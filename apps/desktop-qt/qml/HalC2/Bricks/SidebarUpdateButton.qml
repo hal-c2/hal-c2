@@ -41,11 +41,7 @@ ShellButton {
         padding: 12
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
-        background: Rectangle {
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: Qt.alpha(button.foreground, 0.1)
-            radius: 10
-        }
+        background: ShellPopoverSurface {}
 
         contentItem: ColumnLayout {
             spacing: 8
@@ -54,7 +50,7 @@ ShellButton {
                 Layout.fillWidth: true
                 text: button.update?.label ?? ""
                 color: button.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
                 wrapMode: Text.Wrap
             }
@@ -73,7 +69,7 @@ ShellButton {
                     Label {
                         text: group.modelData.title
                         color: button.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         font.weight: Font.DemiBold
                     }
 
@@ -86,7 +82,7 @@ ShellButton {
                             Layout.fillWidth: true
                             text: "• " + modelData
                             color: button.foreground
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             wrapMode: Text.Wrap
                         }
                     }

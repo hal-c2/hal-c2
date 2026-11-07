@@ -48,6 +48,8 @@ const FakeMc::Extension worktrees([](FakeMc& mc) {
   });
   mc.onRpc(S("orchestration.launchThread"), [&mc](const FakeMc::Rpc& rpc) {
     mc.part<FakeWorktrees>().launches.append(rpc.payload);
+    // An environment told to refuse new threads (SubagentSteps.cpp).
+    if (mc.refusals.contains(rpc.method)) return mc.refuse(rpc, mc.refusals.value(rpc.method));
     const QString threadId = rpc.payload.value(QLatin1String("threadId")).toString();
     const QJsonObject row{{S("id"), threadId}, {S("projectId"), rpc.payload.value(QLatin1String("projectId"))}, {S("title"), rpc.payload.value(QLatin1String("title"))},
                           {S("createdAt"), kAt}, {S("updatedAt"), kAt}};

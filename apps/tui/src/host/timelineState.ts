@@ -1,12 +1,23 @@
-import type { OrchestrationCheckpointSummary, OrchestrationThread } from "@hal-c2/contracts";
+import type {
+  MermaidRenderResult,
+  OrchestrationCheckpointSummary,
+  OrchestrationThread,
+  TimestampFormat,
+} from "@hal-c2/contracts";
 
-import type { TuiQueuedMessage, TuiThreadExtras } from "../orchestrationV2Adapter.ts";
+import type {
+  TuiMessageIntent,
+  TuiQueuedMessage,
+  TuiThreadExtras,
+} from "../orchestrationV2Adapter.ts";
 import { shouldCollapseUserMessage } from "@hal-c2/shared/chatMessages";
 
 import { CHAT_CONTENT_MAX_WIDTH } from "../layout.ts";
 import { deriveContextWindow, formatContextWindow } from "../contextWindow.ts";
 import { buildFileTree, collectDirPaths, flattenFileTree } from "../fileTree.ts";
 import { clip } from "../format.ts";
+import { runnableShellCommand } from "../shellRun.ts";
+import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../timestampFormat.ts";
 import { fileGlyph, fileTypeColor, STATUS_ICONS, TOOL_ICONS } from "../icons.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { ansi, type Palette, relativeTime, sessionStatusColor } from "../theme.ts";
@@ -15,6 +26,7 @@ import {
   deriveTimelineEntries,
   diffStat,
   type FoldableRow,
+  formatWorkingTimer,
   isWorking,
   MAX_VISIBLE_WORK_LOG_ENTRIES,
   type TimelineRow,
@@ -22,6 +34,7 @@ import {
   workingStartedAt,
 } from "../timeline.ts";
 import { linkifyTimelineUrls } from "../timelineLinks.ts";
+import { commandDisplayText, summarizeToolCalls, workspaceRelative } from "../toolSummary.ts";
 import {
   workLogIcon,
   workLogLabel,
@@ -30,10 +43,18 @@ import {
   workLogStatusLabel,
   type WorkLogEntry,
 } from "../worklog.ts";
-import type { AttachmentPreview } from "./attachmentPreviews.ts";
+import type { AttachmentPreview, AttachmentPreviews } from "./attachmentPreviews.ts";
 import { tableToCsv, tableToMarkdown } from "../markdownTable.ts";
 import { threadKey } from "./sidebarState.ts";
-import { chunk, markdownBlockLines, markdownLines, styled, type StyledText } from "./styledText.ts";
+import {
+  chunk,
+  markdownBlockLines,
+  type CodeColouring,
+  markdownLines,
+  plainText,
+  styled,
+  type StyledText,
+} from "./styledText.ts";
 
 // The conversation as published under `timeline` (port of MessagesTimeline):
 // every row pre-styled, with the action a click dispatches, so the Timeline
@@ -55,6 +76,7 @@ export function resolveTimelineWindow(
 
 /** View state the host keeps per thread for the timeline. */
 export interface TimelineView {
+  /** Work groups the user flipped from how they start (a stopped turn's start open). */
   readonly expandedGroups: ReadonlySet<string>;
   /** Turn folds the user flipped from how they start (folded, or open for `openTurns`). */
   readonly expandedFolds: ReadonlySet<string>;
@@ -65,16 +87,27 @@ export interface TimelineView {
   readonly windowEnd: number | null;
   /** Tables whose cells are cut to one line, as `<message id>:table:<n>`. */
   readonly collapsedTables: ReadonlySet<string>;
+  /** Mermaid diagrams shown as their source, as `<message id>:diagram:<n>`. */
+  readonly diagramSources: ReadonlySet<string>;
 }
 
 export const EMPTY_TIMELINE_VIEW: TimelineView = {
   collapsedTables: new Set(),
+  diagramSources: new Set(),
   expandedGroups: new Set(),
   expandedFolds: new Set(),
   expandedMessages: new Set(),
   collapsedDirs: new Map(),
   windowEnd: null,
 };
+
+/** Why the latest run failed. A usage limit reads as a warning that names when to retry. */
+export interface TimelineError {
+  readonly message: string;
+  readonly usageLimit: { readonly resetAt: string | null } | null;
+  /** The user dismissed this failure (its run and message); another one shows again. */
+  readonly dismissed: boolean;
+}
 
 /** One painted line; a click dispatches `action` with `payload`. */
 export interface TimelineLine {
@@ -117,7 +150,16 @@ export const FALLBACK_CELL_PIXELS: CellPixels = { width: 18, height: 35 };
 
 export interface TimelineItem {
   readonly key: string;
-  readonly kind: "pager" | "lineage" | "message" | "work" | "fold" | "files" | "background";
+  readonly kind:
+    | "notice"
+    | "pager"
+    | "lineage"
+    | "message"
+    | "work"
+    | "fold"
+    | "files"
+    | "stamp"
+    | "background";
   readonly align: "left" | "right";
   readonly boxed: boolean;
   /** Width of the item's box (the column width unless boxed). */
@@ -141,10 +183,17 @@ export interface TimelineState {
   readonly items: ReadonlyArray<TimelineItem>;
   /** The newest row is mounted, so the view sticks to the bottom. */
   readonly showingLatest: boolean;
+  /** Earlier turns wait on the MC and are not being fetched: a short timeline asks for them. */
+  readonly canLoadEarlier: boolean;
   readonly rowCount: number;
   readonly windowStart: number;
   readonly windowEnd: number;
-  readonly working: { readonly text: StyledText; readonly elapsedSeconds: number | null } | null;
+  /** The working row; `refreshInMs` is when its time next changes (`timeline.tick`). */
+  readonly working: {
+    readonly text: StyledText;
+    readonly elapsedSeconds: number | null;
+    readonly refreshInMs: number;
+  } | null;
   readonly plan: {
     readonly id: string;
     readonly title: StyledText;
@@ -157,6 +206,8 @@ export interface TimelineInput {
   readonly detail: OrchestrationThread | null;
   readonly hasOlderTurns: boolean;
   readonly loadingOlderTurns: boolean;
+  /** Why the thread's MC cannot be reached (it left the cluster); null while it can. */
+  readonly unreachable?: string | null;
   readonly approvalCount: number;
   readonly view: TimelineView;
   /** Turns whose fold starts open: the ones the user stopped in this session. */
@@ -172,10 +223,20 @@ export interface TimelineInput {
   readonly nowMs: number;
   readonly palette: Palette;
   readonly emptyHint: string;
+  /** The thread's error, as the banner shows it; null when there is none. */
+  readonly error?: TimelineError | null;
   /** Image attachments' links and previews; without it every link reads unavailable. */
-  readonly attachments?: (attachmentId: string) => AttachmentPreview;
+  readonly attachments?: AttachmentPreviews["get"];
   /** Sizes inline previews (default: `FALLBACK_CELL_PIXELS`). */
   readonly cellPixels?: CellPixels | null;
+  /** What the MC drew of a reply's Mermaid diagram (`mermaidDiagrams.ts`); without it they are code. */
+  readonly diagrams?: (source: string) => MermaidRenderResult | undefined;
+  /** Colours a reply's code by its language (`codeColours.ts`); without it code is one colour. */
+  readonly codeColours?: CodeColouring;
+  /** Where the thread works; a file change in it is named relative to it. */
+  readonly workspaceRoot?: string | null;
+  /** How this device writes times (default: the locale's). */
+  readonly timestampFormat?: TimestampFormat;
 }
 
 const line = (
@@ -222,6 +283,7 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
       context: null,
       items: [],
       showingLatest: true,
+      canLoadEarlier: false,
       rowCount: 0,
       windowStart: 0,
       windowEnd: 0,
@@ -248,9 +310,26 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
     checkpointByMessage,
     attachments: input.attachments ?? (() => UNAVAILABLE_ATTACHMENT),
     cellPixels: input.cellPixels ?? FALLBACK_CELL_PIXELS,
+    diagrams: input.diagrams ?? null,
+    codeColours: input.codeColours,
+    workspaceRoot: input.workspaceRoot ?? null,
+    nowMs: input.nowMs,
+    timestampFormat: input.timestampFormat ?? "locale",
+    withMeta: repliesWithMeta(detail),
   };
 
   const items: TimelineItem[] = [];
+  if (input.unreachable) {
+    items.push(
+      item(
+        "notice:unreachable",
+        "notice",
+        width,
+        [line(styled(chunk(input.unreachable, { fg: palette.warning })))],
+        { marginBottom: 1 },
+      ),
+    );
+  }
   if (input.parent) {
     items.push(
       item(
@@ -336,9 +415,51 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
     );
   }
 
+  const error = showingLatest ? input.error : null;
+  if (error) {
+    const reset = error.usageLimit?.resetAt;
+    items.push(
+      item(
+        "error",
+        "notice",
+        width,
+        [
+          error.dismissed
+            ? line(
+                styled(chunk("✕ error hidden · show", { fg: palette.dim })),
+                "timeline.error.show",
+              )
+            : line(
+                styled(
+                  error.usageLimit
+                    ? chunk(
+                        `⚠ Usage limit reached${
+                          reset
+                            ? ` · retry at ${formatDayAwareTimestamp(reset, ctx.timestampFormat, input.nowMs)}`
+                            : ""
+                        }`,
+                        { fg: palette.warning },
+                      )
+                    : chunk(`✖ ${error.message}`, { fg: palette.error }),
+                ),
+                null,
+                null,
+                {
+                  action: "timeline.error.dismiss",
+                  payload: null,
+                  text: styled(chunk("✕ dismiss", { fg: palette.dim })),
+                },
+              ),
+        ],
+        { marginTop: 1 },
+      ),
+    );
+  }
+
   const plan = showingLatest ? latestActionableProposedPlan(detail) : null;
   const working = showingLatest && isWorking(detail);
-  const elapsed = working ? workingElapsedSeconds(workingStartedAt(detail), input.nowMs) : null;
+  const workingFrom = working ? workingStartedAt(detail) : null;
+  const elapsed = working ? workingElapsedSeconds(workingFrom, input.nowMs) : null;
   const contextWindow = deriveContextWindow(detail.activities);
 
   return {
@@ -363,16 +484,23 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
       : null,
     items,
     showingLatest,
+    canLoadEarlier: window.start === 0 && input.hasOlderTurns && !input.loadingOlderTurns,
     rowCount: rows.length,
     windowStart: window.start,
     windowEnd: window.end,
     working: working
       ? {
           elapsedSeconds: elapsed,
+          // The time moves once a second, not on every frame.
+          refreshInMs:
+            elapsed === null
+              ? 0
+              : 1000 - ((((input.nowMs - Date.parse(workingFrom!)) % 1000) + 1000) % 1000),
           text: styled(
             chunk("● ", { fg: palette.accent }),
-            chunk("Working…", { fg: palette.dim }),
-            elapsed !== null && chunk(` ${elapsed}s`, { fg: palette.faint }),
+            elapsed === null
+              ? chunk("Working…", { fg: palette.dim })
+              : chunk(`Working for ${formatWorkingTimer(elapsed)}`, { fg: palette.dim }),
           ),
         }
       : null,
@@ -432,8 +560,15 @@ interface RowContext {
   readonly copied: string | null;
   readonly threadTitle: (threadId: string) => string | null;
   readonly checkpointByMessage: Map<string, OrchestrationCheckpointSummary>;
-  readonly attachments: (attachmentId: string) => AttachmentPreview;
+  readonly attachments: AttachmentPreviews["get"];
   readonly cellPixels: CellPixels;
+  readonly diagrams: ((source: string) => MermaidRenderResult | undefined) | null;
+  readonly codeColours: CodeColouring | undefined;
+  readonly workspaceRoot: string | null;
+  readonly nowMs: number;
+  readonly timestampFormat: TimestampFormat;
+  /** The replies that end a settled turn, which carry its time and actions. */
+  readonly withMeta: ReadonlySet<string>;
 }
 
 const UNAVAILABLE_ATTACHMENT: AttachmentPreview = {
@@ -451,7 +586,44 @@ const ATTACHMENT_TAIL_MIN = 8;
 /** Room a user bubble keeps for an attachment line's link/state tail. */
 const ATTACHMENT_TAIL_WIDTH = 28;
 
-type ImageAttachment = { readonly id: string; readonly name: string; readonly sizeBytes: number };
+type ImageAttachment = {
+  readonly type?: string;
+  readonly id: string;
+  readonly name: string;
+  readonly sizeBytes: number;
+};
+type FileAttachment = ImageAttachment & { readonly type: "file"; readonly mimeType: string };
+
+/** `2 MB`, `12 KB`, `300 B`: a file's size at the unit it reads best in. */
+function fileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
+
+/** A file's kind as people say it: its extension (`PDF`), else its mime subtype. */
+function fileKind(file: Pick<FileAttachment, "name" | "mimeType">): string {
+  const extension = /\.([a-z0-9]{1,8})$/i.exec(file.name)?.[1];
+  const subtype = file.mimeType.split("/")[1]?.split(/[+;]/)[0];
+  return (extension ?? subtype ?? file.mimeType).toUpperCase();
+}
+
+const FILE_GLYPH = "▤";
+
+/** `▤ name · PDF · 2 MB`: what a sent file is called. */
+export function fileLabel(file: FileAttachment): string {
+  return `${FILE_GLYPH} ${file.name} · ${fileKind(file)} · ${fileSize(file.sizeBytes)}`;
+}
+
+/** What a message's input intent reads as; a plain turn start says nothing. */
+function intentMarker(intent: TuiMessageIntent | undefined): string | null {
+  if (intent === "queued_turn") return "Queued behind the active turn";
+  if (intent === "steer") return "Steered the active turn";
+  if (intent === "promoted_queued_to_steer") {
+    return "Originally queued, then promoted to steer the active turn";
+  }
+  return null;
+}
 
 /** `▣ name · 12 KB`: what an image attachment is called everywhere. */
 export function attachmentLabel(attachment: Pick<ImageAttachment, "name" | "sizeBytes">): string {
@@ -492,12 +664,13 @@ export function previewCells(
  * the inline preview under it once loaded (a click opens it full size).
  */
 function attachmentLines(
-  attachment: ImageAttachment,
+  attachment: ImageAttachment | FileAttachment,
   lineWidth: number,
   ctx: RowContext,
 ): TimelineLine[] {
-  const { link, image } = ctx.attachments(attachment.id);
-  const label = attachmentLabel(attachment);
+  const file = attachment.type === "file";
+  const { link, image } = ctx.attachments(attachment.id, file ? "file" : "image");
+  const label = file ? fileLabel(attachment as FileAttachment) : attachmentLabel(attachment);
   const linkText = attachmentLinkText(link);
   const tail = image ? `click image to expand · ${linkText}` : linkText;
   const tailWidth = Math.max(ATTACHMENT_TAIL_MIN, lineWidth - Bun.stringWidth(label) - 2);
@@ -542,23 +715,38 @@ function pushRow(items: TimelineItem[], row: TimelineRow, ctx: RowContext): void
       { marginTop: 1 },
     ),
   );
-  if (expanded) for (const hidden of row.hiddenRows) pushFoldable(items, hidden, ctx);
+  // The work of a turn that starts open starts open too: it shows where the turn stopped.
+  const settled = { startsOpen: ctx.openTurns.has(row.turnId) };
+  if (expanded) for (const hidden of row.hiddenRows) pushFoldable(items, hidden, ctx, settled);
 }
 
-function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext): void {
+/**
+ * A row of the conversation; a `settled` turn's work reads as a summary, unless
+ * it is one call, which reads as itself.
+ */
+function pushFoldable(
+  items: TimelineItem[],
+  row: FoldableRow,
+  ctx: RowContext,
+  settled: { readonly startsOpen: boolean } | null = null,
+): void {
   const { palette, width } = ctx;
   if (row.kind === "work") {
-    items.push(
-      item(row.id, "work", width, workGroupLines(row.id, row.groupedEntries, ctx), {
-        marginBottom: 1,
-      }),
-    );
+    const lines =
+      settled && row.groupedEntries.length > 1
+        ? summarizedGroupLines(row.id, row.groupedEntries, ctx, settled.startsOpen)
+        : workGroupLines(row.id, row.groupedEntries, ctx);
+    items.push(item(row.id, "work", width, lines, { marginBottom: 1 }));
     return;
   }
   const message = row.message;
   const rawBody = message.text.trim().length > 0 ? message.text : "…";
   const body = linkifyTimelineUrls(rawBody);
-  const images = (message.attachments ?? []).filter((attachment) => attachment.type === "image");
+  // Images draw (when the terminal can) and files list; a kind this build does not know has nothing to show.
+  const images: Array<ImageAttachment | FileAttachment> = [
+    ...(message.attachments ?? []).filter((attachment) => attachment.type === "image"),
+    ...(message.attachments ?? []).filter((attachment) => attachment.type === "file"),
+  ] as never;
 
   if (message.role === "user") {
     // MessagesTimeline's bubble: its longest line plus chrome, at most 80% of
@@ -573,7 +761,15 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
             maxBubble,
             Math.max(
               images.reduce(
-                (max, attachment) => Math.max(max, Bun.stringWidth(attachmentLabel(attachment))),
+                (max, attachment) =>
+                  Math.max(
+                    max,
+                    Bun.stringWidth(
+                      attachment.type === "file"
+                        ? fileLabel(attachment as FileAttachment)
+                        : attachmentLabel(attachment),
+                    ),
+                  ),
                 0,
               ) +
                 2 +
@@ -592,6 +788,11 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
     const waiting = queued
       ? `⏸ queued${queued.position === null ? "" : ` · ${queued.position}`}${queued.held ? " · held" : ""}`
       : null;
+    // A message that has gone out says how it reached the agent.
+    const marker = intentMarker((message as { intent?: TuiMessageIntent }).intent);
+    const canCollapse = shouldCollapseUserMessage(rawBody);
+    const expanded = ctx.view.expandedMessages.has(message.id);
+    const toggle = expanded ? "⌃ Show less" : "⌄ Show full message";
     const bubbleWidth = Math.max(
       attachmentMinWidth,
       Math.min(
@@ -601,6 +802,7 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
           longest,
           sender ? Bun.stringWidth(sender) : 0,
           waiting ? Bun.stringWidth(waiting) : 0,
+          marker && !waiting ? Bun.stringWidth(marker) : 0,
         ) + 4,
       ),
     );
@@ -611,6 +813,7 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
     );
     const head = [
       ...(waiting ? [line(styled(chunk(waiting, { fg: palette.warning })))] : []),
+      ...(marker && !waiting ? [line(styled(chunk(marker, { fg: palette.dim })))] : []),
       ...(sender && senderThreadId
         ? [
             line(styled(chunk(sender, { fg: palette.dim })), "thread.open", {
@@ -620,8 +823,6 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
         : []),
       ...(imageLines.length > 0 ? [...imageLines, line(styled(chunk("")))] : []),
     ];
-    const canCollapse = shouldCollapseUserMessage(rawBody);
-    const expanded = ctx.view.expandedMessages.has(message.id);
     const collapsed = canCollapse && !expanded;
     const shown = collapsed ? clipRows(bodyLines, innerWidth) : bodyLines;
     items.push(
@@ -634,13 +835,9 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
           ...shown.map((text) => line(text)),
           ...(canCollapse
             ? [
-                line(
-                  styled(
-                    chunk(expanded ? "⌃ Show less" : "⌄ Show full message", { fg: palette.dim }),
-                  ),
-                  "timeline.message.toggle",
-                  { id: message.id },
-                ),
+                line(styled(chunk(toggle, { fg: palette.dim })), "timeline.message.toggle", {
+                  id: message.id,
+                }),
               ]
             : []),
         ],
@@ -648,7 +845,6 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
           align: "right",
           boxed: true,
           marginTop: 1,
-          marginBottom: 1,
           clip: collapsed
             ? {
                 from: head.length,
@@ -659,10 +855,18 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
         },
       ),
     );
+    const stamp = stampLine(message.createdAt, ctx);
+    items.push(
+      item(`stamp:${message.id}`, "stamp", Bun.stringWidth(plainText(stamp.text)), [stamp], {
+        align: "right",
+        marginBottom: 1,
+      }),
+    );
     return;
   }
 
   const imageLines = images.flatMap((attachment) => attachmentLines(attachment, width, ctx));
+  const meta = ctx.withMeta.has(message.id) && !message.streaming;
   const checkpoint = ctx.checkpointByMessage.get(message.id);
   items.push(
     item(
@@ -670,8 +874,9 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
       "message",
       width,
       [
-        ...replyLines(message.id, body, ctx),
+        ...replyLines(message.id, body, message.streaming, ctx),
         ...(imageLines.length > 0 ? [line(styled(chunk(""))), ...imageLines] : []),
+        ...(meta ? [replyMetaLine(message, ctx)] : []),
       ],
       { marginTop: 1, marginBottom: checkpoint ? 0 : 1 },
     ),
@@ -687,15 +892,96 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
 }
 
 /**
+ * The replies that carry their turn's time and actions: each turn's last one, once
+ * the turn is no longer running (commentary would otherwise flash a time mid-work).
+ * Replies outside any turn count as one turn until the user's next message.
+ */
+function repliesWithMeta(detail: OrchestrationThread): Set<string> {
+  const last = new Map<string, string>();
+  let asked = 0;
+  for (const message of detail.messages) {
+    if (message.role === "user") asked += 1;
+    if (message.role === "assistant") last.set(message.turnId ?? `asked:${asked}`, message.id);
+  }
+  const running = isWorking(detail) ? (detail.latestTurn?.turnId ?? null) : null;
+  return new Set([...last].filter(([turn]) => turn !== running).map(([, id]) => id));
+}
+
+/** When a message was sent; a click shows its full time. */
+function stampLine(sentAt: string, ctx: RowContext): TimelineLine {
+  return line(
+    styled(
+      chunk(formatDayAwareTimestamp(sentAt, ctx.timestampFormat, ctx.nowMs), {
+        fg: ctx.palette.dim,
+      }),
+    ),
+    "timeline.stamp",
+    { full: formatChatTimestampTooltip(sentAt, ctx.timestampFormat) },
+  );
+}
+
+/** Under a turn's last reply: copy it, and when it was written. */
+function replyMetaLine(
+  message: OrchestrationThread["messages"][number],
+  ctx: RowContext,
+): TimelineLine {
+  const key = `${message.id}:reply`;
+  const copied = ctx.copied === key;
+  return {
+    ...line(styled(chunk(""))),
+    parts: [
+      {
+        text: styled(
+          chunk(copied ? "✓ Copied" : "⧉ Copy", {
+            fg: copied ? ctx.palette.success : ctx.palette.dim,
+          }),
+        ),
+        action: "timeline.copy",
+        payload: { key, text: message.text, label: "Reply" },
+      },
+      { text: styled(chunk(" · ", { fg: ctx.palette.dim })), action: "", payload: null },
+      {
+        text: styled(
+          chunk(formatDayAwareTimestamp(message.updatedAt, ctx.timestampFormat, ctx.nowMs), {
+            fg: ctx.palette.dim,
+          }),
+        ),
+        action: "timeline.stamp",
+        payload: { full: formatChatTimestampTooltip(message.updatedAt, ctx.timestampFormat) },
+      },
+    ],
+  };
+}
+
+/**
  * A reply's Markdown as lines. A click on a code block copies its source; a
  * table is followed by a row that copies it as Markdown or CSV and cuts its
- * cells to one line or wraps them again. What was just copied shows it.
+ * cells to one line or wraps them again. A Mermaid diagram is drawn in
+ * characters when the MC can, its title switching to its source and back; a
+ * click on it copies its source. What was just copied shows it. A finished one-line
+ * shell block offers to run its command in the thread's terminal (shellRun.ts).
  */
-function replyLines(messageId: string, body: string, ctx: RowContext): TimelineLine[] {
+function replyLines(
+  messageId: string,
+  body: string,
+  streaming: boolean,
+  ctx: RowContext,
+): TimelineLine[] {
   const { palette, width } = ctx;
   const tableKey = (index: number) => `${messageId}:table:${index}`;
-  const blocks = markdownBlockLines(body, palette, width, (index) =>
-    ctx.view.collapsedTables.has(tableKey(index)),
+  const diagramKey = (index: number) => `${messageId}:diagram:${index}`;
+  const blocks = markdownBlockLines(
+    body,
+    palette,
+    width,
+    (index) => ctx.view.collapsedTables.has(tableKey(index)),
+    ctx.diagrams
+      ? {
+          get: ctx.diagrams,
+          showSource: (index) => ctx.view.diagramSources.has(diagramKey(index)),
+        }
+      : undefined,
+    ctx.codeColours,
   );
   const lines: TimelineLine[] = [];
   blocks.forEach((block, position) => {
@@ -705,9 +991,29 @@ function replyLines(messageId: string, body: string, ctx: RowContext): TimelineL
         ctx.copied === key
           ? { chunks: block.text.chunks.map((part) => ({ ...part, fg: palette.success })) }
           : block.text;
-      lines.push(
-        line(text, "timeline.copy", { key, text: block.code.source, label: "Code block" }),
-      );
+      const label = block.diagram ? "Diagram source" : "Code block";
+      const command = runnableShellCommand(block.code, streaming);
+      const toggle = command
+        ? {
+            text: styled(chunk("▶ Run", { fg: palette.dim })),
+            action: "timeline.code.run",
+            payload: { command },
+          }
+        : block.diagram?.title && block.diagram.drawable
+          ? {
+              text: styled(
+                chunk(
+                  ctx.view.diagramSources.has(diagramKey(block.diagram.index))
+                    ? "⇄ Drawing"
+                    : "⇄ Source",
+                  { fg: palette.dim },
+                ),
+              ),
+              action: "timeline.diagram.toggle",
+              payload: { key: diagramKey(block.diagram.index) },
+            }
+          : null;
+      lines.push(line(text, "timeline.copy", { key, text: block.code.source, label }, toggle));
       return;
     }
     lines.push(line(block.text));
@@ -770,15 +1076,7 @@ function workGroupLines(
   const expanded = ctx.view.expandedGroups.has(id);
   const visible = hasOverflow && !expanded ? entries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES) : entries;
   const hidden = entries.length - visible.length;
-  // A subagent's row opens the thread it works in.
-  // A file change's row opens its diff.
-  const lines = visible.map((entry) =>
-    entry.childThreadId
-      ? line(toolRow(entry, ctx), "thread.open", { key: threadKey(entry.childThreadId) })
-      : entry.diff
-        ? line(toolRow(entry, ctx), "diff.item", { id: entry.id })
-        : line(toolRow(entry, ctx)),
-  );
+  const lines = visible.map((entry) => callLine(entry, toolRow(entry, ctx)));
   if (hasOverflow) {
     lines.push(
       line(
@@ -798,11 +1096,78 @@ function workGroupLines(
   return lines;
 }
 
+// A subagent's row opens the thread it works in.
+// A file change's row opens its diff.
+const callLine = (entry: WorkLogEntry, text: StyledText): TimelineLine =>
+  entry.childThreadId
+    ? line(text, "thread.open", { key: threadKey(entry.childThreadId) })
+    : entry.diff
+      ? line(text, "diff.item", { id: entry.id })
+      : line(text);
+
+/**
+ * A finished turn's group of calls: what they did in one sentence, marked when
+ * one failed, which opens into every call, labelled by what it did.
+ */
+function summarizedGroupLines(
+  id: string,
+  entries: ReadonlyArray<WorkLogEntry>,
+  ctx: RowContext,
+  startsOpen: boolean,
+): TimelineLine[] {
+  const { palette } = ctx;
+  const summary = summarizeToolCalls(entries.map((entry) => entry.item ?? {}));
+  const expanded = ctx.view.expandedGroups.has(id) !== startsOpen;
+  const head = line(
+    styled(
+      chunk(`${expanded ? "▾" : "▸"} ${summary.text}`, { fg: palette.dim }),
+      summary.failed && chunk(` ${STATUS_ICONS.failure.glyph}`, { fg: palette.error }),
+    ),
+    "timeline.workGroup.toggle",
+    { id },
+  );
+  if (!expanded) return [head];
+  return [
+    head,
+    ...entries.map((entry) => callLine(entry, toolRow(entry, ctx, callShown(entry, ctx)))),
+  ];
+}
+
+/** How an opened group shows a call: a command as it was typed with its exit code, a file in the workspace relative to it. */
+function callShown(
+  entry: WorkLogEntry,
+  ctx: RowContext,
+): { label: string; preview: string | null } | undefined {
+  const item = entry.item;
+  if (item?.type === "command_execution" && typeof item.input === "string") {
+    return {
+      label: commandDisplayText(item.input),
+      preview: typeof item.exitCode === "number" ? `exit ${item.exitCode}` : null,
+    };
+  }
+  if (item?.type === "file_change" && typeof item.fileName === "string") {
+    return {
+      label: workspaceRelative(item.fileName, ctx.workspaceRoot),
+      preview: entry.detail ?? null,
+    };
+  }
+  if (item?.type === "dynamic_tool" && item.input != null) {
+    return { label: workLogLabel(entry), preview: JSON.stringify(item.input) };
+  }
+  return undefined;
+}
+
 /** icon · label · status glyph · muted preview (port of ToolRow). */
-function toolRow(entry: WorkLogEntry, ctx: RowContext): StyledText {
+function toolRow(
+  entry: WorkLogEntry,
+  ctx: RowContext,
+  shown: { label: string; preview: string | null } = {
+    label: workLogLabel(entry),
+    preview: workLogPreview(entry),
+  },
+): StyledText {
   const { palette, width } = ctx;
-  const label = workLogLabel(entry);
-  const preview = workLogPreview(entry);
+  const { label, preview } = shown;
   const status = workLogStatusKind(entry);
   const word = workLogStatusLabel(entry);
   // A call that neither succeeded nor failed (declined, stopped) is the neutral dash.
@@ -812,7 +1177,7 @@ function toolRow(entry: WorkLogEntry, ctx: RowContext): StyledText {
     chunk(`${workLogIcon(entry)} `, {
       fg: entry.tone === "error" ? palette.error : palette.accent,
     }),
-    chunk(label, { fg: palette.text }),
+    chunk(clip(label, Math.max(8, width - mark.length - 4)), { fg: palette.text }),
     mark.length > 0 &&
       chunk(` ${mark}`, {
         fg:

@@ -1,4 +1,38 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21363
+#   https://github.com/pingdotgg/t3code/pull/21353
+#   https://github.com/pingdotgg/t3code/pull/22777
+#   https://github.com/pingdotgg/t3code/commit/a12d6ed9428d8e64d76ca86d178abbf564b57cee
+#   https://github.com/pingdotgg/t3code/pull/20878
+#   https://github.com/pingdotgg/t3code/pull/16198
+#   https://github.com/pingdotgg/t3code/pull/14778
+#   https://github.com/pingdotgg/t3code/pull/21069
+#   https://github.com/pingdotgg/t3code/pull/10987
+#   https://github.com/pingdotgg/t3code/pull/14510
+#   https://github.com/pingdotgg/t3code/pull/18308
+#   https://github.com/pingdotgg/t3code/pull/21497
+#   https://github.com/pingdotgg/t3code/pull/18735
+#   https://github.com/pingdotgg/t3code/pull/13859
+#   https://github.com/pingdotgg/t3code/pull/19677
+#   https://github.com/pingdotgg/t3code/pull/16249
+#   https://github.com/pingdotgg/t3code/pull/18389
+#   https://github.com/pingdotgg/t3code/pull/19719
+#   https://github.com/pingdotgg/t3code/pull/19854
+#   https://github.com/pingdotgg/t3code/pull/20080
+#   https://github.com/pingdotgg/t3code/pull/20120
+#   https://github.com/pingdotgg/t3code/pull/20400
+#   https://github.com/pingdotgg/t3code/pull/17923
+#   https://github.com/pingdotgg/t3code/pull/16950
+#   https://github.com/pingdotgg/t3code/pull/19337
+#   https://github.com/pingdotgg/t3code/pull/19401
+#   https://github.com/pingdotgg/t3code/pull/15618
+#   https://github.com/pingdotgg/t3code/pull/15824
+#   https://github.com/pingdotgg/t3code/pull/13807
+#   https://github.com/pingdotgg/t3code/pull/13909
+#   https://github.com/pingdotgg/t3code/pull/12449 (a link to the project folder opens the Files explorer)
+#   https://github.com/pingdotgg/t3code/pull/13795
+#   https://github.com/pingdotgg/t3code/pull/11477
+#   https://github.com/pingdotgg/t3code/pull/22787
 #   apps/web/src/components/ChatMarkdown.tsx (code block header, Copy code, line wrap, table expand and copy, streaming)
 #   apps/web/src/components/ChatMarkdown.tsx (fence file names, collapsible sections, template cards, file chips and their menu and failure toasts, website icons, pull request links)
 #   apps/web/src/markdown-links.ts (file link modifier click, PDFs in the browser, inline code paths)
@@ -21,10 +55,24 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/Markdown.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/TextEditMenu.qml (the right-click menu on a reply's text)
 #   apps/desktop-qt/qml/HalC2/Bricks/js/markdown.js (escaping, safe links, streaming segments)
+#   apps/desktop-qt/src/native/CodeHighlighter.cpp, native/syntax (code colours: syntect with bat's syntaxes, the Pierre themes)
+#   apps/tui/src/host/codeColours.ts (code colours on the terminal: OpenTUI's tree-sitter and its grammars)
 #   apps/desktop-qt/tests/tst_Markdown.qml
 #   apps/desktop-qt/tests/native/features/MarkdownSteps.cpp
 #   https://mermaid.js.org/intro/syntax-reference.html (Mermaid diagrams in a reply)
 #   https://github.com/hal-c2/hal-c2/issues/843
+#   https://github.com/pingdotgg/t3code/pull/12615
+#   https://github.com/pingdotgg/t3code/pull/15067
+#   https://github.com/pingdotgg/t3code/pull/15509
+#   https://github.com/pingdotgg/t3code/pull/15520
+#   https://github.com/pingdotgg/t3code/pull/22120
+#   https://github.com/pingdotgg/t3code/pull/22153
+#   https://github.com/pingdotgg/t3code/pull/22621
+#   https://github.com/pingdotgg/t3code/pull/25246
+#   https://github.com/pingdotgg/t3code/pull/25432
+#   https://github.com/pingdotgg/t3code/pull/25802
+#   https://github.com/pingdotgg/t3code/pull/21472
+#   https://github.com/pingdotgg/t3code/pull/21403
 
 Feature: Formatted messages
   Messages are written in Markdown. The timeline shows headings, lists, quotes, code and
@@ -35,13 +83,65 @@ Feature: Formatted messages
     Given a connected environment with the project "shop"
     And the user is looking at a thread in "shop"
 
-  @shared @backlog-mobile
+  @shared @backlog-mobile @priority-high
   Scenario: A reply shows its formatting
     When the agent answers with a heading, a list, a quote, a code block and a table
     Then the heading and the list are shown as text
     And the quote, the code block and the table are each shown in their own form
 
-  @shared @backlog-mobile
+  # Upstream #22777: Arabic and Hebrew read and line up right to left. Each block takes the
+  # direction of most of its words, each word voting by its first letter, inline code not voting
+  # and a tie going to the first word, so a few English terms do not flip a line.
+  @shared @backlog
+  Scenario Outline: Each block of a reply reads in the direction of most of its words
+    When the agent answers with the <block> "<text>"
+    Then the <block> reads <direction>, its bullets, numbers or rule on that side
+
+    Examples:
+      | block     | text                              | direction     |
+      | paragraph | StrictMode: يعيد الـ render مرتين | right to left |
+      | list      | اكتب دالة `sumBy` تجمع القيم      | right to left |
+      | paragraph | Run `npm test` before you push    | left to right |
+
+  @shared @backlog
+  Scenario: Code inside right-to-left text stays left to right
+    When the agent answers in Arabic with "fetch()" in inline code and a code block after it
+    Then "fetch()" and the code block read left to right
+
+  @shared @backlog @priority-low
+  Scenario: A thread title reads in its own direction
+    Given a thread titled in Hebrew
+    Then the sidebar, the thread's header and the command palette show the title right to left
+    And a title too long to fit is cut at its end
+
+  @shared @backlog @priority-low
+  Scenario: An ordered list past 99 keeps its whole numbers
+    When the agent answers with an ordered list numbered 96 to 103
+    Then every item shows its whole number, from "96." to "103."
+
+  @shared @backlog
+  Scenario Outline: A table right under a line of text is shown as a table
+    When the agent answers with a line of text and, on the next line with no blank line between, a table <where>
+    Then the table is shown as a table and not as a run-on paragraph
+
+    Examples:
+      | where                 |
+      | at the top level      |
+      | inside a quote        |
+      | inside a list item    |
+
+  @shared @backlog
+  Scenario: Character references in a reply are shown as their characters
+    When the agent answers with "Tom &amp; Jerry &copy; 2026"
+    Then the reply reads "Tom & Jerry © 2026"
+
+  @mobile @backlog @priority-low
+  Scenario: Long pressing a link in a reply opens only the link's menu
+    When the user long presses a link in the agent's reply
+    Then the link's menu opens
+    And no text is selected and no table or code block menu opens with it
+
+  @shared @backlog-mobile @priority-high
   Scenario: The user copies a code block
     Given the agent's reply has a code block
     When the user copies the code block
@@ -62,6 +162,18 @@ Feature: Formatted messages
     Given the agent answers "Refunds reuse the old rate."
     When the user right-clicks the reply's text
     Then the menu offers "Copy" and "Select All" only
+
+  # Inline code is one tinted run with no spaces added around it. Only a
+  # span too long for a phone's line may break, and then only after a slash
+  # or a hyphen.
+  @desktop @mobile @backlog-mobile
+  Scenario: Inline code stays whole and reads as written
+    Given the agent answers "The MC lives in `apps/server-ex`, so run (`mix test`)."
+    Then the reply's words read "The MC lives in apps/server-ex, so run (mix test)."
+    And "apps/server-ex" stays on one line however narrow the timeline is
+    When the user selects "apps/server-ex" in the reply
+    And the user chooses "Copy" from the reply's right-click menu
+    Then the clipboard holds "apps/server-ex"
 
   @desktop
   Scenario: Select All in a code block's right-click menu selects its code
@@ -96,31 +208,64 @@ Feature: Formatted messages
     When the user expands the table cells
     Then the long cell wraps
 
+  # Upstream #20878: an expanded table kept its full width, so wrapped columns ran out of view.
+  @shared @backlog
+  Scenario: An expanded wide table fits the conversation once its cells wrap
+    Given the agent's reply has a table wider than the conversation, with long prose cells
+    When the user expands the table cells
+    Then every column fits in the conversation's width, headings wrapping with the cells
+    And only a word too long to break still needs scrolling sideways
+
   @shared @backlog-mobile
   Scenario: Markup in a message is shown as it was written
     When the agent answers with HTML and an image
     Then the HTML is shown as written
     And the image is a link to its address and nothing is loaded from the web
 
+  # Upstream #13807: a trailing "_" or "~" is part of a bare web address.
+  @shared @backlog
+  Scenario Outline: A bare web address in a reply keeps a trailing underscore or tilde
+    When the reply contains the bare address "<address>"
+    Then the link is "<address>" in full
+
+    Examples:
+      | address                                 |
+      | https://example.com/foo_                |
+      | https://localhost/a~                    |
+      | https://example.com/a_b_                |
+
+  # Upstream #13807: sentence punctuation after a bare web address is left outside the link.
+  @shared @backlog
+  Scenario Outline: Punctuation after a bare web address stays outside the link
+    When the reply contains the bare address "<address>" followed by "<punctuation>"
+    Then the link is "<address>"
+    And "<punctuation>" is shown after it
+
+    Examples:
+      | address               | punctuation |
+      | https://example.com/a | .           |
+      | https://example.com/a | ...         |
+      | http://localhost:3000 | ,           |
+
   @shared @backlog-mobile
   Scenario: A link to a script is not a link
     When the agent answers with a link to "javascript:alert(1)"
     Then the link's text is shown and nothing can be opened
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: A reply being written keeps what is already shown
     Given the agent is writing a reply of several paragraphs
     When the reply grows by another paragraph
     Then the paragraphs already shown are not drawn again
 
-  @shared @backlog-mobile
+  @shared @backlog-mobile @priority-high
   Scenario: A code block is shown as code while it is written
     Given the agent is writing a code block
     Then the code written so far is shown as a code block
     When the agent closes the code block
     Then the same code block is shown, finished
 
-  @shared @backlog-mobile
+  @shared @backlog-mobile @priority-low
   Scenario Outline: A GitHub alert shows its kind
     When the agent answers with a "<marker>" alert
     Then the quote is titled "<title>"
@@ -136,35 +281,87 @@ Feature: Formatted messages
   # The same renderer draws diagrams in pages and the file viewer
   # (features/space/markdown.feature).
   # https://github.com/hal-c2/hal-c2/issues/843
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @priority-low
   Scenario: A Mermaid diagram in a reply is drawn
     When the agent answers with a "mermaid" code block holding a flowchart
     Then on the desktop and the phone the flowchart is drawn in place of the code block
-    And in the terminal the diagram's source is shown, named as a "flowchart" diagram
+    And in the terminal the diagram is drawn in characters, or its source is shown, named as a "flowchart" diagram
     And the user can switch to the diagram's source and copy it
 
   # https://github.com/hal-c2/hal-c2/issues/843
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @priority-low
   Scenario: A Mermaid diagram that cannot be drawn shows its source and says why
     When the agent answers with a "mermaid" code block holding a flowchart with an unclosed bracket
     Then the diagram's source is shown as a code block
     And the user is told where the mistake is
     And nothing claims the diagram is still being drawn
 
+  # Upstream #16198: maths in Mermaid labels is drawn.
+  @backlog @desktop @mobile @priority-low
+  Scenario: Maths in a Mermaid diagram's labels is drawn
+    Given the agent replies with a Mermaid diagram whose node label holds "$x^2$"
+    When the reply is shown
+    Then the node's label shows the formula drawn as maths
+
+  # Upstream #21472: Mermaid diagrams follow the theme without being drawn again.
+  @backlog @shared @priority-low
+  Scenario: A theme change recolours Mermaid diagrams without drawing them again
+    Given a reply with a drawn Mermaid flowchart
+    When the user switches between the light and the dark theme
+    Then the diagram takes the new theme's colours without being drawn again
+
+  # Upstream #21472: a wide left-to-right flowchart is scaled down to fit, never turned upright.
+  @backlog @shared @priority-low
+  Scenario: A Mermaid diagram keeps the direction it was written in
+    Given the agent replies with a wide left-to-right Mermaid flowchart
+    When the reply is shown in a narrow column
+    Then the flowchart is drawn left to right, scaled down to fit
+
+  # Upstream #21472: links and images inside a diagram are not followed or loaded.
+  @backlog @shared
+  Scenario: Links and images in a Mermaid diagram are not loaded
+    Given the agent replies with a Mermaid diagram whose nodes hold a link and an image
+    When the reply is shown
+    Then the diagram is drawn without the link or the image
+
+  # Upstream #18308: completed Mermaid blocks are drawn while the reply still streams.
   # https://github.com/hal-c2/hal-c2/issues/843
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A Mermaid diagram being written is drawn once it is finished
     When the agent is still writing a "mermaid" code block
     Then the code written so far is shown as a code block
     When the agent closes the code block
     Then the diagram is drawn
 
-  @shared @backlog-mobile
+  # Upstream #18735: chat markdown can draw LaTeX formulas, behind a setting that is off by default.
+  @backlog @shared @priority-low
+  Scenario: Formulas in a reply are drawn when math rendering is on
+    Given the user turned on math rendering
+    When the agent replies with an inline formula and a formula on its own lines
+    Then both formulas are drawn as math
+    And with math rendering off they are shown as the agent wrote them
+
+  # Upstream #18735: a selection across a drawn formula copies its TeX, not the drawn symbols.
+  @backlog @shared @priority-low
+  Scenario: Copying a drawn formula gives its TeX
+    Given math rendering is on and a reply holds a drawn formula
+    When the user selects the formula and copies it
+    Then the clipboard holds the formula's TeX source
+
+  # Upstream #18735: dollar amounts and unfinished formulas stay as text.
+  @backlog @shared @priority-low
+  Scenario: A price is not mistaken for a formula
+    Given math rendering is on
+    When the agent writes "it costs $5 and $10"
+    Then the text is shown as written, not as math
+    And a formula the agent is still writing is shown as text until it is finished
+
+  @shared @backlog-mobile @priority-high
   Scenario: A user message keeps its line breaks
     Given the user's message has two lines
     Then the message is shown on two lines
 
-  @desktop @mobile @backlog
+  @desktop @mobile @backlog @priority-low
   Scenario Outline: A code block is headed by the file name its fence gives
     Given the agent's reply has a code block whose fence reads <fence>
     Then the code block is headed "<heading>"
@@ -185,12 +382,12 @@ Feature: Formatted messages
     When the user closes the section
     Then its content is hidden
 
-  @desktop @mobile @backlog
+  @desktop @mobile @backlog @priority-low
   Scenario: A collapsible section without a title is called "Details"
     Given the agent's reply has a collapsible section with no title
     Then the section shows "Details"
 
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: A Codex template card puts its skill into the draft
     Given the agent's reply offers the "Google Slides" template
     When the user chooses "Use template"
@@ -213,7 +410,7 @@ Feature: Formatted messages
     Then the user is told "Unable to add to chat"
 
   # Legacy: packages/client-runtime/src/codexArtifactTemplates.ts (codexArtifactTemplatePresentationLabel)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario Outline: A Codex template card names the kind of template it is
     When the agent's reply offers the "Hello World" template of the kind <kind>
     Then the card reads "Hello World" with the label "<label>"
@@ -251,7 +448,7 @@ Feature: Formatted messages
 
   # Legacy: packages/client-runtime/src/codexFileCitations.ts (markdownDestinationPath),
   # packages/client-runtime/src/codexMarkdownDirectives.test.ts (path round trips)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario Outline: A cited file whose path has awkward characters still opens that file
     When the agent's reply cites the file <path> at line 7
     Then following the chip opens <path> at line 7
@@ -263,6 +460,12 @@ Feature: Formatted messages
       | "/tmp/report%5C.md"               |
       | "notes #2/plan?.md"               |
 
+  # Upstream #25802: a relative link with non-ASCII folder or file names was a web link.
+  @backlog @shared
+  Scenario: A relative link in any script is a file chip
+    When the agent's reply holds "[exam](pastexam/線性代數/考試.pdf)"
+    Then it is shown as a file chip for "pastexam/線性代數/考試.pdf", not as a web link
+
   # Legacy: packages/client-runtime/src/codexMarkdownDirectives.ts (renderCodexDirectivesForCopy)
   @backlog @desktop @mobile
   Scenario: Copying a reply copies its file citations and template cards as plain text
@@ -271,9 +474,32 @@ Feature: Formatted messages
     Then the clipboard holds a link named "report.xlsx" to "outputs/report.xlsx"
     And the clipboard holds "Hello World (Document template)"
 
+  # Upstream #14778: a copied task list keeps its nested items and code blocks where they were.
+  @backlog @shared @priority-low
+  Scenario: A selected task list is copied with its nesting intact
+    Given a reply holds a task list with nested items and a code block under one item
+    When the user selects the list and copies it
+    Then the copied Markdown nests each item under its parent
+    And the code block stays under its item
+
+  # Upstream #16249: selected text that spans a Mermaid diagram copies the diagram's source.
+  @backlog @desktop
+  Scenario: Copying a selection across a Mermaid diagram copies its source
+    Given a reply with a sentence, a Mermaid diagram and another sentence
+    When the user selects from the first sentence to the last and copies
+    Then the clipboard holds both sentences with the diagram's fenced Mermaid source between them
+
+  @backlog @desktop @mobile @plugin-codex @priority-low
+  Scenario: A follow-up suggestion from Codex shows its label, not its markup
+    When Codex ends its reply with the follow-up suggestion "Prepare print version"
+    Then the reply shows "Prepare print version"
+    And neither the directive's markup nor its hidden prompt is shown
+    And copying the reply copies "Prepare print version"
+    But a follow-up suggestion with no label or no prompt, in code, or still streaming stays as written
+
   # Legacy: packages/client-runtime/src/markdownLinks.ts (inlineCodeFilePathCandidate)
   @backlog @desktop @mobile
-  Scenario Outline: A path-shaped word in code formatting is a file chip unless it is a web host
+  Scenario Outline: A path-shaped word in code formatting is a file chip unless it is a web host or a model id
     When the agent's reply holds <code> in code formatting
     Then <code> is <shown>
 
@@ -287,9 +513,12 @@ Feature: Formatted messages
       | "192.168.1.5/admin"   | left as code                     |
       | "two words/here.ts"   | left as code                     |
       | "src/index.ts:12:4"   | a file chip                      |
+      | "z-ai/glm-5.3"        | left as code                     |
+      | "Qwen/Qwen2.5-Coder"  | left as code                     |
+      | "vendor/jquery-3.6.0.min.js" | a file chip              |
 
   # Legacy: packages/client-runtime/src/markdownLinks.ts (parseMarkdownFileLink)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario Outline: A link in a reply is a file only when its destination looks like one
     When the agent's reply links to "<destination>"
     Then the link is <shown>
@@ -301,11 +530,49 @@ Feature: Formatted messages
       | Makefile                          | a file link                 |
       | C:\work\shop\src\cart.ts          | a file link                 |
       | file:///work/shop/src/cart.ts#L9  | a file link to line 9       |
-      | file://build-box/share/out.log    | a file link on that share   |
+      | file://build-box/share/out.log    | not a file link             |
       | /settings/profile                 | not a file link             |
       | mailto:dev@example.com            | not a file link             |
       | https://example.com/cart.ts       | not a file link             |
       | #install                          | not a file link             |
+
+  # Upstream a12d6ed94: a network path in a reply made Windows open an SMB session to its host
+  # and send the user's credentials, with no click. Network paths (\\h, //h, /\h) now resolve only
+  # inside the thread's project, so a project on a share keeps working.
+  @backlog @desktop @mobile @mc @priority-high
+  Scenario Outline: A network path outside the project is never looked up
+    Given the thread's project is "C:\work\shop"
+    When the agent's reply <uses> "<path>"
+    Then <outcome>
+    And the machine running the MC never opens a connection to "attacker.test"
+
+    Examples:
+      | uses                 | path                               | outcome                                   |
+      | embeds an image from | file://attacker.test/share/cat.jpg | the image is blocked                      |
+      | embeds an image from | \\\\attacker.test\share\cat.jpg    | the image is blocked                      |
+      | links to             | //attacker.test/share/notes.md     | it is not a file link and nothing is read |
+      | links to             | /\\attacker.test\share\notes.md    | it is not a file link and nothing is read |
+
+  @backlog @desktop @mobile @mc
+  Scenario: A file link inside a project on a network share still opens
+    Given the thread's project is "\\build-box\share\shop"
+    When the agent's reply links to "\\build-box\share\shop\src\cart.ts"
+    Then the link is a file link to "src/cart.ts"
+
+  @backlog @mc @priority-high
+  Scenario: The MC refuses a network path outside the project for a file read or media
+    Given the thread's project is "C:\work\shop"
+    When a client asks for the file "\\attacker.test\share\cat.jpg" as media or to read it
+    Then the MC refuses it without touching the path
+    And it never looks up details of a network path for a file chip
+
+  # Legacy: apps/web/src/markdown-links.ts (workspace root links route to the explorer)
+  @backlog @desktop @mobile
+  Scenario: A link in a reply to the project's own folder opens the Files explorer
+    Given the agent's reply links to the folder of the project "shop"
+    When the user clicks the link
+    Then the Files explorer opens on the project's top folder
+    And no file read is attempted for it
 
   # Legacy: packages/client-runtime/src/markdownLinks.ts (workspaceRelativeFilePath)
   @backlog @desktop @mobile
@@ -319,6 +586,19 @@ Feature: Formatted messages
   Scenario: An image embedded from an address without a file extension is still an image
     When the agent's reply embeds an image from "https://example.com/render?id=7"
     Then the image is shown in the reply
+
+  # Upstream #22787: an image alone on its line keeps that line instead of joining the label
+  # above it; inline images in a sentence stay inline.
+  @backlog @shared
+  Scenario: An image alone on its line is shown below its label
+    When the agent's reply has a line "**Command palette**" with an image alone on the next line
+    Then the image is shown below "Command palette", not beside it
+
+  # Upstream #22787: an image inside a sentence stays inline.
+  @backlog @shared
+  Scenario: An image inside a sentence stays in the sentence
+    When the agent's reply has a sentence with a badge image in the middle of it
+    Then the badge is shown inline within the sentence
 
   # Legacy: packages/client-runtime/src/mediaSource.ts (resolveMediaSource)
   @backlog @desktop @mobile
@@ -353,6 +633,15 @@ Feature: Formatted messages
       | "/work/shop/assets/a/../logo.png"  | offered         |
       | "/work/other/logo.png"             | not offered     |
       | "/work/shop"                       | not offered     |
+
+  @backlog @desktop @mobile
+  Scenario: A host image the connection may not read says to pair again
+    Given the client's connection to the MC may not read the host's files
+    When the agent's reply embeds the image "/work/shop/assets/logo.png"
+    Then the image says it is unavailable because this connection cannot read host files
+    And it says to pair again with a new link to view it
+    And the client never asked the MC for the file
+    But an image that fails while the client is offline still says only that it is unavailable
 
   @desktop @backlog
   Scenario Outline: A file named in a reply is shown as a chip naming where it is
@@ -397,6 +686,21 @@ Feature: Formatted messages
     When the user follows the link
     Then "src/lib/cart-total.ts" opens beside the conversation
 
+  # Upstream #14510: a repository-relative path in a subfolder project repeated the project's
+  # folder; when that path is missing the project's own file opens, and a real file still wins.
+  @desktop @backlog
+  Scenario Outline: A file named from the repository root opens in a project that is a subfolder
+    Given the project "shop" is the folder "apps/shop" of its repository and holds "src/cart.ts"
+    And <nested>
+    And the agent's reply links to "apps/shop/src/cart.ts"
+    When the user follows the link
+    Then <opened> opens beside the conversation
+
+    Examples:
+      | nested                                    | opened                            |
+      | "shop" holds no "apps/shop/src/cart.ts"   | "src/cart.ts"                     |
+      | "shop" also holds "apps/shop/src/cart.ts" | "apps/shop/src/cart.ts" in "shop" |
+
   @desktop @backlog
   Scenario: A link whose bare name fits two files by case alone opens neither
     Given "shop" holds "src/Cart.ts" and "src/cart.ts"
@@ -420,9 +724,16 @@ Feature: Formatted messages
     And the user chooses "Open file" from the link's menu
     Then "assets/logo.png" opens as a large preview
 
+  # Upstream #13859: Android image previews kept the window size from when they opened.
+  @backlog @mobile @priority-low
+  Scenario: An open image preview follows the window when it changes size
+    Given the user has opened an image preview on an Android phone
+    When the user unfolds the phone or puts the app in split screen
+    Then the image and its pan limits fit the new window size
+
   # The desktop links no video player (Qt Multimedia): it offers the video to
   # open in the browser.
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: A linked video opens as a preview
     Given the agent's reply links to the file "media/intro.mp4"
     When the user follows the link
@@ -467,24 +778,45 @@ Feature: Formatted messages
       | that is wider than the thread           | as wide as the thread, keeping its proportions       |
       | that is taller or wider than 480 points | within 480 points each way, keeping its proportions  |
 
-  @backlog @mobile
+  # Colours come from the fence's language, under its usual names and short forms; a fence that
+  # names none, or one the app does not know, shows the code as it is.
+  @shared @backlog-mobile
   Scenario Outline: A code block is coloured only when its fence names a language
-    Given the agent's reply has a code block whose fence reads <fence>
+    Given the agent's reply has a code block whose fence reads "<fence>"
     When the user reads the reply
     Then the code block is shown <colouring>
 
     Examples:
-      | fence | colouring              |
-      | ts    | coloured as TypeScript |
-      |       | as plain text          |
+      | fence   | colouring              |
+      | ts      | coloured as TypeScript |
+      |         | as plain text          |
+      | klingon | as plain text          |
 
-  @backlog @mobile
+    # OpenTUI's tree-sitter ships no Python, Elixir or QML grammar, so the terminal
+    # client shows these plain until it carries them.
+    @backlog-tui
+    Examples:
+      | fence | colouring          |
+      | py    | coloured as Python |
+      | exs   | coloured as Elixir |
+      | qml   | coloured as QML    |
+
+  @shared @backlog-mobile
   Scenario: A code block still being written keeps the colours of its finished lines
     Given the agent is writing a code block whose fence reads "ts"
     And its first three lines are coloured
     When the agent adds a fourth line
     Then the first three lines stay coloured while the new line waits to be coloured
     And the block does not flash back to plain text
+
+  @shared @backlog-mobile
+  Scenario: Code follows the theme without being read again
+    Given the appearance is Light
+    And the agent's reply has a code block whose fence reads "ts"
+    And the code block is shown coloured as TypeScript
+    When the user switches the app from light to dark
+    Then the code block is coloured for the dark theme
+    And its code was not read again
 
   @backlog @mobile
   Scenario: A video embedded in a reply plays on request
@@ -493,6 +825,43 @@ Feature: Formatted messages
     Then "demo.mp4" is shown as a video
     When the user taps it
     Then it plays in a large preview
+
+  # Upstream #21363 and #21353: audio in a reply or attached to a message plays where it is,
+  # instead of only in the file viewer.
+  @backlog @shared
+  Scenario Outline: Audio <where> plays in the conversation
+    Given <given>
+    When the user plays "note.wav" in the conversation
+    Then it plays there, showing its length and how far it has played
+    When the user opens its name
+    Then "note.wav" opens in the file viewer
+
+    Examples:
+      | where                  | given                                                         |
+      | in a reply             | the agent's reply embeds the audio "note.wav" from the workspace |
+      | inside a sentence      | the agent's reply mentions the audio "note.wav" mid-sentence  |
+      | attached to a message  | the user's message carries the attached "note.wav"            |
+
+  # Upstream #21363: a recording streamed without a known length stayed loading for good.
+  @backlog @shared @priority-low
+  Scenario: Audio whose length is not known yet still plays
+    Given the agent's reply embeds a recording whose length is not known until it has played
+    When the user plays it
+    Then it plays, showing how far it has played
+    And its length is shown once it is known
+
+  # Upstream #21353: on the phone, documents the agent shares open in the viewer; tables open
+  # as tables.
+  @backlog @shared
+  Scenario Outline: A file the agent shares opens in the file viewer
+    Given the agent's reply links to "<file>" in the workspace
+    When the user opens it
+    Then "<file>" opens in the file viewer <shown>
+
+    Examples:
+      | file          | shown              |
+      | docs/spec.pdf | as a document      |
+      | data/q3.csv   | as a table         |
 
   @desktop @backlog
   Scenario Outline: A file chip's menu offers what its file can do
@@ -506,6 +875,48 @@ Feature: Formatted messages
       | the image "assets/logo.png"                    | a preview, opening in the editor and revealing it           |
       | the page "public/index.html" with a browser    | opening in the editor, in the in-app browser and revealing  |
       | the file "src/cart.ts"                         | opening in the editor and revealing it                      |
+
+  # Upstream #18389: Open in editor and copy on a basename file chip use the file the chip resolves to.
+  @backlog @desktop
+  Scenario: A file chip named by its basename opens that file in the editor
+    Given a reply cites "cart.ts:12" and the only such file is "src/lib/cart.ts"
+    When the user opens the chip in the editor
+    Then "src/lib/cart.ts" opens at line 12
+    And copying the chip's path copies "src/lib/cart.ts"
+
+  # Upstream #21403: the phone opened a file of that name at the project's top, which did not
+  # exist, and dropped the line.
+  @backlog @mobile
+  Scenario Outline: A file link on the phone opens the file it names
+    Given the project "shop" holds "src/math.ts" and the agent's reply links to <link>
+    When the user taps the link on the phone
+    Then "src/math.ts" opens at line 12
+
+    Examples:
+      | link                       |
+      | "math.ts:12"               |
+      | "src/math.ts:12"           |
+      | "~/code/shop/src/math.ts:12" |
+
+  # Upstream #21403: a link to a folder said "File unavailable" on the phone.
+  @backlog @mobile
+  Scenario: A folder link on the phone opens the file browser on that folder
+    Given the agent's reply links to "src/"
+    When the user taps the link on the phone
+    Then the file browser opens on "src"
+
+  @backlog @mc @shared @priority-low
+  Scenario Outline: A file chip shows what the path really is
+    Given the agent's reply names <path>, which is <what>
+    When the reply is shown
+    Then the chip shows the icon of <kind>
+    And its tooltip gives the file's size when it is a file
+
+    Examples:
+      | path        | what                        | kind        |
+      | "Makefile"  | a file without an extension | a file      |
+      | "src/v1.2"  | a folder with a dot         | a folder    |
+      | ".env"      | a dotfile                   | a file      |
 
   @desktop @backlog
   Scenario Outline: A file link that cannot be opened says why
@@ -526,6 +937,14 @@ Feature: Formatted messages
     When the user copies its relative path from the file chip's menu
     Then the user is told "Relative path copied" with "src/cart.ts"
 
+  # Upstream #21497: relative paths are copied relative to the thread's workspace.
+  @desktop @backlog
+  Scenario: A relative path is copied from the thread's own workspace
+    Given the thread works in a worktree of "shop"
+    And the agent's reply links to "src/cart.ts" in that worktree
+    When the user copies its relative path from the file chip's menu
+    Then "src/cart.ts" is copied, not a path from the project's folder
+
   @desktop @backlog
   Scenario: A copied path that cannot reach the clipboard says so
     Given the agent's reply links to the file "src/cart.ts"
@@ -533,7 +952,7 @@ Feature: Formatted messages
     When the user copies its full path from the file chip's menu
     Then the user is told "Failed to copy full path" with the reason
 
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: A link to a website carries the site's icon
     When the agent's reply links to "https://example.com/docs" with the text "the docs"
     Then the link is shown with the icon of "example.com"
@@ -554,13 +973,21 @@ Feature: Formatted messages
     And no public icon service is told about "<host>"
 
     Examples:
-      | link                          | host              |
-      | http://localhost:3000/        | localhost         |
-      | http://192.168.1.20/admin     | 192.168.1.20      |
-      | http://10.0.0.5:8080/         | 10.0.0.5          |
-      | https://build.internal/runs/1 | build.internal    |
-      | https://box.example.test/     | box.example.test  |
-      | http://[fd00::1]/             | fd00::1           |
+      | link                                    | host                           |
+      | http://localhost:3000/                  | localhost                      |
+      | http://192.168.1.20/admin               | 192.168.1.20                   |
+      | http://10.0.0.5:8080/                   | 10.0.0.5                       |
+      | https://build.internal/runs/1           | build.internal                 |
+      | https://box.example.test/               | box.example.test               |
+      | http://[fd00::1]/                       | fd00::1                        |
+      | https://grafana.internal.acme-corp.com/ | grafana.internal.acme-corp.com |
+      | http://nas.lan/                         | nas.lan                        |
+      | http://wiki.corp/                       | wiki.corp                      |
+
+  @desktop @backlog @priority-low
+  Scenario: A public site's icon is asked for by its name alone
+    When the agent's reply links to "https://example.com:8443/docs" with the text "the docs"
+    Then the public icon service is told only "example.com", without the port
 
   # Legacy: packages/shared/src/favicon.ts (toolActivityFaviconUrl)
   @desktop @backlog
@@ -577,6 +1004,47 @@ Feature: Formatted messages
     When the user follows a link to pull request 42 in the agent's reply
     Then pull request 42 opens beside the conversation
     And the page can still be opened in a browser from there
+
+  # Upstream #10987: Azure DevOps and nested GitLab pull request links opened in the browser; they
+  # now open in the panel.
+  @desktop @backlog
+  Scenario Outline: A pull request link on any host opens beside the conversation
+    Given a message links "<url>"
+    When the user follows the link
+    Then the pull request opens beside the conversation
+
+    Examples:
+      | url                                                      |
+      | https://dev.azure.com/acme/shop/_git/api/pullrequest/42  |
+      | https://gitlab.com/acme/platform/web/-/merge_requests/42 |
+
+  # Upstream #10987: an Azure DevOps link resolves to the project whose Azure project matches,
+  # not the first repository with that name.
+  @desktop @backlog @priority-low
+  Scenario: An Azure DevOps link opens in the project whose Azure project matches
+    Given projects "Payments" and "Billing" both have an Azure DevOps repository "api"
+    When the user follows a link to a pull request in the "Billing" Azure project's "api"
+    Then the pull request opens for the "Billing" project
+
+  @desktop @backlog @priority-low
+  Scenario Outline: A pull request link opened with a modifier goes to the browser
+    Given the project's repository has pull request 42
+    When the user <opens> a link to pull request 42
+    Then pull request 42 opens in the system browser
+    And it does not open beside the conversation
+
+    Examples:
+      | opens                          |
+      | Ctrl or Cmd-clicks             |
+      | middle-clicks                  |
+
+  @desktop @backlog @priority-low
+  Scenario: Pull request links can always open on the hosting site
+    Given the user turned off "Open pull requests in HAL-C2" in the browser settings
+    When the user follows a link to pull request 42 from a reply, a reference, the sidebar or the composer
+    Then pull request 42 opens like any other link, following where links open
+    When the user turns the setting back on
+    Then pull request links open beside the conversation again
 
   @desktop @backlog
   Scenario Outline: A pull request link can be tied to the thread from the reply
@@ -608,6 +1076,13 @@ Feature: Formatted messages
     Then the menu offers opening in the system browser and copying the link
     And the menu does not offer opening in the in-app browser
 
+  # Upstream #11477: a task checkbox belongs to its own list item, not to a nested one.
+  @desktop @backlog
+  Scenario: A parent item with a checked child copies as a plain bullet
+    Given the agent's reply is a plain item with a checked item nested under it
+    When the user selects both and copies
+    Then the clipboard holds "- Parent" and the nested "- [x] Child"
+
   @desktop @backlog
   Scenario Outline: Selected text in a reply copies as Markdown
     Given the agent's reply holds <content>
@@ -636,7 +1111,7 @@ Feature: Formatted messages
     When the user selects exactly that code block and copies
     Then the clipboard holds the code without a fence
 
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: An image or video in a reply shows where it comes from on hover
     Given the agent's reply embeds the image "assets/logo.png" from the thread's workspace
     When the user holds the pointer over the image
@@ -664,6 +1139,16 @@ Feature: Formatted messages
     And the image has the keyboard focus
     When the user presses the menu key, or Shift and F10
     Then the image's menu opens at the image
+
+  # Upstream #25246: Escape closed the whole enlarged image while a popup inside it was open.
+  @desktop @backlog @priority-low
+  Scenario: Escape closes a popup inside an enlarged image before the image
+    Given the user enlarged an image from the agent's reply
+    And a popup inside the enlarged image is open
+    When the user presses Escape
+    Then the popup closes and the image stays enlarged
+    When the user presses Escape again
+    Then the image closes and the keyboard is back on the image in the reply
 
   @desktop @backlog
   Scenario Outline: Copying a media path or address confirms what was copied
@@ -707,7 +1192,7 @@ Feature: Formatted messages
       | an image on the host       | the image has more than 64 million pixels              | Copy image | Could not copy image      |
       | a video on the host        | the file cannot be fetched                             | Save video | Could not save video      |
 
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: A media menu stays single while it is open
     Given the agent's reply embeds an image
     And the image's menu is open
@@ -814,7 +1299,7 @@ Feature: Formatted messages
     When the agent's reply reads "/tmp/frame.png" in plain text and again in code formatting
     Then only the path in code formatting is a link to the file
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A link keeps its destination when its text is code
     When the agent's reply links to "https://example.com/docs" with the text "src/main.ts" in code formatting
     Then the link opens "https://example.com/docs"
@@ -828,6 +1313,17 @@ Feature: Formatted messages
   Scenario: A web address without a scheme in a reply is opened as a web address
     When the agent's reply links to "//cdn.example.com/clip.mp4"
     Then the link opens "https://cdn.example.com/clip.mp4" and not a file on the phone
+
+  # Upstream #13795: bare addresses with a port or a one-word host were not links.
+  @backlog @shared @priority-low
+  Scenario Outline: A bare address with a port or a one-word host in a reply is one link
+    When the agent's reply contains "<address>"
+    Then "<address>" is shown as one link
+
+    Examples:
+      | address               |
+      | http://localhost:5173 |
+      | http://devbox:3000/api |
 
   @backlog @mobile
   Scenario: A mention of a file does not take the punctuation after it
@@ -848,7 +1344,7 @@ Feature: Formatted messages
     When the user selects and copies the whole reply
     Then the clipboard holds the sentence with no icon character and no extra space in front of the file or the link
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The handles of a text selection follow the theme
     Given the user selected text in a reply
     When the phone switches between the light and the dark theme
@@ -880,3 +1376,121 @@ Feature: Formatted messages
     Given the provider does not offer a skill called "unknown"
     When the agent's reply reads "Use $unknown for this."
     Then "$unknown" is shown as plain text
+
+  # Upstream #25432: a skill in a sent message opens the same details as the composer's chip.
+  @backlog @desktop
+  Scenario: A skill chip in a message shows the same details as in the composer
+    Given the provider offers the skill "ui" described as "Build UI" with its instructions in "SKILL.md"
+    And a sent message or a reply shows the skill chip "$ui"
+    When the user rests on the chip
+    Then "Build UI" and "View instructions" are shown, as for the chip in the composer
+    When the user chooses "View instructions"
+    Then "SKILL.md" opens in the thread's files
+
+  # Upstream #22120: tapping a skill chip in a message opens its instructions.
+  @backlog @mobile
+  Scenario: Tapping a skill chip in a reply opens the skill's instructions
+    Given the provider offers the skill "ui" with its instructions in "SKILL.md"
+    And the agent's reply shows the skill chip "$ui"
+    When the user taps the chip
+    Then the skill's "SKILL.md" opens in the thread's files
+
+  # Upstream #22120: a skill chip's long-press menu is the skill's, not a web link's.
+  @backlog @mobile
+  Scenario: Long pressing a skill chip offers its instructions and copying the skill
+    Given the agent's reply shows the skill chip "$ui" for the skill named "UI"
+    When the user long presses the chip
+    Then a menu titled "UI" offers "View instructions" and "Copy skill"
+    And it does not offer to share a link
+    When the user chooses "Copy skill"
+    Then the clipboard holds "$ui"
+
+  # Upstream #22120: View instructions cannot be chosen for a skill with no file.
+  @backlog @mobile @priority-low
+  Scenario: A skill without an instructions file cannot show its instructions
+    Given the agent's reply shows the skill chip "$ui" for a skill with no instructions file
+    When the user long presses the chip
+    Then "View instructions" cannot be chosen
+
+  # Upstream #22621: a thread link in a message is shown as the same chip as an attached
+  # thread, with its project's icon and the thread's current title.
+  @backlog @shared
+  Scenario: A link to a thread in a reply is shown as a thread chip
+    Given the thread "Fix checkout" is in the project "shop"
+    When the agent's reply links to "Fix checkout" with the text "that thread"
+    Then the link is shown as a chip titled "Fix checkout" with the icon of "shop"
+    And following it opens "Fix checkout"
+
+  # Upstream #22621: a link to a thread that is gone says so.
+  @backlog @shared @priority-low
+  Scenario: A link to a thread that no longer exists says so
+    Given the agent's reply links to a thread that has been deleted
+    When the user points at the link
+    Then it says "Thread no longer available"
+
+  # Upstream #22153: a thread link's long-press menu names the thread and offers opening it
+  # and copying the link, never sharing an app-internal address.
+  @backlog @mobile
+  Scenario: Long pressing a thread link offers to open the thread or copy the link
+    Given the agent's reply links to the thread "Fix checkout" on another environment
+    When the user long presses the link
+    Then a menu titled "Fix checkout" offers "Open thread" and "Copy link"
+    And it does not offer to share the link
+    When the user chooses "Open thread"
+    Then "Fix checkout" opens
+
+  # Upstream #22153: a copied thread link is understood when pasted back into a message.
+  @backlog @mobile @priority-low
+  Scenario: A copied thread link is still a link to that thread
+    Given the user copied the link to "Fix checkout" from a reply's menu
+    When the user pastes it into a message and sends it
+    Then the sent message links to "Fix checkout"
+
+  # Upstream #25802: the phone read the backslashes of a Windows image path as escapes.
+  @backlog @shared
+  Scenario: Windows paths stay intact in links and images
+    Given a message with an image destination like C:\Users\me\shot.png
+    When it is shown
+    Then the path is used as written, not read as escapes
+
+  # Upstream #21069: a backslash inside a drive path is kept even before punctuation; escapes
+  # outside paths still work, and collapsed thinking previews follow the same rule.
+  @backlog @shared
+  Scenario Outline: Windows paths in a message's text keep their backslashes
+    When the agent's reply reads "<text>"
+    Then the reply shows "<shown>"
+
+    Examples:
+      | text                         | shown                        |
+      | Look in C:\Users\me\.t3\data | Look in C:\Users\me\.t3\data |
+      | Open C:\a\_b                 | Open C:\a\_b                 |
+      | A \*literal\* star           | A *literal* star             |
+
+  @backlog @shared @priority-low
+  Scenario: A descriptive file link keeps its words
+    Given a reply says "This function [validates the input](/repo/src/example.ts:12)."
+    When the reply is shown
+    Then the prose stays, beside the usual file chip
+    And a link labelled with a file name or path keeps the compact chip
+
+  # Dropped: upstream added this repair (#15520) and reverted it in #15824; malformed
+  # links render as the agent wrote them.
+  @dropped @shared
+  Scenario: A local file link missing its closing bracket is repaired for display
+    Given a reply contains "[file](<local/path/file.md)"
+    When the reply is shown
+    Then the link opens the file as a normal file link
+    And the stored message and its copied text stay as the agent wrote them
+
+  @backlog @mc
+  Scenario: A media link under the home directory resolves
+    Given a reply links media as "~/Downloads/repro.mp4"
+    When the media is requested
+    Then the path expands to the environment's home before project-relative resolution
+
+  # Upstream #19677: missing media names the remote host and the absolute path that was checked.
+  @backlog @shared
+  Scenario: A media link that is not found says where it was looked for
+    Given a reply links "shots/after.png" on the environment "server"
+    And the file is not there
+    Then the media says it was not found on "server" at its full path

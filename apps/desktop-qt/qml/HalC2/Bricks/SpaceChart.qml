@@ -28,12 +28,12 @@ ColumnLayout {
     readonly property var scale: UsageChartMath.niceScale(SpaceChartMath.peak(drawn), 4)
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property real fontSize: Math.round(12 * Theme.fontScale)
+    readonly property real fontSize: Theme.type.meta.size
     // The first four categorical hues in order, one step for each appearance,
     // checked against both surfaces; a chart holds at most four series.
     readonly property var hues: Theme.appearance === "dark" ? ["#3987e5", "#d95926", "#199e70", "#c98500"] : ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]
 
-    spacing: 6
+    spacing: Theme.space.sm
     Accessible.role: Accessible.Graphic
     Accessible.name: qsTr("%1 chart: %2. %3").arg(chart.type ?? "").arg(chart.title ?? "").arg(chart.source ?? "")
 
@@ -43,7 +43,7 @@ ColumnLayout {
         text: view.chart.title ?? ""
         textFormat: Text.PlainText
         color: view.foreground
-        font.pixelSize: Math.round(15 * Theme.fontScale)
+        font.pixelSize: Theme.type.title.size
         font.weight: Font.DemiBold
         wrapMode: Text.Wrap
     }
@@ -209,7 +209,7 @@ ColumnLayout {
                 required property var modelData
                 required property int index
 
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Rectangle {
                     anchors.verticalCenter: parent.verticalCenter

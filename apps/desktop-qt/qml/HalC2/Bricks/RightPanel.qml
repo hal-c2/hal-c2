@@ -5,12 +5,13 @@ import QtQuick.Layouts
 import HalC2.Shell
 import "js/panelTabs.js" as PanelTabs
 
-// The right panel beside a thread: tabs from Shell.state.panel (the Panel
-// controller's) and a native body for each kind js/panelTabs.js lists. Its
-// left edge drags to resize it (a double click goes back to the default
-// width); the layout keeps the thread room of its own (`maximumWidth`), shows
-// the panel over the thread where there is none (`resizable` off), or hides
-// the thread for a maximized panel.
+// The right panel beside a thread: the tabs of Shell.state.panel (the Panel
+// controller's) docked here rather than on the stage, each drawn by its
+// kind's body (js/panelTabs.js) borrowed from `bodies`. Its left edge drags to
+// resize it (a double click goes back to the default width); the layout keeps
+// the thread room of its own (`maximumWidth`), or shows the panel over the
+// thread where there is none (`resizable` off). "Open in centre" moves the
+// shown tab to the stage, and a tab dragged from the stage docks back here.
 Rectangle {
     id: panel
 
@@ -19,21 +20,27 @@ Rectangle {
     readonly property bool open: available && model.isOpen
     readonly property string activeId: open ? model.activeId : ""
     readonly property var activeTab: open ? (model.tabs.find(tab => tab.id === activeId) ?? null) : null
-    readonly property bool maximized: open && model.maximized === true
+    // The tabs docked here; the rest are on the stage.
+    readonly property var docked: open ? model.tabs.filter(tab => tab.dock !== "stage") : []
+    // The bodies to show tabs with, shared with the stage: the window's
+    // (ShellWindow.panelBodies) by default, else the panel's own.
+    property PanelBodies bodies: (Window.window as ShellWindow)?.panelBodies ?? null
+    readonly property PanelBodies pool: bodies ?? (ownBodies.item as PanelBodies)
     // The width the controller keeps, or the one being dragged to.
     property int dragWidth: -1
     readonly property int openWidth: Math.max(minimumWidth, Math.min(dragWidth >= 0 ? dragWidth : (model?.width ?? 540), maximumWidth))
     readonly property int minimumWidth: 360
     // What the layout can give it; set by the layout.
     property real maximumWidth: Infinity
-    // Whether the layout hides the thread for a maximized panel
-    // (`maximized`); only then is filling the window offered.
-    property bool canMaximize: false
     // Whether its left edge drags. A layout showing the panel over the thread
     // gives it a width of its own, which is not the one to remember.
     property bool resizable: true
-    readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
+    readonly property color foreground: Theme.palette.color("ink", "#f2f3f5")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#8b919e")
+    // The tab strip's controls, and the width of the closed panel's toggle.
+    readonly property int stripHeight: Theme.control.xl
+    // The strip's own height: the thread header's, so their hairlines meet.
+    readonly property int headerHeight: Theme.headerHeight
 
     // The tab being renamed in place (double-click its title), else "".
     property string editingId: ""
@@ -48,7 +55,7 @@ Rectangle {
     // Snaps by default: a width animation relays out the thread on every
     // frame. With Panel animations set, a toggle slides for that long
     // (model.transitionMs, none for a thread's own layout or reduced motion).
-    readonly property int targetWidth: open ? openWidth : ownToggle ? 36 : 0
+    readonly property int targetWidth: open ? openWidth : ownToggle ? stripHeight : 0
     property real shownWidth: targetWidth
 
     implicitWidth: shownWidth
@@ -85,22 +92,37 @@ Rectangle {
         Item {
             id: header
 
+            objectName: "panelHeader"
+            // Over the body, which its hairline overlaps.
+            z: 1
             Layout.fillWidth: true
-            Layout.preferredHeight: 36
-            Layout.minimumHeight: 36
-            Layout.maximumHeight: 36
+            Layout.preferredHeight: panel.headerHeight
+            Layout.minimumHeight: panel.headerHeight
+            Layout.maximumHeight: panel.headerHeight
+
+            // The header's hairline, level with the thread's: the first row
+            // under the header, as the timeline's cut edge is.
+            Rectangle {
+                objectName: "panelHeaderEdge"
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.bottom
+                height: 1
+                visible: panel.open
+                color: Theme.palette.color("border", "#27272a")
+            }
 
             ShellButton {
                 id: toggleButton
                 subtle: true
 
                 anchors.left: parent.left
-                anchors.top: parent.top
-                width: 36
-                height: 36
+                anchors.verticalCenter: parent.verticalCenter
+                width: panel.stripHeight
+                height: panel.stripHeight
                 visible: panel.ownToggle
                 iconName: panel.open ? "panel-right-close" : "panel-right"
-                iconSize: 16
+                iconSize: Theme.icon.md
                 iconTint: panel.muted
                 enabled: panel.available
                 Accessible.name: panel.open ? qsTr("Close panel") : qsTr("Open panel")
@@ -116,7 +138,7 @@ Rectangle {
                 readonly property bool overflowing: contentWidth > fullWidth
 
                 function showActive() {
-                    const index = (panel.model?.tabs ?? []).findIndex(entry => entry.id === panel.activeId);
+                    const index = panel.docked.findIndex(entry => entry.id === panel.activeId);
                     if (index < 0)
                         return;
                     positionViewAtIndex(index, ListView.Contain);
@@ -132,10 +154,10 @@ Rectangle {
                 }
 
                 anchors.left: parent.left
-                anchors.leftMargin: panel.ownToggle ? 36 : 8
+                anchors.leftMargin: panel.ownToggle ? panel.stripHeight : Theme.space.sm
                 anchors.right: scrollButtons.visible ? scrollButtons.left : maximizeButton.visible ? maximizeButton.left : addButton.left
-                anchors.top: parent.top
-                height: 36
+                anchors.verticalCenter: parent.verticalCenter
+                height: panel.stripHeight
                 visible: panel.open
                 onCountChanged: showActive()
                 onWidthChanged: showActive()
@@ -147,10 +169,19 @@ Rectangle {
                     }
                 }
                 orientation: ListView.Horizontal
-                spacing: 2
+                spacing: Theme.space.xxs
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
-                model: panel.open ? panel.model.tabs : []
+                // Scrolled by its buttons and the wheel: a drag moves a tab.
+                interactive: false
+                model: panel.docked
+
+                WheelHandler {
+                    onWheel: event => {
+                        const delta = event.angleDelta.x !== 0 ? event.angleDelta.x : event.angleDelta.y;
+                        tabs.contentX = Math.max(tabs.originX, Math.min(tabs.originX + tabs.contentWidth - tabs.width, tabs.contentX - delta / 2));
+                    }
+                }
 
                 delegate: AbstractButton {
                     id: tab
@@ -161,8 +192,8 @@ Rectangle {
                     readonly property bool active: panel.activeId === modelData.id
                     readonly property string iconName: PanelTabs.tabs[modelData.kind]?.icon ?? ""
 
-                    width: tabRow.implicitWidth + 16
-                    height: 36
+                    width: tabRow.implicitWidth + Theme.space.lg
+                    height: panel.stripHeight
                     hoverEnabled: true
                     ToolTip.visible: hovered && titleText.truncated
                     ToolTip.delay: 600
@@ -172,23 +203,35 @@ Rectangle {
                     Keys.onReturnPressed: clicked()
                     Keys.onEnterPressed: clicked()
                     onClicked: Shell.dispatch("rightPanel.activate", { id: tab.modelData.id })
+                    // A pill inset in the strip; the shown tab is raised and outlined.
                     background: Rectangle {
-                        color: tab.active ? Theme.palette.color("surfaceRaised", "#1f1f24") : tab.hovered ? Theme.palette.color("surface", "#141416") : "transparent"
-                        radius: 6
-                        border.width: tab.visualFocus ? 1 : 0
-                        border.color: Theme.palette.color("focus", "#3b82f6")
+                        anchors.fill: parent
+                        anchors.topMargin: Theme.space.xs
+                        anchors.bottomMargin: Theme.space.xs
+                        color: tab.active ? Theme.palette.color("surfaceRaised", "#1f1f24") : tab.hovered ? Theme.palette.color("surfaceOverlay", "#1c1f25") : "transparent"
+                        radius: Theme.radiusMd
+                        border.width: tab.visualFocus || tab.active ? 1 : 0
+                        border.color: tab.visualFocus ? Theme.palette.color("focus", "#3b82f6") : Theme.palette.color("border", "#262a31")
+                    }
+
+                    PanelTabDrag {
+                        anchors.fill: parent
+                        bodies: panel.pool
+                        tabId: tab.modelData.id
+                        title: tab.modelData.title
+                        iconName: tab.iconName
                     }
 
                     Row {
                         id: tabRow
 
                         anchors.centerIn: parent
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         ShellIcon {
                             visible: tab.iconName.length > 0
                             name: tab.iconName
-                            size: 13
+                            size: Theme.icon.sm
                             color: tab.active ? panel.foreground : panel.muted
                             anchors.verticalCenter: parent.verticalCenter
                         }
@@ -198,10 +241,10 @@ Rectangle {
 
                             visible: panel.editingId !== tab.modelData.id
                             text: tab.modelData.title
-                            width: Math.min(implicitWidth, 112)
+                            width: Math.min(implicitWidth, 3.5 * Theme.space.xxl)
                             elide: Text.ElideRight
                             color: tab.active ? panel.foreground : panel.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             anchors.verticalCenter: parent.verticalCenter
 
                             TapHandler {
@@ -219,7 +262,7 @@ Rectangle {
 
                             objectName: "panelRename-" + tab.modelData.id
                             visible: panel.editingId === tab.modelData.id
-                            width: 112
+                            width: 3.5 * Theme.space.xxl
                             anchors.verticalCenter: parent.verticalCenter
                             property bool cancelled: false
                             onAccepted: {
@@ -250,11 +293,11 @@ Rectangle {
                             objectName: "panelClose-" + tab.modelData.id
                             subtle: true
                             iconName: "x"
-                            iconSize: 12
+                            iconSize: Theme.icon.sm
                             iconTint: panel.muted
-                            width: 20
-                            height: 20
-                            padding: 4
+                            width: Theme.icon.md + Theme.space.xs
+                            height: Theme.icon.md + Theme.space.xs
+                            padding: Theme.space.xs
                             Accessible.name: qsTr("Close %1").arg(tab.modelData.title)
                             anchors.verticalCenter: parent.verticalCenter
                             onClicked: Shell.dispatch("rightPanel.close", { id: tab.modelData.id })
@@ -268,16 +311,16 @@ Rectangle {
 
                 objectName: "panelScrollTabs"
                 anchors.right: maximizeButton.visible ? maximizeButton.left : addButton.left
-                anchors.top: parent.top
+                anchors.verticalCenter: parent.verticalCenter
                 visible: panel.open && tabs.overflowing
 
                 ShellButton {
                     objectName: "panelScrollLeft"
                     subtle: true
-                    width: 28
-                    height: 36
+                    width: Theme.control.md
+                    height: panel.stripHeight
                     iconName: "chevron-left"
-                    iconSize: 14
+                    iconSize: Theme.icon.md
                     iconTint: panel.muted
                     enabled: !tabs.atXBeginning
                     Accessible.name: qsTr("Scroll tabs left")
@@ -287,10 +330,10 @@ Rectangle {
                 ShellButton {
                     objectName: "panelScrollRight"
                     subtle: true
-                    width: 28
-                    height: 36
+                    width: Theme.control.md
+                    height: panel.stripHeight
                     iconName: "chevron-right"
-                    iconSize: 14
+                    iconSize: Theme.icon.md
                     iconTint: panel.muted
                     enabled: !tabs.atXEnd
                     Accessible.name: qsTr("Scroll tabs right")
@@ -298,21 +341,26 @@ Rectangle {
                 }
             }
 
+            // Moves the shown tab to the stage, with the timeline put away.
             ShellButton {
                 id: maximizeButton
                 objectName: "panelMaximize"
                 subtle: true
 
                 anchors.right: addButton.left
-                anchors.top: parent.top
-                width: 36
-                height: 36
-                iconName: panel.maximized ? "minimize-2" : "maximize-2"
-                iconSize: 14
+                anchors.verticalCenter: parent.verticalCenter
+                width: panel.stripHeight
+                height: panel.stripHeight
+                iconName: "panel-left-open"
+                iconSize: Theme.icon.md
                 iconTint: panel.muted
-                visible: panel.open && panel.canMaximize
-                Accessible.name: panel.maximized ? qsTr("Show the thread beside the panel") : qsTr("Fill the window")
-                onClicked: Shell.dispatch("rightPanel.toggleMaximized")
+                visible: panel.open && panel.activeTab !== null
+                Accessible.name: qsTr("Open in centre")
+                onClicked: Shell.dispatch("rightPanel.dock", {
+                    id: panel.activeId,
+                    dock: "stage",
+                    focus: true
+                })
             }
 
             ShellButton {
@@ -321,13 +369,13 @@ Rectangle {
 
                 anchors.right: parent.right
                 anchors.rightMargin: panel.trailingInset
-                anchors.top: parent.top
-                width: 36
-                height: 36
-                leftPadding: 10
-                rightPadding: 10
+                anchors.verticalCenter: parent.verticalCenter
+                width: panel.stripHeight
+                height: panel.stripHeight
+                leftPadding: Theme.space.sm
+                rightPadding: Theme.space.sm
                 iconName: "plus"
-                iconSize: 16
+                iconSize: Theme.icon.md
                 iconTint: panel.muted
                 visible: panel.open
                 objectName: "panelAdd"
@@ -433,41 +481,47 @@ Rectangle {
             }
         }
 
-        Item {
+        // The shown tab's body, kept while another tab shows (PanelBodies).
+        PanelBodySlot {
+            objectName: "panelBodySlot"
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: panel.open
-
-            // A native tab's body is made the first time it shows and kept,
-            // hidden, while another tab shows, so it keeps its scroll and what
-            // it loaded.
-            Repeater {
-                model: Object.keys(PanelTabs.tabs)
-
-                delegate: Loader {
-                    id: nativeBody
-
-                    required property string modelData
-                    readonly property var tab: PanelTabs.tabs[modelData]
-                    readonly property bool shown: panel.activeTab !== null && panel.activeTab.kind === modelData
-
-                    objectName: "panelBody-" + modelData
-                    anchors.fill: parent
-                    active: false
-                    visible: shown
-                    onShownChanged: if (shown)
-                        active = true
-                    Component.onCompleted: {
-                        setSource(Qt.resolvedUrl(tab.brick + ".qml"), {
-                            source: Qt.binding(() => nativeBody.tab.source ? Panel[nativeBody.tab.source] : null)
-                        });
-                        active = shown;
-                    }
-                }
-            }
+            bodies: panel.pool
+            tabId: panel.open ? panel.activeId : ""
         }
     }
 
+    Loader {
+        id: ownBodies
+
+        active: panel.bodies === null
+        sourceComponent: PanelBodies {}
+    }
+
+    // A tab dragged here from the stage docks back in the panel.
+    DropArea {
+        objectName: "panelDrop"
+        anchors.fill: parent
+        keys: ["hal-c2/panel-tab"]
+        enabled: panel.open && panel.pool !== null && panel.pool.dragging.length > 0 && !panel.docked.some(tab => tab.id === panel.pool.dragging)
+        onDropped: drop => {
+            const id = panel.pool.dragging;
+            drop.accept();
+            // After the drag has let go of the tab it moves.
+            Qt.callLater(() => Shell.dispatch("rightPanel.dock", {
+                    id: id,
+                    dock: "panel"
+                }));
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            visible: parent.containsDrag
+            color: Qt.alpha(Theme.palette.color("accent", "#2563eb"), 0.12)
+            border.color: Theme.palette.color("accent", "#2563eb")
+        }
+    }
     // The panel's leading edge, so it reads apart from the thread in themes
     // where `chrome` and `canvas` match.
     Rectangle {
@@ -477,7 +531,7 @@ Rectangle {
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         width: 1
-        visible: panel.open && !panel.maximized
+        visible: panel.open
         color: Theme.palette.color("border", "#27272a")
     }
 
@@ -498,16 +552,16 @@ Rectangle {
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.bottom: parent.bottom
-        width: 6
-        visible: panel.open && !panel.maximized && panel.resizable
+        width: Theme.space.sm
+        visible: panel.open && panel.resizable
         cursorShape: Qt.SplitHCursor
         preventStealing: true
         activeFocusOnTab: true
         Accessible.role: Accessible.Splitter
         Accessible.name: qsTr("Resize panel")
         Accessible.onPressAction: Shell.dispatch("rightPanel.resize", {})
-        Keys.onLeftPressed: step(16)
-        Keys.onRightPressed: step(-16)
+        Keys.onLeftPressed: step(Theme.space.lg)
+        Keys.onRightPressed: step(-Theme.space.lg)
         Keys.onReturnPressed: Shell.dispatch("rightPanel.resize", {})
         Keys.onEnterPressed: Shell.dispatch("rightPanel.resize", {})
         onPressed: mouse => {
@@ -531,7 +585,7 @@ Rectangle {
             anchors.left: parent.left
             anchors.top: parent.top
             anchors.bottom: parent.bottom
-            width: 2
+            width: Theme.space.xxs
             visible: edge.activeFocus
             color: Theme.palette.color("focus", "#3b82f6")
         }

@@ -35,8 +35,14 @@ defmodule HalC2.Search do
     path = Store.path()
 
     if not read?() do
+      # A thread an import has not finished is left to it: the import indexes it when
+      # it lands, and a stream opened on it now would miss the rest it then writes.
+      unfinished = HalC2.Import.PreviousInstall.unfinished(path)
+      long = MapSet.new(Store.legacy_streams(path, StreamState.max_legacy()))
+
       for %{id: id, kind: "thread"} <- Store.list_streams(path),
-          do: index_thread(id, StreamState.load(path, id))
+          id not in unfinished,
+          do: read(path, id, id in long, &index_thread(id, &1))
 
       :ok = Store.forget_untyped_messages()
       Store.put_meta(@read, "1")
@@ -59,7 +65,7 @@ defmodule HalC2.Search do
     :ok = read_again()
 
     gone =
-      for message <- StreamState.list(StreamState.load(Store.path(), id), "message"),
+      for message <- StreamState.all(load(id), "message"),
           do: {message["id"], :deleted}
 
     if gone != [], do: Store.index_messages(id, gone)
@@ -67,9 +73,28 @@ defmodule HalC2.Search do
     try do
       write.()
     after
-      :ok = index_thread(id, StreamState.load(Store.path(), id))
+      :ok = index_thread(id, load(id))
       if read?, do: Store.put_meta(@read, "1")
     end
+  end
+
+  # `fun` of a thread's state, read from disk without opening its stream: opening
+  # every thread at boot is what this read must not do. Only a `long` one, whose older
+  # MC's whole snapshot is too big to read at once, is read through its stream, which
+  # migrates it a page at a time (and `HalC2.Streams.Migrations` opens at boot anyway).
+  defp read(path, id, long?, fun) do
+    if long? and Process.whereis(HalC2.Streams) != nil,
+      do: HalC2.Streams.read(id, fun),
+      else: StreamState.load_read(path, id, fun)
+  end
+
+  # The thread as `storing_thread/2` finds it. With no streams running nothing else
+  # writes it, so it is loaded as its stream would load it, the older runs written to
+  # disk, instead of folding a long log whole.
+  defp load(id) do
+    if Process.whereis(HalC2.Streams),
+      do: StreamState.load(Store.path(), id),
+      else: StreamState.load(Store.path(), id, store: Store, max_legacy: :infinity)
   end
 
   @doc "Indexes all of a thread's messages from its loaded `state`, as an import needs."
@@ -77,7 +102,7 @@ defmodule HalC2.Search do
     thread = StreamState.get(state, "thread")[id]
 
     entries =
-      for message <- StreamState.list(state, "message"),
+      for message <- StreamState.all(state, "message"),
           entry = entry(message["id"], message, thread),
           do: entry
 
@@ -152,23 +177,25 @@ defmodule HalC2.Search do
       {_, role, text, at} = Enum.find(found, &(elem(&1, 1) == "user")) || hd(found)
       thread = active[thread_id]
 
-      {thread["updatedAt"] || "",
+      {thread["updatedAt"] || "", text,
        %{
          "threadId" => thread_id,
          "projectId" => thread["projectId"],
          "source" => role,
-         "snippet" => snippet(text, query),
          "messageCreatedAt" => at
        }}
     end)
     |> Enum.sort_by(&elem(&1, 0), :desc)
     |> Enum.take(limit)
-    |> Enum.map(&elem(&1, 1))
+    # Only the kept matches pay for a snippet.
+    |> Enum.map(fn {_, text, match} -> Map.put(match, "snippet", snippet(text, query)) end)
   end
 
-  # The text around the first match, cut to fit.
+  # The text around the first match, cut to fit, without the markup HAL-C2
+  # wraps around what it hands an agent (a delegated task's result, with its
+  # task and thread ids), so a reader sees words, never ids.
   defp snippet(text, query) do
-    text = text |> String.replace(~r/\s+/u, " ") |> String.trim()
+    text = text |> unwrap() |> String.replace(~r/\s+/u, " ") |> String.trim()
 
     if String.length(text) <= @snippet do
       text
@@ -187,5 +214,16 @@ defmodule HalC2.Search do
 
       "#{if start > 0, do: "…"}#{cut}#{if start + body < String.length(text), do: "…"}"
     end
+  end
+
+  # Drops the tags HAL-C2 wraps around what it hands an agent (a delegated
+  # task's result, a composer's context envelope), opening and closing, and
+  # leaves every other tag, such as `<a href="…">` or `Vec<String>`, as written.
+  defp unwrap(text) do
+    Regex.replace(
+      ~r{</?(?:delegated_task_result|hal_c2_context|context)(?:\s+[\w:-]+="[^"]*")*\s*/?>}u,
+      text,
+      " "
+    )
   end
 end

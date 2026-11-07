@@ -103,7 +103,7 @@ defmodule HalC2.Devices.Proxy do
           # Long-lived MJPEG and AVCC responses must not be buffered or compressed.
           |> put_resp_header("cache-control", "no-store, no-transform")
           |> send_chunked(status)
-          |> stream(relay, ref)
+          |> __MODULE__.stream(relay, ref)
 
         {:device_hub, ^relay, {:error, _}} ->
           send_resp(conn, 502, "The device hub did not answer.")
@@ -122,13 +122,17 @@ defmodule HalC2.Devices.Proxy do
     end
   end
 
-  defp stream(conn, relay, ref) do
+  # The relay loops here and in `http_loop/5` and `ws_loop/5` call themselves by name, so
+  # a stream open across release upgrades moves to new code at its next
+  # message instead of pinning the version it started on.
+  @doc false
+  def stream(conn, relay, ref) do
     receive do
       {:device_hub, ^relay, {:data, data}} ->
         case chunk(conn, data) do
           {:ok, conn} ->
             send(relay, :ack)
-            stream(conn, relay, ref)
+            __MODULE__.stream(conn, relay, ref)
 
           {:error, _} ->
             send(relay, :stop)
@@ -273,7 +277,7 @@ defmodule HalC2.Devices.Proxy do
     with {:ok, conn} <- Mint.HTTP.connect(:http, uri.host, uri.port),
          {:ok, conn, req} <-
            Mint.HTTP.request(conn, request.method, request.path, headers, request.body) do
-      http_loop(conn, req, caller, ref, nil)
+      __MODULE__.http_loop(conn, req, caller, ref, nil)
     else
       error -> send(caller, {:device_hub, self(), {:error, inspect(error)}})
     end
@@ -289,7 +293,7 @@ defmodule HalC2.Devices.Proxy do
       {:ok, ws, frames} = Mint.WebSocket.decode(ws, early)
 
       case deliver(frames, conn, ws, req, caller, ref) do
-        {:ok, conn, ws} -> ws_loop(conn, ws, req, caller, ref)
+        {:ok, conn, ws} -> __MODULE__.ws_loop(conn, ws, req, caller, ref)
         :stop -> Mint.HTTP.close(conn)
       end
     else
@@ -297,7 +301,8 @@ defmodule HalC2.Devices.Proxy do
     end
   end
 
-  defp http_loop(conn, req, caller, ref, status) do
+  @doc false
+  def http_loop(conn, req, caller, ref, status) do
     receive do
       {:DOWN, ^ref, _, _, _} ->
         Mint.HTTP.close(conn)
@@ -308,7 +313,7 @@ defmodule HalC2.Devices.Proxy do
       message ->
         case Mint.HTTP.stream(conn, message) do
           :unknown ->
-            http_loop(conn, req, caller, ref, status)
+            __MODULE__.http_loop(conn, req, caller, ref, status)
 
           {:ok, conn, responses} ->
             {status, data, done} =
@@ -345,7 +350,7 @@ defmodule HalC2.Devices.Proxy do
                 Mint.HTTP.close(conn)
 
               true ->
-                http_loop(conn, req, caller, ref, status)
+                __MODULE__.http_loop(conn, req, caller, ref, status)
             end
 
           {:error, conn, reason, _} ->
@@ -387,11 +392,12 @@ defmodule HalC2.Devices.Proxy do
           end
         end
     after
-      10_000 -> {:error, :timeout}
+      Application.get_env(:hal_c2, :device_hub_upgrade_timeout, 10_000) -> {:error, :timeout}
     end
   end
 
-  defp ws_loop(conn, ws, req, caller, ref) do
+  @doc false
+  def ws_loop(conn, ws, req, caller, ref) do
     socket = Mint.HTTP.get_socket(conn)
 
     receive do
@@ -403,7 +409,7 @@ defmodule HalC2.Devices.Proxy do
 
       {:frame, frame} ->
         case send_frame(conn, ws, req, frame) do
-          {:ok, conn, ws} -> ws_loop(conn, ws, req, caller, ref)
+          {:ok, conn, ws} -> __MODULE__.ws_loop(conn, ws, req, caller, ref)
           _ -> send(caller, {:device_hub, self(), :closed})
         end
 
@@ -414,7 +420,7 @@ defmodule HalC2.Devices.Proxy do
              data = for({:data, ^req, data} <- responses, into: "", do: data),
              {:ok, ws, frames} <- Mint.WebSocket.decode(ws, data),
              {:ok, conn, ws} <- deliver(frames, conn, ws, req, caller, ref) do
-          ws_loop(conn, ws, req, caller, ref)
+          __MODULE__.ws_loop(conn, ws, req, caller, ref)
         else
           _ ->
             send(caller, {:device_hub, self(), :closed})

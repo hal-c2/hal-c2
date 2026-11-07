@@ -1,5 +1,17 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15833
+#   https://github.com/pingdotgg/t3code/pull/21032
+#   https://github.com/pingdotgg/t3code/pull/11773
+#   https://github.com/pingdotgg/t3code/pull/19411
+#   https://github.com/pingdotgg/t3code/pull/14917
+#   https://github.com/pingdotgg/t3code/pull/20079
+#   https://github.com/pingdotgg/t3code/pull/15594
+#   https://github.com/pingdotgg/t3code/pull/16167
+#   https://github.com/pingdotgg/t3code/pull/16220
+#   https://github.com/pingdotgg/t3code/pull/16231
 #   https://github.com/pingdotgg/t3code/pull/13314
+#   https://github.com/pingdotgg/t3code/pull/21099
+#   https://github.com/pingdotgg/t3code/pull/18359
 #   docs/user/source-control.md
 #   packages/contracts/src/vcs.ts (VcsCreateWorktreeInput, VcsRemoveWorktreeInput)
 #   packages/contracts/src/worktreeSetup.ts (WorktreeSetupSnapshot, stages, phases)
@@ -61,6 +73,32 @@ Feature: Worktrees and setup scripts
     When the user sends the first message of a thread in a new worktree
     Then the fetch stage runs before the files are checked out
 
+  # Upstream #21032: a new worktree fetched origin even when its base branch tracks another
+  # remote; it now fetches the base's own upstream, and a base that tracks nothing still uses origin.
+  @backlog @mc
+  Scenario: A new worktree starts from the remote its base branch tracks
+    Given the project starts worktrees from origin and "shop" has the remotes "origin" and "upstream"
+    And the base branch "main" tracks "upstream/main"
+    When the user sends the first message of a thread in a new worktree from "main"
+    Then "upstream/main" is fetched and the worktree starts from it
+
+  # Upstream #21032: a base whose remote branch was deleted starts from the local branch.
+  @backlog @mc @priority-low
+  Scenario: A base whose remote branch is gone starts from the local branch
+    Given the project starts worktrees from origin
+    And the base branch "feature/tax" tracks a remote branch that was deleted
+    When the user sends the first message of a thread in a new worktree from "feature/tax"
+    Then the worktree starts from the local "feature/tax"
+    And no stale remote-tracking ref is used
+
+  @backlog @mc
+  Scenario: A fetch that loses a ref race with another fetch is tried again
+    Given the project starts worktrees from origin
+    And a background fetch of "origin" holds "origin/main" while the worktree's fetch runs
+    When git reports it could not update "refs/remotes/origin/main"
+    Then the worktree's fetch is tried once more and the worktree is made
+    And a lock failure that persists tells the user a local reference could not be updated
+
   @mc
   Scenario: Without a remote the fetch stage is skipped
     Given "shop" has no remote
@@ -94,6 +132,26 @@ Feature: Worktrees and setup scripts
     When the user sends "Add tax to the cart" as the first message of a thread in a new worktree
     Then the worktree first sits on the temporary branch "hal-c2/42a5d641"
     And the branch is renamed to a name the writer model derives from the message
+
+  @mc @backlog @priority-low
+  Scenario: Subagents made before the temporary branch is renamed pick up the new name
+    Given a thread in a new worktree delegated to two subagents while the worktree was on its temporary branch
+    And one of the subagent threads is archived
+    When the temporary branch is renamed to "feature/add-tax"
+    Then the thread and both subagent threads record the branch "feature/add-tax"
+
+  @mc @backlog @priority-low
+  Scenario: A thread that moved off the worktree keeps its branch when the temporary branch is renamed
+    Given a subagent recorded the new worktree's temporary branch
+    And it was moved to another worktree before the rename
+    When the temporary branch is renamed to "feature/add-tax"
+    Then the subagent keeps the branch of the worktree it moved to
+
+  @mc @backlog @priority-low
+  Scenario: A provider's own subagent made on the temporary branch records the worktree's current branch
+    Given the temporary branch of a new worktree was renamed to "feature/add-tax"
+    When the provider starts its own subagent carrying the temporary branch from the turn's start
+    Then the subagent thread records the branch "feature/add-tax" read from git
 
   @mc
   Scenario: A branch named "hal-c2" does not stop a new worktree
@@ -148,6 +206,22 @@ Feature: Worktrees and setup scripts
       | action                | duration       | request                                              |
       | checking out files    | 2 minutes      | sends the first message of a thread in a new worktree |
       | removing the worktree | 2 minutes      | removes the worktree                                  |
+
+  # Upstream #14917: Git for Windows refuses paths over 260 characters unless core.longpaths is
+  # set, and a removal that fails partway strands the folder where nothing cleans it up.
+  @backlog @mc @priority-low
+  Scenario Outline: A worktree with long paths works on Windows whatever Git's long-path setting
+    Given the MC runs on Windows and Git's long-path setting is <setting>
+    And "shop" tracks a file whose path in the worktree is longer than 260 characters
+    When the user <request>
+    Then it succeeds
+    And the user's Git configuration is unchanged
+
+    Examples:
+      | setting       | request                                               |
+      | not set       | sends the first message of a thread in a new worktree |
+      | not set       | removes the worktree                                  |
+      | set to false  | removes the worktree                                  |
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (createWorktree: gh-merge-base)
   @mc
@@ -334,6 +408,15 @@ Feature: Worktrees and setup scripts
     Then the setup fails with a message starting "Could not create the worktree:"
     And neither the worktree nor its new branch is left in "shop"
 
+  # Upstream #11773: writing the new branch's base into git's config is optional; a locked config
+  # no longer fails a worktree git already made.
+  @mc @backlog
+  Scenario: A locked git config does not fail a worktree git has made
+    Given another program holds the lock on the git config of "shop"
+    When the user sends the first message of a thread in a new worktree
+    Then the thread starts in the new worktree
+    And the branch's base is taken from the default branch when it is needed
+
   @mc
   Scenario: Cancelling setup before the agent starts
     Given a thread's worktree setup is still checking out files
@@ -447,6 +530,37 @@ Feature: Worktrees and setup scripts
     When the user removes that worktree with force
     Then its folder is gone
 
+  # Upstream #15833: on Windows git can leave junctions behind after removing a worktree, and
+  # they blocked making it again.
+  @backlog @mc @priority-low
+  Scenario: A worktree removed on Windows can be made again
+    Given the MC runs on Windows and "feature/tax" has a worktree
+    When the user removes that worktree
+    Then no leftover links or empty folders remain where it was
+    And a new worktree for "feature/tax" can be made in the same place
+    And files found there are kept
+
+  # Upstream #21099: removing a worktree on Windows followed its junctions and deleted what they
+  # pointed to.
+  @backlog @mc @priority-high
+  Scenario: Removing a worktree on Windows never deletes what its links point to
+    Given the MC runs on Windows and the "feature/tax" worktree holds a junction to a folder outside it
+    When the user removes that worktree
+    Then the folder the junction pointed to and its files are untouched
+
+  # Upstream #21099: the cleanup keeps git's refusals.
+  @backlog @mc @priority-high
+  Scenario Outline: A worktree git refuses to remove on Windows is kept
+    Given the MC runs on Windows and the "feature/tax" worktree <state>
+    When the user removes that worktree without force
+    Then the removal is refused and the worktree's files are kept
+
+    Examples:
+      | state                         |
+      | is locked                     |
+      | has uncommitted changes       |
+      | has a populated submodule     |
+
   @desktop @mobile
   Scenario: Returning to the previous worktree
     Given the user just finished a thread in the worktree on "feature/tax"
@@ -462,17 +576,17 @@ Feature: Worktrees and setup scripts
     And the agent continues in the worktree with the prompt
 
   @mc
-  Scenario: The agent's new worktree runs the setup script hal-c2.json marks
+  Scenario: A cloned repository's setup script waits until imported during agent handoff
     Given the agent works in "shop" without a worktree, and its hal-c2.json marks the setup script
     When the agent hands the thread off to a new worktree on "feature/pay" with a continuation prompt
-    Then the setup script is started
+    Then the handoff skips the setup script until it is imported
 
   @mc
-  Scenario: The agent's new worktree does not run a setup script its branch changed
+  Scenario: The agent's new worktree waits for a branch's changed setup script to be imported
     Given the agent works in "shop" without a worktree, and its hal-c2.json marks the setup script
     And the branch "contrib" changes the setup script's command
     When the agent hands the thread off to a new worktree of "contrib"
-    Then the handoff skips the setup script because it differs from the main checkout's
+    Then the handoff skips the setup script until it is imported
 
   @mc
   Scenario: A thread already in a worktree cannot be handed off again
@@ -572,3 +686,51 @@ Feature: Worktrees and setup scripts
     And the project's default workspace is a new worktree
     When the user opens a new thread in "shop"
     Then that thread's worktree starts from origin
+
+  @backlog @mc @priority-low
+  Scenario: A new worktree honors the submodule setting
+    Given the submodule setting is "skip" and the project has no worktree script of its own
+    When a worktree is created
+    Then submodules are not initialized
+
+  @backlog @mc @priority-low
+  Scenario Outline: A temporary worktree branch gets its name from the prefix
+    Given <state>
+    When a worktree thread is provisioned
+    Then its temporary branch is <branch>
+    And the background rename to a generated name still runs for it
+
+    Examples:
+      | state                                 | branch           |
+      | no branch named after the prefix      | "<prefix>/<hex>" |
+      | a local branch named exactly <prefix> | "<prefix>-<hex>" |
+
+  @backlog @mc @shared
+  Scenario: The user chooses where new worktrees are created
+    Given the worktree location setting holds an absolute path, including on another drive
+    When a worktree is created
+    Then it is at "<location>/<repo>/<branch>" and existing worktrees stay put
+    And a path that is not absolute on the MC fails the creation, pointing to the setting
+    And storage cleanup accepts both the default and the custom folder
+
+  # Upstream #18359: a thread whose worktree was deleted could never start another turn.
+  @backlog @mc @shared @priority-high
+  Scenario Outline: A thread whose worktree was deleted gets it back on its next message
+    Given the thread "Fix checkout" worked in its own worktree on "feature/cart"
+    And the worktree was deleted and <branch>
+    When the user sends the next message
+    Then the worktree is made again <from>
+    And the turn runs in it
+
+    Examples:
+      | branch                         | from                                                          |
+      | "feature/cart" still exists    | on "feature/cart"                                             |
+      | "feature/cart" was deleted too | with "feature/cart" started from the project's current branch |
+
+  @backlog @mc @shared
+  Scenario: A worktree that cannot be made again stops before the agent starts
+    Given the thread "Fix checkout" lost its worktree and making it again fails
+    When the user sends the next message
+    Then the agent is not started
+    And the thread says the worktree could not be made, naming the branch and the path, without raw git output
+    And the user can send again to retry

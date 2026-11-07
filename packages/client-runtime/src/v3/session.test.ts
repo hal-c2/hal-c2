@@ -1,11 +1,24 @@
-import { WS_METHODS } from "@hal-c2/contracts";
+import {
+  OrchestrationV2AppThread,
+  ORCHESTRATION_V2_WS_METHODS,
+  type OrchestrationV2ThreadStreamItem,
+  OrchestrationV2TurnItem,
+  WS_METHODS,
+} from "@hal-c2/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { ClusterRpcError, type ClusterSocket, type ShapeFrame } from "./clusterSocket.ts";
-import { makeV3Session } from "./session.ts";
+import { v2Projection, v2ThreadId } from "../state/orchestrationV2TestFixtures.ts";
+import {
+  ClusterRpcError,
+  type ClusterSocket,
+  type ShapeFrame,
+  type StreamResumePoint,
+} from "./clusterSocket.ts";
+import { makeV3Session, ThreadResumes } from "./session.ts";
 
 const ENVIRONMENT = "environment-here";
 
@@ -58,6 +71,31 @@ function socketAnswering(answer: (method: string, payload: unknown) => Promise<u
   return { socket, calls };
 }
 
+/** A thread and one of its items, as `hal-c2.threadRows` sends them. */
+const pagedThread = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2AppThread))(
+  v2Projection.thread,
+);
+const pagedItem = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2TurnItem))({
+  id: "item-1",
+  threadId: v2ThreadId,
+  runId: null,
+  nodeId: null,
+  providerThreadId: null,
+  providerTurnId: null,
+  nativeItemRef: null,
+  parentItemId: null,
+  ordinal: 1,
+  status: "completed",
+  title: null,
+  startedAt: v2Projection.updatedAt,
+  completedAt: v2Projection.updatedAt,
+  updatedAt: v2Projection.updatedAt,
+  type: "assistant_message",
+  messageId: "message-1",
+  text: "Hello",
+  streaming: false,
+} as unknown as OrchestrationV2TurnItem);
+
 describe("makeV3Session", () => {
   it.effect("asks its own MC where another machine's file is here", () =>
     Effect.gen(function* () {
@@ -77,6 +115,83 @@ describe("makeV3Session", () => {
       ]);
     }),
   );
+
+  describe("a terminal attached with acks", () => {
+    const attach = { threadId: "thread-1", terminalId: "term-1" };
+
+    /** A socket whose MC answers an attach with one frame, recording what was asked. */
+    function terminalSocket() {
+      const { socket, calls: _calls } = socketAnswering(async () => null);
+      const acks: number[] = [];
+      const shapes: Array<{ readonly acknowledged: boolean; readonly shape: unknown }> = [];
+      const answer = (shape: { readonly type: string }, listener: (frame: ShapeFrame) => void) =>
+        queueMicrotask(() =>
+          listener(
+            shape.type === "terminal"
+              ? { t: "terminal", event: { type: "output", data: "x", sequence: 1 } }
+              : { t: "config", mc: "hal_c2@here", config: CONFIG },
+          ),
+        );
+      socket.subscribe = ((shape: { readonly type: string }, listener: never) => {
+        if (shape.type === "terminal") shapes.push({ acknowledged: false, shape });
+        answer(shape, listener);
+        return () => {};
+      }) as never;
+      socket.subscribeAcknowledged = ((shape: never, listener: never) => {
+        shapes.push({ acknowledged: true, shape });
+        answer(shape, listener);
+        return { unsubscribe: () => {}, ack: (sequence: number) => acks.push(sequence) };
+      }) as never;
+      return { socket, acks, shapes };
+    }
+
+    const inputOf = (shape: unknown) => (shape as { readonly input: object }).input;
+
+    it.effect("acknowledges on the attach while it lasts, and asks the MC for no acks field", () =>
+      Effect.gen(function* () {
+        const { socket, acks, shapes } = terminalSocket();
+        const session = yield* makeV3Session({ socket, environmentId: ENVIRONMENT });
+        const stream = session.client[WS_METHODS.terminalAttach]({
+          ...attach,
+          acks: true,
+        } as never) as unknown as Stream.Stream<unknown>;
+
+        yield* stream.pipe(
+          Stream.take(1),
+          Stream.runForEach(() =>
+            Effect.sync(() => session.ackTerminal?.(attach.threadId, attach.terminalId, 1)),
+          ),
+        );
+        expect(acks).toEqual([1]);
+        expect(shapes).toHaveLength(1);
+        expect(shapes[0]!.acknowledged).toBe(true);
+        expect(inputOf(shapes[0]!.shape)).toEqual(attach);
+
+        // The attach has ended, and an ack still on its way goes nowhere.
+        session.ackTerminal?.(attach.threadId, attach.terminalId, 2);
+        expect(acks).toEqual([1]);
+      }),
+    );
+
+    it.effect("leaves an attach without acks to be sent everything", () =>
+      Effect.gen(function* () {
+        const { socket, acks, shapes } = terminalSocket();
+        const session = yield* makeV3Session({ socket, environmentId: ENVIRONMENT });
+        const stream = session.client[WS_METHODS.terminalAttach](
+          attach as never,
+        ) as unknown as Stream.Stream<unknown>;
+
+        yield* stream.pipe(
+          Stream.take(1),
+          Stream.runForEach(() =>
+            Effect.sync(() => session.ackTerminal?.(attach.threadId, attach.terminalId, 1)),
+          ),
+        );
+        expect(shapes.map((shape) => shape.acknowledged)).toEqual([false]);
+        expect(acks).toEqual([]);
+      }),
+    );
+  });
 
   it.effect("follows who else is on a page, by the page's own shape", () =>
     Effect.gen(function* () {
@@ -166,6 +281,29 @@ describe("makeV3Session", () => {
     }),
   );
 
+  it.effect("reads a thread's projection a page at a time", () =>
+    Effect.gen(function* () {
+      const next = [3, "thread", v2ThreadId];
+      const { socket, calls } = socketAnswering(async (_method, payload) =>
+        (payload as { readonly after: unknown }).after == null
+          ? { rows: [["thread", v2ThreadId, pagedThread]], next, offset: 7, at: 1 }
+          : { rows: [["turn-item", "item-1", pagedItem]], next: null, offset: 8, at: 2 },
+      );
+      const session = yield* makeV3Session({ socket, environmentId: ENVIRONMENT });
+
+      const projection = yield* session.client[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
+        threadId: v2ThreadId,
+      } as never);
+
+      expect(calls.map((call) => call.payload)).toEqual([
+        { threadId: v2ThreadId, after: null },
+        { threadId: v2ThreadId, after: next },
+      ]);
+      expect(projection.thread.title).toBe(v2Projection.thread.title);
+      expect(projection.turnItems.map((i) => i.id)).toEqual(["item-1"]);
+    }),
+  );
+
   it.effect("tells why the MC refused a terminal", () =>
     Effect.gen(function* () {
       const { socket } = socketAnswering(() =>
@@ -190,6 +328,84 @@ describe("makeV3Session", () => {
       );
 
       expect(error.message).toContain("settings.json cannot be read");
+    }),
+  );
+});
+
+describe("makeV3Session thread resumes", () => {
+  const thread = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2AppThread))(
+    v2Projection.thread,
+  ) as Record<string, unknown>;
+
+  /** A socket whose thread stream sends a snapshot at offset 9 and an event at 12. */
+  function socketStreaming() {
+    const resumes: Array<StreamResumePoint | undefined> = [];
+    const socket = {
+      subscribe: (_shape: unknown, listener: (frame: ShapeFrame) => void) => {
+        queueMicrotask(() => listener({ t: "config", mc: "hal_c2@here", config: CONFIG }));
+        return () => {};
+      },
+      subscribeWindow: (
+        _shape: unknown,
+        _items: number,
+        listener: (frame: ShapeFrame) => void,
+        _floor: unknown,
+        resume?: StreamResumePoint,
+      ) => {
+        resumes.push(resume);
+        queueMicrotask(() => {
+          listener({
+            t: "snapshot",
+            rows: [["thread", v2ThreadId, pagedThread]],
+            part: 0,
+            done: true,
+            offset: 9,
+            floor: null,
+          });
+          listener({ t: "events", offset: 12, events: [[12, "thread", v2ThreadId, {}, 12]] });
+        });
+        return {
+          unsubscribe: () => {},
+          more: () => true,
+          resumePoint: () => ({ offset: 12, floor: null, handle: "log-1" }),
+        };
+      },
+    } as unknown as ClusterSocket;
+    return { socket, resumes };
+  }
+
+  const subscribe = (
+    socket: ClusterSocket,
+    store: ThreadResumes,
+    request: Record<string, unknown>,
+  ) =>
+    Effect.gen(function* () {
+      const session = yield* makeV3Session({ socket, environmentId: ENVIRONMENT, resumes: store });
+      const thread = session.client[ORCHESTRATION_V2_WS_METHODS.subscribeThread] as unknown as (
+        request: unknown,
+      ) => Stream.Stream<OrchestrationV2ThreadStreamItem>;
+      return yield* Stream.runCollect(
+        thread({ threadId: v2ThreadId, ...request }).pipe(Stream.take(2)),
+      );
+    });
+
+  it.effect("carries a replaced session's stream on when the thread state holds all of it", () =>
+    Effect.gen(function* () {
+      const { socket, resumes } = socketStreaming();
+      const store = new ThreadResumes();
+      yield* subscribe(socket, store, {});
+      yield* subscribe(socket, store, { afterSequence: 12 });
+      expect(resumes).toEqual([undefined, { offset: 12, floor: null, handle: "log-1" }]);
+    }),
+  );
+
+  it.effect("loads the thread again when the thread state is behind the stream", () =>
+    Effect.gen(function* () {
+      const { socket, resumes } = socketStreaming();
+      const store = new ThreadResumes();
+      yield* subscribe(socket, store, {});
+      yield* subscribe(socket, store, { afterSequence: 9 });
+      expect(resumes).toEqual([undefined, undefined]);
     }),
   );
 });

@@ -10,18 +10,25 @@ defmodule HalC2.OrchestrationPropTest do
   cancel, edit, reorder and promote queued messages (and have Codex refuse to take a
   promoted one, also after the thread was archived while Codex was asked); resume a held queue; interrupt a turn, or the run of a message as a
   client that read it as active does (#403, #474);
-  crash a provider runtime mid-turn; release a thread's provider session as
+  crash a provider runtime mid-turn, or end only its provider stream (the app-server
+  exiting), which fails the run, unless the MC is shutting down, when the run is left
+  for the next boot's recovery to settle; stop a run nothing drives any more, which
+  settles it as interrupted with its checkpoint; release a thread's provider session as
   IdleSessions does; stop a thread as the plugin that started it does, after which no
   message queued at the stop ever starts, on it or on a task delegated from it, and the
   thread goes on as any other once the stop has passed it, also while a task below it
-  is held up; and restart the MC mid-turn (boot recovery). A message can also
+  is held up; and restart the MC mid-turn (boot recovery), also after a turn that had
+  ended and was still capturing its checkpoint, which completes. A message can also
   stop its turn on a usage limit, which holds the queue behind it; the user can then
   choose to resume at the reset, and the limit recovery sweep at the reset resumes the
   held queue, or sends "Continue where you left off." when nothing was held.
 
   Each message names one of two Codex instances (`codex`, and `codex-work` from the
   settings); a message for the instance the running turn is not on never joins it, and
-  the thread is on the instance of the run that started last.
+  the thread is on the instance of the run that started last. The agent can switch the
+  thread to an instance, as `hal_c2_thread_configure` does: the turn in progress
+  finishes where it is, and the MC's own messages, which name no instance, run on the
+  one the thread is on when they start, never taking it back (#1048).
 
   Turns run on the fake Codex app-server in `test/support/fake_codex.py`, through the
   bundled Codex plugin as on an MC. Every
@@ -32,10 +39,13 @@ defmodule HalC2.OrchestrationPropTest do
   ended, then compares each thread's projection with the model: thread state, runs
   and their statuses in ordinal order (the order they started), the queue's order and
   positions, at most one active run, and every user message exactly once, in the run
-  it belongs to. A message that steered a turn reached Codex once (the fake logs every
+  it belongs to, and the run a restart or a promote interrupted names the message's
+  run (`steeredByRunId`). A message that steered a turn reached Codex once (the fake logs every
   `turn/steer`) and is in the transcript ahead of the answer it got. A message of the
-  MC's own is in the transcript as a notification, never as a user message, and while
-  it is queued it cannot be edited or made to steer.
+  MC's own is in the transcript as a notification, never as a user message; it queues
+  ahead of the user's messages, and while it is queued it cannot be edited, moved or
+  made to steer, nor a message moved ahead of it. A message the user queues while the
+  queue is held is held too, and the queue of an archived thread cannot be resumed.
   """
 
   use ExUnit.Case, async: false
@@ -173,6 +183,7 @@ defmodule HalC2.OrchestrationPropTest do
        {:call, __MODULE__, :steer_twice,
         [tid, msg, oneof(@instances), oneof([:taken, :taken, :refused])]}},
       {1, {:call, __MODULE__, :rename, [tid, oneof(["Alpha", "Beta"])]}},
+      {2, {:call, __MODULE__, :switch, [tid, oneof(@instances)]}},
       {1, {:call, __MODULE__, :recover, [tid]}},
       {1, {:call, __MODULE__, :sweep, []}},
       {1, {:call, __MODULE__, :archive, [tid]}},
@@ -265,8 +276,12 @@ defmodule HalC2.OrchestrationPropTest do
         do: [],
         else: [
           {2, {:call, __MODULE__, :crash, [oneof(running)]}},
+          {4, {:call, __MODULE__, :end_stream, [oneof(running)]}},
+          {4, {:call, __MODULE__, :end_stream_leaving, [oneof(running)]}},
+          {4, {:call, __MODULE__, :stop_undriven, [oneof(running)]}},
           {2, {:call, __MODULE__, :restart, []}},
-          {1, {:call, __MODULE__, :restart_stuck, [oneof(running)]}}
+          {1, {:call, __MODULE__, :restart_stuck, [oneof(running)]}},
+          {1, {:call, __MODULE__, :restart_capturing, [oneof(running)]}}
         ]
 
     # A limit stop is worth choosing to resume, and an armed resume worth reaching.
@@ -277,11 +292,29 @@ defmodule HalC2.OrchestrationPropTest do
       if(limited == [], do: [], else: [{4, {:call, __MODULE__, :recover, [oneof(limited)]}}]) ++
         if armed == [], do: [], else: [{4, {:call, __MODULE__, :sweep, []}}]
 
-    frequency(always ++ after_held_up ++ on_messages ++ on_queued ++ on_running ++ on_limits)
+    # A switch away while the MC's own message waits, which then starts on the instance
+    # switched to: too rare a run of commands to draw otherwise (#1048).
+    switchable =
+      for {t, %{status: :live} = thread} <- threads,
+          Enum.any?(thread.queue, &thread.messages[&1].notice),
+          do: {t, hd(@instances -- [thread.instance])}
+
+    on_notices =
+      if switchable == [],
+        do: [],
+        else: [{6, let({t, i} <- oneof(switchable), do: {:call, __MODULE__, :switch, [t, i]})}]
+
+    frequency(
+      always ++ after_held_up ++ on_messages ++ on_queued ++ on_running ++ on_limits ++ on_notices
+    )
   end
 
   def precondition(%{threads: threads}, {:call, _, :crash, [tid]}),
     do: threads[tid] != nil and running(threads[tid]) != nil
+
+  def precondition(%{threads: threads}, {:call, _, fun, [tid]})
+      when fun in [:end_stream, :end_stream_leaving, :stop_undriven],
+      do: threads[tid] != nil and running(threads[tid]) != nil
 
   def precondition(%{threads: threads}, {:call, _, :release, [tid]}),
     do: threads[tid] != nil
@@ -295,6 +328,10 @@ defmodule HalC2.OrchestrationPropTest do
   def precondition(%{threads: threads}, {:call, _, :restart_stuck, [tid]}),
     do: threads[tid] != nil and running(threads[tid]) != nil
 
+  # A queue behind the turn would wait on the user at boot, as after any restart.
+  def precondition(%{threads: threads}, {:call, _, :restart_capturing, [tid]}),
+    do: threads[tid] != nil and running(threads[tid]) != nil and threads[tid].queue == []
+
   def precondition(%{threads: threads}, {:call, _, :promote, [tid, msg, :archived]}),
     do:
       match?(%{status: :live}, threads[tid]) and msg in threads[tid].queue and
@@ -303,6 +340,10 @@ defmodule HalC2.OrchestrationPropTest do
   def precondition(%{threads: threads}, {:call, _, fun, [tid, msg | _]})
       when fun in [:cancel, :edit, :reorder, :promote, :resend, :interrupt_run],
       do: Map.has_key?((threads[tid] || %{messages: %{}}).messages, msg)
+
+  # An agent switches the thread it runs in; one put away has no agent to switch it.
+  def precondition(%{threads: threads}, {:call, _, :switch, [tid, _]}),
+    do: match?(%{status: :live}, threads[tid])
 
   def precondition(_state, _call), do: true
 
@@ -410,6 +451,18 @@ defmodule HalC2.OrchestrationPropTest do
   def next_state(state, _result, {:call, _, :crash, [tid]}),
     do: update(state, tid, &(&1 |> end_running(:failed) |> start_next()))
 
+  # The provider's stream ending mid-turn fails the run, as its runtime crashing does.
+  def next_state(state, result, {:call, module, :end_stream, [tid]}),
+    do: next_state(state, result, {:call, module, :crash, [tid]})
+
+  # One ending while the MC shuts down leaves the run; the next boot interrupts it.
+  def next_state(state, result, {:call, module, :end_stream_leaving, [_tid]}),
+    do: next_state(state, result, {:call, module, :restart, []})
+
+  # A stop settles a run nothing drives as a stop settles any run.
+  def next_state(state, result, {:call, module, :stop_undriven, [tid]}),
+    do: next_state(state, result, {:call, module, :interrupt, [tid]})
+
   def next_state(state, _result, {:call, _, :restart, []}) do
     threads =
       Map.new(state.threads, fn {tid, thread} ->
@@ -438,8 +491,18 @@ defmodule HalC2.OrchestrationPropTest do
   def next_state(state, result, {:call, module, :restart_stuck, [_tid]}),
     do: next_state(state, result, {:call, module, :restart, []})
 
+  # The turn had ended; the checkpoint captured at boot completes it.
+  def next_state(state, result, {:call, module, :restart_capturing, [tid]}) do
+    state = update(state, tid, &end_running(&1, :completed))
+    next_state(state, result, {:call, module, :restart, []})
+  end
+
   # The session goes and the next message starts it again; no run changes.
   def next_state(state, _result, {:call, _, :release, [_tid]}), do: state
+
+  # The thread's next turn runs on the instance; the turn in progress finishes where it is.
+  def next_state(state, _result, {:call, _, :switch, [tid, instance]}),
+    do: update(state, tid, &%{&1 | instance: instance})
 
   # Resume at the reset: armed for the limit stop that is the thread's latest run.
   def next_state(state, _result, {:call, _, :recover, [tid]}) do
@@ -467,7 +530,7 @@ defmodule HalC2.OrchestrationPropTest do
   end
 
   def next_state(state, _result, {:call, _, :resume, [tid]}) do
-    case refusal(state, tid, :queue) do
+    case refusal(state, tid, :resume) do
       nil ->
         update(state, tid, fn thread ->
           thread
@@ -511,7 +574,7 @@ defmodule HalC2.OrchestrationPropTest do
   end
 
   def next_state(state, _result, {:call, _, :reorder, [tid, msg, before]}) do
-    case refusal(state, tid, :queue) do
+    case refusal(state, tid, :queue) || reorder_refusal(state, tid, msg, before) do
       nil ->
         update(state, tid, fn thread ->
           if msg in thread.queue do
@@ -605,6 +668,9 @@ defmodule HalC2.OrchestrationPropTest do
       thread when command == :interrupt ->
         if running(thread), do: nil, else: {:error, "no running turn"}
 
+      %{status: :archived} when command == :resume ->
+        {:error, "Thread #{tid} is not active."}
+
       _ ->
         nil
     end
@@ -634,6 +700,17 @@ defmodule HalC2.OrchestrationPropTest do
     end
   end
 
+  # The agent's queued result is not the user's to move, nor to move a message ahead of.
+  defp reorder_refusal(state, tid, msg, before) do
+    thread = state.threads[tid]
+
+    cond do
+      agents_own(state, tid, msg) -> {:error, :agents_own}
+      before in thread.queue and thread.messages[before].notice -> {:error, :ahead_of_result}
+      true -> nil
+    end
+  end
+
   defp expected_reply(state, :create, [tid]),
     do: if(state.threads[tid], do: {:error, "Thread #{tid} already exists."}, else: :ok)
 
@@ -649,6 +726,8 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp expected_reply(state, :rename, [tid, _]), do: refusal(state, tid, :rename) || :ok
 
+  defp expected_reply(_state, :switch, _args), do: :ok
+
   defp expected_reply(state, fun, [tid])
        when fun in [:archive, :unarchive, :delete, :interrupt],
        do: refusal(state, tid, fun) || :ok
@@ -659,8 +738,12 @@ defmodule HalC2.OrchestrationPropTest do
   defp expected_reply(state, :edit, [tid, msg, _]),
     do: refusal(state, tid, :queue) || agents_own(state, tid, msg) || :ok
 
-  defp expected_reply(state, fun, [tid | _]) when fun in [:resume, :cancel, :reorder],
-    do: refusal(state, tid, :queue) || :ok
+  defp expected_reply(state, :resume, [tid]), do: refusal(state, tid, :resume) || :ok
+
+  defp expected_reply(state, :cancel, [tid | _]), do: refusal(state, tid, :queue) || :ok
+
+  defp expected_reply(state, :reorder, [tid, msg, before]),
+    do: refusal(state, tid, :queue) || reorder_refusal(state, tid, msg, before) || :ok
 
   defp expected_reply(_state, :promote, [_tid, _msg, :archived]),
     do: {:error, :archived_meanwhile}
@@ -694,7 +777,10 @@ defmodule HalC2.OrchestrationPropTest do
     do: message =~ ~r/^Queued run \S+ is not queued\.$/
 
   defp reply_matches?({:error, :agents_own}, {:error, message}),
-    do: message =~ ~r/^Queued run \S+ is the agent's own message/
+    do: message =~ ~r/^Automatic completion deliveries cannot be/
+
+  defp reply_matches?({:error, :ahead_of_result}, {:error, message}),
+    do: message == "Queued messages cannot be reordered ahead of automatic completion delivery."
 
   defp reply_matches?({:error, :archived_meanwhile}, {:error, message}),
     do: message =~ ~r/not queued again: the thread was archived\.$/
@@ -739,6 +825,10 @@ defmodule HalC2.OrchestrationPropTest do
       Enum.find(thread.runs, &(&1.msg == msg)).instance == run.instance
   end
 
+  # The running turn is interrupted for `msg`, which it names (`steeredByRunId`).
+  defp steered_by(thread, msg),
+    do: set_runs(thread, &if(&1.status == :running, do: Map.put(&1, :by, msg), else: &1))
+
   defp end_running(thread, status),
     do: set_runs(thread, &if(&1.status == :running, do: %{&1 | status: status}, else: &1))
 
@@ -757,6 +847,14 @@ defmodule HalC2.OrchestrationPropTest do
     with :live <- thread.status,
          nil <- running(thread),
          next when next != nil <- Enum.find(thread.queue, &(not MapSet.member?(held, &1))) do
+      # The MC's own message runs on the thread's instance as it starts, which a switch
+      # since it was queued may have changed; anything else takes the thread over.
+      thread =
+        if thread.messages[next].notice,
+          do:
+            set_runs(thread, &if(&1.msg == next, do: %{&1 | instance: thread.instance}, else: &1)),
+          else: thread
+
       %{thread | queue: List.delete(thread.queue, next)}
       |> Map.put(:instance, Enum.find(thread.runs, &(&1.msg == next)).instance)
       |> put_in([:messages, next, :shown], true)
@@ -846,9 +944,18 @@ defmodule HalC2.OrchestrationPropTest do
     active = running(thread)
     text = if mode == :limit, do: "usage limit #{msg}", else: "wait #{msg}"
     message = %{text: text, run: msg, shown: false, notice: mode == :notice}
-    run = %{msg: msg, status: :queued, held: false, instance: instance}
+    # The MC's own message names no instance: it is on the thread's.
+    instance = if mode == :notice, do: thread.instance, else: instance
+    # A message the user queues while the queue is held is held with it; a restart, or
+    # the agent's own result (`:notice`), is not.
+    held = mode in [:queue, :limit] and held_queue?(thread)
+    run = %{msg: msg, status: :queued, held: held, instance: instance}
 
     cond do
+      active == nil and held ->
+        %{thread | runs: thread.runs ++ [run], queue: enqueue(thread, msg, mode)}
+        |> put_in([:messages, msg], message)
+
       active == nil ->
         %{thread | runs: thread.runs ++ [run], instance: instance}
         |> put_in([:messages, msg], %{message | shown: true})
@@ -862,15 +969,34 @@ defmodule HalC2.OrchestrationPropTest do
         |> start_next()
 
       mode == :restart ->
-        %{thread | runs: thread.runs ++ [run], queue: [msg | thread.queue]}
+        %{thread | runs: thread.runs ++ [run], queue: enqueue(thread, msg, mode)}
         |> put_in([:messages, msg], message)
+        |> steered_by(msg)
         |> end_running(:interrupted)
         |> start_next()
 
       true ->
-        %{thread | runs: thread.runs ++ [run], queue: thread.queue ++ [msg]}
+        %{thread | runs: thread.runs ++ [run], queue: enqueue(thread, msg, mode)}
         |> put_in([:messages, msg], message)
     end
+  end
+
+  defp held_queue?(thread),
+    do: Enum.any?(thread.runs, &(&1.held and &1.msg in thread.queue))
+
+  # Where a newly queued message goes: the agent's results first, in the order they came,
+  # then the user's messages. A restart, or the agent's result, goes ahead of the user's.
+  defp enqueue(thread, msg, mode) do
+    {results, users} = Enum.split_with(thread.queue, &thread.messages[&1].notice)
+    if mode in [:restart, :notice], do: results ++ [msg] ++ users, else: thread.queue ++ [msg]
+  end
+
+  # A message put first in the queue goes behind the agent's queued results.
+  defp first(thread, msg) do
+    {results, users} =
+      Enum.split_with(List.delete(thread.queue, msg), &thread.messages[&1].notice)
+
+    results ++ [msg | users]
   end
 
   # A queued message steers the running turn, or goes first in the queue when no turn
@@ -881,10 +1007,11 @@ defmodule HalC2.OrchestrationPropTest do
 
     case running(thread) do
       nil ->
-        %{thread | queue: [msg | List.delete(thread.queue, msg)]}
+        %{thread | queue: first(thread, msg)}
 
       %{instance: other} when other != instance or how == :refused ->
-        %{thread | queue: [msg | List.delete(thread.queue, msg)]}
+        %{thread | queue: first(thread, msg)}
+        |> steered_by(msg)
         |> end_running(:interrupted)
         |> start_next()
 
@@ -910,7 +1037,7 @@ defmodule HalC2.OrchestrationPropTest do
       runs:
         for(
           run <- thread.runs,
-          do: {run.msg, Atom.to_string(run.status), run.held, run.instance}
+          do: {run.msg, Atom.to_string(run.status), run.held, run.instance, Map.get(run, :by)}
         ),
       queue: thread.queue,
       foreign: [],
@@ -1033,6 +1160,11 @@ defmodule HalC2.OrchestrationPropTest do
               "source" => %{"kind" => "delegated_task", "taskIds" => ["task-#{msg}"]},
               "outcome" => "completed",
               "summary" => "#{msg} finished"
+            },
+            "delegatedCompletion" => %{
+              "parentRunId" => nil,
+              "taskIds" => ["task-#{msg}"],
+              "acceptedAt" => nil
             }
           }
 
@@ -1043,18 +1175,27 @@ defmodule HalC2.OrchestrationPropTest do
           %{"dispatchMode" => %{"type" => "start_immediately"}, "deliveryIntent" => "restart"}
       end
 
-    Map.merge(
-      %{
-        "type" => "message.dispatch",
-        "threadId" => tid,
-        "messageId" => msg,
-        "text" => if(mode == :limit, do: "usage limit #{msg}", else: "wait #{msg}"),
-        "attachments" => [],
-        "modelSelection" => %{"instanceId" => instance, "model" => "gpt-5.4"}
-      },
-      extra
-    )
+    %{
+      "type" => "message.dispatch",
+      "threadId" => tid,
+      "messageId" => msg,
+      "text" => if(mode == :limit, do: "usage limit #{msg}", else: "wait #{msg}"),
+      "attachments" => [],
+      "modelSelection" => %{"instanceId" => instance, "model" => "gpt-5.4"}
+    }
+    # `Delegation` names no model: the result goes to the thread's.
+    |> then(&if(mode == :notice, do: Map.delete(&1, "modelSelection"), else: &1))
+    |> Map.merge(extra)
   end
+
+  # As `hal_c2_thread_configure` switches the agent's own thread.
+  def switch(tid, instance),
+    do:
+      thread_command(%{
+        "type" => "provider.switch",
+        "threadId" => tid,
+        "modelSelection" => %{"instanceId" => instance, "model" => "gpt-5.4"}
+      })
 
   def rename(tid, title),
     do: thread_command(%{"type" => "thread.metadata.update", "threadId" => tid, "title" => title})
@@ -1348,6 +1489,69 @@ defmodule HalC2.OrchestrationPropTest do
     reply({:ok, %{}}, ending)
   end
 
+  # Only the provider's stream ends (the app-server exits), the runtime living on.
+  def end_stream(tid) do
+    ending = active_runs(tid)
+    kill_stream(tid)
+    reply({:ok, %{}}, ending)
+  end
+
+  # The same while the MC is shutting down: the run is left as it is for the next boot
+  # (checked before the boot), which settles it as interrupted.
+  def end_stream_leaving(tid) do
+    [run_id] = active_runs(tid)
+    HalC2.Orchestration.Recovery.leaving(true)
+    kill_stream(tid)
+    still_active? = run_id in active_runs(tid)
+    result = restart()
+
+    if still_active?,
+      do: result,
+      else: reply({:error, "the run was ended while the MC was stopping"}, [])
+  end
+
+  # A run whose runtime was killed as the MC stopped, which nothing drives any more
+  # (the MC kept running), is stopped by the user: it settles as interrupted and keeps
+  # a checkpoint of what it changed.
+  def stop_undriven(tid) do
+    [run_id] = active_runs(tid)
+    ending = [run_id]
+    HalC2.Orchestration.Recovery.leaving(true)
+    [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, tid)
+    gone = Process.monitor(pid)
+    Process.exit(pid, :kill)
+
+    receive do
+      {:DOWN, ^gone, :process, _, _} -> :ok
+    end
+
+    _ = :sys.get_state(HalC2.Orchestration.TurnWatch)
+    HalC2.Orchestration.Recovery.leaving(false)
+
+    result = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => tid})
+    {outcome, projection} = reply(result, ending)
+    run = current(tid) |> StreamState.get("run") |> Map.fetch!(run_id)
+    checkpoint = StreamState.get(current(tid), "checkpoint")[run["checkpointId"]]
+
+    if run["status"] == "interrupted" and checkpoint == nil,
+      do: {{:error, "the stopped run kept no checkpoint"}, projection},
+      else: {outcome, projection}
+  end
+
+  defp kill_stream(tid) do
+    [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, tid)
+    conn = :sys.get_state(pid).conn
+    gone = Process.monitor(conn)
+    Process.exit(conn, :kill)
+
+    receive do
+      {:DOWN, ^gone, :process, _, _} -> :ok
+    end
+
+    _ = :sys.get_state(pid)
+    :ok
+  end
+
   # The MC stops with turns running and boots again: provider runtimes go without
   # ending their turns, the streams come back from the store, and boot recovery
   # settles what was running.
@@ -1385,6 +1589,46 @@ defmodule HalC2.OrchestrationPropTest do
 
     _ = :sys.get_state(HalC2.Orchestration.TurnWatch)
     restart()
+  end
+
+  # The MC stops after `tid`'s provider turn ended, while its checkpoint was still to
+  # be captured: the effect's record is left running. Boot recovery leaves the run to
+  # the effect sweep, which captures the checkpoint and completes it.
+  def restart_capturing(tid) do
+    [run_id] = active_runs(tid)
+    run = current(tid) |> StreamState.get("run") |> Map.fetch!(run_id)
+    at = HalC2.Orchestration.Entities.now()
+    id = "effect:checkpoint-#{System.unique_integer([:positive])}"
+
+    HalC2.Store.put_meta(
+      "effect:#{tid}:#{id}",
+      JSON.encode!(%{
+        "id" => id,
+        "threadId" => tid,
+        "type" => "checkpoint.capture",
+        "lane" => "checkpoint",
+        "status" => "running",
+        "attempts" => 1,
+        "delays" => [],
+        "error" => nil,
+        "args" => %{
+          "cwd" => Process.get(:work),
+          "scopeId" => tid,
+          "runOrdinal" => run["ordinal"],
+          "runId" => run_id,
+          "rootNodeId" => run["rootNodeId"],
+          "at" => at
+        },
+        "createdAt" => at,
+        "updatedAt" => at
+      })
+    )
+
+    {:ok, _} = restart()
+    # Effects start after recovery, as at boot, and sweep the record.
+    HalC2.Prop.restart_service(HalC2.Orchestration.Effects)
+    :ok = HalC2.Orchestration.Effects.drain(tid)
+    reply({:ok, %{}}, [run_id])
   end
 
   defp thread_command(command), do: reply(Orchestration.dispatch(command), [])
@@ -1563,7 +1807,7 @@ defmodule HalC2.OrchestrationPropTest do
               run <- runs,
               do:
                 {run["userMessageId"], run["status"], run["queueHeld"] == true,
-                 run["providerInstanceId"]}
+                 run["providerInstanceId"], by_id[run["steeredByRunId"]]["userMessageId"]}
             ),
           queue: queue,
           foreign: foreign(state, runs),

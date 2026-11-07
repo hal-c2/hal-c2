@@ -24,14 +24,15 @@ defmodule HalC2.Cluster do
   reaches members, `HalC2.Cluster.Epmd` stands in for EPMD and
   `HalC2.Cluster.Discovery` finds where members are.
 
-  A machine joins with an invite from any member (`invite/1`, `join/1`): it trades the
-  link for an `access:write` session, presents its fingerprint, and the member admits
-  it (`admit/1`). The invite names the inviter's fingerprint, so the joining machine
-  trusts that certificate alone and nothing else the answer says. Members exchange
-  the list whenever they connect, whenever it changes and every half minute, entry by
-  entry by timestamp (`merge/3`), so the new machine learns the other members from the
-  inviter over the cluster connection, a machine that joins one member is admitted by
-  all of them, and a removal (`remove/1`) reaches members that were away. The half
+  A machine joins with an invite from any member (`invite/1`, `join/1`). It first
+  authenticates the inviter's signed challenge against the invite's fingerprint, then
+  sends its certificate and entry encrypted to that key. The inviter checks the joiner's
+  signature and consumes the cluster-only invite proof before admission. The secret and
+  the joiner's description never cross the network in readable form.
+  Members exchange the list whenever they connect, whenever it changes and every half
+  minute, entry by entry by timestamp (`merge/3`), so the new machine learns the other
+  members from the inviter over the cluster connection, a machine that joins one member
+  is admitted by all of them, and a removal (`remove/1`) reaches members that were away. The half
   minute is for a member whose cluster process restarted: its connections outlived it,
   so no member connects anew to tell it what it missed. Timestamps come from
   `stamp/1`, so they order changes even when the members' clocks disagree.
@@ -44,7 +45,7 @@ defmodule HalC2.Cluster do
 
   use GenServer
 
-  alias HalC2.Cluster.Epmd
+  alias HalC2.Cluster.{Epmd, Join}
 
   @table __MODULE__
   @dist_port 4370
@@ -76,11 +77,42 @@ defmodule HalC2.Cluster do
 
   @doc """
   This machine and the other members: `%{"clustered" => true, "id", "mc", "addresses",
-  "version", "members" => [%{"id", "label", "addresses", "version", "connected"}]}`, or
-  `%{"clustered" => false, "reason"}` when the MC was not started for clustering. A
-  member's `version` is the one it last reported, nil before it reported any.
+  "version", "members" => [%{"id", "label", "addresses", "version", "connected", "off",
+  "offline"}]}`, or `%{"clustered" => false, "reason"}` when the MC was not started for
+  clustering. A member's `version` is the one it last reported, nil before it reported
+  any; `off` when it is switched off (`switch/2`), `offline` when discovery stopped
+  trying it often (`HalC2.Cluster.Discovery`).
   """
-  def status, do: GenServer.call(__MODULE__, :status)
+  def status do
+    case GenServer.call(__MODULE__, :status) do
+      %{"members" => members} = status ->
+        offline = HalC2.Cluster.Discovery.offline()
+        members = for m <- members, do: Map.put(m, "offline", m["id"] in offline)
+        %{status | "members" => members}
+
+      status ->
+        status
+    end
+  end
+
+  @doc """
+  Asks discovery to try the member `id` again at once and often, after it stopped
+  (`HalC2.Cluster.Discovery.reconnect/1`). Refused for a machine switched off, which is
+  switched on instead, or one that is not a member.
+  """
+  def reconnect(id) do
+    case status() do
+      %{"clustered" => false, "reason" => reason} ->
+        {:error, reason}
+
+      %{"members" => members} ->
+        case Enum.find(members, &(&1["id"] == id)) do
+          nil -> {:error, :not_a_member}
+          %{"off" => true} -> {:error, :switched_off}
+          _member -> HalC2.Cluster.Discovery.reconnect(id)
+        end
+    end
+  end
 
   @doc """
   Takes up the version this MC moved to in place (`HalC2.Upgrade`) and tells the
@@ -92,11 +124,40 @@ defmodule HalC2.Cluster do
   def peers, do: GenServer.call(__MODULE__, :peers)
 
   @doc """
-  Admits the machine described by `entry` (`id`, `fingerprint`, `label`, `addresses`), as
-  asked through `POST /api/cluster/members`. Returns this MC's id, cluster port and
-  member list for the new machine.
+  Admits a trusted, already authenticated `entry`. Remote joins go through
+  `join_admit/1`; the old bearer route is not an admission path.
   """
   def admit(entry), do: GenServer.call(__MODULE__, {:admit, entry})
+
+  @doc """
+  Answers the first, non-identifying message of a cluster join. Anyone on the network
+  can send one, so the invite is checked and the handshake worked here, in the caller,
+  before this MC's process is asked for anything.
+  """
+  def join_challenge(request) do
+    with :ok <- live_invite(request),
+         {:ok, {cert, key}} <- GenServer.call(__MODULE__, :identity) do
+      Join.answer(request, cert, key)
+    end
+  end
+
+  @doc """
+  Authenticates and consumes an invite, then admits its encrypted join entry. As with
+  `join_challenge/1`, only an opened request for a live invite reaches this MC's process.
+  """
+  def join_admit(request) do
+    with :ok <- live_invite(request),
+         {:ok, {cert, key}} <- GenServer.call(__MODULE__, :identity),
+         {:ok, package} <- Join.open(request, cert, key) do
+      GenServer.call(__MODULE__, {:join_admit, package})
+    end
+  end
+
+  defp live_invite(%{"invite" => id}) when is_binary(id) do
+    if HalC2.Auth.cluster_invite?(id), do: :ok, else: {:error, :link_invalid}
+  end
+
+  defp live_invite(_request), do: {:error, :invalid_link}
 
   @doc "Tells the connected members this MC's shared settings, which changed here."
   def share_settings, do: GenServer.cast(__MODULE__, :share_settings)
@@ -105,16 +166,37 @@ defmodule HalC2.Cluster do
   def remove(id), do: GenServer.call(__MODULE__, {:remove, id})
 
   @doc """
+  Whether `id` was a member and was removed (`remove/1`), as this MC's member table has
+  it: not one that is only switched off, which can come back. False while this MC's
+  cluster is off, which knows no member.
+  """
+  def removed?(id) when is_binary(id) do
+    Process.whereis(__MODULE__) != nil and GenServer.call(__MODULE__, {:removed?, id}) == true
+  end
+
+  @doc """
+  Switches the member `id` off (`on` false) or back on. Off, it is kept in the table
+  and listed in `status/0` but treated as removed everywhere: unpinned, disconnected,
+  its threads gone from the sidebar. Every member applies it, as with `remove/1`:
+  one MC alone could not stay apart from a member the others connect it to. On, it
+  is admitted again from what was kept, and discovery looks for it at once.
+  """
+  def switch(id, on), do: GenServer.call(__MODULE__, {:switch, id, on})
+
+  @doc """
   Joins the cluster of the machine an invite (`invite/1`) is from. A pairing link that
   names no fingerprint is refused whatever it grants: nothing in it says whose
   certificate to trust. Waits up to 15 s to connect and returns `status/0`.
   """
   def join(link) do
     with {:ok, entry} <- GenServer.call(__MODULE__, :entry),
-         {:ok, base, token, pin} <- parse_link(link),
-         {:ok, access} <- exchange(base, token, entry["label"]),
+         {:ok, base, invite, token, pin} <- parse_link(link),
+         {:ok, challenge, private} <- Join.challenge(invite),
+         {:ok, answer} <- ask_challenge(base, challenge),
+         {:ok, {cert, key}} <- GenServer.call(__MODULE__, :identity),
+         {:ok, admission} <- Join.seal(challenge, answer, token, pin, entry, cert, key, private),
          {:ok, %{"id" => inviter, "port" => port, "members" => members}}
-         when is_binary(inviter) and is_map(members) <- ask_admission(base, access, entry),
+         when is_binary(inviter) and is_map(members) <- ask_admission(base, admission),
          {:ok, members} <- trusted(members, inviter, pin) do
       :ok = :net_kernel.monitor_nodes(true)
       address = "#{URI.parse(base).host}:#{port}"
@@ -131,24 +213,20 @@ defmodule HalC2.Cluster do
   end
 
   @doc """
-  A one-time pairing link that grants `access:write` and names this MC's fingerprint
-  (in the fragment, which is never sent anywhere), for another machine to `join/1`
-  with within five minutes: `%{"link", "expiresAt", "localOnly"}`. It points at the
-  address `HalC2.Web.address/1` picks for `input` (`"baseUrl"`, `"tailscale"`, else
-  where the MC listens), and `localOnly` says no other machine can reach the link.
+  A cluster-only one-time invite that names this MC's fingerprint in the fragment, good
+  for another machine to `join/1` with within five minutes. Its address comes from
+  `HalC2.Web.address/1`, so LAN, Tailscale and explicit `baseUrl` invites all use the
+  same authenticated, encrypted join protocol.
   """
   def invite(input \\ %{}) do
     with {:ok, %{"address" => base, "localOnly" => local_only}} <- HalC2.Web.address(input),
-         {:ok, %{"credential" => token, "expiresAt" => expires}} <-
-           HalC2.Auth.create_pairing_link(%{
-             "scopes" => ["access:write"],
-             "label" => "Cluster invite"
-           }) do
+         {:ok, %{"id" => id, "credential" => token, "expiresAt" => expires}} <-
+           HalC2.Auth.create_cluster_invite() do
       fingerprint = GenServer.call(__MODULE__, :fingerprint)
 
       {:ok,
        %{
-         "link" => "#{base}/?token=#{token}#fingerprint=#{fingerprint}",
+         "link" => "#{base}/?token=#{token}&invite=#{id}#fingerprint=#{fingerprint}",
          "expiresAt" => expires,
          "localOnly" => local_only
        }}
@@ -170,6 +248,9 @@ defmodule HalC2.Cluster do
 
   def describe(:cannot_remove_self), do: "A machine cannot remove itself from its cluster."
   def describe(:not_a_member), do: "That machine is not a member of this cluster."
+  def describe(:cannot_switch_off_self), do: "A machine cannot switch itself off."
+  def describe(:not_switched_off), do: "That machine is not switched off."
+  def describe(:switched_off), do: "That machine is switched off. Switch it on first."
   def describe(:invalid_member), do: "The joining machine sent an invalid description."
 
   def describe(:other_version),
@@ -200,7 +281,7 @@ defmodule HalC2.Cluster do
   def describe(reason), do: to_string(reason)
 
   # Reasons that crossed the wire as strings.
-  @reasons ~w(not_booted_for_clustering link_lacks_access link_invalid invalid_link
+  @reasons ~w(cannot_switch_off_self not_switched_off switched_off not_booted_for_clustering link_lacks_access link_invalid invalid_link
     cannot_remove_self not_a_member invalid_member wrong_machine not_an_invite
     other_version)a
   defp describe_string(reason) do
@@ -269,11 +350,12 @@ defmodule HalC2.Cluster do
 
     Map.merge(newer, %{
       "admittedAt" => max(ours["admittedAt"], theirs["admittedAt"]),
-      "removedAt" => max_time(ours["removedAt"], theirs["removedAt"])
+      "removedAt" => max_time(ours["removedAt"], theirs["removedAt"]),
+      "offAt" => max_time(ours["offAt"], theirs["offAt"])
     })
   end
 
-  defp ties(entry), do: Map.drop(entry, ["admittedAt", "removedAt"])
+  defp ties(entry), do: Map.drop(entry, ["admittedAt", "removedAt", "offAt"])
 
   defp max_time(nil, b), do: b
   defp max_time(a, nil), do: a
@@ -282,9 +364,10 @@ defmodule HalC2.Cluster do
   defp sanitize(%{"fingerprint" => fp, "admittedAt" => admitted, "updatedAt" => updated} = entry)
        when is_binary(fp) and is_integer(admitted) and is_integer(updated) do
     removed = entry["removedAt"]
+    off = entry["offAt"]
     addresses = entry["addresses"]
 
-    if is_integer(removed) or is_nil(removed) do
+    if (is_integer(removed) or is_nil(removed)) and (is_integer(off) or is_nil(off)) do
       %{
         "fingerprint" => fp,
         "label" => if(is_binary(entry["label"]), do: entry["label"]),
@@ -296,6 +379,7 @@ defmodule HalC2.Cluster do
         "version" => if(is_binary(entry["version"]), do: entry["version"]),
         "admittedAt" => admitted,
         "removedAt" => removed,
+        "offAt" => off,
         "updatedAt" => updated
       }
     end
@@ -311,7 +395,7 @@ defmodule HalC2.Cluster do
   def stamp(members) do
     seen =
       for {_id, entry} <- members,
-          time <- [entry["admittedAt"], entry["removedAt"], entry["updatedAt"]],
+          time <- [entry["admittedAt"], entry["removedAt"], entry["offAt"], entry["updatedAt"]],
           is_integer(time),
           reduce: 0,
           do: (latest -> max(latest, time))
@@ -324,6 +408,15 @@ defmodule HalC2.Cluster do
     do: removed == nil or admitted > removed
 
   def member?(_entry), do: false
+
+  @doc """
+  Whether a member table entry is switched off (`switch/2`): its last removal is the
+  switch-off `offAt` records, so a later `remove/1` removes it for good.
+  """
+  def off?(%{"offAt" => off, "removedAt" => off} = entry) when is_integer(off),
+    do: not member?(entry)
+
+  def off?(_entry), do: false
 
   @doc false
   # The distribution handshake's `verify_fun` (see `ssl_dist_conf/1`): a certificate
@@ -387,13 +480,14 @@ defmodule HalC2.Cluster do
     connected = state.transport.connected()
 
     members =
-      for {id, entry} <- state.members, id != state.id, member?(entry) do
+      for {id, entry} <- state.members, id != state.id, member?(entry) or off?(entry) do
         %{
           "id" => id,
           "label" => entry["label"] || id,
           "addresses" => entry["addresses"] || [],
           "version" => entry["version"],
-          "connected" => mc_name(id) in connected
+          "connected" => member?(entry) and mc_name(id) in connected,
+          "off" => off?(entry)
         }
       end
 
@@ -441,29 +535,25 @@ defmodule HalC2.Cluster do
       }}, state}
   end
 
-  def handle_call({:admit, entry}, _from, state) do
-    with %{"id" => id, "fingerprint" => fp} when is_binary(id) and is_binary(fp) <- entry,
-         true <- id != state.id and Regex.match?(~r/^[0-9a-z][0-9a-z-]{0,62}$/, id),
-         true <- Regex.match?(@fingerprint, fp) do
-      now = stamp(state.members)
+  def handle_call(:identity, _from, state), do: {:reply, {:ok, identity(state.dir)}, state}
 
-      admitted = %{
-        "fingerprint" => fp,
-        "label" => entry["label"],
-        "addresses" => entry["addresses"],
-        "version" => entry["version"],
-        "admittedAt" => now,
-        "removedAt" => nil,
-        "updatedAt" => now
-      }
-
-      state = merge_in(state, %{id => admitted})
-
-      {:reply,
-       {:ok, %{"id" => state.id, "port" => Epmd.listen_port(), "members" => state.members}},
-       state}
+  def handle_call({:join_admit, package}, _from, state) do
+    with :ok <- validate_entry(state, package.entry),
+         :ok <-
+           HalC2.Auth.consume_cluster_invite(package.invite, package.proof, package.proof_message),
+         {:ok, answer, state} <- put_admission(state, package.entry) do
+      {:reply, {:ok, answer}, state}
     else
-      _ -> {:reply, {:error, :invalid_member}, state}
+      error -> {:reply, error, state}
+    end
+  end
+
+  def handle_call({:admit, entry}, _from, state) do
+    with :ok <- validate_entry(state, entry),
+         {:ok, answer, state} <- put_admission(state, entry) do
+      {:reply, {:ok, answer}, state}
+    else
+      error -> {:reply, error, state}
     end
   end
 
@@ -481,6 +571,9 @@ defmodule HalC2.Cluster do
     {:reply, :ok, merge_in(state, members)}
   end
 
+  def handle_call({:removed?, id}, _from, state),
+    do: {:reply, gone?(state.members[id]), state}
+
   def handle_call({:remove, id}, _from, state) do
     entry = state.members[id]
 
@@ -488,13 +581,42 @@ defmodule HalC2.Cluster do
       id == state.id ->
         {:reply, {:error, :cannot_remove_self}, state}
 
-      not member?(entry) ->
+      not member?(entry) and not off?(entry) ->
         {:reply, {:error, :not_a_member}, state}
 
       true ->
         now = stamp(state.members)
-        removed = %{entry | "removedAt" => now, "updatedAt" => now}
+        removed = Map.merge(entry, %{"removedAt" => now, "updatedAt" => now})
         {:reply, :ok, merge_in(state, %{id => removed})}
+    end
+  end
+
+  def handle_call({:switch, id, on}, _from, state) do
+    entry = state.members[id]
+    now = stamp(state.members)
+
+    cond do
+      id == state.id ->
+        {:reply, {:error, :cannot_switch_off_self}, state}
+
+      not member?(entry) and not off?(entry) ->
+        {:reply, {:error, :not_a_member}, state}
+
+      on and off?(entry) ->
+        admitted = Map.merge(entry, %{"admittedAt" => now, "updatedAt" => now})
+        state = merge_in(state, %{id => admitted})
+        HalC2.Cluster.Discovery.poll()
+        {:reply, :ok, state}
+
+      on ->
+        {:reply, {:error, :not_switched_off}, state}
+
+      member?(entry) ->
+        off = Map.merge(entry, %{"removedAt" => now, "offAt" => now, "updatedAt" => now})
+        {:reply, :ok, merge_in(state, %{id => off})}
+
+      true ->
+        {:reply, {:error, :not_a_member}, state}
     end
   end
 
@@ -569,7 +691,7 @@ defmodule HalC2.Cluster do
         Application.get_env(:hal_c2, :cluster_gossip, @gossip_every)
       )
 
-  # A cluster process updated in place (`HalC2.Hot`) does not run `init/1` again. One
+  # A cluster process updated in place by a release upgrade does not run `init/1` again. One
   # from before the port outlived it keeps it in the table, where `Epmd` no longer
   # looks (distribution names it only once), and has no gossip going.
   @impl true
@@ -584,6 +706,35 @@ defmodule HalC2.Cluster do
 
   # --- members -----------------------------------------------------------------
 
+  defp validate_entry(state, entry) do
+    with %{"id" => id, "fingerprint" => fp} when is_binary(id) and is_binary(fp) <- entry,
+         true <- id != state.id and Regex.match?(~r/^[0-9a-z][0-9a-z-]{0,62}$/, id),
+         true <- Regex.match?(@fingerprint, fp) do
+      :ok
+    else
+      _ -> {:error, :invalid_member}
+    end
+  end
+
+  defp put_admission(state, entry) do
+    %{"id" => id, "fingerprint" => fp} = entry
+    now = stamp(state.members)
+
+    admitted = %{
+      "fingerprint" => fp,
+      "label" => entry["label"],
+      "addresses" => entry["addresses"],
+      "version" => entry["version"],
+      "admittedAt" => now,
+      "removedAt" => nil,
+      "updatedAt" => now
+    }
+
+    state = merge_in(state, %{id => admitted})
+    answer = %{"id" => state.id, "port" => Epmd.listen_port(), "members" => state.members}
+    {:ok, answer, state}
+  end
+
   defp transport,
     do: Application.get_env(:hal_c2, :cluster_transport, HalC2.Cluster.Distribution)
 
@@ -593,11 +744,21 @@ defmodule HalC2.Cluster do
     if merged == state.members do
       state
     else
+      before = state.members
       state = commit(%{state | members: merged})
       for mc <- state.transport.connected(), do: state.transport.send(mc, {:merge, merged})
+
+      # A member removed for good does not come back to finish a move to it.
+      for {id, entry} <- merged,
+          gone?(entry),
+          not gone?(before[id]),
+          do: HalC2.ThreadMove.removed(id)
+
       state
     end
   end
+
+  defp gone?(entry), do: entry != nil and not member?(entry) and not off?(entry)
 
   # Saves the table, pins its members and cuts off anyone no longer one.
   defp commit(state) do
@@ -698,6 +859,14 @@ defmodule HalC2.Cluster do
 
   # --- identity and distribution -----------------------------------------------
 
+  # Only the two fixed identity names below the MC-owned cluster directory are read.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp identity(dir) do
+    cert = Path.join(dir, "mc.pem") |> File.read!() |> X509.Certificate.from_pem!()
+    key = Path.join(dir, "mc.key") |> File.read!() |> X509.PrivateKey.from_pem!()
+    {cert, key}
+  end
+
   # This machine's certificate, made on first start. One from the CA-based cluster
   # (issued by a CA, named after an address) is replaced along with that cluster's files.
   defp identity!(dir, id) do
@@ -746,21 +915,22 @@ defmodule HalC2.Cluster do
     uri = URI.parse(String.trim(link))
     params = Map.merge(URI.decode_query(uri.fragment || ""), URI.decode_query(uri.query || ""))
 
-    case params do
-      %{"token" => token} when uri.scheme in ["http", "https"] and is_binary(uri.host) ->
-        case params["fingerprint"] do
-          # Any other pairing link: it names no certificate to trust.
-          nil ->
-            {:error, :not_an_invite}
+    with %{"token" => token, "fingerprint" => pin} <- params,
+         true <- uri.scheme in ["http", "https"] and is_binary(uri.host),
+         true <- Regex.match?(@fingerprint, pin) do
+      case params["invite"] do
+        nil ->
+          {:error, :link_lacks_access}
 
-          pin ->
-            if Regex.match?(@fingerprint, pin),
-              do: {:ok, "#{uri.scheme}://#{uri.authority}", token, pin},
-              else: {:error, :invalid_link}
-        end
+        invite when is_binary(invite) and invite != "" ->
+          {:ok, "#{uri.scheme}://#{uri.authority}", invite, token, pin}
 
-      _ ->
-        {:error, :invalid_link}
+        _ ->
+          {:error, :invalid_link}
+      end
+    else
+      params when not is_map_key(params, "fingerprint") -> {:error, :not_an_invite}
+      _ -> {:error, :invalid_link}
     end
   end
 
@@ -774,26 +944,17 @@ defmodule HalC2.Cluster do
     end
   end
 
-  defp exchange(base, token, label) do
-    form =
-      URI.encode_query(%{
-        "grant_type" => "urn:ietf:params:oauth:grant-type:token-exchange",
-        "subject_token_type" => "urn:hal-c2:params:oauth:token-type:environment-bootstrap",
-        "subject_token" => token,
-        "scope" => "access:write",
-        "client_label" => "Cluster: #{label}"
-      })
-
-    case request(base <> "/oauth/token", nil, "application/x-www-form-urlencoded", form) do
-      {:ok, 200, %{"access_token" => access}} -> {:ok, access}
-      {:ok, 400, %{"error" => "invalid_scope"}} -> {:error, :link_lacks_access}
-      {:ok, _, _} -> {:error, :link_invalid}
+  defp ask_challenge(base, challenge) do
+    case request(base <> "/api/cluster/join/challenge", challenge) do
+      {:ok, 200, answer} -> {:ok, answer}
+      {:ok, 409, %{"reason" => reason}} -> {:error, {:refused, reason}}
+      {:ok, status, _} -> {:error, {:refused, status}}
       error -> error
     end
   end
 
-  defp ask_admission(base, access, entry) do
-    case request(base <> "/api/cluster/members", access, "application/json", JSON.encode!(entry)) do
+  defp ask_admission(base, admission) do
+    case request(base <> "/api/cluster/join/admit", admission) do
       {:ok, 200, answer} ->
         {:ok, answer}
 
@@ -812,18 +973,19 @@ defmodule HalC2.Cluster do
     end
   end
 
-  defp request(url, bearer, type, body) do
-    headers = if bearer, do: [{~c"authorization", ~c"Bearer #{bearer}"}], else: []
-
+  defp request(url, body) do
     ssl = [
       verify: :verify_peer,
       cacerts: :public_key.cacerts_get(),
       customize_hostname_check: [match_fun: :public_key.pkix_verify_hostname_match_fun(:https)]
     ]
 
+    request =
+      {to_charlist(url), [], ~c"application/json", JSON.encode!(body)}
+
     case :httpc.request(
            :post,
-           {to_charlist(url), headers, to_charlist(type), body},
+           request,
            [timeout: 15_000, ssl: ssl],
            body_format: :binary
          ) do

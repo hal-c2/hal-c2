@@ -1,4 +1,18 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24588
+#   https://github.com/pingdotgg/t3code/pull/19666
+#   https://github.com/pingdotgg/t3code/pull/23647
+#   https://github.com/pingdotgg/t3code/pull/20272
+#   https://github.com/pingdotgg/t3code/pull/15630
+#   https://github.com/pingdotgg/t3code/pull/20059
+#   https://github.com/pingdotgg/t3code/pull/15753
+#   https://github.com/pingdotgg/t3code/pull/18832
+#   https://github.com/pingdotgg/t3code/pull/20445
+#   https://github.com/pingdotgg/t3code/pull/17158
+#   https://github.com/pingdotgg/t3code/pull/19372
+#   https://github.com/pingdotgg/t3code/pull/19432
+#   https://github.com/pingdotgg/t3code/pull/15468
+#   https://github.com/pingdotgg/t3code/pull/25239
 #   docs/user/remote-access.md (Pair over a LAN or private network, Tailscale HTTPS, Hosted web app,
 #     Desktop-managed SSH)
 #   docs/internals/remote.md
@@ -77,7 +91,7 @@ Feature: How clients reach an environment
       | requires-configuration | says the address needs HTTPS set up first                 |
       | unknown                | offers it without a promise                               |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Turning off network access keeps Tailscale HTTPS working
     Given network access is on
     And the environment is also reachable through Tailscale HTTPS
@@ -85,7 +99,7 @@ Feature: How clients reach an environment
     Then devices on the local network disconnect
     And Tailscale HTTPS keeps working
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Tailscale HTTPS without Tailscale explains itself
     Given Tailscale is not running on this machine
     When the user turns on Tailscale HTTPS
@@ -127,11 +141,20 @@ Feature: How clients reach an environment
     When an operator asks for a Tailscale pairing link on the taken port
     Then the refusal tells them to run "hal-c2-service pair"
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: The first SSH launch installs the server on the host
     Given a host that has never run HAL-C2
     When the user adds it as an SSH environment
     Then the server is downloaded to the host's runtime folder before it starts
+
+  # Upstream #15630: discovery listed both a configured alias and its known-hosts address.
+  @backlog @desktop
+  Scenario: A configured SSH host is suggested by its alias only
+    Given the SSH config names "build" with the address "10.0.0.5" and a user and port of its own
+    And "10.0.0.5" is in the known hosts
+    When the user looks for an SSH host to add
+    Then "build" is suggested and "10.0.0.5" is not
+    And searching for "10.0.0.5" finds "build"
 
   # Legacy: apps/desktop/src/main.ts (resolveDesktopSshCliRunner: the release the app is on, no Node on the host)
   @backlog @desktop
@@ -149,12 +172,22 @@ Feature: How clients reach an environment
     When the app reconnects to the environment
     Then the host runs version "1.4.0" of the server
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: An SSH launch reuses a server already running on the host
     Given the host already runs a HAL-C2 server for its own user on its loopback address
     When the user adds it as an SSH environment
     Then the desktop app connects to that server
     And no second server is started on the host
+
+  # Upstream #23647: after an update, an older server reused on the host could not read the
+  # pairing the desktop made, and the environment showed reconnecting for good.
+  @backlog @desktop
+  Scenario: An SSH host running an older server it cannot pair with says why
+    Given the host already runs a HAL-C2 server older than the desktop app
+    And that server cannot accept the pairing the desktop app makes
+    When the user connects to the SSH environment
+    Then the connection is blocked, naming both versions and asking to restart or update the host's server
+    And it does not keep reconnecting
 
   @backlog @desktop
   Scenario: An SSH launch ignores a runtime record whose server has gone
@@ -162,19 +195,28 @@ Feature: How clients reach an environment
     When the user adds it as an SSH environment
     Then a new server is started on the host
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: An SSH launch keeps the port the host used last when it is free
     Given the host's server last ran on a port that is free
     When the user connects to the SSH environment
     Then the server starts on that port
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: An SSH launch takes the next free port when the usual one is taken
     Given the port the host's server used last is taken by another program
     When the user connects to the SSH environment
     Then the server starts on the next free port after it
 
+  # Upstream #19372: an SSH launch no longer picks a port another server answers on
   @backlog @desktop
+  Scenario: An SSH launch skips a port another server already answers on
+    Given another server on the host listens on every address on the port the launch would pick
+    And the host lets a loopback test bind succeed on that port anyway
+    When the user connects to the SSH environment
+    Then the server starts on a port nothing answers on
+    And the host shows no firewall prompt for the check
+
+  @backlog @desktop @priority-low
   Scenario: An SSH launch fails when no port is free in the range it tries
     Given every port in the range the launch tries is taken
     When the user connects to the SSH environment
@@ -186,35 +228,51 @@ Feature: How clients reach an environment
     When the user connects to the SSH environment
     Then the connection fails saying the server did not become ready
 
-  @backlog @desktop
+  # Upstream #19666: retrying an interrupted SSH pairing started a second setup on a slow host.
+  @backlog @desktop @priority-low
+  Scenario: Retrying an interrupted SSH connection finishes the setup already under way
+    Given the user's first connection to an SSH host was interrupted while the host was still setting up
+    When the user connects to the SSH environment again
+    Then the desktop app waits for that setup and pairs with it once
+    And no second setup is started on the host
+
+  @backlog @desktop @priority-high
   Scenario: An SSH host that asks for a password
     Given an SSH host that needs a password
     When the desktop app connects
     Then the user is asked for the password
     And the password is not kept after the connection
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The password prompt names the host and the user it is for
     Given an SSH host that needs a password for "olafur@build-box"
     When the desktop app connects
     Then the prompt names "olafur@build-box"
     And it says the password is used for this connection attempt only and is not saved
 
+  # Upstream #20272: the SSH prompt asks for a password or verification code.
   @backlog @desktop
+  Scenario: An SSH host that asks for a verification code gets one
+    Given an SSH host that asks for a verification code after the password
+    When the user connects to it
+    Then the prompt asks for a password or verification code
+    And the code the user enters is sent to the host
+
+  @backlog @desktop @priority-low
   Scenario: A password prompt that was not answered in time expires
     Given the password prompt for an SSH host is showing a countdown
     When the time runs out
     Then the prompt says it expired and cannot be answered
     And the user is told to try connecting again
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Cancelling the password prompt stops the connection without retrying
     Given an SSH host that needs a password
     When the user cancels the password prompt
     Then the connection stops
     And it is not retried until the user connects again
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Several hosts asking for a password are asked one at a time
     Given two SSH hosts that each need a password
     When the desktop app connects to both
@@ -222,7 +280,7 @@ Feature: How clients reach an environment
     And the second host's prompt follows once the first is answered or cancelled
 
   # Legacy: apps/desktop/src/ssh/DesktopSshPasswordPrompts.ts
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The password prompt comes to the front of a minimized window
     Given an SSH host that needs a password
     And the app's window is minimized
@@ -230,13 +288,22 @@ Feature: How clients reach an environment
     Then the window is restored and brought forward
     And the user is asked for the password
 
-  @backlog @desktop
+  # Upstream #25239: a prompt that came while pairing, signing in or on any page outside the
+  # main window's views was dropped.
+  @backlog @desktop @priority-low
+  Scenario: A password prompt that comes before the app is ready is still shown
+    Given an SSH host that needs a password
+    And the user is still pairing or signing in
+    When the desktop app connects to that host
+    Then the user is asked for the password once the app can show it
+
+  @backlog @desktop @priority-low
   Scenario: Closing the window cancels a waiting password prompt
     Given the user is being asked for an SSH host's password
     When the user closes the app's window
     Then the connection fails saying the authentication was cancelled because the window closed
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A password cannot be asked for when there is no window
     Given an SSH host that needs a password
     And the app has no window open
@@ -255,14 +322,51 @@ Feature: How clients reach an environment
     Then the connection fails and can be retried
     And the one-time pairing credential is not consumed
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: A saved SSH environment reconnects without pairing again
     Given a saved SSH environment
     When the desktop app restarts
     Then it reconnects over SSH without a new pairing link
 
-  # Legacy: apps/desktop/src/ipc/methods/sshEnvironment.ts (DesktopSshEnvironmentRequestError)
+  # Upstream #20445: one host session per desktop and SSH route, instead of a new one per connect.
+  @backlog @desktop @priority-high
+  Scenario: Reconnecting to an SSH environment reuses its session on the host
+    Given a saved SSH environment the desktop app has connected to once
+    When the desktop app reconnects or restarts
+    Then it signs in with the session it saved for that route
+    And the host has no new session for this desktop
+
+  # Upstream #20445: a session that can no longer be used is replaced by pairing once.
   @backlog @desktop
+  Scenario Outline: An SSH environment whose saved session cannot be used pairs once more
+    Given a saved SSH environment whose session on the host <state>
+    When the desktop app reconnects
+    Then it pairs once and saves the new session
+    And the next reconnect reuses that session
+
+    Examples:
+      | state                      |
+      | was revoked                |
+      | has expired                |
+      | lacks a scope clients need |
+
+  # Upstream #20445: a failed session check is retried and never pairs.
+  @backlog @desktop
+  Scenario: A failed check of a saved SSH session is retried without pairing
+    Given a saved SSH environment whose host cannot answer the session check
+    When the desktop app reconnects
+    Then the connection attempt fails and is tried again
+    And the desktop app does not pair
+
+  # Upstream #20445: a saved SSH route that now reaches another environment is refused.
+  @backlog @desktop @priority-high
+  Scenario: A saved SSH route that reaches a different environment is refused
+    Given a saved SSH environment whose host now runs a different environment
+    When the desktop app reconnects
+    Then the connection fails before pairing or sending the saved session
+
+  # Legacy: apps/desktop/src/ipc/methods/sshEnvironment.ts (DesktopSshEnvironmentRequestError)
+  @backlog @desktop @priority-low
   Scenario Outline: A request to an SSH host's server that is refused says what the server answered
     Given a saved SSH environment whose server answers with <status>
     When the desktop app asks it to <operation>
@@ -292,14 +396,54 @@ Feature: How clients reach an environment
     When the user removes it
     Then that server keeps running
 
+  # Upstream #19432: reconnecting keeps the remote server and its agents running
+  @backlog @desktop @priority-high
+  Scenario: Reconnecting reuses the server the app launched
+    Given an SSH environment whose server the desktop app launched
+    And that server recorded itself in the host's runtime record
+    When the laptop wakes from sleep and the app reconnects
+    Then the app connects to the same server
+    And the agents running on the host keep running
+
+  # Upstream #19432: reconnecting keeps the remote server and its agents running
   @backlog @desktop
+  Scenario: Reconnecting waits for a busy server instead of replacing it
+    Given an SSH environment whose launched server is slow to answer but still running
+    When the app reconnects
+    Then it waits as long as it would for a cold start
+    And if the server still does not answer the reconnect fails and can be retried
+    And the server keeps running
+
+  # Upstream #19432: reconnecting keeps the remote server and its agents running
+  @backlog @desktop
+  Scenario: Replacing a dead forward closes only the local tunnel
+    Given an SSH environment whose local forward died while the network was down
+    When the app reconnects
+    Then a new forward is opened to the same server
+    And the server on the host is not stopped
+
+  # Upstream #18832: an SSH tunnel keeps working while ssh keeps printing diagnostics.
+  @backlog @mc @priority-low
+  Scenario: A talkative SSH connection keeps forwarding
+    Given the user's SSH configuration makes ssh print verbose diagnostics
+    When an SSH environment's tunnel is ready and ssh keeps printing
+    Then the environment stays reachable through the tunnel
+
+  # Upstream #19432: reconnecting keeps the remote server and its agents running
+  @backlog @desktop @priority-high
+  Scenario: A crashed launched server is replaced on reconnect
+    Given an SSH environment whose launched server crashed and was not reaped
+    When the app reconnects
+    Then a new server is started on the host
+
+  @backlog @desktop @priority-low
   Scenario: A failed SSH reconnect after an update can be retried
     Given an SSH environment fails to reconnect after an app update
     When the user retries the launch
     Then the environment reconnects
 
   # Legacy: packages/ssh/src/tunnel.ts (handleSshAuthFailure: promptCount >= 2)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A wrong SSH password is asked for once more and then the connection fails
     Given an SSH host that needs a password
     When the user enters a wrong password
@@ -318,7 +462,7 @@ Feature: How clients reach an environment
     And the host is left without that server install
 
   # Legacy: packages/ssh/src/tunnel.ts (the runner script: executable does not run on this host)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A downloaded server that cannot run on the host is not kept for later launches
     Given a host that has never run HAL-C2
     And the downloaded server cannot run on that host
@@ -327,14 +471,15 @@ Feature: How clients reach an environment
     And the next connection downloads and checks it again
 
   # Legacy: packages/ssh/src/tunnel.ts (hal_c2_fetch: curl or wget)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A host that can download neither with curl nor with wget says what it needs
     Given a host that has never run HAL-C2 and has neither curl nor wget
     When the user adds it as an SSH environment
     Then the connection fails saying the host needs curl or wget to download the server
 
+  # Upstream #20059: two installs racing on a mkdir that wrongly succeeds no longer unpack the server twice.
   # Legacy: packages/ssh/src/tunnel.ts (REMOTE_RUNNER_SCRIPT install lock)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Two launches onto one host install the server once
     Given a host that has never run HAL-C2
     And two environments reach that host as the same user
@@ -351,7 +496,7 @@ Feature: How clients reach an environment
     And the failed start leaves nothing running or recorded on the host
 
   # Legacy: packages/ssh/src/tunnel.ts (REMOTE_LAUNCH_SCRIPT: wrote nothing)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A server that fails to start without writing anything says so
     Given the server started on the host exits before writing any output
     When the user connects to the SSH environment
@@ -368,7 +513,7 @@ Feature: How clients reach an environment
     And removing the environment leaves that server running
 
   # Legacy: packages/ssh/src/tunnel.ts (REMOTE_STOP_SCRIPT: did not stop within 2 seconds)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A launched server that does not stop in time is reported and still owned
     Given an SSH environment whose server the desktop app launched
     And that server does not stop when asked
@@ -385,7 +530,7 @@ Feature: How clients reach an environment
     And a new one is made to the same server
 
   # Legacy: packages/ssh/src/tunnel.ts (withTargetLock: reconnect cannot reuse a server while stop is pending)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Reconnecting waits for a stop that is still in progress
     Given the user is removing an SSH environment whose server the app launched
     When the same host is connected again before the server has stopped
@@ -393,7 +538,7 @@ Feature: How clients reach an environment
     And it does not reuse the server that is stopping
 
   # Legacy: packages/ssh/src/tunnel.ts (targetConnectionKey, remoteStateKey)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: The same host as another user or on another port is a separate environment
     Given an SSH environment to "devbox" as "ada" on port 22
     When the user adds another SSH environment to "devbox" with <difference>
@@ -406,14 +551,14 @@ Feature: How clients reach an environment
       | the port 2222      |
 
   # Legacy: packages/ssh/src/command.ts (redactSshErrorOutput, MAX_SSH_ERROR_OUTPUT_LENGTH)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: An SSH failure never shows the credentials in the host's output
     Given the host's output on a failed launch includes a pairing token or a bearer token
     When the connection fails
     Then the failure message shows the output with those secrets hidden
 
   # Legacy: packages/ssh/src/command.ts (MAX_SSH_ERROR_OUTPUT_LENGTH = 4000)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A very long SSH failure is cut short and says so
     Given the host's output on a failed launch is far longer than a dialog can show
     When the connection fails
@@ -421,7 +566,7 @@ Feature: How clients reach an environment
     And it says the rest was left out
 
   # Legacy: packages/ssh/src/command.ts (ConnectTimeout=10), tunnel.ts (SSH_READY_TIMEOUT_MS)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A host that does not answer is given up on instead of waited on
     Given the SSH host does not answer at all
     When the user connects to the SSH environment
@@ -429,7 +574,7 @@ Feature: How clients reach an environment
     And the user can try again
 
   # Legacy: packages/ssh/src/tunnel.ts (startSshTunnel: tunnel process exit surfaces ssh message)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A tunnel that ssh closes at once shows ssh's own message
     Given the host accepts the launch but ssh refuses to forward the port
     When the user connects to the SSH environment
@@ -444,7 +589,7 @@ Feature: How clients reach an environment
     And a user or port typed in the dialog wins over the config's
 
   # Legacy: packages/ssh/src/command.ts (resolveSshTarget fallback)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A host name the SSH config cannot resolve is connected to as typed
     Given the user's SSH config does not name "build.example"
     When the user adds an SSH environment to "build.example"
@@ -457,3 +602,75 @@ Feature: How clients reach an environment
     Given the environment offers only a plain HTTP address
     When the hosted app tries to connect
     Then the browser blocks the connection
+
+  # Upstream #15468: clients learn an environment's LAN and tailnet addresses
+  @backlog @mc @shared
+  Scenario: A client learns an environment's other addresses once connected
+    Given an MC bound to a LAN address and a tailnet address
+    And a client paired over only one of them
+    When the client's session is ready
+    Then the MC reports the addresses it is bound to
+    And the client saves the new ones as routes marked as found automatically, ranked by kind
+    And a loopback-only MC reports none
+
+  # Upstream #15468: clients learn an environment's LAN and tailnet addresses
+  @backlog @shared
+  Scenario: A learned route follows the host's address
+    Given a client holds a route it learned from the MC
+    When the MC stops reporting that address and reports a new one
+    Then the old learned route is dropped and the new one saved
+    And a route the user paired is never rewritten
+    And the live session is not replaced by the change, only by the better-route check
+
+  # Upstream #24588: a dead LAN address held up every other route for the whole check. The
+  # same change made upstream's background service listen on private networks by default; the
+  # MC keeps listening on loopback unless told otherwise.
+  @backlog @shared
+  Scenario: A dead route does not hold up the others
+    Given a client holds a learned LAN route that never answers and a tailnet route
+    When the client checks its routes
+    Then the tailnet route is tried after a head start of half a second, not after the LAN check gives up
+    And a route that answered late is tried before routes that are still silent
+
+  # Upstream #20445: a credential paired over HTTPS, loopback or the tailnet is not copied to a
+  # learned plain-HTTP address on the local network or the internet; tailnet addresses are still learned.
+  @backlog @shared @priority-high
+  Scenario Outline: A credential paired over a secure route is not lent to a plain HTTP address off the tailnet
+    Given a client paired with the environment over <paired>
+    When the client learns a plain HTTP address on <learned>
+    Then the learned address <outcome>
+
+    Examples:
+      | paired                          | learned           | outcome                           |
+      | HTTPS                           | the local network | is not saved with that credential |
+      | loopback                        | the internet      | is not saved with that credential |
+      | the tailnet                     | the local network | is not saved with that credential |
+      | plain HTTP on the local network | the local network | is saved with that credential     |
+      | HTTPS                           | the tailnet       | is saved with that credential     |
+
+  # Upstream #15753: a Proton VPN address in 100.64/10 is no longer advertised as Tailscale in pairing links
+  # Upstream #17158: Cloudflare and other VPN addresses no longer show as Tailscale
+  @backlog @mc @priority-low
+  Scenario Outline: An address in the shared 100.64/10 range is a tailnet address only on Tailscale's own interface
+    Given the MC's machine has the address "100.96.0.1" on <interface>
+    When the MC reports the addresses it is bound to
+    Then "100.96.0.1" is reported as <kind>
+
+    Examples:
+      | interface                                | kind                    |
+      | Tailscale's network interface            | a tailnet address       |
+      | a Cloudflare WARP or other VPN interface | a local network address |
+
+  # Upstream #17158: Cloudflare and other VPN addresses no longer show as Tailscale
+  @backlog @shared @priority-low
+  Scenario Outline: A route is labelled Tailscale only with proof
+    Given a client has a route to "<host>"
+    And <proof>
+    When the user looks at the environment's routes
+    Then the route is labelled "<label>"
+
+    Examples:
+      | host                | proof                                                   | label     |
+      | 100.101.102.103     | the MC reported that address as a tailnet address       | Tailscale |
+      | devbox.tail1.ts.net | the host is a Tailscale name                            | Tailscale |
+      | 100.96.0.1          | the MC reported that address as a local network address | VPN       |

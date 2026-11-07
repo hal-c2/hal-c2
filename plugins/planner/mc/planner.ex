@@ -1848,6 +1848,7 @@ defmodule HalC2Plugins.Planner do
     tied? =
       &(relinked != [] and Enum.any?([&1["parent"] | &1["after"]], fn id -> id in relinked end))
 
+    items = Sync.linked_at(items, relinked)
     left = Sync.left(before, items)
 
     state = %{state | items: items, pushing: forget(state.pushing, gone)}

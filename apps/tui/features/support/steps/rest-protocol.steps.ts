@@ -106,7 +106,7 @@ step("it is blocked before opening a socket", (ctx: ProtocolWorld) => {
 
 step("it says which side to update", (ctx: ProtocolWorld) => {
   expect((ctx.refusal as Error).message).toBe(
-    "This client is not supported by this server. Update your app or use a compatible release to connect to workstation.",
+    "workstation runs a newer HAL-C2 protocol than this client. Update HAL-C2 on this device to connect.",
   );
 });
 

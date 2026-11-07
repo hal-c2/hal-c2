@@ -46,7 +46,7 @@ Rectangle {
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.topMargin: 4
-        anchors.rightMargin: 6
+        anchors.rightMargin: Theme.space.sm
         height: 26
         spacing: 2
 

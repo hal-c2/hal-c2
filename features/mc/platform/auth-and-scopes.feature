@@ -1,4 +1,19 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24554
+#   https://github.com/pingdotgg/t3code/pull/19616
+#   https://github.com/pingdotgg/t3code/pull/17370
+#   https://github.com/pingdotgg/t3code/pull/18509
+#   https://github.com/pingdotgg/t3code/pull/14128
+#   https://github.com/pingdotgg/t3code/pull/17772
+#   https://github.com/pingdotgg/t3code/pull/20432
+#   https://github.com/pingdotgg/t3code/pull/10298
+#   https://github.com/pingdotgg/t3code/pull/9791
+#   https://github.com/pingdotgg/t3code/pull/9790
+#   https://github.com/pingdotgg/t3code/pull/9789
+#   https://github.com/pingdotgg/t3code/pull/9788
+#   https://github.com/pingdotgg/t3code/pull/9787
+#   https://github.com/pingdotgg/t3code/pull/9786
+#   https://github.com/pingdotgg/t3code/pull/9785
 #   apps/server-ex/lib/hal_c2/auth.ex (pairing tokens, sessions, tickets, desktop bootstrap, access stream)
 #   apps/server-ex/lib/hal_c2/web/router.ex (/oauth/token, /api/auth/*, with_scope)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (authAccess shape, current session)
@@ -47,20 +62,20 @@ Feature: MC authentication and scopes
     When a client exchanges it
     Then the exchange fails as an invalid grant
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Pairing tokens can be typed by hand
     When the MC mints a pairing token
     Then it is 12 characters long
     And it uses no characters that look alike, such as 0 and O or 1 and I
 
-  @backlog @mc
+  @mc
   Scenario: Two clients racing for one pairing token leave exactly one session
     Given a pairing token that has not been exchanged
     When two clients exchange it at the same moment
     Then exactly one of them receives a session
     And the other is refused as an invalid grant
 
-  @backlog @mc
+  @mc
   Scenario: A pairing link bound to a client key only pairs that client
     Given a pairing link minted for a client's DPoP key
     When a client that holds another key exchanges it
@@ -84,6 +99,17 @@ Feature: MC authentication and scopes
       | a command-line pairing token | orchestration:read, orchestration:operate, terminal:operate, review:write, relay:read |
       | the desktop bootstrap token  | the standard scopes plus access:read, access:write and relay:write                    |
       | a pairing link naming scopes | only the named scopes the MC knows                                                    |
+
+  # Upstream #20432 dropped the standard/administrative split: standard scopes already hold
+  # terminal:operate (a shell as the MC's user), from which every scope can be minted, so
+  # access and relay management join the default. Blocked on the maintainers deciding to
+  # follow it; if they do, the rows above and the scenarios that pair "with standard scopes"
+  # to show a refusal pair with an explicitly narrowed grant instead.
+  @backlog @blocked @mc
+  Scenario: An ordinary pairing grants access and relay management by default
+    When a client pairs with a command-line pairing token that names no scopes
+    Then its session carries access:read, access:write and relay:write besides the standard scopes
+    And a session paired before the change keeps the scopes it was granted
 
   @mc
   Scenario: The desktop bootstrap token can be exchanged repeatedly for a day
@@ -120,6 +146,37 @@ Feature: MC authentication and scopes
     When an administrator lists the authorized clients
     Then the MC's access token is not among them
 
+  # Upstream #24554: a socket ticket opened any ticket route, and a DPoP session's ticket
+  # worked for anyone holding the string.
+  @backlog @mc @priority-high
+  Scenario Outline: A socket ticket opens only the route it was bought for
+    Given a client bought a socket ticket for <route>
+    When it opens <other> with that ticket
+    Then the MC refuses the socket
+
+    Examples:
+      | route              | other              |
+      | the RPC socket     | a media stream     |
+      | media streams      | the RPC socket     |
+
+  @backlog @mc @priority-high
+  Scenario Outline: A DPoP session's RPC ticket needs a fresh proof from the session's key
+    Given a DPoP client bought an RPC socket ticket
+    When the socket is opened with <proof>
+    Then the MC <answer>
+
+    Examples:
+      | proof                                   | answer           |
+      | a fresh proof from the client's key     | opens the socket |
+      | no proof                                | refuses it       |
+      | a proof from another key                | refuses it       |
+      | a proof that was already used           | refuses it       |
+
+  @backlog @mc
+  Scenario: A ticket bought without naming a route still opens either
+    Given an older client bought a socket ticket without naming a route
+    Then it can open the RPC socket or a media stream with it
+
   @mc
   Scenario: A ticket request without a valid session is refused
     When a client asks for a socket ticket with an unknown bearer token
@@ -136,6 +193,27 @@ Feature: MC authentication and scopes
   Scenario: An expired session is refused
     Given a session that expired
     When the client asks for a socket ticket with it
+    Then the MC answers unauthorized
+
+  # Clients renew a session before it runs out, so a saved environment stays signed in.
+  @mc
+  Scenario: A session can be renewed without closing its sockets
+    Given a client whose session runs out in a day, with a socket open
+    When it renews its session
+    Then its session is valid for 30 days from now, with the same token
+    And administrators watching the access list see the new expiry
+    And the socket stays open
+
+  @mc
+  Scenario: Renewing never shortens a session
+    Given a client whose session runs out in a year
+    When it renews its session
+    Then its session still runs out in a year
+
+  @mc
+  Scenario: A session that expired cannot be renewed
+    Given a session that expired
+    When it renews its session
     Then the MC answers unauthorized
 
   @mc
@@ -242,7 +320,7 @@ Feature: MC authentication and scopes
     When a paired device opens a socket
     Then that client shows as connected with its last connection time
 
-  @backlog @mc
+  @mc
   Scenario: Paired clients are listed administrators first, then connected, then newest
     Given three paired clients, one of them an administrator
     And one of the others has an open socket
@@ -251,7 +329,7 @@ Feature: MC authentication and scopes
     And the connected client comes before the one that is not connected
     And clients that tie are listed newest first
 
-  @backlog @mc
+  @mc
   Scenario: A client with an open socket stays listed past its expiry
     Given a paired client whose session has expired
     And it still has a socket open
@@ -259,21 +337,21 @@ Feature: MC authentication and scopes
     Then the client is listed as connected
     And once its last socket closes it is no longer listed
 
-  @backlog @mc
+  @mc
   Scenario: The MC's own startup link is not listed with pairing links
     Given the MC minted a link for the app that started it
     And an administrator created a pairing link labelled "Tablet"
     When an administrator lists pairing links
     Then only the "Tablet" link is listed
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A client's surface and app version are recorded when it connects
     Given a paired client
     When it opens a socket reporting its surface and app version
     Then the authorized clients list shows that surface and version for it
     And a later connection that reports only a version keeps the surface it reported before
 
-  @backlog @mc
+  @mc
   Scenario Outline: A pairing link carries only scopes its creator holds
     Given an administrator creating a pairing link
     When it names <scopes>
@@ -282,15 +360,17 @@ Feature: MC authentication and scopes
     Examples:
       | scopes                                          | outcome                                    |
       | a scope that the administrator does not hold    | refuses the link as an invalid scope       |
+      | an unknown scope                                | refuses the link as an invalid scope       |
       | no scopes at all                                | refuses the link as an invalid scope       |
       | the same scope twice                            | refuses the link as an invalid scope       |
+      | the default scopes without holding all of them  | refuses the link as an invalid scope       |
 
-  @backlog @mc
+  @mc
   Scenario: Responses that carry credentials are never cached
     When a client exchanges a pairing token or asks for a socket ticket
     Then the answer is marked as not storable by browsers or proxies
 
-  @backlog @mc
+  @mc
   Scenario Outline: A call is refused when the session lacks the scope that matches what it changes
     Given a client whose session lacks <scope>
     When it <action>
@@ -298,8 +378,6 @@ Feature: MC authentication and scopes
 
     Examples:
       | scope                  | action                                         |
-      | relay:write            | installs the relay client                      |
-      | relay:read             | asks for the relay client's status             |
       | orchestration:operate  | reports the host's power state                 |
       | orchestration:read     | reports that the client is in the foreground   |
       | orchestration:operate  | submits a review on a pull request             |
@@ -308,23 +386,35 @@ Feature: MC authentication and scopes
       | orchestration:operate  | opens a preview                                |
       | orchestration:read     | lists previews                                 |
 
+  # The MC has no relay client to install or ask about yet, so nothing exercises these two scopes.
+  @backlog @mc
+  Scenario Outline: A relay call is refused when the session lacks the scope that matches what it changes
+    Given a client whose session lacks <scope>
+    When it <action>
+    Then the MC refuses saying <scope> is required
+
+    Examples:
+      | scope       | action                             |
+      | relay:write | installs the relay client          |
+      | relay:read  | asks for the relay client's status |
+
   @mc
   Scenario: A client's device type is read from its user agent
     When a phone, a tablet and a desktop browser each pair
     Then the MC records each as mobile, tablet and desktop
 
-  @backlog @mc
+  @mc
   Scenario: A client's own device description wins over its user agent
     When a client pairs presenting a device type, an operating system and a label
     Then the MC records what the client presented
     And only what it left out is read from the user agent
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: The address a client paired from is recorded without IPv6 wrapping
     When a client pairs from an IPv4 address that the system reports as an IPv4-mapped IPv6 address
     Then the authorized clients list shows the plain IPv4 address
 
-  @backlog @mc
+  @mc
   Scenario: A command-line tool is recorded as a bot
     When curl or wget exchanges a pairing token
     Then the MC records its device type as bot
@@ -336,6 +426,14 @@ Feature: MC authentication and scopes
     Given two MCs on one machine on different ports
     When a browser signs in to both
     Then each MC reads only the session cookie that it set
+
+  # hosted-web-app: upstream #18509 accepts a session cookie only from the server's own page.
+  # The MC's clients sign in with bearer credentials and no browser session exists to guard.
+  @dropped @mc
+  Scenario: A browser session cookie sent from another site's page is refused
+    Given a browser holds a session cookie for the MC
+    When a page from another origin sends a request with that cookie
+    Then the MC refuses the request as an invalid credential
 
   @mc
   Scenario: Listed pairing links never reveal their secret
@@ -383,6 +481,19 @@ Feature: MC authentication and scopes
     And it cannot reconnect with its old session
 
   @mc
+  Scenario Outline: A session that ends closes the sockets it has open
+    Given a paired client has an open socket
+    When <ending>
+    Then the client's socket is closed
+    And it cannot reconnect with its old session
+
+    Examples:
+      | ending                                                      |
+      | the client's session expires                                |
+      | the client's session is replaced by a new one               |
+      | an administrator revokes the client while its socket opens  |
+
+  @mc
   Scenario: A token exchange can narrow the scopes it asks for
     Given a pairing link with administrative scopes
     When a client exchanges it asking only for orchestration:read
@@ -402,21 +513,31 @@ Feature: MC authentication and scopes
     Then the MC accepts it
     And a token presented with an invalid proof is refused rather than treated as a bearer
 
-  @backlog @mc
+  # Upstream #19616: the host computed DPoP key thumbprints with its locale's sort order, so hosts
+  # in a Latvian, Lithuanian, Basque or Azerbaijani locale refused valid clients.
+  # Likely already implemented: apps/server-ex/lib/hal_c2/auth/dpop.ex (thumbprint/1 writes the members in a fixed order)
+  @backlog @mc @priority-high
+  Scenario: A client's key is recognised whatever the host's locale
+    Given the MC runs under a Latvian, Lithuanian, Basque or Azerbaijani locale
+    And a client that paired with a DPoP key
+    When it presents its access token with a proof
+    Then the MC accepts it
+
+  @mc
   Scenario: A session bound to a client key lasts one hour and is not a plain bearer
     Given a client that paired with a DPoP key
     Then its session expires after one hour, not thirty days
     And presenting that token as a plain bearer is refused
     And presenting a token that is not bound to a key under the DPoP scheme is refused
 
-  @backlog @mc
+  @mc
   Scenario: A DPoP proof works once
     Given a client that paired with a DPoP key
     And it presented its token with a proof that the MC accepted
     When the same proof is presented again
     Then the MC refuses it as a replay
 
-  @backlog @mc
+  @mc
   Scenario Outline: A DPoP proof that does not fit the request is refused for a reason
     Given a client that paired with a DPoP key
     When it presents a proof that <problem>
@@ -436,6 +557,19 @@ Feature: MC authentication and scopes
     When a browser presents it to a development MC
     Then the MC grants an administrative session
     And revoking it locally does not affect another worktree
+    When the development token is rotated
+    Then the previous development credential is refused
+    And the replacement development credential signs in
+    When the development token is removed
+    Then the previous development credential is refused
+
+  @mc
+  Scenario: A non-development MC removes a reusable development credential
+    Given a fixed development auth token is configured
+    When a browser presents it to a development MC
+    Then the MC grants an administrative session
+    When a non-development MC restarts on the same store with that token in its environment
+    Then the previous development credential is refused
 
   @mc
   Scenario: The desktop's new bootstrap session replaces its previous one
@@ -451,26 +585,32 @@ Feature: MC authentication and scopes
     Then it sees the same clients as Connections settings
     And it can revoke one of them
 
-  @backlog @mc
+  @mc
   Scenario: A pairing link from the command line can carry a lifetime, a label and a public address
     When an operator mints a pairing link with a lifetime of one hour, the label "Ana's phone" and the public address "https://mc.example.com"
     Then the printed link points at "https://mc.example.com" and carries a one-time token
     And the link expires after one hour
     And Connections settings lists the link as "Ana's phone"
 
-  @backlog @mc
+  # Upstream #14128: the readable output printed "DateTime.Utc(...)" for the expiry.
+  @mc
+  Scenario: A minted pairing link's readable output gives its expiry as an ISO 8601 time
+    When an operator mints a pairing link from the command line
+    Then the output says when the link expires as an ISO 8601 time such as "2026-09-28T00:56:46.668Z"
+
+  @mc
   Scenario: An operator can print a minted pairing link as JSON
     When an operator mints a pairing link from the command line and asks for JSON
     Then the output is only a JSON document with the link's id, label, token, scopes and expiry
 
-  @backlog @mc
+  @mc
   Scenario: A session token is issued from the command line for a headless client
     When an operator issues a session for the subject "ci" from the command line
     Then the MC prints a bearer token that signs in as a session for "ci"
     And the session has administrative scopes
     And the session is listed with the other clients and can be revoked
 
-  @backlog @mc
+  @mc
   Scenario Outline: A session issued from the command line is printed the way the operator asked
     When an operator issues a session from the command line asking for <form>
     Then the output is <result>
@@ -480,7 +620,7 @@ Feature: MC authentication and scopes
       | the token  | only the bearer token, so a script can capture it                              |
       | JSON       | only a JSON document with the session id, token, scopes, subject and expiry    |
 
-  @backlog @mc
+  @mc
   Scenario: Pairing links listed from the command line show their details but never their secret
     Given two pairing links are waiting to be used
     When an operator lists pairing links from the command line
@@ -488,7 +628,7 @@ Feature: MC authentication and scopes
     And no link shows its token
     But the desktop's own bootstrap link is not listed
 
-  @backlog @mc
+  @mc
   Scenario: Sessions listed from the command line show how each client is used
     Given a paired client that has never connected to the MC
     When an operator lists sessions from the command line
@@ -497,7 +637,7 @@ Feature: MC authentication and scopes
     And a session with no client label reads "unlabeled client"
     And bearer tokens are never shown
 
-  @backlog @mc
+  @mc
   Scenario Outline: Listing from the command line with nothing active says so
     Given there are no <things>
     When an operator lists <things> from the command line
@@ -508,7 +648,7 @@ Feature: MC authentication and scopes
       | pairing links | No active pairing credentials.   |
       | sessions      | No active sessions.              |
 
-  @backlog @mc
+  @mc
   Scenario Outline: Revoking from the command line says whether anything was revoked
     Given <state>
     When an operator revokes it by id from the command line
@@ -527,3 +667,62 @@ Feature: MC authentication and scopes
     When an operator mints a pairing link and lists sessions from the command line
     Then both commands work against the MC's stored access records
     And the minted link works once the MC starts
+
+  @mc
+  Scenario: A pairing link with limited scopes pairs with exactly those
+    Given a pairing link granting only some scopes
+    When a client exchanges it asking for those scopes
+    Then the session holds exactly those scopes
+    And a request the link cannot grant is refused before the link is used up
+
+  @backlog @mc @priority-high
+  Scenario Outline: Sensitive actions need their own scope
+    Given a session without the scope "<scope>"
+    When it <action>
+    Then the call is refused for the missing scope
+
+    Examples:
+      | scope                  | action                                                      |
+      | settings:write         | changes environment settings or keybindings                 |
+      | providers:manage       | configures, signs in, installs or updates a provider        |
+      | environment:maintain   | updates the server or sends it a process signal             |
+      | source-control:write   | clones, pushes, switches branch or writes to a pull request |
+      | filesystem:read        | browses, searches or previews workspace files               |
+      | filesystem:write       | edits a file or saves a plan                                |
+      | preview:operate        | controls a browser preview                                  |
+      | diagnostics:read       | reads traces, host processes, resource history or usage     |
+      | terminal:read          | observes a terminal's history and output                    |
+
+  @backlog @mc
+  Scenario: A terminal can be watched without being controlled
+    Given a session that may read terminals but not operate them
+    When it observes a terminal
+    Then it sees the history and live output, including a session that has exited
+    And it cannot send input, resize, clear, restart or close it
+
+  @backlog @mc @priority-high
+  Scenario: An older client keeps its connection across new scopes
+    Given a client that does not know a newly added scope
+    When it pairs or reads its permissions
+    Then scopes it does not know are left out of what it is told
+    And it stays connected, with single features denied rather than the connection
+
+  @backlog @mc @priority-high
+  Scenario Outline: An action needs its own narrower scope, not only orchestration
+    Given a session with the orchestration scopes but without "<scope>"
+    When it <action>
+    Then the call is refused for the missing scope
+
+    Examples:
+      | scope                | action                                                     |
+      | settings:write       | saves a project's scripts                                  |
+      | preview:operate      | clicks, types, navigates or uploads a file in a preview    |
+      | settings:write       | approves a full-access MCP client                          |
+      | source-control:write | approves a full-access MCP client                          |
+
+  @backlog @mc
+  Scenario: Only the viewer controlling a preview answers its file picker
+    Given two viewers watch a preview and one of them controls it
+    When the page opens a file picker
+    Then only the controlling viewer can answer it
+    And when control passes to the other viewer, the picker is offered to them

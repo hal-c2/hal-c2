@@ -66,8 +66,14 @@ add_executable(tst_Features
   ../src/MobileApp.h
   ../src/Maintenance.cpp
   ../src/Maintenance.h
+  ../src/MobileTerminal.cpp
+  ../src/MobileTerminal.h
   ../src/Pairing.cpp
   ../src/Pairing.h
+  ../src/Resume.cpp
+  ../src/Resume.h
+  ../src/TurnAgents.cpp
+  ../src/TurnAgents.h
   "${_harness}/FakeMc.cpp"
   "${_harness}/FakeMc.h"
   "${_harness}/FakeFiles.cpp"
@@ -97,7 +103,22 @@ add_test(NAME Features COMMAND tst_Features)
 set_tests_properties(Features PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
 # The screens' own decisions, against the desktop's fake HalC2.Shell. Qt's own
 # runner first: one on PATH can be Qt 5's, which exits 1 saying nothing.
-find_program(HAL_C2_QMLTESTRUNNER NAMES qmltestrunner6 qmltestrunner HINTS "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_BINS}")
+# NO_DEFAULT_PATH: with CMAKE_PREFIX_PATH=/usr (Arch) the prefix's bin/ would
+# come before the HINTS, and hold Qt 5's runner.
+# An older build dir may have cached Qt 5's runner: drop a cached path that is
+# not under Qt 6's bin/.
+if(HAL_C2_QMLTESTRUNNER)
+  set(QT6_BINDIR "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_BINS}")
+  cmake_path(IS_PREFIX QT6_BINDIR "${HAL_C2_QMLTESTRUNNER}" NORMALIZE _qmltest_in_qt6)
+  if(NOT _qmltest_in_qt6)
+    unset(HAL_C2_QMLTESTRUNNER CACHE)
+  endif()
+endif()
+find_program(HAL_C2_QMLTESTRUNNER NAMES qmltestrunner6 qmltestrunner
+  PATHS "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_BINS}" NO_DEFAULT_PATH)
+if(NOT HAL_C2_QMLTESTRUNNER)
+  find_program(HAL_C2_QMLTESTRUNNER NAMES qmltestrunner6 qmltestrunner)
+endif()
 if(HAL_C2_QMLTESTRUNNER)
   add_test(NAME Qml COMMAND "${HAL_C2_QMLTESTRUNNER}" -input "${CMAKE_CURRENT_SOURCE_DIR}/qml"
     -import "${_desktop}/tests/imports" -import "${_desktop}/qml" -import "${CMAKE_CURRENT_SOURCE_DIR}/../qml")

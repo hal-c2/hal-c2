@@ -985,7 +985,7 @@ defmodule HalC2.Plugins do
 
   def handle_info(_other, state), do: {:noreply, state}
 
-  # A host updated in place (`HalC2.Hot`) from before crashes were charged to the
+  # A host updated in place by a release upgrade from before crashes were charged to the
   # supervisor that reported them: its workers are the running supervisors'.
   @impl true
   def code_change(_old, state, _extra) do

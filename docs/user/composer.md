@@ -177,7 +177,15 @@ to a steer, or remove it.
 
 If the server restarts, saved queued messages keep their order and are held. Choose
 **Resume queue** above the composer on desktop, or in the queue sheet on mobile,
-to continue. You can edit, reorder, or remove held messages without starting them.
+to continue. You can edit, reorder, or remove held messages without starting them. A
+message you queue while the queue is held waits behind them.
+
+When a task the agent delegated finishes, its result waits at the front of the queue, so the
+agent hears it before your next message. It cannot be moved, edited, or sent as a steer.
+Removing it means the agent is not woken for that task; the task's result stays readable.
+
+A queued row shows its message's attachments; select one to open it full size, as in the
+timeline.
 
 The pencil on a queued row opens that message in the composer for editing. The original message
 stays in the queue until you save, and its row is highlighted while you edit. The message's
@@ -248,7 +256,10 @@ files show the copy that was attached to the message.
 ## Attached files
 
 Select a file chip in your draft or a sent message to preview it. Code and JSON use syntax
-highlighting; Markdown, HTML, CSV, and TSV offer rendered and raw views. Audio files have
+highlighting; Markdown, HTML, CSV, and TSV offer rendered and raw views. A Mermaid diagram, in a
+reply, a page or a rendered file, is drawn; one that can't be drawn shows its source and why, and
+the terminal client draws flowcharts, sequence, state and class diagrams in characters and shows
+other types as their source. Audio files have
 playback controls. Large text files show a limited preview; save the file to read it in full.
 
 On desktop, files open beside the conversation with the same controls as a workspace

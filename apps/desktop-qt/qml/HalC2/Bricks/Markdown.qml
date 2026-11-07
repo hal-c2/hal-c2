@@ -21,21 +21,43 @@ Item {
     // Files viewer makes of its checklists (`task:<n>` links) are kept, to be
     // ticked. A reply must never have them, or it could tick a box in a file.
     property bool trusted: false
-    property color textColor: Qt.alpha(Theme.palette.color("text", "#f5f5f5"), 0.8)
+    property color textColor: Theme.palette.color("inkSecondary", "#b8bdc7")
+    // The prose's font: a page's heading is larger, a ticked item struck out.
+    property int fontSize: Theme.type.prose.size
+    property int fontWeight: Font.Normal
+    property bool struck: false
+    // Off, prose is drawn as plain Text with no selection, menu or link
+    // handling, for a page's hundreds of idle blocks whose owner edits on a
+    // click and opens what linkAt finds.
+    property bool selectable: true
+    // The bulleted and numbered lists the text sits inside, for a page's list
+    // item drawn on its own: its marker is the one its depth takes.
+    property int bulletDepth: 0
+    property int numberDepth: 0
 
     // An assistant reply offers "Cite" on a selection (AssistantSelectionToolbar).
     property bool citable: false
+    // A reply offers "Run in terminal" on a code block that is one complete
+    // shell command (Md.shellCommand), once it is no longer streaming.
+    property bool runnable: false
     // The brick this one is a quote of, which cites for it.
     property Markdown host: null
     // The text with the selection, when one has it.
     property TextEdit selection: null
 
-    signal linkActivated(string link)
+    // A pull request link's hover card and where a click on it goes
+    // (Panel.linkPreviews, a PullRequestLinkPreviews); none shows the address.
+    property var linkPreviews: null
+
+    // external: the click held Shift as well, for the browser whatever the link.
+    signal linkActivated(string link, bool external)
     // The selection to quote in the composer: {text, start, end, prefix,
     // suffix}, an AssistantCitation's selector over the reply as drawn.
     signal cited(var selector)
+    // The user ran a code block's command (trimmed) from its Run.
+    signal runCommand(string command)
 
-    readonly property color headingColor: Theme.palette.color("text", "#f5f5f5")
+    readonly property color headingColor: Theme.palette.color("ink", "#f2f3f5")
     readonly property color mutedColor: Theme.palette.color("textMuted", "#818181")
     readonly property color borderColor: Theme.palette.color("border", "#191919")
     readonly property color selectionColor: Qt.alpha(Theme.palette.color("accent", "#346bf1"), 0.4)
@@ -49,9 +71,11 @@ Item {
         link: css(Theme.link),
         heading: css(headingColor),
         muted: css(mutedColor),
-        // Inline code is a muted pill with a border; rich text
-        // has neither border nor radius, so the fill carries the border.
-        codeFill: css(Qt.tint(Theme.palette.color("muted", "#111111"), Qt.alpha(borderColor, 0.7))),
+        // Inline code is inset tinted with a tenth of the ink: rich text
+        // has no border or radius, so the tint is all that marks it, and it
+        // still does in a monospace shell, where code and prose share a font.
+        codeFill: css(Qt.tint(Theme.palette.color("inset", "#0a0b0d"), Qt.alpha(headingColor, 0.1))),
+        codeSize: Math.min(codeSize, fontSize),
         mono: monoFamily,
         rule: css(borderColor)
     })
@@ -153,8 +177,42 @@ Item {
         }
     }
 
-    // Puts plain text on the clipboard.
+    // The link at (x, y) in the brick, or "".
+    function linkAt(x: real, y: real): string {
+        for (let i = 0; i < segments.count; ++i) {
+            const item = segmentAt(i);
+            if (!item || typeof item.linkAt !== "function")
+                continue;
+            const at = item.mapFromItem(root, x, y);
+            if (at.y >= 0 && at.y < item.height)
+                return item.linkAt(at.x, at.y);
+        }
+        return "";
+    }
+
+    // Whether (x, y) in the brick is on one of its own controls (a code
+    // block's copy or wrap, a table's expand or copy), for an owner that
+    // takes every other press itself, as a page's block does to edit it.
+    function controlAt(x: real, y: real): bool {
+        let item = root;
+        let at = Qt.point(x, y);
+        for (;;) {
+            const child = item.childAt(at.x, at.y);
+            if (child === null)
+                return false;
+            if (child instanceof ShellButton)
+                return child.enabled;
+            at = child.mapFromItem(item, at.x, at.y);
+            item = child;
+        }
+    }
+
+    // Puts plain text on the clipboard, through a TextEdit made on the first
+    // copy: most bricks never copy.
+    property TextEdit clipboard: null
     function copyText(value) {
+        if (clipboard === null)
+            clipboard = clipboardEdit.createObject(root);
         clipboard.text = value;
         clipboard.selectAll();
         clipboard.copy();
@@ -179,7 +237,7 @@ Item {
     function sync() {
         if (reading === null)
             reading = Md.state();
-        const next = Md.segments(text, { streaming: streaming, lineBreaks: lineBreaks, tasks: trusted }, reading);
+        const next = Md.segments(text, { streaming: streaming, lineBreaks: lineBreaks, tasks: trusted, ulDepth: bulletDepth, olDepth: numberDepth }, reading);
         const roles = ["html", "code", "language", "title", "open", "indent", "payload", "alert", "gap"];
         for (let i = Math.min(reading.stable, segmentModel.count); i < next.length; ++i) {
             const segment = next[i];
@@ -226,6 +284,8 @@ Item {
     onStreamingChanged: sync()
     onLineBreaksChanged: sync()
     onTrustedChanged: sync()
+    onBulletDepthChanged: sync()
+    onNumberDepthChanged: sync()
     Component.onCompleted: sync()
 
     ListModel {
@@ -241,10 +301,12 @@ Item {
         onTriggered: root.measure()
     }
 
-    TextEdit {
-        id: clipboard
-        visible: false
-        textFormat: TextEdit.PlainText
+    Component {
+        id: clipboardEdit
+        TextEdit {
+            visible: false
+            textFormat: TextEdit.PlainText
+        }
     }
 
     // A 24px icon button: ghost-muted, or
@@ -256,7 +318,7 @@ Item {
         implicitWidth: 24
         implicitHeight: 24
         iconSize: 12
-        radius: 6
+        radius: Theme.radiusSm
         tint: iconButton.checked ? root.headingColor : root.mutedColor
         focusPolicy: Qt.TabFocus
         Accessible.name: iconButton.label
@@ -273,11 +335,13 @@ Item {
     component RichText: TextEdit {
         id: richText
 
-        function follow(eventPoint) {
+        function follow(eventPoint, external) {
             const link = linkAt(eventPoint.position.x, eventPoint.position.y);
             if (link.length > 0 && !link.startsWith("task:"))
-                root.linkActivated(link);
+                root.linkActivated(link, external === true);
         }
+        // The link under the pointer is a pull request the panel can read: its card shows instead.
+        readonly property bool previewed: root.linkPreviews !== null && hoveredLink.length > 0 && root.linkPreviews.address === hoveredLink
 
         textFormat: TextEdit.RichText
         // TODO(ljos#159): Qt names a TextEdit by its text already; `ljos check` wants it said.
@@ -289,19 +353,32 @@ Item {
         selectionColor: root.selectionColor
         color: root.textColor
         font.family: root.uiFamily
-        font.pixelSize: Math.round(14 * Theme.fontScale)
+        font.pixelSize: root.fontSize
+        font.weight: root.fontWeight
+        font.strikeout: root.struck
         onLinkActivated: link => {
             if (link.startsWith("task:"))
-                root.linkActivated(link);
+                root.linkActivated(link, false);
+        }
+        onHoveredLinkChanged: {
+            if (root.linkPreviews !== null)
+                root.linkPreviews.hover(hoveredLink.startsWith("task:") ? "" : hoveredLink);
         }
         onSelectedTextChanged: root.track(this)
+        // Qt's own copy would carry the word joiners inline code is drawn with.
+        Keys.onPressed: event => {
+            if (event.matches(StandardKey.Copy) && selectedText.length > 0) {
+                root.copyText(Md.plain(selectedText));
+                event.accepted = true;
+            }
+        }
         function texts() {
             return [this];
         }
         // Shown off its own text: bound to the link instead, it could open
         // with the previous link's text.
         ToolTip.visible: ToolTip.text.length > 0
-        ToolTip.text: hoveredLink.length > 0 && !hoveredLink.startsWith("task:") ? qsTr("%1\n%2-click to open").arg(hoveredLink).arg(Qt.platform.os === "osx" ? "⌘" : "Ctrl") : ""
+        ToolTip.text: hoveredLink.length > 0 && !hoveredLink.startsWith("task:") && !previewed ? qsTr("%1\n%2-click to open").arg(hoveredLink).arg(Qt.platform.os === "osx" ? "⌘" : "Ctrl") : ""
         ToolTip.delay: 600
         TapHandler {
             acceptedButtons: Qt.LeftButton
@@ -309,6 +386,23 @@ Item {
             acceptedModifiers: Qt.ControlModifier
             // ljos-allow(focus-pointer-only): a read-only TextEdit has no keyboard path to its links yet, hal-c2#574
             onTapped: eventPoint => richText.follow(eventPoint)
+        }
+        // Shift as well opens it in the browser, a pull request included.
+        TapHandler {
+            acceptedButtons: Qt.LeftButton
+            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+            acceptedModifiers: Qt.ControlModifier | Qt.ShiftModifier
+            // ljos-allow(focus-pointer-only): a read-only TextEdit has no keyboard path to its links yet, hal-c2#574
+            onTapped: eventPoint => richText.follow(eventPoint, true)
+        }
+        HoverHandler {
+            id: linkPointer
+        }
+        PullRequestLinkCard {
+            previews: root.linkPreviews
+            shown: richText.previewed
+            address: richText.hoveredLink
+            pointer: linkPointer.point.position
         }
         // Offers what can be done with the link under a point.
         function linkMenu(position, scenePosition) {
@@ -347,6 +441,36 @@ Item {
         }
     }
 
+    // Prose that is only drawn (`selectable` off). The Text sits in an item
+    // the loader sizes, as a Text sized from outside lays itself out again.
+    component DrawnText: Item {
+        id: drawnItem
+
+        property alias text: drawnLabel.text
+
+        function linkAt(x: real, y: real): string {
+            return drawnLabel.linkAt(x, y);
+        }
+        function texts() {
+            return [];
+        }
+
+        implicitWidth: drawnLabel.implicitWidth
+        implicitHeight: drawnLabel.implicitHeight
+
+        Text {
+            id: drawnLabel
+            width: drawnItem.width
+            textFormat: Text.RichText
+            wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+            color: root.textColor
+            font.family: root.uiFamily
+            font.pixelSize: root.fontSize
+            font.weight: root.fontWeight
+            font.strikeout: root.struck
+        }
+    }
+
     // Horizontal scrolling for code and tables: the wheel's sideways axis or
     // shift, and a thin bar; flicking is for touch, so a mouse drag selects.
     component SideScroll: Flickable {
@@ -362,7 +486,7 @@ Item {
             policy: flick.contentWidth > flick.width + 0.5 ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
             contentItem: Rectangle {
                 implicitHeight: 7
-                radius: 3.5
+                radius: Theme.radiusPill
                 color: Qt.alpha(root.borderColor, 0.78)
             }
             background: Item {}
@@ -384,43 +508,50 @@ Item {
 
     // "Cite" under the selection's last line, or over it at the brick's foot
     // when there is a line above to sit on (AssistantSelectionToolbar). It
-    // takes no focus: the selection stays.
-    ShellButton {
-        id: citeButton
-        objectName: "citeSelection"
-
-        readonly property bool tooLong: root.selection !== null && root.selection.selectedText.length > 8000
-        readonly property rect end: {
-            const edit = root.selection;
-            if (edit === null)
-                return Qt.rect(0, 0, 0, 0);
-            edit.width;
-            root.width;
-            const caret = edit.positionToRectangle(edit.selectionEnd);
-            const at = root.mapFromItem(edit, caret.x, caret.y);
-            return Qt.rect(at.x, at.y, caret.width, caret.height);
-        }
-
-        visible: root.citable && root.selection !== null
+    // takes no focus: the selection stays. Only a brick that can be
+    // selected makes it.
+    Loader {
         z: 1
-        x: Math.max(0, Math.min(end.x, root.width - width))
-        y: end.y + end.height + 4 + height <= root.height || end.y - height - 4 < 0 ? end.y + end.height + 4 : end.y - height - 4
-        implicitHeight: 24
-        iconName: "quote"
-        iconSize: 12
-        font.pixelSize: Math.round(12 * Theme.fontScale)
-        focusPolicy: Qt.NoFocus
-        enabled: !tooLong
-        text: tooLong ? qsTr("Shorten selection") : qsTr("Cite")
-        Accessible.name: tooLong ? qsTr("Selection is too long to cite") : qsTr("Cite selection in composer")
-        onClicked: root.cite(root.selection)
+        active: root.selectable
+        sourceComponent: Component {
+            ShellButton {
+                id: citeButton
+                objectName: "citeSelection"
 
-        // The outline button is see-through; this one floats over text.
-        Rectangle {
-            z: -2
-            anchors.fill: parent
-            radius: citeButton.radius
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
+                readonly property bool tooLong: root.selection !== null && root.selection.selectedText.length > 8000
+                readonly property rect end: {
+                    const edit = root.selection;
+                    if (edit === null)
+                        return Qt.rect(0, 0, 0, 0);
+                    edit.width;
+                    root.width;
+                    const caret = edit.positionToRectangle(edit.selectionEnd);
+                    const at = root.mapFromItem(edit, caret.x, caret.y);
+                    return Qt.rect(at.x, at.y, caret.width, caret.height);
+                }
+
+                visible: root.citable && root.selection !== null
+                z: 1
+                x: Math.max(0, Math.min(end.x, root.width - width))
+                y: end.y + end.height + 4 + height <= root.height || end.y - height - 4 < 0 ? end.y + end.height + 4 : end.y - height - 4
+                implicitHeight: 24
+                iconName: "quote"
+                iconSize: 12
+                font.pixelSize: Theme.type.meta.size
+                focusPolicy: Qt.NoFocus
+                enabled: !tooLong
+                text: tooLong ? qsTr("Shorten selection") : qsTr("Cite")
+                Accessible.name: tooLong ? qsTr("Selection is too long to cite") : qsTr("Cite selection in composer")
+                onClicked: root.cite(root.selection)
+
+                // The outline button is see-through; this one floats over text.
+                Rectangle {
+                    z: -2
+                    anchors.fill: parent
+                    radius: citeButton.radius
+                    color: Theme.palette.color("surfaceOverlay", "#18181b")
+                }
+            }
         }
     }
 
@@ -458,6 +589,14 @@ Item {
                     return block && typeof block.texts === "function" ? block.texts() : [];
                 }
 
+                // Prose and quotes have links; code and tables are not looked in.
+                function linkAt(x: real, y: real): string {
+                    if (!block || typeof block.linkAt !== "function")
+                        return "";
+                    const at = block.mapFromItem(seg, x, y);
+                    return block.linkAt(at.x, at.y);
+                }
+
                 objectName: "markdownSegment"
                 width: column.width
                 height: gap + loader.height
@@ -478,12 +617,20 @@ Item {
                         if (root.fitWidth)
                             measureLater.restart();
                     }
-                    sourceComponent: seg.kind === "code" ? codeBlock : seg.kind === "table" ? table : seg.kind === "quote" ? quote : prose
+                    sourceComponent: seg.kind === "code" ? codeBlock : seg.kind === "table" ? table : seg.kind === "quote" ? quote : root.selectable ? prose : drawnProse
                 }
 
                 Component {
                     id: prose
                     RichText {
+                        objectName: "markdownProse"
+                        text: root.rich(seg.html)
+                    }
+                }
+
+                Component {
+                    id: drawnProse
+                    DrawnText {
                         objectName: "markdownProse"
                         text: root.rich(seg.html)
                     }
@@ -499,6 +646,8 @@ Item {
                         property bool copied: false
                         readonly property real lineHeight: Math.round(root.codeSize * 1.375 * 10) / 10
                         readonly property string code: seg.code
+                        // What its Run sends to the terminal; empty when it offers none.
+                        readonly property string command: root.runnable && !root.streaming ? Md.shellCommand(seg) : ""
                         // A Mermaid block is drawn once its fence is closed; the
                         // user can switch back to its source.
                         readonly property bool mermaid: seg.language.toLowerCase() === "mermaid" && !seg.open
@@ -517,7 +666,7 @@ Item {
 
                         implicitWidth: picture ? diagram.implicitWidth : codeText.implicitWidth + 28.8
                         implicitHeight: 30 + content.height
-                        radius: Theme.radius
+                        radius: Theme.radiusMd
                         color: Theme.palette.color("codeBackground", "#111111")
                         border.color: root.borderColor
                         border.width: 1
@@ -549,15 +698,15 @@ Item {
                                 text: seg.title.length > 0 ? seg.title : seg.language.length > 0 ? seg.language : "text"
                                 elide: Text.ElideRight
                                 font.family: root.monoFamily
-                                font.pixelSize: Math.round(11 * Theme.fontScale)
-                                color: Qt.alpha(Theme.palette.color("codeForeground", "#f5f5f5"), 0.72)
+                                font.pixelSize: Theme.type.caption.size
+                                color: Theme.palette.color("inkSecondary", "#b8bdc7")
                             }
                         }
 
                         Row {
                             id: actions
                             anchors.right: parent.right
-                            anchors.rightMargin: 6
+                            anchors.rightMargin: Theme.space.sm
                             y: 6
                             spacing: 2
                             IconButton {
@@ -574,6 +723,13 @@ Item {
                                 checked: block.wrapped
                                 label: block.wrapped ? qsTr("Disable line wrap") : qsTr("Wrap lines")
                                 onClicked: block.wrapped = !block.wrapped
+                            }
+                            IconButton {
+                                objectName: "runCode"
+                                visible: block.command.length > 0
+                                iconName: "play"
+                                label: qsTr("Run in terminal")
+                                onClicked: root.runCommand(block.command)
                             }
                             IconButton {
                                 objectName: "copyCode"
@@ -617,6 +773,17 @@ Item {
                                         acceptedButtons: Qt.RightButton
                                         acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                                         onTapped: root.openTextMenu(codeText, point.position)
+                                    }
+
+                                    // Coloured by its fence's language, in the
+                                    // theme its background is; while the reply
+                                    // writes it, only its finished lines.
+                                    CodeHighlighter {
+                                        objectName: "codeHighlighter"
+                                        document: codeText.textDocument
+                                        language: seg.language
+                                        background: block.color
+                                        streaming: root.streaming && seg.open
                                     }
                                 }
                             }
@@ -796,7 +963,7 @@ Item {
                                                         y: line.head ? 8.8 : 7.2
                                                         width: parent.width - 24
                                                         wrapMode: grid.expanded && !line.head ? TextEdit.WrapAtWordBoundaryOrAnywhere : TextEdit.NoWrap
-                                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                                        font.pixelSize: Theme.type.meta.size
                                                         font.weight: line.head ? Font.DemiBold : Font.Normal
                                                         text: root.rich("<p align=\"" + (grid.spec.align[cellBox.index] ?? "left") + "\" style=\"margin:0;line-height:19.5px;-qt-line-height-type:minimum\">" + cellBox.html + "</p>")
                                                         onImplicitWidthChanged: measureCells.restart()
@@ -897,7 +1064,7 @@ Item {
                             visible: quoteBox.kindOf !== null
                             x: 12
                             height: visible ? 23 : 0
-                            spacing: 6
+                            spacing: Theme.space.sm
                             ShellIcon {
                                 anchors.verticalCenter: parent.verticalCenter
                                 name: quoteBox.kindOf ? quoteBox.kindOf[1] : ""
@@ -910,7 +1077,7 @@ Item {
                                 text: quoteBox.kindOf ? quoteBox.kindOf[0] : ""
                                 color: quoteBox.titleColor
                                 font.family: root.uiFamily
-                                font.pixelSize: Math.round(14 * Theme.fontScale)
+                                font.pixelSize: Theme.type.prose.size
                                 font.weight: Font.Medium
                             }
                         }
@@ -928,16 +1095,27 @@ Item {
                                 // Before the text, which is parsed as it is set.
                                 brick.lineBreaks = Qt.binding(() => root.lineBreaks);
                                 brick.trusted = Qt.binding(() => root.trusted);
+                                brick.selectable = Qt.binding(() => root.selectable);
+                                brick.fontSize = Qt.binding(() => root.fontSize);
+                                brick.fontWeight = Qt.binding(() => root.fontWeight);
+                                brick.struck = Qt.binding(() => root.struck);
                                 brick.text = Qt.binding(() => seg.payload);
                                 // A quote reads muted; an alert's body is ordinary text.
                                 brick.textColor = Qt.binding(() => quoteBox.kindOf ? root.textColor : root.mutedColor);
+                                brick.runnable = Qt.binding(() => root.runnable && !root.streaming);
+                                brick.linkPreviews = Qt.binding(() => root.linkPreviews);
                                 brick.linkActivated.connect(root.linkActivated);
+                                brick.runCommand.connect(root.runCommand);
                                 brick.host = root;
                             }
                         }
 
                         function texts() {
                             return quoteBox.quoted ? quoteBox.quoted.texts() : [];
+                        }
+
+                        function linkAt(x: real, y: real): string {
+                            return quoteBox.quoted ? quoteBox.quoted.linkAt(x - inner.x, y - inner.y) : "";
                         }
                     }
                 }

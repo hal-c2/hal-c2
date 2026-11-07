@@ -48,6 +48,7 @@ defmodule HalC2.Orchestration.Fork do
           "snoozedUntil" => nil,
           "snoozedAt" => nil,
           "pinnedAt" => nil,
+          "autoSettleDisabledAt" => nil,
           "lastVisitedAt" => nil,
           "deletedAt" => nil
         })
@@ -57,7 +58,7 @@ defmodule HalC2.Orchestration.Fork do
 
       changes =
         [create("thread", target_id, target)] ++
-          history(source, run["ordinal"], target_id, at) ++
+          HalC2.Streams.read(source_id, &history(&1, run["ordinal"], target_id, at)) ++
           [create("context-transfer", transfer["id"], transfer)]
 
       HalC2.Streams.transact(target_id, :thread, fn state ->

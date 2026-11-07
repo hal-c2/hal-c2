@@ -122,6 +122,40 @@ defmodule HalC2.ClusterServerTest do
     refute_received {:sent, _, {:settings, _, _}}
   end
 
+  test "switching on a machine that is unknown or removed answers that it is no member" do
+    assert {:error, :not_a_member} = Cluster.switch("stranger", true)
+    assert {:error, :not_a_member} = Cluster.switch("stranger", false)
+
+    fp = String.duplicate("a", 64)
+    entry = %{"id" => "m1", "fingerprint" => fp, "version" => HalC2.Upgrade.version()}
+    {:ok, _} = Cluster.admit(entry)
+    assert {:error, :not_switched_off} = Cluster.switch("m1", true)
+    :ok = Cluster.switch("m1", false)
+    :ok = Cluster.switch("m1", true)
+
+    :ok = Cluster.remove("m1")
+    assert {:error, :not_a_member} = Cluster.switch("m1", true)
+    assert {:error, :not_a_member} = Cluster.switch("m1", false)
+  end
+
+  test "a member removed for good, not one switched off, calls off the moves to it" do
+    # This test stands in for HalC2.ThreadMove, to hear what it is told.
+    Process.register(self(), HalC2.ThreadMove)
+    fp = String.duplicate("a", 64)
+    entry = %{"id" => "m1", "fingerprint" => fp, "version" => HalC2.Upgrade.version()}
+    {:ok, _} = Cluster.admit(entry)
+    refute Cluster.removed?("m1")
+
+    :ok = Cluster.switch("m1", false)
+    refute Cluster.removed?("m1")
+    refute_received {:"$gen_cast", {:removed, _}}
+
+    :ok = Cluster.remove("m1")
+    assert Cluster.removed?("m1")
+    assert_received {:"$gen_cast", {:removed, "m1"}}
+    refute Cluster.removed?("stranger")
+  end
+
   defp flush_sent do
     receive do
       {:sent, _, _} -> flush_sent()
@@ -163,7 +197,7 @@ defmodule HalC2.ClusterServerTest do
     assert %{gossip: ^timer} = :sys.get_state(Cluster)
   end
 
-  # What `HalC2.Hot` does for a process whose module changed.
+  # What a release upgrade (`{update, M, {advanced, []}}`) does for a process whose module changed.
   defp update_in_place do
     :ok = :sys.suspend(Cluster)
     :ok = :sys.change_code(Cluster, Cluster, nil, :hot)

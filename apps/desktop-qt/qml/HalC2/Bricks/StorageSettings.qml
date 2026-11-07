@@ -13,7 +13,7 @@ SettingsPage {
 
     readonly property var settings: Shell.state.storageSettings ?? null
     readonly property bool editable: Shell.state.settingsScope?.editable ?? false
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
 
     objectName: "storageSettings"
     title: qsTr("Storage")
@@ -26,16 +26,16 @@ SettingsPage {
 
         objectName: "storageRule:" + modelData.key
         Layout.fillWidth: true
-        spacing: 12
+        spacing: Theme.space.md
 
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 2
+            spacing: Theme.space.xxs
 
             Label {
                 text: rule.modelData.title
-                color: Theme.palette.color("text", "#e4e4e7")
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                color: Theme.palette.color("ink", "#e4e4e7")
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
 
@@ -44,14 +44,14 @@ SettingsPage {
                 visible: rule.modelData.mixed
                 text: qsTr("Mixed across selected machines")
                 color: Theme.palette.color("warningForeground", "#fbbf24")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             Label {
                 Layout.fillWidth: true
                 text: rule.modelData.description
-                color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                color: Theme.palette.color("inkTertiary", "#a1a1aa")
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
         }
@@ -73,8 +73,8 @@ SettingsPage {
         Label {
             visible: rule.modelData.days && rule.modelData.value === null && !rule.modelData.mixed
             text: qsTr("Off")
-            color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            color: Theme.palette.color("inkTertiary", "#a1a1aa")
+            font.pixelSize: Theme.type.meta.size
         }
 
         ShellSwitch {
@@ -96,19 +96,19 @@ SettingsPage {
         objectName: "storageNotice"
         Layout.fillWidth: true
         visible: storage.settings?.status === "unsupported"
-        spacing: 6
+        spacing: Theme.space.sm
 
         Label {
             Layout.fillWidth: true
             text: storage.settings?.notice ?? ""
-            color: Theme.palette.color("text", "#e4e4e7")
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            color: Theme.palette.color("ink", "#e4e4e7")
+            font.pixelSize: Theme.type.body.size
             wrapMode: Text.Wrap
         }
 
         Flow {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Theme.space.sm
 
             Repeater {
                 model: storage.settings?.eligible ?? []
@@ -127,29 +127,26 @@ SettingsPage {
     ColumnLayout {
         Layout.fillWidth: true
         visible: storage.settings?.status === "ready"
-        spacing: 12
+        spacing: Theme.space.md
 
-        Label {
+        SettingsHeading {
             text: qsTr("Worktrees")
-            color: storage.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
-            font.weight: Font.DemiBold
         }
 
         RowLayout {
             objectName: "storageMode"
             Layout.fillWidth: true
             visible: storage.settings?.projectScope ?? false
-            spacing: 12
+            spacing: Theme.space.md
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 2
+                spacing: Theme.space.xxs
 
                 Label {
                     text: qsTr("Automatic worktree cleanup")
-                    color: Theme.palette.color("text", "#e4e4e7")
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    color: Theme.palette.color("ink", "#e4e4e7")
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                 }
 
@@ -163,7 +160,7 @@ SettingsPage {
                         return qsTr("Use each machine's worktree cleanup settings.");
                     }
                     color: storage.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.Wrap
                 }
             }
@@ -187,12 +184,9 @@ SettingsPage {
             delegate: Rule {}
         }
 
-        Label {
+        SettingsHeading {
             visible: (storage.settings?.artifacts ?? []).length > 0
             text: qsTr("Artifacts, logs and temporary files")
-            color: storage.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
-            font.weight: Font.DemiBold
         }
 
         Repeater {
@@ -208,12 +202,12 @@ SettingsPage {
             objectName: "storageTemporaryFilesFolder"
             Layout.fillWidth: true
             visible: folder !== null
-            spacing: 4
+            spacing: Theme.space.xs
 
             Label {
                 text: qsTr("Temporary files folder")
-                color: Theme.palette.color("text", "#e4e4e7")
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                color: Theme.palette.color("ink", "#e4e4e7")
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
 
@@ -222,14 +216,14 @@ SettingsPage {
                 visible: temporaryFiles.folder?.mixed ?? false
                 text: qsTr("Mixed across selected machines")
                 color: Theme.palette.color("warning", "#fbbf24")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             Label {
                 Layout.fillWidth: true
                 text: qsTr("Where agents' temporary files go on this machine, as an absolute path. Blank uses the cache directory. New agent sessions use it; anything in the old folder stays until you remove it.")
                 color: storage.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 

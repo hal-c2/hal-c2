@@ -39,6 +39,26 @@ Item {
             tryCompare(dialog, "opened", true);
             return dialog;
         }
+        // A folder that is not a repository offers Initialize Git; a narrow
+        // header shows its glyph alone, and measures both widths either way.
+        function test_initializeGitGoesIconOnlyWhenCompact() {
+            Shell.state = { git: Object.assign({}, Shell.state.git, { isRepo: false, initPending: false }) };
+            let git = createTemporaryObject(component, root);
+            let init = findChild(git, "gitInitButton");
+            verify(init.visible);
+            compare(init.text, "Initialize Git");
+            verify(!init.iconOnly);
+            const labelled = init.implicitWidth;
+            verify(Math.abs(git.fullWidth - labelled) <= 1, "full " + git.fullWidth + " against " + labelled);
+            git.compact = true;
+            compare(init.text, "");
+            verify(init.iconOnly);
+            compare(init.Accessible.name, "Initialize Git");
+            // The button's row lays out on the next polish.
+            tryVerify(() => Math.abs(git.compactWidth - init.implicitWidth) <= 1, 1000, "compact " + git.compactWidth + " against " + init.implicitWidth);
+            verify(Math.abs(git.fullWidth - labelled) <= 1, "the full width holds while compact");
+        }
+
         // Scenario: Leaving every file out disables committing (features/source-control/commit-and-generated-messages.feature)
         function test_emptySelectionDisablesBothCommitActions() {
             let git = createTemporaryObject(component, root);

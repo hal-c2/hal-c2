@@ -84,6 +84,10 @@ QQuickItem* Brick::item(const QString& objectName) const {
   return found;
 }
 
+QQuickItem* Brick::find(const QString& objectName) const {
+  return findItem(m_window.contentItem(), objectName);
+}
+
 QPoint Brick::at(const QQuickItem* item, double fx, double fy) {
   // Positioners and anchors settle on the window's polish: drawing a frame
   // runs it, so the point is where the user would see the item now.

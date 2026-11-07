@@ -5,11 +5,14 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 import "js/settingsRows.js" as Rows
+import "js/settingsPages.js" as Pages
 
 // A native settings page: its title, anything the page puts first (its
-// children), then `rows` (js/settingsRows.js) under their section headings.
+// children), then `rows` (js/settingsRows.js) under their section headings,
+// each row on a hairline, in one centred column (columnX in js/settingsPages.js).
 // A settings search result it holds (route.target, an objectName on the page)
-// is scrolled into view when opened.
+// is scrolled into view when opened, or, when the selected scope cannot show
+// it, a notice in place of the page says which scope can.
 Rectangle {
     id: page
 
@@ -23,6 +26,54 @@ Rectangle {
 
     readonly property var route: Shell.state.route ?? null
     readonly property int targetSeq: route !== null && route.targetSeq !== undefined ? route.targetSeq : 0
+
+    // The search result opened here, while it is one the page holds (Pages.targetOf).
+    readonly property var scope: Shell.state.settingsScope ?? null
+    readonly property var target: route !== null && route.kind === "settings" && route.target ? Pages.targetOf(route.section, route.target, Qt.platform.os) : null
+
+    // What stands between the user and the opened setting, shown in place of
+    // the page: {text, choices: [{label, action, payload}]}, or null. A setting
+    // some selected environment cannot have offers the environments that can;
+    // one set per environment offers every project.
+    readonly property var notice: {
+        if (target === null || scope === null) return null;
+        if (target.capability) {
+            const targets = scope.targets ?? [];
+            const environments = scope.environments ?? [];
+            const supports = environment => environment.capabilities?.[target.capability] === true;
+            // The rule Settings.supports() shows the row by: every target's
+            // settings are read and it has the capability. A target still
+            // loading is waited for; one offline cannot show the setting.
+            const states = targets.map(id => environments.find(candidate => candidate.id === id));
+            if (states.some(environment => environment !== undefined && environment.online && !environment.readable)) return null;
+            const lacking = states.length === 0 || states.some(environment => environment === undefined || !environment.readable || !supports(environment));
+            if (!lacking) return null;
+            const choices = environments.filter(environment => environment.online && supports(environment)).map(environment => ({
+                label: environment.label, action: "settingsScope.environment", payload: { id: environment.id }
+            }));
+            return {
+                text: choices.length > 0
+                    ? qsTr("%1 requires a supporting environment. Choose one to continue.").arg(target.title)
+                    : qsTr("%1 requires a supporting environment. Connect or update an environment to continue.").arg(target.title),
+                choices: choices
+            };
+        }
+        if (target.scope === "environment" && scope.kind === "project") {
+            return {
+                text: qsTr("%1 is not available for the selected target. Choose its owning scope to continue.").arg(target.title),
+                choices: [{ label: qsTr("All projects"), action: "settingsScope.project", payload: { key: "" } }]
+            };
+        }
+        return null;
+    }
+
+    // Moves to the scope a notice offers, then on to the setting.
+    function choose(choice) {
+        const section = route.section;
+        const targetId = route.target;
+        Shell.dispatch(choice.action, choice.payload);
+        Shell.dispatch("settings.openResult", { to: section, targetId: targetId });
+    }
 
     function descendant(item, name) {
         for (let i = 0; i < item.children.length; ++i) {
@@ -58,10 +109,14 @@ Rectangle {
             Qt.callLater(reveal);
             return;
         }
-        const target = descendant(column, route.target);
+        if (notice !== null) return;
+        // A setting hidden until another is on opens at that one.
+        let target = descendant(column, route.target);
+        if ((target === null || !target.visible) && page.target?.within)
+            target = descendant(column, page.target.within);
         if (target === null) return;
         following = true;
-        const y = target.mapToItem(column, 0, 0).y + column.y - 12;
+        const y = target.mapToItem(column, 0, 0).y + column.y - Theme.space.md;
         flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height));
     }
 
@@ -77,10 +132,11 @@ Rectangle {
         const top = item.mapToItem(flick.contentItem, 0, 0).y;
         const bottom = top + item.height;
         let y = flick.contentY;
-        if (top < y + 12 || bottom - top > flick.height - 24)
-            y = top - 12;
-        else if (bottom > y + flick.height - 12)
-            y = bottom - flick.height + 12;
+        const edge = Theme.space.md;
+        if (top < y + edge || bottom - top > flick.height - 2 * edge)
+            y = top - edge;
+        else if (bottom > y + flick.height - edge)
+            y = bottom - flick.height + edge;
         else
             return;
         following = false;
@@ -89,6 +145,8 @@ Rectangle {
 
     onFocusedItemChanged: if (focusedItem !== null) revealFocus(focusedItem)
     onTargetSeqChanged: Qt.callLater(reveal)
+    // The setting a notice stood in for is shown once the notice goes.
+    onNoticeChanged: if (notice === null) Qt.callLater(reveal)
     Component.onCompleted: Qt.callLater(reveal)
     color: Theme.palette.color("canvas", "#0b0b0d")
 
@@ -97,7 +155,7 @@ Rectangle {
         objectName: "scroll"
 
         anchors.fill: parent
-        contentHeight: column.implicitHeight + 48
+        contentHeight: column.implicitHeight + 2 * Theme.space.xl
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         ScrollBar.vertical: ScrollBar {
@@ -111,10 +169,10 @@ Rectangle {
 
             onImplicitHeightChanged: if (page.following) Qt.callLater(page.reveal)
 
-            x: 24
-            y: 24
-            width: Math.min(720, flick.width - 48)
-            spacing: 14
+            x: Pages.columnX(flick.width, Theme.space.xl)
+            y: Theme.space.xl
+            width: Pages.columnWidth(flick.width, Theme.space.xl)
+            spacing: Theme.space.md
 
             SettingsBreadcrumb {
                 Layout.fillWidth: true
@@ -122,27 +180,74 @@ Rectangle {
             }
 
             ColumnLayout {
+                objectName: "settingsNotice"
+
+                visible: page.notice !== null
+                Layout.fillWidth: true
+                spacing: Theme.space.md
+
+                Label {
+                    Layout.fillWidth: true
+                    text: page.notice?.text ?? ""
+                    color: page.foreground
+                    font.pixelSize: Theme.type.body.size
+                    wrapMode: Text.Wrap
+                }
+
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: Theme.space.sm
+
+                    Repeater {
+                        model: page.notice?.choices ?? []
+
+                        delegate: ShellButton {
+                            required property var modelData
+
+                            objectName: "choose:" + (modelData.payload.id ?? "allProjects")
+                            text: modelData.label
+                            onClicked: page.choose(modelData)
+                        }
+                    }
+                }
+            }
+
+            ColumnLayout {
                 id: lead
 
+                visible: page.notice === null
                 Layout.fillWidth: true
-                spacing: 14
+                spacing: Theme.space.md
             }
 
             Repeater {
                 model: Rows.listed(page.rows, Qt.platform.os, page.openFolds)
 
+                // A row sits on a hairline, centred in the gap above it; a
+                // heading opens its section without one.
                 delegate: Loader {
                     id: entry
 
                     required property var modelData
+                    readonly property bool onHairline: modelData.section === undefined
 
                     Layout.fillWidth: true
+                    Layout.topMargin: onHairline ? Theme.space.md : 0
                     // A row every selected environment must support is listed once they do.
                     visible: {
                         Settings.document;
+                        if (page.notice !== null) return false;
                         return !modelData.requires || Settings.supports(modelData.requires);
                     }
                     sourceComponent: modelData.section !== undefined ? heading : modelData.link !== undefined ? linkRow : modelData.component === "textGeneration" ? textGenerationRow : modelData.component === "backgroundActivity" ? backgroundActivityRow : settingRow
+
+                    Rectangle {
+                        visible: entry.onHairline
+                        y: -Math.round((Theme.space.md + column.spacing) / 2)
+                        width: entry.width
+                        height: 1
+                        color: page.line
+                    }
 
                     Component {
                         id: heading
@@ -154,16 +259,16 @@ Rectangle {
                             readonly property bool open: page.openFolds[entry.modelData.section] === true
 
                             objectName: "settingsSection:" + entry.modelData.section
-                            spacing: 6
+                            spacing: Theme.space.sm
 
                             RowLayout {
-                                Layout.topMargin: 12
-                                spacing: 6
+                                Layout.topMargin: Theme.space.lg
+                                spacing: Theme.space.sm
 
                                 Label {
                                     text: entry.modelData.section
                                     color: page.foreground
-                                    font.pixelSize: Math.round(14 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.title.size
                                     font.weight: Font.DemiBold
                                 }
 
@@ -176,12 +281,6 @@ Rectangle {
                                     onClicked: page.setFold(entry.modelData.section, !sectionHeading.open)
                                 }
                             }
-
-                            Rectangle {
-                                Layout.fillWidth: true
-                                implicitHeight: 1
-                                color: page.line
-                            }
                         }
                     }
 
@@ -191,24 +290,24 @@ Rectangle {
 
                         RowLayout {
                             objectName: "settingsRow:" + entry.modelData.id
-                            spacing: 12
+                            spacing: Theme.space.md
 
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                spacing: 2
+                                spacing: Theme.space.xxs
 
                                 Label {
                                     text: entry.modelData.title
                                     color: page.foreground
-                                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.body.size
                                     font.weight: Font.Medium
                                 }
 
                                 Label {
                                     Layout.fillWidth: true
                                     text: entry.modelData.description ?? ""
-                                    color: Theme.palette.color("textMuted", "#a1a1aa")
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    color: Theme.palette.color("inkTertiary", "#a1a1aa")
+                                    font.pixelSize: Theme.type.meta.size
                                     wrapMode: Text.Wrap
                                 }
                             }

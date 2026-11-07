@@ -53,6 +53,30 @@ describe("ClusterSocket", () => {
     socket.close();
   });
 
+  it("a shell sub says the rows the client holds as they are when it is sent", async () => {
+    vi.useFakeTimers();
+    const { socket, sockets } = setup();
+    let have: Record<string, readonly [string, number]> = {};
+    socket.subscribeShell(
+      () => {},
+      () => have,
+    );
+    sockets[0]!.serve({ t: "hello", mc: "hal_c2@a" });
+    expect(sockets[0]!.sent).toEqual([
+      { t: "sub", id: 1, shape: { type: "shell" }, offset: null, have: {} },
+    ]);
+
+    have = { "hal_c2@a": ["e1", 7] };
+    sockets[0]!.close();
+    await vi.advanceTimersByTimeAsync(10);
+    sockets[1]!.serve({ t: "hello", mc: "hal_c2@a" });
+    expect(sockets[1]!.sent).toEqual([
+      { t: "sub", id: 1, shape: { type: "shell" }, offset: null, have: { "hal_c2@a": ["e1", 7] } },
+    ]);
+    socket.close();
+    vi.useRealTimers();
+  });
+
   it("reconnects and resumes each stream from the last offset it saw", async () => {
     vi.useFakeTimers();
     const { socket, sockets } = setup();
@@ -80,6 +104,50 @@ describe("ClusterSocket", () => {
     sockets[0]!.serve({ t: "resync", id: 1, offset: 7 });
     expect(sockets[0]!.sent.at(-1)).toMatchObject({ t: "sub", id: 1, offset: 7 });
     expect(frames).toEqual([]);
+    socket.close();
+  });
+
+  describe("an acknowledged terminal", () => {
+    const shape = { type: "terminal", mc: "hal_c2@b", input: { threadId: "t" } } as const;
+
+    it("says so on every sub, a reconnect's too, and acks on its id", async () => {
+      vi.useFakeTimers();
+      const { socket, sockets } = setup();
+      const subscription = socket.subscribeAcknowledged(shape, () => {});
+      sockets[0]!.serve({ t: "hello", mc: "hal_c2@a" });
+      expect(sockets[0]!.sent).toEqual([{ t: "sub", id: 1, shape, offset: null, acks: true }]);
+      subscription.ack(7);
+      expect(sockets[0]!.sent.at(-1)).toEqual({ t: "ack", id: 1, sequence: 7 });
+
+      sockets[0]!.close();
+      await vi.advanceTimersByTimeAsync(10);
+      sockets[1]!.serve({ t: "hello", mc: "hal_c2@a" });
+      expect(sockets[1]!.sent).toEqual([{ t: "sub", id: 1, shape, offset: null, acks: true }]);
+      socket.close();
+      vi.useRealTimers();
+    });
+
+    it("drops an ack it cannot deliver", () => {
+      const { socket, sockets } = setup();
+      const subscription = socket.subscribeAcknowledged(shape, () => {});
+      // Before the MC's hello the sub has not gone out, so there is nothing to acknowledge.
+      subscription.ack(1);
+      expect(sockets[0]!.sent).toEqual([]);
+
+      sockets[0]!.serve({ t: "hello", mc: "hal_c2@a" });
+      subscription.unsubscribe();
+      subscription.ack(2);
+      expect(sockets[0]!.sent.at(-1)).toEqual({ t: "unsub", id: 1 });
+      socket.close();
+    });
+  });
+
+  it("a subscription that does not acknowledge never says it does", () => {
+    const { socket, sockets } = setup();
+    const shape = { type: "terminal", mc: "hal_c2@b", input: { threadId: "t" } } as const;
+    socket.subscribe(shape, () => {});
+    sockets[0]!.serve({ t: "hello", mc: "hal_c2@a" });
+    expect(sockets[0]!.sent).toEqual([{ t: "sub", id: 1, shape, offset: null }]);
     socket.close();
   });
 
@@ -179,6 +247,50 @@ describe("ClusterSocket", () => {
       expect(sockets[1]!.sent.at(-1)).toMatchObject({ t: "sub", id: 1, window: { floor: 5 } });
       socket.close();
       vi.useRealTimers();
+    });
+
+    it("carries on from where another socket's subscription stopped", () => {
+      const first = setup();
+      const resumed = first.socket.subscribeWindow(shape, 200, () => {});
+      expect(resumed.resumePoint()).toBeNull();
+      first.sockets[0]!.serve({ t: "hello", mc: "hal_c2@a" });
+      first.sockets[0]!.serve({ t: "snapshot", id: 1, offset: 9, floor: 3, handle: "log-1" });
+      first.sockets[0]!.serve({ t: "events", id: 1, offset: 12, events: [] });
+      const point = resumed.resumePoint();
+      expect(point).toEqual({ offset: 12, floor: 3, handle: "log-1" });
+      first.socket.close();
+
+      const second = setup();
+      second.socket.subscribeWindow(shape, 200, () => {}, undefined, point!);
+      second.sockets[0]!.serve({ t: "hello", mc: "hal_c2@a" });
+      expect(second.sockets[0]!.sent).toEqual([
+        { t: "sub", id: 1, shape, offset: 12, window: { floor: 3 }, handle: "log-1" },
+      ]);
+      second.socket.close();
+    });
+
+    it("asks again for a stream refused while its MC was out of the cluster", () => {
+      const { socket, sockets } = setup();
+      const frames: ShapeFrame[] = [];
+      socket.subscribe({ type: "shell" }, () => {});
+      socket.subscribeWindow(shape, 200, (frame) => frames.push(frame));
+      sockets[0]!.serve({ t: "hello", mc: "hal_c2@a" });
+      sockets[0]!.serve({ t: "snapshot", id: 2, offset: 9, floor: null, handle: "log-1" });
+      sockets[0]!.serve({ t: "live", id: 2, offset: 9 });
+      sockets[0]!.serve({ t: "error", id: 2, reason: "unknown MC" });
+      sockets[0]!.sent = [];
+
+      sockets[0]!.serve({ t: "shell.mc", id: 1, mc: "hal_c2@other", online: true });
+      sockets[0]!.serve({ t: "shell.mc", id: 1, mc: shape.mc, online: false });
+      expect(sockets[0]!.sent).toEqual([]);
+      sockets[0]!.serve({ t: "shell.mc", id: 1, mc: shape.mc, online: true });
+      expect(sockets[0]!.sent).toEqual([
+        { t: "sub", id: 2, shape, offset: 9, window: { floor: null }, handle: "log-1" },
+      ]);
+      sockets[0]!.serve({ t: "shell.mc", id: 1, mc: shape.mc, online: true });
+      expect(sockets[0]!.sent).toHaveLength(1);
+      expect(frames.map((frame) => frame.t)).toEqual(["snapshot", "live", "error"]);
+      socket.close();
     });
 
     it("opens at the floor a replaced session held", () => {

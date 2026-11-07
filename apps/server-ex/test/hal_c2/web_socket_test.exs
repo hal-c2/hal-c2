@@ -2,6 +2,7 @@ defmodule HalC2.Web.SocketTest do
   use ExUnit.Case, async: false
 
   alias HalC2.Test.{LateUnsubscribe, WsClient}
+  alias HalC2.Terminal.OutputWindow
 
   @moduletag :tmp_dir
 
@@ -593,6 +594,156 @@ defmodule HalC2.Web.SocketTest do
     assert output == [{2, "for-second\r\n"}]
   end
 
+  # A slow client on one socket leaves the one beside it alone: the shell is not paused,
+  # the acking subscription is held at the limit and gets a snapshot once it catches up.
+  test "a terminal subscription that stops acknowledging is held until it catches up", %{
+    port: port,
+    tmp_dir: dir
+  } do
+    start_terminals()
+    input = %{"threadId" => "th-slow", "terminalId" => "term-1", "cwd" => dir}
+    line = String.duplicate("x", 40_000)
+
+    client =
+      connect(port)
+      |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => terminal_shape(input)})
+
+    {%{"status" => "running"}, client} = terminal_snapshot(client, 1)
+
+    client =
+      WsClient.send_json(client, %{
+        "t" => "sub",
+        "id" => 2,
+        "shape" => terminal_shape(input),
+        "acks" => true
+      })
+
+    {%{"sequence" => first}, client} = terminal_snapshot(client, 2)
+
+    print_terminal(input, line <> "\r\n")
+    assert {[{1, _}, {2, _}], client} = sorted_output(client)
+    print_terminal(input, line <> "\r\n")
+    {output, client} = sorted_output(client)
+    assert [{1, _}, {2, _}] = output
+    print_terminal(input, "held\r\n")
+    assert {[{1, "held\r\n"}], client} = terminal_output(client)
+
+    # A partial ack does not catch it up; acknowledging all it was sent does.
+    client = WsClient.send_json(client, %{"t" => "ack", "id" => 2, "sequence" => first})
+    print_terminal(input, "still-held\r\n")
+    assert {[{1, "still-held\r\n"}], client} = terminal_output(client)
+
+    seq = :sys.get_state(await_terminal(input)).seq
+    client = WsClient.send_json(client, %{"t" => "ack", "id" => 2, "sequence" => seq})
+    {%{"history" => history, "sequence" => caught_up}, client} = terminal_snapshot(client, 2)
+    assert history =~ "still-held"
+
+    client = WsClient.send_json(client, %{"t" => "ack", "id" => 2, "sequence" => caught_up})
+
+    {_pong, _frames, client} =
+      client |> WsClient.send_json(%{"t" => "ping"}) |> WsClient.recv_until(&(&1["t"] == "pong"))
+
+    print_terminal(input, "live-again\r\n")
+    assert {[{1, "live-again\r\n"}, {2, "live-again\r\n"}], _client} = sorted_output(client)
+  end
+
+  # Counting a snapshot's history against the window held the next output of a busy
+  # shell whenever the history was past the limit, and its ack brought another snapshot:
+  # a client keeping up saw nothing but snapshots.
+  test "output after a large snapshot reaches the client before it acknowledges", %{
+    port: port,
+    tmp_dir: dir
+  } do
+    start_terminals()
+    input = %{"threadId" => "th-large", "terminalId" => "term-1", "cwd" => dir}
+
+    client =
+      connect(port)
+      |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => terminal_shape(input)})
+
+    {%{"status" => "running"}, client} = terminal_snapshot(client, 1)
+
+    print_terminal(input, String.duplicate("x", 2 * OutputWindow.limit()) <> "\r\n")
+    {[{1, _}], client} = sorted_output(client)
+
+    client =
+      WsClient.send_json(client, %{
+        "t" => "sub",
+        "id" => 2,
+        "shape" => terminal_shape(input),
+        "acks" => true
+      })
+
+    {%{"history" => history, "sequence" => sequence}, client} = terminal_snapshot(client, 2)
+    assert byte_size(history) > OutputWindow.limit()
+
+    print_terminal(input, "busy\r\n")
+    assert {[{1, "busy\r\n"}, {2, "busy\r\n"}], client} = sorted_output(client)
+
+    client = WsClient.send_json(client, %{"t" => "ack", "id" => 2, "sequence" => sequence})
+
+    {_pong, frames, client} =
+      client |> WsClient.send_json(%{"t" => "ping"}) |> WsClient.recv_until(&(&1["t"] == "pong"))
+
+    assert frames == []
+
+    print_terminal(input, "still-busy\r\n")
+    assert {[{1, "still-busy\r\n"}, {2, "still-busy\r\n"}], _client} = sorted_output(client)
+  end
+
+  # Dropping the window of a subscription whose catch-up attach failed sent it everything
+  # from then on, with a gap where it was held and nothing to say so.
+  test "a held terminal subscription whose catch-up attach fails starts over", %{
+    port: port,
+    tmp_dir: dir
+  } do
+    start_terminals()
+    input = %{"threadId" => "th-failed", "terminalId" => "term-1", "cwd" => dir}
+    line = String.duplicate("x", 40_000)
+
+    client =
+      connect(port)
+      |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => terminal_shape(input)})
+
+    {_snapshot, client} = terminal_snapshot(client, 1)
+
+    client =
+      WsClient.send_json(client, %{
+        "t" => "sub",
+        "id" => 2,
+        "shape" => terminal_shape(input),
+        "acks" => true
+      })
+
+    {_snapshot, client} = terminal_snapshot(client, 2)
+    print_terminal(input, line <> "\r\n")
+    {[{1, _}, {2, _}], client} = sorted_output(client)
+    print_terminal(input, line <> "\r\n")
+    {[{1, _}, {2, _}], client} = sorted_output(client)
+    print_terminal(input, "held\r\n")
+    {[{1, "held\r\n"}], client} = terminal_output(client)
+
+    # The attach the catch-up makes times out.
+    terminal = await_terminal(input)
+    seq = :sys.get_state(terminal).seq
+    Application.put_env(:hal_c2, :remote_timeout, 50)
+    on_exit(fn -> Application.delete_env(:hal_c2, :remote_timeout) end)
+    :sys.suspend(terminal)
+    client = WsClient.send_json(client, %{"t" => "ack", "id" => 2, "sequence" => seq})
+
+    assert {%{"t" => "resync", "id" => 2}, _, client} =
+             WsClient.recv_until(client, &(&1["t"] == "resync"))
+
+    :sys.resume(terminal)
+    print_terminal(input, "after\r\n")
+    assert {[{1, "after\r\n"}], _client} = terminal_output(client)
+  end
+
+  defp sorted_output(client) do
+    {output, client} = terminal_output(client)
+    {Enum.sort(output), client}
+  end
+
   # A terminal whose MC left the cluster for a moment dropped the socket as it
   # went: what was typed still reached the shell, but nothing came back. The
   # socket says so in the terminal and has the client attach again once the MC
@@ -1152,8 +1303,10 @@ defmodule HalC2.Web.SocketTest do
     HalC2.Test.OldMc.bump(old)
     assert {[{1, 1}, {2, 1}], client} = pong_refresh_frames(client)
 
-    # The two share the one watch the old MC keeps, let go of with the last.
+    # The two share the one watch the old MC keeps, let go of with the last. The bump
+    # waits for the pong that says the socket has taken the unsub.
     client = WsClient.send_json(client, %{"t" => "unsub", "id" => 1})
+    assert {[], client} = pong_refresh_frames(client)
     HalC2.Test.OldMc.bump(old)
     assert {[{2, 2}], client} = pong_refresh_frames(client)
 

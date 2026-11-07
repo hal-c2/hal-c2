@@ -16,9 +16,12 @@ SettingsPage {
     title: qsTr("Appearance")
     rows: Rows.appearance
 
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     // The collection variants picked to remove together.
     property var selected: []
+    // Whether any theme row has Edit and Remove: every row then keeps their
+    // room, so the icons of all rows share columns.
+    readonly property bool anyCustom: Themes.available.some(theme => theme.source === "custom")
     readonly property var modes: [
         { mode: "system", label: qsTr("System") },
         { mode: "light", label: qsTr("Light") },
@@ -46,26 +49,26 @@ SettingsPage {
         default property alias actions: actions.data
 
         Layout.fillWidth: true
-        spacing: 6
+        spacing: Theme.space.sm
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.topMargin: 12
-            spacing: 8
+            Layout.topMargin: Theme.space.md
+            spacing: Theme.space.sm
 
             Label {
                 id: label
 
                 Layout.fillWidth: true
-                color: Theme.palette.color("text", "#e4e4e7")
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                color: Theme.palette.color("ink", "#e4e4e7")
+                font.pixelSize: Theme.type.title.size
                 font.weight: Font.DemiBold
             }
 
             RowLayout {
                 id: actions
 
-                spacing: 8
+                spacing: Theme.space.sm
             }
         }
 
@@ -76,7 +79,12 @@ SettingsPage {
         }
     }
 
-    // A theme to draw with: its colors, its name, and a mark on the one in use (`checked`).
+    // The one in use, in a list or a segmented row: a raised fill and the
+    // accent's ink, never an outline (that is keyboard focus's).
+    readonly property color selectedFill: Theme.palette.color("surfaceRaised", "#1f1f24")
+    readonly property color selectedInk: Theme.palette.color("accentText", "#60a5fa")
+
+    // A theme to draw with: a check on the one in use (`checked`), its colors and its name.
     component ThemeChoice: AbstractButton {
         id: choice
 
@@ -86,24 +94,33 @@ SettingsPage {
 
         Layout.fillWidth: true
         implicitHeight: 32
-        leftPadding: 8
-        rightPadding: 8
+        leftPadding: Theme.space.sm
+        rightPadding: Theme.space.sm
         hoverEnabled: true
-        font.pixelSize: Math.round(13 * Theme.fontScale)
+        font.pixelSize: Theme.type.body.size
         font.weight: Font.Medium
 
         background: Rectangle {
-            radius: Math.min(Theme.radius, 8)
-            color: choice.checked || choice.hovered || choice.down ? choice.accentSurface : Qt.alpha(choice.accentSurface, 0)
-            border.width: choice.visualFocus ? 2 : choice.checked ? 1 : 0
-            border.color: choice.visualFocus ? Theme.palette.color("focus", "#3b82f6") : Theme.palette.color("accent", "#2563eb")
+            radius: Theme.radiusMd
+            color: choice.hovered || choice.down ? choice.accentSurface : choice.checked ? page.selectedFill : Qt.alpha(choice.accentSurface, 0)
+            border.width: choice.visualFocus ? 2 : 0
+            border.color: Theme.palette.color("focus", "#3b82f6")
         }
 
         contentItem: RowLayout {
-            spacing: 8
+            spacing: Theme.space.sm
+
+            // Its room is kept on every row, so the names line up.
+            ShellIcon {
+                objectName: "chosen"
+                opacity: choice.checked ? 1 : 0
+                name: "check"
+                size: 14
+                color: page.selectedInk
+            }
 
             Row {
-                spacing: 3
+                spacing: Theme.space.xxs
 
                 Repeater {
                     model: choice.swatch
@@ -114,7 +131,7 @@ SettingsPage {
                         objectName: "swatch"
                         width: 14
                         height: 14
-                        radius: 7
+                        radius: Theme.radiusPill
                         color: modelData
                         border.color: Theme.palette.color("border", "#27272a")
                     }
@@ -125,15 +142,8 @@ SettingsPage {
                 Layout.fillWidth: true
                 text: choice.text
                 font: choice.font
-                color: page.foreground
+                color: choice.checked ? page.selectedInk : page.foreground
                 elide: Text.ElideRight
-            }
-
-            ShellIcon {
-                visible: choice.checked
-                name: "check"
-                size: 14
-                color: page.foreground
             }
         }
     }
@@ -150,7 +160,7 @@ SettingsPage {
         Layout.fillWidth: true
         visible: Theme.loaded || Theme.lastError.length > 0
         implicitHeight: shellThemeText.implicitHeight + 20
-        radius: Math.min(Theme.radius, 8)
+        radius: Theme.radiusMd
         color: Theme.palette.color("surfaceRaised", "#18181b")
         border.color: Theme.palette.color("info", "#3b82f6")
 
@@ -160,8 +170,8 @@ SettingsPage {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            anchors.margins: 12
-            spacing: 4
+            anchors.margins: Theme.space.md
+            spacing: Theme.space.xs
 
             Label {
                 objectName: "shellThemeTitle"
@@ -169,7 +179,7 @@ SettingsPage {
                 visible: Theme.loaded
                 text: qsTr("The shell theme file “%1” is in use").arg(shellTheme.name)
                 color: page.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.DemiBold
                 wrapMode: Text.Wrap
             }
@@ -180,7 +190,7 @@ SettingsPage {
                 visible: Theme.loaded
                 text: (Theme.followsSystemAppearance ? qsTr("Its colors are drawn over the theme chosen below, and it follows the color scheme chosen here.") : qsTr("Its colors are drawn over the theme chosen below, and it keeps the app %1 whatever the color scheme.").arg(Theme.appearance === "dark" ? qsTr("dark") : qsTr("light"))) + " " + qsTr("Your choices are still saved, and show in full once the file is removed.")
                 color: page.foreground
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -190,7 +200,7 @@ SettingsPage {
                 visible: text.length > 0
                 text: Theme.lastError
                 color: Theme.palette.color("errorForeground", "#f87171")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -200,7 +210,7 @@ SettingsPage {
                 text: Theme.path
                 color: page.muted
                 font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
                 wrapMode: Text.WrapAnywhere
             }
         }
@@ -210,9 +220,12 @@ SettingsPage {
         text: qsTr("Color scheme")
     }
 
+    // Three equal segments, whatever their labels' lengths.
     RowLayout {
+        objectName: "modes"
         Layout.fillWidth: true
-        spacing: 8
+        uniformCellSizes: true
+        spacing: Theme.space.sm
 
         Repeater {
             model: page.modes
@@ -222,8 +235,12 @@ SettingsPage {
 
                 objectName: "mode:" + modelData.mode
                 Layout.fillWidth: true
+                readonly property bool chosen: Themes.mode === modelData.mode
+
                 text: modelData.label
-                primary: Themes.mode === modelData.mode
+                hoverFill: chosen ? page.selectedFill : Qt.alpha(accentSurface, accentSurface.a * 0.5)
+                checked: chosen
+                tint: chosen ? page.selectedInk : Theme.palette.color("text", "#e4e4e7")
                 Accessible.name: qsTr("%1 appearance").arg(modelData.label)
                 onClicked: Themes.setMode(modelData.mode)
             }
@@ -261,7 +278,7 @@ SettingsPage {
     // be copied to start a theme of one's own, but not edited or removed.
     RowLayout {
         Layout.fillWidth: true
-        spacing: 6
+        spacing: Theme.space.sm
 
         ThemeChoice {
             objectName: "theme:hal-c2"
@@ -273,6 +290,8 @@ SettingsPage {
         }
 
         ShellButton {
+            id: standardCopy
+
             objectName: "duplicate:hal-c2"
             subtle: true
             iconName: "copy"
@@ -280,6 +299,18 @@ SettingsPage {
             ToolTip.visible: hovered
             ToolTip.text: qsTr("Duplicate")
             onClicked: Themes.duplicateStandard()
+        }
+
+        // The room of the buttons it lacks (Export, and Edit and Remove when
+        // a row has them), so its Duplicate is in the other rows' column.
+        Repeater {
+            model: page.anyCustom ? 3 : 1
+
+            delegate: Item {
+                objectName: "slot"
+                implicitWidth: standardCopy.implicitWidth
+                implicitHeight: standardCopy.implicitHeight
+            }
         }
     }
 
@@ -295,7 +326,7 @@ SettingsPage {
 
             objectName: "theme:" + modelData.id
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Theme.space.sm
 
             // A collection's variants are picked to remove several at once.
             ShellCheckBox {
@@ -319,17 +350,18 @@ SettingsPage {
                 text: themeRow.modelData.source === "environment" ? qsTr("From this environment") : themeRow.modelData.appearances.length === 1 ? (themeRow.modelData.appearances[0] === "dark" ? qsTr("Dark only") : qsTr("Light only")) : ""
                 visible: text.length > 0
                 color: page.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             Label {
                 text: themeRow.modelData.collection ?? ""
                 visible: text.length > 0
                 color: page.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             ShellButton {
+                objectName: "duplicate:" + themeRow.modelData.id
                 subtle: true
                 iconName: "copy"
                 Accessible.name: qsTr("Duplicate %1").arg(themeRow.modelData.label)
@@ -338,8 +370,13 @@ SettingsPage {
                 onClicked: Themes.duplicate(themeRow.modelData.id)
             }
 
+            // Only a theme of one's own is edited or removed; the others
+            // keep the room while one shows, so the columns hold.
             ShellButton {
-                visible: themeRow.custom
+                visible: themeRow.custom || page.anyCustom
+                opacity: themeRow.custom ? 1 : 0
+                enabled: themeRow.custom
+                Accessible.ignored: !themeRow.custom
                 subtle: true
                 iconName: "pencil-ruler"
                 Accessible.name: qsTr("Edit %1").arg(themeRow.modelData.label)
@@ -363,7 +400,10 @@ SettingsPage {
             }
 
             ShellButton {
-                visible: themeRow.custom
+                visible: themeRow.custom || page.anyCustom
+                opacity: themeRow.custom ? 1 : 0
+                enabled: themeRow.custom
+                Accessible.ignored: !themeRow.custom
                 subtle: true
                 iconName: "x"
                 Accessible.name: qsTr("Remove %1").arg(themeRow.modelData.label)
@@ -405,14 +445,14 @@ SettingsPage {
             }
 
             Layout.fillWidth: true
-            spacing: 12
+            spacing: Theme.space.md
 
             Label {
                 Layout.fillWidth: true
                 text: halfRow.modelData.label
                 wrapMode: Text.Wrap
                 color: page.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
 
             ShellComboBox {

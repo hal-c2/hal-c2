@@ -1,15 +1,22 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17547
+#   https://github.com/pingdotgg/t3code/pull/16674
 #   docs/user/thread-sidebar.md (Settling, Auto-settle rules)
+#   https://github.com/pingdotgg/t3code/pull/11846 (per-thread Auto-settle behavior: Enabled, Disabled)
 #   apps/web/src/components/threadActionMenu.logic.ts (Settle thread, Un-settle thread)
 #   apps/web/src/components/ChatView.tsx (settled notice in the open thread)
 #   apps/web/src/components/settings/SettingsPanels.tsx (General: auto-settle rules)
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Settled section, settled limit)
 #   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml (Settle, Un-settle)
+#   apps/desktop-qt/src/native/ThreadNoticeController.cpp (settled notice), ThreadMenuController.cpp (Auto-settle behavior)
 #   apps/tui/src/components/Sidebar.logic.ts (Settled section, paging)
 #   apps/tui/src/commands.ts (Settle, Un-settle)
 #   packages/contracts/src/orchestrationV2.ts (thread.settle, thread.auto-settle, thread.unsettle, thread.settled, thread.unsettled)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (settle, unsettle)
 #   apps/server-ex/lib/hal_c2/orchestration/settlement.ex
+#   https://github.com/pingdotgg/t3code/pull/15024
+#   https://github.com/pingdotgg/t3code/pull/24760
+#   https://github.com/pingdotgg/t3code/pull/24830
 
 Feature: Settling threads
   Settling marks a thread as done without archiving it. Threads also settle on their own
@@ -29,7 +36,7 @@ Feature: Settling threads
     When the user un-settles "Ship checkout"
     Then "Ship checkout" returns to the top of the active threads
 
-  @backlog @desktop
+  @desktop
   Scenario: An open settled thread says so and can be un-settled there
     Given "Ship checkout" is settled
     When the user opens "Ship checkout"
@@ -37,7 +44,7 @@ Feature: Settling threads
     When the user chooses "Un-settle"
     Then "Ship checkout" returns to the active threads
 
-  @backlog @desktop
+  @desktop
   Scenario: An un-settle that fails is reported
     Given the user has opened "Ship checkout", which is settled
     And the environment rejects the un-settle
@@ -45,7 +52,7 @@ Feature: Settling threads
     Then the user is told "Failed to un-settle thread" with the reason
     And "Ship checkout" stays settled
 
-  @backlog @desktop
+  @desktop
   Scenario: A settled thread that woke earlier does not say it woke
     Given "Ship checkout" woke from a snooze and was then settled
     When the user opens "Ship checkout"
@@ -64,19 +71,21 @@ Feature: Settling threads
     Then the status line reports that the settle failed and why
     And "Ship checkout" stays active
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Settling a pinned thread removes the pin
     Given "Ship checkout" is pinned
     When the user settles "Ship checkout"
     Then "Ship checkout" is settled and no longer pinned
 
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: Settling dismisses questions the agent is waiting on
     Given the agent in "Ship checkout" asked a question in the background
     When the user settles "Ship checkout"
     Then the question is dismissed
 
-  @desktop @mobile @backlog-mobile
+  # Upstream #17547: the server's confirmation brought the old wake time back; settling now
+  # clears the snooze where it is stored.
+  @desktop @mobile
   Scenario: Settling a snoozed thread ends the snooze
     Given "Ship checkout" is snoozed until tomorrow
     When the user settles "Ship checkout"
@@ -88,11 +97,26 @@ Feature: Settling threads
     When the pull request is merged on GitHub
     Then "Ship checkout" moves to the settled section without the user settling it
 
-  @backlog @mobile
+  @mobile
   Scenario: A thread whose pull request merges leaves the phone's active list on its own
     Given "Ship checkout" is linked to a pull request
     When the pull request is merged on GitHub
     Then "Ship checkout" is shown as settled on the phone
+
+  # Upstream #11846: per-thread auto-settle switch
+  @shared
+  Scenario: A thread's auto-settle can be turned off and back on
+    When the user turns auto-settle off for "Ship checkout"
+    Then "Ship checkout" stays out of automatic settling
+    When the user turns auto-settle on for "Ship checkout"
+    Then "Ship checkout" settles automatically again after a quiet spell
+
+  # Upstream #11846: per-thread auto-settle switch
+  @shared
+  Scenario: Settling a thread with auto-settle off still works
+    Given "Ship checkout" has auto-settle turned off
+    When the user settles "Ship checkout"
+    Then "Ship checkout" moves to the settled section
 
   @mc
   Scenario: A thread settles after a quiet spell
@@ -150,6 +174,22 @@ Feature: Settling threads
     And the settle sweep runs
     Then "Ship checkout" stays active
 
+  # Upstream #16674: inactivity restarts after a snoozed thread wakes
+  @backlog @mc @priority-low
+  Scenario Outline: A snoozed thread that wakes starts its quiet spell again
+    Given the auto-settle rule is "after 1 day of inactivity"
+    And "Ship checkout" has been snoozed for 3 days with no activity
+    When <wake>
+    And the settle sweep runs
+    Then "Ship checkout" stays active
+    And it settles only after a further day with no activity
+
+    Examples:
+      | wake                                  |
+      | the user wakes "Ship checkout"        |
+      | the snooze of "Ship checkout" ends    |
+      | the user pins "Ship checkout"         |
+
   @mc
   Scenario: An automatic settle that races new activity is dropped
     Given the settle sweep decided to settle "Ship checkout"
@@ -184,7 +224,7 @@ Feature: Settling threads
     When "Ship checkout" has had no activity for 3 days
     Then "Ship checkout" stays active and pinned
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario Outline: Choosing auto-settle rules for an environment
     When the user sets auto-settle to <rule> for <scope>
     Then threads on <affected> follow the new rule
@@ -195,15 +235,40 @@ Feature: Settling threads
       | never on inactivity | all environments       | every environment |
       | when the PR merges  | all environments       | every environment |
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Different rules across environments are shown as mixed
     Given "home" settles after 3 days and "work" settles after 7 days
     When the user looks at the auto-settle rules for all environments
     Then the quiet spell is shown as mixed
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: An offline environment keeps its auto-settle rules
     Given the environment "work" is offline
     When the user changes the auto-settle rules for all environments
     Then "work" keeps its previous rules
     And the user can see "work" was not updated
+
+  # Upstream #15024: threads settle as soon as an agent merges their pull request
+  # Upstream #24760: the pull request is read when the merge command ends, not when the run ends.
+  @backlog @mc
+  Scenario: A thread settles when the agent merges its own pull request from a shell
+    Given the agent ran gh pr merge or close, or the glab equivalent
+    When the command ends
+    Then the pull request is read fresh before the run ends
+    And the thread settles as soon as its turn ends
+
+  # Upstream #24830: a branch pull request the thread never linked was read from a minute-old
+  # cache, so the thread showed in the inbox and only settled later.
+  @backlog @mc
+  Scenario: A thread settles at once after a shell merge of a pull request it never linked
+    Given the thread's branch has an open pull request that is not linked to it
+    When the agent merges it with gh pr merge and the turn ends
+    Then the branch's pull request is read fresh
+    And the thread settles within two seconds of its turn ending
+
+  # Upstream #24760: background work ending only got noticed by the once-a-minute sweep.
+  @backlog @mc
+  Scenario: A thread is checked for settling as soon as its background work ends
+    Given a thread whose turn ended while a subagent still worked
+    When the subagent finishes
+    Then the thread is checked for settling at once, without waiting for the next sweep

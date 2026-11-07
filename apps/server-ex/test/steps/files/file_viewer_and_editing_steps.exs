@@ -139,17 +139,45 @@ defmodule HalC2.Steps.Files.FileViewerAndEditing do
     World.put_client(context, "no terminal", Mc.connect_as(context.mc, Mc.pair(scopes, "Phone")))
   end
 
+  step "a client paired with terminal access", context do
+    scopes = HalC2.Auth.standard_scopes()
+    World.put_client(context, "terminal", Mc.connect_as(context.mc, Mc.pair(scopes, "Desktop")))
+  end
+
   step "that client writes {string} in {string}", %{args: [file, project]} = context do
+    write_at(
+      context,
+      World.project(context, project).root,
+      Host.path(context, file),
+      "no terminal"
+    )
+  end
+
+  step "that client writes {string} with the project folder {string}",
+       %{args: [file, folder]} = context do
+    write_at(context, Host.path(context, folder), file, "no terminal")
+  end
+
+  step "a client writes {string} with the project folder {string}",
+       %{args: [file, folder]} = context do
+    write_at(context, Host.path(context, folder), file, "terminal")
+  end
+
+  step "that client writes {string} in the worktree", %{args: [file]} = context do
+    write_at(context, context.worktree, file, "no terminal")
+  end
+
+  step "{string} exists in the worktree with the written contents", %{args: [file]} = context do
+    assert {:ok, _} = context.reply
+    assert File.read!(Path.join(context.worktree, file)) == context.written
+    context
+  end
+
+  defp write_at(context, cwd, file, client) do
     Mc.ensure(HalC2.Workspace)
     contents = "export const written = #{System.unique_integer([:positive])};\n"
-
-    input = %{
-      "cwd" => World.project(context, project).root,
-      "relativePath" => Host.path(context, file),
-      "contents" => contents
-    }
-
-    {reply, context} = World.call(context, "projects.writeFile", input, "no terminal")
+    input = %{"cwd" => cwd, "relativePath" => file, "contents" => contents}
+    {reply, context} = World.call(context, "projects.writeFile", input, client)
     Map.merge(context, %{reply: reply, written: contents})
   end
 
@@ -173,6 +201,13 @@ defmodule HalC2.Steps.Files.FileViewerAndEditing do
     assert {:ok, %{"relativePath" => path}} = context.reply
     assert path == Host.path(context, file)
     assert File.read!(path) == context.written
+    context
+  end
+
+  step "the outside file {string} has the written contents", %{args: [file]} = context do
+    basename = Path.basename(file)
+    assert {:ok, %{"relativePath" => ^basename}} = context.reply
+    assert File.read!(Host.path(context, file)) == context.written
     context
   end
 

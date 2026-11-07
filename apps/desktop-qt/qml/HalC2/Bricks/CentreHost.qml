@@ -1,20 +1,18 @@
 import QtQuick
-import "js/centreViews.js" as Views
 
-// The centre for the route (js/centreViews.js): its thread or draft, home,
-// pull requests or usage. Empty for a route kind no view draws.
-Loader {
-    id: host
-
+// The route's centre (RouteView) and a thread's stage beside or over it
+// (ThreadArea), for a layout that places its own Composer under it. The stage
+// borrows the tab bodies of the window's side panel (ShellWindow.panelBodies).
+//
+//   CentreHost { kind: root.route?.kind ?? "" }
+ThreadArea {
     // The route kind to show; ShellWindow.route.kind by default layouts.
     property string kind: ""
-    readonly property string brick: Views.brickFor(kind)
-    // The loaded view's corner radius, for layouts that round the centre.
-    property real radius: 0
-    // Whether the loaded view is a conversation scrolled away from its latest output.
-    readonly property bool conversationScrolled: status === Loader.Ready && (item as ThreadView)?.scrolledAway === true
+    // The route's view (RouteView.item), and the brick it is drawn by.
+    readonly property Item item: centreView.item as Item
+    readonly property string brick: centreView.brick
 
-    active: brick.length > 0
-    source: active ? Qt.resolvedUrl(brick + ".qml") : ""
-    onLoaded: item.radius = Qt.binding(() => host.radius)
+    routeKind: kind
+    composerShown: false
+    bodies: (Window.window as ShellWindow)?.panelBodies ?? null
 }

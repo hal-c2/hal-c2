@@ -53,8 +53,8 @@ TestCase {
         compare(combo.background.border.color, "#ff8800");
     }
 
-    // A bordered picker (Settings) rings on any focus, mouse included.
-    function test_outlinePickerRingsOnAnyFocus() {
+    // A bordered picker (Settings) keeps its border; only the keyboard rings it.
+    function test_outlinePickerRingsOnlyForTheKeyboard() {
         Theme.colors = {
             focus: "#ff8800",
             input: "#333333"
@@ -65,7 +65,9 @@ TestCase {
         compare(combo.background.border.width, 1);
         compare(combo.background.border.color, "#333333");
         combo.forceActiveFocus(Qt.MouseFocusReason);
-        compare(combo.background.border.width, 1);
+        compare(combo.background.border.color, "#333333");
+        combo.focus = false;
+        combo.forceActiveFocus(Qt.TabFocusReason);
         compare(combo.background.border.color, "#ff8800");
     }
 
@@ -79,7 +81,7 @@ TestCase {
         });
         openCombo(combo);
         // The keyboard starts on the current value; moving off it leaves the
-        // chosen row with its own quiet fill.
+        // chosen row with only its check.
         compare(combo.highlightedIndex, 1);
         combo.forceActiveFocus();
         keyClick(Qt.Key_Down);
@@ -87,8 +89,7 @@ TestCase {
         compare(items.length, 3);
         compare(items.map(row => row.Accessible.checked), [false, true, false]);
         compare(items.map(row => row.contentItem.children[1].visible), [false, true, false]);
-        const fill = items[1].background.color;
-        compare(fill.a.toFixed(2), "0.08");
+        compare(items[1].background.color.a, 0);
         compare(items[0].background.color.a, 0);
     }
 
@@ -162,5 +163,44 @@ TestCase {
             const centre = label.mapToItem(row, 0, label.height / 2).y;
             fuzzyCompare(centre, row.background.height / 2, 1, "label centre " + centre);
         }
+    }
+
+    // A list longer than the popup's 320 ends on a whole row, not a sliced
+    // one, with a bar at the right edge saying there is more (the diff's
+    // turn picker stopped mid-"Turn 11").
+    function test_aLongListEndsOnAWholeRowAndHintsAtMore() {
+        const turns = [];
+        for (let turn = 1; turn <= 30; ++turn)
+            turns.push("Turn " + turn);
+        const combo = createTemporaryObject(comboComponent, testCase, {
+            y: 20,
+            model: turns,
+            currentIndex: 0
+        });
+        openCombo(combo);
+        const popup = combo.popup;
+        const list = popup.contentItem;
+        verify(popup.height <= 320);
+        compare((list.height) % Theme.control.md, 0);
+        compare(popup.height, list.height + popup.topPadding + popup.bottomPadding);
+        // A thin bar at the right edge says there is more: at the top, then at the end.
+        const thumb = findChild(list, "scrollThumb");
+        verify(thumb.visible);
+        verify(Math.abs(thumb.y - Theme.space.xxs) < 0.5, "the bar starts at the top, not " + thumb.y);
+        verify(thumb.height < list.height - 2 * Theme.space.xxs);
+        verify(thumb.x >= list.width - Theme.space.sm, "the bar keeps to the rows' right padding");
+        list.positionViewAtEnd();
+        tryVerify(() => Math.abs(thumb.y + thumb.height - (list.height - Theme.space.xxs)) < 0.5, 2000, "the bar ends at the bottom, not " + thumb.y);
+    }
+
+    // A short list shows every row and no edge.
+    function test_aShortListShowsNoEdge() {
+        const combo = createTemporaryObject(comboComponent, testCase, {
+            y: 20
+        });
+        openCombo(combo);
+        const list = combo.popup.contentItem;
+        compare(list.height, 3 * Theme.control.md);
+        verify(!findChild(list, "scrollThumb").visible);
     }
 }

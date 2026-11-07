@@ -1,10 +1,13 @@
 #include "ThemeStore.h"
 
+#include <cmath>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QFontDatabase>
+#include <QFontInfo>
 #include <QGuiApplication>
+#include <QHash>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
@@ -104,6 +107,7 @@ ThemeStore::ThemeStore(const QString& configDir, QObject* parent)
   m_debounce.setInterval(80);
   connect(&m_debounce, &QTimer::timeout, this, &ThemeStore::reload);
   connect(this, &ThemeStore::themeChanged, this, &ThemeStore::applyInterfaceFont);
+  connect(this, &ThemeStore::themeChanged, this, &ThemeStore::applyType);
   connect(&m_watcher, &QFileSystemWatcher::fileChanged, this, [this] {
     watch();
     scheduleReload();
@@ -115,6 +119,48 @@ ThemeStore::ThemeStore(const QString& configDir, QObject* parent)
   applyDefaults();
   watch();
   reload();
+  applyType();
+}
+
+void ThemeTypeStep::set(int size, int lineHeight, int weight) {
+  if (size == m_size && lineHeight == m_lineHeight && weight == m_weight) return;
+  m_size = size;
+  m_lineHeight = lineHeight;
+  m_weight = weight;
+  emit changed();
+}
+
+void ThemeTypeRamp::apply(qreal scale, bool monospace) {
+  // Sans sizes and line heights; a monospace face gets two more pixels of
+  // leading on every step and a smaller display, since its glyphs run wide.
+  const int leading = monospace ? 2 : 0;
+  const auto step = [&](ThemeTypeStep& target, int size, int lineHeight, int weight) {
+    target.set(qRound(size * scale), qRound(lineHeight * scale) + leading, weight);
+  };
+  step(m_caption, 11, 16, 500);
+  step(m_meta, 12, 16, 400);
+  step(m_body, 13, 18, 400);
+  step(m_prose, 14, 22, 400);
+  step(m_title, 16, 22, 600);
+  if (monospace) m_display.set(qRound(22 * scale), qRound(28 * scale), 600);
+  else step(m_display, 24, 30, 600);
+}
+
+void ThemeStore::applyType() {
+  bool monospace = false;
+  if (qobject_cast<QGuiApplication*>(QCoreApplication::instance())) {
+    const QString family = fontUi();
+    if (!family.isEmpty()) {
+      QFont font;
+      font.setFamilies({family});
+      monospace = QFontInfo(font).fixedPitch();
+    }
+  }
+  m_type.apply(fontScale(), monospace);
+  if (monospace != m_monospace) {
+    m_monospace = monospace;
+    emit themeChanged();
+  }
 }
 
 void ThemeStore::watch() {
@@ -243,16 +289,115 @@ QColor parseCssColor(const QString& value) {
 
 }  // namespace
 
+namespace {
+
+QColor mix(const QColor& from, const QColor& to, qreal amount) {
+  return QColor::fromRgbF(from.redF() + (to.redF() - from.redF()) * amount, from.greenF() + (to.greenF() - from.greenF()) * amount,
+                          from.blueF() + (to.blueF() - from.blueF()) * amount, from.alphaF() + (to.alphaF() - from.alphaF()) * amount);
+}
+
+// Roles under two names: a newer one and the one themes already set.
+const QHash<QString, QString>& renames() {
+  static const QHash<QString, QString> pairs{
+      {QStringLiteral("ink"), QStringLiteral("text")},           {QStringLiteral("text"), QStringLiteral("ink")},
+      {QStringLiteral("inkTertiary"), QStringLiteral("textMuted")}, {QStringLiteral("textMuted"), QStringLiteral("inkTertiary")},
+      {QStringLiteral("destructive"), QStringLiteral("error")},  {QStringLiteral("error"), QStringLiteral("destructive")},
+      {QStringLiteral("popover"), QStringLiteral("surfaceOverlay")}, {QStringLiteral("surfaceOverlay"), QStringLiteral("popover")},
+  };
+  return pairs;
+}
+
+// A role derived from others when a palette leaves it out: a mix of two
+// roles, or a copy of one (b empty).
+struct Derivation {
+  const char* a;
+  const char* b;
+  qreal amount;
+};
+
+const QHash<QString, Derivation>& derivations() {
+  static const QHash<QString, Derivation> table{
+      {QStringLiteral("inkSecondary"), {"ink", "inkTertiary", 0.5}},
+      {QStringLiteral("borderStrong"), {"border", "ink", 0.12}},
+      {QStringLiteral("inset"), {"codeBackground", nullptr, 0}},
+      {QStringLiteral("inputSurface"), {"surface", nullptr, 0}},
+      {QStringLiteral("accentText"), {"accent", nullptr, 0}},
+      {QStringLiteral("diffAddedSurface"), {"canvas", "diffAdded", 0.14}},
+      {QStringLiteral("diffRemovedSurface"), {"canvas", "diffRemoved", 0.14}},
+  };
+  return table;
+}
+
+// A role a palette names, under either of its names.
+QColor named(const QVariantMap& palette, const QString& role) {
+  const QColor own = parseCssColor(palette.value(role).toString());
+  if (own.isValid()) return own;
+  const QString other = renames().value(role);
+  return other.isEmpty() ? QColor() : parseCssColor(palette.value(other).toString());
+}
+
+// A derived role from `lookup`, which resolves the roles it is made of.
+template <typename Lookup>
+QColor derive(const Derivation& recipe, Lookup lookup) {
+  const QColor first = lookup(QLatin1String(recipe.a));
+  if (!recipe.b) return first;
+  const QColor second = lookup(QLatin1String(recipe.b));
+  return first.isValid() && second.isValid() ? mix(first, second, recipe.amount) : QColor();
+}
+
+// A role in one palette alone: named, or derived from what it names.
+QColor resolveIn(const QVariantMap& palette, const QString& role) {
+  const QColor own = named(palette, role);
+  if (own.isValid()) return own;
+  const auto recipe = derivations().constFind(role);
+  return recipe == derivations().constEnd() ? QColor() : derive(*recipe, [&](const QString& r) { return named(palette, r); });
+}
+
+// `color` deepened until white text on it reads at 4.5:1 (WCAG AA): what a
+// destructive button is filled with when no palette names destructiveFill.
+QColor deepenedUnderWhite(const QColor& color) {
+  const auto channel = [](qreal c) { return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4); };
+  const auto luminance = [&](const QColor& c) {
+    return 0.2126 * channel(c.redF()) + 0.7152 * channel(c.greenF()) + 0.0722 * channel(c.blueF());
+  };
+  const QColor hsl = color.toHsl();
+  const qreal hue = qMax<qreal>(0, hsl.hslHueF()), saturation = hsl.hslSaturationF();
+  QColor fill = color.toRgb();
+  fill.setAlphaF(1);
+  for (qreal lightness = hsl.lightnessF(); lightness > 0 && 1.05 / (luminance(fill) + 0.05) < 4.5;) {
+    lightness = qMax<qreal>(0, lightness - 0.01);
+    fill = QColor::fromHslF(hue, saturation, lightness).toRgb();
+  }
+  return fill;
+}
+
+}  // namespace
+
 QColor ThemeStore::color(const QString& role, const QColor& fallback) const {
-  for (const QVariantMap* source : {&m_colors, &m_baseColors}) {
-    const auto value = source->value(role).toString();
-    if (value.isEmpty()) {
-      continue;
-    }
-    const QColor parsed = parseCssColor(value);
-    if (parsed.isValid()) {
-      return parsed;
-    }
+  // The shell's theme file first, then the base theme. A derived role the
+  // file leaves out still follows the file when it sets what the role is made
+  // of: its own text, say, gives its own secondary ink.
+  const QColor shell = named(m_colors, role);
+  if (shell.isValid()) return shell;
+  const bool destructiveFill = role == QLatin1String("destructiveFill");
+  if (destructiveFill && named(m_colors, QStringLiteral("error")).isValid()) {
+    return deepenedUnderWhite(named(m_colors, QStringLiteral("error")));
+  }
+  const auto recipe = derivations().constFind(role);
+  if (recipe != derivations().constEnd() &&
+      (named(m_colors, QLatin1String(recipe->a)).isValid() || (recipe->b && named(m_colors, QLatin1String(recipe->b)).isValid()))) {
+    const QColor derived = derive(*recipe, [this](const QString& r) { return color(r, QColor()); });
+    if (derived.isValid()) return derived;
+  }
+  const QColor base = resolveIn(m_baseColors, role);
+  if (base.isValid()) return base;
+  if (destructiveFill) {
+    const QColor error = resolveIn(m_baseColors, QStringLiteral("error"));
+    if (error.isValid()) return deepenedUnderWhite(error);
+  }
+  // What dims the window behind a dialog, when no palette says.
+  if (role == QLatin1String("scrim")) {
+    return appearance() == QStringLiteral("light") ? QColor(0x14, 0x16, 0x1a, 82) : QColor(0, 0, 0, 143);
   }
   return fallback;
 }

@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18309
+#   https://github.com/pingdotgg/t3code/pull/24899
+#   https://github.com/pingdotgg/t3code/pull/16750
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/orchestration.ex (steerable?, driver_for, follow-up queueing)
 #   apps/server-ex/lib/hal_c2/orchestration/entities.ex (steers?), apps/server-ex/lib/hal_c2/pi/thread_runtime.ex (steer)
@@ -10,6 +13,7 @@
 #   apps/web/src/components/chat/ChatComposer.tsx (capability-gated controls)
 #   docs/user/providers-claude.md, docs/user/providers-codex.md, docs/user/providers-opencode.md,
 #   docs/user/providers-pi.md, docs/user/providers-muse.md, docs/user/providers-antigravity.md, docs/user/providers-acp.md, docs/user/cursor.md
+#   https://github.com/pingdotgg/t3code/pull/14542
 
 @mc
 Feature: Provider capabilities
@@ -128,7 +132,7 @@ Feature: Provider capabilities
       | Cursor      |
       | Antigravity |
 
-  @backlog
+  @backlog @priority-low
   Scenario: Antigravity refuses a rewind of the conversation
     Given an Antigravity thread with three turns
     When the user rewinds to the first turn
@@ -146,7 +150,7 @@ Feature: Provider capabilities
 
     # The OpenCode row is split out: OpenCode's plan agent answers in prose, and neither
     # server captures a proposed plan from it (OpenCodeAdapterV2.ts emitsProposedPlan: false).
-    @backlog
+    @backlog @priority-low
     Examples: Not yet on the MC
       | provider |
       | OpenCode |
@@ -171,22 +175,80 @@ Feature: Provider capabilities
       | provider    |
       | Codex       |
 
-  @shared @backlog-desktop @backlog-mobile
+  @shared @backlog-desktop @backlog-mobile @priority-low
   Scenario: An ACP subagent's messages stay in its own thread
     Given an ACP agent starts a native child session
     When the child sends messages and a final summary
     Then they appear in the child's thread
     And the parent receives only the child's result
 
-  @shared @backlog-mc @backlog-desktop @backlog-mobile
+  @shared @backlog-mc @backlog-desktop @backlog-mobile @priority-low
   Scenario: An ACP edit carries its replaced lines
     Given an ACP agent edits a file by giving the old text and the new text
     When the user looks at the change
     Then the diff shows the replaced lines
     And the diff is not empty just because the agent sent no patch
 
-  @backlog
+  @backlog @priority-low
   Scenario: A registry agent declares its capabilities through its plugin
     Given a registry agent that declares it can be steered
     When the user sends a follow-up during its turn
     Then the message joins the running turn
+
+  @backlog @shared @mc
+  Scenario: Restarting the agent session loads new skills and plugins
+    Given a thread whose provider has new skills, plugins or MCP servers
+    When the user chooses Restart agent session in the command palette
+    Then the thread's provider process is stopped and the conversation stays
+    And the next message resumes it on a fresh process with the new setup
+    And the folder is scanned again so the slash and dollar menus list the new skills
+    And a failure shows an error toast
+
+  # Upstream #16750: a folder's skill scan goes stale after five minutes; the composer rescans
+  # it once when it opens there, so a skill added to the project shows up without a restart.
+  @backlog @mc @priority-low
+  Scenario Outline: Opening the composer rescans a folder's skills only once they are stale
+    Given the skills of folder "api" were scanned <age> ago
+    And a skill "deploy" was added to "api" since
+    When the user opens the composer for a thread working in "api"
+    Then <outcome>
+
+    Examples:
+      | age        | outcome                                                     |
+      | 6 minutes  | "api" is scanned again and the dollar menu offers "deploy"  |
+      | 2 minutes  | "api" is not scanned again and "deploy" is not offered yet  |
+
+  # Upstream #18309: a folder's skill scan is published even while the provider's health
+  # check fails; commands it cannot read keep the last known ones instead of going empty.
+  @backlog
+  Scenario: Skills stay offered while the provider's health check fails
+    Given Codex's health check fails
+    And Codex's skill scan of folder "api" finds the skill "deploy"
+    When the user opens the composer for a thread working in "api"
+    Then the dollar and slash menus offer "deploy"
+    And Codex still shows its health problem
+
+  # Upstream #24899: every thread open sent every provider's skills for every folder; a
+  # folder's skills now come only when a composer asks for that folder.
+  @backlog @mc @shared
+  Scenario: A client is sent the skills of a folder only when it asks for that folder
+    Given Codex has scanned the skills of folders "api" and "web"
+    When the user opens the composer for a thread working in "api"
+    Then the client is sent the skills Codex found in "api"
+    And the client is not sent the skills of "web"
+
+  # Upstream #24899
+  @backlog @mc
+  Scenario: Two composers asking for one folder share its scan
+    Given a skill scan of folder "api" is still running
+    When another client asks for the skills of "api"
+    Then it receives the result of the running scan, not an empty list
+    And the scan finishes even if the client that started it disconnects
+
+  # Upstream #24899: a deleted worktree's scan never finished, so its composer retried every
+  # 10 seconds forever.
+  @backlog @shared @priority-low
+  Scenario: A composer stops asking for the skills of a folder that cannot be scanned
+    Given the folder of thread "t1" was deleted
+    When the user keeps the composer of "t1" open
+    Then the skills of the folder are asked for at most 3 times

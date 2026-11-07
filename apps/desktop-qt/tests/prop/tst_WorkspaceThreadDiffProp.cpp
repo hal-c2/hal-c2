@@ -6,7 +6,14 @@
 // thread's timeline. The user switches thread
 // (its timeline sometimes not there yet), shows and hides the tab, picks a
 // turn, all changes, the working tree or the branch, changes the base and
-// whitespace options, focuses one file and reloads.
+// whitespace options, focuses one file and reloads. Each thread keeps its
+// own selection and base. A latest turn that changed no files opens on all
+// changes when an earlier one changed some, until the user picks the latest
+// turn. While the checkout is shown, a change the agent
+// makes (here, a checkpoint's status) asks for it again without blanking it,
+// and the same answer leaves it as it was. A review the MC cut short lists
+// its files, and the user opens them (or retries one that failed) to load
+// each one's changes.
 //
 // The model is what the user should see. The picker's selection is always
 // one of its choices. Each property's signal fires once when it changes and
@@ -18,10 +25,12 @@
 #include "WorkspaceModels.h"
 
 #include <QJsonArray>
+#include <QSet>
 #include <QSignalSpy>
 
 #include <memory>
 #include <optional>
+#include <tuple>
 
 #include "FakeMc.h"
 #include "McClient.h"
@@ -56,12 +65,15 @@ void showValue(const Checkpoint& checkpoint, std::ostream& os) {
 
 using Checkpoints = QList<Checkpoint>;
 
-// Turn number -> the ready checkpoint's id.
+// Turn number -> the ready checkpoint's id. As the MC counts them, turns are
+// the ready checkpoints in order: one still being written has no number yet.
 QMap<int, QString> readyTurns(const Checkpoints& checkpoints) {
-  QMap<int, QString> turns;
+  QMap<int, QString> byOrdinal;
   for (const Checkpoint& checkpoint : checkpoints) {
-    if (checkpoint.status == QLatin1String("ready")) turns.insert(checkpoint.ordinal, checkpoint.id);
+    if (checkpoint.status == QLatin1String("ready")) byOrdinal.insert(checkpoint.ordinal, checkpoint.id);
   }
+  QMap<int, QString> turns;
+  for (const QString& id : std::as_const(byOrdinal)) turns.insert(int(turns.size()) + 1, id);
   return turns;
 }
 
@@ -93,12 +105,16 @@ struct Request {
   QString cwd;
   QString base;
   int selection = 0;
+  // One file's changes of a review cut short.
+  QString file;
   // Which of the client's requests it was: only the newest is shown.
   int number = 0;
+  // Which listing of a review cut short a file's request is for.
+  int listing = 0;
 
   bool sameAsked(const Request& other) const {
     return method == other.method && thread == other.thread && from == other.from && to == other.to && whitespace == other.whitespace &&
-           cwd == other.cwd && base == other.base;
+           cwd == other.cwd && base == other.base && file == other.file;
   }
 };
 
@@ -109,6 +125,7 @@ void showValue(const Request& request, std::ostream& os) {
   } else {
     os << " of '" << request.cwd.toStdString() << "' base '" << request.base.toStdString() << "'";
   }
+  if (!request.file.isEmpty()) os << " file " << request.file.toStdString();
   os << (request.whitespace ? " ignoring whitespace" : "");
 }
 
@@ -124,6 +141,7 @@ struct Answer {
 
 Answer answerOf(const Request& request, const QMap<QString, Checkpoints>& mc) {
   const QString ws = request.whitespace ? QStringLiteral("-ws") : QString();
+  if (!request.file.isEmpty()) return {std::nullopt, {request.file}};
   if (request.method == QLatin1String("review.getDiffPreview")) {
     const bool branch = request.selection == ThreadDiff::Branch;
     Answer answer;
@@ -162,9 +180,27 @@ struct Model {
   bool timeline = false;
   bool active = false;
   int selection = -1;
+  // The user picked the latest turn, so it is shown even when it changed nothing.
+  bool latestPicked = false;
   QString cwd;
   QString base;
   bool whitespace = true;
+
+  // What each other thread had selected, its base, and whether the latest turn was picked.
+  QMap<QString, std::tuple<int, QString, bool>> choices_;
+  // A load following the checkout keeps a shown diff until it is answered.
+  bool quiet = false;
+  // The review answer shown (its kind and files), and the focus shown of it:
+  // the same again changes nothing.
+  QString sourceKey;
+  QString presented;
+  // A review cut short: its files, how far each one's changes are, and which
+  // the user opened.
+  bool lazy = false;
+  QString lazyKind;
+  int listing = 0;
+  QMap<QString, QString> fileStates;
+  QSet<QString> opened;
 
   QString status = QStringLiteral("idle");
   QString message;
@@ -191,11 +227,29 @@ struct Model {
     }
     return std::nullopt;
   }
-  int effective() const { return selection == -1 && turns().isEmpty() && !cwd.isEmpty() ? int(ThreadDiff::WorkingTree) : selection; }
+  // How many files the summary of turn `turn`'s checkpoint lists.
+  int filesOf(int turn) const {
+    const QString id = turns().value(turn);
+    for (const Checkpoint& checkpoint : mc.value(thread)) {
+      if (checkpoint.id == id) return checkpoint.files;
+    }
+    return 0;
+  }
+  // The default shows all changes when the latest turn changed no files and an earlier one did.
+  bool opensOnAllChanges() const {
+    if (latestPicked || turns().size() < 2 || filesOf(latestTurn()) > 0) return false;
+    for (int turn = 1; turn < latestTurn(); ++turn) {
+      if (filesOf(turn) > 0) return true;
+    }
+    return false;
+  }
+  // What the picker shows.
+  int picked() const { return selection == -1 && opensOnAllChanges() ? 0 : selection; }
+  int effective() const { return selection == -1 && turns().isEmpty() && !cwd.isEmpty() ? int(ThreadDiff::WorkingTree) : picked(); }
   bool reviewing() const { return effective() <= ThreadDiff::WorkingTree; }
   int shownTurn() const {
-    if (selection == 0 || reviewing()) return 0;
-    return selection > 0 ? selection : latestTurn();
+    if (effective() == 0 || reviewing()) return 0;
+    return effective() > 0 ? effective() : latestTurn();
   }
   QList<int> choices() const {
     QList<int> values;
@@ -217,7 +271,7 @@ struct Model {
       request.cwd = cwd;
       request.selection = effective();
       if (request.selection == ThreadDiff::Branch) request.base = base;
-    } else if (selection == 0) {
+    } else if (effective() == 0) {
       request.method = QStringLiteral("orchestration.getFullThreadDiff");
       request.to = latestTurn();
     } else {
@@ -245,6 +299,7 @@ struct Model {
     if (!reviewing() && turns().isEmpty()) {
       ++request;
       loaded.reset();
+      dropReview();
       clearDiff();
       setStatus(QStringLiteral("empty"), QStringLiteral("No completed turns yet."));
       return;
@@ -255,7 +310,32 @@ struct Model {
     loaded = key;
     next.number = ++request;
     pending.append(next);
+    if (reviewing() && quiet) return;
     setStatus(QStringLiteral("loading"), reviewing() ? QStringLiteral("Loading changes...") : QStringLiteral("Loading checkpoint diff..."));
+  }
+
+  // The agent changed the checkout: what is shown of it is asked for again.
+  void follow() {
+    if (!reviewing()) return;
+    loaded.reset();
+    quiet = status == QLatin1String("ready");
+    load();
+    quiet = false;
+  }
+
+  // The thread's checkpoints changed in its stream.
+  void streamed(const QString& thread, const Checkpoints& next) {
+    const QStringList before = mutationOf(mc.value(thread));
+    mc[thread] = next;
+    if (thread != this->thread) return;
+    readCheckpoints();
+    if (timeline && mutationOf(next) != before) follow();
+  }
+  static QStringList mutationOf(const Checkpoints& checkpoints) {
+    QStringList out;
+    for (const Checkpoint& checkpoint : checkpoints) out.append(checkpoint.id + QLatin1Char('=') + checkpoint.status);
+    out.sort();
+    return out;
   }
 
   void setStatus(const QString& next, const QString& why = {}) {
@@ -266,17 +346,31 @@ struct Model {
     files.clear();
     fileTotal = 0;
   }
+  void dropReview() {
+    sourceKey.clear();
+    lazy = false;
+  }
   void present(const QStringList& diff) {
     files = diff;
     fileTotal = int(diff.size());
-    if (!focus.isEmpty() && !diff.contains(focus)) focus.clear();
+    // A review cut short shows every file it lists.
+    if (lazy || (!focus.isEmpty() && !diff.contains(focus))) focus.clear();
+    presented = focus;
   }
   QStringList shown() const { return focus.isEmpty() ? files : QStringList{focus}; }
 
   void answer(const Request& request, const Answer& answer) {
+    if (!request.file.isEmpty()) {
+      // A file's changes are taken while its listing is shown.
+      if (request.listing != listing || !lazy || !fileStates.contains(request.file)) return;
+      QString& state = fileStates[request.file];
+      if (!state.isEmpty()) state = answer.error ? QStringLiteral("error") : QString();
+      return;
+    }
     if (request.number != this->request) return;
     if (answer.error) {
       loaded.reset();
+      dropReview();
       clearDiff();
       setStatus(QStringLiteral("error"), *answer.error);
       return;
@@ -285,8 +379,24 @@ struct Model {
       comparedBase = answer.base;
       comparedHead = answer.head;
       truncated = answer.truncated;
+      const QString kind = request.selection == ThreadDiff::Branch ? QStringLiteral("branch-range") : QStringLiteral("working-tree");
+      const QString key = kind + QLatin1Char(' ') + answer.files.join(QLatin1Char(',')) + (answer.truncated ? QStringLiteral(" cut") : QString());
+      if (key != sourceKey || focus != presented) {
+        sourceKey = key;
+        lazy = answer.truncated && !answer.files.isEmpty();
+        lazyKind = kind;
+        if (lazy) {
+          ++listing;
+          fileStates.clear();
+          for (const QString& file : answer.files) fileStates.insert(file, QStringLiteral("unloaded"));
+          opened.clear();
+        }
+        present(answer.files);
+      }
+    } else {
+      dropReview();
+      present(answer.files);
     }
-    present(answer.files);
     if (!answer.files.isEmpty()) {
       setStatus(QStringLiteral("ready"));
     } else if (request.method != QLatin1String("review.getDiffPreview")) {
@@ -301,8 +411,9 @@ struct Model {
   // The thread's timeline read its checkpoints again.
   void readCheckpoints() {
     if (selection > 0 && !turns().contains(selection)) selection = -1;
-    // All changes of a thread with no turns is not a choice.
+    // All changes of a thread with no turns is not a choice, nor the checkout without one.
     if (selection == 0 && turns().isEmpty()) selection = -1;
+    if (selection <= ThreadDiff::WorkingTree && cwd.isEmpty()) selection = -1;
     load();
   }
 };
@@ -326,7 +437,7 @@ struct Facts {
 };
 
 Facts factsOf(const Model& model) {
-  return {model.choices(), model.latestTurn(), model.latestCheckpoint(), model.selection, model.shownTurn(), model.reviewing(), model.status, model.message,
+  return {model.choices(), model.latestTurn(), model.latestCheckpoint(), model.picked(), model.shownTurn(), model.reviewing(), model.status, model.message,
           model.focus,     model.fileTotal,    model.base,      model.comparedBase, model.comparedHead, model.truncated};
 }
 
@@ -360,6 +471,7 @@ struct Sut {
                       p.value(QLatin1String("ignoreWhitespace")).toBool(),
                       p.value(QLatin1String("cwd")).toString(),
                       p.value(QLatin1String("baseRef")).toString()};
+      request.file = p.value(QLatin1String("file")).toObject().value(QLatin1String("path")).toString();
       held.append({request, rpc});
     };
     for (const char* method : {"orchestration.getTurnDiff", "orchestration.getFullThreadDiff", "review.getDiffPreview"}) {
@@ -429,11 +541,27 @@ struct Sut {
       const Answer turn = answerOf(answered.request, checkpoints);
       if (!ok) {
         mc.refuse(answered.rpc, QStringLiteral("no"));
+      } else if (!request.file.isEmpty()) {
+        // One file's changes, from either source.
+        const QString patch = patchOf({request.file});
+        QJsonArray sources;
+        for (const QString kind : {QStringLiteral("working-tree"), QStringLiteral("branch-range")}) {
+          sources.append(QJsonObject{{QStringLiteral("kind"), kind}, {QStringLiteral("diff"), patch}, {QStringLiteral("truncated"), false}});
+        }
+        mc.reply(answered.rpc, QJsonObject{{QStringLiteral("sources"), sources}});
       } else if (request.method == QLatin1String("review.getDiffPreview")) {
         const auto source = [](const QString& kind, const Answer& answer) {
-          return QJsonObject{{QStringLiteral("kind"), kind},           {QStringLiteral("diff"), patchOf(answer.files)},
+          // A source cut short counts every file.
+          QJsonArray stats;
+          for (const QString& file : answer.files) {
+            stats.append(QJsonObject{{QStringLiteral("path"), file}, {QStringLiteral("previousPath"), QJsonValue()},
+                                     {QStringLiteral("additions"), 1}, {QStringLiteral("deletions"), 1}});
+          }
+          const QString patch = patchOf(answer.files);
+          return QJsonObject{{QStringLiteral("kind"), kind},           {QStringLiteral("diff"), patch},
+                             {QStringLiteral("diffHash"), QString::number(qHash(patch), 16)},
                              {QStringLiteral("baseRef"), answer.base}, {QStringLiteral("headRef"), answer.head},
-                             {QStringLiteral("truncated"), answer.truncated}};
+                             {QStringLiteral("truncated"), answer.truncated}, {QStringLiteral("files"), stats}};
         };
         mc.reply(answered.rpc, QJsonObject{{QStringLiteral("sources"), QJsonArray{source(QStringLiteral("working-tree"), tree),
                                                                                   source(QStringLiteral("branch-range"), branch)}}});
@@ -468,7 +596,7 @@ void check(const Facts& before, const Model& expected, Sut& sut) {
   for (const QVariant& choice : diff.choices()) choices.append(choice.toMap().value(QStringLiteral("value")).toInt());
   RC_ASSERT(choices == expected.choices());
   RC_ASSERT(diff.latestTurn() == expected.latestTurn());
-  RC_ASSERT(diff.selection() == expected.selection);
+  RC_ASSERT(diff.selection() == expected.picked());
   // The picker shows the selection: it is one of the choices, or the first.
   RC_ASSERT(diff.selection() == -1 || choices.contains(diff.selection()));
   RC_ASSERT(diff.shownTurn() == expected.shownTurn());
@@ -486,6 +614,13 @@ void check(const Facts& before, const Model& expected, Sut& sut) {
     RC_ASSERT(sut.paths() == expected.shown());
   }
   if (expected.status == QLatin1String("empty") || expected.status == QLatin1String("error")) RC_ASSERT(sut.paths().isEmpty());
+  if (expected.status == QLatin1String("ready") && expected.lazy) {
+    DiffModel& model = *diff.model();
+    for (int f = 0; f < model.fileCount(); ++f) {
+      RC_ASSERT(model.state(f) == expected.fileStates.value(model.path(f)));
+      RC_ASSERT(model.expanded(f) == expected.opened.contains(model.path(f)));
+    }
+  }
 
   // What a shown tab settles on is what the MC says now.
   const bool settled = expected.status == QLatin1String("ready") || expected.status == QLatin1String("empty");
@@ -549,9 +684,9 @@ struct NewTurn : Step<NewTurn> {
     return checkpoints;
   }
   void apply(Model& model) const override {
-    model.mc[thread] = next(model);
+    const Checkpoints checkpoints = next(model);
     ++model.serial;
-    if (thread == model.thread) model.readCheckpoints();
+    model.streamed(thread, checkpoints);
   }
   void act(const Model& before, Sut& sut) const { sut.stream(thread, next(before)); }
   void show(std::ostream& os) const override { os << "a turn of " << thread.toStdString() << (ready ? " finishes" : " is writing its checkpoint"); }
@@ -582,8 +717,7 @@ struct Ready : Step<Ready> {
     return checkpoints;
   }
   void apply(Model& model) const override {
-    model.mc[thread] = next(model);
-    if (thread == model.thread) model.readCheckpoints();
+    model.streamed(thread, next(model));
   }
   void act(const Model& before, Sut& sut) const { sut.stream(thread, next(before)); }
   void show(std::ostream& os) const override { os << id.toStdString() << " of " << thread.toStdString() << " is ready"; }
@@ -615,8 +749,7 @@ struct Summarize : Step<Summarize> {
   }
   // As any change to the checkpoints, it asks again for a diff that failed.
   void apply(Model& model) const override {
-    model.mc[thread] = next(model);
-    if (thread == model.thread) model.readCheckpoints();
+    model.streamed(thread, next(model));
   }
   void act(const Model& before, Sut& sut) const { sut.stream(thread, next(before)); }
   void show(std::ostream& os) const override { os << id.toStdString() << " of " << thread.toStdString() << " lists " << files << " files"; }
@@ -636,8 +769,7 @@ struct Rewind : Step<Rewind> {
     return checkpoints;
   }
   void apply(Model& model) const override {
-    model.mc[thread] = next(model);
-    if (thread == model.thread) model.readCheckpoints();
+    model.streamed(thread, next(model));
   }
   void act(const Model& before, Sut& sut) const { sut.stream(thread, next(before)); }
   void show(std::ostream& os) const override { os << thread.toStdString() << " is rewound to turn " << turn; }
@@ -645,13 +777,28 @@ struct Rewind : Step<Rewind> {
 
 // --- The user ----------------------------------------------------------------------
 
+// The thread's checkout becomes `cwd`; the checkout's own choices go with it.
+void checkOut(Model& model, const QString& cwd) {
+  if (cwd == model.cwd) return;
+  model.cwd = cwd;
+  if (cwd.isEmpty() && model.selection <= ThreadDiff::WorkingTree) model.selection = -1;
+  model.load();
+}
+
 struct SetThread : Step<SetThread> {
   QString thread = *oneOf(kThreads);
   bool timeline = *rc::gen::weightedElement<bool>({{4, true}, {1, false}});
+  QString cwd = *oneOf(kCheckouts);
   explicit SetThread(const Model&) {}
   void apply(Model& model) const override {
-    if (thread == model.thread && timeline == model.timeline) return;
+    if (thread == model.thread && timeline == model.timeline) {
+      checkOut(model, cwd);
+      return;
+    }
     if (thread != model.thread) {
+      if (!model.thread.isEmpty()) model.choices_.insert(model.thread, {model.selection, model.base, model.latestPicked});
+      const auto [selection, base, latestPicked] = model.choices_.value(thread, {-1, QString(), false});
+      model.choices_.remove(thread);
       model.thread = thread;
       ++model.request;
       model.loaded.reset();
@@ -660,14 +807,23 @@ struct SetThread : Step<SetThread> {
       model.comparedBase.clear();
       model.comparedHead.clear();
       model.truncated = false;
-      model.selection = -1;
+      model.dropReview();
+      model.selection = selection;
+      model.base = base;
+      model.latestPicked = latestPicked;
       model.setStatus(QStringLiteral("idle"));
     }
     model.timeline = timeline;
+    // The thread's choice is checked against its own checkout.
+    model.cwd = cwd;
     model.readCheckpoints();
   }
-  void act(const Model&, Sut& sut) const { sut.diff->setThread(kEnvironment, thread, timeline ? sut.timelines.at(thread).get() : nullptr); }
-  void show(std::ostream& os) const override { os << "open " << thread.toStdString() << (timeline ? "" : " before its timeline"); }
+  void act(const Model&, Sut& sut) const {
+    sut.diff->setThread(kEnvironment, thread, timeline ? sut.timelines.at(thread).get() : nullptr, cwd);
+  }
+  void show(std::ostream& os) const override {
+    os << "open " << thread.toStdString() << (timeline ? "" : " before its timeline") << " on '" << cwd.toStdString() << "'";
+  }
 };
 
 struct SetActive : Step<SetActive> {
@@ -684,13 +840,7 @@ struct SetActive : Step<SetActive> {
 struct SetCheckout : Step<SetCheckout> {
   QString cwd = *oneOf(kCheckouts);
   explicit SetCheckout(const Model&) {}
-  void apply(Model& model) const override {
-    if (cwd == model.cwd) return;
-    model.cwd = cwd;
-    // The checkout's own choices go with it.
-    if (cwd.isEmpty() && model.selection <= ThreadDiff::WorkingTree) model.selection = -1;
-    model.load();
-  }
+  void apply(Model& model) const override { checkOut(model, cwd); }
   void act(const Model&, Sut& sut) const { sut.diff->setCheckout(cwd); }
   void show(std::ostream& os) const override { os << "checkout '" << cwd.toStdString() << "'"; }
 };
@@ -704,8 +854,13 @@ struct Select : Step<Select> {
     if (next < ThreadDiff::Branch || (next <= ThreadDiff::WorkingTree && model.cwd.isEmpty())) next = -1;
     // All changes needs a turn.
     if (next == 0 && model.turns().isEmpty()) next = -1;
-    if (next == model.selection) return;
+    // Picking the latest turn shows it from then on, even when it changed nothing.
+    if (next == model.selection && !(next == -1 && model.opensOnAllChanges())) {
+      if (next == -1) model.latestPicked = true;
+      return;
+    }
     model.selection = next;
+    model.latestPicked = next == -1;
     model.focus.clear();
     model.load();
   }
@@ -803,6 +958,41 @@ struct AnswerOne : Step<AnswerOne> {
   }
 };
 
+// A file of a review cut short is opened, or retried after it failed.
+struct OpenFile : Step<OpenFile> {
+  QString path;
+  explicit OpenFile(const Model& model) {
+    QStringList paths;
+    for (auto it = model.fileStates.cbegin(); it != model.fileStates.cend(); ++it) {
+      if (it.value() == QLatin1String("unloaded") || it.value() == QLatin1String("error")) paths.append(it.key());
+    }
+    RC_PRE(model.lazy && model.status == QLatin1String("ready") && !paths.isEmpty());
+    path = *oneOf(paths);
+  }
+  void checkPreconditions(const Model& model) const override {
+    const QString state = model.fileStates.value(path);
+    RC_PRE(model.lazy && model.status == QLatin1String("ready") && (state == QLatin1String("unloaded") || state == QLatin1String("error")));
+  }
+  void apply(Model& model) const override {
+    model.fileStates[path] = QStringLiteral("loading");
+    model.opened.insert(path);
+    Request request{QStringLiteral("review.getDiffPreview"), {}, -1, -1, model.whitespace, model.cwd};
+    if (model.lazyKind == QLatin1String("branch-range")) request.base = model.base;
+    request.file = path;
+    request.listing = model.listing;
+    model.pending.append(request);
+  }
+  void act(const Model& before, Sut& sut) const {
+    // Opening it asks for its changes; a failed one opened already has a retry.
+    if (before.opened.contains(path)) {
+      sut.diff->retryFile(path);
+    } else {
+      sut.diff->model()->setExpanded(sut.diff->model()->fileOf(path), true);
+    }
+  }
+  void show(std::ostream& os) const override { os << "open " << path.toStdString(); }
+};
+
 }  // namespace
 
 class WorkspaceThreadDiffProp : public QObject {
@@ -815,7 +1005,7 @@ private slots:
       rc::state::check(Model(), sut,
                        rc::state::gen::execOneOfWithArgs<NewTurn, NewTurn, Ready, Summarize, Rewind, SetThread, SetActive, SetActive, SetCheckout,
                                                          Select, Select, SetBase, SetWhitespace, Focus, Reload, AnswerOne, AnswerOne,
-                                                         AnswerOne, AnswerOne>());
+                                                         AnswerOne, AnswerOne, OpenFile, OpenFile>());
     }));
   }
 };

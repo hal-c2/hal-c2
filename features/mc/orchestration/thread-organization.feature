@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14887
+#   https://github.com/pingdotgg/t3code/pull/17258
 #   packages/contracts/src/orchestrationV2.ts (thread.settle, thread.settled, thread.unsettle,
 #     thread.unsettled, thread.snooze, thread.snoozed, thread.unsnooze, thread.unsnoozed,
 #     thread.pin, thread.pinned, thread.unpin, thread.unpinned, thread.pin.reorder,
@@ -152,6 +154,21 @@ Feature: Organizing threads in the engine
       | waits for an answer to a question     |
       | has a queued run that has not started |
 
+  # Upstream #17258 names the first thing in the way and how to clear it. When this lands
+  # the generic reason above and in the scenarios below gives way to these.
+  @backlog @mc
+  Scenario Outline: Refusing to settle a thread says what is in the way
+    Given thread "t1" <state>
+    When a client settles "t1"
+    Then the command fails with "<reason>"
+
+    Examples:
+      | state                                              | reason                                                                                  |
+      | waits for an approval                              | Thread t1 is waiting on an approval or question. Answer it before settling.             |
+      | waits for an answer to a question                  | Thread t1 is waiting on an approval or question. Answer it before settling.             |
+      | has a running turn                                 | Thread t1 is still running. Stop it before settling.                                    |
+      | holds a message the user queued, paused by a Stop  | Thread t1 has a queued message. Send it or remove it from the queue before settling.    |
+
   # A message from a client whose clock is off still counts as waiting for its turn,
   # but only within two minutes either way; older or further ahead is stale data.
   @backlog @mc
@@ -206,11 +223,14 @@ Feature: Organizing threads in the engine
       | a client                 |
       | the MC, automatically    |
 
+  # Upstream #14887: every snooze is stamped afresh, even to the same wake time; only a retried
+  # command is applied once.
   @backlog @mc
-  Scenario: Snoozing to the wake time a thread already has changes nothing
+  Scenario: Snoozing again to the wake time a thread already has stamps the snooze afresh
     Given thread "t1" is snoozed until tomorrow 09:00
     When a client snoozes "t1" until tomorrow 09:00 again
-    Then thread "t1" keeps its original snoozed-at time
+    Then thread "t1" gets a new snoozed-at time
+    And a retry of that same snooze command is applied once
 
   @backlog @mc
   Scenario: Manual settling dismisses a question the provider is not waiting on
@@ -219,13 +239,13 @@ Feature: Organizing threads in the engine
     Then thread "t1" is settled by override
     And the question is dismissed
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Automatic settling never dismisses a pending question
     Given thread "t1" waits only for an answer to a question the provider does not block on
     When the MC settles "t1" automatically
     Then the command fails with "Thread t1 has active or blocked work and cannot be settled."
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A settled thread is brought back when the agent needs the user
     Given thread "t1" is settled
     When the provider raises <need> on "t1"
@@ -296,7 +316,7 @@ Feature: Organizing threads in the engine
       | is idle                                | a past time    |
 
   # Only the web and TUI clients refuse this today; neither server does.
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: The engine refuses to archive a thread whose agent is running
     Given thread "t1" has a running turn
     When a client archives "t1"

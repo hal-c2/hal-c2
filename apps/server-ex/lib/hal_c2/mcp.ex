@@ -441,7 +441,7 @@ defmodule HalC2.Mcp do
     {:ok, nil}
   end
 
-  # Code loaded over this server (`HalC2.Hot`) migrates it here, never through
+  # A release upgrade loading code over this server migrates it here, never through
   # init: a table a newer module keeps is made now, in this process, so the
   # requests the new code answers find it there.
   @impl true

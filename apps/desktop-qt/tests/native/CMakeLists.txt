@@ -44,6 +44,18 @@ add_executable(tst_ReleaseNotes tst_ReleaseNotes.cpp ../../src/native/DesktopUpd
 target_include_directories(tst_ReleaseNotes PRIVATE ../../src/native)
 target_link_libraries(tst_ReleaseNotes PRIVATE Qt6::Core Qt6::Test)
 add_test(NAME ReleaseNotes COMMAND tst_ReleaseNotes)
+# What the pull request thread dialog reads from a pasted reference.
+add_executable(tst_PullRequestReference tst_PullRequestReference.cpp ../../src/native/PullRequestReference.cpp)
+target_include_directories(tst_PullRequestReference PRIVATE ../../src/native)
+target_link_libraries(tst_PullRequestReference PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME PullRequestReference COMMAND tst_PullRequestReference)
+# The fake MC's code fences against what the MC itself reads and writes.
+add_executable(tst_CodeFence tst_CodeFence.cpp features/CodeFence.h)
+target_include_directories(tst_CodeFence PRIVATE features)
+target_compile_definitions(tst_CodeFence PRIVATE
+  HAL_C2_CODE_FENCES="${CMAKE_CURRENT_SOURCE_DIR}/../../../server-ex/test/fixtures/space/code-fences.json")
+target_link_libraries(tst_CodeFence PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME CodeFence COMMAND tst_CodeFence)
 add_executable(tst_BackendProcess tst_BackendProcess.cpp ../../src/BackendProcess.cpp)
 target_include_directories(tst_BackendProcess PRIVATE ../../src)
 target_link_libraries(tst_BackendProcess PRIVATE Qt6::Core Qt6::Test)
@@ -62,7 +74,10 @@ target_compile_definitions(tst_Features PRIVATE
 target_link_libraries(tst_Features PRIVATE hal_c2_native Qt6::GuiPrivate Qt6::Quick Qt6::Test)
 hal_c2_target_platform_window(tst_Features)
 # The terminal bricks draw with qml-ghostty's Terminal.
-target_link_libraries(tst_Features PRIVATE qmlghosttyplugin)
+target_link_libraries(tst_Features PRIVATE qmlghosttyplugin qmlghostty)
+# The in-app browser's pages (BrowserPanel).
+find_package(Qt6 6.9 REQUIRED COMPONENTS WebEngineQuick)
+target_link_libraries(tst_Features PRIVATE Qt6::WebEngineQuick)
 add_test(NAME Features COMMAND tst_Features)
 set_tests_properties(Features PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
 add_executable(tst_LocalTranscriber tst_LocalTranscriber.cpp ../../src/LocalTranscriber.cpp)
@@ -75,8 +90,11 @@ foreach(test_name IN ITEMS ShellRuntime ShellExamples)
     ../../src/ShellRuntime.cpp
     ../../src/ShellBridge.cpp
     ../../src/ThemeStore.cpp
-    # Composer.qml's rich text; it registers itself, as in the app.
+    # Composer.qml's rich text and Markdown.qml's code; they register
+    # themselves, as in the app.
     ../../src/native/ComposerHighlighter.cpp
+    ../../src/native/CodeHighlighter.cpp
+    ../../src/native/CodeReader.cpp
   )
   target_include_directories(tst_${test_name} PRIVATE ../../src ../../src/native)
   target_compile_definitions(tst_${test_name} PRIVATE
@@ -86,6 +104,7 @@ foreach(test_name IN ITEMS ShellRuntime ShellExamples)
   target_link_libraries(tst_${test_name} PRIVATE
     Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::Quick Qt6::Test qmlghosttyplugin
   )
+  hal_c2_link_syntax(tst_${test_name})
   hal_c2_target_platform_window(tst_${test_name})
   add_test(NAME ${test_name} COMMAND tst_${test_name})
   # The examples are copied over one shell.qml in turn, and a copy keeps its
@@ -105,13 +124,22 @@ if(UNIX AND NOT APPLE)
   add_test(NAME NativeNotifications COMMAND "${HAL_C2_DBUS_RUN_SESSION}" -- $<TARGET_FILE:tst_NativeNotifications>)
 endif()
 # How the shell resolves its theme: the lookup order, the halves, the fallbacks.
-add_executable(tst_ThemeResolution tst_ThemeResolution.cpp)
+add_executable(tst_ThemeResolution tst_ThemeResolution.cpp ../../src/ThemeStore.cpp)
+target_include_directories(tst_ThemeResolution PRIVATE ../../src)
 target_compile_definitions(tst_ThemeResolution PRIVATE HAL_C2_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../..")
 target_link_libraries(tst_ThemeResolution PRIVATE hal_c2_native Qt6::Test)
 add_test(NAME ThemeResolution COMMAND tst_ThemeResolution)
 add_executable(tst_ThisMachine tst_ThisMachine.cpp)
 target_link_libraries(tst_ThisMachine PRIVATE hal_c2_native Qt6::Test)
 add_test(NAME ThisMachine COMMAND tst_ThisMachine)
+# What plugin pages format times with (Format.qml).
+add_executable(tst_TimeFormat tst_TimeFormat.cpp)
+target_link_libraries(tst_TimeFormat PRIVATE hal_c2_native Qt6::Test)
+add_test(NAME TimeFormat COMMAND tst_TimeFormat)
+# Which links in the conversation are pull requests, and which project reads one.
+add_executable(tst_PullRequestLinks tst_PullRequestLinks.cpp)
+target_link_libraries(tst_PullRequestLinks PRIVATE hal_c2_native Qt6::Test)
+add_test(NAME PullRequestLinks COMMAND tst_PullRequestLinks)
 set_tests_properties(ThemeResolution PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
 # Regressions the property tests (tests/prop) found, one tst_*Regression.cpp
 # each, picked up on the next build.
@@ -120,3 +148,9 @@ hal_c2_add_glob_tests(PATTERN "tst_*Regression.cpp" LABEL regression
   INCLUDES ../../src ../../src/native features
   LIBRARIES hal_c2_native
 )
+# An agent driving a real page (PreviewAutomationHost on QtWebEngine).
+add_executable(tst_PreviewAutomationWeb tst_PreviewAutomationWeb.cpp features/FakeMc.cpp)
+target_include_directories(tst_PreviewAutomationWeb PRIVATE . features)
+target_link_libraries(tst_PreviewAutomationWeb PRIVATE hal_c2_native Qt6::Quick Qt6::WebEngineQuick Qt6::Test)
+add_test(NAME PreviewAutomationWeb COMMAND tst_PreviewAutomationWeb)
+set_tests_properties(PreviewAutomationWeb PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")

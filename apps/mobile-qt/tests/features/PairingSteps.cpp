@@ -12,6 +12,8 @@
 #include <QQuickItem>
 #include <QUrl>
 
+#include <algorithm>
+
 #include "Harness.h"
 #include "McClient.h"
 #include "NativeShell.h"
@@ -30,6 +32,9 @@ void enterPairingLink(World& world, const QString& link) {
   expect(field->hasActiveFocus(), QStringLiteral("the pairing link field did not take the keyboard"));
   world.type(link);
   expect(field->property("text").toString() == link, QStringLiteral("the field reads %1").arg(field->property("text").toString()));
+  // A phone on its side scrolls down to the button.
+  QQuickItem* screen = world.item(QStringLiteral("pairingScreen"));
+  screen->setProperty("contentY", std::max(0.0, screen->property("contentHeight").toDouble() - screen->height()));
   world.tap(QStringLiteral("pairingPair"));
   world.waitFor([&] { return pairingPhase(world) != QLatin1String("pairing"); }, QStringLiteral("an answer to the pairing link"));
 }
@@ -253,7 +258,10 @@ const Steps steps([] {
   });
 
   step(S("the user is told to use compatible versions of the app and server"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return world.find(S("connectionNoticeTitle")) != nullptr; }, [&] { return S("a notice; the screen says: %1").arg(screenTexts(world)); });
+    // The notice says it is connecting until the MC's descriptor is read.
+    world.waitFor([&] { return world.native().client()->phase() == McClient::Phase::Blocked; },
+                  [&] { return S("the connection to be blocked; it is %1").arg(show(world.state(S("connection")))); });
+    world.openConnectionNotice();
     expect(shownText(world, S("connectionNoticeTitle")) == S("This app is too old for %1").arg(world.mc.label) &&
                shownText(world, S("connectionNoticeDetail")) == S("Update HAL-C2 on this device to connect."),
            S("the screen says: %1").arg(screenTexts(world)));
@@ -277,7 +285,7 @@ const Steps steps([] {
 
   // Settings need the connection; beside the notice of a lost one is the other way out.
   step(S("the user removes it from the connection notice and confirms"), [](World& world, const Captures&, const Table&) {
-    world.item(S("connectionNoticeTitle"));
+    world.openConnectionNotice();
     world.tap(S("connectionForget"));
     world.awaitPopup(S("confirmDialog"));
     expect(world.shows(S("Forget %1?").arg(world.mc.label)), S("the question does not name %1; the screen says: %2").arg(world.mc.label, screenTexts(world)));

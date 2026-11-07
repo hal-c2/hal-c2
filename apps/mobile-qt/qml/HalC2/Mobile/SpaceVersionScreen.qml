@@ -43,7 +43,7 @@ ColumnLayout {
         elide: Text.ElideRight
         color: Theme.palette.color("textMuted", "#a1a1aa")
         font.pixelSize: Math.round(13 * Theme.fontScale)
-        text: view.arrived ? qsTr("The page as it was on %1").arg(Qt.formatDateTime(new Date(view.version.at), Qt.locale().dateTimeFormat(Locale.ShortFormat))) : qsTr("Loading this version…")
+        text: view.arrived ? qsTr("The page as it was on %1").arg(Format.dateTime(view.version.at)) : qsTr("Loading this version…")
     }
 
     ListView {

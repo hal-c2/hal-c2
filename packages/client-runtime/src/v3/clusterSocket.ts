@@ -6,8 +6,11 @@
  *
  * Subscriptions are multiplexed by id. On reconnect every stream subscription is
  * sent again with the last offset it saw, so the MC replays only what was
- * missed; the shell is always re-sent whole because it is small. A `resync` from
- * the MC (this client fell too far behind) is handled the same way.
+ * missed; a shell subscribed with `subscribeShell` says which rows it holds
+ * (`have`), so the MC sends only the rows changed since. A `resync` from
+ * the MC (this client fell too far behind) is handled the same way. A stream the MC
+ * refused with `error` because its MC is out of the cluster is asked again, from
+ * its offset, once the MC says on the shell that that MC is back (`shell.mc`).
  */
 
 export type ShellShape = { readonly type: "shell" };
@@ -133,6 +136,19 @@ interface Subscription {
   handle?: string;
   /** Items of a `more` the MC has not finished answering; asked again after a resubscription. */
   pendingMore?: number;
+  /** A terminal whose client acknowledges what it has handled; every sub says so. */
+  readonly acks?: true;
+  /** The MC refused the stream (its MC left the cluster) and forgot it. */
+  refused?: boolean;
+  /** The shell's rows as the client holds them, read on every sub: the MC sends only what came after. */
+  readonly have?: () => Readonly<Record<string, readonly [string, number]>>;
+}
+
+/** Where a windowed thread stream is: what a subscription on another socket resumes from. */
+export interface StreamResumePoint {
+  readonly offset: number;
+  readonly floor: number | null | undefined;
+  readonly handle: string | undefined;
 }
 
 /** A thread stream that holds its newest turns; `more` adds the ones before. */
@@ -140,6 +156,15 @@ export interface WindowedSubscription {
   readonly unsubscribe: () => void;
   /** Asks for about `items` more turn items; false when the socket is not connected. */
   readonly more: (items: number) => boolean;
+  /** Where the stream is now; null before it has an offset. */
+  readonly resumePoint: () => StreamResumePoint | null;
+}
+
+/** A terminal that acknowledges; `ack` says everything up to `sequence` was handled. */
+export interface AcknowledgedSubscription {
+  readonly unsubscribe: () => void;
+  /** Dropped when the socket is not connected: the next sub starts over from a snapshot. */
+  readonly ack: (sequence: number) => void;
 }
 
 type SocketLike = Pick<WebSocket, "send" | "close" | "readyState"> & {
@@ -164,6 +189,9 @@ export interface ClusterSocketOptions {
 }
 
 const OPEN = 1;
+
+/** How often a socket pings its MC. It waits on no answer: a slow MC is never asked again. */
+export const PING_INTERVAL_MS = 25_000;
 
 export class ClusterSocket {
   private socket: SocketLike | null = null;
@@ -216,27 +244,53 @@ export class ClusterSocket {
   }
 
   /**
+   * Subscribes to the cluster shell, saying on every sub (each socket's first, and a
+   * resubscription) which rows the client holds, so the MC answers with what it lacks.
+   */
+  subscribeShell(
+    onFrame: (frame: ShapeFrame) => void,
+    have: () => Readonly<Record<string, readonly [string, number]>>,
+  ): () => void {
+    return this.add({ shape: { type: "shell" }, onFrame, offset: null, have }).unsubscribe;
+  }
+
+  /**
    * Subscribes to a thread stream as its newest `items` turn items (`page` frames
    * answer `more`). The folded thread can be shorter than the thread; `snapshot`
    * and `page` frames say where it starts. `floor` opens the window a client already
-   * held (a replaced session's) at that run instead (null: all of the thread).
+   * held (a replaced session's) at that run instead (null: all of the thread);
+   * `resume` carries on from where another socket's subscription was.
    */
   subscribeWindow(
     shape: StreamShape,
     items: number,
     onFrame: (frame: ShapeFrame) => void,
     floor?: number | null,
+    resume?: StreamResumePoint,
   ): WindowedSubscription {
+    const window = resume?.floor ?? floor;
     return this.add({
       shape,
       onFrame,
-      offset: null,
+      offset: resume?.offset ?? null,
       windowItems: items,
-      ...(floor === undefined ? {} : { floor }),
+      ...(window === undefined ? {} : { floor: window }),
+      ...(resume?.handle === undefined ? {} : { handle: resume.handle }),
     });
   }
 
-  private add(subscription: Subscription): WindowedSubscription {
+  /**
+   * Subscribes to a terminal whose output the MC holds back once too much of it waits
+   * unacknowledged (`HalC2.Terminal.OutputWindow`); a reconnect starts over the same way.
+   */
+  subscribeAcknowledged(
+    shape: TerminalShape,
+    onFrame: (frame: ShapeFrame) => void,
+  ): AcknowledgedSubscription {
+    return this.add({ shape, onFrame, offset: null, acks: true });
+  }
+
+  private add(subscription: Subscription): WindowedSubscription & AcknowledgedSubscription {
     const id = this.nextId++;
     this.subscriptions.set(id, subscription);
     this.sendSub(id);
@@ -251,6 +305,13 @@ export class ClusterSocket {
         this.send({ t: "more", id, items });
         return true;
       },
+      ack: (sequence) => {
+        if (this.ready && this.subscriptions.has(id)) this.send({ t: "ack", id, sequence });
+      },
+      resumePoint: () =>
+        subscription.offset === null
+          ? null
+          : { offset: subscription.offset, floor: subscription.floor, handle: subscription.handle },
     };
   }
 
@@ -283,6 +344,7 @@ export class ClusterSocket {
       return;
     }
     if (frame.t === "pong") return;
+    if (frame.t === "shell.mc" && frame.online === true) this.resubscribeRefused(frame.mc);
     const id = typeof frame.id === "number" ? frame.id : null;
     if ((frame.t === "rpc.result" || frame.t === "rpc.error") && id !== null) {
       const call = this.calls.get(id);
@@ -300,6 +362,8 @@ export class ClusterSocket {
     }
     // The MC ended the shape and already forgot it.
     if (frame.t === "end") this.subscriptions.delete(id);
+    // The MC forgot a stream it refused; it is asked again when its MC is back.
+    if (frame.t === "error" && subscription.shape.type === "stream") subscription.refused = true;
     if ((frame.t === "events" || frame.t === "live") && typeof frame.offset === "number") {
       subscription.offset = frame.offset;
     }
@@ -338,12 +402,27 @@ export class ClusterSocket {
     }, delay);
   }
 
+  private resubscribeRefused(mc: unknown): void {
+    for (const [id, subscription] of this.subscriptions) {
+      if (subscription.refused !== true || subscription.shape.type !== "stream") continue;
+      if (subscription.shape.mc === mc) this.sendSub(id);
+    }
+  }
+
   private sendSub(id: number): void {
     const subscription = this.subscriptions.get(id);
     if (subscription === undefined || !this.ready) return;
+    delete subscription.refused;
     const offset = subscription.shape.type === "stream" ? subscription.offset : null;
     if (subscription.windowItems === undefined) {
-      this.send({ t: "sub", id, shape: subscription.shape, offset });
+      this.send({
+        t: "sub",
+        id,
+        shape: subscription.shape,
+        offset,
+        ...(subscription.acks ? { acks: true } : {}),
+        ...(subscription.have ? { have: subscription.have() } : {}),
+      });
       return;
     }
     this.send({
@@ -373,7 +452,7 @@ export class ClusterSocket {
     this.stopPing();
     this.pingTimer = setInterval(
       () => this.send({ t: "ping" }),
-      this.options.pingIntervalMs ?? 25_000,
+      this.options.pingIntervalMs ?? PING_INTERVAL_MS,
     );
   }
 

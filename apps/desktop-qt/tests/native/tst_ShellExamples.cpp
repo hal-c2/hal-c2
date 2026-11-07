@@ -36,6 +36,13 @@ static QQuickItem* findVisualItemOfType(QQuickItem* parent, const char* type) {
   return nullptr;
 }
 
+// The route's centre: a layout of a shell's own draws it with CentreHost,
+// DefaultLayout (a DefaultShell's, as the folders example is) with ThreadArea.
+static QQuickItem* findCentre(QQuickItem* parent) {
+  auto* centre = findVisualItemOfType(parent, "CentreHost");
+  return centre ? centre : findVisualItemOfType(parent, "ThreadArea");
+}
+
 class ShellExamplesTest : public QObject {
   Q_OBJECT
 
@@ -92,6 +99,9 @@ private slots:
   void initTestCase() {
     QVERIFY(directory.isValid());
     qmlRegisterType<LocalFolderModel>("HalC2.Shell", 1, 0, "LocalFolderModel");
+    // The side panel's Device tab draws one; the stub stands in for the native item.
+    qmlRegisterType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/DeviceScreen.qml")),
+                    "HalC2.Shell", 1, 0, "DeviceScreen");
     theme = std::make_unique<ThemeStore>(directory.path());
     qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Terminals.qml")),
                              "HalC2.Shell", 1, 0, "Terminals");
@@ -109,9 +119,11 @@ private slots:
                              "HalC2.Shell", 1, 0, "Panel");
     qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/PaletteModel.qml")),
                              "HalC2.Shell", 1, 0, "PaletteModel");
-    // The built-in layout's Device tab draws on this; the decoder is hal_c2_native's.
-    qmlRegisterType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/DeviceScreen.qml")),
-                    "HalC2.Shell", 1, 0, "DeviceScreen");
+    // A Space route shows the Space view, which reads these.
+    qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Spaces.qml")),
+                             "HalC2.Shell", 1, 0, "Spaces");
+    qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Diagrams.qml")),
+                             "HalC2.Shell", 1, 0, "Diagrams");
     runtime = std::make_unique<ShellRuntime>(
         ShellRuntime::Options{directory.path(), QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/qml")},
         &bridge, theme.get());
@@ -141,7 +153,7 @@ private slots:
   // A thread or draft route draws its view in the centre (js/centreViews.js);
   // settings take the centre's place until they close.
   void threadRoutesDrawTheCentre(QQuickWindow* window) {
-    auto* centre = findVisualItemOfType(window->contentItem(), "CentreHost");
+    auto* centre = findCentre(window->contentItem());
     QVERIFY(centre);
     QVERIFY(centre->isVisible());
     bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Tax line"}});
@@ -171,7 +183,7 @@ private slots:
   void rightPanelLeavesTheThreadRoom(QQuickWindow* window) {
     auto* panel = findVisualItemOfType(window->contentItem(), "RightPanel");
     QVERIFY(panel);
-    auto* centre = findVisualItemOfType(window->contentItem(), "CentreHost");
+    auto* centre = findCentre(window->contentItem());
     QVERIFY(centre);
     auto open = QJsonDocument::fromJson(R"({
       "isOpen":true,"tabs":[],"activeId":"","width":900,
@@ -186,13 +198,18 @@ private slots:
     // The thread's 360, less a card's border round the centre, once a
     // sidebar that folds for it has.
     QTRY_VERIFY2(centre->width() >= 356, qPrintable(QString::number(centre->width())));
-    QTRY_VERIFY(panel->mapToScene(QPointF(panel->width(), 0)).x() <= window->width());
+    const auto where = [&] {
+      return QString("centre %1+%2, panel %3+%4, window %5")
+          .arg(centre->mapToScene(QPointF()).x()).arg(centre->width())
+          .arg(panel->mapToScene(QPointF()).x()).arg(panel->width()).arg(window->width());
+    };
+    QTRY_VERIFY2(panel->mapToScene(QPointF(panel->width(), 0)).x() <= window->width(), qPrintable(where()));
   }
 
   // The usage route draws its chart inside the centre, and the day under the
   // pointer is read out without leaving the plot.
   void usageRouteDrawsTheChart(QQuickWindow* window) {
-    auto* centre = findVisualItemOfType(window->contentItem(), "CentreHost");
+    auto* centre = findCentre(window->contentItem());
     QVERIFY(centre);
     QVariantList days;
     for (int day = 0; day < 7; ++day) {
@@ -249,7 +266,7 @@ private slots:
   // the thread; back on Threads, and with the page gone, the shell is as it was.
   void pluginPagesHaveTabs(QQuickWindow* window) {
     auto* content = window->contentItem();
-    auto* centre = findVisualItemOfType(content, "CentreHost");
+    auto* centre = findCentre(content);
     QVERIFY(centre);
     QTRY_VERIFY(centre->isVisible());
     const QString key = QStringLiteral("code-review/reviews@1");
@@ -435,7 +452,7 @@ private slots:
     if (example == "folders") {
       auto* explorer = window->findChild<QQuickItem*>("folderExplorer");
       QVERIFY(explorer);
-      auto* centre = window->findChild<QQuickItem*>("centreHost");
+      auto* centre = window->findChild<QQuickItem*>("routeView");
       QVERIFY(centre);
       auto* threads = window->findChild<QQuickItem*>("threadSidebar");
       QVERIFY(threads);
@@ -791,8 +808,9 @@ private slots:
     window->resize(1200, 800);
     QVERIFY(QTest::qWaitForWindowExposed(window));
     bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Tax line"}});
-    bridge.publish("connection", QVariantMap{{"phase", "reconnecting"}, {"title", "Reconnecting to ai-beast"},
-                                             {"detail", "Connection refused"}, {"canRetry", true}, {"traceId", ""},
+    bridge.publish("connection", QVariantMap{{"phase", "reconnecting"}, {"state", "retrying"}, {"status", "Reconnecting"},
+                                             {"title", "Reconnecting to ai-beast"}, {"settling", false},
+                                             {"detail", "The connection was lost. HAL-C2 keeps trying."}, {"canRetry", true}, {"traceId", ""},
                                              {"needsPairing", false}, {"pairing", false}, {"pairingError", ""},
                                              {"versionWarning", QVariant()}});
     bridge.publish("toasts", QVariantMap{{"expanded", false},
@@ -810,11 +828,16 @@ private slots:
     QTRY_VERIFY(notice->isVisible());
     QTRY_VERIFY(toasts->height() > 0);
     const auto rect = [](QQuickItem* item) { return QRectF(item->mapToScene(QPointF()), QSizeF(item->width(), item->height())); };
-    // The one notice takes room of its own, below everything the window lays out.
-    for (const char* name : {"workspace", "centreHost", "threadSidebar"}) {
-      auto* other = findVisualItem(window->contentItem(), name);
-      QVERIFY(other);
-      QVERIFY2(!rect(notice).intersects(rect(other)), name);
+    // The one notice takes room of its own, below everything the window lays
+    // out, its icon and its panel opened from it alike.
+    for (const bool open : {false, true}) {
+      notice->setProperty("open", open);
+      QTRY_COMPARE(notice->height() > 40, open);
+      for (const char* name : {"workspace", "routeView", "threadSidebar"}) {
+        auto* other = findVisualItem(window->contentItem(), name);
+        QVERIFY(other);
+        QVERIFY2(!rect(notice).intersects(rect(other)), name);
+      }
     }
     // The toasts hang under the header, inside the window.
     QVERIFY(rect(toasts).top() >= rect(workspace).bottom());
@@ -842,8 +865,9 @@ private slots:
     auto* window = qobject_cast<QQuickWindow*>(engine->rootObjects().last());
     QVERIFY(window);
     QVERIFY(QTest::qWaitForWindowExposed(window));
-    bridge.publish("connection", QVariantMap{{"phase", "reconnecting"}, {"title", "Reconnecting to ai-beast"},
-                                             {"detail", "Connection refused"}, {"canRetry", true}, {"traceId", ""},
+    bridge.publish("connection", QVariantMap{{"phase", "reconnecting"}, {"state", "retrying"}, {"status", "Reconnecting"},
+                                             {"title", "Reconnecting to ai-beast"}, {"settling", false},
+                                             {"detail", "The connection was lost. HAL-C2 keeps trying."}, {"canRetry", true}, {"traceId", ""},
                                              {"needsPairing", false}, {"pairing", false}, {"pairingError", ""},
                                              {"versionWarning", QVariant()}});
     const std::function<int(QQuickItem*)> shown = [&shown](QQuickItem* item) {
@@ -961,9 +985,13 @@ private slots:
       "isOpen": false, "activeId": "diff", "tabs": [{"id": "diff", "kind": "diff", "title": "Diff"}],
       "canAdd": {"diff": true, "files": true, "terminal": true}, "detailsOpen": false, "details": null
     })").toVariant().toMap();
-    const auto show = [&](bool open, bool details, bool maximized) {
+    // `staged`: the Diff tab fills the thread's centre (the stage, timeline hidden).
+    const auto show = [&](bool open, bool details, bool staged) {
       panel["isOpen"] = open;
-      panel["maximized"] = maximized;
+      panel["tabs"] = QVariantList{QVariantMap{{"id", "diff"}, {"kind", "diff"}, {"title", "Diff"}, {"dock", staged ? "stage" : "panel"}}};
+      panel["stage"] = staged ? QVariantMap{{"tabs", panel["tabs"]}, {"panes", QStringList{"diff"}}, {"layout", "single"}, {"focusedPane", 0}, {"focus", true}, {"chatWidth", 0}}
+                              : QVariantMap{{"tabs", QVariantList{}}, {"panes", QStringList{""}}, {"layout", "single"}, {"focusedPane", 0}, {"focus", false}, {"chatWidth", 0}};
+      panel["shownTabs"] = staged || open ? QStringList{"diff"} : QStringList{};
       panel["detailsOpen"] = details;
       panel["details"] = details ? QVariant(QVariantMap{{"environment", "Local"}, {"online", true}, {"checkout", "Local"}, {"folder", "/work"}, {"relations", QVariantList{}}}) : QVariant();
       bridge.publish("panel", panel);
@@ -983,16 +1011,18 @@ private slots:
     QTRY_VERIFY(rightOf("panelAdd") > 0);
     QTRY_VERIFY(rightOf("panelAdd") <= corner);
     QCOMPARE(left(), corner);
-    QVERIFY(buttons->y() + buttons->height() <= 36);
+    // Centred on the strip's line, which is the thread header's.
+    QCOMPARE(buttons->y() + buttons->height() / 2, theme->headerHeight() / 2.0);
     show(true, false, false);
     QTRY_VERIFY(rightOf("threadDetailsClose") < 0);
     QTRY_VERIFY(rightOf("panelAdd") <= corner);
     QCOMPARE(left(), corner);
-    // A panel filling the window still has them.
-    show(true, false, true);
-    QTRY_VERIFY(!workspace->isVisible());
+    // A tab in the thread's centre: the stage sits under the header.
+    show(false, false, true);
+    QTRY_VERIFY(rightOf("stageDismiss") > 0);
+    QVERIFY(workspace->isVisible());
     QVERIFY(buttons->isVisible());
-    QTRY_VERIFY(rightOf("panelAdd") <= corner);
+    QTRY_VERIFY(rightOf("threadDetailsToggle") <= corner);
     QCOMPARE(left(), corner);
     // The tabs of a plugin's page.
     show(false, false, false);
@@ -1055,9 +1085,9 @@ private slots:
     bridge.publish("composer", threadComposer());
     QTRY_VERIFY(findVisualItem(root, "composerDrop")->width() > 0);
     QVERIFY(!dropAttaches(window, QPointF(leftOf(side) + side->width() / 2, 500)));
-    // Its width is the sheet's, not one to drag or to fill the window from.
+    // Its width is the sheet's, not one to drag. ("Open in centre",
+    // panelMaximize, still moves the tab to the stage from here.)
     QVERIFY(!findVisualItem(side, "panelEdge")->isVisible());
-    QVERIFY(!findVisualItem(side, "panelMaximize")->isVisible());
     // The header's toggle is clear of it, a click beside it closes it, and so
     // does Escape.
     auto* toggle = findVisualItem(workspace, "panelToggle");
@@ -1080,10 +1110,12 @@ private slots:
     QTRY_COMPARE(side->width(), 0.0);
     QCOMPARE(workspace->width(), 960.0 - 256);
 
-    // The thread details go over the thread once it would have under 360.
+    // The thread details go over the thread once it would have under the
+    // layout's 480 (LayoutController's contentMinimumWidth).
     show(false, true);
+    window->resize(1040, 1000);
     QTRY_VERIFY(details->isVisible());
-    QTRY_COMPARE(workspace->width(), 960.0 - 256 - 280);
+    QTRY_COMPARE(workspace->width(), 1040.0 - 256 - 280);
     window->resize(880, 1000);
     QTRY_COMPARE(workspace->width(), 880.0 - 256);
     QTRY_COMPARE(leftOf(details) + details->width(), 880.0);
@@ -1114,14 +1146,21 @@ private slots:
     QVERIFY(findVisualItem(side, "panelMaximize")->isVisible());
     // With the details beside it the panel gives up width, not the thread.
     show(true, true);
-    QTRY_COMPARE(workspace->width(), 360.0);
-    QCOMPARE(side->width(), 1400.0 - 256 - 280 - 360);
-    QCOMPARE(leftOf(details), 256.0 + 360);
-    // And with no room left for its minimum beside them, it is a sheet.
+    QTRY_COMPARE(workspace->width(), 480.0);
+    QCOMPARE(side->width(), 1400.0 - 256 - 280 - 480);
+    QCOMPARE(leftOf(details), 256.0 + 480);
+    // And with no room left for its minimum beside them, it is a sheet over
+    // the thread, left of the details, which stay uncovered and take clicks.
     window->resize(1200, 800);
     QTRY_COMPARE(workspace->width(), 1200.0 - 256 - 280);
     QTRY_VERIFY(scrim->isVisible());
-    QCOMPARE(leftOf(side) + side->width(), 1200.0);
+    QCOMPARE(leftOf(details) + details->width(), 1200.0);
+    QCOMPARE(leftOf(side) + side->width(), leftOf(details));
+    QCOMPARE(leftOf(scrim) + scrim->width(), leftOf(side));
+    const int closes = toggles();
+    QTest::mouseClick(window, Qt::LeftButton, {}, QPoint(int(leftOf(details) + details->width() / 2), 500));
+    QCoreApplication::processEvents();
+    QCOMPARE(toggles(), closes);
 
     bridge.publish("composer", QVariant());
     bridge.publish("panel", QVariant());
@@ -1218,6 +1257,38 @@ private slots:
     bridge.publish("toasts", QVariant());
     // And they work from here.
     QTest::mouseClick(window, Qt::LeftButton, {}, QPoint(int(buttons->x()) + 48, int(buttons->y()) + 14));
+    QTRY_COMPARE(window->visibility(), QWindow::Maximized);
+    window->showNormal();
+    bridge.publish("route", QVariant());
+    bridge.publish("workspace", initialState.value("workspace"));
+  }
+
+  // Scenario Outline: The window controls are on every page, a Space
+  // (features/navigation/windows.feature): a Space draws the header line a
+  // thread's header shares, so no band sits above it; the buttons centre on
+  // that line, and the line drags and maximizes the window.
+  void defaultShellPutsTheWindowButtonsOnASpacesHeaderLine() {
+#ifdef Q_OS_MACOS
+    QSKIP("macOS draws the window's buttons itself");
+#endif
+    bridge.publish("workspace", QVariant());
+    bridge.publish("route", QVariantMap{{"kind", "space"}});
+    auto* window = defaultShell(1400, 800);
+    QVERIFY(window);
+    auto* root = window->contentItem();
+    auto* buttons = findVisualItem(root, "windowButtons");
+    auto* band = findVisualItem(root, "chromeBand");
+    QVERIFY(buttons && band);
+    QQuickItem* line = nullptr;
+    QTRY_VERIFY((line = findVisualItem(root, "spaceHeaderLine")) && line->isVisible());
+    QTRY_VERIFY(!band->isVisible());
+    QTRY_VERIFY(buttons->isVisible());
+    QTRY_COMPARE(buttons->mapToScene(QPointF(buttons->width(), 0)).x(), 1396.0);
+    QTRY_COMPARE(line->mapToScene(QPointF(0, 0)).y(), 52.0);
+    QCOMPARE(buttons->mapToScene(QPointF(0, buttons->height() / 2)).y(), 26.0);
+    // A double click on the line, clear of its buttons, maximizes the window.
+    const QPoint onTheLine(800, 26);
+    QTest::mouseDClick(window, Qt::LeftButton, {}, onTheLine);
     QTRY_COMPARE(window->visibility(), QWindow::Maximized);
     window->showNormal();
     bridge.publish("route", QVariant());

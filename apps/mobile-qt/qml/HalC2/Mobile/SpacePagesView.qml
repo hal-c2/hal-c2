@@ -6,7 +6,10 @@ import QtQuick.Layouts
 import HalC2.Shell
 import HalC2.Bricks
 
-// The pages of the open Space as a tree, its decks and its trash under them.
+// The pages of the open Space as a tree with its decks and its trash, and under
+// them a section for each project with Space files (`Spaces.projects`, collapsed
+// until the user expands it). A file picked in a section is edited as a page of
+// its project.
 ColumnLayout {
     id: view
 
@@ -34,13 +37,6 @@ ColumnLayout {
             iconName: "image"
             label: qsTr("Images")
             onClicked: view.screen.showImages()
-        }
-
-        MobileIconButton {
-            objectName: "spaceFromProjectFiles"
-            iconName: "folder-open"
-            label: qsTr("Add a page from a project's files")
-            onClicked: Shell.dispatch("space.files.pick", {})
         }
 
         MobileIconButton {
@@ -181,6 +177,55 @@ ColumnLayout {
                     onClicked: view.screen.openDeck(model.id)
                     onMenuRequested: view.screen.deckTrashMenu(model.id)
                 }
+            }
+        }
+    }
+
+    ListView {
+        objectName: "spaceProjects"
+        Layout.fillWidth: true
+        // The sections take the room they need, up to half the screen's; their own
+        // list, so an expanded project builds only the rows on screen.
+        Layout.preferredHeight: Math.min(contentHeight, view.height / 2)
+        visible: count > 0
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        model: Spaces.projects
+
+        delegate: SpaceListRow {
+            required property var model
+            readonly property bool section: model.kind === "project"
+
+            objectName: section ? "spaceProject:" + model.projectId : "spaceProject" + (model.kind === "file" ? "File:" : "Folder:") + model.projectId + ":" + model.path
+            width: ListView.view.width
+            // A gap above each section, outside its highlight.
+            implicitHeight: section ? 60 : 52
+            topInset: section ? 8 : 0
+            topPadding: topInset
+            title: model.name
+            depth: model.depth
+            iconName: section ? (model.expanded ? "chevron-down" : "chevron-right") : model.kind === "folder" ? (model.expanded ? "folder-open" : "folder") : "file-text"
+            Accessible.name: model.kind === "file" ? model.name : (model.expanded ? qsTr("Collapse %1") : qsTr("Expand %1")).arg(model.name)
+            function setExpanded(open) {
+                if (model.kind === "file" || open === model.expanded)
+                    return;
+                Shell.dispatch("space.project.setExpanded", section ? { projectId: model.projectId, expanded: open } : { projectId: model.projectId, path: model.path, expanded: open });
+            }
+
+            onClicked: {
+                if (model.kind === "file")
+                    Shell.dispatch("space.openFile", { projectId: model.projectId, relativePath: model.path });
+                else
+                    setExpanded(!model.expanded);
+            }
+            // A hardware keyboard: Space clicks, Left and Right collapse and expand.
+            Keys.onLeftPressed: event => {
+                event.accepted = model.kind !== "file";
+                setExpanded(false);
+            }
+            Keys.onRightPressed: event => {
+                event.accepted = model.kind !== "file";
+                setExpanded(true);
             }
         }
     }

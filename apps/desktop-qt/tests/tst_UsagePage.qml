@@ -153,7 +153,7 @@ Item {
             const page = createTemporaryObject(usageComponent, root);
             const message = findChild(page, "usageMessage");
             verify(message.visible);
-            compare(message.text, "No provider on the selected environments reports subscription limits.");
+            compare(message.title, "No provider on the selected environments reports subscription limits.");
             verify(!findChild(page, "usageWindowLabel").visible);
         }
 
@@ -162,7 +162,8 @@ Item {
         function test_nothingReadYetShowsNoEmptyBreakdown() {
             Shell.state = { usage: root.usage({ scanning: true, summary: undefined, message: "Reading session history…" }) };
             const page = createTemporaryObject(usageComponent, root);
-            compare(findChild(page, "usageMessage").text, "Reading session history…");
+            compare(findChild(page, "usageMessage").title, "Reading session history…");
+            compare(findChild(page, "usageMessage").status, "loading");
             compare(findChild(page, "usageTotal").parent.visible, false, "no Totals, Models or Daily heading");
         }
 
@@ -227,6 +228,45 @@ Item {
             const row = findChild(page, "usageCredits_codex:sam@example.com");
             verify(!findChild(row, "useReset").visible, "nothing is left to spend");
             compare(findChild(row, "resetStatus").text, "No reset credit left.");
+        }
+
+        // A limit's bar is the accent until a quarter is left, then a warning,
+        // and an error under a tenth.
+        function test_a_limits_bar_is_the_accent_until_little_is_left() {
+            Theme.colors = { accent: "#3b6fe0", warning: "#fbbf24", error: "#f87171" };
+            try {
+                Shell.state = { usage: root.usage({ metric: "limits", summary: null, limits: { notices: [], pools: [{
+                    driver: "codex", label: "Codex",
+                    windows: [{ key: "weekly", label: "Weekly", remainingPercent: 60, resetsAt: "",
+                                accounts: [{ name: "Plenty", usedPercent: 40, resetsAt: "" },
+                                           { name: "Little", usedPercent: 80, resetsAt: "" },
+                                           { name: "Nearly none", usedPercent: 95, resetsAt: "" }] }],
+                    credits: [] }] } }) };
+                const page = createTemporaryObject(usageComponent, root);
+                const bars = [];
+                const collect = item => {
+                    if (item.objectName === "limitLeft")
+                        bars.push(item);
+                    for (const child of item.children)
+                        collect(child);
+                };
+                collect(page);
+                compare(bars.map(bar => bar.color.toString()), ["#3b6fe0", "#fbbf24", "#f87171"]);
+            } finally {
+                Theme.colors = {};
+            }
+        }
+
+        // Each day's bar is the accent too.
+        function test_a_days_bar_is_the_accent() {
+            Theme.colors = { accent: "#3b6fe0" };
+            try {
+                Shell.state = { usage: root.usage({}) };
+                const page = createTemporaryObject(usageComponent, root);
+                compare(findChild(page, "periodBar").color.toString(), "#3b6fe0");
+            } finally {
+                Theme.colors = {};
+            }
         }
     }
 }

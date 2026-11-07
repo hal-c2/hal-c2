@@ -3,3 +3,5 @@
 # Batch files need CRLF for cmd.exe to parse them reliably.
 *.cmd text eol=crlf
 *.bat text eol=crlf
+# Vendored upstream source: collapsed in review diffs (native/mermaid/vendor/README.md).
+native/mermaid/vendor/*/src/** linguist-vendored linguist-generated

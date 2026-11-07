@@ -1,11 +1,16 @@
 // The client's view of its MC (McClient, ShellStore, LocalCache) against a fake
 // MC (tests/native/features/FakeMc) whose rows change, which drops and comes
-// back, restarts with a new epoch, answers calls, refuses them or holds them,
-// while the client reconnects, restarts from its cache and subscribes.
+// back, restarts with a new epoch, takes sockets and never says hello, stops
+// answering the foreground check, refuses the client's credential or answers
+// as another environment, answers calls, refuses them or holds them, while the
+// client reconnects, is opened again (paired anew), restarts from its cache,
+// comes to the foreground and subscribes. It holds one socket to the MC at
+// most, and does not retry an MC that turned it away.
 
 #include "Prop.h"
 
 #include <QJsonArray>
+#include <QTcpSocket>
 
 #include <map>
 #include <memory>
@@ -54,17 +59,41 @@ const char* name(Mode mode) {
   return "?";
 }
 
+// How the MC turns the client away, and the phase that leaves it in.
+enum class Refusal { None, Invalid, Scope, Request, Missing, Elsewhere };
+
+const char* name(Refusal refusal) {
+  switch (refusal) {
+    case Refusal::None: return "none";
+    case Refusal::Invalid: return "credential invalid";
+    case Refusal::Scope: return "scope missing";
+    case Refusal::Request: return "request rejected";
+    case Refusal::Missing: return "no endpoint";
+    case Refusal::Elsewhere: return "another environment";
+  }
+  return "?";
+}
+
 struct Model {
   // The MC's rows by id, each its version `n`.
   std::map<std::string, int> rows;
   // What the client last saw of them: shown while the MC is away.
   std::map<std::string, int> known;
   bool up = true;
+  // The MC is up but turns the client away; it waits for the foreground.
+  Refusal refused = Refusal::None;
   int epoch = 1;
   std::vector<Owed> calls;
   // Each subscription's, live or ended.
   std::vector<bool> subscriptions;
 };
+
+void respond(QTcpSocket* socket, int status, const QByteArray& body) {
+  socket->readAll();
+  socket->write("HTTP/1.1 " + QByteArray::number(status) + " Status\r\nContent-Type: application/json\r\nContent-Length: " +
+                QByteArray::number(body.size()) + "\r\nConnection: close\r\n\r\n" + body);
+  socket->disconnectFromHost();
+}
 
 struct Sut {
   struct CallRecord {
@@ -90,6 +119,10 @@ struct Sut {
 
   Sut() {
     cache.open(dir.path());
+    // The environment the address answers as, read before every socket.
+    mc.onRaw(QStringLiteral("/.well-known/hal-c2/environment"), [this](QTcpSocket* socket, const QByteArray&) {
+      respond(socket, 200, QJsonDocument(QJsonObject{{QStringLiteral("environmentId"), mc.environmentId}}).toJson(QJsonDocument::Compact));
+    });
     mc.onRpc(QStringLiteral("prop.call"), [this](const FakeMc::Rpc& rpc) {
       const QString mode = rpc.payload.value(QLatin1String("mode")).toString();
       if (mode == QLatin1String("refuse")) {
@@ -120,18 +153,24 @@ struct Sut {
   void start() {
     client = std::make_unique<McClient>();
     client->setRetryDelays({20});
+    // A hushed MC's socket is given up on well within a step.
+    client->setSetupTimeout(500);
+    client->setProbeTimeout(100);
     store = std::make_unique<ShellStore>(client.get());
     store->setCache(&cache);
     store->open(mc.origin());
-    client->open(mc.origin(), QStringLiteral("token"));
+    open();
   }
+  // As the phone opens what it paired with: the environment named.
+  void open() { client->open(mc.origin(), QStringLiteral("token"), QStringLiteral("env-a")); }
   void stop() {
     store.reset();
     client.reset();
   }
 
   void setRow(const std::string& id, int n) {
-    const QJsonObject row{{QStringLiteral("id"), q(id)}, {QStringLiteral("n"), n}};
+    // The title says the version too, so threads() shows which one it read.
+    const QJsonObject row{{QStringLiteral("id"), q(id)}, {QStringLiteral("n"), n}, {QStringLiteral("title"), QString::number(n)}};
     (isThread(id) ? mc.threads : mc.projects).insert(q(id), row);
     mc.sendRow(q(id), row, isThread(id) ? QStringLiteral("thread") : QStringLiteral("project"));
   }
@@ -157,9 +196,25 @@ struct Sut {
 // the one reply it is owed; an ended subscription hears nothing more, and the
 // MC holds the ones still live.
 void expectSame(const Model& model, Sut& sut) {
-  if (model.up) {
+  const bool connected = model.up && model.refused == Refusal::None;
+  if (model.refused != Refusal::None) {
+    const McClient::Phase phase = model.refused == Refusal::Invalid ? McClient::Phase::Refused : McClient::Phase::Blocked;
+    if (!halc2::prop::until([&] { return sut.client->phase() == phase; })) {
+      RC_FAIL("turned away (" + std::string(name(model.refused)) + "), the client is in phase " + std::to_string(int(sut.client->phase())));
+    }
+    RC_ASSERT(!sut.client->failureMessage().isEmpty());
+    // It waits: no attempt of its own.
+    const qsizetype attempts = sut.mc.connections.size();
+    halc2::prop::settle();
+    RC_ASSERT(sut.client->phase() == phase);
+    RC_ASSERT(sut.mc.connections.size() == attempts);
+  } else if (model.up) {
     RC_ASSERT(halc2::prop::until([&] { return sut.client->isReady(); }));
     RC_ASSERT(sut.barrierCall());
+    // The sockets it left close; only the one it is on stays.
+    if (!halc2::prop::until([&] { return sut.mc.openSockets() == 1; })) {
+      RC_FAIL("the MC holds " + std::to_string(sut.mc.openSockets()) + " sockets of the client's");
+    }
     RC_ASSERT(sut.store->synchronized());
     RC_ASSERT(sut.client->phase() == McClient::Phase::Ready);
   } else {
@@ -169,19 +224,32 @@ void expectSame(const Model& model, Sut& sut) {
     RC_ASSERT(phase == McClient::Phase::Retrying || phase == McClient::Phase::Connecting);
   }
 
-  const auto& rows = model.up ? model.rows : model.known;
+  const auto& rows = connected ? model.rows : model.known;
   for (const auto& ids : {kThreads, kProjects}) {
     for (const std::string& id : ids) {
       const QJsonObject shown = isThread(id) ? sut.store->threadRow(QStringLiteral("env-a:") + q(id))
                                              : sut.store->projectRow(QStringLiteral("env-a"), q(id));
       const auto expected = rows.find(id);
       if (expected == rows.end()) {
-        if (!shown.isEmpty()) RC_FAIL("shows " + id + " the MC " + (model.up ? "removed: " : "had not: ") + rc::toString(shown));
+        if (!shown.isEmpty()) RC_FAIL("shows " + id + " the MC " + (connected ? "removed: " : "had not: ") + rc::toString(shown));
       } else if (shown.value(QLatin1String("n")).toInt(-1) != expected->second) {
         RC_FAIL("shows " + id + " as " + rc::toString(shown) + ", the MC's is " + std::to_string(expected->second));
       }
     }
   }
+
+  // The thread list every listener reads is built from the same rows, never
+  // left as it was before a change.
+  std::map<std::string, int> listed;
+  for (const sidebar::Thread& thread : sut.store->threads()) {
+    RC_ASSERT(thread.environmentId == QStringLiteral("env-a"));
+    listed[thread.id.toStdString()] = thread.title.toInt();
+  }
+  std::map<std::string, int> threads;
+  for (const auto& [id, n] : rows) {
+    if (isThread(id)) threads[id] = n;
+  }
+  if (listed != threads) RC_FAIL("threads() lists " + rc::toString(listed) + ", the rows are " + rc::toString(threads));
 
   // The cache keeps the MC's word, at the version the store resumes from.
   sut.store->flush();
@@ -217,7 +285,7 @@ void expectSame(const Model& model, Sut& sut) {
       RC_FAIL("subscription " + std::to_string(i) + " heard " + std::to_string(record.frames - record.framesAtEnd) + " frames after it ended");
     }
   }
-  if (model.up) {
+  if (connected) {
     const QList<int> held = sut.mc.subscribers(QStringLiteral("prop"));
     RC_ASSERT(std::set<int>(held.begin(), held.end()) == live);
   }
@@ -232,7 +300,7 @@ void disconnect(Model& model) {
 }
 
 void settled(Model& model) {
-  if (model.up) model.known = model.rows;
+  if (model.up && model.refused == Refusal::None) model.known = model.rows;
 }
 
 using Command = rc::state::Command<Model, Sut>;
@@ -280,7 +348,7 @@ struct DropMc : Step<DropMc> {
   bool restart = *rc::gen::arbitrary<bool>();
 
   explicit DropMc(const Model&) {}
-  void checkPreconditions(const Model& model) const override { RC_PRE(model.up); }
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.up && model.refused == Refusal::None); }
   void apply(Model& model) const override {
     disconnect(model);
     model.up = !down;
@@ -298,6 +366,28 @@ struct DropMc : Step<DropMc> {
   void show(std::ostream& os) const override { os << "DropMc(" << (down ? "down" : "back") << (restart ? ", new epoch" : "") << ")"; }
 };
 
+// The MC drops the client and takes its next sockets without a word, as one
+// stuck before its hello: the client gives up on each and tries again.
+struct Hush : Step<Hush> {
+  explicit Hush(const Model&) {}
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.up && model.refused == Refusal::None); }
+  void apply(Model& model) const override {
+    disconnect(model);
+    model.up = false;
+    settled(model);
+  }
+  void act(const Model&, Sut& sut) const {
+    QSignalSpy ready(sut.client.get(), &McClient::readyChanged);
+    sut.mc.sayHello = false;
+    sut.mc.drop();
+    RC_ASSERT(halc2::prop::until([&] { return !ready.isEmpty(); }));
+    // It reaches the MC again, which says nothing.
+    const qsizetype before = sut.mc.connections.size();
+    RC_ASSERT(halc2::prop::until([&] { return sut.mc.connections.size() > before; }));
+  }
+  void show(std::ostream& os) const override { os << "Hush"; }
+};
+
 struct ComeBack : Step<ComeBack> {
   explicit ComeBack(const Model&) {}
   void checkPreconditions(const Model& model) const override { RC_PRE(!model.up); }
@@ -305,7 +395,10 @@ struct ComeBack : Step<ComeBack> {
     model.up = true;
     settled(model);
   }
-  void act(const Model&, Sut& sut) const { sut.mc.startAccepting(); }
+  void act(const Model&, Sut& sut) const {
+    sut.mc.sayHello = true;
+    sut.mc.startAccepting();
+  }
   void show(std::ostream& os) const override { os << "ComeBack"; }
 };
 
@@ -314,6 +407,14 @@ struct Reconnect : Step<Reconnect> {
   void apply(Model& model) const override { disconnect(model); }
   void act(const Model&, Sut& sut) const { sut.client->reconnect(); }
   void show(std::ostream& os) const override { os << "Reconnect"; }
+};
+
+// Opened again without being closed, as pairing anew does.
+struct Reopen : Step<Reopen> {
+  explicit Reopen(const Model&) {}
+  void apply(Model& model) const override { disconnect(model); }
+  void act(const Model&, Sut& sut) const { sut.open(); }
+  void show(std::ostream& os) const override { os << "Reopen"; }
 };
 
 // The app quits and starts again: it shows what it kept until its MC answers.
@@ -344,7 +445,7 @@ struct Call : Step<Call> {
   explicit Call(const Model&) {}
   Owed owed(const Model& model) const {
     if (gone) return Owed::Nothing;
-    if (!model.up) return Owed::NotConnected;
+    if (!model.up || model.refused != Refusal::None) return Owed::NotConnected;
     switch (mode) {
       case Mode::Answer: return Owed::Result;
       case Mode::Refuse: return Owed::Refused;
@@ -426,6 +527,73 @@ struct Unsubscribe : Step<Unsubscribe> {
   void show(std::ostream& os) const override { os << "Unsubscribe(" << index << (ownerGone ? ", owner gone" : "") << ")"; }
 };
 
+// The MC turns the client's next attempt away: its credential needs a ticket,
+// which is refused, or the address answers as another environment.
+struct TurnAway : Step<TurnAway> {
+  Refusal refusal = *rc::gen::element(Refusal::Invalid, Refusal::Scope, Refusal::Request, Refusal::Missing, Refusal::Elsewhere);
+
+  explicit TurnAway(const Model&) {}
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.up && model.refused == Refusal::None); }
+  void apply(Model& model) const override {
+    disconnect(model);
+    model.refused = refusal;
+  }
+  void act(const Model&, Sut& sut) const {
+    if (refusal == Refusal::Elsewhere) {
+      sut.mc.environmentId = QStringLiteral("env-elsewhere");
+    } else {
+      const int status = refusal == Refusal::Invalid ? 401 : refusal == Refusal::Scope ? 403 : refusal == Refusal::Request ? 400 : 404;
+      sut.mc.onRaw(QStringLiteral("/ws?token="), [](QTcpSocket* socket, const QByteArray&) { respond(socket, 401, "{}"); });
+      sut.mc.onRaw(QStringLiteral("/api/auth/websocket-ticket"), [status](QTcpSocket* socket, const QByteArray&) { respond(socket, status, "{}"); });
+    }
+    sut.client->reconnect();
+  }
+  void show(std::ostream& os) const override { os << "TurnAway(" << name(refusal) << ")"; }
+};
+
+// The MC takes the client again, and the app comes to the foreground.
+struct TakeBack : Step<TakeBack> {
+  explicit TakeBack(const Model&) {}
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.refused != Refusal::None); }
+  void apply(Model& model) const override {
+    model.refused = Refusal::None;
+    settled(model);
+  }
+  void act(const Model&, Sut& sut) const {
+    sut.mc.environmentId = QStringLiteral("env-a");
+    sut.mc.offRaw(QStringLiteral("/ws?token="));
+    sut.mc.offRaw(QStringLiteral("/api/auth/websocket-ticket"));
+    sut.client->wake();
+  }
+  void show(std::ostream& os) const override { os << "TakeBack"; }
+};
+
+// The app comes to the foreground: a waiting client tries at once, one turned
+// away tries once more, and a connected one checks its socket, which the MC
+// answers or, gone silent, does not, and is replaced.
+struct Foreground : Step<Foreground> {
+  bool silent = *rc::gen::arbitrary<bool>();
+
+  explicit Foreground(const Model&) {}
+  bool replaced(const Model& model) const { return silent && model.up && model.refused == Refusal::None; }
+  void apply(Model& model) const override {
+    if (replaced(model)) disconnect(model);
+  }
+  void act(const Model& model, Sut& sut) const {
+    if (!model.up || model.refused != Refusal::None) return sut.client->wake();
+    QSignalSpy checked(sut.client.get(), &McClient::checked);
+    const qsizetype before = sut.mc.connections.size();
+    sut.mc.answerPings = !silent;
+    sut.client->wake();
+    RC_ASSERT(halc2::prop::until([&] { return !checked.isEmpty(); }));
+    RC_ASSERT(checked.first().first().toBool() == !silent);
+    if (silent) RC_ASSERT(halc2::prop::until([&] { return sut.mc.connections.size() > before; }));
+    sut.mc.answerPings = true;
+    if (!silent) RC_ASSERT(sut.mc.connections.size() == before);
+  }
+  void show(std::ostream& os) const override { os << "Foreground(" << (silent ? "silent" : "answered") << ")"; }
+};
+
 }  // namespace
 
 class SyncClientProp : public QObject {
@@ -436,8 +604,9 @@ private slots:
     QVERIFY(rc::check("the client shows and keeps what its MC said, and every call gets the reply it is owed", [] {
       Sut sut;
       rc::state::check(Model{}, sut,
-                       rc::state::gen::execOneOfWithArgs<PutRow, PutRow, RemoveRow, DropMc, ComeBack, ComeBack, Reconnect, RestartClient,
-                                                         Call, Call, AnswerHeld, Subscribe, Unsubscribe>());
+                       rc::state::gen::execOneOfWithArgs<PutRow, PutRow, RemoveRow, DropMc, Hush, ComeBack, ComeBack, Reconnect, Reopen,
+                                                         RestartClient, Call, Call, AnswerHeld, Subscribe, Unsubscribe, TurnAway,
+                                                         TakeBack, Foreground>());
     }));
   }
 };

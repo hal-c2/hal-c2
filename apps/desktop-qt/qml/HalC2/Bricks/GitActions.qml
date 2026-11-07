@@ -22,6 +22,23 @@ RowLayout {
 
     // Icon-only pill, for narrow header strips.
     property bool compact: false
+    // Its width with labels and without, whichever it shows (ShellSplitButton).
+    readonly property real fullWidth: !visible ? 0 : pill.visible ? pill.fullWidth : unavailableReason !== "" ? unavailableWide.advanceWidth : initButton.visible ? initButton.labelledWidth : implicitWidth
+    readonly property real compactWidth: !visible ? 0 : pill.visible ? pill.compactWidth : unavailableReason !== "" ? unavailableNarrow.advanceWidth : initButton.visible ? initButton.implicitHeight : implicitWidth
+
+    TextMetrics {
+        id: unavailableWide
+
+        font.pixelSize: Theme.type.meta.size
+        text: qsTr("Git unavailable")
+    }
+
+    TextMetrics {
+        id: unavailableNarrow
+
+        font.pixelSize: Theme.type.meta.size
+        text: qsTr("No git")
+    }
 
     spacing: 0
     visible: ready || unavailableReason !== ""
@@ -47,7 +64,7 @@ RowLayout {
         visible: git.unavailableReason !== ""
         text: git.compact ? qsTr("No git") : qsTr("Git unavailable")
         color: git.muted
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
 
         HoverHandler {
             id: unavailableHover
@@ -58,16 +75,34 @@ RowLayout {
     }
 
     ShellButton {
+        id: initButton
+
+        readonly property string label: git.ready && git.model.initPending ? qsTr("Initializing…") : qsTr("Initialize Git")
+        // Its width with the label, measured whether or not it shows one.
+        readonly property real labelledWidth: Theme.space.sm * 3 + iconSize + Math.ceil(initLabel.advanceWidth)
+
+        TextMetrics {
+            id: initLabel
+
+            font: initButton.font
+            text: initButton.label
+        }
+
+        objectName: "gitInitButton"
         implicitHeight: 24
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         iconName: "git-branch"
         visible: git.ready && !git.model.isRepo
         enabled: git.ready && !git.model.initPending
-        text: git.ready && git.model.initPending ? qsTr("Initializing…") : qsTr("Initialize Git")
+        // Compact, the branch glyph alone, named by its tooltip.
+        text: git.compact ? "" : label
+        Accessible.name: label
         onClicked: Shell.dispatch("git.init")
     }
 
     ShellSplitButton {
+        id: pill
+
         visible: git.ready && git.model.isRepo
         enabled: git.ready && !git.model.busy
         actionEnabled: git.ready && git.model.quickAction.disabledReason === null
@@ -183,28 +218,24 @@ RowLayout {
         modal: true
         padding: 16
 
-        background: Rectangle {
-            radius: Theme.radius
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: Theme.palette.color("border", "#27272a")
-            border.width: 1
-        }
+        Overlay.modal: ShellScrim {}
+        background: ShellPopoverSurface {}
 
         contentItem: ColumnLayout {
-            spacing: 10
+            spacing: Theme.space.sm
 
             Text {
                 text: qsTr("Commit changes")
                 color: git.foreground
-                font.pixelSize: Math.round(15 * Theme.fontScale)
-                font.bold: true
+                font.pixelSize: Theme.type.title.size
+                font.weight: Font.DemiBold
             }
 
             Text {
                 Layout.fillWidth: true
                 text: qsTr("Review and confirm your commit. Leave the message blank to auto-generate one.")
                 color: git.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -212,7 +243,7 @@ RowLayout {
                 visible: git.ready && git.model.isDefaultRef
                 text: qsTr("Warning: committing on the default branch %1").arg(git.ready ? (git.model.branch ?? "") : "")
                 color: Theme.palette.color("warningForeground", "#e0af68")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             ListView {
@@ -251,7 +282,7 @@ RowLayout {
                         Layout.fillWidth: true
                         text: fileRow.modelData.path
                         color: git.foreground
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         elide: Text.ElideMiddle
                     }
 
@@ -274,13 +305,13 @@ RowLayout {
                     Text {
                         text: "+" + fileRow.modelData.insertions
                         color: Theme.palette.color("update", "#22c55e")
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                     }
 
                     Text {
                         text: "−" + fileRow.modelData.deletions
                         color: Theme.palette.color("errorForeground", "#ef4444")
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                     }
                 }
             }
@@ -288,7 +319,7 @@ RowLayout {
             Rectangle {
                 Layout.fillWidth: true
                 implicitHeight: 84
-                radius: Theme.radius
+                radius: Theme.radiusMd
                 color: Theme.palette.color("input", "#141416")
                 border.color: message.activeFocus ? Theme.palette.color("focus", "#3b82f6") : Theme.palette.color("border", "#27272a")
 
@@ -305,14 +336,14 @@ RowLayout {
                         color: git.foreground
                         wrapMode: TextEdit.Wrap
                         background: null
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                     }
                 }
             }
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Item {
                     Layout.fillWidth: true
@@ -362,22 +393,18 @@ RowLayout {
         visible: pending !== null
         closePolicy: Popup.NoAutoClose
 
-        background: Rectangle {
-            radius: Theme.radius
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: Theme.palette.color("border", "#27272a")
-            border.width: 1
-        }
+        Overlay.modal: ShellScrim {}
+        background: ShellPopoverSurface {}
 
         contentItem: ColumnLayout {
-            spacing: 10
+            spacing: Theme.space.sm
 
             Text {
                 Layout.fillWidth: true
                 text: confirmDialog.pending ? confirmDialog.pending.title : ""
                 color: git.foreground
-                font.pixelSize: Math.round(15 * Theme.fontScale)
-                font.bold: true
+                font.pixelSize: Theme.type.title.size
+                font.weight: Font.DemiBold
                 wrapMode: Text.Wrap
             }
 
@@ -385,13 +412,13 @@ RowLayout {
                 Layout.fillWidth: true
                 text: confirmDialog.pending ? confirmDialog.pending.description : ""
                 color: git.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Item {
                     Layout.fillWidth: true
@@ -466,21 +493,17 @@ RowLayout {
             step = 0;
         }
 
-        background: Rectangle {
-            radius: Theme.radius
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: Theme.palette.color("border", "#27272a")
-            border.width: 1
-        }
+        Overlay.modal: ShellScrim {}
+        background: ShellPopoverSurface {}
 
         contentItem: ColumnLayout {
-            spacing: 10
+            spacing: Theme.space.sm
 
             Text {
                 text: qsTr("Publish repository")
                 color: git.foreground
-                font.pixelSize: Math.round(15 * Theme.fontScale)
-                font.bold: true
+                font.pixelSize: Theme.type.title.size
+                font.weight: Font.DemiBold
             }
 
             Text {
@@ -489,7 +512,7 @@ RowLayout {
                 text: [qsTr("Step 1 of 3 · Host"), qsTr("Step 2 of 3 · Repository"), qsTr("Step 3 of 3 · Summary")][publishDialog.step]
                 wrapMode: Text.Wrap
                 color: git.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             // The host.
@@ -511,7 +534,7 @@ RowLayout {
                 visible: publishDialog.step === 0 && text.length > 0
                 text: publishDialog.host?.hint ?? ""
                 color: Theme.palette.color("warningForeground", "#e0af68")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -525,7 +548,7 @@ RowLayout {
                 placeholderText: qsTr("owner/repository")
                 placeholderTextColor: git.muted
                 color: git.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 onAccepted: nextButton.clicked()
             }
             ComboBox {
@@ -556,7 +579,7 @@ RowLayout {
                 visible: publishDialog.step === 2
                 text: qsTr("Create the %1 repository %2 on %3, add it as the remote origin and push %4.").arg(visibility.currentValue === "public" ? qsTr("public") : qsTr("private")).arg(repository.text.trim()).arg(publishDialog.host?.label ?? "").arg(git.ready && git.model.branch ? git.model.branch : qsTr("this branch"))
                 color: git.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 wrapMode: Text.Wrap
             }
 
@@ -566,13 +589,13 @@ RowLayout {
                 visible: text !== ""
                 text: publishDialog.form?.error ?? ""
                 color: Theme.palette.color("errorForeground", "#ef4444")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Item {
                     Layout.fillWidth: true

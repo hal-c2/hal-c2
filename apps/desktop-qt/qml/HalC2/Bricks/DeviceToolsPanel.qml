@@ -73,7 +73,7 @@ Rectangle {
         property string title: ""
 
         width: parent ? parent.width : 0
-        spacing: 6
+        spacing: Theme.space.sm
         topPadding: 8
         bottomPadding: 8
         leftPadding: 12
@@ -82,9 +82,8 @@ Rectangle {
         Text {
             text: section.title
             color: root.muted
-            font.pixelSize: Math.round(11 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             font.weight: Font.Medium
-            font.capitalization: Font.AllUppercase
         }
     }
 
@@ -99,13 +98,17 @@ Rectangle {
 
         Text {
             anchors.left: parent.left
+            anchors.right: holder.left
+            anchors.rightMargin: 8
             anchors.verticalCenter: parent.verticalCenter
             text: row.label
             color: root.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
+            elide: Text.ElideRight
         }
         Item {
             id: holder
+            clip: true
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             width: parent.width * 0.55
@@ -182,7 +185,10 @@ Rectangle {
         }
     }
 
-    component SubmitRow: ToolRow {
+    // A field on its own full-width line, its action button on the line
+    // below: a row this holder's 55% control column would otherwise
+    // squeeze (hal-c2#923), since this row has no label of its own.
+    component SubmitRow: Column {
         id: submitRow
 
         property string field: ""
@@ -190,31 +196,33 @@ Rectangle {
         property string action: ""
         property bool canSubmit: true
 
-        height: 32
+        width: parent ? parent.width - 24 : 0
+        spacing: Theme.space.sm
 
         ShellTextField {
             id: fieldItem
 
             objectName: "toolsField-" + submitRow.field
-            anchors.left: parent.left
-            anchors.right: submitButton.left
-            anchors.rightMargin: 6
-            anchors.verticalCenter: parent.verticalCenter
+            width: parent.width
             placeholderText: submitRow.placeholder
             enabled: !root.disabled && submitRow.canSubmit
             onAccepted: submitButton.clicked()
         }
-        ShellButton {
-            id: submitButton
+        Item {
+            width: parent.width
+            height: submitButton.implicitHeight
 
-            objectName: "toolsSubmit-" + submitRow.field
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            text: submitRow.action
-            enabled: !root.disabled && submitRow.canSubmit && fieldItem.text.trim().length > 0
-            onClicked: {
-                root.tools.submit(submitRow.field, fieldItem.text);
-                fieldItem.text = "";
+            ShellButton {
+                id: submitButton
+
+                objectName: "toolsSubmit-" + submitRow.field
+                anchors.right: parent.right
+                text: submitRow.action
+                enabled: !root.disabled && submitRow.canSubmit && fieldItem.text.trim().length > 0
+                onClicked: {
+                    root.tools.submit(submitRow.field, fieldItem.text);
+                    fieldItem.text = "";
+                }
             }
         }
     }
@@ -232,7 +240,7 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 text: qsTr("Tools")
                 color: root.foreground
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 font.weight: Font.Medium
             }
             BusyIndicator {
@@ -248,7 +256,7 @@ Rectangle {
             ShellButton {
                 objectName: "toolsClose"
                 anchors.right: parent.right
-                anchors.rightMargin: 6
+                anchors.rightMargin: Theme.space.sm
                 anchors.verticalCenter: parent.verticalCenter
                 subtle: true
                 iconName: "x"
@@ -271,7 +279,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: root.view ? root.view.error : ""
             color: root.errorColor
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
         Text {
             objectName: "toolsLoading"
@@ -280,7 +288,7 @@ Rectangle {
             visible: root.view !== null && !root.view.loaded && root.view.error.length === 0
             text: qsTr("Reading device settings…")
             color: root.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
     }
 
@@ -311,7 +319,7 @@ Rectangle {
                         elide: Text.ElideLeft
                         text: root.view ? root.view.foreground : "—"
                         color: root.foreground
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
                 }
                 ToolRow {
@@ -321,7 +329,7 @@ Rectangle {
                     Row {
                         anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         ShellButton {
                             objectName: "toolsTerminate"
@@ -512,8 +520,9 @@ Rectangle {
                     ShellComboBox {
                         objectName: "toolsLocationPreset"
                         anchors.left: parent.left
+                        anchors.right: locationSet.left
+                        anchors.rightMargin: Theme.space.sm
                         anchors.verticalCenter: parent.verticalCenter
-                        width: 132
                         outline: true
                         model: root.presets
                         currentIndex: -1
@@ -523,15 +532,19 @@ Rectangle {
                         onActivated: index => root.tools.applyPreset(root.presets[index])
                     }
                     ShellButton {
+                        id: locationSet
+
                         objectName: "toolsLocationSet"
-                        anchors.left: parent.left
-                        anchors.leftMargin: 138
+                        anchors.right: root.ios ? locationClear.left : parent.right
+                        anchors.rightMargin: root.ios ? Theme.space.sm : 0
                         anchors.verticalCenter: parent.verticalCenter
                         text: qsTr("Set")
                         enabled: !root.disabled && parent.locationValid
                         onClicked: root.tools.applyLocation()
                     }
                     ShellButton {
+                        id: locationClear
+
                         objectName: "toolsLocationClear"
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
@@ -566,14 +579,17 @@ Rectangle {
 
                         objectName: "toolsPermission"
                         anchors.left: parent.left
+                        anchors.right: permissionButtons.left
+                        anchors.rightMargin: Theme.space.sm
                         anchors.verticalCenter: parent.verticalCenter
-                        width: 132
                         outline: true
                         model: root.ios ? root.iosPermissions : root.androidPermissions
                         enabled: !root.disabled
                         Accessible.name: qsTr("Permission")
                     }
                     Row {
+                        id: permissionButtons
+
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
                         spacing: 4
@@ -617,7 +633,7 @@ Rectangle {
                         objectName: "toolsPushField"
                         anchors.left: parent.left
                         anchors.right: pushSend.left
-                        anchors.rightMargin: 6
+                        anchors.rightMargin: Theme.space.sm
                         anchors.verticalCenter: parent.verticalCenter
                         placeholderText: qsTr("Alert text")
                         enabled: !root.disabled && root.view !== null && root.view.hasForeground
@@ -640,7 +656,7 @@ Rectangle {
                     visible: root.view !== null && !root.view.hasForeground
                     text: qsTr("Open an app first.")
                     color: root.muted
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                 }
             }
 
@@ -663,7 +679,7 @@ Rectangle {
                         visible: root.view === null || root.view.events.length === 0
                         text: qsTr("No events yet.")
                         color: root.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                     }
                     Repeater {
                         model: root.view ? root.view.events : []
@@ -675,7 +691,7 @@ Rectangle {
                             elide: Text.ElideRight
                             text: modelData.time + "  " + modelData.summary
                             color: root.foreground
-                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                            font.pixelSize: Theme.type.caption.size
                         }
                     }
                 }

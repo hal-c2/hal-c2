@@ -31,9 +31,10 @@ Every entry in the digest, pull request or direct commit, gets exactly one dispo
 before the cursor moves past it:
 
 - **carry**: new or changed behaviour HAL-C2 should have. Write or edit scenarios.
-- **covered**: the ledger already says it. Add the PR URL to that file's `# Sources:`. If
-  upstream changed the behaviour, change the scenario, and mark it `@backlog` only if the
-  the MC or QML no longer does what it now says.
+- **covered**: the ledger already says it. Add the PR URL to that file's `# Sources:` and, when
+  it covers only some of the file, an `# Upstream #<n>` line above the scenarios it covers (see
+  "Cite the pull request"). If upstream changed the behaviour, change the scenario, and mark it
+  `@backlog` only if the MC or QML no longer does what it now says.
 - **drop**: behaviour HAL-C2 decides not to have. Write it as a `@dropped` scenario with the
   reason in a comment, so the decision can be reviewed.
 - **skip**: nothing user-observable. CI, release and build tooling, tests, refactors,
@@ -58,6 +59,9 @@ These are the mistakes the first upstream batch (hal-c2/hal-c2#10) made and revi
   `@mc` and `mise run features:mc <file>` runs it and passes. Client scenarios stay
   `@backlog` here: no runner covers every surface `@shared` names (there is no mobile runner,
   and the desktop one reads only its own files), so the backlog job clears them per surface.
+- **A priority for new backlog work.** Give each new backlog scenario `@priority-high`,
+  `@priority-low` or nothing (normal) by the rubric in `features/README.md`, consistent with
+  its neighbours; a scenario added under a group tag inherits it.
 - **Every surface tag that applies.** Anything a user sees needs client tags (`@shared`, or
   `@desktop` / `@mobile` / `@tui`), not only `@mc`, or the client runners never select it.
 - **Existing plugin ids only.** `grep -rhoE '@plugin-[a-z0-9-]+' features | sort -u` lists
@@ -65,9 +69,13 @@ These are the mistakes the first upstream batch (hal-c2/hal-c2#10) made and revi
 - **Declarative.** What the user does and observes, never widgets or layout, per the README.
 - **Cite the pull request**, `https://github.com/pingdotgg/t3code/pull/<n>`, in the file's
   `# Sources:` block. A commit without a pull request is cited by the full commit URL the
-  digest prints, never a bare hash. The citation is what credits its authors: the
-  [T3 Code Tracker](https://github.com/hal-c2/t3code-tracker-plugin) plugin lists every
-  cited pull request with who wrote it and how far its scenarios have got.
+  digest prints, never a bare hash. Then put `# Upstream #<n>: <what upstream did>`
+  (`# Upstream <sha>: ...` with the full 40-character hash for a commit) directly above each
+  scenario, `Rule`, `Examples` table or `Feature` it covers, where a tag line would go; a pull
+  request the whole file comes from needs only the `# Sources:` line. The citation is what
+  credits its authors: the [T3 Code Tracker](https://github.com/hal-c2/t3code-tracker-plugin) plugin lists every
+  cited pull request with who wrote it and how far its scenarios have got, counting only
+  the scenarios under its `# Upstream` lines (see `features/README.md`, Upstream).
 - **Credit by name, not by trailer.** The digest's `By:` line is who wrote the pull request
   upstream. Name them in the PR description; never add them as `Co-authored-by` on a HAL-C2
   commit, which would say they wrote the scenarios.

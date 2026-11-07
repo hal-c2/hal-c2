@@ -1,5 +1,42 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24104 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/24636 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/22171 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/22172 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/14581 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/20382 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/19499 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/19640 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/19271 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/22108 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/18885 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/11013 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/19444 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/17743 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/18838 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/18621 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/16554 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/19321 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/19329 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/19335 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/19383 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/19389 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/19379 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/17275
+#   https://github.com/pingdotgg/t3code/pull/16998
+#   https://github.com/pingdotgg/t3code/pull/10585
+#   https://github.com/pingdotgg/t3code/pull/14139
+#   https://github.com/pingdotgg/t3code/pull/17366
+#   https://github.com/pingdotgg/t3code/pull/17599
+#   https://github.com/pingdotgg/t3code/pull/15086
+#   https://github.com/pingdotgg/t3code/pull/15487
+#   https://github.com/pingdotgg/t3code/pull/13567
+#   https://github.com/pingdotgg/t3code/pull/14127
 #   docs/user/remote-access.md (HAL-C2 Connect, Manage or revoke access, HAL-C2 Connect troubleshooting)
+#   https://github.com/pingdotgg/t3code/pull/12006 (dropped: an update restart keeps the tunnel)
+#   https://github.com/pingdotgg/t3code/pull/25572 (dropped: the managed relay client moves to a fixed cloudflared)
+#   https://github.com/pingdotgg/t3code/pull/22903
+#   https://github.com/pingdotgg/t3code/pull/23038
 #   docs/internals/hal-c2-connect.md (trusted broker, DPoP-bound mint, link outlives a connector, OAuth traps)
 #   docs/operations/connect-setup.md
 #   docs/user/background-service.md (signing out of HAL-C2 Connect leaves the service alone)
@@ -61,6 +98,7 @@ Feature: HAL-C2 Connect
     When two processes create its identity at the same moment
     Then both use the identity that was stored first
 
+  # Upstream #25572: the managed relay client moved to a cloudflared without the eMudhra trust.
   @dropped @mc
   Scenario: A linked MC is reachable through its managed tunnel
     Given a linked MC
@@ -137,6 +175,15 @@ Feature: HAL-C2 Connect
     When the MC upgrades itself
     Then its tunnel stays up throughout
 
+  # T3 Code's #12006 keeps the tunnel through a desktop-initiated update restart. HAL-C2 does not
+  # restart the MC for updates: it upgrades in place (see mc/platform/upgrades.feature), so the
+  # restart case this guards does not arise here.
+  @dropped @mc
+  Scenario: An update restart keeps the tunnel up
+    Given a linked MC with its tunnel up
+    When the MC restarts to install an update
+    Then its tunnel stays up through the restart
+
   @dropped @mc
   Scenario: A tunnel connector that exits is started again
     Given a linked MC with its tunnel up
@@ -150,6 +197,29 @@ Feature: HAL-C2 Connect
     And each further restart waits twice as long, up to one minute
     And the delay starts over once the connector has run for thirty seconds
     And changing the tunnel's configuration starts over at one second
+
+  @dropped @mc
+  Scenario: A connector left with no tunnel connections after a network change is restarted
+    Given a linked MC whose tunnel connector is running
+    When the network changes and the connector reports it has no connections for about three minutes
+    Then the MC restarts the connector so it finds the relay's edge again
+    And a connector that is merely unreachable for its health check is not restarted
+    And each restart that never recovers waits twice as long before the next, up to about half an hour
+
+  @dropped @mc
+  Scenario: A relink that fails part-way leaves the link unmanaged so it can be repaired
+    Given a linked MC that is relinking
+    When storing one of the link's secrets fails
+    Then the MC's tunnel configuration is not kept from the old link
+    And turning the link on again in Settings relinks and repairs it
+
+  @dropped @desktop
+  Scenario: A link the relay holds as publish-only reads as off and out of sync
+    Given the relay holds the MC's link for alerts only
+    But the MC still has its tunnel configuration
+    Then the HAL-C2 Connect switch reads off with a note that it is out of sync
+    When the user switches it on
+    Then the MC is relinked with its tunnel
 
   @dropped @mc
   Scenario: The connector's token never reaches the logs
@@ -198,6 +268,16 @@ Feature: HAL-C2 Connect
     When the user deregisters it from their account
     Then its cloud access is revoked
     And its place counts no longer toward the account's limit
+
+  @dropped @mc @desktop
+  Scenario: A deregistered MC says it was removed and offers a relink
+    Given an MC that was deregistered from the user's account
+    When the MC starts and the relay refuses its tunnel
+    Then the MC marks its link as removed and stops trying
+    And Settings shows HAL-C2 Connect as off because the MC was removed
+    And the connect status command says to link it again
+    When the user links it again
+    Then the mark is cleared and nothing saved was deleted
 
   @dropped @mc
   Scenario: An operator links the MC from the command line
@@ -849,3 +929,187 @@ Feature: HAL-C2 Connect
     When the user is not signed in
     Then the page asks them to sign in
     And once signed in it sends the terminal's authorization request on to the account provider
+
+  # Upstream #14127: the confirmation for removing a Connect environment. HAL-C2 Connect was
+  # removed, so there is no account registration left behind to explain.
+  @dropped
+  Scenario: Removing a Connect environment says it stays registered to the account
+    Given the environment is linked to the user's HAL-C2 Connect account
+    When the user removes the environment from this device
+    Then the confirmation says it stays registered to the account and keeps its host space
+
+  # Dropped with Connect: its relay forwarded webhooks to the tunnel and could hold them while
+  # the environment was offline, and said so when an idle tunnel had been removed.
+  @dropped @mc
+  Scenario: The relay forwards and holds webhooks
+    Given an environment linked to Connect with a webhook task
+    When a sender calls the relay's stable URL while the environment is offline and holding is on
+    Then the relay answers 202 and delivers the request when the environment is back
+
+  @dropped @shared
+  Scenario: An offline host says its idle tunnel was removed
+    Given a host whose tunnel the relay removed after a long idle time
+    When the user looks at it
+    Then it says to start HAL-C2 on that computer and update it to reconnect
+
+  # Dropped with HAL-C2 Connect (see the comment above the feature): there is no relay client to keep current.
+  @dropped @mc
+  Scenario: A relay client too old to run the connector is passed over
+    Given the relay client on the PATH is older than the first release the connector needs
+    When the MC looks for a relay client
+    Then it uses a newer one it installed itself, or reports the relay client as missing
+
+  # Dropped with HAL-C2 Connect.
+  @dropped @mc
+  Scenario: A linked MC brings its own relay client up to the pinned release
+    Given a linked MC whose installed relay client is not the pinned release
+    When the MC starts
+    Then it installs the pinned release in the background while the old connector keeps serving
+    And the old connector stops only after the new one has connected
+    And a relay client on the PATH or given by an override path is never replaced
+
+  # Dropped with HAL-C2 Connect.
+  @dropped @mc
+  Scenario: A relay client install outlasts a short file lock and a stalled download
+    Given a relay client install is in progress
+    When the new client is briefly held open by another program, or its download stops arriving
+    Then the install retries the move for about ten seconds before it fails
+    And a download that has not finished after ten minutes fails as a failed download
+
+  # Dropped with HAL-C2 Connect.
+  @dropped @mc
+  Scenario: A cancelled relay client install does not block the next one
+    Given a relay client install is cancelled after it took the install lock
+    When another install starts
+    Then it is not refused as locked
+
+  # Dropped with HAL-C2 Connect.
+  @dropped @shared
+  Scenario: Earlier turns load for an agent-created thread on a relayed environment
+    Given a thread an agent created on an environment reached through HAL-C2 Connect
+    When the user loads its earlier turns
+    Then the earlier turns appear instead of a credential error
+
+  # Dropped with HAL-C2 Connect.
+  @dropped @shared
+  Scenario: A device retries on its own while the host's tunnel is being set up
+    Given an environment reached through HAL-C2 Connect is replacing its tunnel
+    When the user's device tries to connect to it
+    Then the device says "The environment's T3 Connect tunnel is still being set up."
+    And it connects on its own once the new tunnel is ready
+
+  # Dropped with HAL-C2 Connect.
+  @dropped @mc
+  Scenario: A stalled account token request does not hold up other credential calls
+    Given the account's token endpoint stops answering during a token refresh
+    When ten seconds pass
+    Then the refresh fails
+    And later credential calls are answered
+
+  # Dropped with HAL-C2 Connect.
+  @dropped @shared
+  Scenario: A link that times out at the relay says so with a trace id
+    Given the relay gives up on linking an environment with HTTP 504
+    When the user sees the link error
+    Then it says the relay timed out and to try again in a few minutes
+    And it offers the relay's trace id to copy
+
+  # Upstream #17743: unlinking warns when the relay still holds the environment's record.
+  # Dropped with HAL-C2 Connect.
+  @dropped @mc
+  Scenario: Unlinking warns when the relay keeps the environment's record
+    Given an environment linked to the relay
+    When the user unlinks it and the relay does not remove its record
+    Then the user is warned that the relay still lists the environment
+
+  # Upstream #19444: the relay finds cloudflared on the user's full PATH.
+  # Dropped with HAL-C2 Connect.
+  @dropped @mc
+  Scenario: The relay finds cloudflared installed outside the system path
+    Given cloudflared is installed only in a folder the user's shell adds to the path
+    When the MC opens its relay tunnel
+    Then cloudflared is found and the tunnel opens
+
+  # Upstream #11013: a device still loading its Connect sign-in reported "Your cloud sign-in
+  # changed" and stopped retrying. Dropped with HAL-C2 Connect.
+  @dropped @shared
+  Scenario: A device still loading its Connect sign-in retries instead of asking to sign in again
+    Given the user's device is still loading its HAL-C2 Connect sign-in
+    When it tries to reach an environment through the relay
+    Then it says it is waiting for the sign-in to load
+    And it connects on its own once the sign-in has loaded
+
+  # Upstream #19499: a credential renewed during shutdown is kept, and a refused renewal says
+  # to sign in again. Dropped with HAL-C2 Connect.
+  @dropped @mc
+  Scenario: A Connect sign-in renewed while the MC shuts down is kept
+    Given the MC is renewing its HAL-C2 Connect sign-in
+    When the MC shuts down before the renewal is saved
+    Then the renewed sign-in is saved before the MC exits
+    And a renewal the account refuses for good stops retrying and says to sign in again
+
+  # Upstream #20382: the tunnel falls back to HTTP/2 after repeated QUIC stalls.
+  # Dropped with HAL-C2 Connect.
+  @dropped @mc
+  Scenario: The relay tunnel falls back to HTTP/2 on a network that keeps stalling QUIC
+    Given the MC's relay tunnel keeps losing its QUIC connection to idle timeouts
+    When thirty such stalls happen within five minutes
+    Then the tunnel switches to HTTP/2 until the MC restarts
+    And a transport the user set explicitly is kept
+
+  # Upstream #14581: a relay provisioning failure names the stage that failed.
+  # Dropped with HAL-C2 Connect.
+  @dropped @shared
+  Scenario: A failed relay setup says which stage failed
+    Given the relay could not finish setting up an environment's tunnel
+    When the user's device reports the failure
+    Then it names the stage that failed alongside the reason and trace id
+
+  # Upstream #22171: a failed Connect connection names the part that failed and how to fix it.
+  # Dropped with HAL-C2 Connect.
+  @dropped @shared
+  Scenario Outline: A failed Connect connection says which part failed
+    Given the user's device cannot reach an environment through the relay because <cause>
+    When the user looks at the connection
+    Then it says <what failed> and what to try
+
+    Examples:
+      | cause                                     | what failed                              |
+      | the host's tunnel is down                 | the host's tunnel is not running         |
+      | HAL-C2 on the host is not answering       | the host is not answering                |
+      | the tunnel's name does not resolve        | the tunnel's address could not be found  |
+      | the tunnel's certificate is refused       | a secure connection could not be made    |
+
+  # Upstream #22172: "t3 connect" checks that other devices can reach the host through the
+  # tunnel and says why when they cannot. Dropped with HAL-C2 Connect.
+  @dropped @mc
+  Scenario: A linked host checks that other devices can reach it through the relay
+    Given a linked host whose network blocks the tunnel's port
+    When the host connects to the relay
+    Then it reports that other devices cannot reach it and why
+
+  # Upstream #22903: an abandoned browser sign-in left T3 Connect's social sign-in stuck for minutes,
+  # fixed with a Cancel bar. Upstream #23038 replaced that with Clerk's own fix. Dropped: Connect is
+  # not supported yet.
+  @dropped @desktop
+  Scenario: A browser sign-in the user abandoned can be started again at once
+    Given the user started signing in to HAL-C2 Connect in the system browser
+    When the user closes that browser tab without finishing
+    Then the user can start signing in again right away
+
+  # Upstream #24636: signed out of T3 Connect, Settings > Connections offers Sign in in place of a
+  # disabled switch. Dropped: Connect is not supported yet.
+  @dropped @desktop
+  Scenario: Signed out of Connect, the Connect setting offers to sign in
+    Given the user is signed out of HAL-C2 Connect
+    When the user opens the connection settings
+    Then the Connect setting offers to sign in instead of a switch that cannot be turned on
+
+  # Upstream #24104: a guest link lets someone without an account watch a thread live in a browser
+  # and send messages the owner approves. Dropped: the link is served only through T3 Connect, which
+  # is not supported yet, and the guest watches in a web page, which HAL-C2 does not have.
+  @dropped @mc @shared
+  Scenario: A guest with a share link watches a thread and sends messages the owner approves
+    Given the user shared the thread "Fix login" with a guest link
+    When the guest opens the link and sends "Can you check the logout path too?"
+    Then the guest's message waits in "Fix login" until the user sends or dismisses it

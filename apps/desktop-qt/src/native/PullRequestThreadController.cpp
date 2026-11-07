@@ -1,19 +1,25 @@
-// Starting a thread on a pull request: the user names one (a URL, 42 or
-// #42), sees what it is, and chooses where it is checked out.
+// Starting a thread on a pull request: the user names one (a link, a
+// checkout command, 42 or #42), sees what it is, and chooses where it is
+// checked out (upstream PullRequestThreadDialog).
 //
 // Publishes `pullRequestThread`: null while closed, else {step ("ask",
-// "resolving", "choose" or "starting"), reference, error, pullRequest:
-// {number, title, branches ("feature/tax → main"), state} once resolved}.
+// "resolving", "choose" or "starting"), text (the field's), reference (what
+// the text names, PullRequestReference), error, mode (what is being prepared
+// while starting), pullRequest: {number, title, headBranch, baseBranch,
+// branches ("feature/tax → main"), state} once resolved}.
 //
 // Actions: `pullRequestThread.open` (also the palette's "Start a thread on a
-// pull request…"), `pullRequestThread.resolve {reference}`
-// (`git.resolvePullRequest` in the route's project; nothing is checked out),
+// pull request…"), `pullRequestThread.edit {reference}` (the field changed:
+// what it names is resolved once the typing pauses),
+// `pullRequestThread.resolve {reference}` (at once; `git.resolvePullRequest`
+// in the route's project; nothing is checked out),
 // `pullRequestThread.start {mode: "local" | "worktree"}`
 // (`git.preparePullRequestThread`, then a thread on what it prepared, which
-// the window moves to) and `pullRequestThread.cancel`.
+// the window moves to; it cannot be cancelled) and `pullRequestThread.cancel`.
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QTimer>
 #include <QUuid>
 #include <QVariantMap>
 
@@ -22,6 +28,7 @@
 #include "NativeController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
+#include "PullRequestReference.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ToastController.h"
@@ -30,7 +37,12 @@
 class PullRequestThreadController : public QObject, public NativeController {
 public:
   PullRequestThreadController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
-      : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {}
+      : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {
+    // As long as the upstream dialog waits for typing to pause.
+    m_debounce.setSingleShot(true);
+    m_debounce.setInterval(450);
+    connect(&m_debounce, &QTimer::timeout, this, &PullRequestThreadController::request);
+  }
 
   void activate() override {
     if (m_active) return;
@@ -48,6 +60,8 @@ public:
       open(map);
     } else if (action == QLatin1String("pullRequestThread.cancel")) {
       if (m_step != QLatin1String("starting")) close();
+    } else if (action == QLatin1String("pullRequestThread.edit")) {
+      edit(map.value(QStringLiteral("reference")).toString());
     } else if (action == QLatin1String("pullRequestThread.resolve")) {
       resolve(map.value(QStringLiteral("reference")).toString());
     } else if (action == QLatin1String("pullRequestThread.start")) {
@@ -61,6 +75,8 @@ private:
   // belongs to, as the pull requests page sends for a pull request no thread
   // works on, the dialog goes straight to resolving it in that project.
   void open(const QVariantMap& named = {}) {
+    // What is being prepared is not abandoned (see start).
+    if (m_step == QLatin1String("starting")) return;
     const QString reference = named.value(QStringLiteral("reference")).toString();
     if (!reference.isEmpty()) {
       const QString environment = named.value(QStringLiteral("environmentId")).toString();
@@ -74,8 +90,7 @@ private:
       m_project = project;
       m_cwd = root;
       m_step = QStringLiteral("ask");
-      m_error.clear();
-      m_pullRequest = {};
+      m_text.clear();
       resolve(reference);
       return;
     }
@@ -88,29 +103,65 @@ private:
     m_project = place->projectId;
     m_cwd = place->root;
     m_step = QStringLiteral("ask");
+    m_text.clear();
     m_reference.clear();
     m_error.clear();
     m_pullRequest = {};
+    m_debounce.stop();
     ++m_generation;
     publish();
   }
 
   void close() {
     m_step.clear();
+    m_debounce.stop();
     ++m_generation;
     publish();
   }
 
-  void resolve(const QString& reference) {
-    const QString named = reference.trimmed();
-    if (m_step.isEmpty() || m_step == QLatin1String("starting") || named.isEmpty()) return;
-    m_reference = named;
-    m_error.clear();
+  // The field's text changed. What it cannot name is said at once; what it
+  // names is resolved once the typing pauses, and cannot be chosen till then.
+  void edit(const QString& text) {
+    if (m_step.isEmpty() || m_step == QLatin1String("starting") || text == m_text) return;
+    m_text = text;
+    m_debounce.stop();
+    const std::optional<QString> named = pullRequestReference::parse(text);
+    if (named && *named == m_reference && m_step == QLatin1String("choose")) return publish();
+    ++m_generation;
+    if (!name(named)) return;
+    m_debounce.start();
+  }
+
+  void resolve(const QString& text) {
+    if (m_step.isEmpty() || m_step == QLatin1String("starting")) return;
+    m_text = text;
+    m_debounce.stop();
+    ++m_generation;
+    if (name(pullRequestReference::parse(text))) request();
+  }
+
+  // Takes what the text names (resolving it) or says why it names nothing.
+  bool name(const std::optional<QString>& named) {
     m_pullRequest = {};
+    if (!named) {
+      m_step = QStringLiteral("ask");
+      m_reference.clear();
+      m_error = m_text.trimmed().isEmpty() ? tr("Paste a pull request URL, checkout command, or enter 123 / #123.")
+                                           : tr("Use a pull request URL, checkout command, 123, or #123.");
+      publish();
+      return false;
+    }
     m_step = QStringLiteral("resolving");
+    m_reference = *named;
+    m_error.clear();
     publish();
+    return true;
+  }
+
+  void request() {
+    if (m_step != QLatin1String("resolving")) return;
     const quint64 generation = ++m_generation;
-    m_client->call(this, m_environment, QStringLiteral("git.resolvePullRequest"), QJsonObject{{QStringLiteral("cwd"), m_cwd}, {QStringLiteral("reference"), named}},
+    m_client->call(this, m_environment, QStringLiteral("git.resolvePullRequest"), QJsonObject{{QStringLiteral("cwd"), m_cwd}, {QStringLiteral("reference"), m_reference}},
                    [this, generation](const QJsonValue& result, const std::optional<QString>& error) {
                      if (generation != m_generation) return;
                      if (error) {
@@ -127,6 +178,7 @@ private:
   void start(const QString& mode) {
     if (m_step != QLatin1String("choose") || (mode != QLatin1String("local") && mode != QLatin1String("worktree"))) return;
     m_step = QStringLiteral("starting");
+    m_mode = mode;
     m_error.clear();
     publish();
     const quint64 generation = ++m_generation;
@@ -134,7 +186,7 @@ private:
     const auto failed = [this, generation](const QString& reason) {
       if (generation != m_generation) return;
       m_step = QStringLiteral("choose");
-      m_error = reason.isEmpty() ? tr("The pull request could not be checked out.") : reason;
+      m_error = reason.isEmpty() ? tr("Failed to prepare pull request thread.") : reason;
       publish();
     };
     m_client->call(this, m_environment, QStringLiteral("git.preparePullRequestThread"),
@@ -185,12 +237,15 @@ private:
     if (!m_pullRequest.isEmpty()) {
       pullRequest = QVariantMap{{QStringLiteral("number"), m_pullRequest.value(QLatin1String("number")).toInt()},
                                 {QStringLiteral("title"), m_pullRequest.value(QLatin1String("title")).toString()},
+                                {QStringLiteral("headBranch"), m_pullRequest.value(QLatin1String("headBranch")).toString()},
+                                {QStringLiteral("baseBranch"), m_pullRequest.value(QLatin1String("baseBranch")).toString()},
                                 {QStringLiteral("branches"), QStringLiteral("%1 → %2").arg(m_pullRequest.value(QLatin1String("headBranch")).toString(),
                                                                                            m_pullRequest.value(QLatin1String("baseBranch")).toString())},
                                 {QStringLiteral("state"), m_pullRequest.value(QLatin1String("state")).toString()}};
     }
     m_bridge->publish(QStringLiteral("pullRequestThread"),
-                      QVariantMap{{QStringLiteral("step"), m_step}, {QStringLiteral("reference"), m_reference}, {QStringLiteral("error"), m_error},
+                      QVariantMap{{QStringLiteral("step"), m_step}, {QStringLiteral("text"), m_text}, {QStringLiteral("reference"), m_reference},
+                                  {QStringLiteral("error"), m_error}, {QStringLiteral("mode"), m_step == QLatin1String("starting") ? m_mode : QString()},
                                   {QStringLiteral("pullRequest"), pullRequest}});
   }
 
@@ -202,8 +257,11 @@ private:
   QString m_environment;
   QString m_project;
   QString m_cwd;
+  QString m_text;
   QString m_reference;
+  QString m_mode;
   QString m_error;
+  QTimer m_debounce;
   QJsonObject m_pullRequest;
   quint64 m_generation = 0;
 };

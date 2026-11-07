@@ -24,6 +24,14 @@ Item {
     readonly property var plan: shown ? turn.plan ?? null : null
     readonly property var queue: shown ? turn.queue : []
     readonly property var waiting: shown ? turn.waiting ?? [] : []
+    // The running turn's task list, summed up; `tasksOpen` lists every step.
+    // It closes on another thread, and when the list goes (an approval or a
+    // question takes its place, or the turn ends).
+    readonly property var tasks: shown ? turn.tasks ?? null : null
+    property bool tasksOpen: false
+    readonly property string tasksThread: shown ? turn.threadKey : ""
+    onTasksThreadChanged: tasksOpen = false
+    onTasksChanged: if (tasks === null) tasksOpen = false
     // The MC keeps the queue for the user (after a restart or a usage limit)
     // until it is resumed.
     readonly property bool queueHeld: shown && turn.queueHeld === true
@@ -46,7 +54,7 @@ Item {
 
     // Whether the turn waits on anything. The height follows this and not
     // `visible`, which a host may bind to more than this.
-    readonly property bool pending: approval !== null || question !== null || plan !== null || queue.length > 0 || waiting.length > 0
+    readonly property bool pending: approval !== null || question !== null || plan !== null || tasks !== null || queue.length > 0 || waiting.length > 0
 
     visible: pending
     implicitHeight: pending ? column.implicitHeight + 8 : 0
@@ -110,7 +118,115 @@ Item {
         anchors.top: parent.top
         anchors.horizontalCenter: parent.horizontalCenter
         width: Math.min(parent.width - requests.gutter * 2, requests.maximumCardWidth)
-        spacing: 6
+        spacing: Theme.space.sm
+
+        // The agent's tasks (ComposerTasksBadge): the current step and how
+        // many are done, opening to every step with its status and time.
+        ShellCard {
+            objectName: "tasks"
+            Layout.fillWidth: true
+            visible: requests.tasks !== null
+            implicitHeight: tasksColumn.implicitHeight + 12
+
+            ColumnLayout {
+                id: tasksColumn
+
+                anchors.fill: parent
+                anchors.margins: 6
+                spacing: 2
+
+                ShellButton {
+                    id: tasksToggle
+
+                    objectName: "tasksToggle"
+                    Layout.fillWidth: true
+                    implicitHeight: 28
+                    subtle: true
+                    Accessible.name: qsTr("%1: %2 of %3 complete. Current task: %4")
+                        .arg(requests.tasksOpen ? qsTr("Collapse tasks") : qsTr("Tasks"))
+                        .arg(requests.tasks?.completed ?? 0).arg(requests.tasks?.total ?? 0).arg(requests.tasks?.current ?? "")
+                    onClicked: requests.tasksOpen = !requests.tasksOpen
+                    contentItem: RowLayout {
+                        spacing: Theme.space.sm
+
+                        ShellIcon {
+                            name: "list-todo"
+                            size: Theme.icon.sm
+                            color: requests.muted
+                        }
+                        Text {
+                            text: qsTr("Tasks")
+                            color: requests.muted
+                            font.family: requests.uiFont
+                            font.pixelSize: Theme.type.meta.size
+                        }
+                        Text {
+                            objectName: "tasksCurrent"
+                            Layout.fillWidth: true
+                            text: requests.tasks?.current ?? ""
+                            color: requests.foreground
+                            font.family: requests.uiFont
+                            font.pixelSize: Theme.type.meta.size
+                            font.weight: Font.Medium
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            objectName: "tasksProgress"
+                            text: "%1/%2".arg(requests.tasks?.completed ?? 0).arg(requests.tasks?.total ?? 0)
+                            color: (requests.tasks?.completed ?? 0) >= (requests.tasks?.total ?? 1) ? Theme.palette.color("success", "#22c55e") : requests.muted
+                            font.family: requests.uiFont
+                            font.pixelSize: Theme.type.meta.size
+                        }
+                        ShellIcon {
+                            name: requests.tasksOpen ? "chevron-down" : "chevron-up"
+                            size: Theme.icon.sm
+                            color: requests.muted
+                        }
+                    }
+                }
+
+                Repeater {
+                    model: requests.tasksOpen ? requests.tasks?.steps ?? [] : []
+
+                    RowLayout {
+                        id: taskStep
+
+                        required property var modelData
+                        objectName: "taskStep"
+                        readonly property string step: modelData.text
+                        readonly property string status: modelData.status
+                        readonly property string duration: modelData.duration
+                        Layout.fillWidth: true
+                        Layout.leftMargin: Theme.space.sm
+                        Layout.rightMargin: Theme.space.sm
+                        spacing: Theme.space.sm
+                        Accessible.role: Accessible.ListItem
+                        Accessible.name: "%1: %2".arg(status === "completed" ? qsTr("Completed") : status === "running" ? qsTr("Running") : qsTr("Pending")).arg(step)
+
+                        ShellIcon {
+                            name: taskStep.status === "completed" ? "check" : taskStep.status === "running" ? "circle-dot" : "circle"
+                            size: Theme.icon.sm
+                            color: taskStep.status === "completed" ? Theme.palette.color("success", "#22c55e")
+                                : taskStep.status === "running" ? Theme.palette.color("accent", "#3b6fe0") : Qt.alpha(requests.muted, 0.5)
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: taskStep.step
+                            color: taskStep.status === "running" ? requests.foreground : requests.muted
+                            font.family: requests.uiFont
+                            font.pixelSize: Theme.type.meta.size
+                            wrapMode: Text.Wrap
+                        }
+                        Text {
+                            text: taskStep.duration
+                            color: requests.muted
+                            font.family: requests.uiFont
+                            font.pixelSize: Theme.type.meta.size
+                        }
+                    }
+                }
+            }
+        }
 
         // The pending approval.
         ShellCard {
@@ -134,7 +250,7 @@ Item {
                         wrapMode: Text.Wrap
                         color: requests.foreground
                         font.family: requests.uiFont
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         font.weight: Font.DemiBold
                     }
 
@@ -156,7 +272,7 @@ Item {
                         text: qsTr("%1/%2").arg(Math.min(requests.approvalIndex, requests.approvals.length - 1) + 1).arg(requests.approvals.length)
                         color: requests.muted
                         font.family: requests.uiFont
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     ShellButton {
@@ -178,7 +294,7 @@ Item {
                     text: requests.approval?.detail ?? ""
                     color: requests.foreground
                     font.family: Theme.fontMono.length > 0 ? Theme.fontMono : requests.uiFont
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.WrapAnywhere
                     maximumLineCount: 6
                     elide: Text.ElideRight
@@ -191,13 +307,13 @@ Item {
                     text: requests.approval?.problem ?? ""
                     color: requests.warning
                     font.family: requests.uiFont
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.Wrap
                 }
 
                 Flow {
                     Layout.fillWidth: true
-                    spacing: 6
+                    spacing: Theme.space.sm
 
                     Repeater {
                         model: requests.approval?.options ?? []
@@ -232,7 +348,7 @@ Item {
                         text: qsTr("%1: %2").arg(modelData.label).arg(modelData.warning)
                         color: requests.warning
                         font.family: requests.uiFont
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         wrapMode: Text.Wrap
                     }
                 }
@@ -261,21 +377,21 @@ Item {
                         required property var modelData
 
                         Layout.fillWidth: true
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         Text {
                             Layout.fillWidth: true
                             text: questionItem.modelData.question
                             color: requests.foreground
                             font.family: requests.uiFont
-                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            font.pixelSize: Theme.type.body.size
                             font.weight: Font.DemiBold
                             wrapMode: Text.Wrap
                         }
 
                         Flow {
                             Layout.fillWidth: true
-                            spacing: 6
+                            spacing: Theme.space.sm
 
                             Repeater {
                                 model: questionItem.modelData.options
@@ -301,7 +417,7 @@ Item {
                         RowLayout {
                             Layout.fillWidth: true
                             visible: questionItem.modelData.allowCustomAnswer !== false
-                            spacing: 6
+                            spacing: Theme.space.sm
 
                             ShellTextField {
                                 objectName: "questionAnswer-" + questionItem.modelData.id
@@ -333,7 +449,7 @@ Item {
                         Flow {
                             Layout.fillWidth: true
                             visible: (questionItem.modelData.attachments ?? []).length > 0
-                            spacing: 6
+                            spacing: Theme.space.sm
 
                             Repeater {
                                 model: questionItem.modelData.attachments ?? []
@@ -360,7 +476,7 @@ Item {
                     text: requests.question?.problem ?? ""
                     color: requests.warning
                     font.family: requests.uiFont
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.Wrap
                 }
 
@@ -407,21 +523,36 @@ Item {
                 id: planRow
 
                 anchors.fill: parent
-                anchors.margins: 10
+                anchors.margins: Theme.space.sm
                 spacing: 8
 
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 2
 
-                    Text {
+                    // "Plan ready" and the plan's heading (ComposerPlanFollowUpBanner).
+                    RowLayout {
                         Layout.fillWidth: true
-                        text: requests.plan?.title ?? ""
-                        color: requests.foreground
-                        font.family: requests.uiFont
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
-                        font.weight: Font.DemiBold
-                        elide: Text.ElideRight
+                        spacing: Theme.space.sm
+
+                        Text {
+                            objectName: "planReady"
+                            text: qsTr("Plan ready")
+                            color: requests.muted
+                            font.family: requests.uiFont
+                            font.pixelSize: Theme.type.body.size
+                            font.weight: Font.DemiBold
+                        }
+                        Text {
+                            objectName: "planHeading"
+                            Layout.fillWidth: true
+                            visible: text.length > 0
+                            text: requests.plan?.heading ?? ""
+                            color: requests.foreground
+                            font.family: requests.uiFont
+                            font.pixelSize: Theme.type.body.size
+                            elide: Text.ElideRight
+                        }
                     }
 
                     Text {
@@ -429,7 +560,7 @@ Item {
                         text: qsTr("Implement the plan, or send a message to refine it.")
                         color: requests.muted
                         font.family: requests.uiFont
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         elide: Text.ElideRight
                     }
                 }
@@ -471,17 +602,20 @@ Item {
                             objectName: "planSave"
                             text: qsTr("Save to workspace…")
                             iconName: "save"
-                            onTriggered: planSaveDialog.open()
+                            // Without a workspace the save only says so.
+                            onTriggered: (requests.plan?.workspaceRoot ?? "").length > 0 ? planSaveDialog.open() : Shell.dispatch("plan.save", {})
                         }
                     }
                 }
 
+                // Implements the plan, or refines it once feedback is typed.
                 ShellButton {
                     objectName: "planImplement"
+                    readonly property bool refine: requests.composerModel?.planAction === "refine"
                     implicitHeight: 28
                     primary: true
-                    text: qsTr("Implement")
-                    onClicked: Shell.dispatch("composer.plan.implement", {})
+                    text: refine ? qsTr("Refine") : qsTr("Implement")
+                    onClicked: refine ? Shell.dispatch("composer.submit", {}) : Shell.dispatch("composer.plan.implement", {})
                 }
             }
         }
@@ -519,8 +653,8 @@ Item {
                     RowLayout {
                         anchors.fill: parent
                         anchors.leftMargin: 12
-                        anchors.rightMargin: 10
-                        spacing: 6
+                        anchors.rightMargin: Theme.space.sm
+                        spacing: Theme.space.sm
 
                         ShellIcon {
                             name: "clock"
@@ -533,18 +667,18 @@ Item {
                             elide: Text.ElideRight
                             color: requests.muted
                             font.family: requests.uiFont
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
                         Text {
                             objectName: "queueCount"
                             text: queueCard.count
                             color: requests.muted
                             font.family: requests.uiFont
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
-                        ShellIcon {
-                            name: queueCard.expanded ? "chevron-down" : "chevron-right"
-                            size: 13
+                        ShellChevron {
+                            direction: queueCard.expanded ? "down" : "right"
+                            size: Theme.icon.sm
                             color: requests.muted
                         }
                     }
@@ -557,8 +691,8 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 32
                     Layout.leftMargin: 12
-                    Layout.rightMargin: 6
-                    spacing: 6
+                    Layout.rightMargin: Theme.space.sm
+                    spacing: Theme.space.sm
 
                     ShellIcon {
                         name: "pause"
@@ -570,7 +704,7 @@ Item {
                         text: qsTr("Messages stay saved until you resume.")
                         color: requests.foreground
                         font.family: requests.uiFont
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         elide: Text.ElideRight
                         maximumLineCount: 1
                     }
@@ -593,7 +727,7 @@ Item {
                     objectName: "queueList"
                     visible: queueCard.expanded
                     Layout.fillWidth: true
-                    Layout.preferredHeight: Math.min(contentHeight, 128)
+                    Layout.preferredHeight: Math.min(contentHeight, 200)
                     contentHeight: queueRows.implicitHeight
                     clip: true
                     boundsBehavior: Flickable.StopAtBounds
@@ -622,61 +756,157 @@ Item {
                         Repeater {
                             model: requests.queue
 
-                            delegate: RowLayout {
+                            delegate: ColumnLayout {
                                 id: queued
 
                                 required property var modelData
+                                readonly property var attachments: modelData.attachments ?? []
 
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 32
-                                Layout.leftMargin: 12
-                                Layout.rightMargin: 6
-                                spacing: 6
+                                spacing: 0
 
-                                Text {
-                                    objectName: "queueText-" + queued.modelData.runId
+                                RowLayout {
                                     Layout.fillWidth: true
-                                    text: queued.modelData.text
-                                    textFormat: Text.PlainText
-                                    color: requests.foreground
-                                    font.family: requests.uiFont
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
-                                    elide: Text.ElideRight
-                                    maximumLineCount: 1
+                                    Layout.preferredHeight: 32
+                                    Layout.leftMargin: 12
+                                    Layout.rightMargin: Theme.space.sm
+                                    spacing: Theme.space.sm
+
+                                    Text {
+                                        objectName: "queueText-" + queued.modelData.runId
+                                        Layout.fillWidth: true
+                                        // An attachment-only message says what it carries.
+                                        text: queued.modelData.text.length > 0 || queued.attachments.length === 0 ? queued.modelData.text : qsTr("%n attachment(s)", "", queued.attachments.length)
+                                        textFormat: Text.PlainText
+                                        color: queued.modelData.text.length > 0 ? requests.foreground : requests.muted
+                                        font.family: requests.uiFont
+                                        font.pixelSize: Theme.type.meta.size
+                                        elide: Text.ElideRight
+                                        maximumLineCount: 1
+                                    }
+
+                                    // Editing puts the message in the composer; sending saves it.
+                                    ShellButton {
+                                        objectName: "queueEdit-" + queued.modelData.runId
+                                        implicitHeight: 24
+                                        subtle: true
+                                        text: requests.composerModel?.editingQueuedRunId === queued.modelData.runId ? qsTr("Editing") : qsTr("Edit")
+                                        enabled: requests.composerModel?.editingQueuedRunId !== queued.modelData.runId
+                                        onClicked: Shell.dispatch("composer.queue.edit", {
+                                            runId: queued.modelData.runId
+                                        })
+                                    }
+
+                                    ShellButton {
+                                        objectName: "queueSteer-" + queued.modelData.runId
+                                        implicitHeight: 24
+                                        subtle: true
+                                        text: qsTr("Steer")
+                                        onClicked: Shell.dispatch("composer.queue.steer", {
+                                            runId: queued.modelData.runId
+                                        })
+                                    }
+
+                                    ShellButton {
+                                        objectName: "queueRemove-" + queued.modelData.runId
+                                        implicitHeight: 24
+                                        subtle: true
+                                        iconName: "x"
+                                        implicitWidth: implicitHeight
+                                        Accessible.name: qsTr("Remove from the queue")
+                                        onClicked: Shell.dispatch("composer.queue.remove", {
+                                            runId: queued.modelData.runId
+                                        })
+                                    }
                                 }
 
-                                // Editing puts the message in the composer; sending saves it.
-                                ShellButton {
-                                    objectName: "queueEdit-" + queued.modelData.runId
-                                    implicitHeight: 24
-                                    subtle: true
-                                    text: requests.composerModel?.editingQueuedRunId === queued.modelData.runId ? qsTr("Editing") : qsTr("Edit")
-                                    enabled: requests.composerModel?.editingQueuedRunId !== queued.modelData.runId
-                                    onClicked: Shell.dispatch("composer.queue.edit", {
-                                        runId: queued.modelData.runId
-                                    })
-                                }
+                                // What it carries: an image's thumbnail, a file by name;
+                                // either opens large in the attachment viewer.
+                                Flow {
+                                    objectName: "queueAttachments-" + queued.modelData.runId
+                                    visible: queued.attachments.length > 0
+                                    Layout.fillWidth: true
+                                    Layout.leftMargin: 12
+                                    Layout.rightMargin: Theme.space.sm
+                                    Layout.bottomMargin: Theme.space.sm
+                                    spacing: Theme.space.sm
 
-                                ShellButton {
-                                    objectName: "queueSteer-" + queued.modelData.runId
-                                    implicitHeight: 24
-                                    subtle: true
-                                    text: qsTr("Steer")
-                                    onClicked: Shell.dispatch("composer.queue.steer", {
-                                        runId: queued.modelData.runId
-                                    })
-                                }
+                                    Repeater {
+                                        model: queued.attachments
 
-                                ShellButton {
-                                    objectName: "queueRemove-" + queued.modelData.runId
-                                    implicitHeight: 24
-                                    subtle: true
-                                    iconName: "x"
-                                    implicitWidth: implicitHeight
-                                    Accessible.name: qsTr("Remove from the queue")
-                                    onClicked: Shell.dispatch("composer.queue.remove", {
-                                        runId: queued.modelData.runId
-                                    })
+                                        delegate: Rectangle {
+                                            id: carried
+
+                                            required property var modelData
+                                            readonly property bool image: modelData.kind === "image"
+                                            readonly property bool pictured: thumbnail.status === Image.Ready
+
+                                            function open() {
+                                                Shell.dispatch("attachment.sent.view", {
+                                                    id: modelData.id,
+                                                    name: modelData.name,
+                                                    mimeType: modelData.mimeType ?? ""
+                                                });
+                                            }
+
+                                            objectName: "queueAttachment-" + modelData.id
+                                            Accessible.role: Accessible.Button
+                                            Accessible.name: qsTr("Open %1").arg(modelData.name)
+                                            Accessible.onPressAction: open()
+                                            activeFocusOnTab: true
+                                            Keys.onReturnPressed: open()
+                                            Keys.onEnterPressed: open()
+                                            Keys.onSpacePressed: open()
+                                            width: image ? 48 : Math.min(220, fileLabel.implicitWidth + 30)
+                                            height: image ? 48 : 24
+                                            radius: 2
+                                            color: Qt.alpha(requests.foreground, 0.04)
+                                            border.color: activeFocus ? requests.foreground : Qt.alpha(requests.foreground, 0.12)
+
+                                            Image {
+                                                id: thumbnail
+                                                visible: carried.image
+                                                anchors.fill: parent
+                                                anchors.margins: 1
+                                                source: carried.image ? carried.modelData.url ?? "" : ""
+                                                sourceSize.height: 96
+                                                fillMode: Image.PreserveAspectCrop
+                                                clip: true
+                                            }
+                                            ShellIcon {
+                                                visible: carried.image ? !carried.pictured : true
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                anchors.horizontalCenter: carried.image ? parent.horizontalCenter : undefined
+                                                x: 6
+                                                name: carried.image ? "image" : "file-text"
+                                                size: carried.image ? 18 : 12
+                                                color: requests.muted
+                                            }
+                                            Text {
+                                                id: fileLabel
+                                                visible: !carried.image
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                x: 22
+                                                width: parent.width - 28
+                                                text: carried.modelData.name
+                                                textFormat: Text.PlainText
+                                                color: requests.foreground
+                                                font.family: requests.uiFont
+                                                font.pixelSize: Theme.type.caption.size
+                                                elide: Text.ElideMiddle
+                                            }
+                                            HoverHandler {
+                                                id: carriedHover
+                                                cursorShape: Qt.PointingHandCursor
+                                            }
+                                            TapHandler {
+                                                onTapped: carried.open()
+                                            }
+                                            ToolTip.visible: carriedHover.hovered && carried.image
+                                            ToolTip.delay: 500
+                                            ToolTip.text: carried.modelData.name
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -706,7 +936,7 @@ Item {
                                 textFormat: Text.PlainText
                                 color: modelData.outcome === "failed" ? requests.warning : requests.muted
                                 font.family: requests.uiFont
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                                 elide: Text.ElideRight
                                 maximumLineCount: 1
                                 font.underline: notice.worker.length > 0 && waitingHover.hovered
@@ -730,11 +960,16 @@ Item {
         }
     }
 
-    // Where in the workspace the plan is saved; empty takes the
-    // plan's own file name.
+    // Where in the workspace the plan is saved, starting from its file name.
+    // It closes once the plan is written and stays open when the write fails
+    // or no path is given, so another can be tried.
     Popup {
         id: planSaveDialog
         objectName: "planSaveDialog"
+
+        readonly property int saved: Shell.state.planSave?.saved ?? 0
+        readonly property bool saving: Shell.state.planSave?.saving === true
+        onSavedChanged: close()
 
         parent: Overlay.overlay
         scale: Shell.state.layout?.zoom ?? 1
@@ -744,27 +979,33 @@ Item {
         width: 380
         modal: true
         padding: 16
+        onAboutToShow: planSavePath.text = requests.plan?.fileName ?? ""
         onOpened: {
-            planSavePath.text = "";
             planSavePath.forceActiveFocus();
+            planSavePath.selectAll();
         }
 
-        background: Rectangle {
-            radius: Theme.radius
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: Theme.palette.color("border", "#27272a")
-            border.width: 1
-        }
+        Overlay.modal: ShellScrim {}
+        background: ShellPopoverSurface {}
 
         contentItem: ColumnLayout {
-            spacing: 10
+            spacing: Theme.space.sm
 
             Text {
                 text: qsTr("Save plan to workspace")
                 color: requests.foreground
                 font.family: requests.uiFont
-                font.pixelSize: Math.round(15 * Theme.fontScale)
-                font.bold: true
+                font.pixelSize: Theme.type.title.size
+                font.weight: Font.DemiBold
+            }
+            Text {
+                objectName: "planSaveHint"
+                Layout.fillWidth: true
+                text: qsTr("Enter a path relative to %1.").arg(requests.plan?.workspaceRoot ?? "")
+                color: requests.muted
+                font.family: requests.uiFont
+                font.pixelSize: Theme.type.meta.size
+                wrapMode: Text.Wrap
             }
             ShellTextField {
                 id: planSavePath
@@ -777,7 +1018,7 @@ Item {
             }
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Item {
                     Layout.fillWidth: true
@@ -791,13 +1032,11 @@ Item {
 
                     objectName: "planSaveConfirm"
                     primary: true
-                    text: qsTr("Save")
-                    onClicked: {
-                        Shell.dispatch("plan.save", {
-                            path: planSavePath.text.trim()
-                        });
-                        planSaveDialog.close();
-                    }
+                    enabled: !planSaveDialog.saving
+                    text: planSaveDialog.saving ? qsTr("Saving...") : qsTr("Save")
+                    onClicked: Shell.dispatch("plan.save", {
+                        path: planSavePath.text.trim()
+                    })
                 }
             }
         }

@@ -21,7 +21,8 @@ defmodule HalC2.Projection.Shell do
   # Absent from older payloads; the schema omits them rather than sending null.
   # `moving` and `movedTo` mark a thread leaving for, or gone to, another machine
   # (`HalC2.ThreadMove`). `plugin` marks a thread a plugin started (`HalC2.Plugins.Host`).
-  @optional_fields ~w(linkedPullRequest branchPullRequest activeOrderKey historyOrigin moving movedTo plugin)
+  @optional_fields ~w(linkedPullRequest branchPullRequest activeOrderKey autoSettleDisabledAt historyOrigin
+                     moving movedTo plugin)
 
   @spec thread_shell(StreamState.t(), StreamState.t() | Timeline.resolve() | nil) :: map
   def thread_shell(%StreamState{} = state, source \\ nil) do
@@ -49,21 +50,26 @@ defmodule HalC2.Projection.Shell do
       |> Enum.filter(&(get(&1, "role") == "user"))
       |> latest_by(&epoch_ms(get(&1, "updatedAt")))
 
+    # The session of the latest run's provider: after a switch the run's failure stands
+    # (a usage limit keeps its resume) instead of taking the new provider's session error.
+    session_instance = get(latest_run, "providerInstanceId") || get(thread, "providerInstanceId")
+
     provider_session =
       state
       |> StreamState.list("provider-session")
-      |> Enum.filter(&(get(&1, "providerInstanceId") == get(thread, "providerInstanceId")))
+      |> Enum.filter(&(get(&1, "providerInstanceId") == session_instance))
       |> latest_by(&epoch_ms(get(&1, "updatedAt")))
 
-    local_items = Timeline.local_items(state)
+    local_count = Timeline.local_count(state)
 
     visible_count =
       if source,
-        do: length(Timeline.visible_items(state, resolver(source))),
-        else: length(local_items)
+        do: Timeline.visible_count(state, resolver(source)),
+        else: local_count
 
     error =
       ThreadError.summary(
+        latest_run,
         ThreadError.latest_root_provider_failure(latest_run, turn_items),
         get(provider_session, "lastError")
       )
@@ -120,7 +126,7 @@ defmodule HalC2.Projection.Shell do
           runs: runs
         ),
       "providerInstanceHistory" => provider_instance_history(get(thread, "id"), provider_threads),
-      "itemCount" => length(local_items),
+      "itemCount" => local_count,
       "visibleItemCount" => visible_count,
       "createdAt" => get(thread, "createdAt"),
       "updatedAt" =>

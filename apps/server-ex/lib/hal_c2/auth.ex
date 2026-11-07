@@ -15,6 +15,8 @@ defmodule HalC2.Auth do
       a proof) makes a session bound to that key for 1 hour: each request carries
       `Authorization: DPoP <token>` and a fresh proof (`authenticate/1`); a bound token
       is never accepted as a bearer. Open sockets are unaffected when it expires.
+    * A session renews itself (`renew/1`, `POST /api/auth/session/renew`) for its own
+      lifetime from now, keeping its token, so a saved environment stays signed in.
     * With a reusable development credential (`HAL_C2_DEV_AUTH_TOKEN`, dev builds
       only), that credential is itself an administrative session in every MC's
       own store, so one browser signs in to every worktree on a host.
@@ -72,6 +74,8 @@ defmodule HalC2.Auth do
     {"auth_pairing", "created_at", "INTEGER"},
     # Credentials bound to a device key: the DPoP key thumbprint that must redeem them.
     {"auth_pairing", "proof_jkt", "TEXT"},
+    # Cluster invites use pairing storage but never become client sessions.
+    {"auth_pairing", "kind", "TEXT"},
     {"auth_sessions", "id", "TEXT"},
     {"auth_sessions", "last_connected_at", "INTEGER"},
     {"auth_sessions", "device_type", "TEXT"},
@@ -96,25 +100,92 @@ defmodule HalC2.Auth do
   `admin: true` pairs with the operator's scopes, for tools on the host itself.
   """
   @spec create_pairing_token(String.t(), keyword) :: String.t()
-  def create_pairing_token(path, opts \\ []) do
+  def create_pairing_token(path, opts \\ []),
+    do: path |> mint_pairing_link(opts) |> Map.fetch!("credential")
+
+  @doc """
+  Like `create_pairing_token/2`, answering the whole link (`id`, `credential`, `label`,
+  `createdAt`, `expiresAt`, `scopes`). `ttl_ms` sets its lifetime (five minutes
+  otherwise) and `label` names it in Settings → Connections.
+  """
+  @spec mint_pairing_link(String.t(), keyword) :: map
+  def mint_pairing_link(path, opts \\ []) do
     scopes = if opts[:admin], do: @admin_scopes, else: @standard_scopes
+
+    link =
+      with_db(path, fn db ->
+        ensure_schema(db)
+
+        insert_pairing(
+          db,
+          opts[:label],
+          scopes,
+          opts[:ttl_ms] || @pairing_ttl,
+          nil,
+          "pairing-link"
+        )
+      end)
+
+    Map.put(link, "scopes", scopes)
+  end
+
+  @doc """
+  Issues an administrative session for `subject` straight into the store at `path`, for
+  a headless client; usable from outside the MC. Answers `{id, token, scopes, expires_at}`.
+  """
+  def issue_session(path, subject, label \\ nil) do
+    access = random_token()
+    id = "session-" <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
+    created = now()
 
     with_db(path, fn db ->
       ensure_schema(db)
-      insert_pairing(db, nil, scopes)
+
+      exec(
+        db,
+        "INSERT INTO auth_sessions (token_hash, scopes, label, created_at, expires_at, id, device_type, subject) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'bot', ?7)",
+        [
+          hash(access),
+          Enum.join(@admin_scopes, " "),
+          label,
+          created,
+          created + @session_ttl,
+          id,
+          subject
+        ]
+      )
     end)
-    |> Map.fetch!("credential")
+
+    %{id: id, token: access, scopes: @admin_scopes, expires_at: iso(created + @session_ttl)}
+  end
+
+  @doc "The pairing links waiting in the store at `path`, as Connections lists them; usable from outside the MC."
+  def pairing_links(path) do
+    with_db(path, &ensure_schema/1)
+    links(path)
+  end
+
+  @doc "Revokes the pairing link `id` in the store at `path`; usable from outside the MC."
+  def revoke_pairing_link(path, id) do
+    with_db(path, fn db ->
+      ensure_schema(db)
+      query(db, "DELETE FROM auth_pairing WHERE id = ?1 RETURNING id", [id]) != []
+    end)
   end
 
   @doc """
   Exchanges a pairing token for `{:ok, access_token, expires_in_s, scopes}`.
   `client` describes who asked: `label`, `device_type`, `os`, `user_agent`,
   `proof_jkt`, the DPoP key it proved and the token is bound to (a credential
-  minted for a key needs that one), and `scopes` to ask for fewer than the credential grants
-  (`{:error, :scope_not_granted}` when it asks for more).
+  minted for a key needs that one), `proof`, that key's verified but unclaimed exchange
+  proof, and `scopes` to ask for fewer than the credential grants (`{:error,
+  :scope_not_granted}` when it asks for more).
   """
   @spec exchange(String.t(), map) ::
-          {:ok, String.t(), pos_integer, [String.t()]} | :error | {:error, :scope_not_granted}
+          {:ok, String.t(), pos_integer, [String.t()]}
+          | :error
+          | {:error, :scope_not_granted}
+          | {:error, :dpop, :replay}
   def exchange(pairing_token, client \\ %{}),
     do: GenServer.call(__MODULE__, {:exchange, pairing_token, client})
 
@@ -235,6 +306,17 @@ defmodule HalC2.Auth do
   end
 
   @doc """
+  Renews a session `request_session/1` found: its expiry moves to now plus its own
+  lifetime (30 days bearer, 1 hour DPoP-bound), never earlier than it was, and its token
+  stays the same, so open sockets and tickets are untouched. `{:ok, expires_at}`, or
+  `:error` when it has expired or been revoked. The MC's own token (`local_session/0`)
+  has no row and keeps its expiry.
+  """
+  @spec renew(map) :: {:ok, integer} | :error
+  def renew(%{id: nil, expires_at: expires_at}), do: {:ok, expires_at}
+  def renew(%{id: id}), do: GenServer.call(__MODULE__, {:renew, id})
+
+  @doc """
   The client sessions in the store at `path`, as `GET /api/auth/clients` lists them
   (without `connected`, which only the running MC knows); usable from outside the MC.
   """
@@ -338,8 +420,28 @@ defmodule HalC2.Auth do
     end
   end
 
-  @doc "`POST /api/auth/pairing-token`: a pairing link, with its one-time credential."
+  @doc "Creates a pairing link for a trusted MC operation, with its one-time credential."
   def create_pairing_link(input), do: GenServer.call(__MODULE__, {:create_link, input})
+
+  @doc """
+  Creates a pairing link for an authenticated client. `creator_scopes` must come from
+  the client's verified session, never from its request.
+  """
+  def create_pairing_link(input, creator_scopes),
+    do: GenServer.call(__MODULE__, {:create_link, input, creator_scopes})
+
+  @doc "Creates a one-time credential usable only by the cluster join protocol."
+  def create_cluster_invite, do: GenServer.call(__MODULE__, :create_cluster_invite)
+
+  @doc "Whether a live cluster invite has this public id."
+  def cluster_invite?(id), do: GenServer.call(__MODULE__, {:cluster_invite, id})
+
+  @doc """
+  Consumes a cluster invite when its HMAC matches `message`. Verification and deletion
+  happen in one transaction; an ordinary pairing exchange cannot consume the row.
+  """
+  def consume_cluster_invite(id, proof, message),
+    do: GenServer.call(__MODULE__, {:consume_cluster_invite, id, proof, message})
 
   @doc "`GET /api/auth/pairing-links`."
   def pairing_links, do: GenServer.call(__MODULE__, :links)
@@ -387,6 +489,7 @@ defmodule HalC2.Auth do
     path = HalC2.Store.path()
     with_db(path, &ensure_schema/1)
     dev = dev_credential(path)
+    revoked = revoke(path, "subject = ?1 AND id IS NOT ?2", ["reusable-dev-token", dev[:id]])
 
     desktop =
       case Application.get_env(:hal_c2, :desktop_token) do
@@ -394,9 +497,11 @@ defmodule HalC2.Auth do
         token -> %{hash: hash(token), expires_at: now() + @desktop_ttl}
       end
 
+    state = %{path: path, desktop: desktop, dev: dev}
+    close_sockets(state, revoked)
     Process.send_after(self(), :prune, @prune_every)
 
-    {:ok, %{path: path, desktop: desktop, dev: dev}}
+    {:ok, broadcast(state, removed_clients(revoked))}
   end
 
   @impl true
@@ -410,14 +515,20 @@ defmodule HalC2.Auth do
               requested = client[:scopes] || granted
 
               if Enum.all?(requested, &(&1 in granted)) do
-                # Desktop restarts forget the previous token, so its session is replaced.
-                replaced =
-                  if subject == "desktop-bootstrap",
-                    do: revoke_rows(db, "subject = ?1", [subject]),
-                    else: []
+                case HalC2.Auth.Dpop.claim(client[:proof]) do
+                  :ok ->
+                    # Desktop restarts forget the previous token, so its session is replaced.
+                    replaced =
+                      if subject == "desktop-bootstrap",
+                        do: revoke_rows(db, "subject = ?1", [subject]),
+                        else: []
 
-                {reply, created} = create_session(db, requested, subject, client, state)
-                {reply, events ++ removed_clients(replaced) ++ created, replaced}
+                    {reply, created} = create_session(db, requested, subject, client, state)
+                    {reply, events ++ removed_clients(replaced) ++ created, replaced}
+
+                  {:error, :replay} ->
+                    {:rollback, {{:error, :dpop, :replay}, [], []}}
+                end
               else
                 {:rollback, {{:error, :scope_not_granted}, [], []}}
               end
@@ -433,25 +544,76 @@ defmodule HalC2.Auth do
     {:reply, reply, broadcast(state, events)}
   end
 
-  def handle_call({:create_link, input}, _from, state) do
-    scopes = Enum.filter(input["scopes"] || @standard_scopes, &(&1 in @admin_scopes))
-    ttl = input["ttlMs"] || @pairing_ttl
-
-    link =
-      with_db(
-        state.path,
-        &insert_pairing(&1, input["label"], scopes, ttl, input["proofKeyThumbprint"])
-      )
-
-    listed =
-      Map.drop(link, ["credential"])
-      |> Map.merge(%{"scopes" => scopes, "subject" => input["subject"] || "pairing-link"})
-
-    state = broadcast(state, [event("pairingLinkUpserted", listed)])
-    {:reply, {:ok, Map.take(link, ~w(id credential label expiresAt))}, state}
+  def handle_call(:create_cluster_invite, _from, state) do
+    create_link(
+      %{"label" => "Cluster invite"},
+      ~w(access:write terminal:operate),
+      state,
+      "cluster-invite"
+    )
   end
 
-  def handle_call(:prune, _from, state), do: {:reply, prune_expired(state.path), state}
+  def handle_call({:cluster_invite, id}, _from, state) when is_binary(id) do
+    found =
+      with_db(state.path, fn db ->
+        query(
+          db,
+          "SELECT 1 FROM auth_pairing WHERE id = ?1 AND kind = 'cluster-invite' AND expires_at > ?2",
+          [id, now()]
+        ) != []
+      end)
+
+    {:reply, found, state}
+  end
+
+  def handle_call({:consume_cluster_invite, id, proof, message}, _from, state)
+      when is_binary(id) and is_binary(proof) and is_binary(message) do
+    {reply, events} =
+      with_db(state.path, fn db ->
+        transaction(db, fn ->
+          with [[stored, expires]] <-
+                 query(
+                   db,
+                   "SELECT token_hash, expires_at FROM auth_pairing WHERE id = ?1 AND kind = 'cluster-invite'",
+                   [id]
+                 ),
+               true <- expires > now(),
+               {:ok, key} <- Base.decode16(stored, case: :lower),
+               expected <- :crypto.mac(:hmac, :sha256, key, message),
+               true <-
+                 byte_size(proof) == byte_size(expected) and :crypto.hash_equals(proof, expected),
+               [[^id]] <-
+                 query(
+                   db,
+                   "DELETE FROM auth_pairing WHERE id = ?1 AND kind = 'cluster-invite' RETURNING id",
+                   [id]
+                 ) do
+            {:ok, [event("pairingLinkRemoved", %{"id" => id})]}
+          else
+            _ -> {{:error, :link_invalid}, []}
+          end
+        end)
+      end)
+
+    {:reply, reply, broadcast(state, events)}
+  end
+
+  def handle_call({:create_link, input, creator_scopes}, _from, state) do
+    case delegated_scopes(Map.get(input, "scopes", @standard_scopes), creator_scopes) do
+      {:ok, scopes} -> create_link(input, scopes, state)
+      {:error, _} = error -> {:reply, error, state}
+    end
+  end
+
+  def handle_call({:create_link, input}, _from, state) do
+    scopes = Enum.filter(input["scopes"] || @standard_scopes, &(&1 in @admin_scopes))
+    create_link(input, scopes, state)
+  end
+
+  def handle_call(:prune, _from, state) do
+    {counts, expired} = prune_expired(state.path)
+    {:reply, counts, broadcast(state, removed_clients(expired))}
+  end
 
   def handle_call(:links, _from, state), do: {:reply, links(state.path), state}
 
@@ -466,6 +628,29 @@ defmodule HalC2.Auth do
   end
 
   def handle_call(:clients, _from, state), do: {:reply, clients(state), state}
+
+  def handle_call({:renew, id}, _from, state) do
+    now = now()
+
+    renewed =
+      with_db(state.path, fn db ->
+        query(
+          db,
+          """
+          UPDATE auth_sessions
+          SET expires_at = MAX(expires_at, CASE WHEN proof_jkt IS NULL THEN ?2 ELSE ?3 END)
+          WHERE id = ?1 AND expires_at > ?4
+          RETURNING expires_at
+          """,
+          [id, now + @session_ttl, now + @dpop_session_ttl, now]
+        )
+      end)
+
+    case renewed do
+      [[expires_at]] -> {:reply, {:ok, expires_at}, broadcast(state, client_events(state, id))}
+      [] -> {:reply, :error, state}
+    end
+  end
 
   def handle_call({:revoke_client, id}, _from, state) do
     revoked = revoke(state.path, "id = ?1", [id])
@@ -490,6 +675,33 @@ defmodule HalC2.Auth do
 
     snapshot = %{"pairingLinks" => links(state.path), "clientSessions" => clients(state)}
     {:reply, {:ok, revision(), snapshot}, state}
+  end
+
+  defp create_link(input, scopes, state, kind \\ "pairing-link") do
+    ttl = input["ttlMs"] || @pairing_ttl
+
+    link =
+      with_db(
+        state.path,
+        &insert_pairing(&1, input["label"], scopes, ttl, input["proofKeyThumbprint"], kind)
+      )
+
+    listed =
+      Map.drop(link, ["credential"])
+      |> Map.merge(%{"scopes" => scopes, "subject" => input["subject"] || "pairing-link"})
+
+    state = broadcast(state, [event("pairingLinkUpserted", listed)])
+    {:reply, {:ok, Map.take(link, ~w(id credential label expiresAt))}, state}
+  end
+
+  defp delegated_scopes(requested, creator) do
+    creator = if creator == :all, do: @admin_scopes, else: creator
+
+    if is_list(requested) and requested != [] and is_list(creator) and
+         Enum.all?(requested, &(&1 in @admin_scopes)) and requested == Enum.uniq(requested) and
+         Enum.all?(requested, &(&1 in creator)),
+       do: {:ok, requested},
+       else: {:error, :invalid_scope}
   end
 
   @impl true
@@ -523,9 +735,9 @@ defmodule HalC2.Auth do
   end
 
   def handle_info(:prune, state) do
-    prune_expired(state.path)
+    {_counts, expired} = prune_expired(state.path)
     Process.send_after(self(), :prune, @prune_every)
-    {:noreply, state}
+    {:noreply, broadcast(state, removed_clients(expired))}
   end
 
   # A watcher left, or a socket closed (its session may now be offline).
@@ -550,25 +762,53 @@ defmodule HalC2.Auth do
   defp prune_expired(path) do
     now = now()
 
-    {pairing, sessions} =
+    {pairing, expired} =
       with_db(path, fn db ->
         {length(query(db, "DELETE FROM auth_pairing WHERE expires_at <= ?1 RETURNING 1", [now])),
-         length(query(db, "DELETE FROM auth_sessions WHERE expires_at <= ?1 RETURNING 1", [now]))}
+         for(
+           [id] <-
+             query(db, "DELETE FROM auth_sessions WHERE expires_at <= ?1 RETURNING id", [now]),
+           do: id
+         )}
       end)
 
+    # Counted first: a ticket never outlives its session, so the ones of a session that
+    # ran out are among the expired, and `drop_tickets/1` would leave nothing to count.
     tickets = :ets.select_delete(@tickets, [{{:_, :"$1", :_}, [{:"=<", :"$1", now}], [true]}])
-    %{pairing: pairing, sessions: sessions, tickets: tickets, proofs: HalC2.Auth.Dpop.prune()}
+
+    # A session that ran out takes the sockets it opened with it.
+    drop_tickets(expired)
+    close_sockets(nil, expired)
+    sessions = length(expired)
+
+    counts = %{
+      pairing: pairing,
+      sessions: sessions,
+      tickets: tickets,
+      proofs: HalC2.Auth.Dpop.prune()
+    }
+
+    # The ids come back so the caller tells watchers each client is gone: the closed
+    # sockets' `:DOWN` finds no row left to report.
+    {counts, expired}
   end
 
-  defp insert_pairing(db, label, scopes, ttl \\ @pairing_ttl, proof_jkt \\ nil) do
+  defp insert_pairing(
+         db,
+         label,
+         scopes,
+         ttl,
+         proof_jkt,
+         kind
+       ) do
     token = random_token()
     id = "pairing-" <> Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)
     created = now()
 
     exec(
       db,
-      "INSERT INTO auth_pairing (token_hash, expires_at, id, label, scopes, created_at, proof_jkt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-      [hash(token), created + ttl, id, label, Enum.join(scopes, " "), created, proof_jkt]
+      "INSERT INTO auth_pairing (token_hash, expires_at, id, label, scopes, created_at, proof_jkt, kind) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+      [hash(token), created + ttl, id, label, Enum.join(scopes, " "), created, proof_jkt, kind]
     )
 
     %{
@@ -602,6 +842,7 @@ defmodule HalC2.Auth do
                """
                DELETE FROM auth_pairing
                WHERE token_hash = ?1 AND (proof_jkt IS NULL OR proof_jkt = ?2)
+                 AND (kind IS NULL OR kind = 'pairing-link')
                RETURNING expires_at, id, scopes
                """,
                [hash(token), client[:proof_jkt]]
@@ -698,8 +939,19 @@ defmodule HalC2.Auth do
     end)
   end
 
-  defp clients(state),
-    do: with_db(state.path, &session_rows(&1, online(state), "expires_at > ?1", [now()]))
+  # Administrators first, then the connected, then the newest. A client whose session ran
+  # out stays listed while a socket it opened is open (`prune_expired/1` closes those).
+  defp clients(state) do
+    online = online(state)
+    open = MapSet.to_list(online)
+    marks = Enum.map_join(Enum.with_index(open, 2), ",", fn {_, i} -> "?#{i}" end)
+    expired = if open == [], do: "", else: " OR id IN (#{marks})"
+
+    state.path
+    |> with_db(&session_rows(&1, online, "expires_at > ?1" <> expired, [now() | open]))
+    |> Enum.sort_by(& &1["issuedAt"], :desc)
+    |> Enum.sort_by(&{"access:write" not in &1["scopes"], not &1["connected"]})
+  end
 
   defp online(_state), do: MapSet.new(:ets.match(@live, {{:socket, :_}, :"$1"}), &hd/1)
 
@@ -774,7 +1026,7 @@ defmodule HalC2.Auth do
     cond do
       agent =~ ~r/iPad|Tablet/i -> "tablet"
       agent =~ ~r/Mobile|iPhone|Android/i -> "mobile"
-      agent =~ ~r/bot|curl|Elixir|node/i -> "bot"
+      agent =~ ~r/bot|curl|wget|Elixir|node/i -> "bot"
       true -> "desktop"
     end
   end
@@ -827,6 +1079,15 @@ defmodule HalC2.Auth do
     exec(
       db,
       "UPDATE auth_pairing SET id = 'pairing-' || substr(token_hash, 1, 12) WHERE id IS NULL",
+      []
+    )
+
+    # Pending invites made before the cluster-only kind existed (`Cluster.invite/1` made
+    # them as pairing links with this label) must not become sessions after an upgrade.
+    # Every row written since names its kind, so a row without one is from before.
+    exec(
+      db,
+      "UPDATE auth_pairing SET kind = 'cluster-invite' WHERE kind IS NULL AND label = 'Cluster invite'",
       []
     )
   end

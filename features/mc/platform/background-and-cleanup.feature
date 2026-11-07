@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15738
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/background_policy.ex (presets, leases, run_scope_work?)
 #   apps/server-ex/lib/hal_c2/vcs/watch.ex (automatic git fetch and status under the policy)
@@ -70,6 +71,14 @@ Feature: Background work and storage cleanup on the MC
     When its socket closes
     Then its leases end at once
 
+  # Upstream #15738: an activity report cut off by a reconnect no longer stops later reports.
+  @backlog @shared
+  Scenario: A client keeps reporting activity after a report is cut off
+    Given a client in front reports it shows a checkout's status
+    When its connection is replaced while a report is on its way
+    Then the client's next report still reaches the MC
+    And the MC keeps refreshing that checkout's git status
+
   @mc
   Scenario: The performance profile works for clients in the background too
     Given the background activity profile is "performance"
@@ -114,13 +123,13 @@ Feature: Background work and storage cleanup on the MC
       | low power mode, with pausing on    |
       | being unplugged, with pausing on   |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A host power reading that has gone stale pauses nothing
     Given a client in front shows a checkout
     And the host's last power report is too old to trust
     Then the MC keeps refreshing that checkout
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A host power report older than one already accepted is ignored
     Given the host reported it is locked
     When an older report that says it is unlocked arrives afterwards

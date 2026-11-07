@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
 #include <QMetaObject>
@@ -24,8 +25,8 @@ class ShellBridge;
 class ShellStore;
 class TimelineModel;
 
-// The composer on the thread or new-thread draft the window shows (the
-// route), against the MC: the draft itself (text, caret, model, options,
+// The composer on the thread, new-thread draft or Space page the window shows
+// (the route), against the MC: the draft itself (text, caret, model, options,
 // modes, images, terminal excerpts, quoted replies), what the picker offers, the @ $ / suggestions, sending,
 // follow-ups while a turn runs, stop, the thread's pending approvals and
 // questions, and its proposed plan.
@@ -68,6 +69,27 @@ class TimelineModel;
 // applied: the brick adopts published text only when it answers its newest
 // edit, so its own typing is never overwritten by an older echo, while the
 // shell's changes (a suggestion, a cleared send, a restored failure) land.
+//
+// A Space page (SpaceController::promptPage) has a draft of its own too,
+// keyed pageKey(pageId), which no thread key or draft id can be. Its prompt
+// writes on the page: plain text goes to the page's bricks as
+// `space.prompt.write` {pageId, text} (the page decides the kind of block and
+// clears the prompt), and `@agent …` asks an agent to work on the page
+// (SpaceController::askAgent) with the prompt's model, options, modes,
+// attachments and the project picked for it (`composer.project.set
+// {projectId}`, else the MC's `space.page.agentTarget`); a refused ask keeps
+// everything. Stop stops the page's agent. A page's composer has no checkout,
+// queue, follow-ups, several models or excerpts. `composer.ask` starts an ask
+// in the page's prompt, ahead of what is there.
+//
+// The Space's images (SpaceController::imagesShown, with no thread, draft or
+// page open) have a prompt of their own too, keyed imagesKey(spaceId), routeKind
+// "images": its words are what the image should show, and a send generates one
+// (`space.image.generate`) with the image model picked for it. The model picker
+// offers only the image models of the providers that can make an image
+// (`space.image.providers`, asked each time the images open); a send is busy
+// while an image is being made. It has no options, modes, attachments,
+// excerpts, checkout or queue.
 //
 // Actions: composer.text.set {target, text, cursor, edit},
 // composer.suggest.select {id}, composer.suggest.dismiss,
@@ -121,10 +143,11 @@ class TimelineModel;
 // `[Assistant quote](hal-c2-citation://v1/...)` link to the text, which holds
 // the whole citation (AssistantCitation in packages/contracts).
 //
-// Editing a queued message puts its text in the thread's composer
-// (`composer.editingQueuedRunId`) and sets the thread's own draft aside; a
-// send saves the edit (`queued-run.edit`, text only) and cancelling gives the
-// draft back. A run that leaves the queue mid-edit ends it: a changed edit
+// Editing a queued message puts its text and attachments in the thread's
+// composer (`composer.editingQueuedRunId`; the message's attachments are
+// listed with `sent`) and sets the thread's own draft, attachments included,
+// aside; a send saves the edit (`queued-run.edit`, its text and, when they
+// changed, its attachments) and cancelling gives the draft back. A run that leaves the queue mid-edit ends it: a changed edit
 // stays in the composer when the set-aside draft was empty, and is dropped
 // with a toast otherwise.
 class ComposerController : public QObject, public NativeController {
@@ -161,6 +184,10 @@ public:
   // Whether `target`'s draft has files still on their way to the MC, or a
   // send in flight that carries the draft's attachments.
   bool attachmentsPending(const QString& target) const;
+  // The draft key of a Space page; never a thread key (env:id) or a draft id (a uuid).
+  static QString pageKey(const QString& pageId) { return QStringLiteral("page#") + pageId; }
+  // The draft key of a Space's images prompt.
+  static QString imagesKey(const QString& spaceId) { return QStringLiteral("images#") + spaceId; }
   // More than one model is chosen for the draft, each to get a thread of its own.
   bool choseSeveralModels(const QString& draftId) const { return m_drafts.value(draftId).multipleModels.has_value(); }
   // Adds `text` after the route's draft, a space apart from what is there
@@ -247,6 +274,8 @@ private:
     // A new thread's prompt goes to each of these instead: one thread per
     // model, each in its own worktree.
     std::optional<QList<QJsonObject>> multipleModels;
+    // A Space page's: the project an ask runs in, as picked.
+    QString projectId;
     QList<Attachment> attachments;
     QList<Excerpt> excerpts;
   };
@@ -270,6 +299,8 @@ private:
     // The text to give back if the send fails; empty for none.
     QString prompt;
     QString messageId;
+    // Feedback on, or the implementing of, a proposed plan.
+    bool planFollowUp = false;
   };
   // A prompt on its way to the MC, kept with the drafts until the MC answers
   // it: one a quit, crash or dropped connection cut off comes back to its
@@ -327,6 +358,34 @@ private:
                             const std::optional<QString>& error);
   // The model a thread (its own) or a draft (the project's default) starts from.
   QJsonObject baseSelection(const QString& key) const;
+  // What a new thread in the project starts with.
+  QJsonObject newThreadSelection(const QString& environmentId, const QString& projectId) const;
+  QString newThreadRuntimeMode(const QString& projectId) const;
+  // The Space page on show, when no thread or draft is.
+  QString openPage() const;
+  bool onPage() const { return !m_pageId.isEmpty(); }
+  // The project the page's ask runs in: picked, else the MC's default.
+  QString pageProject() const;
+  // Asks the MC where the page's ask would run, once it is connected.
+  void askPageProject();
+  // A page's send: an ask, or words for the page to write.
+  bool submitPage(const QString& target, const QString& text);
+  // `@agent` ahead of the page's prompt, and the keyboard to it.
+  void startAsk();
+  // Whether the page's agent is at work, which makes the send button stop it.
+  bool pageAgentRunning() const;
+  void followPage();
+  // The Space whose images are on show, when no thread, draft or page is.
+  QString openImages() const;
+  bool onImages() const { return !m_imagesSpace.isEmpty(); }
+  // The images prompt: the image model picked, else the MC's default; empty when
+  // no provider is on offer to make one.
+  QJsonObject imageSelection(const QString& target) const;
+  bool selectImageModel(const QString& target, const QString& instanceId, const QString& model);
+  // The images prompt's send: an image of what it says.
+  bool submitImages(const QString& target, const QString& text);
+  QVariantMap imagesComposerState() const;
+  QVariantList imagePickerInstances() const;
   // The message and the mode changes before it; empty `text` implements the plan.
   bool sendTurn(const QString& target, const QString& text, const QString& mode, bool planFollowUp, bool fromDraft);
   void sendNext(const QString& target);
@@ -358,6 +417,11 @@ private:
   bool addReviewComment(const QVariantMap& comment);
   // A selection of one of the route thread's replies joins its draft.
   bool addCitation(const QVariantMap& selection);
+  // Whether a draft of `text` holds nothing but terminal excerpts whose text is
+  // gone. It is not sent, and the user is told.
+  bool stopForExpiredExcerpts(const QString& text, const Draft& draft);
+  // Tells the user how many of `contexts` a send left out, for lack of their text.
+  void warnOfExpiredExcerpts(const QList<Excerpt>& contexts);
   // The message text with a link per excerpt, note and quote, and the
   // excerpts' and notes' records as its `context`.
   static void withExcerpts(QJsonObject& message, const QList<Excerpt>& contexts);
@@ -412,6 +476,8 @@ private:
   // Searches the workspace for an @ query the menu has no answer for yet.
   void searchPaths(const QString& target);
   bool canSearchPaths(const QString& target) const;
+  std::pair<QString, QString> searchPlace(const QString& target) const;
+  std::optional<composer::Trigger> triggerOf(const QString& target) const;
   void refreshPathSearch();
 
   // The catalogue of the route's environment.
@@ -438,6 +504,10 @@ private:
   // shared state (Kept) the others show too.
   static void publishEverywhere(NativeShell* shell);
   QVariantMap turnState() const;
+  // A sent image's signed address, asked of the thread's timeline when it has none yet.
+  QString sentAddress(const QString& id) const;
+  // What the composer shows of an edited queued message's own attachments.
+  QVariantList shownSent() const;
   bool queueHeld() const;
   QVariant composerState(const QVariantMap& turn) const;
   QVariantMap pickerState() const;
@@ -481,9 +551,21 @@ private:
   // The route thread (or draft) and its stream.
   QString m_thread;
   QString m_draftId;
+  // The Space page on show instead, and the project its asks run in unless
+  // one is picked (`space.page.agentTarget`).
+  QString m_pageId;
+  QString m_pageProject;
+  bool m_pageProjectAsked = false;
+  bool m_pageRunning = false;
+  // The Space whose images are on show instead.
+  QString m_imagesSpace;
   QPointer<TimelineModel> m_timeline;
+  // Sent attachments whose address was asked of the timeline (sentAddress),
+  // until it signs one; one it would not sign is not asked for again.
+  mutable QSet<QString> m_sentAsked;
   QMetaObject::Connection m_timelineConnection;
   QMetaObject::Connection m_timelineStatus;
+  QMetaObject::Connection m_timelineSigned;
   // The files attached to each question's answer, by request id then
   // question id; they go with the answer and stay out of the thread's draft.
   QHash<QString, QHash<QString, QList<Attachment>>> m_answerFiles;
@@ -529,9 +611,18 @@ private:
   struct QueuedEdit {
     QString thread;
     QString runId;
+    QString messageId;
     QString original;
+    // The message's attachments still on it, as the MC holds them, and
+    // whether any were taken off.
+    QJsonArray sent;
+    bool sentChanged = false;
     QString saved;
     int savedCursor = 0;
+    QList<Attachment> savedAttachments;
+    // Added images the MC has stored for the message, by draft id: a save
+    // the MC refused reuses them rather than storing them again.
+    QHash<QString, QJsonObject> stored;
     bool saving = false;
   };
   std::optional<QueuedEdit> m_queuedEdit;

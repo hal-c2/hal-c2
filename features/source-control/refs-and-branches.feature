@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23314
+#   https://github.com/pingdotgg/t3code/pull/14157
+#   https://github.com/pingdotgg/t3code/pull/22807
+#   https://github.com/pingdotgg/t3code/pull/22225
+#   https://github.com/pingdotgg/t3code/pull/20440
+#   https://github.com/pingdotgg/t3code/pull/19315
 #   packages/contracts/src/vcs.ts (VcsListRefsInput, VcsListRefsResult, VcsSwitchRefInput, VcsCreateRefInput)
 #   packages/contracts/src/rpc.ts (vcs.listRefs, vcs.switchRef, vcs.createRef)
 #   apps/server-ex/lib/hal_c2/vcs.ex (list_refs, switch_ref, create_ref)
@@ -33,6 +39,22 @@ Feature: Picking, switching and creating branches
     And "main" is marked default and listed next
     And the other branches follow, most recently committed first
 
+  # Upstream #22807: after a git switch in a terminal, the picker kept the old branch as
+  # current, even once that branch was deleted.
+  @backlog @mc @shared
+  Scenario: Opening the branch list picks up a branch switched outside HAL-C2
+    Given the user ran "git switch main" in a terminal of the thread
+    When the user opens the branch list
+    Then "main" is marked current
+    And the thread shows "main" with no ahead or behind counts or pull request left from "feature/tax"
+
+  # Upstream #22807
+  @backlog @mc
+  Scenario: Opening the branch list does not fetch from the remote
+    When the user opens the branch list
+    Then the thread's git status is read from the checkout
+    And nothing is fetched and no pull request is looked up
+
   @mc @desktop
   Scenario: Searching narrows the branch list
     # The scenario needs "feature/old" to exist before it can find it.
@@ -60,7 +82,7 @@ Feature: Picking, switching and creating branches
     But it is listed when the user asks for matching remote refs too
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (listRefs: snapshot cache, epoch bumps)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: Paging through a long branch list does not read the repository again
     Given "shop" has 400 branches
     When a client reads every page of the branch list
@@ -82,11 +104,21 @@ Feature: Picking, switching and creating branches
       | renames the temporary branch of a new worktree |
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (LIST_REFS_REFRESH_COALESCE_TTL, LIST_REFS_REFRESH_FAILURE_COOLDOWN)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: Asking for a fresh branch list again and again does not hammer the repository
     Given clients ask for a fresh branch list of "shop" several times within five seconds
     Then the repository's refs are read once
     And after a read that failed the next fresh read is not attempted for half a minute
+
+  # Upstream #23314: a reconnect that replaced the session left the branch list stale until the
+  # next connection change.
+  @shared @backlog @priority-low
+  Scenario: The branch list is read again after a reconnect
+    Given the user has the branch list of "shop" open
+    And a branch was created on the machine while the client was disconnected
+    When the client reconnects
+    Then the new branch is listed without the user asking
+    And a read that fails while the connection is coming back is retried quietly
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (listRefs: isRepo false)
   @mc @backlog
@@ -107,6 +139,24 @@ Feature: Picking, switching and creating branches
     When the user lists branches
     Then "feature/old" is marked with that worktree's path
 
+  # Upstream #19315: "git worktree list -z" needs git 2.36, and older git dropped every path.
+  @backlog @mc @priority-low
+  Scenario: Worktree paths are found on git older than 2.36
+    Given the machine's git is 2.25
+    And "feature/old" is checked out in another worktree
+    When the user lists branches
+    Then "feature/old" is marked with that worktree's path
+    And an agent can still launch a thread in that worktree
+
+  # Upstream #14157: with a git folder kept outside the checkout, git listed that folder as the
+  # branch's worktree.
+  @backlog @mc @priority-low
+  Scenario: A repository whose git folder lives elsewhere is not listed as a worktree
+    Given "shop" keeps its git folder outside the project folder
+    When the user lists branches
+    Then the current branch is shown as checked out in the project folder
+    And the git folder is not listed as a worktree
+
   @mc @desktop
   Scenario: Switching to a local branch
     When the user switches the thread to "main"
@@ -124,6 +174,20 @@ Feature: Picking, switching and creating branches
     Given a file is named "feature/gone" and the branch "feature/gone" no longer exists
     When the user switches to "feature/gone"
     Then the switch fails and the file is left as it was
+
+  # Upstream #20440: remote, ref and path names reach git after "--end-of-options", and a
+  # branch name starting with "-" (other than a lone "-") is refused before a checkout or a
+  # worktree is made.
+  @backlog @mc @priority-high
+  Scenario Outline: A branch named like an option is refused before git sees it
+    When the user <action> the branch "--upload-pack=touch pwned"
+    Then the MC refuses it as a branch name
+    And nothing is checked out or created
+
+    Examples:
+      | action                 |
+      | switches to            |
+      | creates a worktree for |
 
   @mc @desktop
   Scenario: Creating a branch from the search text
@@ -165,7 +229,7 @@ Feature: Picking, switching and creating branches
     When the user looks at the thread list
     Then the thread in "shop" shows the branch "feature/tax"
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: Copying the branch name
     When the user copies the thread's branch name
     Then "feature/tax" is on the clipboard
@@ -186,7 +250,7 @@ Feature: Picking, switching and creating branches
     When the status updates
     Then the thread's branch reads "feature/pay"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A new branch name made of several words is made with dashes
     Given the user searched the branch list for "<typed>"
     When the user creates it
@@ -198,14 +262,14 @@ Feature: Picking, switching and creating branches
       | fix  the   cart  | fix-the-cart   |
       | Feature/Pay      | Feature/Pay    |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Typing a name with spaces still finds the branch that has dashes
     Given the project has the branch "new-branch"
     When the user searched the branch list for "new branch"
     Then "new-branch" is listed
     And no entry offers to create "new-branch" again
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: The entry to create a branch comes and goes with the search text
     Given the user is <picking>
     When the user searched the branch list for "<text>"
@@ -234,7 +298,7 @@ Feature: Picking, switching and creating branches
     Then the thread says the folder is on "main" but the thread last ran on "feature/tax"
     And sending would continue on "main"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The branch notice appears once the user starts writing
     Given the thread last ran on "feature/tax" and the folder is now on "main"
     When the user has not typed anything yet
@@ -261,7 +325,7 @@ Feature: Picking, switching and creating branches
       | git refuses to switch the folder                         | Failed to switch checkout                            |
       | the folder switched but the thread could not be updated  | Checkout switched, but the thread could not be updated |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The branch notice can be dismissed
     Given the branch notice is shown for "feature/tax"
     When the user dismisses it
@@ -289,18 +353,27 @@ Feature: Picking, switching and creating branches
     When the user looks at the thread list
     Then the thread's row says the folder is currently checked out on another branch
 
+  # Upstream #22225: reverted #14883; an agent switching branches in its own worktree is normal
+  # work, so worktree threads do not warn. Threads in the project's folder still do (above).
   @backlog @desktop
+  Scenario: A worktree thread whose checkout moved to another branch does not warn
+    Given a thread in its own worktree last ran on "feature/tax"
+    And the agent checked out "feature/other" in that worktree
+    When the user looks at the thread list and the thread's branch
+    Then the thread does not say another branch is checked out
+
+  @backlog @desktop @priority-low
   Scenario: A new thread's base ref is labelled as coming from origin when it starts from there
     Given the user chose a new worktree for a new thread based on the local branch "main"
     When the user chooses to start the worktree from origin
     Then the base reads "From origin/main"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A base that is a remote branch reads as itself
     Given the user chose a new worktree for a new thread based on the remote branch "origin/release"
     Then the base reads "From origin/release"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: The branch list says when it is still loading or has nothing to show
     Given <state>
     When the user opens the branch list

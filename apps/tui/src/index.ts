@@ -9,11 +9,12 @@ import { installKittyClipboardExtension } from "@hal-c2/opentui-image";
 import { runShell } from "opentui-qml";
 
 import { bundledAppVersion, resolveAppVersion } from "./appVersion.ts";
-import { makeClusterClient } from "./clusterClient.ts";
-import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts";
+import { connectTui } from "./clusterClient.ts";
+import type { TuiOptions } from "./connection.ts";
 import { detectInlineImageTransport, inlineImageProtocol } from "./terminalGraphics.ts";
 import { createHost } from "./host/host.ts";
 import { fileMutedThreads, MUTED_THREADS_FILE } from "./host/mutedThreads.ts";
+import { fileTimestampFormat, TIMESTAMP_FORMAT_FILE } from "./host/timestampFormatSetting.ts";
 import { enginePluginPort, filePluginStore, PLUGIN_RECORDS_FILE } from "./host/plugins.ts";
 import { movePromptCursorToEnd } from "./host/promptCursor.ts";
 import { PLUGINS_DIR, readUserConfig, saveKeymapOverrides } from "./host/userConfig.ts";
@@ -153,11 +154,7 @@ async function main(): Promise<void> {
     mintSocketUrl: makeHttpSocketTicketMinter({ origin, bearerToken: connection.bearerToken }),
     logPath,
   };
-  const runtime = buildTuiRuntime(options);
-  // The other machines of a cluster are reached through this same MC, each by its environment id.
-  const client = makeClusterClient(makeTuiClient(runtime, origin), (environmentId) =>
-    makeTuiClient(buildTuiRuntime({ ...options, environmentId }), origin, false),
-  );
+  const client = connectTui(options);
 
   // A tmux pane can still be showing scrollback when this child starts. Return it
   // to the live screen before entering OpenTUI's alternate screen so the complete
@@ -239,6 +236,9 @@ async function main(): Promise<void> {
     ...(process.env.HAL_C2_TUI_DEV === "1" ? { watchPlugins: watchPluginFiles } : {}),
     // Muted threads are this device's: they live beside the user's shell config.
     mutedThreads: fileMutedThreads(NodePath.join(configDir, MUTED_THREADS_FILE)),
+    timestampFormat: fileTimestampFormat(NodePath.join(configDir, TIMESTAMP_FORMAT_FILE)),
+    // So are the Space pane's project sections the user expanded.
+    projectSections: fileMutedThreads(NodePath.join(configDir, "space-sections.json")),
     // ^G: hand the terminal to the editor, then take the screen back.
     runEditor: async ({ cmd, args }, file) => {
       renderer.suspend();

@@ -5,10 +5,10 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
-// Adds a page from a project's files (`space.files.pick`): the files the
-// project's spaces section covers, as the MC listed them (SpaceController's
-// `files`), and the scan that writes that section. Open while `space.picking`
-// names a project.
+// Edits a project's file as a page, from the command palette (`space.files.pick`):
+// the files the project's spaces section covers, as the MC listed them
+// (SpaceController's `files`), and the scan that writes that section. Open while
+// `space.picking` names a project.
 Dialog {
     id: dialog
 
@@ -44,18 +44,15 @@ Dialog {
     width: Math.min(520, (parent?.width ?? 552) / scale - 32)
     padding: 20
     closePolicy: Popup.CloseOnEscape
-    title: qsTr("Add a page from a project's files")
+    title: qsTr("Edit a project file as a page")
 
-    background: Rectangle {
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.color: Theme.palette.color("border", "#27272a")
-        radius: Math.min(Theme.radius, 16)
-    }
+    Overlay.modal: ShellScrim {}
+    background: ShellPopoverSurface {}
     header: Label {
         text: dialog.title
         padding: 20
         bottomPadding: 4
-        font.pixelSize: Math.round(17 * Theme.fontScale)
+        font.pixelSize: Theme.type.title.size
         font.weight: Font.DemiBold
         color: Theme.palette.color("text", "#e4e4e7")
     }
@@ -120,7 +117,7 @@ Dialog {
 
                 // A list reads from the left, where a button centres its label.
                 contentItem: RowLayout {
-                    spacing: 6
+                    spacing: Theme.space.sm
 
                     ShellIcon {
                         name: "file-text"
@@ -153,9 +150,9 @@ Dialog {
                     ? qsTr("The files of %1 could not be listed: %2").arg(dialog.projectTitle).arg(dialog.listed.error)
                 : dialog.listed.config === "invalid"
                     ? qsTr("The spaces section of %1's hal-c2.json cannot be read.").arg(dialog.projectTitle)
-                    : qsTr("%1 has no files for a Space. A scan writes a spaces section for its Markdown files.").arg(dialog.projectTitle)
+                    : qsTr("%1 has no files to edit as pages. A scan writes a spaces section for its Markdown files.").arg(dialog.projectTitle)
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
         }
 
         RowLayout {

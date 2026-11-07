@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24589
+#   https://github.com/pingdotgg/t3code/pull/24648
+#   https://github.com/pingdotgg/t3code/pull/23783
+#   https://github.com/pingdotgg/t3code/pull/18163
+#   https://github.com/pingdotgg/t3code/pull/19423
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (thread.updated, thread.removed, project.updated,
 #     project.removed, shell and thread projection schemas)
@@ -53,7 +58,7 @@ Feature: What the engine projects for clients
     Then the shell row has no active run
     And its activity status is waiting
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A cancelled queued run does not hide the run still running before it
     Given run 1 of "t1" is running and run 2 was queued behind it
     When run 2 is cancelled before it starts
@@ -71,6 +76,15 @@ Feature: What the engine projects for clients
     Given "t1" has a long conversation
     Then the shell row of "t1" has no latest visible message text
     And it records when the latest user message was sent
+
+  # Upstream #23783: 39 delegated threads streaming at once overflowed the shell subscription's
+  # buffer and left every client catching up.
+  @backlog @mc @priority-low
+  Scenario: A subagent's transcript does not stream to the shell
+    Given "t1" has many subagents streaming their replies
+    Then shell subscribers get each subagent's run changes and requests for input
+    But not the subagents' transcript updates
+    And a client that opens a subagent still gets its whole transcript
 
   @mc
   Scenario: A thread with an active proposed plan is marked actionable
@@ -99,6 +113,16 @@ Feature: What the engine projects for clients
   Scenario: A rolled-back latest run abandons its background work
     Given the latest run of "t1" was rolled back while a background command ran
     Then the shell row of "t1" lists no background tasks
+
+  # Upstream #18163: a failed later start made the old session's empty list of background work be
+  # ignored, so a command Stop killed was still listed.
+  @mc @backlog
+  Scenario: Stopping a thread clears the background command it ended
+    Given the latest run of "t1" completed while a background command kept running
+    And a later start of the provider for "t1" failed
+    When the user stops "t1"
+    Then the background command ends
+    And the shell row of "t1" lists no background tasks
 
   @mc
   Scenario: The thread error comes from the failed root turn of the latest run
@@ -142,6 +166,40 @@ Feature: What the engine projects for clients
   Scenario: A legacy model selection naming a provider is shown with an instance id
     Given "t1" was stored with a model selection that names provider "codex"
     Then the shell row of "t1" shows instance "codex" and the model
+
+  # Upstream #24648: idle subagent threads were a third of every cold connect's thread list,
+  # for rows the sidebar never shows.
+  @backlog @mc @priority-high
+  Scenario Outline: A shell snapshot can leave out idle subagent threads
+    Given "t1" has a subagent thread "t1-child" that <state>
+    When a client that asks to leave out idle subagents connects
+    Then the shell snapshot <outcome> "t1-child"
+
+    Examples:
+      | state                                        | outcome          |
+      | is idle                                      | does not contain |
+      | has a live or queued run                     | contains         |
+      | waits on a request or has background work    | contains         |
+      | has a subagent of its own                    | contains         |
+
+  @backlog @mc @priority-high
+  Scenario: Opening a thread reads its subagent family
+    Given the shell snapshot left out the idle subagents of "t1"
+    When the user opens "t1"
+    Then the client reads the subagent tree of "t1" once
+    And its lineage, subagent rows and their diffs show as before
+
+  @backlog @shared @mobile
+  Scenario Outline: A thread missing from the shell is not taken for deleted
+    Given the shell snapshot left out the idle subagent "t1-child"
+    When <action>
+    Then <outcome>
+
+    Examples:
+      | action                                              | outcome                                                   |
+      | the user follows a link to "t1-child"               | "t1-child" opens                                          |
+      | the phone sends a message queued for "t1-child"     | the message is sent once its family is read, not dropped  |
+      | the user deletes a thread that shares the worktree  | the MC is asked which threads use the worktree first      |
 
   @mc
   Scenario: The archived shell snapshot lists archived threads and their projects
@@ -190,7 +248,7 @@ Feature: What the engine projects for clients
     Then the page holds only visible turns
     And it ends at the true start of the history
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A bounded snapshot holds the newest 10 user turns and older pages hold 20
     Given "t1" has 60 user turns
     When a client asks for a bounded snapshot of "t1"
@@ -198,13 +256,24 @@ Feature: What the engine projects for clients
     When it asks for the page before that cursor
     Then it receives the 20 user turns before them
 
-  @mc @backlog
-  Scenario: A page of history never splits a turn
-    Given an earlier turn of "t1" ran hundreds of tool calls and was steered twice
+  # Upstream #24589: one agent turn of 10,454 rows loaded whole and froze the client. A turn
+  # of up to 500 rows stays whole; a longer one is paged.
+  @mc @backlog @priority-high
+  Scenario: A page of history keeps an ordinary turn whole
+    Given an earlier turn of "t1" ran 400 tool calls and was steered twice
     When a client pages back to that turn
     Then the page holds the whole turn, from the user's message to its last item
     And the steering messages do not count as turns of their own
 
+  @mc @backlog @priority-high
+  Scenario: Opening a thread whose turn is longer than 500 rows starts at its newest rows
+    Given the last turn of "t1" holds 900 rows
+    When a client asks for a bounded snapshot of "t1"
+    Then it receives the turn's newest rows within one megabyte and a cursor for older history
+    When it asks for the page before that cursor
+    Then it receives at most 75 older rows of the same turn
+
+  # Upstream #19423: a notification that starts a run counts as a turn, so a woken thread's window stays bounded
   @mc @backlog
   Scenario: Automatic turns cannot make a page of history unbounded
     Given "t1" has hundreds of turns started by background work between two user messages
@@ -218,7 +287,7 @@ Feature: What the engine projects for clients
     Then the page holds at most 75 items and about one megabyte
     And it holds at least one item, however large that item is
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario Outline: A history cursor the MC cannot use is refused
     When a client asks for older history of "t1" with <cursor>
     Then the request fails as an invalid history cursor
@@ -229,7 +298,7 @@ Feature: What the engine projects for clients
       | a cursor the MC never gave            |
       | a cursor longer than 4,096 characters |
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A history cursor stays valid while the thread grows
     Given a client holds a cursor into the history of "t1"
     When "t1" gains new turns
@@ -243,7 +312,7 @@ Feature: What the engine projects for clients
     When the client asks for the page before that cursor
     Then it receives the turns before the position the cursor recorded
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A bounded snapshot keeps everything the user can still act on
     Given "t1" has a very long history
     And an active proposed plan, a pending handoff, a pending approval and a queued message are older than its newest turns
@@ -264,7 +333,7 @@ Feature: What the engine projects for clients
     Then nothing the user can act on is left out
     And the snapshot is marked as over its payload budget
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario Outline: Bulky item bodies are left out of what a thread subscriber is sent
     Given "t1" has <item>
     When a client reads or follows "t1"
@@ -320,7 +389,7 @@ Feature: What the engine projects for clients
     Then it receives the full diff
     And the stored command outputs, tool results and handoff transcripts are unchanged
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: The first shell snapshot does not wait for repository lookups
     Given project "demo" has a repository whose identity is not resolved yet
     When a client subscribes to the shell

@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18488
+#   https://github.com/pingdotgg/t3code/pull/22203
 #   docs/user/source-control.md (writing style, Repository conventions)
 #   apps/web/src/components/settings/SourceControlWritingSettings.tsx
 #   apps/web/src/components/settings/SourceControlWritingSettings.test.tsx (mixed instructions, bulk apply and reset)
@@ -54,6 +56,15 @@ Feature: Source control writing settings
     When the user turns on a separate source control writer model and picks one
     Then commits, pull requests and branch names are written by that model
 
+  # Upstream #22203: a writing style with some parts left at their defaults made every later
+  # settings save fail.
+  @backlog @mc @priority-high
+  Scenario: A writing style with some parts at their defaults does not stop settings saving
+    Given the writing style is Conventional Commits and its other parts are at their defaults
+    When the user changes an unrelated setting
+    Then the change is saved
+    And the writing style is still Conventional Commits
+
   @desktop @mobile @backlog-mobile
   Scenario: Going back to the text generation model
     Given a separate source control writer model is on
@@ -71,6 +82,24 @@ Feature: Source control writing settings
     Given saving settings fails
     When the user picks a writer model
     Then the user is told "Source control writer model not saved"
+
+  # Upstream #18488: both pickers chose a model but not its options.
+  @backlog @desktop @mobile @priority-low
+  Scenario Outline: The <model> model's options are chosen beside it
+    Given the <model> model is "gpt-5.5" on Codex
+    When the user sets its reasoning effort to high and turns on fast mode beside the picker
+    Then the <model> model runs with high effort in fast mode
+
+    Examples:
+      | model                    |
+      | source control writer    |
+      | review guide             |
+
+  @backlog @desktop @mobile @priority-low
+  Scenario: Model options are not offered while environments disagree on the model
+    Given "Laptop" and "Build box" use different source control writer models
+    When the user looks at the writer model for both
+    Then no model options are offered beside it
 
   @mc
   Scenario: A project's own writing style wins over the environment's

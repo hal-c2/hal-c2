@@ -1,4 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24847
+#   https://github.com/pingdotgg/t3code/pull/22898
+#   https://github.com/pingdotgg/t3code/pull/18860
+#   https://github.com/pingdotgg/t3code/pull/18849
+#   https://github.com/pingdotgg/t3code/pull/17327
+#   https://github.com/pingdotgg/t3code/pull/17730
+#   https://github.com/pingdotgg/t3code/pull/25389
 #   apps/desktop-qt/qml/HalC2/Bricks/DefaultShell.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (sidebarCollapsed, settingsActive)
 #   apps/desktop-qt/src/native/LayoutController.cpp (sidebar.toggle, remembered on the device)
@@ -6,7 +13,8 @@
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (workspace.runScript, workspace.openInEditor)
 #   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/ThreadDetailsPanel.qml (threadPanel.toggle)
-#   apps/desktop-qt/src/native/RightPanelController.cpp (tabs, open, canAdd; the Pull requests and Previews tabs)
+#   apps/desktop-qt/src/native/RightPanelController.cpp (tabs, open, canAdd; the Pull requests and Previews tabs;
+#     rightPanel.toggleMaximized opens the tab in the centre, desktop/stage.feature)
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 #   apps/desktop-qt/tests/native/features/HeaderSteps.cpp (the header brick laid out offscreen)
 #   apps/desktop-qt/tests/native/features/TerminalSteps.cpp (terminal drawer, right panel terminal tabs)
@@ -72,6 +80,14 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then the thread list is hidden
       And the settings sections are shown in its place
 
+    # Upstream #24847: the settings sections moved out of the sidebar into the settings dialog.
+    # Replaces the scenario above once desktop carries it.
+    @backlog @desktop
+    Scenario: Settings keep their sections beside their pages, leaving the thread list
+      When the user opens settings
+      Then the thread list stays as it was
+      And the settings sections are shown beside the settings page
+
     @desktop
     Scenario: The sidebar snaps rather than animating its width
       When the user toggles the sidebar
@@ -90,17 +106,66 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the window becomes narrower than the sidebar allows
       Then the sidebar shrinks to fit
 
-    # The web's off-canvas sidebar (AppSidebarLayout.tsx): showing it over the thread is not
-    # remembered, so a window with room again has the sidebar it had.
+    # The web's off-canvas sidebar (AppSidebarLayout.tsx), kept as a rail of icons beside the
+    # thread whose expand button is the way back to the full list: opening it over the thread is
+    # not remembered, so a window with room again has the sidebar it had.
     @desktop
     Scenario: A window too narrow for the sidebar and the thread shows the sidebar over the thread
       Given the sidebar is shown
+      When the window becomes too narrow for the sidebar beside the thread
+      Then the sidebar is a rail of icons beside the thread
+      When the user asks to show the sidebar
+      Then the sidebar opens over the thread at its minimum width
+      When the user hides the thread list
+      Then the sidebar is a rail of icons beside the thread
+      When the window becomes wide again
+      Then the sidebar is back beside the thread
+
+    @desktop
+    Scenario: A hidden sidebar stays hidden in a narrow window
+      Given the sidebar is hidden
       When the window becomes too narrow for the sidebar beside the thread
       Then the sidebar is hidden
       When the user asks to show the sidebar
       Then the sidebar opens over the thread at its minimum width
       When the window becomes wide again
-      Then the sidebar is back beside the thread
+      Then the sidebar is hidden
+
+    # Upstream #18849: Tab could focus and Enter activate controls of a collapsed sidebar; hiding
+    # it moves focus to the control that shows it again.
+    @backlog @desktop
+    Scenario: The keyboard does not reach a hidden sidebar
+      Given a control in the sidebar has the keyboard focus
+      When the user hides the sidebar
+      Then the focus moves to the control that shows the sidebar
+      And moving the focus with Tab never lands in the hidden sidebar
+      When the user shows the sidebar again
+      Then its controls can be reached with Tab
+
+    # Two-line rows need the room; a narrower window keeps one line a thread, and one too narrow
+    # for the list beside the thread keeps only the rail.
+    @desktop
+    Scenario Outline: The sidebar's rows follow the window's width
+      Given the sidebar is shown
+      When the window is <width> wide
+      Then the sidebar draws <rows>
+
+      Examples:
+        | width | rows            |
+        | 1280  | two-line rows   |
+        | 1100  | two-line rows   |
+        | 1000  | one-line rows   |
+        | 860   | one-line rows   |
+        | 800   | a rail of icons |
+
+    # A monospace face sets fewer characters in the same width: 296 lets a resting row show 24
+    # characters of its title before it elides.
+    @desktop
+    Scenario: A monospace interface font widens the sidebar
+      When the interface font is monospaced
+      Then the sidebar is 296 wide
+      When the interface font is proportional
+      Then the sidebar is 256 wide
 
     @desktop
     Scenario: Resetting the sidebar width
@@ -108,20 +173,20 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user resets the sidebar width
       Then the sidebar returns to its default width
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Clicking the sidebar's edge without dragging leaves it as it is
       Given the sidebar is open at a width the user chose
       When the user clicks the sidebar's edge without moving
       Then the sidebar keeps its width
       And the sidebar stays open
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Releasing a drag on the sidebar's edge is not also a click
       When the user drags the sidebar's edge and lets go
       Then the sidebar has the width where it was released
       And nothing else is activated by the release
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A resize in progress ends where it is when the window loses focus
       Given the user is dragging the <edge>
       When the window loses focus
@@ -133,7 +198,7 @@ Feature: Layout: sidebar, header, right panel and drawer
         | sidebar's edge     |
         | right panel's edge |
 
-    @backlog @desktop
+    @desktop
     Scenario: Resizing the window does not hide or show the sidebar
       Given the sidebar is open
       When the user makes the window narrow and then wide again
@@ -172,27 +237,43 @@ Feature: Layout: sidebar, header, right panel and drawer
       And the start of the title still shows
 
     # Proved by tst_Workspace.qml (test_tightHeaderKeepsTheTitleReadable), not yet by a step (hal-c2/hal-c2#213).
-    @desktop @backlog-desktop
+    @desktop @backlog-desktop @priority-low
     Scenario: The full thread title is a hover away
       Given a shortened thread title
       When the user hovers it
       Then the whole title is shown
       And a shortened project name shows whole on hover too
 
+    # The header gives up what the git action and the panel toggles need, in
+    # one order: the project segment of the breadcrumb, whole; then the
+    # labels; then the run and open pills, which fold into one menu (the
+    # thread details offer them too). None of them cuts the thread title
+    # short: a title that needs the room takes it first.
     @desktop
-    Scenario: A narrow header drops action labels
-      When the window is narrower than 720 pixels
+    Scenario: The header gives up its project, labels, then pills, only when they do not fit
+      Given the thread's project has the actions "Dev" and "Test"
+      And the environment has the editors "Zed" and "VS Code"
+      When the header is as wide as a 900 pixel window leaves it
+      Then the header actions show with their labels
+      Given a long thread title
+      When the header is as wide as a 900 pixel window leaves it
+      Then the header leaves the project's name out
+      And the header actions show without their labels
+      And the start of the title still shows
+      When the window is wide
+      Then the header shows the project's name
+      And the header actions show with their labels
+      When the header has no room for its actions' labels
       Then the header actions show without their labels
+      When the header has no room for its actions as icons
+      Then the header's "More actions" menu runs "Dev" and opens in "Zed"
 
-    # Run and Open are also in the thread details; the panel toggles and the
-    # breadcrumb are what the header cannot lose.
     # Proved by tst_Workspace.qml (test_tightHeaderNeverOverlaps), not yet by a step (hal-c2/hal-c2#213).
     @desktop @backlog-desktop
-    Scenario: A tight header drops actions before anything overlaps
+    Scenario: A tight header never overlaps
       Given the thread's project has an action and an editor to open it in
-      When the header has under 520 pixels for its items
-      Then the run and open actions are not in the header
-      And the breadcrumb, the git action and the panel toggles do not overlap
+      When the header has no room for its actions as icons
+      Then the breadcrumb, the git action and the panel toggles do not overlap
       And nothing of the header is drawn over the panel beside it
       When the header has room again
       Then the run and open actions are back
@@ -290,14 +371,12 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then pull request cannot be added
       And the Add menu says "This thread's branch has no pull request yet." for pull request
 
-    @desktop @backlog-desktop
+    @desktop @backlog-desktop @priority-low
     Scenario: The right panel is set apart from the thread by a border
       Given the right panel is open
       Then a 1 px border in the theme's border colour marks its leading edge
-      When the user maximizes the right panel
-      Then the border is not drawn
 
-    @desktop @backlog-desktop
+    @desktop @backlog-desktop @priority-low
     Scenario: Tabs that do not fit scroll and keep the active one in view
       Given the right panel has more tabs than fit
       When the user adds a Device tab
@@ -333,7 +412,7 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user drags the right panel's edge far to the left or far to the right
       Then the right panel is never narrower than 360 pixels
       And it is never wider than 70 percent of the window
-      And the thread beside it keeps at least 360 pixels
+      And the thread beside it keeps at least 480 pixels
 
     @backlog @desktop
     Scenario: Each thread keeps its own right panel width
@@ -344,7 +423,7 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user returns to "Fix login"
       Then the right panel is the width the user dragged it to
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Switching threads in the middle of a drag leaves both widths alone
       Given the user is dragging the right panel's edge on "Fix login"
       When the user switches to "Add tests" before letting go
@@ -357,20 +436,44 @@ Feature: Layout: sidebar, header, right panel and drawer
     Scenario: A docked right panel leaves the thread its room
       Given the window is 1400 pixels wide
       And the right panel and the thread details are open
-      Then the thread is at least 360 pixels wide
+      Then the thread is at least 480 pixels wide
       And the right panel is narrower than the width it was given
 
     # The web's sheet (apps/web/src/rightPanelLayout.ts): at 980 pixels and
     # under, or wherever the panel's minimum does not fit beside the thread.
     # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
+    # Its tab can still open in the thread's centre (desktop/stage.feature).
     @desktop @backlog-desktop
     Scenario: In a narrow window the right panel opens over the thread
       Given the window is 960 pixels wide
       When the user opens the right panel
       Then it is shown as a sheet over the thread, under the header
       And the thread keeps the full width
-      And the right panel can be neither resized nor maximized
+      And the right panel cannot be resized
       When the user presses Escape
+      Then the right panel is closed
+
+    # Upstream #25389: the right panel lost its maximize control once it opened over the thread.
+    @backlog @desktop @priority-low
+    Scenario: The right panel over the thread can still be maximized
+      Given the window is 960 pixels wide and the right panel is open over the thread
+      When the user maximizes the right panel
+      Then it takes the window's full width, as it does in a wide window
+      When the user restores it
+      Then it is shown over the thread again
+
+    # The timeline's floor is the layout's (LayoutController's
+    # contentMinimumWidth), the room the thread list leaves it too.
+    # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
+    Scenario: A right panel that would leave the thread under 480 pixels opens over it
+      Given the window is 1200 pixels wide
+      And the thread details are open beside the thread
+      When the user opens the right panel
+      Then it is shown as a sheet over the thread, under the header
+      And the thread keeps at least 480 pixels
+      And the thread details stay beside it, uncovered and usable
+      When the user clicks the thread beside the right panel
       Then the right panel is closed
 
     # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
@@ -384,18 +487,29 @@ Feature: Layout: sidebar, header, right panel and drawer
     # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
     @desktop @backlog-desktop
     Scenario: In a narrow window the thread details open over the thread
-      Given the thread would be under 360 pixels wide beside the thread details
+      Given the thread would be under 480 pixels wide beside the thread details
       When the user opens the thread details
       Then they are shown over the thread, under the header
       And the thread keeps the full width
 
+    # The web's maximize filled the window; the desktop opens the tab in the
+    # thread's centre instead and keeps the composer (desktop/stage.feature).
     @desktop
-    Scenario: Maximizing the right panel
+    Scenario: Opening the right panel's tab in the thread's centre
       Given the right panel is open
-      When the user toggles the right panel to fill the window
-      Then the right panel covers the thread
-      When the user toggles it again
-      Then the thread is shown beside the right panel
+      When the user opens the right panel's tab in the centre
+      Then the tab fills the thread's centre above the composer
+      When the user opens it in the centre again
+      Then the tab is back in the right panel beside the thread
+
+    # Upstream #17327: a maximized right panel came back beside the chat after the user
+    # visited Settings or another thread.
+    @backlog @desktop
+    Scenario: A tab opened in the centre is still there when the user comes back to the thread
+      Given the right panel's tab of "t1" is open in the thread's centre
+      When the user visits Settings or another thread and returns to "t1"
+      Then the tab still fills "t1"'s centre
+      And another thread's right panel stays where its user left it
 
     @desktop
     Scenario: The right panel's tabs and width survive a restart
@@ -443,7 +557,19 @@ Feature: Layout: sidebar, header, right panel and drawer
         | L      | linked pull requests  |
         | M      | device                |
 
-    @backlog @desktop
+    # Upstream #22898: typing with nothing focused moves the keys to the composer, and that took
+    # the panel's letters first when the panel opened after the window had loaded.
+    @backlog @desktop @priority-low
+    Scenario: An empty right panel's letters open their tab instead of going to the composer
+      Given the right panel was opened with no tabs after the window had loaded
+      And nothing has keyboard focus, so typing goes to the composer
+      When the user presses "t"
+      Then a terminal tab opens in the right panel
+      And the composer is still empty
+      When the user presses "x"
+      Then "x" is typed into the composer
+
+    @backlog @desktop @priority-low
     Scenario: The letters of an empty right panel are left alone while the user types
       Given the right panel is open with no tabs
       And the user is typing in the composer
@@ -451,7 +577,7 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then "d" is typed into the composer
       And no tab opens in the right panel
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An empty right panel is worked with the arrow keys
       Given the right panel is open with no tabs
       When the user moves down the offered kinds with the arrow keys and presses Enter
@@ -492,6 +618,22 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then "Close to the right" cannot be chosen
       And "Close others" can be chosen
 
+    # Upstream #17730: tabs kept the order they were opened in.
+    @backlog @desktop @priority-low
+    Scenario: Right panel tabs are put in order by dragging
+      Given the right panel has "Diff", "Files" and "Terminal" tabs in that order
+      And the terminal is running a command
+      When the user drags the "Terminal" tab before "Diff"
+      Then the tabs read "Terminal", "Diff" and "Files"
+      And the terminal is still running its command
+      And the thread keeps that order when it is opened again
+
+    @backlog @desktop @priority-low
+    Scenario: A browser tab that opens after a reorder goes at the end
+      Given the user has dragged the right panel's tabs into the order "Terminal", "Diff" and "Files"
+      When the agent opens a browser tab
+      Then the tabs read "Terminal", "Diff", "Files" and the browser tab
+
     @backlog @desktop
     Scenario: Closing the active tab moves to the tab beside it
       Given the right panel has "Diff", "Files" and "Terminal" tabs and "Files" is active
@@ -510,6 +652,14 @@ Feature: Layout: sidebar, header, right panel and drawer
       Given the right panel has "Diff" and "Files" tabs
       When the user middle-clicks the "Diff" tab
       Then only the "Files" tab remains
+
+    # Upstream #18860: middle-click closing a panel tab does not paste the primary selection.
+    @backlog @desktop
+    Scenario: Closing a tab with a middle click pastes nothing
+      Given the user selected some text and the composer has the focus
+      When the user middle-clicks a right panel tab
+      Then the tab closes
+      And nothing is pasted into the composer
 
     @backlog @desktop
     Scenario: A file tab's path can be copied from its menu
@@ -559,19 +709,19 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then the thread details open over the conversation instead of beside it
 
     @backlog @desktop
-    Scenario: Thread details float while the right panel fills the window
-      Given the right panel fills the window
+    Scenario: Thread details float while a tab fills the thread's centre
+      Given a right panel tab fills the thread's centre
       When the user toggles the thread details panel
       Then the thread details open over the right panel
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Floating thread details are not reopened by a restart
       Given the thread details are open over the conversation
       When the desktop quits and starts again
       Then the thread details are not open
       And the user's choice to keep them beside the conversation is remembered
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Opening the right panel closes floating thread details
       Given the thread details are open over the conversation
       When the user opens the right panel
@@ -600,7 +750,7 @@ Feature: Layout: sidebar, header, right panel and drawer
       And no tab is added
 
     # Legacy: apps/web/src/rightPanelStore.ts (pullRequestSurfaceId: host and environment are part of a tab's identity)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: Pull requests that only look alike each get their own tab
       Given the right panel has a tab for pull request 42 of "acme/shop" on "github.com"
       When the user opens <other>

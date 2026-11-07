@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
 #include <QMutex>
@@ -110,7 +112,7 @@ class LocalCache : public QObject {
 
 public:
   // Bumped when a table changes: an older or newer database is dropped.
-  static constexpr int kSchema = 1;
+  static constexpr int kSchema = 2;
   // The threads kept, most recently opened first.
   static constexpr int kThreads = 100;
 
@@ -135,14 +137,29 @@ public:
   // copy's floor; a copy that already starts later is left as it is.
   void trimThread(const QString& key, qint64 floor);
   void forgetThread(const QString& key);
+  // Forgets the environment's threads, providers and branch lists.
   void forgetEnvironment(const QString& environmentId);
+
+  // The providers an environment last reported, so a new task can offer its
+  // models before it is reachable. `reply` gets every environment's at once.
+  void storeProviders(const QString& environmentId, const QJsonArray& providers);
+  void loadProviders(QObject* context, std::function<void(const QHash<QString, QJsonArray>&)> reply);
+
+  // A repository's whole branch list as read in `cwd` (never a search's
+  // matches, nor a page of it). Branches are repository-wide and a worktree
+  // reads them under another cwd, so a change drops every list of the
+  // environment (forgetRefs).
+  void storeRefs(const QString& environmentId, const QString& cwd, const QJsonObject& list);
+  void loadRefs(const QString& environmentId, const QString& cwd, QObject* context,
+                std::function<void(const std::optional<QJsonObject>&)> reply);
+  void forgetRefs(const QString& environmentId);
   // Starts the database over, so nothing kept stays on disk: the client left
   // its MC for good (NativeShell::close). Blocks until it is done. False when
   // the file could be neither removed nor emptied: what it holds is not read,
   // but is still on disk.
   bool clear();
 
-  // Returns once everything asked for so far is done and every loadThread
+  // Returns once everything asked for so far is done and every load
   // reply has run. Tests and shutdown wait on this.
   void drain();
 

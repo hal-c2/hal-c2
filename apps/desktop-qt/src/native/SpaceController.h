@@ -177,10 +177,70 @@ private:
   QJsonArray m_read;
 };
 
+// The project sections of the Space sidebar (features/space/project-files.feature): one
+// for each project of the MC with Space files, in the order its projects are given, each
+// holding its files as a tree by folder. A section and each folder start collapsed; which
+// the user expanded are `expandedProjects` and `expandedFolders`, for the client to
+// remember across restarts. A project with no files, or not answered for yet, has no
+// section.
+//
+// Rows {id, kind (project, folder, file), projectId, path, name, depth, expanded, pageId}:
+// a project's row, then, while it is expanded, its folders and files depth first, a
+// folder's folders before its files, each by name, and a folder's own only while it is
+// expanded too. `path` is a folder's or a file's path in the project, `pageId` a file's
+// page ("" before it is opened).
+class SpaceProjects : public SpaceRows {
+  Q_OBJECT
+
+public:
+  struct Project {
+    QString id;
+    QString title;
+  };
+
+  explicit SpaceProjects(QObject* parent = nullptr);
+
+  // Shown by title, whatever order they come in.
+  void setProjects(QList<Project> projects);
+  // The project's Space files, path to page id, as its `space.files.list` last said.
+  void setFiles(const QString& projectId, const QHash<QString, QString>& pages);
+  void setExpanded(const QString& projectId, bool expanded);
+  bool isExpanded(const QString& projectId) const { return m_expanded.contains(projectId); }
+  // A folder by its path in the project, as its row says it.
+  void setFolderExpanded(const QString& projectId, const QString& path, bool expanded);
+  // The section and the folders a file is in, opened so its row shows.
+  void reveal(const QString& projectId, const QString& path);
+  // Sorted, sections not shown included: a project out of reach keeps its choice.
+  QStringList expandedProjects() const;
+  // Project id to its expanded folders' paths, sorted; a collapsed section keeps its own.
+  QVariantMap expandedFolders() const;
+  // What was remembered; says it back only when it forgot folders the listing lacks.
+  void restoreExpanded(const QStringList& projectIds, const QVariantMap& folders);
+
+signals:
+  // What to remember changed: the user expanded or collapsed a section or folder, or a
+  // listing or restore forgot folders gone from it.
+  void expandedChanged();
+
+private:
+  void build();
+  // Drops the project's expanded folders its listed files are no longer in, once it
+  // lists any; true when it dropped some.
+  bool forgetGoneFolders(const QString& projectId);
+
+  QList<Project> m_projects;
+  QHash<QString, QHash<QString, QString>> m_files;
+  QSet<QString> m_expanded;
+  QHash<QString, QSet<QString>> m_folders;
+};
+
 // What the Space view shows of the MC's Space streams: the Spaces, the
 // selected Space's page tree, decks and trash, the selected page's blocks and
 // comments, and the selected deck's slides. A selected deck is shown instead of
-// the selected page, and it alone can be presented. Everything comes from the streams; the one thing it adds is an
+// the selected page, and it alone can be presented. A project file's page is shown
+// from its project's Space (`fileSpaceId`, whose stream is a second one), while the
+// sidebar goes on showing the selected Space; picking a page or deck of that Space
+// goes back to it. Everything comes from the streams; the one thing it adds is an
 // edit the user made (a block's text, a tick) shown until the MC has answered
 // it and the stream has moved past what it was, after which the stream's
 // value is what shows. Who else is on the open page comes from the
@@ -225,6 +285,8 @@ class SpacePages : public QObject {
   Q_PROPERTY(QString spaceId READ spaceId NOTIFY changed)
   Q_PROPERTY(QString spaceName READ spaceName NOTIFY changed)
   Q_PROPERTY(QString pageId READ pageId NOTIFY changed)
+  // The project Space whose file page is on show, else "".
+  Q_PROPERTY(QString fileSpaceId READ fileSpaceId NOTIFY changed)
   // {id, title, parentPageId, trashed, sourceThreadId, sourceThreadTitle, site, file},
   // or empty. `site` is what the page has published, {url, localOnly, behind,
   // publishedAt}, or empty. `file` is the project file the page is, {projectId,
@@ -266,6 +328,11 @@ public:
   QString spaceId() const { return m_spaceId; }
   QString spaceName() const;
   QString pageId() const { return m_pageId; }
+  QString fileSpaceId() const { return m_fileShown ? m_fileSpaceId : QString(); }
+  // The project Space followed for a file's page, on show or awaited.
+  QString fileSpaceFollowed() const { return m_fileSpaceId; }
+  // The Space the open page is of: the file's project Space, else the selected one.
+  QString shownSpaceId() const { return m_fileShown ? m_fileSpaceId : m_spaceId; }
   // The open page: {id, title, parentPageId, trashed, sourceThreadId,
   // sourceThreadTitle, schedule, writtenAt, site, file}. `schedule` is what the MC
   // shows of the page's update plus its `cadenceLabel`, empty when it has none.
@@ -287,19 +354,29 @@ public:
 
   SpaceStream& index() { return m_index; }
   SpaceStream& space() { return m_space; }
-  // A frame of the `spaces` index, or of the selected Space's stream.
+  SpaceStream& fileSpace() { return m_file; }
+  // The stream the open page is on: the file's project Space's, else the selected Space's.
+  const SpaceStream& shown() const { return m_fileShown ? m_file : m_space; }
+  // A frame of the `spaces` index, of the selected Space's stream, or of the
+  // project Space's whose file page is on show.
   void receiveIndex(const QJsonObject& frame);
   void receiveSpace(const QJsonObject& frame);
+  void receiveFileSpace(const QJsonObject& frame);
   void setUnreachable(bool unreachable);
+  // The file's project Space's stream failed; the next frame on it, or leaving the file, clears it.
+  void setFileUnreachable();
   // A `spacePresence` frame of the page `pageId`; only the open page's shows,
   // and whoever was on a page stops showing when another opens.
   void receiveViewers(const QString& pageId, const QJsonObject& frame);
   void clearViewers();
 
   // Shows the Space `id` (a new copy of its stream follows) or page `id`
-  // of it; one the streams do not hold is not selected.
+  // of it; one the streams do not hold is not selected. Either leaves a file's page.
   void selectSpace(const QString& id);
   void selectPage(const QString& id);
+  // Shows the page `pageId` of the project Space `spaceId`, once its stream holds it (a
+  // new copy follows for another Space). Whatever the user picks meanwhile stands.
+  void openFilePage(const QString& spaceId, const QString& pageId);
   // Shows the deck `id` in place of the page; one the stream does not hold is
   // not selected.
   void selectDeck(const QString& id);
@@ -347,8 +424,15 @@ signals:
   void agentAskRequested();
   // The MC answered an ask: whoever holds its words lets them go only if it took it.
   void agentAskAnswered(const QString& pageId, const QString& request, bool taken);
+  // The page the prompt writes on may have changed (promptPage).
+  void promptPageChanged();
+  // The image providers on offer, or whether an image is being made, changed
+  // (SpaceController::imageProviders, generatingImage).
+  void imageOfferChanged();
   // The selected Space changed: its stream is followed anew.
   void spaceSelected(const QString& id);
+  // The project Space a file's page is shown from changed ("" for none).
+  void fileSpaceSelected(const QString& id);
   void viewersChanged();
   // These images should be shown and have no good address, nor one on its way.
   void imagesNeeded(const QStringList& imageIds);
@@ -369,6 +453,13 @@ private:
   // Keeps the selection on what the streams hold; true when it selected
   // another Space, which rebuilt the rows.
   bool reselect();
+  // Moves the selected Space to `id` (the index holds it, or "" for none), keeping a
+  // file's page on show.
+  void switchSpace(const QString& id);
+  // Back to the selected Space's pages; true when a file's page was on show.
+  bool leaveFile();
+  // The block `id` of either stream.
+  QJsonObject blockOf(const QString& id) const;
   bool live(const QJsonObject& page) const;
   // Keeps the presenter on a slide of the deck as it stands.
   void followPresenter();
@@ -381,11 +472,19 @@ private:
 
   SpaceStream m_index;
   SpaceStream m_space;
+  SpaceStream m_file;
+  // The index's or the selected Space's stream failed, or the file's project Space's.
   bool m_unreachable = false;
+  bool m_fileUnreachable = false;
   QString m_spaceId;
   QString m_pageId;
   QString m_awaitedSpace;
   QString m_awaitedPage;
+  QString m_fileSpaceId;
+  bool m_fileShown = false;
+  // The file's page awaited in m_file. While it is, a page of the selected Space stays
+  // on show; a file's page of another project Space shows nothing.
+  QString m_awaitedFilePage;
   QVariantMap m_viewers;
   QString m_viewersPage;
   QString m_deckId;
@@ -441,14 +540,15 @@ private:
 //            the project's Space files as `space.files.list` last said; pageId is
 //            "" for a file with no page yet. A refused list has no paths and the MC's
 //            error. A project not answered for yet is not there.
-//   picking  the project whose files the Space view offers to add as a page, "" for none
+//   picking  the project whose files the command palette offers to edit as pages, "" for none
 //   projects [{id, title}]: this MC's projects, for the picker to choose from
-// A file opens in the selected Space, else the last one shown, else the first; the
-// MC's answer names the Space when the file already has a page in another, and
-// that Space and page are shown. A file-backed page is read again from its file
-// each time it comes on show.
+// A file's page is its project's Space's, which the MC names in its answer; it is shown
+// beside the selected Space's pages, in its project's section (`projects`, the files of
+// every project of this MC, listed each time the view opens). A file-backed page is
+// read again from its file each time it comes on show.
 //
-// Actions (each payload's `spaceId` defaults to the selected Space):
+// Actions (each payload's `spaceId` defaults to the Space of what it names: a file's
+// page's project Space, else the selected Space):
 // `space.open`, `space.select {spaceId}`, `space.selectPage {pageId}`,
 // `space.create {name}`, `space.rename {spaceId, name}`, `space.delete {spaceId}`,
 // `space.page.create {title, parentPageId, link}`, `space.page.rename {pageId, title}`,
@@ -466,8 +566,8 @@ private:
 // when absent), `space.files.list {projectId}`, `space.files.pick {projectId}` (the
 // project of the thread on show, else the last picked, else the first, when absent),
 // `space.files.pickClose`, `space.files.scan {projectId, replace}` (projectId as
-// for pick), `space.page.unlinkFile {pageId}`, `space.page.showFile {pageId}` (the
-// file in the Files tab of the project's latest thread),
+// for pick), `space.project.setExpanded {projectId, expanded}`, `space.page.showFile
+// {pageId}` (the file in the Files tab of the project's latest thread),
 // `space.block.insert {pageId, kind, text, checked, linkedPageId, imageId, afterBlockId}`
 // (afterBlockId: "" first, absent last), `space.block.visualize {pageId, request,
 // blockId (the chart it replaces), afterBlockId}`, `space.block.update {blockId, text}`,
@@ -492,6 +592,7 @@ private:
 // `space.image.delete {imageId}`.
 class SpaceController : public SpacePages, public NativeController {
   Q_OBJECT
+  Q_PROPERTY(SpaceProjects* projects READ projects CONSTANT)
 
 public:
   static inline const QString kOpen = QStringLiteral("space.open");
@@ -502,6 +603,12 @@ public:
   static inline const QString kPresentDeck = QStringLiteral("space.deck.presentOpen");
   static inline const QString kPickFile = QStringLiteral("space.files.pick");
   static inline const QString kScanFiles = QStringLiteral("space.files.scanProject");
+  // The device setting keeping the expanded sections, as "environment:project".
+  static inline const QString kExpandedKey = QStringLiteral("spaceExpandedProjects");
+  // {environment: {project: [folder paths]}}: a project id may hold ':' itself.
+  static inline const QString kExpandedFoldersKey = QStringLiteral("spaceExpandedFolders");
+  // Set while this writes both: the first write must not restore the other's old value.
+  bool m_rememberingExpanded = false;
 
   SpaceController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
@@ -509,6 +616,7 @@ public:
   bool handle(const QString& action, const QVariant& payload) override;
 
   QString error() const { return m_error; }
+  SpaceProjects* projects() const { return m_projects; }
   // The phone layout's Space screen selects a page before showing it: the user
   // is on it only while the screen says so (`space.pageShown`). On the desktop
   // and in the phone's wide layout the selected page is the one on show.
@@ -522,14 +630,42 @@ public:
   void listFiles(const QString& environmentId, const QString& projectId);
   // Whether `relativePath` was among the Space files the MC last said the project has.
   bool isSpaceFile(const QString& environmentId, const QString& projectId, const QString& relativePath) const;
-  // Opens the file as a page (`space.openFile`) and shows it.
+  // Opens the file as a page (`space.page.openFile`) and shows it from its project's
+  // Space, unless another file was opened or the user picked something since.
   void openFile(const QString& environmentId, const QString& projectId, const QString& relativePath);
+
+  // The page the timeline's prompt writes on (ComposerController): the selected
+  // page while it is on show and out of the trash, else empty.
+  QString promptPage() const;
+  // The Space whose images the prompt makes an image for: the open Space while
+  // its images are on show, else empty.
+  QString promptImages() const { return m_open && imagesShown() ? spaceId() : QString(); }
+  // Asks an agent to work on the page (`space.page.askAgent`) with the
+  // prompt's choices, {request, projectId?, modelSelection?, runtimeMode?,
+  // interactionMode?, attachments?, context?}. `answered` says whether the MC
+  // took it; a refusal is said in a toast.
+  void askAgent(const QString& pageId, const QJsonObject& ask, std::function<void(bool taken)> answered);
+  // Has the open Space's image drawn (`space.image.generate`) from `prompt`, by
+  // `selection` ({instanceId, model}) or the MC's pick. `answered` says whether
+  // an image was made; a refusal or failure is said in a toast.
+  void generateImage(const QString& prompt, const QJsonObject& selection, std::function<void(bool made)> answered = {});
+  // `space.image.providers`' last answer, {providers, selection}; empty until asked.
+  QVariantMap imageProviders() const { return m_imageProviders; }
+  bool generatingImage() const { return m_generatingImages > 0; }
+  // The project an ask goes to unless the prompt names one
+  // (`space.page.agentTarget`); empty for none, or when the MC cannot say.
+  void agentTarget(std::function<void(const QString& projectId)> done);
 
 private:
   void setOpen(bool open);
   void follow();
   void unfollow();
   void followSpace();
+  void followFileSpace();
+  // The sections follow this MC's projects, and which are expanded the device's settings.
+  void refreshProjects();
+  void restoreExpanded();
+  void rememberExpanded();
   // Follows who else is on the open page, only while it is on show and the
   // client connected: a new connection follows it anew.
   void followViewers();
@@ -562,7 +698,6 @@ private:
   void presentDeck(const QString& id);
   void signImages(const QStringList& imageIds);
   void addImageFile(const QString& url);
-  void generateImage(const QString& prompt, const QJsonObject& selection);
   void toast(const QString& type, const QString& title, const QString& description = {});
   void publish();
 
@@ -574,6 +709,11 @@ private:
   bool m_listed = false;
   int m_indexSubscription = 0;
   int m_spaceSubscription = 0;
+  int m_fileSubscription = 0;
+  QString m_followedFileSpace;
+  SpaceProjects* m_projects = new SpaceProjects(this);
+  // The `space.page.openFile` whose answer is shown, 0 for none.
+  int m_opening = 0;
   int m_viewersSubscription = 0;
   QTimer* m_viewersRetry = nullptr;
   QString m_followedSpace;

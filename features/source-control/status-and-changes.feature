@@ -1,9 +1,20 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14942
+#   https://github.com/pingdotgg/t3code/pull/20175
+#   https://github.com/pingdotgg/t3code/pull/16453
+#   https://github.com/pingdotgg/t3code/pull/20412
+#   https://github.com/pingdotgg/t3code/pull/19371
+#   https://github.com/pingdotgg/t3code/pull/20440
+#   https://github.com/pingdotgg/t3code/pull/12465
+#   https://github.com/pingdotgg/t3code/pull/16771
+#   https://github.com/pingdotgg/t3code/pull/13894
+#   https://github.com/pingdotgg/t3code/pull/14718
 #   docs/user/source-control.md
 #   packages/contracts/src/vcs.ts (VcsStatusLocalResult, VcsStatusRemoteResult, VcsStatusStreamEvent, VcsDriverKind)
 #   packages/contracts/src/rpc.ts (vcs.refreshStatus, subscribeVcsStatus, vcs.init)
 #   apps/server-ex/lib/hal_c2/vcs.ex (status, init)
 #   apps/server-ex/lib/hal_c2/vcs/watch.ex
+#   apps/server-ex/lib/hal_c2/pull_requests/branches.ex (one answer per branch's pull request)
 #   apps/server/src/git/GitManager.ts, apps/server/src/vcs/VcsStatusBroadcaster.ts (pull request lookup cadence, shared polling, automatic pull)
 #   apps/server/src/vcs/VcsProjectConfig.ts, VcsDriverRegistry.ts, VcsProcess.ts (project vcs.json, detection, concurrency)
 #   apps/server/src/vcs/GitVcsDriverCore.ts (index lock, unborn HEAD, upstream refresh back-off)
@@ -31,12 +42,57 @@ Feature: Repository status and working tree changes
     And it lists both files with their inserted and deleted line counts
     And it says the working tree has changes
 
+  @backlog @mc
+  Scenario: A file whose name starts or ends with a space keeps its exact path
+    Given the user has added " leading.txt" to "shop"
+    When status is read for "shop"
+    Then it lists " leading.txt" with its leading space
+    And a git action given " leading.txt" acts on that file, not on "leading.txt"
+
+  # Upstream #20175: status parsed git's display output, which quotes and escapes some paths.
+  @backlog @mc @priority-high
+  Scenario Outline: Status lists changed files by their real paths
+    Given the user has <change> in "shop"
+    When status is read for "shop"
+    Then it lists <listed>
+    And a git action given that path acts on that file
+
+    Examples:
+      | change                                   | listed                                        |
+      | added "docs/résumé.md"                   | "docs/résumé.md"                              |
+      | added 'notes/a "quoted" name.txt'        | 'notes/a "quoted" name.txt'                   |
+      | renamed "src/cart.ts" to "src/basket.ts" | "src/basket.ts" as renamed from "src/cart.ts" |
+
+    # Upstream #19371: a quoted file name lost a leading U+FEFF, the invisible byte-order mark.
+    Examples:
+      | change                                                       | listed                                                |
+      | renamed "old.txt" to a name of U+FEFF followed by "note.txt" | that name, U+FEFF included, as renamed from "old.txt" |
+
+  # Upstream #16771: counting the lines of thousands of untracked files pegged the CPU.
+  @backlog @mc @priority-low
+  Scenario: Status over 5,000 untracked files says its totals are incomplete
+    Given "shop" has 6,000 untracked files and a change to "src/cart.ts"
+    When status is read for "shop"
+    Then it says the line totals are incomplete instead of counting every untracked file
+    And the thread's changes show no totals
+    And the diff shows the change to "src/cart.ts", marked as cut short
+
   @mc
   Scenario: Status reports how the branch stands against its upstream
     Given "feature/tax" tracks "origin/feature/tax" and is 2 commits ahead and 1 behind
     When status is read for "shop"
     Then the status says the branch has an upstream
     And it reports 2 commits ahead and 1 behind
+
+  # Upstream #16453: a branch without an upstream that is configured to merge into "upstream/main"
+  # was still compared with the fork's "origin/main".
+  @backlog @mc
+  Scenario: A branch's changes are compared with the base it is configured to merge into
+    Given the branch "fix-tax" has no upstream and is set to merge into "upstream/main"
+    And the fork's "origin/main" is behind "upstream/main"
+    When status is read for "shop" on "fix-tax"
+    Then its changes and the commits it is ahead are counted against "upstream/main"
+    And commits only "upstream/main" has are not shown as the branch's changes
 
   # Delivered natively (WorkspaceController follows the checkout's vcs status); no desktop test yet.
   @mc @desktop @tui
@@ -111,6 +167,17 @@ Feature: Repository status and working tree changes
     When status is read for "notes"
     Then the status says it is not a repository
 
+  # Upstream #20440: every git process runs with safe.bareRepository=explicit, so a bare
+  # repository hidden in a project's files cannot bring its config or hooks into HAL-C2's git calls.
+  # A project whose own folder is a bare repository is still opened, by naming it explicitly
+  # (mc/orchestration/projects.feature, "A project in a bare repository carries its repository").
+  @backlog @mc @priority-high
+  Scenario: A bare repository among a project's files is not opened as a repository
+    Given the folder "fixtures/evil" in "shop" is shaped like a bare repository with a hook
+    When HAL-C2 runs git inside "fixtures/evil"
+    Then "fixtures/evil" is not opened as a repository
+    And the hook does not run
+
   # Legacy: apps/server/src/git/GitManager.test.ts (status returns an explicit non-repo result for deleted directories)
   @mc @backlog
   Scenario: A folder that has been deleted says it is not a repository
@@ -119,8 +186,16 @@ Feature: Repository status and working tree changes
     Then the status says it is not a repository
     And no failure is reported
 
+  # Upstream #14942: without git installed, a folder read as a failure to start git.
+  @backlog @mc
+  Scenario: A folder on a machine without git says it is not a repository
+    Given git is not installed on the MC's machine
+    When status is read for "notes"
+    Then the status says it is not a repository
+    And no failure is reported
+
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (statusDetails: unborn HEAD)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A repository with no commits yet still reports its branch and changes
     Given the project "notes" is a git repository with no commits
     And "notes" holds a staged "a.txt" and an untracked "b.txt"
@@ -129,7 +204,7 @@ Feature: Repository status and working tree changes
     And "a.txt" and "b.txt" are listed with their changed line counts
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (readStatusDetailsLocal: index lock)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A checkout whose git index is locked reports that instead of a status
     Given another git process is holding the index lock of "shop"
     When status is read for "shop"
@@ -167,18 +242,20 @@ Feature: Repository status and working tree changes
     Then the status carries no pull request
 
   # Legacy: apps/server/src/git/GitManager.ts (prLookupFailureTtl)
-  @mc @backlog
+  @mc
   Scenario: A host that keeps refusing the pull request lookup is asked less and less often
     Given the host refuses the pull request lookup for "feature/tax" every time
-    When status is read for "shop" repeatedly
+    And a client in front is showing a thread in "shop" on "feature/tax"
+    When the status's automatic fetch runs again and again
     Then the lookup is retried after 20 seconds, then 40 seconds, doubling up to 15 minutes
     And the first answer that succeeds brings back the normal rhythm
 
   # Legacy: apps/server/src/git/GitManager.ts (PR_LOOKUP_CACHE_TTL, PR_LOOKUP_NO_OPEN_PR_CACHE_TTL)
-  @mc @backlog
+  @mc
   Scenario Outline: How soon status asks the host about a branch's pull request again depends on what it found
     Given the host's last answer for "feature/tax" was <answer>
-    When status is read for "shop" over the next minutes
+    And a client in front is showing a thread in "shop" on "feature/tax"
+    When the status's automatic fetch runs over the next minutes
     Then the host is asked again after about <wait>
 
     Examples:
@@ -186,6 +263,33 @@ Feature: Repository status and working tree changes
       | an open pull request     | 1 minute   |
       | a merged pull request    | 5 minutes  |
       | no pull request at all   | 5 minutes  |
+
+  # One answer per branch: the thread's pull request discovery and the checkout's status
+  # share it (`HalC2.PullRequests.Branches`), so GitHub is asked once for both.
+  @mc
+  Scenario: A checkout's branch status shows the pull request the MC already found, without asking GitHub again
+    Given "feature/tax" has an open draft pull request on GitHub
+    And the MC has found the pull request of the thread "work" on "feature/tax"
+    When a client in front is showing a thread in "shop"
+    Then the status carries that pull request with its state open and marked as a draft
+    And the status did not ask the host about "feature/tax"
+
+  @mc
+  Scenario: Refreshing the status asks the host about the pull request again
+    Given "feature/tax" has an open draft pull request on GitHub
+    And the MC has found the pull request of the thread "work" on "feature/tax"
+    When status is read for "shop"
+    Then the status carries that pull request with its state open and marked as a draft
+    And the status asked the host about "feature/tax" again
+
+  @mc
+  Scenario: A pull request change made through HAL-C2 has the status ask the host again
+    Given "feature/tax" has an open draft pull request on GitHub
+    And the automatic Git fetch interval is 30 seconds
+    And a client in front is showing a thread in "shop"
+    When the user refreshes the pull requests
+    And the status's automatic fetch runs
+    Then the status asked the host about "feature/tax" again
 
   # Legacy: apps/server/src/git/GitManager.ts (isUnpublishedBranch)
   @mc @backlog
@@ -227,8 +331,26 @@ Feature: Repository status and working tree changes
     When status is read for "shop" on "patch-1"
     Then the status carries no pull request
 
-  # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (refreshPullRequestStatus), GitManager.ts (refreshMissingPullRequest)
   @mc @backlog
+  Scenario: A branch pushed to the user's fork without an upstream finds its pull request
+    Given "fix/loader" was pushed to the remote "fork" without setting an upstream
+    And an open pull request on "origin" comes from "fix/loader" on that fork
+    When status is read for "shop" on "fix/loader"
+    Then the status carries that pull request
+    And the pull request is not linked to the thread until the user links it
+
+  # Upstream #20412: with no "origin", the branch's remote was taken for a fork, so its pull
+  # request was not found and "Commit, push & PR" tried to open a second one.
+  @backlog @mc
+  Scenario: A branch on a repository's only remote finds its pull request without an origin
+    Given the only remote of "shop" is named "github"
+    And an open pull request on "github" comes from "fix-tax"
+    When status is read for "shop" on "fix-tax"
+    Then the status carries that pull request
+    And committing, pushing and opening a pull request from "fix-tax" uses it instead of opening another
+
+  # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (refreshPullRequestStatus), GitManager.ts (refreshMissingPullRequest)
+  @mc @backlog @priority-high
   Scenario: A pull request opened outside HAL-C2 shows up when the next turn ends
     Given a client in front is showing a thread in "shop"
     And the status has no pull request for "feature/tax"
@@ -260,7 +382,7 @@ Feature: Repository status and working tree changes
       | a newer turn of the thread is already running             |
 
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (refreshPullRequestStatus: resolves the checked-out branch again)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A pull request found for one branch is not shown after the agent checks out another
     Given the status of "shop" carries the pull request of "feature/tax"
     And the agent checks out "feature/other", which has no pull request, during its turn
@@ -281,21 +403,21 @@ Feature: Repository status and working tree changes
       | the user creates the pull request     |
 
   # Legacy: apps/server/src/git/GitManager.ts (STATUS_RESULT_CACHE_TTL)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: Many clients asking for status in the same second cause one read
     Given five clients ask for the status of "shop" within one second
     Then git is asked once for the checkout's status
     And all five get the same answer
 
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (fingerprints)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A refresh that finds nothing new sends nothing to watchers
     Given a client is watching the status of "shop"
     When the status is refreshed and nothing about the checkout changed
     Then the client receives no update
 
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (poller per cwd)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: Clients watching one checkout share a single background fetch
     Given two clients are watching the status of "shop"
     When the fetch interval elapses
@@ -303,7 +425,7 @@ Feature: Repository status and working tree changes
     And both clients receive the result
 
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (remoteRefreshFailureDelay)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A remote that fails to fetch is retried less and less often
     Given the automatic Git fetch interval is 30 seconds
     And the remote of "shop" cannot be reached
@@ -335,7 +457,7 @@ Feature: Repository status and working tree changes
       | is on a branch other than its default           | is not pulled                |
 
   # Legacy: apps/server/src/vcs/VcsProjectConfig.ts
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario Outline: A project can say which version control system it uses
     Given the project folder or a folder above it holds "<file>" naming the system "jj"
     When status is read for "shop"
@@ -347,14 +469,14 @@ Feature: Repository status and working tree changes
       | .t3/vcs.json        |
 
   # Legacy: apps/server/src/vcs/VcsProjectConfig.ts (a bad file falls back to automatic detection)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A version control file that cannot be read is ignored
     Given the project holds ".hal-c2/vcs.json" that is not valid JSON
     When status is read for "shop"
     Then the system is detected automatically and the status is read
 
   # Legacy: apps/server/src/vcs/VcsProjectConfig.ts (findConfigPath, configuredKind)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario Outline: Which version control file the project's choice comes from
     Given <files>
     When status is read for "shop"
@@ -369,7 +491,7 @@ Feature: Repository status and working tree changes
       | a folder above "shop" names "jj" and "shop" itself holds no file                         | Jujutsu  |
 
   # Legacy: apps/server/src/vcs/VcsDriverRegistry.ts (resolve), VcsProvisioningService.ts (resolveRequestedKind)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario Outline: A version control system the MC cannot use is named when it is asked for
     Given <situation>
     When <request>
@@ -383,14 +505,14 @@ Feature: Repository status and working tree changes
       | the system to initialize is left unknown              | the user initializes "notes"             | A concrete VCS driver kind is required for repository provisioning. |
 
   # Legacy: apps/server/src/vcs/VcsProvisioningService.ts (resolveRequestedKind)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: Initializing without naming a system creates a git repository
     Given the project "notes" is not in a git repository
     When the user initializes "notes" without naming a version control system
     Then "notes" becomes a git repository
 
   # Legacy: apps/server/src/vcs/VcsDriverRegistry.ts (null detections are not cached)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A folder that has just become a repository is noticed at once
     Given status was just read for "notes" and said it is not a repository
     When "notes" is initialized as a git repository
@@ -404,14 +526,20 @@ Feature: Repository status and working tree changes
     And no more than 4 GitHub CLI commands run at once
 
   # Legacy: apps/server/src/vcs/VcsProcess.ts (isTransientGitExit, CHECKPOINT_CAPTURE_OPERATION)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A checkpoint is not lost to a brief git lock
     Given git reports a lock file or a vanished file while a checkpoint is being captured
     When the capture command is retried
     Then the checkpoint is captured if the second or third attempt succeeds
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A Jujutsu checkout reports its status
     Given the project "shop" is a Jujutsu repository
     When status is read for "shop"
     Then the status reports the Jujutsu driver with its bookmark and working copy changes
+
+  @backlog @mc @priority-high
+  Scenario: Reading status never takes the git index lock
+    Given the MC keeps the status of "shop" fresh in the background
+    When the user runs "git checkout" or "git commit" in "shop" while a status read is under way
+    Then the user's git command is not refused for a lock the MC holds

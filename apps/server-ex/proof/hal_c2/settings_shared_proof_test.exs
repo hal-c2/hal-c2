@@ -14,7 +14,9 @@ defmodule HalC2.SettingsSharedProofTest do
     model: "settings_shared.maude",
     module: "SETTINGS-SHARED",
     check: "SETTINGS-SHARED-PROPS",
-    timeout: 600_000,
+    # two(2, 2, 1, 1, 1) has run past 10 minutes on a slow runner, on a model whose whole
+    # suite passes in under 6 on a fast one.
+    timeout: 1_200_000,
     code: [
       {:exports, HalC2.Settings.Shared},
       {:messages, HalC2.Settings},
@@ -66,10 +68,15 @@ defmodule HalC2.SettingsSharedProofTest do
         "the file's hash, which the check compares; put stands for the check adopting an edit",
       "HalC2.Cluster handle_call :status" => @reads,
       "HalC2.Cluster handle_call :fingerprint" => @reads,
+      "HalC2.Cluster handle_call {:removed?, _}" => @reads,
       "HalC2.Cluster handle_call :entry" => @members,
       "HalC2.Cluster handle_call {:admit, _}" => @members,
       "HalC2.Cluster handle_call {:joined, _, _, _}" => @members,
       "HalC2.Cluster handle_call {:remove, _}" => @members,
+      "HalC2.Cluster handle_call {:switch, _, _}" => @members,
+      "HalC2.Cluster handle_call :identity" =>
+        "reads this MC's key for the join handshake, which cluster_join.maude models",
+      "HalC2.Cluster handle_call {:join_admit, _}" => @members,
       "HalC2.Cluster handle_call _" => @members,
       "HalC2.Cluster handle_cast {:merge, _}" => @members,
       "HalC2.Cluster handle_cast :version_changed" => @members,

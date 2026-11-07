@@ -26,8 +26,10 @@ defmodule HalC2.Application do
   end
 
   @doc """
-  The MC's services in start order. A hot update starts the ones the running MC
-  does not have yet (`HalC2.Upgrade`).
+  The MC's services in start order. A release upgrade brings the running tree in
+  line with them (`HalC2.Upgrade.Tree`): a service new here starts, one gone stops,
+  and one whose spec changed restarts, so a spec must compare equal across versions
+  when nothing changed (name functions, `&Mod.fun/0`, never closures).
   """
   def children do
     [
@@ -43,16 +45,22 @@ defmodule HalC2.Application do
       {HalC2.Store, path: HalC2.Store.home_path()},
       HalC2.Auth,
       HalC2.Settings,
+      # Turns for the streams migrating an older MC's long snapshot, one at a time.
+      HalC2.Streams.Migrations,
       HalC2.Streams,
       HalC2.Shell,
       # The other members' files, as folders on this machine.
       HalC2.MachineFiles,
       # Turns this MC was running when it stopped end as interrupted.
       %{id: :recovery, start: {HalC2.Orchestration.Recovery, :start_link, []}},
+      # Stopped after the runtimes: a clean stop settles the turns they leave.
+      HalC2.Orchestration.Recovery.Shutdown,
       HalC2.Orchestration.TurnWatch,
       # The recorded side effects of accepted commands, replayed or cancelled
       # for what the last boot left unfinished.
       HalC2.Orchestration.Effects,
+      # Wakes threads for work their provider finished in the background.
+      HalC2.Orchestration.Wake,
       Supervisor.child_spec({Task, &HalC2.Search.backfill/0}, id: :search_backfill),
       {Registry, keys: :unique, name: HalC2.Codex.Registry},
       {Registry, keys: :unique, name: HalC2.Claude.Registry},
@@ -80,6 +88,9 @@ defmodule HalC2.Application do
       HalC2.Devices,
       HalC2.Diagnostics,
       HalC2.PullRequests.Refreshes,
+      HalC2.GitHub.Limits,
+      HalC2.PullRequests.Held,
+      HalC2.PullRequests.Branches,
       HalC2.PullRequests.Discovery,
       HalC2.PullRequests.Sync,
       HalC2.PullRequests.Wakes,
@@ -120,6 +131,10 @@ defmodule HalC2.Application do
       HalC2.Web,
       # server-runtime.json, once the listener is bound; removed first on the way down.
       HalC2.RuntimeRecord,
+      # Threads an older MC left a long snapshot of are migrated, once clients can connect.
+      Supervisor.child_spec({Task, &HalC2.Streams.Migrations.migrate_all/0},
+        id: :stream_migrations
+      ),
       # Turns the restart cut off go on, where the user asked for that.
       Supervisor.child_spec({Task, &HalC2.Orchestration.Recovery.continue/0}, id: :continue),
       # Projects that ask for it are brought up to date.
@@ -163,6 +178,7 @@ defmodule HalC2.Application do
        do: HalC2.Migration.run(opts)
 
     HalC2.Paths.ensure!()
+    HalC2.Claude.McpConfig.sweep()
     # The tokens of the environments an MC linked to outside its cluster, before MCs
     # connected only by clustering.
     HalC2.Secrets.delete("environment-links")

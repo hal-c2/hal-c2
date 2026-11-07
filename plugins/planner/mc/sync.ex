@@ -1347,19 +1347,21 @@ defmodule HalC2Plugins.Planner.Sync do
   no longer has it: GitHub keeps the move it takes last, and a push that took after
   another milestone's for the same issue, the task having moved on meanwhile, left it
   behind. Each op moves an issue to the milestone holding its task, or out of any, as
-  `pushes/5` does; none goes for an issue the milestone's own `ops` move, or whose last
-  move is where the plan has it, so a move that sets one right is only checked again,
-  once it took. The op takes the task off the milestone's `synced` `misplaced`, which
-  `misplaced/2` puts it on with the issue, so a refusal of the op leaves it for the
-  milestone's next push (`held_pushes/4`), whichever issue the task names by then.
+  `pushes/5` does, and out of any when no task names it any more: its task was removed,
+  unlinked or relinked while the move waited, and the push that took the issue out for
+  it may have taken first. None goes for an issue the milestone's own `ops` move, or
+  whose last move is where the plan has it, so a move that sets one right is only
+  checked again, once it took. The op takes the task, nil when none names the issue, off
+  the milestone's `synced` `misplaced`, which `misplaced/2` puts it on with the issue, so
+  a refusal of the op leaves it for the milestone's next push (`held_pushes/4`),
+  whichever issue the task names by then.
   """
   def reasserts(moved, ops, items, projects) do
     sent = for {"update", %{"milestone" => _} = input, _} <- ops, do: key(input)
 
     for %{"milestone" => wrote} = issue <- moved |> Enum.reverse() |> Enum.uniq_by(&key/1),
         key(issue) not in sent,
-        task = linked(items, issue),
-        task != nil,
+        task = linked(items, issue) || %{},
         held = holders(items, issue["repository"], task["id"]),
         if(held == [], do: wrote != nil, else: wrote not in held),
         project = project_id(Map.put(task, "issue", issue), projects),
@@ -1422,6 +1424,39 @@ defmodule HalC2Plugins.Planner.Sync do
 
     id in milestone["after"] and id in synced["after"] and
       Plan.same_ref?(had(synced, items, id), issue)
+  end
+
+  @doc """
+  `items` with each task of `relinked` naming its issue in the milestone GitHub has it
+  in, when only a milestone's `synced` knows that: a link names the issue in no known
+  milestone (`Plan.link/3`), while the push of the milestone the task left it in, refused
+  or still on its way, has GitHub hold it there. Without it a task that leaves the issue
+  again, removed say, leaves it in that milestone with nothing to ask it out (`left/2`).
+  """
+  def linked_at(items, relinked) do
+    Enum.reduce(relinked, items, fn id, items ->
+      with %{"issue" => %{} = issue} when not is_map_key(issue, "milestone") <- items[id],
+           number when is_integer(number) <- held_in(items, issue) do
+        put_in(items[id]["issue"]["milestone"], number)
+      else
+        _ -> items
+      end
+    end)
+  end
+
+  # The number of a milestone whose `synced` has GitHub hold `issue`, or nil.
+  defp held_in(items, issue) do
+    Enum.find_value(items, fn
+      {_, %{"milestone" => %{} = ref, "synced" => %{"after" => held} = synced}} ->
+        refs = synced["refs"] || %{}
+
+        if same?(ref["repository"], issue["repository"]) and
+             Enum.any?(held, &Plan.same_ref?(refs[&1], issue)),
+           do: ref["number"]
+
+      _ ->
+        nil
+    end)
   end
 
   @doc "`synced` with the marks of `left/2`; nothing else when there are none."

@@ -4,6 +4,7 @@ FolderOperationDialog 1.0 FolderOperationDialog.qml
 ClusterSettings 1.0 ClusterSettings.qml
 ConnectionsSettings 1.0 ConnectionsSettings.qml
 LoadBalancingGroup 1.0 LoadBalancingGroup.qml
+SavedEnvironmentsGroup 1.0 SavedEnvironmentsGroup.qml
 Composer 1.0 Composer.qml
 ComposerAttachment 1.0 ComposerAttachment.qml
 ModelPicker 1.0 ModelPicker.qml
@@ -17,12 +18,18 @@ DefaultShell 1.0 DefaultShell.qml
 GitActions 1.0 GitActions.qml
 Notifications 1.0 Notifications.qml
 RightPanel 1.0 RightPanel.qml
+Stage 1.0 Stage.qml
+ThreadArea 1.0 ThreadArea.qml
+PanelTabDrag 1.0 PanelTabDrag.qml
+PanelBodySlot 1.0 PanelBodySlot.qml
+PanelBodies 1.0 PanelBodies.qml
 SettingsNav 1.0 SettingsNav.qml
 ShellErrorOverlay 1.0 ShellErrorOverlay.qml
 ConnectionNotice 1.0 ConnectionNotice.qml
 UsageModelPrices 1.0 UsageModelPrices.qml
 ProviderModelList 1.0 ProviderModelList.qml
 ComposerUsageLimits 1.0 ComposerUsageLimits.qml
+RedactedText 1.0 RedactedText.qml
 ConnectionStatusRow 1.0 ConnectionStatusRow.qml
 ServerUpdateAction 1.0 ServerUpdateAction.qml
 ServerUpdatesList 1.0 ServerUpdatesList.qml
@@ -41,6 +48,12 @@ ShellIcon 1.0 ShellIcon.qml
 QrCode 1.0 QrCode.qml
 ShellSplitButton 1.0 ShellSplitButton.qml
 ShellChevron 1.0 ShellChevron.qml
+ShellPopover 1.0 ShellPopover.qml
+ShellPopoverSurface 1.0 ShellPopoverSurface.qml
+ShellScrim 1.0 ShellScrim.qml
+ShellScrollEdge 1.0 ShellScrollEdge.qml
+ShellToolTip 1.0 ShellToolTip.qml
+ShellEmptyState 1.0 ShellEmptyState.qml
 Sidebar 1.0 Sidebar.qml
 SidebarThreadRow 1.0 SidebarThreadRow.qml
 HalC2Wordmark 1.0 HalC2Wordmark.qml
@@ -54,6 +67,7 @@ KeybindingsSettings 1.0 KeybindingsSettings.qml
 SettingsHost 1.0 SettingsHost.qml
 SettingsPage 1.0 SettingsPage.qml
 SettingsRow 1.0 SettingsRow.qml
+SettingsHeading 1.0 SettingsHeading.qml
 BackgroundActivityRow 1.0 BackgroundActivityRow.qml
 TextGenerationRow 1.0 TextGenerationRow.qml
 ProjectActionsSettings 1.0 ProjectActionsSettings.qml
@@ -71,9 +85,11 @@ PullRequestThreadDialog 1.0 PullRequestThreadDialog.qml
 EditFromHereDialog 1.0 EditFromHereDialog.qml
 WorktreeSetupCard 1.0 WorktreeSetupCard.qml
 LimitRecoveryBanner 1.0 LimitRecoveryBanner.qml
+ThreadNotice 1.0 ThreadNotice.qml
 ProviderUpdateNotice 1.0 ProviderUpdateNotice.qml
 ThreadLineage 1.0 ThreadLineage.qml
 CentreHost 1.0 CentreHost.qml
+RouteView 1.0 RouteView.qml
 ThreadView 1.0 ThreadView.qml
 DiffPanel 1.0 DiffPanel.qml
 FilesPanel 1.0 FilesPanel.qml
@@ -89,6 +105,7 @@ AgentsPanel 1.0 AgentsPanel.qml
 RevertDialog 1.0 RevertDialog.qml
 TerminalSplits 1.0 TerminalSplits.qml
 TerminalMenu 1.0 TerminalMenu.qml
+TerminalScrollbar 1.0 TerminalScrollbar.qml
 TextEditMenu 1.0 TextEditMenu.qml
 TerminalPanel 1.0 TerminalPanel.qml
 PullRequestsPanel 1.0 PullRequestsPanel.qml
@@ -113,7 +130,6 @@ SpaceChart 1.0 SpaceChart.qml
 SpaceSlashMenu 1.0 SpaceSlashMenu.qml
 SpaceBlockImage 1.0 SpaceBlockImage.qml
 SpaceImages 1.0 SpaceImages.qml
-SpaceImageDialog 1.0 SpaceImageDialog.qml
 SpaceFilePicker 1.0 SpaceFilePicker.qml
 SpaceComments 1.0 SpaceComments.qml
 SpaceHistoryPanel 1.0 SpaceHistoryPanel.qml
@@ -142,11 +158,13 @@ WelcomeWizard 1.0 WelcomeWizard.qml
 OnboardingTerminal 1.0 OnboardingTerminal.qml
 SnapShotSettings 1.0 SnapShotSettings.qml
 Markdown 1.0 Markdown.qml
+PullRequestLinkCard 1.0 PullRequestLinkCard.qml
 MermaidDiagram 1.0 MermaidDiagram.qml
 Plugin 1.0 Plugin.qml
 Contribution 1.0 Contribution.qml
 PluginSlot 1.0 PluginSlot.qml
 singleton PluginRegistry 1.0 PluginRegistry.qml
+singleton Format 1.0 Format.qml
 PluginsSettings 1.0 PluginsSettings.qml
 ShellTabs 1.0 ShellTabs.qml
 PluginPages 1.0 PluginPages.qml
@@ -158,3 +176,7 @@ PluginSettings 1.0 PluginSettings.qml
 NotificationsSettings 1.0 NotificationsSettings.qml
 PairingSettings 1.0 PairingSettings.qml
 MaintenanceSettings 1.0 MaintenanceSettings.qml
+BrowserPanel 1.0 BrowserPanel.qml
+BrowserDevicesView 1.0 BrowserDevicesView.qml
+DevicesPicker 1.0 DevicesPicker.qml
+AgentCue 1.0 AgentCue.qml

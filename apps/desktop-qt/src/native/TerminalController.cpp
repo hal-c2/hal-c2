@@ -13,9 +13,11 @@
 #include <algorithm>
 
 #include "NativeShell.h"
+#include "LayoutController.h"
 #include "McClient.h"
 #include "MenuController.h"
 #include "ShellBridge.h"
+#include "SettingsController.h"
 #include "ShellStore.h"
 #include "ToastController.h"
 #include "WorkspaceController.h"
@@ -59,8 +61,25 @@ bool terminalBefore(const QString& left, const QString& right) {
   return left < right;
 }
 
+// Acknowledging is cumulative, so output is acknowledged together: when this much
+// is unacknowledged, or else a moment after the last of it (as the TUI does). The
+// MC's window is 64 KiB of UTF-8, at most 48 KiB for this many UTF-16 units, so a
+// steady stream keeps flowing; the moment's timer means the tail is always
+// acknowledged, which is all the MC waits for, so a client cannot stall itself.
+constexpr qsizetype kAckEvery = 16 * 1024;
+int ackDelay = TerminalSession::defaultAckDelay;
+
 QString threadKeyOf(const QString& environmentId, const QString& threadId) {
   return environmentId + QLatin1Char(':') + threadId;
+}
+
+// What the user was doing when a write came back with no reason, from the keys it carried.
+QString writeFailure(const QString& data) {
+  static const QRegularExpression movement(QStringLiteral("^(?:\\x1b[bf]|\\x01|\\x05|\\x1b\\[1;\\d+[CDHF])$"));
+  if (data == QLatin1String("\x0c")) return QStringLiteral("Failed to clear terminal");
+  if (data == QLatin1String("\x15")) return QStringLiteral("Failed to delete terminal input");
+  if (movement.match(data).hasMatch()) return QStringLiteral("Failed to move cursor");
+  return QStringLiteral("Terminal write failed");
 }
 
 }  // namespace
@@ -93,13 +112,22 @@ TerminalSession::TerminalSession(McClient* client, const TerminalPlace& place, c
     input.insert(QStringLiteral("cols"), size.width());
     input.insert(QStringLiteral("rows"), size.height());
   }
-  m_subscription = client->subscribe(this, 
+  m_ackTimer.setSingleShot(true);
+  connect(&m_ackTimer, &QTimer::timeout, this, &TerminalSession::sendAck);
+  m_subscription = client->subscribe(this,
       {
           {QStringLiteral("type"), QStringLiteral("terminal")},
           {QStringLiteral("environment"), place.environmentId},
           {QStringLiteral("input"), input},
       },
-      [this](const QJsonObject& frame) { onFrame(frame); });
+      [this](const QJsonObject& frame) { onFrame(frame); },
+      [this] {
+        // A new socket's window starts with its snapshot: nothing read before counts.
+        m_ackTimer.stop();
+        m_unacked = -1;
+        m_unackedSize = 0;
+        return QJsonObject{{QStringLiteral("acks"), true}};
+      });
 }
 
 TerminalSession::~TerminalSession() {
@@ -112,6 +140,7 @@ void TerminalSession::onFrame(const QJsonObject& frame) {
     // The MC refused the attach and forgot the shape.
     m_client->unsubscribe(m_subscription);
     m_subscription = 0;
+    m_ackTimer.stop();
     note(frame.value(QLatin1String("reason")).toString());
     emit failed(frame.value(QLatin1String("reason")).toString());
     return;
@@ -121,7 +150,15 @@ void TerminalSession::onFrame(const QJsonObject& frame) {
   const QString kind = event.value(QLatin1String("type")).toString();
   if (kind == QLatin1String("snapshot") || kind == QLatin1String("restarted")) {
     // Every (re)subscription starts with a snapshot: the screen starts over.
-    replace(event.value(QLatin1String("snapshot")).toObject().value(QLatin1String("history")).toString());
+    const QJsonObject snapshot = event.value(QLatin1String("snapshot")).toObject();
+    replace(snapshot.value(QLatin1String("history")).toString());
+    // The MC counts a snapshot against its window; what came before it is over.
+    m_ackTimer.stop();
+    m_unacked = snapshot.value(QLatin1String("sequence")).toInteger(-1);
+    m_unackedSize = 0;
+    if (!m_parked) sendAck();
+    // Attached again: the next outage is a new one, and is said.
+    m_writeFailure.clear();
     if (!m_attached) {
       m_attached = true;
       flushWrites();
@@ -133,7 +170,10 @@ void TerminalSession::onFrame(const QJsonObject& frame) {
       flushResize();
     }
   } else if (kind == QLatin1String("output")) {
-    append(event.value(QLatin1String("data")).toString());
+    const QString data = event.value(QLatin1String("data")).toString();
+    append(data);
+    // After the signal: the Terminal writes it into its screen right there.
+    consumed(event.value(QLatin1String("sequence")).toInteger(-1), data.size());
   } else if (kind == QLatin1String("cleared")) {
     replace(QString());
   } else if (kind == QLatin1String("exited")) {
@@ -145,9 +185,41 @@ void TerminalSession::onFrame(const QJsonObject& frame) {
     // Attaching again (on a reconnect) would open the terminal anew.
     m_client->unsubscribe(m_subscription);
     m_subscription = 0;
+    m_ackTimer.stop();
     emit closed();
   }
 }
+
+void TerminalSession::consumed(qint64 sequence, qsizetype size) {
+  if (sequence < 0) return;
+  m_unacked = sequence;
+  m_unackedSize += size;
+  if (m_parked) return;
+  if (m_unackedSize >= kAckEvery) {
+    sendAck();
+  } else {
+    m_ackTimer.start(ackDelay);
+  }
+}
+
+void TerminalSession::sendAck() {
+  m_ackTimer.stop();
+  if (m_unacked >= 0 && m_subscription) m_client->ack(m_subscription, m_unacked);
+  m_unacked = -1;
+  m_unackedSize = 0;
+}
+
+void TerminalSession::setParked(bool parked) {
+  if (parked == m_parked) return;
+  m_parked = parked;
+  if (parked) {
+    m_ackTimer.stop();
+  } else {
+    sendAck();
+  }
+}
+
+void TerminalSession::setAckDelay(int milliseconds) { ackDelay = milliseconds; }
 
 void TerminalSession::append(const QString& data) {
   if (data.isEmpty()) return;
@@ -174,6 +246,10 @@ void TerminalSession::note(const QString& text) {
   append(QStringLiteral("\r\n[%1]\r\n").arg(text));
 }
 
+void TerminalSession::report(const QString& message) {
+  append(QStringLiteral("\r\n[terminal] %1\r\n").arg(message));
+}
+
 void TerminalSession::write(const QString& data) {
   m_pendingWrite.append(data);
   flushWrites();
@@ -193,14 +269,17 @@ void TerminalSession::flushWrites() {
                      {QStringLiteral("terminalId"), m_terminalId},
                      {QStringLiteral("data"), chunk},
                  },
-                 [self = QPointer(this)](const QJsonValue&, const std::optional<QString>& error) {
+                 [self = QPointer(this), chunk](const QJsonValue&, const std::optional<QString>& error) {
                    if (!self) return;
                    self->m_writing = false;
                    if (error) {
                      // Typing into an ended shell, or no MC: what was typed is gone.
                      self->m_pendingWrite.clear();
+                     const QString failure = !error->isEmpty() ? *error : writeFailure(chunk);
+                     if (failure != std::exchange(self->m_writeFailure, failure)) self->report(failure);
                      return;
                    }
+                   self->m_writeFailure.clear();
                    self->flushWrites();
                  });
 }
@@ -348,6 +427,11 @@ TerminalController::TerminalController(ShellBridge* bridge, McClient* client, Sh
                                        QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_tabs(this) {
   connect(store, &ShellStore::changed, this, &TerminalController::refresh);
+  // A new socket starts a new list, which owes nothing of what the old one did.
+  connect(client, &McClient::readyChanged, this, [this](bool ready) {
+    if (ready) return;
+    for (ThreadUi& ui : m_ui) ui.gone.clear();
+  });
   m_told = facts();
 }
 
@@ -358,7 +442,17 @@ void TerminalController::activate() {
   if (auto* workspace = NativeShell::of(this)->controller<WorkspaceController>()) {
     connect(workspace, &WorkspaceController::placeChanged, this, &TerminalController::refresh);
   }
+  // Built after this one, too.
+  if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
+    connect(settings, &SettingsController::deviceChanged, this, &TerminalController::reduceMotionChanged);
+  }
   refresh();
+}
+
+bool TerminalController::reduceMotion() const {
+  if (LayoutController::systemReducedMotion()) return true;
+  auto* settings = NativeShell::of(this)->controller<SettingsController>();
+  return settings && settings->setting(QStringLiteral("reduceMotion")).toBool();
 }
 
 bool TerminalController::isOpen() const {
@@ -413,7 +507,7 @@ void TerminalController::save() {
 }
 
 TerminalController::Facts TerminalController::facts() const {
-  return {m_threadKey, available(), isOpen(), m_height, activeTerminalId(), activeGroup(), groupSizes()};
+  return {m_threadKey, available(), isOpen(), m_height, activeTerminalId(), activeGroup(), groupSizes(), drawerCount(), listing()};
 }
 
 void TerminalController::notify() {
@@ -441,6 +535,10 @@ QVariantMap TerminalController::groupSizes() const {
   if (!m_place) return sizes;
   for (const Group& group : m_ui.value(m_threadKey).groups) sizes.insert(group.id, group.terminals.size());
   return sizes;
+}
+
+int TerminalController::drawerCount() const {
+  return m_place ? int(drawerIds(m_ui.value(m_threadKey), terminalIds()).size()) : 0;
 }
 
 TerminalController::Group* TerminalController::groupOf(ThreadUi& ui, const QString& terminalId) {
@@ -482,10 +580,40 @@ bool TerminalController::supported() {
   return g_supported;
 }
 
-void TerminalController::setDrawn(bool drawn) {
-  if (drawn == m_drawn) return;
-  m_drawn = drawn;
+void TerminalController::setSingleScreen(bool singleScreen) {
+  if (singleScreen == m_singleScreen) return;
+  m_singleScreen = singleScreen;
   refresh();
+}
+
+void TerminalController::setCovered(bool covered) {
+  if (covered == m_covered) return;
+  m_covered = covered;
+  refresh();
+}
+
+QVariantList TerminalController::listing() const {
+  QVariantList terminals;
+  if (!m_singleScreen || !m_place) return terminals;
+  const auto known = m_known.value(m_threadKey);
+  for (const QString& id : terminalIds()) {
+    const Summary summary = known.value(id);
+    terminals.append(QVariantMap{{QStringLiteral("terminalId"), id},
+                                 {QStringLiteral("label"), terminalLabel(id, summary.label)},
+                                 {QStringLiteral("status"), summary.status.isEmpty() ? QStringLiteral("starting") : summary.status},
+                                 {QStringLiteral("busy"), summary.busy},
+                                 {QStringLiteral("cwd"), summary.cwd}});
+  }
+  return terminals;
+}
+
+QStringList TerminalController::liveOf(const QStringList& ids) const {
+  const auto known = m_known.value(m_threadKey);
+  QStringList live;
+  for (const QString& id : ids) {
+    if (!known.value(id).ended()) live.append(id);
+  }
+  return live;
 }
 
 bool TerminalController::handle(const QString& action, const QVariant& payload) {
@@ -505,7 +633,8 @@ bool TerminalController::handle(const QString& action, const QVariant& payload) 
   }
   if (action == QLatin1String("terminal.new")) {
     if (!m_place) return true;
-    if (terminalIds().size() >= maxTerminals) {
+    // The ended ones a phone's MC keeps listing leave room.
+    if ((m_singleScreen ? liveOf(terminalIds()) : terminalIds()).size() >= maxTerminals) {
       toast(QStringLiteral("At most %1 terminals per thread.").arg(maxTerminals), QString());
       return true;
     }
@@ -522,7 +651,8 @@ bool TerminalController::handle(const QString& action, const QVariant& payload) 
     return true;
   }
   if (action == QLatin1String("terminal.followLink")) {
-    followLink(args.value(QStringLiteral("kind")).toString(), args.value(QStringLiteral("text")).toString(),
+    followLink(args.value(QStringLiteral("terminalId")).toString(), args.value(QStringLiteral("kind")).toString(),
+               args.value(QStringLiteral("text")).toString(),
                args.value(QStringLiteral("cwd")).toString());
     return true;
   }
@@ -545,8 +675,8 @@ bool TerminalController::handle(const QString& action, const QVariant& payload) 
 // Where the route's thread (a draft too) runs its terminals: its project root,
 // worktree and scripts.
 std::optional<TerminalPlace> TerminalController::placeOfWorkspace() const {
-  // No terminal in this build, or nowhere in the layout to draw one: no thread has a place for it.
-  if (!supported() || !m_drawn) return std::nullopt;
+  // No terminal in this build: no thread has a place for it.
+  if (!supported()) return std::nullopt;
   auto* workspace = NativeShell::of(this)->controller<WorkspaceController>();
   if (!workspace || !workspace->place()) return std::nullopt;
   const WorkspaceController::Place& at = *workspace->place();
@@ -627,16 +757,22 @@ void TerminalController::syncTabs() {
   // The MC closed the last one (here or elsewhere, while the user was away
   // too): the drawer hides.
   if (ui.open && drawer.isEmpty()) ui.open = false;
-  if (!drawer.contains(ui.active)) ui.active = drawer.isEmpty() ? QString() : drawer.constLast();
+  if (m_singleScreen) {
+    settleSingleScreen(ui, drawer);
+  } else if (!drawer.contains(ui.active)) {
+    ui.active = drawer.isEmpty() ? QString() : drawer.constLast();
+  }
   const bool panel = drawer.size() < ids.size();
   if (!ui.open && !m_attached && !panel) return;
   m_attached = true;
   const auto known = m_known.value(m_threadKey);
+  // A single screen attaches no ended shell: its terminal is listed, and starts anew when opened.
+  const QStringList shown = m_singleScreen ? liveOf(ids) : ids;
   for (int i = int(m_tabs.rows().size()) - 1; i >= 0; --i) {
-    if (!ids.contains(m_tabs.rows().at(i).terminalId)) m_tabs.remove(i);
+    if (!shown.contains(m_tabs.rows().at(i).terminalId)) m_tabs.remove(i);
   }
-  for (int i = 0; i < ids.size(); ++i) {
-    const QString& id = ids.at(i);
+  for (int i = 0; i < shown.size(); ++i) {
+    const QString& id = shown.at(i);
     const Summary summary = known.value(id);
     const QString label = terminalLabel(id, summary.label);
     TerminalTabs::Row row{id, label, summary.busy, nullptr, id};
@@ -657,6 +793,7 @@ void TerminalController::syncTabs() {
     }
     // Still attached from the user's last visit.
     if (TerminalSession* parked = m_parked[m_threadKey].sessions.take(id)) {
+      parked->setParked(false);
       row.session = parked;
       m_tabs.insert(i, row);
       continue;
@@ -666,6 +803,7 @@ void TerminalController::syncTabs() {
     const QString threadKey = m_threadKey;
     connect(session, &TerminalSession::closed, this, [this, threadKey, id] {
       m_ui[threadKey].local.remove(id);
+      m_ui[threadKey].starting.remove(id);
       m_known[threadKey].remove(id);
       if (auto parked = m_parked.find(threadKey); parked != m_parked.end()) {
         if (TerminalSession* gone = parked->sessions.take(id)) gone->deleteLater();
@@ -676,21 +814,55 @@ void TerminalController::syncTabs() {
         notify();
       }
     });
-    // A shell that ended on its own takes its terminal with it, unasked.
+    // A shell that ended on its own takes its terminal with it, unasked; a
+    // single screen moves on and leaves the MC's listing as it is.
     connect(session, &TerminalSession::exited, this, [this, threadKey, id] {
+      if (m_singleScreen) {
+        m_known[threadKey][id].status = QStringLiteral("exited");
+        if (threadKey != m_threadKey) return;
+        syncTabs();
+        notify();
+        return;
+      }
       if (threadKey == m_threadKey && terminalIds().contains(id)) closeTerminal(id);
     });
+    connect(session, &TerminalSession::attached, this, [this, threadKey, id] { m_ui[threadKey].starting.remove(id); });
+    connect(session, &TerminalSession::failed, this, [this, threadKey, id](const QString& reason) { abandonStart(threadKey, id, reason); });
     row.session = session;
     m_tabs.insert(i, row);
   }
   // What the visit left that the thread no longer has.
   dropParked(m_threadKey);
+  if (m_singleScreen) {
+    const QString group = activeGroup();
+    for (const TerminalTabs::Row& row : m_tabs.rows()) row.session->setParked(!ui.open || row.group != group);
+  }
+}
+
+void TerminalController::settleSingleScreen(ThreadUi& ui, const QStringList& drawer) const {
+  if (m_covered) return;
+  const QStringList live = liveOf(drawer);
+  if (ui.open && !live.contains(ui.active)) {
+    // The nearest running one below it, else the first above; none shuts the screen.
+    QString next = live.isEmpty() ? QString() : live.constFirst();
+    for (const QString& id : live) {
+      if (terminalBefore(id, ui.active)) next = id;
+    }
+    if (next.isEmpty()) {
+      ui.open = false;
+    } else {
+      ui.active = next;
+    }
+  }
+  // An ended one stays active with the screen shut: its menu still says what became of it.
+  if (!drawer.contains(ui.active)) ui.active = live.isEmpty() ? QString() : live.constFirst();
 }
 
 void TerminalController::park(const QString& threadKey, const QString& cwd) {
   dropParked(threadKey);
   const QHash<QString, TerminalSession*> sessions = m_tabs.take();
   if (sessions.isEmpty()) return;
+  for (TerminalSession* session : sessions) session->setParked(true);
   m_parked.insert(threadKey, {cwd, sessions});
   m_parkedOrder.append(threadKey);
   while (m_parkedOrder.size() > maxParkedThreads) dropParked(m_parkedOrder.constFirst());
@@ -718,9 +890,14 @@ void TerminalController::onTerminals(const QString& environmentId, const QJsonOb
   auto put = [this, &environmentId](const QJsonObject& terminal) {
     const QString key = threadKeyOf(environmentId, terminal.value(QLatin1String("threadId")).toString());
     const QString id = terminal.value(QLatin1String("terminalId")).toString();
+    ThreadUi& ui = m_ui[key];
+    if (ui.gone.contains(id)) return;
     m_known[key].insert(id, {terminal.value(QLatin1String("label")).toString(),
-                             terminal.value(QLatin1String("hasRunningSubprocess")).toBool()});
-    m_ui[key].local.remove(id);
+                             terminal.value(QLatin1String("hasRunningSubprocess")).toBool(),
+                             terminal.value(QLatin1String("status")).toString(),
+                             terminal.value(QLatin1String("cwd")).toString()});
+    ui.local.remove(id);
+    ui.starting.remove(id);
   };
   if (type == QLatin1String("snapshot")) {
     const QString prefix = environmentId + QLatin1Char(':');
@@ -740,7 +917,10 @@ void TerminalController::onTerminals(const QString& environmentId, const QJsonOb
     const QString key = threadKeyOf(environmentId, event.value(QLatin1String("threadId")).toString());
     const QString id = event.value(QLatin1String("terminalId")).toString();
     m_known[key].remove(id);
-    m_ui[key].local.remove(id);
+    ThreadUi& ui = m_ui[key];
+    ui.local.remove(id);
+    ui.starting.remove(id);
+    ui.gone.remove(id);
   } else {
     return;
   }
@@ -753,9 +933,16 @@ bool TerminalController::setOpen(bool open) {
   ThreadUi& ui = m_ui[m_threadKey];
   if (std::exchange(ui.restored, false)) ui.open = false;
   if (ui.open == open) return false;
+  if (open && m_singleScreen) {
+    const QStringList drawer = drawerIds(ui, terminalIds());
+    const QStringList live = liveOf(drawer);
+    const QString first = !live.isEmpty() ? live.constFirst() : !drawer.isEmpty() ? drawer.constFirst() : nextTerminalId();
+    openTerminal(live.contains(ui.active) || (live.isEmpty() && drawer.contains(ui.active)) ? ui.active : first);
+    return true;
+  }
   ui.open = open;
   // A drawer with no terminal yet gets its first one.
-  if (open && drawerIds(ui, terminalIds()).isEmpty()) ui.local.insert(nextTerminalId());
+  if (open && drawerIds(ui, terminalIds()).isEmpty()) startTerminal(ui, nextTerminalId());
   syncTabs();
   notify();
   return true;
@@ -766,7 +953,11 @@ bool TerminalController::setOpen(bool open) {
 void TerminalController::openTerminal(const QString& terminalId) {
   ThreadUi& ui = m_ui[m_threadKey];
   ui.restored = false;
-  if (!terminalIds().contains(terminalId)) ui.local.insert(terminalId);
+  if (!terminalIds().contains(terminalId)) {
+    startTerminal(ui, terminalId);
+  } else if (m_singleScreen && m_known.value(m_threadKey).value(terminalId).ended()) {
+    restartTerminal(terminalId);
+  }
   if (Group* group = groupOf(ui, terminalId); group && group->panel) {
     group->active = terminalId;
   } else {
@@ -776,6 +967,75 @@ void TerminalController::openTerminal(const QString& terminalId) {
   syncTabs();
   notify();
   emit focusRequested(terminalId);
+}
+
+void TerminalController::restartTerminal(const QString& terminalId) {
+  m_known[m_threadKey][terminalId].status = QStringLiteral("starting");
+  QJsonObject input = m_place->launchInput(terminalId);
+  if (m_size.isValid()) {
+    input.insert(QStringLiteral("cols"), m_size.width());
+    input.insert(QStringLiteral("rows"), m_size.height());
+  }
+  const QString threadKey = m_threadKey;
+  m_client->call(this, m_place->environmentId, QStringLiteral("terminal.open"), input,
+                 [this, threadKey, terminalId](const QJsonValue&, const std::optional<QString>& error) {
+                   if (!error) return;
+                   m_known[threadKey][terminalId].status = QStringLiteral("exited");
+                   if (threadKey == m_threadKey) {
+                     syncTabs();
+                     notify();
+                   }
+                   toast(QStringLiteral("Unable to open terminal"), *error);
+                 });
+}
+
+TerminalController::Starting& TerminalController::startTerminal(ThreadUi& ui, const QString& terminalId) {
+  ui.local.insert(terminalId);
+  ui.gone.remove(terminalId);
+  Starting& starting = ui.starting[terminalId];
+  starting = {};
+  starting.active = ui.active;
+  return starting;
+}
+
+void TerminalController::abandonStart(const QString& threadKey, const QString& terminalId, const QString& reason) {
+  ThreadUi& ui = m_ui[threadKey];
+  const auto found = ui.starting.constFind(terminalId);
+  if (found == ui.starting.cend()) return;
+  const Starting starting = *found;
+  ui.starting.erase(found);
+  ui.local.remove(terminalId);
+  for (auto group = ui.groups.begin(); group != ui.groups.end(); ++group) {
+    if (group->id != starting.group || !group->terminals.removeOne(terminalId)) continue;
+    if (group->active == terminalId) group->active = starting.groupActive;
+    group->vertical = starting.groupVertical;
+    // A split that made its group leaves the terminal it split on its own again.
+    if (starting.madeGroup && group->terminals.size() <= 1) ui.groups.erase(group);
+    break;
+  }
+  if (ui.active == terminalId) ui.active = starting.active;
+  if (auto parked = m_parked.find(threadKey); parked != m_parked.end()) {
+    if (TerminalSession* gone = parked->sessions.take(terminalId)) gone->deleteLater();
+    if (parked->sessions.isEmpty()) dropParked(threadKey);
+  }
+  if (threadKey == m_threadKey) {
+    if (m_focused == terminalId) m_focused.clear();
+    syncTabs();
+    notify();
+    if (m_ui[threadKey].open) emit focusRequested(activeTerminalId());
+  }
+  if (!starting.quiet) toast(QStringLiteral("Unable to open terminal"), reason);
+}
+
+QFont TerminalController::terminalFont(const QString& family, int pixelSize, qreal pointSize) const {
+  QFont font;
+  font.setFamilies({family.isEmpty() ? QStringLiteral("monospace") : family, QStringLiteral("Symbols Nerd Font Mono")});
+  if (pointSize > 0) {
+    font.setPointSizeF(pointSize);
+  } else {
+    font.setPixelSize(pixelSize);
+  }
+  return font;
 }
 
 void TerminalController::focusTerminal(const QString& terminalId) {
@@ -802,7 +1062,7 @@ void TerminalController::split(const QString& terminalId, bool vertical) {
     // A hidden drawer with no terminal yet gets its first one, then the split.
     if (!ids.isEmpty()) return;
     target = nextTerminalId();
-    ui.local.insert(target);
+    startTerminal(ui, target);
     ui.active = target;
   }
   Group* group = groupOf(ui, target);
@@ -815,11 +1075,15 @@ void TerminalController::split(const QString& terminalId, bool vertical) {
     return;
   }
   const QString id = nextTerminalId();
+  Starting& starting = startTerminal(ui, id);
+  starting.madeGroup = !group;
   if (!group) {
     ui.groups.append({QStringLiteral("group-%1").arg(++m_groupCount), {target}, vertical, false, target});
     group = &ui.groups.last();
   }
-  ui.local.insert(id);
+  starting.group = group->id;
+  starting.groupVertical = group->vertical;
+  starting.groupActive = group->active;
   group->terminals.insert(group->terminals.indexOf(target) + 1, id);
   group->vertical = vertical;
   group->active = id;
@@ -842,7 +1106,9 @@ QString TerminalController::addPanelGroup() {
   ui.restored = false;
   const QString id = nextTerminalId();
   const QString group = QStringLiteral("group-%1").arg(++m_groupCount);
-  ui.local.insert(id);
+  Starting& starting = startTerminal(ui, id);
+  starting.group = group;
+  starting.madeGroup = true;
   ui.groups.append({group, {id}, false, true, id});
   syncTabs();
   notify();
@@ -891,7 +1157,9 @@ void TerminalController::closeTerminal(const QString& terminalId) {
   const QString threadKey = m_threadKey;
   ThreadUi& ui = m_ui[threadKey];
   ui.local.remove(terminalId);
+  ui.starting.remove(terminalId);
   ui.closing.insert(terminalId);
+  ui.gone.insert(terminalId);
   // Closing the active one activates the last one left in its group, else
   // the drawer's last one.
   QString next;
@@ -915,9 +1183,12 @@ void TerminalController::closeTerminal(const QString& terminalId) {
                      {QStringLiteral("deleteHistory"), true},
                  },
                  [this, threadKey, place, terminalId](const QJsonValue&, const std::optional<QString>& error) {
-                   m_ui[threadKey].closing.remove(terminalId);
-                   m_known[threadKey].remove(terminalId);
+                   ThreadUi& ui = m_ui[threadKey];
+                   ui.closing.remove(terminalId);
+                   // Once its `remove` has come, a listing is a terminal opened since.
+                   if (ui.gone.contains(terminalId) || error) m_known[threadKey].remove(terminalId);
                    if (error) {
+                     ui.gone.remove(terminalId);
                      // The MC no longer has the session to close: ask the
                      // shell itself to leave.
                      m_client->call(this, place.environmentId, QStringLiteral("terminal.write"),
@@ -945,12 +1216,15 @@ void TerminalController::closeTerminal(const QString& terminalId) {
 // A link the user followed in a terminal: a
 // web address goes to the browser (the desktop draws no pages itself), a file
 // path to the editor, resolved against the folder the shell reported (OSC 7)
-// or the one the terminal started in.
-void TerminalController::followLink(const QString& kind, const QString& text, const QString& reportedCwd) {
+// or the one the terminal started in. What cannot open is said without
+// touching the terminal's shell: a path in the terminal it was printed in.
+void TerminalController::followLink(const QString& terminalId, const QString& kind, const QString& text, const QString& reportedCwd) {
   if (!m_place || text.isEmpty()) return;
   if (kind == QLatin1String("url")) {
     const QUrl url(text);
-    if (url.isValid() && (url.scheme() == QLatin1String("http") || url.scheme() == QLatin1String("https"))) m_bridge->openExternal(url);
+    if (url.isValid() && (url.scheme() == QLatin1String("http") || url.scheme() == QLatin1String("https")) && !m_bridge->openExternal(url)) {
+      toast(QStringLiteral("Unable to open link"), text);
+    }
     return;
   }
   static const QRegularExpression position(QStringLiteral("^(.*?)((?::\\d+){0,2})$"));
@@ -968,53 +1242,73 @@ void TerminalController::followLink(const QString& kind, const QString& text, co
   }
   auto* workspace = NativeShell::of(this)->controller<WorkspaceController>();
   if (!workspace || !workspace->openInEditor({}, path + match.captured(2))) {
-    toast(QStringLiteral("Unable to open path"), QStringLiteral("This environment has no editor to open %1 in.").arg(path));
+    if (TerminalSession* session = this->session(terminalId)) {
+      session->report(QStringLiteral("Unable to open path"));
+    } else {
+      toast(QStringLiteral("Unable to open path"), QStringLiteral("This environment has no editor to open %1 in.").arg(path));
+    }
   }
 }
 
 bool TerminalController::runScript(const QString& scriptId) {
+  QJsonObject script;
+  for (const QJsonValue& value : m_place ? m_place->scripts : QJsonArray()) {
+    if (value.toObject().value(QLatin1String("id")).toString() == scriptId) script = value.toObject();
+  }
+  return runCommand(script.value(QLatin1String("name")).toString(), script.value(QLatin1String("command")).toString());
+}
+
+bool TerminalController::runCommand(const QString& name, const QString& line) {
   if (!supported()) {
     toast(QStringLiteral("This build of HAL-C2 has no terminal"), QStringLiteral("Project actions run in one. Run it from HAL-C2 on a computer."));
     return false;
   }
-  // A layout with no place for a terminal (the phone's): the action's key is
-  // not taken without a word.
-  if (!m_drawn) {
-    toast(QStringLiteral("No terminal on a screen this small"), QStringLiteral("Project actions run in one. Run it from a wider window or another device."));
-    return false;
-  }
-  if (!m_active || !m_place) return false;
-  QJsonObject script;
-  for (const QJsonValue& value : std::as_const(m_place->scripts)) {
-    if (value.toObject().value(QLatin1String("id")).toString() == scriptId) script = value.toObject();
-  }
-  if (script.isEmpty()) return false;
-  const QString name = script.value(QLatin1String("name")).toString();
+  if (!m_active || !m_place || line.isEmpty()) return false;
   const QStringList ids = terminalIds();
   const QString active = activeTerminalId();
   QString terminalId = !active.isEmpty() ? active : !ids.isEmpty() ? ids.constFirst() : nextTerminalId();
-  if (m_known.value(m_threadKey).value(terminalId).busy) {
+  if (m_singleScreen) {
+    // On a single screen a script never lands in a shell the user is at: the
+    // first terminal when nothing runs, else a new one. A first terminal still
+    // closing is not taken: its `remove` would take the script's with it.
+    const QStringList live = liveOf(ids);
+    if (live.size() >= maxTerminals) {
+      toast(QStringLiteral("At most %1 terminals per thread.").arg(maxTerminals), QString());
+      return true;
+    }
+    const QString first = QStringLiteral("term-1");
+    const QString next = nextTerminalId();
+    terminalId = live.isEmpty() && (ids.contains(first) || next == first) ? first : next;
+    // The terminal.open below starts its shell.
+    if (ids.contains(terminalId)) m_known[m_threadKey][terminalId].status = QStringLiteral("starting");
+  } else if (m_known.value(m_threadKey).value(terminalId).busy) {
     if (ids.size() >= maxTerminals) {
       toast(QStringLiteral("At most %1 terminals per thread.").arg(maxTerminals), QString());
       return true;
     }
     terminalId = nextTerminalId();
   }
+  const bool isNew = !ids.contains(terminalId);
   openTerminal(terminalId);
+  if (isNew) {
+    if (const auto starting = m_ui[m_threadKey].starting.find(terminalId); starting != m_ui[m_threadKey].starting.end()) starting->quiet = true;
+  }
   // terminal.open restarts a shell that has ended, so the script always runs.
   QJsonObject input = m_place->launchInput(terminalId);
   if (const TerminalSession* session = this->session(terminalId); session && session->size().isValid()) {
     input.insert(QStringLiteral("cols"), session->size().width());
     input.insert(QStringLiteral("rows"), session->size().height());
   }
-  const QString command = script.value(QLatin1String("command")).toString() + QLatin1Char('\r');
+  const QString command = line + QLatin1Char('\r');
   const QString threadKey = m_threadKey;
   const TerminalPlace place = *m_place;
   m_client->call(this, place.environmentId, QStringLiteral("terminal.open"), input,
-                 [this, threadKey, place, terminalId, command, name](const QJsonValue&,
-                                                                      const std::optional<QString>& error) {
+                 [this, threadKey, place, terminalId, command, name, isNew](const QJsonValue&,
+                                                                             const std::optional<QString>& error) {
                    const QString failed = QStringLiteral("Failed to run script \"%1\".").arg(name);
                    if (error) {
+                     // Only a terminal opened for the script goes with it; one it asked to reopen stays.
+                     if (isNew) abandonStart(threadKey, terminalId, *error);
                      toast(failed, *error);
                      return;
                    }
@@ -1041,7 +1335,10 @@ bool TerminalController::runScript(const QString& scriptId) {
 QString TerminalController::nextTerminalId() const {
   QSet<int> used;
   for (const QString& id : terminalIds()) used.insert(terminalNumber(id));
-  for (const QString& id : m_ui.value(m_threadKey).closing) used.insert(terminalNumber(id));
+  const ThreadUi ui = m_ui.value(m_threadKey);
+  for (const QString& id : ui.closing) used.insert(terminalNumber(id));
+  // Its `remove` is still to come, and would take the new one with it.
+  for (const QString& id : ui.gone) used.insert(terminalNumber(id));
   int next = 1;
   while (used.contains(next)) ++next;
   return QStringLiteral("term-%1").arg(next);

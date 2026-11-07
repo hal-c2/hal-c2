@@ -86,7 +86,7 @@ Feature: Carrying an agent's own session to another machine
       | provider | where it lives                                          | where the copy goes                                                           | resumes                                |
       | OpenCode | its own session store, exported with its session export | the destination's OpenCode, through its session import, bound to "~/src/shop" | resumes the imported session by its id |
 
-    @backlog @plugin-antigravity
+    @backlog @plugin-antigravity @priority-low
     Examples: Antigravity
       | provider    | where it lives                                                     | where the copy goes                                           | resumes                              |
       | Antigravity | the profile HAL-C2 keeps for that Antigravity instance on "laptop" | the profile of the matching Antigravity instance on "desktop" | resumes the copy by the session's id |

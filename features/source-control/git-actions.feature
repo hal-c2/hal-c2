@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23999
+#   https://github.com/pingdotgg/t3code/pull/15625
+#   https://github.com/pingdotgg/t3code/pull/18862
 #   docs/user/source-control.md
 #   docs/internals/consistency-action-names.md
 #   apps/web/src/components/GitActionsControl.logic.ts (buildMenuItems, resolveQuickAction)
@@ -93,8 +96,18 @@ Feature: Recommended git action and the git menu
       | is behind its upstream                    | Create PR | Pull or rebase before creating a PR.  |
       | has uncommitted changes                   | Create PR | Commit changes before creating a PR.  |
 
+  # Upstream #15625: unrelated local files no longer block a pull request for what the branch
+  # already committed. The "Create PR" row above then holds only for a branch with nothing
+  # committed of its own.
+  @backlog @mc @desktop @mobile
+  Scenario: A pull request can be created from committed work while other files are changed
+    Given a feature branch with commits of its own and staged, unstaged and untracked files besides
+    When the user creates a pull request
+    Then the pull request holds the branch's commits, and its title and description are written from them
+    And the staged, unstaged and untracked files are left as they were
+
   # The shell's git bridge words these itself (apps/web/src/hooks/useGitActions.ts).
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario Outline: The shell's git menu names why pushing or creating a pull request cannot run
     Given the checkout <state>
     When the user opens the git menu
@@ -138,7 +151,27 @@ Feature: Recommended git action and the git menu
       | GitHub | Create PR            |
       | GitLab | Create MR            |
 
-  @backlog @mobile
+  # Upstream #23999: GitLab merge requests were called "pull request" and "PR" almost everywhere.
+  @backlog @desktop @mobile @tui
+  Scenario Outline: A GitLab merge request is called one wherever it is the only one shown
+    Given the thread is linked to a GitLab merge request
+    When the user looks at <surface>
+    Then it says "merge request" or "MR", not "pull request" or "PR"
+
+    Examples:
+      | surface                                       |
+      | the linked merge request's row and badge      |
+      | the merge request's details and review controls |
+      | the result of a git action                    |
+      | a merge request referenced in the composer    |
+
+  @backlog @desktop @mobile @tui @priority-low
+  Scenario: Pages about every host's pull requests keep calling them pull requests
+    Given one project is on GitHub and another on GitLab
+    When the user opens the pull requests page
+    Then the page and its rows are titled "Pull requests"
+
+  @backlog @mobile @priority-high
   Scenario: Running the recommended action from the phone
     Given the checkout has uncommitted changes on a feature branch with a remote
     When the user runs the recommended git action from the phone
@@ -180,6 +213,14 @@ Feature: Recommended git action and the git menu
     Then the git actions say "MC unavailable: noconnection"
     When "env-c" is reachable again
     Then the git actions are available again
+
+  @backlog @shared
+  Scenario: Git actions run on the thread the user switched to
+    Given the thread "Deploy" works in the worktree on "feature/tax"
+    And the thread "Docs" works in the worktree on "feature/docs"
+    When the user goes from "Deploy" to "Docs" and runs "Commit, push & PR"
+    Then the commit, push and pull request are made in the "feature/docs" worktree
+    And its progress and result are shown on "Docs"
 
   Rule: Publishing a repository without a remote
 

@@ -72,7 +72,7 @@ Feature: Moving in from T3 Code and the old HAL-C2 home
         | the MC | ~/.t3/elixir |
 
       # The TypeScript servers' migration.
-      @backlog
+      @backlog @priority-high
       Examples: Not yet on the MC
         | what                 | source         |
         | the installed server | ~/.t3/userdata |

@@ -66,6 +66,11 @@ export const TerminalAttachInput = Schema.Struct({
   env: Schema.optional(TerminalEnvSchema),
   providerInstanceId: Schema.optional(ProviderInstanceId),
   restartIfNotRunning: Schema.optional(Schema.Boolean),
+  /**
+   * The client will acknowledge the snapshots and output it has handled, and is held
+   * back by the MC when it falls behind (`HalC2.Terminal.OutputWindow`).
+   */
+  acks: Schema.optional(Schema.Boolean),
 });
 export type TerminalAttachInput = typeof TerminalAttachInput.Type;
 

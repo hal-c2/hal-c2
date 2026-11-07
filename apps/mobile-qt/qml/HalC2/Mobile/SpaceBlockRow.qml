@@ -6,14 +6,20 @@ import QtQuick.Layouts
 import HalC2.Shell
 import HalC2.Bricks
 
-// One block of the open page in the phone layout. Its text is edited where it
-// is and goes to the MC when the editor loses focus; a checklist item is ticked
+// One block of the open page in the phone layout. Its text is drawn as Markdown
+// (the chat's Markdown brick, untrusted); a tap on a link opens it, and a tap
+// anywhere else edits its source where it is, which goes to the MC when the
+// editor loses focus and is drawn again. A checklist item is ticked
 // by its box, a link opens its page and an image shows above its caption. Moving,
 // deleting and commenting are in the menu at its end, where a desktop's hover would
 // have them. A chart is not written in: it is drawn, and asked for again from the menu.
 // A raw block is Markdown the page keeps as written: shown and edited as its source,
 // in a fixed-width face, line for line, scrolled sideways rather than wrapped. A table
-// and a code block show so too until they are drawn as such (#854). A "mermaid" code
+// and a code block are drawn as the chat draws them and edited as such a source
+// (#854), a list item is
+// drawn with its marker (#869), and a block the page does not draw yet shows what
+// the MC writes around its text (a list item's indent, an alert's kind, a divider, a footnote's label, a section's tags, math's
+// fences and an image's address, #869 and #877). A "mermaid" code
 // block, or a raw block that is one "mermaid" fence, is drawn as its diagram instead,
 // with its source a tap away, and says under the source why when it can't be drawn.
 Rectangle {
@@ -44,8 +50,23 @@ Rectangle {
     readonly property int level: model.level ?? 2
     // A code block's language ("" for none).
     readonly property string language: model.language ?? ""
-    readonly property bool raw: kind === "raw" || kind === "table" || kind === "code"
-    readonly property bool editing: editor.activeFocus
+    // Edited as lines of source: Markdown kept as written, a table and code.
+    readonly property bool sourceKind: kind === "raw" || kind === "table" || kind === "code"
+    // Shown as its source now: a raw block always, a table or code while edited.
+    readonly property bool raw: sourceKind && editor !== null
+    // The Markdown the MC writes above, before, after and below the text (SpaceController).
+    readonly property string markdownAbove: model.markdownAbove ?? ""
+    readonly property string markdownLead: model.markdownLead ?? ""
+    readonly property string markdownTail: model.markdownTail ?? ""
+    readonly property string markdownBelow: model.markdownBelow ?? ""
+    // The bulleted and numbered lists a list item sits inside (SpaceController).
+    readonly property int listBullets: model.listBullets ?? 0
+    readonly property int listNumbers: model.listNumbers ?? 0
+    readonly property string mono: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
+    // The source editor: made while the user edits a drawn block, and always
+    // for a block that is shown as its source.
+    readonly property TextEdit editor: editorLoader.item as TextEdit
+    readonly property bool editing: editor !== null && editor.activeFocus
     // The Mermaid source a "mermaid" code block holds, or a raw block's fence, or "":
     // drawn in place of the text until the user switches to the source, and what
     // they write there once it is saved.
@@ -53,6 +74,25 @@ Rectangle {
                                         : kind === "raw" ? mermaidOf(text) : ""
     property bool diagramSource: false
     readonly property bool diagramShown: diagramCode.length > 0 && diagram.drawn && !diagramSource
+    // The block shows text: a link, a chart, what an update wrote, a divider,
+    // a section's end and a drawn diagram show something else.
+    readonly property bool textShown: !diagramShown && ["subpage_link", "chart", "generated", "divider", "details_end"].indexOf(kind) < 0
+    // Text drawn as Markdown while it is not edited (as the desktop's SpaceBlock
+    // draws it): a raw block is its source, a diagram's or math's code is drawn
+    // otherwise (or is its source), and an image's caption and a section's
+    // summary sit between Markdown the MC writes on their line.
+    readonly property bool drawn: textShown && kind !== "raw" && !(kind === "code" && (diagramCode.length > 0 || language === "math")) && kind !== "details" && kind !== "image"
+    // The user is writing in a drawn block: its source shows.
+    property bool sourceShown: false
+    // A drawn bullet or numbered item has its marker drawn with its text, as
+    // the chat draws a list; the lead keeps the indent that nests it. A text
+    // the brick would read out of the item keeps its marker in the lead.
+    readonly property string marker: drawn && editor === null && (kind === "bullet" || kind === "numbered") && !leavesItem(markdownLead.replace(/^ +/, ""), text) ? markdownLead.replace(/^ +/, "") : ""
+    // What the brick draws: an item's further lines are indented under its
+    // marker, so a second paragraph stays in the item.
+    // Code is drawn inside a fence longer than any it holds.
+    readonly property string drawnSource: kind === "code" ? fenced(text, language)
+                                        : marker === "" ? text : marker + text.replace(/\n/g, "\n" + " ".repeat(marker.length))
 
     signal menuRequested
     signal linkOpened
@@ -65,17 +105,63 @@ Rectangle {
         return fence ? fence[2] : "";
     }
 
+    // `code` in a backtick fence naming `language`, longer than any fence in it
+    // (as the desktop's SpaceBlock writes it).
+    function fenced(code, language) {
+        let ticks = 3;
+        for (const line of code.split("\n")) {
+            const fence = /^ {0,3}(`{3,})/.exec(line);
+            if (fence)
+                ticks = Math.max(ticks, fence[1].length + 1);
+        }
+        const fence = "`".repeat(ticks);
+        return fence + language + "\n" + code + "\n" + fence;
+    }
+
     function commit() {
-        if (kind !== "subpage_link" && kind !== "chart" && kind !== "generated" && editor.text !== text)
+        if (editor !== null && kind !== "subpage_link" && kind !== "chart" && kind !== "generated" && editor.text !== text)
             Shell.dispatch("space.block.update", { blockId: blockId, text: editor.text });
+    }
+
+    // The link a drawn block opens: the web, mail and the app's own, which
+    // Shell.openExternal opens. A path or an in-page anchor is text to edit.
+    function openable(link) {
+        return /^(https?|mailto|hal-c2):/i.test(link) ? link : "";
+    }
+
+    // Whether an item's text, after its marker, is Markdown that is no list
+    // item: a rule of the bullet's own character (`- ---`), a quote, a fence or
+    // a table, read as js/markdown.js reads one: a row with a `|` over a
+    // delimiter row of as many cells.
+    function leavesItem(marker, text) {
+        const lines = text.split("\n");
+        const cells = row => row.trim().replace(/\\\|/g, "").replace(/^\||\|$/g, "").split("|").length;
+        const table = lines.length > 1 && lines[0].includes("|") && /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/.test(lines[1]) && cells(lines[0]) === cells(lines[1]);
+        return table || /^[ \t]{0,3}(>|```|~~~)/.test(lines[0]) || /^(-{3,}|\*{3,}|_{3,})$/.test((marker + lines[0]).replace(/[ \t]/g, ""));
+    }
+
+    // Shows a drawn block's source to edit, the caret near (x, y) in the drawn
+    // text, or at its end with no point.
+    function edit(x, y) {
+        sourceShown = true;
+        editor.forceActiveFocus();
+        if (x === undefined) {
+            editor.cursorPosition = editor.length;
+        } else {
+            const at = editor.mapFromItem(drawnLoader, x, y);
+            editor.cursorPosition = editor.positionAt(at.x, at.y);
+        }
     }
 
     // What the MC wrote shows, and a diagram is drawn again, unless the user is
     // writing here.
     onTextChanged: {
-        if (editor.activeFocus)
+        // The editor's focus, not `editing`: a write it makes as it loses
+        // the keyboard lands before that follows.
+        if (editor !== null && editor.activeFocus)
             return;
-        editor.text = text;
+        if (editor !== null)
+            editor.text = text;
         diagramSource = false;
     }
     // Scrolled away or the screen left mid-edit: what was written still counts.
@@ -93,18 +179,6 @@ Rectangle {
         anchors.rightMargin: 4
         spacing: 4
 
-        CheckBox {
-            objectName: "spaceTick:" + row.text
-            visible: row.kind === "checklist"
-            enabled: !row.readOnly
-            checked: row.checked
-            Accessible.name: row.text
-            onToggled: {
-                Shell.dispatch("space.block.setChecked", { blockId: row.blockId, checked: checked });
-                checked = Qt.binding(() => row.checked);
-            }
-        }
-
         ColumnLayout {
             Layout.fillWidth: true
             Layout.alignment: Qt.AlignVCenter
@@ -115,7 +189,8 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.topMargin: 8
                 Layout.preferredHeight: picture.height
-                visible: row.kind === "image"
+                // An image by its address is never fetched: its caption and address show instead.
+                visible: row.kind === "image" && row.imageId.length > 0
 
                 SpaceBlockImage {
                     id: picture
@@ -131,61 +206,196 @@ Rectangle {
                 }
             }
 
-            // A raw block's lines keep their length: it scrolls sideways, the others wrap.
-            Flickable {
-                id: scroller
+            Label {
+                objectName: "spaceMarkdownAbove:" + row.text
+                visible: row.markdownAbove.length > 0 && source.visible
+                text: row.markdownAbove
+                color: Theme.palette.color("textMuted", "#a1a1aa")
+                font.family: row.mono
+                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.features: { "liga": 0, "calt": 0 }
+            }
+
+            // The text, and what the MC writes before and after it on its line.
+            RowLayout {
+                id: source
 
                 Layout.fillWidth: true
-                Layout.preferredHeight: editor.height
                 visible: row.kind !== "subpage_link" && row.kind !== "chart" && row.kind !== "generated" && !row.diagramShown
-                contentWidth: editor.width
-                contentHeight: editor.height
-                flickableDirection: Flickable.HorizontalFlick
-                boundsBehavior: Flickable.StopAtBounds
-                interactive: contentWidth > width
-                clip: row.raw
+                spacing: 4
 
-                TextEdit {
-                    id: editor
+                // Under the line above, as the MC writes it: a section's summary under its tag.
+                Label {
+                    objectName: "spaceMarkdownLead:" + row.text
+                    visible: text.length > 0
+                    text: row.markdownLead.slice(0, row.markdownLead.length - row.marker.length)
+                    color: Theme.palette.color("textMuted", "#a1a1aa")
+                    font.family: row.mono
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.features: { "liga": 0, "calt": 0 }
+                }
 
-                    objectName: "spaceBlockEditor:" + row.text
-                    width: row.raw ? Math.max(scroller.width, implicitWidth) : scroller.width
-                    readOnly: row.readOnly
-                    textFormat: TextEdit.PlainText
-                    wrapMode: row.raw ? TextEdit.NoWrap : TextEdit.Wrap
-                    color: Theme.palette.color("text", "#e4e4e7")
-                    selectionColor: Theme.palette.color("accent", "#2563eb")
-                    opacity: row.kind === "checklist" && row.checked ? 0.6 : 1
-                    font.family: row.raw ? (Theme.fontMono.length > 0 ? Theme.fontMono : "monospace") : Application.font.family
-                    // A second-level heading is the usual one; a first is larger and the rest step down.
-                    font.pixelSize: Math.round((row.kind === "heading" ? [24, 20, 18, 17, 16, 15][Math.min(Math.max(row.level, 1), 6) - 1] : row.raw ? 13 : 15) * Theme.fontScale)
-                    font.weight: row.kind === "heading" ? Font.DemiBold : Font.Normal
-                    font.strikeout: row.kind === "checklist" && row.checked
-                    Accessible.name: qsTr("Block text")
-                    Component.onCompleted: text = row.text
-                    onActiveFocusChanged: {
-                        if (activeFocus)
-                            return;
-                        row.commit();
-                        text = row.text;
-                    }
-                    // Typing in raw Markdown past the edge brings the cursor back into view.
-                    onCursorRectangleChanged: {
-                        if (!row.raw || !activeFocus)
-                            return;
-                        if (cursorRectangle.x < scroller.contentX)
-                            scroller.contentX = cursorRectangle.x;
-                        else if (cursorRectangle.x + cursorRectangle.width > scroller.contentX + scroller.width)
-                            scroller.contentX = cursorRectangle.x + cursorRectangle.width - scroller.width;
-                    }
-                    // A heading or a checklist item is one line.
-                    Keys.onReturnPressed: event => {
-                        if (row.kind === "heading" || row.kind === "checklist")
-                            editor.focus = false;
-                        else
-                            event.accepted = false;
+                CheckBox {
+                    objectName: "spaceTick:" + row.text
+                    visible: row.kind === "checklist"
+                    enabled: !row.readOnly
+                    checked: row.checked
+                    Accessible.name: row.text
+                    onToggled: {
+                        Shell.dispatch("space.block.setChecked", { blockId: row.blockId, checked: checked });
+                        checked = Qt.binding(() => row.checked);
                     }
                 }
+
+                // A raw block's lines keep their length: it scrolls sideways, the others wrap.
+                Flickable {
+                    id: scroller
+
+                    Layout.fillWidth: true
+                    // A divider and a section's end have no text: their Markdown is all they show.
+                    visible: row.textShown
+                    // Up to its text's width when something follows it on its line.
+                    Layout.maximumWidth: row.markdownTail.length > 0 ? Math.max(40, (row.editor?.implicitWidth ?? 0) + 2) : Number.POSITIVE_INFINITY
+                    Layout.preferredHeight: contentHeight
+                    contentWidth: row.editor !== null ? editorLoader.width : width
+                    contentHeight: row.editor !== null ? editorLoader.height : drawnLoader.height
+                    flickableDirection: Flickable.HorizontalFlick
+                    boundsBehavior: Flickable.StopAtBounds
+                    interactive: contentWidth > width
+                    clip: row.raw
+
+                    // The text drawn, at its size and with its tick's strikeout: a tap
+                    // on a link opens it, anywhere else edits the source, as a
+                    // keyboard's focus does.
+                    Loader {
+                        id: drawnLoader
+
+                        active: row.drawn
+                        visible: row.editor === null
+                        width: scroller.width
+
+                        sourceComponent: FocusScope {
+                            height: Math.max(drawnText.implicitHeight, 24)
+                            activeFocusOnTab: true
+                            Accessible.role: Accessible.EditableText
+                            Accessible.name: qsTr("Block text")
+                            onActiveFocusChanged: {
+                                if (activeFocus)
+                                    row.edit();
+                            }
+
+                            Markdown {
+                                id: drawnText
+
+                                objectName: "spaceBlockText:" + row.text
+                                width: parent.width
+                                selectable: false
+                                text: row.drawnSource
+                                bulletDepth: row.listBullets
+                                numberDepth: row.listNumbers
+                                textColor: Theme.palette.color("text", "#e4e4e7")
+                                fontSize: Math.round((row.kind === "heading" ? [24, 20, 18, 17, 16, 15][Math.min(Math.max(row.level, 1), 6) - 1] : 15) * Theme.fontScale)
+                                fontWeight: row.kind === "heading" ? Font.DemiBold : Font.Normal
+                                struck: row.kind === "checklist" && row.checked
+                                opacity: row.kind === "checklist" && row.checked ? 0.6 : 1
+                            }
+
+                            TapHandler {
+                                onTapped: eventPoint => {
+                                    // The brick's own controls (a code block's copy, a table's) answer their tap.
+                                    if (drawnText.controlAt(eventPoint.position.x, eventPoint.position.y))
+                                        return;
+                                    const link = row.openable(drawnText.linkAt(eventPoint.position.x, eventPoint.position.y));
+                                    if (link.length > 0)
+                                        Shell.openExternal(link);
+                                    else
+                                        row.edit(eventPoint.position.x, eventPoint.position.y);
+                                }
+                            }
+                        }
+                    }
+
+                    Loader {
+                        id: editorLoader
+
+                        // A diagram keeps its source while it is drawn, a tap away.
+                        active: (row.textShown || row.diagramCode.length > 0) && (!row.drawn || row.sourceShown)
+                        sourceComponent: editorComponent
+                    }
+
+                    Component {
+                        id: editorComponent
+
+                        TextEdit {
+                            id: sourceEditor
+
+                            objectName: "spaceBlockEditor:" + row.text
+                            width: row.sourceKind ? Math.max(scroller.width, implicitWidth) : scroller.width
+                            readOnly: row.readOnly
+                            textFormat: TextEdit.PlainText
+                            wrapMode: row.sourceKind ? TextEdit.NoWrap : TextEdit.Wrap
+                            color: Theme.palette.color("text", "#e4e4e7")
+                            selectionColor: Theme.palette.color("accent", "#2563eb")
+                            opacity: row.kind === "checklist" && row.checked ? 0.6 : 1
+                            font.family: row.sourceKind ? (Theme.fontMono.length > 0 ? Theme.fontMono : "monospace") : Application.font.family
+                            // A second-level heading is the usual one; a first is larger and the rest step down.
+                            font.pixelSize: Math.round((row.kind === "heading" ? [24, 20, 18, 17, 16, 15][Math.min(Math.max(row.level, 1), 6) - 1] : row.sourceKind ? 13 : 15) * Theme.fontScale)
+                            font.weight: row.kind === "heading" ? Font.DemiBold : Font.Normal
+                            font.strikeout: row.kind === "checklist" && row.checked
+                            Accessible.name: qsTr("Block text")
+                            Component.onCompleted: text = row.text
+                            // Leaving it writes it, and a drawn block is drawn again.
+                            onActiveFocusChanged: {
+                                if (activeFocus)
+                                    return;
+                                row.commit();
+                                text = row.text;
+                                row.sourceShown = false;
+                            }
+                            // Typing in raw Markdown past the edge brings the cursor back into view.
+                            onCursorRectangleChanged: {
+                                if (!row.sourceKind || !activeFocus)
+                                    return;
+                                if (cursorRectangle.x < scroller.contentX)
+                                    scroller.contentX = cursorRectangle.x;
+                                else if (cursorRectangle.x + cursorRectangle.width > scroller.contentX + scroller.width)
+                                    scroller.contentX = cursorRectangle.x + cursorRectangle.width - scroller.width;
+                            }
+                            // A heading or a checklist item is one line.
+                            Keys.onReturnPressed: event => {
+                                if (row.kind === "heading" || row.kind === "checklist")
+                                    sourceEditor.focus = false;
+                                else
+                                    event.accepted = false;
+                            }
+                        }
+                    }
+                }
+
+                Label {
+                    objectName: "spaceMarkdownTail:" + row.text
+                    visible: row.markdownTail.length > 0
+                    text: row.markdownTail
+                    color: Theme.palette.color("textMuted", "#a1a1aa")
+                    font.family: row.mono
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.features: { "liga": 0, "calt": 0 }
+                }
+
+                Item {
+                    Layout.fillWidth: true
+                    visible: row.markdownTail.length > 0 || !scroller.visible
+                }
+            }
+
+            Label {
+                objectName: "spaceMarkdownBelow:" + row.text
+                visible: row.markdownBelow.length > 0 && source.visible
+                text: row.markdownBelow
+                color: Theme.palette.color("textMuted", "#a1a1aa")
+                font.family: row.mono
+                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.features: { "liga": 0, "calt": 0 }
             }
 
             // The diagram in place of its source, or why it isn't drawn under it.

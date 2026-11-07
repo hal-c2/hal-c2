@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
+import "js/settingsPages.js" as Pages
 
 // This machine's cluster, a native settings page (ClusterController publishes
 // `cluster`): its members, an invite link for another machine, joining another
@@ -22,23 +23,23 @@ Rectangle {
     readonly property bool canChange: !busy && !needsAdmin
     // Connected members that run another version than this machine.
     readonly property var behind: clustered ? status.members.filter(m => m.connected && m.version && m.version !== status.version) : []
-    readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color foreground: Theme.palette.color("ink", "#e4e4e7")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
 
     color: Theme.palette.color("canvas", "#0b0b0d")
 
     component Heading: Label {
         Layout.fillWidth: true
-        Layout.topMargin: 12
+        Layout.topMargin: Theme.space.md
         color: page.foreground
-        font.pixelSize: Math.round(14 * Theme.fontScale)
+        font.pixelSize: Theme.type.title.size
         font.weight: Font.DemiBold
     }
 
     component Note: Label {
         Layout.fillWidth: true
         color: page.muted
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
 
@@ -48,22 +49,36 @@ Rectangle {
         required property string label
         required property string detail
         property string memberId: ""
+        // Switched off: kept, cut off from the cluster until switched on.
+        property bool off: false
 
         Layout.fillWidth: true
-        spacing: 8
+        spacing: Theme.space.sm
 
         Label {
             Layout.fillWidth: true
             text: memberRow.label
             color: page.foreground
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             elide: Text.ElideRight
         }
 
         Label {
             text: memberRow.detail
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
+        }
+
+        ShellSwitch {
+            objectName: "clusterMemberSwitch"
+            visible: memberRow.memberId.length > 0
+            enabled: page.canChange
+            checked: !memberRow.off
+            Accessible.name: qsTr("Switch %1 on or off").arg(memberRow.label)
+            onToggled: Shell.dispatch("cluster.switch", {
+                id: memberRow.memberId,
+                on: checked
+            })
         }
 
         ShellButton {
@@ -79,18 +94,20 @@ Rectangle {
     }
 
     Flickable {
+        id: flick
+
         anchors.fill: parent
-        contentHeight: column.implicitHeight + 48
+        contentHeight: column.implicitHeight + 2 * Theme.space.xl
         clip: true
         boundsBehavior: Flickable.StopAtBounds
 
         ColumnLayout {
             id: column
 
-            x: 24
-            y: 24
-            width: Math.min(640, parent.width - 48)
-            spacing: 8
+            x: Pages.columnX(flick.width, Theme.space.xl)
+            y: Theme.space.xl
+            width: Pages.columnWidth(flick.width, Theme.space.xl)
+            spacing: Theme.space.sm
 
             SettingsBreadcrumb {
                 Layout.fillWidth: true
@@ -104,11 +121,11 @@ Rectangle {
             Label {
                 objectName: "clusterNotice"
                 Layout.fillWidth: true
-                Layout.topMargin: 4
+                Layout.topMargin: Theme.space.xs
                 visible: page.notice !== null
                 text: page.notice ? page.notice.text : ""
                 color: page.notice && page.notice.kind === "error" ? Theme.palette.color("errorForeground", "#f87171") : Theme.palette.color("success", "#22c55e")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -145,11 +162,12 @@ Rectangle {
                     required property var modelData
                     label: modelData.label
                     detail: {
-                        const state = modelData.connected ? qsTr("connected") : qsTr("offline");
+                        const state = modelData.off ? qsTr("off") : modelData.connected ? qsTr("connected") : qsTr("offline");
                         const other = modelData.version && modelData.version !== page.status.version;
                         return other ? qsTr("%1, on %2").arg(state).arg(modelData.version) : state;
                     }
                     memberId: modelData.id
+                    off: modelData.off === true
                 }
             }
 
@@ -180,7 +198,7 @@ Rectangle {
             }
 
             RowLayout {
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ShellButton {
                     objectName: "clusterInvite"
@@ -203,7 +221,7 @@ Rectangle {
             RowLayout {
                 Layout.fillWidth: true
                 visible: page.invite !== null
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ShellTextField {
                     objectName: "clusterInviteLink"
@@ -225,7 +243,7 @@ Rectangle {
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ShellTextField {
                     id: joinLink

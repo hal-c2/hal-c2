@@ -147,20 +147,20 @@ Feature: Terminal tabs and splits
       When the user closes a split group of three terminals
       Then the user is asked once to close 3 terminals, naming each of them
 
-    @backlog @desktop
+    @desktop
     Scenario: Closing the right-most active terminal activates the one before it
       Given the thread has terminals 1, 2 and 3 with terminal 3 active
       When the user closes the active terminal
       Then terminal 2 is active
 
-    @backlog @desktop
+    @desktop
     Scenario: Closing a terminal that is not active keeps the active one
       Given the thread has terminals 1, 2 and 3 with terminal 3 active
       When the user closes terminal 1
       Then terminal 3 is still active
       And its group and place in the row are unchanged
 
-    @backlog @desktop
+    @desktop
     Scenario: The terminal list names each group and how many terminals it holds
       Given the thread has one terminal on its own, a group of two side by side, and a stacked group of three
       When the user looks at the terminal list
@@ -168,22 +168,22 @@ Feature: Terminal tabs and splits
       And each label shows how many terminals the group holds
       And choosing a group's label makes that group's terminal active
 
-    @backlog @desktop
+    @desktop
     Scenario: A single terminal shows its actions without a terminal list
       Given the thread has one terminal
-      Then the terminal offers split, new and close actions over its own corner
+      Then the terminal offers split, new and close actions above its own corner
       And no terminal list is shown
       When the user opens a second terminal
       Then the terminal list appears beside the terminals with the same actions
 
-    @backlog @desktop
+    @desktop
     Scenario: Clicking a terminal in a split makes it the active one
       Given the thread has two terminals side by side with the first active
       When the user clicks inside the second terminal
       Then the second terminal is active and has the keyboard
       And closing the active terminal now closes the second terminal
 
-    @backlog @desktop
+    @desktop
     Scenario: A terminal the user just closed does not come back from a late list
       Given the thread has terminals 1 and 2
       When the user closes terminal 1
@@ -192,7 +192,7 @@ Feature: Terminal tabs and splits
       When terminal 1 is opened again later
       Then terminal 1 appears in the terminal list again
 
-    @backlog @desktop
+    @desktop
     Scenario: A new terminal is not dropped while the MC's list catches up
       Given the user opens a second terminal and the MC's list of terminals still shows only the first
       Then the second terminal stays in the terminal list
@@ -204,7 +204,7 @@ Feature: Terminal tabs and splits
       When the user returns to one of them
       Then its terminals show their live output without replaying history
 
-    @backlog @mobile
+    @mobile
     Scenario: The user switches between a thread's terminals on the phone
       Given a thread with two terminals
       When the user picks the second terminal on the phone

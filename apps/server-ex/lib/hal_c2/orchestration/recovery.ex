@@ -21,6 +21,11 @@ defmodule HalC2.Orchestration.Recovery do
   interrupted settles once `continue/0` has seen whether the child goes on.
 
   Only threads whose sidebar row shows an active run or background work are opened.
+
+  A clean stop settles the same way as it goes (`shut_down/0`, from
+  `HalC2.Orchestration.Recovery.Shutdown`), once the runtimes have stopped, so no thread
+  is left running while the MC is down; what it would have continued is kept for the
+  next boot. Work a restart or a shutdown cut off says which ended it (`statusDetail`).
   """
 
   require Logger
@@ -31,6 +36,8 @@ defmodule HalC2.Orchestration.Recovery do
 
   @active_runs ~w(preparing queued starting running waiting)
   @active ~w(pending preparing queued starting running waiting active)
+  # What a clean stop settled and would continue, for the next boot.
+  @shut_down_key "recovery:shutdown"
 
   @doc false
   # Settles before the MC takes requests, so no client sees a stale "running".
@@ -47,21 +54,13 @@ defmodule HalC2.Orchestration.Recovery do
     leaving(false)
     survivors = reattachable()
     :persistent_term.put({__MODULE__, :survivors}, survivors)
-
-    threads =
-      for {{mc, thread_id}, {"thread", row}} <- HalC2.Shell.rows(),
-          mc == node(),
-          not is_map_key(survivors, thread_id),
-          # `status` is the latest run's, so a cancelled queued run can hide a running
-          # one behind it; `activityRunStatus` is the latest active run's.
-          row["status"] in @active_runs or row["activityRunStatus"] != nil or
-            (row["pendingBackgroundTasks"] || []) != [],
-          do: thread_id
+    threads = active_threads(Map.keys(survivors))
 
     # Before any run is interrupted: a child still running when the MC stopped is not
     # one that ended, and `continue/0` may resume it to report as it should.
     reconciled = Map.new(threads, &{&1, HalC2.Orchestration.Delegation.reconcile(&1)})
-    :persistent_term.put({__MODULE__, :delegating}, threads)
+    {shut_down, shut_down_threads} = take_shut_down()
+    :persistent_term.put({__MODULE__, :delegating}, Enum.uniq(threads ++ shut_down_threads))
 
     settled =
       for thread_id <- threads,
@@ -69,6 +68,10 @@ defmodule HalC2.Orchestration.Recovery do
           count = count + reconciled[thread_id],
           count > 0,
           do: {thread_id, continuable}
+
+    # A thread settled again here (its program survived the stop but not the boot)
+    # goes by what this boot found.
+    settled = settled ++ Enum.reject(shut_down, &List.keymember?(settled, elem(&1, 0), 0))
 
     # Their sidebar rows too, or a client connecting right away would see "running".
     for {thread_id, _} <- settled, do: HalC2.Streams.flush_shell(thread_id)
@@ -90,6 +93,97 @@ defmodule HalC2.Orchestration.Recovery do
 
     if settled != [], do: Logger.info("settled interrupted turns in #{length(settled)} threads")
     Enum.map(settled, &elem(&1, 0))
+  end
+
+  # This MC's threads whose sidebar row shows an active run or background work, but those
+  # in `except`.
+  defp active_threads(except) do
+    for {{mc, thread_id}, {"thread", row}} <- HalC2.Shell.rows(),
+        mc == node(),
+        thread_id not in except,
+        # `status` is the latest run's, so a cancelled queued run can hide a running
+        # one behind it; `activityRunStatus` is the latest active run's.
+        row["status"] in @active_runs or row["activityRunStatus"] != nil or
+          (row["pendingBackgroundTasks"] || []) != [],
+        do: thread_id
+  end
+
+  @doc """
+  Settles, at a clean stop and once the provider runtimes have stopped, the turns of
+  threads whose program does not outlive the MC, saying the shutdown ended them. What
+  `continue/0` would do for them is kept for the next boot's `run/0`.
+  """
+  def shut_down do
+    going_on = for {thread_id, %{snapshot: %{}}} <- Durable.survivors_peek(), do: thread_id
+    # The sidebar rows trail their streams by a flush; bring them up to date first.
+    for stream_id <- Registry.select(HalC2.Streams.Registry, [{{:"$1", :_, :_}, [], [:"$1"]}]),
+        do: HalC2.Streams.flush_shell(stream_id)
+
+    settled =
+      for thread_id <- active_threads(going_on),
+          # One still up (a service an update added stops before them) ends its own.
+          not HalC2.Orchestration.IdleSessions.live?(thread_id),
+          {count, what} = settle(thread_id, :shutdown),
+          count > 0,
+          do: {thread_id, what}
+
+    for {thread_id, _} <- settled, do: HalC2.Streams.flush_shell(thread_id)
+
+    if settled != [] do
+      :ok = HalC2.Store.put_meta(@shut_down_key, JSON.encode!(Enum.map(settled, &encode/1)))
+      Logger.info("settled turns in #{length(settled)} threads before stopping")
+    end
+
+    :ok
+  end
+
+  defp encode({thread_id, what}) do
+    case what do
+      %{} = run ->
+        %{"thread" => thread_id, "continue" => run}
+
+      :requeued ->
+        %{"thread" => thread_id, "requeued" => true}
+
+      {:background, run, commands} ->
+        %{"thread" => thread_id, "background" => run, "commands" => commands}
+
+      nil ->
+        %{"thread" => thread_id}
+    end
+  end
+
+  defp decode(%{"thread" => thread_id} = entry) do
+    case entry do
+      %{"continue" => %{} = run} ->
+        {thread_id, run}
+
+      %{"requeued" => true} ->
+        {thread_id, :requeued}
+
+      %{"background" => %{} = run, "commands" => commands} ->
+        {thread_id, {:background, run, commands}}
+
+      _ ->
+        {thread_id, nil}
+    end
+  end
+
+  # What the last clean stop settled: `{[{thread, what}], threads}`, read once.
+  defp take_shut_down do
+    case HalC2.Store.meta(HalC2.Store.home_path(), @shut_down_key) do
+      nil ->
+        {[], []}
+
+      text ->
+        :ok = HalC2.Store.delete_meta(@shut_down_key)
+        entries = text |> JSON.decode!() |> Enum.map(&decode/1)
+        {Enum.reject(entries, &is_nil(elem(&1, 1))), Enum.map(entries, &elem(&1, 0))}
+    end
+  rescue
+    e ->
+      Logger.warning("could not read what the last stop settled: #{Exception.message(e)}")
+      {[], []}
   end
 
   # The programs that can go on: alive, and last saved on the very run the thread is on.
@@ -130,6 +224,9 @@ defmodule HalC2.Orchestration.Recovery do
   @doc false
   # Connects before the MC takes requests; `continue/0` acts on what failed.
   def start_reattach do
+    # Before the listener, so a page's agent asked after it is not the reconciliation's.
+    HalC2.Space.PageAgent.boot()
+
     :persistent_term.put({__MODULE__, :failed}, reattach())
     :ignore
   end
@@ -164,13 +261,19 @@ defmodule HalC2.Orchestration.Recovery do
   turn had finished and only the commands it left running in the background were
   ended (`run` is that turn's), or nil.
   """
-  def settle(thread_id) do
+  def settle(thread_id, trigger \\ :restart) do
+    capturing = capturing(thread_id)
+
     HalC2.Streams.transact(thread_id, :thread, fn state ->
-      changes = changes(state, Entities.now())
+      changes = changes(state, Entities.now(), trigger, capturing)
       requeued? = Enum.any?(StreamState.list(state, "run"), &unstarted?(state, &1))
 
       what =
-        if requeued?, do: :requeued, else: continuable(state) || ended_background(state)
+        cond do
+          requeued? -> :requeued
+          (latest_run(state) || %{})["id"] in capturing -> nil
+          true -> continuable(state) || ended_background(state)
+        end
 
       {changes, {length(changes), what}}
     end)
@@ -285,12 +388,31 @@ defmodule HalC2.Orchestration.Recovery do
       {"thread", thread} ->
         thread["archivedAt"] == nil and thread["deletedAt"] == nil and
           HalC2.Settings.for_project(thread["projectId"])["continueThreadsAfterServerUpdate"] ==
-            true and latest?(thread_id, run) and not HalC2.Space.PageAgent.stopping?(thread_id)
+            true and same_provider?(thread, run) and latest?(thread_id, run) and
+          not continued?(thread_id, run) and not HalC2.Space.PageAgent.stopping?(thread_id)
 
       _ ->
         false
     end
   end
+
+  # A thread set to another provider since would be continued on a conversation it left.
+  defp same_provider?(thread, run) do
+    instance = fn entity ->
+      (entity["modelSelection"] || %{})["instanceId"] || entity["providerInstanceId"]
+    end
+
+    instance.(thread) in [nil, instance.(run)]
+  end
+
+  # A recovery that ran again (a boot cut short after it asked) asks once.
+  defp continued?(thread_id, run),
+    do:
+      StreamState.fetch(
+        HalC2.Streams.state(thread_id),
+        "message",
+        "message:restart-continuation:#{run["id"]}"
+      ) != nil
 
   defp continuation(thread_id, run, text) do
     command = %{
@@ -315,12 +437,12 @@ defmodule HalC2.Orchestration.Recovery do
 
   defp background_text([command]),
     do:
-      "The server restarted, which stopped the background command `#{command}`. " <>
+      "The server stopped, which ended the background command `#{command}`. " <>
         "Start it again if you still need it, then continue where you left off."
 
   defp background_text(commands),
     do:
-      "The server restarted, which stopped these background commands: " <>
+      "The server stopped, which ended these background commands: " <>
         Enum.map_join(commands, ", ", &"`#{&1}`") <>
         ". Start them again if you still need them, then continue where you left off."
 
@@ -367,8 +489,40 @@ defmodule HalC2.Orchestration.Recovery do
         "activeAttemptId" => nil
       })
 
-  defp changes(state, at) do
+  # Runs whose provider turn ended but whose checkpoint the MC stopped capturing. The
+  # capture runs again at boot (`HalC2.Orchestration.Effects`) and completes the run,
+  # so the restart leaves them be (apps/server ProviderRuntimeRecovery.ts).
+  defp capturing(thread_id) do
+    for %{"type" => "checkpoint.capture", "status" => status, "args" => %{"runId" => run_id}} <-
+          HalC2.Orchestration.Effects.effects(thread_id),
+        status in ~w(pending running),
+        into: MapSet.new(),
+        do: run_id
+  end
+
+  # A kind's entities to settle. Messages of older runs too, read from disk a page
+  # at a time: an MC from before recovery settled runs could leave one streaming, or
+  # a steer on it, whose run has gone cold since.
+  defp entities(state, "message"),
+    do: state |> StreamState.rows(kinds: ["message"]) |> Stream.map(fn {_, id, m} -> {id, m} end)
+
+  defp entities(state, kind), do: StreamState.get(state, kind)
+
+  defp changes(state, at, trigger, capturing) do
     done = %{"status" => "interrupted", "completedAt" => at}
+
+    # What a capturing run still owns: itself, its attempts, provider turn, nodes and items.
+    left =
+      for {id, run} <- StreamState.get(state, "run"),
+          id in capturing,
+          attempt = StreamState.get(state, "run-attempt")[run["activeAttemptId"]] || %{},
+          own <- [id, attempt["providerTurnId"]],
+          own != nil,
+          into: MapSet.new(),
+          do: own
+
+    ended = if trigger == :shutdown, do: "shut down", else: "restarted"
+    detail = "Cancelled because the server #{ended} before the provider work completed."
 
     delegated =
       for {id, %{"origin" => "app_owned"}} <- StreamState.get(state, "subagent"),
@@ -411,7 +565,8 @@ defmodule HalC2.Orchestration.Recovery do
                  "status" => "interrupted",
                  "completedAt" => at,
                  "updatedAt" => at,
-                 "streaming" => false
+                 "streaming" => false,
+                 "statusDetail" => detail
                })
            )},
           {"message",
@@ -427,7 +582,7 @@ defmodule HalC2.Orchestration.Recovery do
                  "status" => "expired",
                  "responseCapability" => %{
                    "type" => "not_resumable",
-                   "reason" => "The server restarted before this runtime request was resolved."
+                   "reason" => "The server #{ended} before this runtime request was resolved."
                  },
                  "resolvedAt" => at
                })
@@ -437,7 +592,8 @@ defmodule HalC2.Orchestration.Recovery do
              do: Map.merge(&1, %{"status" => "idle", "updatedAt" => at})
            )}
         ],
-        {id, entity} <- StreamState.get(state, kind),
+        {id, entity} <- entities(state, kind),
+        id not in left and entity["runId"] not in capturing,
         next = fun.(entity),
         next != nil,
         patch = Patch.diff(entity, next),

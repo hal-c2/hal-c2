@@ -95,7 +95,7 @@ Item {
         }
 
         // Background: a project with an open thread on Codex.
-        function createPicker(instances) {
+        function createPicker(instances, favorites) {
             Shell.state = {
                 composer: Object.assign(Shell.defaultComposer(), {
                     selectedInstanceId: "codex",
@@ -103,6 +103,7 @@ Item {
                 }),
                 modelPicker: {
                     instances: instances,
+                    favorites: favorites ?? true,
                     shortcut: "Ctrl+Shift+M",
                     previousProvider: chord("arrowup", true),
                     nextProvider: chord("arrowdown", true),
@@ -232,12 +233,13 @@ Item {
             openPicker(picker);
             const row = inPicker(picker, "modelPickerRow:codex:gpt-5.5");
             compare(row.disabledReason, reason);
+            // Its star cannot be pressed.
+            compare(inPicker(picker, "modelPickerFavorite:codex:gpt-5.5").enabled, false);
             mouseClick(row);
             // The keyboard skips it too: Down from the chosen model wraps
-            // nowhere past it, and its star cannot be pressed.
+            // nowhere past it.
             keyClick(Qt.Key_Down);
             keyClick(Qt.Key_Return);
-            compare(inPicker(picker, "modelPickerFavorite:codex:gpt-5.5").enabled, false);
             compare(selections().includes("codex:gpt-5.5"), false);
         }
 
@@ -289,6 +291,19 @@ Item {
             tryCompare(picker, "view", "claudeAgent");
         }
 
+        // A picker without favorites (the images' prompt) leaves them off the
+        // rail for the keyboard too.
+        function test_the_rail_keys_skip_favorites_when_there_are_none() {
+            const picker = createPicker([codex(), claude()], false);
+            openPicker(picker);
+            keyClick(Qt.Key_Backtab, Qt.ShiftModifier);
+            tryCompare(inPicker(picker, "modelPickerProvider:codex"), "activeFocus", true);
+            keyClick(Qt.Key_Up);
+            tryCompare(inPicker(picker, "modelPickerProvider:claudeAgent"), "activeFocus", true);
+            keyClick(Qt.Key_Down);
+            tryCompare(inPicker(picker, "modelPickerProvider:codex"), "activeFocus", true);
+        }
+
         function test_the_user_jumps_to_a_model_by_its_number() {
             const picker = createPicker([codex(), claude()]);
             openPicker(picker);
@@ -322,6 +337,29 @@ Item {
 
         // The web row's parts: the short name, the provider line with its
         // sub-provider, the legacy fold and the empty search.
+        // A provider with more models than fit stops on a whole row, with a
+        // bar at the right edge saying there is more.
+        function test_a_long_model_list_stops_on_a_whole_row() {
+            const many = [];
+            for (let index = 1; index <= 12; ++index)
+                many.push(model("m" + index, "Model " + index));
+            const picker = createPicker([codex(many)]);
+            openPicker(picker);
+            const list = inPicker(picker, "modelPickerList");
+            tryVerify(() => list.count === 12);
+            const first = list.itemAtIndex(0);
+            const pitch = first.height + list.spacing;
+            compare((list.height + list.spacing) % pitch, 0);
+            // A thin bar at the right edge says there is more: at the top, then at the end.
+            const thumb = findChild(list, "scrollThumb");
+            verify(thumb.visible);
+            verify(Math.abs(thumb.y - Theme.space.xxs) < 0.5, "the bar starts at the top, not " + thumb.y);
+            verify(thumb.height < list.height - 2 * Theme.space.xxs);
+            verify(thumb.x >= list.width - Theme.space.sm, "the bar keeps to the rows' right padding");
+            list.positionViewAtEnd();
+            tryVerify(() => Math.abs(thumb.y + thumb.height - (list.height - Theme.space.xxs)) < 0.5, 2000, "the bar ends at the bottom, not " + thumb.y);
+        }
+
         function test_rows_follow_the_web_list() {
             const opencode = instance("opencode", "opencode", "OpenCode", [model("anthropic/claude-sonnet-4", "Anthropic: Claude Sonnet 4", {
                     shortName: "Claude Sonnet 4",

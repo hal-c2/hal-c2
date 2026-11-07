@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13253
+#   https://github.com/pingdotgg/t3code/pull/17901
+#   https://github.com/pingdotgg/t3code/pull/16322
+#   https://github.com/pingdotgg/t3code/pull/14103
+#   https://github.com/pingdotgg/t3code/pull/22495
 #   docs/user/source-control.md (providers, rescan)
 #   apps/web/src/components/settings/SourceControlSettings.tsx
 #   packages/contracts/src/rpc.ts (server.discoverSourceControl)
@@ -20,14 +25,14 @@ Feature: Source Control settings
     Then each version control and hosting tool is listed as available, missing or status unknown
     And each available tool shows its version
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: Revealing a signed-in account
     Given the GitHub CLI is signed in as "octocat"
     And GitHub reads "Authenticated" without the account name
     When the user reveals the account
     Then the account "octocat" is shown
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: Hiding a revealed account again
     Given the user revealed the GitHub account
     When the user hides it
@@ -64,7 +69,7 @@ Feature: Source Control settings
     When the panel loads
     Then the user is told "Could not scan the server environment"
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: A host that is not supported yet is marked coming soon
     When the panel loads
     Then hosts HAL-C2 cannot use yet are marked "Coming Soon"
@@ -85,6 +90,15 @@ Feature: Source Control settings
     When the user sets the automatic Git fetch interval to 0 seconds
     Then Git never fetches in the background
 
+  # Upstream #13253: a zero fetch interval also stops the fetch and pull on window focus.
+  @backlog @mc @desktop
+  Scenario: With fetching off, coming back to the window neither fetches nor pulls
+    Given the automatic Git fetch interval is 0 seconds
+    And the default branch is clean and was behind its remote when last fetched
+    When the user comes back to the window
+    Then Git does not fetch and the branch is not pulled
+    And the branch's local status still refreshes
+
   @tui
   Scenario: Seeing source control tools from the terminal client
     When the user opens source control settings in the terminal client
@@ -96,20 +110,20 @@ Feature: Source Control settings
     When the user opens Settings, Source Control
     Then the user is told to connect an environment to inspect its version control tools and hosting integrations
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Several environments show one machine's tools at a time
     Given the user is editing settings across "Laptop" and "Build box"
     When the panel loads
     Then the tools of "Laptop" are listed
     And the version control section is named after "Laptop"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The first scan shows placeholders and can be rescanned only once it ends
     When the panel is still running its first scan
     Then placeholders stand in for the tools
     And rescanning is not possible until the scan ends
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A hosting tool says why it cannot be used yet
     Given the hosting tool "GitLab" <state>
     When the panel loads
@@ -123,20 +137,20 @@ Feature: Source Control settings
       | is installed but its sign-in could not be checked        | Could not verify GitLab, with the reason or the install hint               |
       | is not on this server                                    | Not available on this server, with its install hint                         |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A tool's availability is shown, not changed
     When the user looks at a tool's availability
     Then it shows on only when the tool is available and, for a hosting tool, signed in
     And the user cannot change it from the panel
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Git's details open from its row or from a search for the fetch interval
     Given the panel lists Git
     When the user searches settings for the automatic fetch interval
     Then Git's details open with the interval in view
     And no other tool offers details
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A fetch interval is kept as whole seconds from zero
     When the user enters <typed> as the automatic Git fetch interval
     Then it is kept as <kept> seconds
@@ -148,23 +162,107 @@ Feature: Source Control settings
       | -5    | 0    |
       | empty | 0    |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A custom fetch interval makes the background profile advanced
     Given the background activity profile is "Balanced"
     When the user sets a fetch interval that is not the profile's
     Then General settings show the background activity profile as advanced
     And the shared background activity policy still decides whether a fetch may run when the timer fires
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Scanning can be retried from the empty state
     Given nothing was detected on the environment
     When the user chooses to scan from the empty state
     Then the environment is scanned again
     And scanning cannot be started twice while it runs
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Hosting tools are listed alone when there is no version control tool
     Given the environment reports hosting tools but no version control tool
     When the panel loads
     Then the hosting tools are listed
     And the rescan control is on that list
+
+  # Bitbucket credentials entered in Settings instead of the server's environment variables.
+  # The tokens live in the environment's secret store and never reach a client.
+  # Upstream #14103: Bitbucket credentials are saved from Source Control settings
+  @backlog @desktop @mobile
+  Scenario: A Bitbucket access token is saved from Source Control settings
+    Given Bitbucket is not configured on the environment
+    When the user opens Bitbucket and saves an access token
+    Then Bitbucket is configured on the environment without a restart
+    And the token is shown as a saved, masked value
+
+  # Upstream #14103: Bitbucket credentials are saved from Source Control settings
+  @backlog @desktop @mobile
+  Scenario: Saving a Bitbucket sign-in method clears the other one
+    Given Bitbucket has a saved API token and an Atlassian account email
+    When the user saves an access token
+    Then the API token and the email are cleared
+
+  # Upstream #14103: Bitbucket credentials are saved from Source Control settings
+  @backlog @desktop @mobile
+  Scenario: Removing Bitbucket credentials leaves Bitbucket unconfigured
+    Given Bitbucket has a saved access token
+    When the user removes the Bitbucket credentials
+    Then Bitbucket is not configured on the environment
+
+  # Upstream #14103: Bitbucket credentials are saved from Source Control settings
+  @backlog @mc @priority-high
+  Scenario: A saved Bitbucket token stays out of the settings file and every client payload
+    Given the user saved a Bitbucket API token on the environment
+    When a client reads the server settings
+    Then the client learns only that a token is set
+    And the token is not written to the settings file
+
+  # Upstream #16322: choose the GitHub account per host
+  @backlog @shared
+  Scenario: The user chooses which GitHub account an MC uses for each host
+    Given the user is signed in to GitHub as "work" and "personal" on one host
+    When the user picks "work" for that host
+    Then the MC uses "work" for that host's requests from then on
+    And a host turned off in settings refuses its requests and says where to turn it on
+
+  # Upstream #16322: a GitHub token is saved in Settings
+  @backlog @mc
+  Scenario: GitHub works from a saved token without the GitHub CLI
+    Given the user saved a GitHub token
+    When the MC talks to GitHub
+    Then it uses the token and does not need the GitHub CLI
+
+  # Upstream #17901: host settings live on each host definition, with a GitCafe token
+  @backlog @mc @shared
+  Scenario: A GitCafe token is saved from Source Control settings
+    Given GitCafe is not signed in through its CLI or environment
+    When the user saves a GitCafe token
+    Then GitCafe works at once, using the saved token before any from the environment or the CLI
+    And the token is only sent to git.cafe, never to its staging host
+
+  # Upstream #22495: creating a GitCafe repository or pull request still needed the cafe CLI
+  # when a token covered everything else.
+  @backlog @mc @priority-low
+  Scenario: A GitCafe token alone creates repositories and pull requests
+    Given the user saved a GitCafe token and the cafe CLI is not installed
+    When the user publishes a project as a new GitCafe repository and opens a pull request from a fork
+    Then the repository and the pull request are created
+
+  # Upstream #17901: host settings live on each host definition, with a GitCafe token
+  @backlog @mc @shared
+  Scenario: A host's saved secret is never shown back
+    Given the user saved a secret for a source control host
+    When the user opens that host's settings on any client
+    Then the field says a secret is saved without showing it
+
+  # Upstream #17901: host settings live on each host definition, with a GitCafe token
+  @backlog @mc @shared @priority-low
+  Scenario: Removing a host's settings clears them
+    Given a source control host has saved settings and a token
+    When the user removes that host's settings
+    Then the host's settings and token are gone and the host falls back to its environment or CLI sign-in
+
+  # Upstream #17901: host settings live on each host definition, with a GitCafe token
+  @backlog @mc @priority-low
+  Scenario: Settings of a host this MC does not know are kept
+    Given the settings file holds settings for a source control host this MC does not ship
+    When the MC saves other settings
+    Then that host's settings are still in the file

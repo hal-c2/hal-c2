@@ -1,5 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18143
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/23899
+#   https://github.com/pingdotgg/t3code/pull/22850
 #   apps/server-ex/lib/hal_c2/mcp/tools/queue.ex (hal_c2_queue_list, hal_c2_queue_read, hal_c2_queue_edit,
 #     hal_c2_queue_cancel, hal_c2_queue_reorder, hal_c2_queue_promote_to_steer, hal_c2_pending_request_list,
 #     hal_c2_pending_request_read, hal_c2_pending_request_respond)
@@ -71,6 +74,20 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
     Given the agent of "t2" asked for approval to run a command
     When the agent of "caller" responds to that request
     Then it fails with code "invalid_request" and "The pending user-input request was not found."
+
+  # Upstream #22850: every request no longer pending was reported as not found.
+  @backlog @mc
+  Scenario Outline: Answering a question that is no longer pending says why
+    Given the agent of "t2" asked the user a question
+    And <state>
+    When the agent of "caller" answers it
+    Then it fails saying "<message>"
+
+    Examples:
+      | state                                | message                                                  |
+      | the user already answered it          | The user-input request was already answered.             |
+      | it expired                            | The user-input request is no longer pending (expired).   |
+      | it was cancelled                      | The user-input request is no longer pending (cancelled). |
 
   @mc
   Scenario: Listing and reading projects
@@ -192,6 +209,20 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
       | repository and number on the project's host     |
       | host, repository and number                     |
 
+  # Upstream #23899: GitCafe's own address for a pull request is /pull/<n> (/pulls/<n> redirects
+  # to it), and the link, unlink and watch tools refused the address a user copies.
+  @backlog @mc @priority-low
+  Scenario Outline: An agent links a GitCafe pull request by either of its addresses
+    When the agent of "caller" links the pull request "<url>"
+    Then pull request 42 of "team/shop" on "git.cafe" is linked to "caller"
+    And the same address can be unlinked and watched
+
+    Examples:
+      | url                                       |
+      | https://git.cafe/team/shop/pull/42        |
+      | https://git.cafe/team/shop/pulls/42       |
+      | https://staging.git.cafe/team/shop/pull/42/files |
+
   @mc
   Scenario: Linking a pull request that is already linked changes nothing
     Given "caller" links pull request 12
@@ -250,3 +281,54 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
     Given "caller" has pull requests 10, 11 and 12 stacked on each other and 12 dismissed
     When the agent of "caller" lists its pull requests
     Then it receives 10 and 11 and the chain they form
+
+  # Upstream #18143: agents asked to prepare review guides had no tool to call.
+  @backlog @mc @priority-low
+  Scenario Outline: An agent starts review guides for several pull requests at once
+    Given "Review guides (beta)" is on
+    And <situation>
+    When the agent of "caller" asks for guides of pull request 42 of "owner/repo" and pull request 43 of "<repo>"
+    Then it is told at once that the guide of 42 has started
+    And that 43 <outcome>
+
+    Examples:
+      | situation                                                  | repo       | outcome                                                                  |
+      | a guide of 43 at its head is already being written          | owner/repo | joined the guide already being written                                   |
+      | no project in this environment checks out "other/repo"      | other/repo | failed because no project checks out its repository, pointing at adding one |
+
+  @backlog @mc @priority-low
+  Scenario: At most twenty pull requests are guided in one call
+    When the agent of "caller" asks for guides of 21 pull requests
+    Then the call is refused for asking for more than 20
+
+  @backlog @mc @priority-low
+  Scenario: Every guide an agent asks for is refused while review guides are off
+    Given "Review guides (beta)" is off
+    When the agent of "caller" asks for guides of pull requests 42 and 43
+    Then each is refused, naming the "Review guides (beta)" setting
+
+  @backlog @mc @priority-low
+  Scenario: Reading a guide never starts one
+    Given the guide of pull request 42 was written before its latest push
+    When the agent of "caller" reads the guide of pull request 42
+    Then it receives the guide, that no guide is being written and that a push left it stale
+    And no guide is started
+
+  # Writing a guide changes no thread, so it needs the pull requests permission, not
+  # control of a thread.
+  @backlog @mc @priority-low
+  Scenario Outline: Who may ask for review guides
+    Given the agent of "caller" <access>
+    When it asks for a guide of pull request 42
+    Then the request is <result>
+
+    Examples:
+      | access                                                    | result   |
+      | may work with pull requests but not control threads       | accepted |
+      | runs in read-only mode                                    | refused  |
+      | belongs to a turn that has ended                          | refused  |
+
+  @backlog @shared @priority-low
+  Scenario: An agent's guide requests are named in the thread's work log
+    When the agent of "caller" starts review guides and later reads one
+    Then the work log reads "Started review guides" and "Read a review guide"

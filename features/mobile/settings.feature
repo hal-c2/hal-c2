@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24766
+#   https://github.com/pingdotgg/t3code/pull/18381
+#   https://github.com/pingdotgg/t3code/pull/9356
 #   apps/mobile/src/features/settings/SettingsRouteScreen.tsx (HAL-C2 Account row, sections)
 #   apps/mobile/src/features/settings/SettingsAuthRouteScreen.tsx (sign in, profile, sign out)
 #   apps/mobile/app.config.ts (Apple and Google sign-in configuration)
@@ -31,6 +34,19 @@ Feature: Settings that belong to the phone
 
   Background:
     Given the phone is paired with "My MacBook"
+
+  # Upstream #24766: Settings on a tablet or a foldable had no search.
+  Rule: Searching settings
+
+    @backlog @mobile
+    Scenario Outline: Searching settings finds a page by what it holds
+      When the user searches settings for "<query>"
+      Then <outcome>
+
+      Examples:
+        | query    | outcome                                                        |
+        | dark     | "Appearance" is listed and sections with no match are not      |
+        | zzz      | the user is told no settings match                             |
 
   # The HAL-C2 account was the HAL-C2 Connect (Clerk) sign-in, removed with Connect.
   Rule: HAL-C2 account
@@ -91,7 +107,7 @@ Feature: Settings that belong to the phone
 
   Rule: Appearance
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario Outline: The user chooses whether the app is light or dark
       When the user sets the appearance to "<mode>"
       Then the app is <result>
@@ -102,35 +118,35 @@ Feature: Settings that belong to the phone
         | Light  | always light                 |
         | Dark   | always dark                  |
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: A theme is chosen for both light and dark
       When the user chooses the theme "Ocean"
       Then "Ocean" is used in light and in dark
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: A theme is chosen for only light or only dark
       Given the theme is "HAL-C2"
       When the user chooses "Ocean" for dark only
       Then "Ocean" is used in dark
       And "HAL-C2" is still used in light
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: Material You is offered when the phone provides its own colours
       Given the phone provides system colours
       When the user chooses the theme "Material You"
       Then the app takes its colours from the phone
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: Material You is not offered when the phone has no system colours
       Given the phone provides no system colours
       Then the theme "Material You" is not offered
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: The text size changes the size of every message
       When the user sets the text size to 18 points
       Then messages are shown at 18 points
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario Outline: Code and terminal sizes follow the text size until the user sets their own
       Given the <surface> has no size of its own
       When the user changes the text size
@@ -145,7 +161,7 @@ Feature: Settings that belong to the phone
         | code and diffs |
         | terminal       |
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario Outline: Sizes stay within limits
       When the user sets the <setting> to <asked> points
       Then the <setting> is <kept> points
@@ -157,7 +173,7 @@ Feature: Settings that belong to the phone
         | code font size | 30    | 18   |
         | code font size | 4     | 8    |
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: Word break wraps long lines of code instead of scrolling them
       Given a diff with a line longer than the screen
       When the user turns word break on
@@ -165,7 +181,7 @@ Feature: Settings that belong to the phone
       When the user turns word break off
       Then the long line scrolls sideways
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: The appearance page previews a change before the user leaves it
       When the user changes the code font size
       Then the preview on the appearance page shows code at the new size
@@ -234,25 +250,25 @@ Feature: Settings that belong to the phone
       Then the user is told to connect an environment to view and create scheduled tasks
       And creating a task is not offered
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: The user dictates the prompt of a scheduled task
       Given the phone can dictate
       When the user dictates the prompt of a new scheduled task
       Then the spoken words are added to the prompt
       And the user reviews the prompt before saving the task
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: A task cannot be saved while dictation is still finishing
       Given the user is dictating the prompt of a scheduled task
       Then saving the task is not offered until the dictation has finished or been cancelled
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: Leaving a task while dictating says the dictation will be lost
       Given the user is dictating the prompt of a scheduled task
       When the user tries to leave the task
       Then the user is asked whether to discard the dictation and the unsaved changes
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: A task's time of day is read in the environment's time zone
       When the user opens a scheduled task that runs at a time of day
       Then the user is told the time follows the environment's time zone
@@ -307,6 +323,15 @@ Feature: Settings that belong to the phone
       Then the settings scope reads "Unavailable project"
       And the project's pages ask the user to select a project with a checkout on a connected environment
 
+    # Upstream #9356: a setting another environment refused was only logged.
+    @backlog @mobile
+    Scenario: A setting some environments refuse names each of them and why
+      Given the user's settings scope holds "My MacBook" and "Office Mac"
+      And "Office Mac" refuses settings changes
+      When the user changes a thread behavior setting
+      Then the user is told the change was not saved on "Office Mac", with its reason
+      And "My MacBook" keeps the new value
+
     @backlog @mobile
     Scenario Outline: Server settings need a connected environment
       Given no environment is connected
@@ -327,7 +352,7 @@ Feature: Settings that belong to the phone
       When the user opens the new thread settings
       Then the user is told to use the scope to select a connected environment
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario Outline: The keyboard settings are offered on iPhone only
       Given the user is on <phone>
       When the user opens settings
@@ -340,27 +365,27 @@ Feature: Settings that belong to the phone
 
   Rule: Server settings on a phone
 
-    @backlog @mobile
+    @backlog @mobile @priority-high
     Scenario: A setting changed with several environments chosen applies to each of them
       Given "My MacBook" and "Office Mac" are connected
       And the settings scope is "All environments"
       When the user turns on automatically pulling the default branch
       Then "My MacBook" and "Office Mac" both pull the default branch automatically
 
-    @backlog @mobile
+    @backlog @mobile @priority-high
     Scenario: Settings changes are applied one at a time
       Given the user has just changed a server setting
       And the environments have not answered yet
       Then the other choices on the page cannot be used until they have
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: Restart continuation cannot be changed on an environment that cannot do it
       Given the settings scope includes an MC that cannot continue threads after a restart
       When the user opens maintenance settings
       Then continuing after a restart cannot be turned on
       And the user is told to update the older MC to control it
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: Project settings on an environment that cannot keep overrides are read only
       Given the user chose the project "shop"
       And the MC of "My MacBook" cannot keep project overrides
@@ -377,7 +402,7 @@ Feature: Settings that belong to the phone
 
   Rule: Provider accounts on a phone
 
-    @backlog @mobile
+    @backlog @mobile @priority-high
     Scenario: Provider accounts lists each chosen environment's providers that can sign in
       Given "My MacBook" has providers that can sign in from the app
       When the user opens provider accounts
@@ -396,7 +421,7 @@ Feature: Settings that belong to the phone
       When the user opens provider accounts
       Then the user is told to select a connected environment
 
-    @backlog @mobile
+    @backlog @mobile @priority-high
     Scenario: A signed-in account's email stays hidden until asked
       Given "Claude" is signed in on "My MacBook" as "ada@example.com"
       When the user opens provider accounts
@@ -460,7 +485,7 @@ Feature: Settings that belong to the phone
       Then "Codex" is not signed in
       And the user can sign in again
 
-    @backlog @mobile
+    @backlog @mobile @priority-high
     Scenario: A sign-in that fails says why in place
       Given "Codex" fails to sign in
       Then the reason is shown under "Codex"
@@ -479,7 +504,7 @@ Feature: Settings that belong to the phone
       When the user opens provider accounts
       Then signing in to "Codex" is shown but cannot be used
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: A provider with no in-app sign-in points to its documentation
       Given "Gemini" does not offer a sign-in the app can drive
       When the user opens provider accounts
@@ -488,13 +513,13 @@ Feature: Settings that belong to the phone
 
   Rule: Legal documents on a phone
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: Legal opens the license inside the app
       When the user opens Legal from About
       Then the project's license is shown in the app
       And the user can close it
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: A legal page that cannot load says why and can be retried
       Given the legal page cannot be loaded
       When the user opens Legal from About
@@ -503,14 +528,14 @@ Feature: Settings that belong to the phone
       Then the legal page is loaded again
       And the user can open it in the browser instead
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: Links out of a legal page open in the browser
       Given the user is reading the license
       When the user follows a link to another site
       Then the link opens in the phone's browser
       And the license stays open in the app
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: The legal page can be opened in the browser from its header
       Given the user is reading the security policy
       When the user chooses to open the document in the browser
@@ -519,7 +544,7 @@ Feature: Settings that belong to the phone
   Rule: Settings kept on the phone
 
     # Likely already implemented: apps/mobile/src/persistence/mobile-preferences.ts
-    @backlog @mobile
+    @backlog @mobile @priority-high
     Scenario: The phone's own settings are kept when the app restarts
       Given the user chose a dark theme, a larger text size and thread grouping by project
       When the app is closed and opened again
@@ -551,14 +576,21 @@ Feature: Settings that belong to the phone
       When the user changes two settings in quick succession
       Then both settings are kept
 
-    @backlog @mobile
+    @backlog @mobile @priority-high
     Scenario: Plan Mode is off until the user asks for it
       Given the user has not turned on Plan Mode under Legacy
       When the user starts a task
       Then the task runs in Build mode
       And no Build and Plan choice is offered
 
-    @backlog @mobile
+    @backlog @mobile @priority-high
     Scenario: Turning on Plan Mode brings back the Build and Plan choice
       When the user turns on Plan Mode under Legacy
       Then the Build and Plan choice is offered when starting a task
+
+    # Upstream #18381: text typed in a settings field is saved when the user leaves with Back.
+    @backlog @mobile
+    Scenario: Text typed in a setting is kept when the user leaves with Back
+      Given the user typed "ana/" as the worktree branch prefix
+      When the user presses Back without leaving the field first
+      Then the branch prefix "ana/" is saved

@@ -2996,8 +2996,18 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
+  # Counted through the stream's cold rows too: a long thread keeps only its latest
+  # runs' messages in memory.
   step "{string} has all {int} of its messages", %{args: [title, n]} = context do
-    assert length(HalC2.StreamState.list(World.stream(context, title), "message")) == n
+    ids =
+      context
+      |> World.thread_id(title)
+      |> HalC2.Streams.read(fn state ->
+        state |> HalC2.StreamState.all("message") |> Enum.map(& &1["id"])
+      end)
+
+    assert length(ids) == n
+    assert length(Enum.uniq(ids)) == n
     context
   end
 
@@ -3786,6 +3796,7 @@ defmodule HalC2.Steps.Threads do
   end
 
   defp discover(context) do
+    HalC2.Test.Mc.ensure(HalC2.PullRequests.Branches)
     Mc.ensure({HalC2.PullRequests.Discovery, interval: nil})
     :ok = HalC2.PullRequests.Discovery.sweep()
     context

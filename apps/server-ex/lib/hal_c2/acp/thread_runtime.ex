@@ -764,12 +764,21 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
+    # The MC ending the agent on the way down leaves the run and its work for the next
+    # boot's recovery (`HalC2.Orchestration.Recovery.stopping?/0`).
     state =
-      if state.turn,
-        do: end_turn(state, "failed", "#{HalC2.Acp.label(state.agent)} exited unexpectedly"),
-        else: state
+      cond do
+        HalC2.Orchestration.Recovery.stopping?() ->
+          state
 
-    state = end_work(state, "failed")
+        state.turn ->
+          state
+          |> end_turn("failed", "#{HalC2.Acp.label(state.agent)} exited unexpectedly")
+          |> end_work("failed")
+
+        true ->
+          end_work(state, "failed")
+      end
 
     {:noreply, released(%{state | conn: nil, session_id: nil, prompt: nil, server: nil})}
   end

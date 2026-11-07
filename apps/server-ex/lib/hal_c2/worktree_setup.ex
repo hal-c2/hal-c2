@@ -40,7 +40,7 @@ defmodule HalC2.WorktreeSetup do
   # Colours, cursor movement and titles, then whatever control characters are left.
   @terminal_control ~r/\e\[[0-9;?]*[ -\/]*[@-~]|\e\][^\a\e]*(?:\a|\e\\)|\e[()][A-Za-z0-9]|\e[=>]/
   @stray_control ~r/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/
-  @untrusted "this branch's hal-c2.json setup script differs from the main checkout's, so it was not run"
+  @untrusted "the checkout's setup script was not run; import or save the setup action under Settings → Project → Actions first"
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -338,7 +338,7 @@ defmodule HalC2.WorktreeSetup do
     {:noreply, %{state | watchers: watchers}}
   end
 
-  # A server updated in place (`HalC2.Hot`) from before subscriptions had refs kept each
+  # A server updated in place by a release upgrade from before subscriptions had refs kept each
   # thread's watchers as a set of pids, watched without one.
   @impl true
   def code_change(_old, state, _extra) do
@@ -694,37 +694,25 @@ defmodule HalC2.WorktreeSetup do
   end
 
   @doc """
-  The script to run in a new worktree at `path` of the project checked out at `root`:
-  `{:run, script}` for the one the project's saved actions mark to run on worktree
-  creation, else for the one the worktree's own `hal-c2.json` marks (the branch's file,
-  which the clients read from the thread's checkout too); `:none` when neither marks one.
-  Like the clients' import, the first marked script wins; the file has no per-platform
-  field, so a Windows variant has to come after the POSIX one.
-
-  The user saved their actions, but anyone with a branch can write its file. So the
-  file's script runs only when `root`'s own file marks one with the same command that
-  blocks the agent the same way; otherwise it is `{:skip, reason}`. That keeps a branch
-  from choosing the command, not from shaping what it does: the command still runs
-  against the branch's files (its `mise.toml`, `package.json`, `mix.exs`), as a saved
-  setup script does. Requiring the branch's commits to be in `root` would skip setup
-  for worktrees off feature branches, which is what `delegate_task` makes.
+  The script to run in a new worktree at `path`: `{:run, script}` for the first of the
+  project's saved actions marked to run on worktree creation. With no saved setup action,
+  a marked script in the worktree's `hal-c2.json` returns `{:skip, reason}` until the user
+  imports or saves it; no marked file script returns `:none`. Like the clients' import,
+  the first marked script wins; the file has no per-platform field, so a Windows variant
+  has to come after the POSIX one.
   """
-  def setup_script(project, root, path) do
-    with nil <- Enum.find(saved_scripts(project), &setup?/1),
-         %{} = script <- Enum.find(HalC2.ProjectFile.scripts(path), &setup?/1) do
-      if Enum.any?(HalC2.ProjectFile.scripts(root), &same_setup?(&1, script)),
-        do: {:run, script},
-        else: {:skip, @untrusted}
-    else
-      nil -> :none
-      script -> {:run, script}
+  def setup_script(project, _root, path) do
+    case Enum.find(saved_scripts(project), &setup?/1) do
+      %{} = script ->
+        {:run, script}
+
+      nil ->
+        case Enum.find(HalC2.ProjectFile.scripts(path), &setup?/1) do
+          nil -> :none
+          %{} -> {:skip, @untrusted}
+        end
     end
   end
-
-  defp same_setup?(trusted, script),
-    do:
-      setup?(trusted) and trusted["command"] == script["command"] and
-        trusted["async"] == false == (script["async"] == false)
 
   defp setup?(script), do: script["runOnWorktreeCreate"] == true
 

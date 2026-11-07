@@ -1,4 +1,15 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24985
+#   https://github.com/pingdotgg/t3code/pull/21071
+#   https://github.com/pingdotgg/t3code/pull/18574
+#   https://github.com/pingdotgg/t3code/pull/15083
+#   https://github.com/pingdotgg/t3code/pull/12648 (folded phone and unfolded split; Android foldables here)
+#   https://github.com/pingdotgg/t3code/pull/19988
+#   https://github.com/pingdotgg/t3code/pull/20403
+#   https://github.com/pingdotgg/t3code/pull/18157
+#   https://github.com/pingdotgg/t3code/pull/13085
+#   https://github.com/pingdotgg/t3code/pull/13310
+#   https://github.com/pingdotgg/t3code/pull/24298
 #   apps/mobile/src/lib/layout.ts (split view thresholds, pane widths)
 #   apps/mobile/src/features/layout/ (sidebar, inspector pane, maximize content)
 #   apps/mobile/src/lib/useHoverGesture.ts, components/RowPressable.tsx (hover highlight for mouse and stylus)
@@ -8,11 +19,13 @@
 #   apps/mobile/plugins/withAndroidTabletOrientation
 #   apps/mobile/modules/hal-c2-composer-editor/ios/HalC2ComposerEditorView.swift (send keys named in the Cmd-hold list)
 #   apps/mobile-qt/qml/HalC2/Mobile/MobileShell.qml (the desktop's layout from 736 by 480, the phone's below)
+#   apps/desktop-qt/src/native/LayoutController.cpp (sidebarMode: the slim rows and rail a window without modes never gets)
 #   docs/internals/mobile-qt.md (one root, two layouts)
 #   apps/mobile/src/lib/adaptive-navigation.ts, layout.ts (thread and file selection beside the list, sidebar and inspector widths, reading width)
 # Keybinding ids and the desktop command palette are specified in features/navigation/.
 # This file covers the tablet layout and hardware keyboards attached to phones and tablets.
 
+@priority-low
 Feature: Tablet layout and hardware keyboards
   On a wide enough screen the app shows the thread list, the thread and an inspector side
   by side. A hardware keyboard reaches the common actions without touching the screen.
@@ -32,12 +45,80 @@ Feature: Tablet layout and hardware keyboards
       | 844   | 390    | one at a time   |
       | 390   | 844    | one at a time   |
 
+  # The desktop's slim rows and its rail are for windows narrower than a tablet's: wherever the
+  # tablet splits, its thread list keeps its full rows.
+  @mobile
+  Scenario Outline: A split tablet keeps the full thread list
+    Given the app window is <width> wide and <height> tall
+    Then the thread list shows its full rows
+
+    Examples:
+      | width | height |
+      | 736   | 480    |
+      | 1024  | 768    |
+
+  # Android foldables with a vertical hinge. The split snaps at 170° and lets go at
+  # 175°, because Pixel foldables report the hinge in 5° steps and read 175° nearly flat.
+  @backlog @mobile
+  Scenario Outline: A foldable bent like a book splits at the crease
+    Given the layout is split on a foldable with a vertical hinge
+    When the hinge is bent from <from>° to <to>°
+    Then the thread list <result>
+
+    Examples:
+      | from | to  | result                                  |
+      | 180  | 175 | keeps its usual width                   |
+      | 175  | 170 | ends at the crease                      |
+      | 170  | 175 | goes back to its usual width            |
+
+  @backlog @mobile
+  Scenario: A crease that would leave a pane too narrow keeps the usual split
+    Given the layout is split on a foldable bent like a book
+    And ending the thread list at the crease would leave the list under 280 or the thread under 320 wide
+    Then the thread list keeps its usual width
+
+  @backlog @mobile
+  Scenario: A menu does not open across the crease
+    Given the layout is split on a foldable bent like a book
+    When the user opens the thread filter menu
+    Then the menu opens on its button's side of the crease
+
+  @backlog @mobile
+  Scenario: A foldable opened before the app was ready still follows its crease
+    Given the app's window was not ready when it began watching the fold
+    When the foldable is bent like a book
+    Then the thread list ends at the crease
+
+  @backlog @mobile
+  Scenario: Bending the hinge again mid-move moves the split on from where it is
+    Given the split is moving to the crease
+    When the hinge changes again before it gets there
+    Then the edge moves on from where it is without jumping
+
+  # Upstream #18574: folding the phone keeps the composer on the folded screen.
+  @backlog @mobile
+  Scenario: Folding the phone with a thread open keeps the composer on screen
+    Given a thread is open on an unfolded phone
+    When the user folds the phone
+    Then the thread stays open
+    And the whole composer, including Send, is on the folded screen
+
   # The desktop's layout has no empty detail pane: with no thread it lands on a new thread's draft.
   @backlog @mobile
   Scenario: An empty detail pane tells the user what to do
     Given the layout is split
     And no thread is selected
     Then the user is told to choose a thread from the sidebar or start a new task
+
+  # Upstream #24298: Settings on a wide Android screen was one wide page.
+  @backlog @mobile
+  Scenario: Settings on a wide screen keeps its sections beside the chosen page
+    Given the layout is split on an Android tablet or an unfolded phone
+    When the user opens Settings
+    Then the settings sections are listed beside the Environments page
+    When the user chooses another section and opens one of its pages
+    Then the sections stay beside it
+    And on a narrow screen Settings opens one page at a time, with Back
 
   @mobile
   Scenario: The user hides and shows the thread sidebar
@@ -46,6 +127,36 @@ Feature: Tablet layout and hardware keyboards
     Then the thread sidebar is hidden
     When the user shows the thread sidebar
     Then the thread sidebar is shown
+
+  # Upstream #21071: one control switches the split sidebar between threads and pull
+  # requests, in place of the rail.
+  @backlog @mobile
+  Scenario: The split sidebar switches between threads and pull requests
+    Given the layout is split
+    When the user switches the sidebar to pull requests
+    Then the sidebar lists pull requests
+    When the user switches the sidebar back
+    Then the sidebar lists threads
+
+  # Upstream #21071: sidebar threads open while Settings or New task is open.
+  @backlog @mobile
+  Scenario Outline: A thread chosen in the split sidebar opens over another screen
+    Given the layout is split
+    And <screen> is open
+    When the user chooses "Add search" in the thread list
+    Then "Add search" is shown
+
+    Examples:
+      | screen     |
+      | Settings   |
+      | a new task |
+
+  # Upstream #21071: sidebar taps did nothing until the app had navigated once.
+  @backlog @mobile
+  Scenario: The split sidebar opens threads straight after launch
+    Given the app has just started with the layout split
+    When the user chooses "Add search" in the thread list before going anywhere else
+    Then "Add search" is shown
 
   @backlog @mobile
   Scenario: The thread's header starts a new task beside the thread
@@ -98,6 +209,30 @@ Feature: Tablet layout and hardware keyboards
     And the user made the thread's files pane wider
     When the thread's other side pane is shown
     Then it has the width it had before the files pane was widened
+
+  # Upstream #24985: on a tablet, opening a subagent or a device took over the thread.
+  @backlog @mobile @priority-low
+  Scenario Outline: A <item> opens in the inspector beside its thread
+    Given the layout is split and the user is in "Fix checkout"
+    When the user opens <what>
+    Then it opens in the inspector pane with "Fix checkout" still shown
+    When the user maximizes it
+    Then it fills the screen
+    When the user returns from it
+    Then it is in the inspector beside "Fix checkout" again
+
+    Examples:
+      | item     | what                                     |
+      | subagent | a subagent's card in "Fix checkout"      |
+      | device   | a device preview from "Fix checkout"     |
+
+  # Upstream #24985
+  @backlog @mobile @priority-low
+  Scenario: The inspector opens at 40% of the screen and resizes between limits
+    Given the layout is split
+    When the inspector pane opens for the first time
+    Then it takes 40% of the screen's width
+    And dragging its divider sizes it between 260 points and 60% of the screen
 
   @backlog @mobile
   Scenario: A screen reader can widen and narrow the side pane
@@ -155,6 +290,23 @@ Feature: Tablet layout and hardware keyboards
     Then "Tax line" is shown side by side with the list
     And the composer still reads "half a thought"
 
+  # Upstream #13085: the one-column list and the two-column sidebar share one filter.
+  @backlog @mobile
+  Scenario: Changing the layout keeps the thread list's project filter and search
+    Given the thread list is filtered to the project "Linux" and searched for "Make"
+    When the window changes between one column and two columns and back
+    Then the thread list is still filtered to "Linux" and searched for "Make"
+    When the user clears the project filter and the window changes layout again
+    Then the thread list is still unfiltered
+
+  # Upstream #18157. In two columns the empty detail pane offers a new task; with one
+  # column there is none, so the list offers it.
+  @backlog @mobile
+  Scenario: A tablet window too narrow for two columns starts a new task from the thread list
+    Given the tablet window is narrow enough to show one column
+    When the user starts a new task from the thread list
+    Then the user is asked to choose its project
+
   @mobile
   Scenario: A finger scrolls the thread list beside the thread
     Given the layout is split
@@ -207,19 +359,20 @@ Feature: Tablet layout and hardware keyboards
     And the terminal's key does nothing
     And the command palette lists no terminal command
 
-  # The terminal wants a keyboard and room (docs/internals/mobile-qt.md); the phone layout draws none.
   @mobile
-  Scenario: A phone with a keyboard has no terminal to open
+  Scenario: A phone with a keyboard opens the thread's terminal on its own screen
     Given a hardware keyboard is attached to a phone
     And the user is in the thread "Tax line"
-    Then the terminal's key does nothing
+    When the user presses the terminal's key
+    Then the thread's terminal opens on its own screen
 
   @mobile
-  Scenario: A project action on a phone says why it does not run
+  Scenario: A project action on a phone runs in a terminal
     Given a hardware keyboard is attached to a phone
     And the user is in the thread "Tax line"
+    And "shop" has the script "test"
     When the user asks for a project action
-    Then the user is told a screen this small has no terminal for it
+    Then "test" runs in a terminal session
 
   # The Android package lets every device rotate, as Android asks of apps on large screens;
   # nothing holds a phone in portrait.
@@ -438,12 +591,13 @@ Feature: Tablet layout and hardware keyboards
     Then the screen opened last handles it
     And the thread screen does not
 
+  # Upstream #21071: in split view a thread or pull request replaces the detail pane with no slide-in.
   @backlog @mobile
   Scenario: Choosing another thread beside the list swaps the thread without stacking screens
     Given the layout is split
     And the user is reading "Fix checkout"
     When the user chooses "Add search" in the thread list
-    Then "Add search" is shown beside the list
+    Then "Add search" takes the place of "Fix checkout" beside the list without sliding in
     When the user goes back
     Then the user does not return to "Fix checkout"
 
@@ -480,6 +634,7 @@ Feature: Tablet layout and hardware keyboards
     When the user hides the inspector
     Then the thread list is shown again
 
+  # Upstream #21071: on Android the thread, the composer and the full-width thread list stop at 640dp and stay centred.
   @backlog @mobile
   Scenario: Reading text in a thread stays a comfortable width on a wide window
     Given the app window is wider than the thread's reading width
@@ -505,3 +660,19 @@ Feature: Tablet layout and hardware keyboards
     Then the row opens
     When the user scrolls the list
     Then the list scrolls
+
+  # Upstream #13310: a folded phone's cover screen, after a split thread was left unfolded.
+  @backlog @mobile
+  Scenario: Returning to the app on a folded phone keeps the composer and Send on screen
+    Given the user is writing a draft in a thread on an unfolded phone with the keyboard open
+    When the app goes to the background, the phone folds, and the app returns on the cover screen
+    Then the composer fits the cover screen and Send is visible
+    And the draft text is still there
+
+  # Upstream #15083: on iPadOS 18 a pending task tapped in the split sidebar never opened.
+  @backlog @mobile
+  Scenario: A pending task chosen in the split thread list opens beside it
+    Given the layout is split
+    And a pending task is waiting in "shop"
+    When the user chooses the pending task in the thread list
+    Then the pending task opens for editing beside the list

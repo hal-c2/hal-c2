@@ -6,6 +6,8 @@
 
 #include <QTest>
 
+#include <algorithm>
+
 #include "Brick.h"
 #include "CommandPaletteController.h"
 #include "Harness.h"
@@ -98,6 +100,19 @@ const Steps steps([] {
 
   step(QStringLiteral("the user searche[sd] settings for %1").arg(q), [](World& world, const Captures& c, const Table&) {
     search(world, c[0]);
+    // What the palette, the sidebar and the archive say "listed" of, the search's results.
+    world.onSettingsPage.insert(QStringLiteral("notListed"), [&world](const QStringList& named) {
+      const QVariantList list = rows(world);
+      expect(std::none_of(list.cbegin(), list.cend(), [&](const QVariant& row) { return row.toMap().value(QStringLiteral("title")) == named[0]; }), describeRows(world));
+    });
+    world.onSettingsPage.insert(QStringLiteral("listedUnder"), [&world](const QStringList& named) {
+      const QVariantMap row = rows(world).value(resultTitled(world, named[0])).toMap();
+      expect(row.value(QStringLiteral("sectionLabel")) == named[1], describeRows(world));
+    });
+    world.onSettingsPage.insert(QStringLiteral("onlyListed"), [&world](const QStringList& named) {
+      const QVariantList list = rows(world);
+      expect(list.size() == 1 && list.first().toMap().value(QStringLiteral("title")) == named[0], describeRows(world));
+    });
   });
   step(QStringLiteral("each result names its section"), [](World& world, const Captures&, const Table&) {
     const QVariantList list = rows(world);

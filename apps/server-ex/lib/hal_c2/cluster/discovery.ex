@@ -14,6 +14,11 @@ defmodule HalC2.Cluster.Discovery do
   One attempt runs at a time, in a task, so this process never waits on the network:
   a `poll/0` during an attempt makes one more right after it, however many came, and
   an attempt that crashes only ends early.
+
+  A member no attempt has reached for five minutes (`:cluster_give_up_after`) is
+  offline: it is tried only every five minutes (`:cluster_offline_interval`) from then
+  on, until it is reached or `reconnect/1` asks for it. Clients see it through
+  `HalC2.Shell.link/2` as a machine that stopped trying.
   """
 
   use GenServer
@@ -25,11 +30,15 @@ defmodule HalC2.Cluster.Discovery do
   @callback addresses() :: [String.t()]
 
   @interval 10_000
+  @give_up_after 300_000
+  @offline_interval 300_000
   @strategy_timeout 5_000
 
   @doc """
   Starts the discovery. `attempt:` replaces what one attempt does (connecting the
-  members), for tests that drive the scheduling without a network.
+  members), for tests that drive the scheduling without a network. It is given the
+  ids to leave out (offline members between their rare tries) when it takes one
+  argument, and may return `%{id => reached?}` for the members it looked at.
   """
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -39,27 +48,95 @@ defmodule HalC2.Cluster.Discovery do
     :ok
   end
 
+  @doc "The ids of the members that are offline: discovery stopped trying them often."
+  def offline do
+    GenServer.call(__MODULE__, :offline)
+  catch
+    :exit, _ -> []
+  end
+
+  @doc """
+  Tries the member `id` again at once and often, as if it had never failed. An
+  offline member is no longer said to be, until attempts fail for long again.
+  """
+  def reconnect(id) do
+    GenServer.call(__MODULE__, {:reconnect, id})
+  catch
+    :exit, _ -> :ok
+  end
+
+  @doc """
+  Takes in what an attempt at `now` found, `%{id => true | false | :skipped}` for every
+  member, into `failing` (`%{id => first failure}`): a reached member is cleared, a
+  missed one keeps the time it first failed, a skipped one is kept as it was, and one
+  no longer listed is no longer a member.
+  """
+  def settle(failing, results, now) do
+    Enum.reduce(results, Map.take(failing, Map.keys(results)), fn
+      {id, true}, acc -> Map.delete(acc, id)
+      {_id, :skipped}, acc -> acc
+      {id, _missed}, acc -> Map.put_new(acc, id, now)
+    end)
+  end
+
+  @doc "The members of `failing` that have failed for `give_up` ms or longer at `now`."
+  def offline(failing, now, give_up),
+    do: for({id, since} <- failing, now - since >= give_up, into: MapSet.new(), do: id)
+
   @impl true
   def init(opts) do
     # An attempt that crashes must not take the discovery down with it: restarted, it
     # would poll at once and crash again on whatever broke the last attempt.
     Process.flag(:trap_exit, true)
     send(self(), :poll)
-    attempt = Keyword.get(opts, :attempt, &connect_members/0)
-    {:ok, %{task: nil, again: false, timer: nil, attempt: attempt}}
+    attempt = Keyword.get(opts, :attempt, &connect_members/1)
+
+    {:ok,
+     %{
+       task: nil,
+       again: false,
+       timer: nil,
+       attempt: attempt,
+       failing: %{},
+       offline: MapSet.new(),
+       tried_offline: nil
+     }}
+  end
+
+  @impl true
+  def handle_call(:offline, _from, state), do: {:reply, MapSet.to_list(state.offline), state}
+
+  def handle_call({:reconnect, id}, _from, state) do
+    state = tell(%{state | failing: Map.delete(state.failing, id)})
+    send(self(), :poll)
+    {:reply, :ok, state}
   end
 
   @impl true
   def handle_info(:poll, %{task: nil} = state) do
     if state.timer, do: Process.cancel_timer(state.timer)
-    {:noreply, %{state | task: Task.async(state.attempt), timer: nil}}
+    now = now()
+    rare = setting(:cluster_offline_interval, @offline_interval)
+
+    {skip, tried} =
+      if state.tried_offline == nil or now - state.tried_offline >= rare,
+        do: {MapSet.new(), now},
+        else: {state.offline, state.tried_offline}
+
+    attempt =
+      if is_function(state.attempt, 1),
+        do: fn -> state.attempt.(skip) end,
+        else: state.attempt
+
+    {:noreply, %{state | task: Task.async(attempt), timer: nil, tried_offline: tried}}
   end
 
   def handle_info(:poll, state), do: {:noreply, %{state | again: true}}
 
-  def handle_info({ref, _result}, %{task: %Task{ref: ref}} = state) do
+  def handle_info({ref, result}, %{task: %Task{ref: ref}} = state) do
     Process.demonitor(ref, [:flush])
-    {:noreply, finish(state)}
+    failing = if is_map(result), do: settle(state.failing, result, now()), else: state.failing
+    {:noreply, finish(tell(%{state | failing: failing}))}
   end
 
   def handle_info({:DOWN, ref, :process, _, _}, %{task: %Task{ref: ref}} = state),
@@ -70,19 +147,42 @@ defmodule HalC2.Cluster.Discovery do
 
   defp finish(state) do
     if state.again, do: send(self(), :poll)
-    interval = Application.get_env(:hal_c2, :cluster_poll_interval, @interval)
+    interval = setting(:cluster_poll_interval, @interval)
     %{state | task: nil, again: false, timer: Process.send_after(self(), :poll, interval)}
   end
 
-  defp connect_members do
+  # Tells clients of each member that went offline or stopped being so.
+  defp tell(state) do
+    offline = offline(state.failing, now(), setting(:cluster_give_up_after, @give_up_after))
+    for id <- MapSet.difference(offline, state.offline), do: HalC2.Shell.link(id, false)
+    for id <- MapSet.difference(state.offline, offline), do: HalC2.Shell.link(id, true)
+    %{state | offline: offline}
+  end
+
+  defp setting(key, default), do: Application.get_env(:hal_c2, key, default)
+
+  defp now, do: System.monotonic_time(:millisecond)
+
+  # Every member and whether it is connected after the attempt (`settle/3`): the
+  # members that are not, except those in `skip`, are tried.
+  defp connect_members(skip) do
     connected = Node.list()
+    peers = Cluster.peers()
 
-    missing =
-      for {id, addresses} <- Cluster.peers(),
-          Cluster.mc_name(id) not in connected,
-          do: {id, addresses}
+    known =
+      for {id, _} <- peers, into: %{} do
+        cond do
+          Cluster.mc_name(id) in connected -> {id, true}
+          id in skip -> {id, :skipped}
+          true -> {id, false}
+        end
+      end
 
-    if missing != [] do
+    missing = for {id, addresses} <- peers, known[id] == false, do: {id, addresses}
+
+    if missing == [] do
+      known
+    else
       found =
         strategies()
         |> Task.async_stream(&strategy_addresses/1,
@@ -95,11 +195,14 @@ defmodule HalC2.Cluster.Discovery do
         end)
 
       missing
-      |> Task.async_stream(fn {id, addresses} -> connect(id, addresses ++ found) end,
+      |> Task.async_stream(fn {id, addresses} -> {id, connect(id, addresses ++ found)} end,
         timeout: :infinity,
         ordered: false
       )
-      |> Stream.run()
+      |> Enum.reduce(known, fn
+        {:ok, {id, reached}}, acc -> Map.put(acc, id, reached)
+        {:exit, _}, acc -> acc
+      end)
     end
   end
 

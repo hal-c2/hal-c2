@@ -30,6 +30,9 @@ function(hal_c2_add_native_library)
   target_include_directories(hal_c2_native PUBLIC "${_hal_c2_src}" "${_hal_c2_src}/native")
   # The QR codes pairing links are shown as (src/native/QrCode.cpp).
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/QrCodeGen.cmake")
+  # Code coloured by its language (src/native/CodeHighlighter.cpp).
+  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Syntax.cmake")
+  hal_c2_link_syntax(hal_c2_native)
   target_sources(hal_c2_native PRIVATE "${qrcodegen_SOURCE_DIR}/cpp/qrcodegen.cpp")
   target_include_directories(hal_c2_native PRIVATE "${qrcodegen_SOURCE_DIR}/cpp")
   # Android has no FFmpeg to load and pkg-config would find this machine's
@@ -67,7 +70,8 @@ function(hal_c2_add_native_library)
   if(APPLE AND NOT IOS)
     target_sources(hal_c2_native PRIVATE "${_hal_c2_src}/native/MacPlatform.mm")
     set_source_files_properties("${_hal_c2_src}/native/MacPlatform.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
-    target_link_libraries(hal_c2_native PUBLIC "-framework AppKit" "-framework ApplicationServices" "-framework Carbon")
+    # Security: the Keychain the saved environments' credentials go to (SecretStore).
+    target_link_libraries(hal_c2_native PUBLIC "-framework AppKit" "-framework ApplicationServices" "-framework Carbon" "-framework Security")
   endif()
   # Snap Shot's xdg-desktop-portal backend talks D-Bus (PortalSnapShot).
   if(UNIX AND NOT APPLE AND NOT ANDROID)
@@ -85,6 +89,7 @@ function(hal_c2_add_native_library)
   # flash and flight (WindowsSnapShot); not built anywhere else.
   if(WIN32)
     target_sources(hal_c2_native PRIVATE "${_hal_c2_src}/native/win/WindowsSystem.cpp")
-    target_link_libraries(hal_c2_native PUBLIC user32 gdi32 dwmapi)
+    # advapi32: the Credential Manager (SecretStore).
+    target_link_libraries(hal_c2_native PUBLIC user32 gdi32 dwmapi advapi32)
   endif()
 endfunction()

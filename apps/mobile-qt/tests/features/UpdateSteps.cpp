@@ -224,6 +224,7 @@ const Steps steps([] {
   });
 
   step(S("the user is offered to update %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    world.openConnectionNotice();
     awaitText(world, S("connectionUpdate"), S("Update %1").arg(c[0]));
     world.tap(S("connectionUpdate"));
     awaitText(world, S("maintenanceUpdate-") + kOwn, S("Update to 1.4.0"));
@@ -234,6 +235,7 @@ const Steps steps([] {
     describe(world.mc, kOwn, S("1.3.0"), kService);
     appIs(world, c[0]);
     pairWithEnvironment(world);
+    world.openConnectionNotice();
     world.item(S("connectionUpdate"));
     world.tap(S("connectionDismissWarning"));
     world.waitFor([&] { return world.find(S("connectionUpdate")) == nullptr; },
@@ -251,6 +253,7 @@ const Steps steps([] {
   // The next release of the app: the notice is for it.
   step(S("a notice for %1 does appear").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     appIs(world, c[0]);
+    world.openConnectionNotice();
     awaitText(world, S("connectionUpdate"), S("Update server"));
     const QVariantMap warning = world.state(S("connection")).toMap().value(S("versionWarning")).toMap();
     expect(warning.value(S("clientVersion")).toString() == c[0], S("the notice is for %1").arg(show(warning)));
@@ -301,8 +304,24 @@ const Steps steps([] {
     world.mc.announceEnvironment();
   });
   step(S("the user is told %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
-    // What a viewer open over everything says (FilesSteps.cpp), or how an update went.
-    if (world.state(S("attachmentViewer")).toMap().isEmpty()) return awaitText(world, S("maintenanceOutcome-") + kOwn, c[0]);
+    // What a viewer open over everything says (FilesSteps.cpp), how an update
+    // went, or a toast drawn on screen (SubagentSteps.cpp: a plan that could
+    // not be handed on; connection-health: an environment not connected).
+    if (world.state(S("attachmentViewer")).toMap().isEmpty()) {
+      const QString outcome = S("maintenanceOutcome-") + kOwn;
+      const auto toasted = [&] {
+        for (const QVariant& toast : world.state(S("toasts")).toMap().value(S("items")).toList()) {
+          const QVariantMap fields = toast.toMap();
+          if ((fields.value(S("title")) == c[0] || fields.value(S("description")) == c[0]) &&
+              world.find(S("notification-") + fields.value(S("id")).toString()) != nullptr)
+            return true;
+        }
+        return false;
+      };
+      world.waitFor([&] { return (world.find(outcome) != nullptr && world.find(outcome)->property("text").toString() == c[0]) || toasted(); },
+                    [&] { return S("\"%1\"; the screen says: %2; toasts are %3").arg(c[0], screenTexts(world), show(world.state(S("toasts")))); });
+      return;
+    }
     world.waitFor([&] { return world.shows(c[0], false); }, [&] { return S("\"%1\"; the screen says: %2").arg(c[0], world.texts().join(S(" | "))); });
   });
   step(S("the update of %1 can be started again").arg(kQuoted), [](World& world, const Captures&, const Table&) {

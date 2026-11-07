@@ -201,6 +201,18 @@ defmodule HalC2.Steps.Space.Markdown do
     context
   end
 
+  # Each column is a block's field, `-` for one it does not have or that is empty.
+  step "the blocks of {string} are:", %{args: [title]} = context do
+    [header | rows] = context.datatable.raw
+
+    shown =
+      for block <- blocks(context, title),
+          do: Enum.map(header, &(block |> Map.get(&1) |> to_string() |> dash()))
+
+    assert shown == rows
+    context
+  end
+
   step "the user adds the numbered item {string} after {string}",
        %{args: [text, after_text]} = context do
     after_id = block_id(context, after_text)
@@ -246,6 +258,36 @@ defmodule HalC2.Steps.Space.Markdown do
 
   step "the user makes {string} a plain quote", %{args: [text]} = context do
     update_block(context, text, %{"alert" => nil})
+  end
+
+  step "{string} has a paragraph holding:", %{args: [title]} = context do
+    assert Enum.find(blocks(context, title), &(&1["kind"] == "paragraph"))["text"] ==
+             context.docstring
+
+    context
+  end
+
+  step "{string} has the footnote {string} holding:", %{args: [title, label]} = context do
+    note = Enum.find(blocks(context, title), &(&1["label"] == label)) || flunk("no footnote")
+    assert {note["kind"], note["text"]} == {"footnote", context.docstring}
+    context
+  end
+
+  step "the user labels {string} as {string}", %{args: [text, label]} = context do
+    update_block(context, text, %{"label" => label})
+  end
+
+  step "the collapsed section of {string} is titled {string}",
+       %{args: [title, summary]} = context do
+    assert Enum.find(blocks(context, title), &(&1["kind"] == "details"))["text"] == summary
+    context
+  end
+
+  step "{string} has the image {string} from {string}",
+       %{args: [title, caption, url]} = context do
+    image = Enum.find(blocks(context, title), &(&1["kind"] == "image")) || flunk("no image")
+    assert {image["text"], image["url"], image["imageId"]} == {caption, url, nil}
+    context
   end
 
   # An update whose reply a later step may check, as `context.reply`.
@@ -304,6 +346,9 @@ defmodule HalC2.Steps.Space.Markdown do
 
   defp raw_block(context, title),
     do: Enum.find(blocks(context, title), &(&1["kind"] == "raw")) || flunk("no raw block")
+
+  defp dash(""), do: "-"
+  defp dash(field), do: field
 
   defp unescape(text), do: text |> String.replace("\\n", "\n") |> String.replace("\\r", "\r")
 end

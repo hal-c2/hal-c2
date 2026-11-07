@@ -3,7 +3,8 @@ defmodule HalC2.AuthPropTest do
   `HalC2.Auth` against a model of what it promises: a pairing token redeems once and
   grants the scopes it was minted with; a session authenticates until it expires or is
   revoked, as a bearer or by DPoP proof (each proof accepted once, for the key and
-  token it names); a WebSocket ticket opens one socket for a session that is still
+  token it names), and renewing it while valid moves its expiry to now plus its
+  lifetime, never earlier; a WebSocket ticket opens one socket for a session that is still
   there; what expired is rejected, and `prune/0` drops it. Time is a fixed clock the
   commands advance. Restarting `HalC2.Auth` must keep every pairing token and session,
   and forgets tickets and proof records (they live in ETS).
@@ -51,6 +52,46 @@ defmodule HalC2.AuthPropTest do
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
         |> aggregate(command_names(cmds))
       end
+    end
+  end
+
+  property "a pairing link delegates only a valid subset of its creator's scopes",
+    numtests: HalC2.Prop.numtests(100) do
+    creator = let(scopes <- resize(5, list(oneof(@admin))), do: Enum.uniq(scopes))
+
+    requested =
+      frequency([
+        {2, nil},
+        {8, resize(5, list(oneof(@admin ++ ["bogus:scope"])))}
+      ])
+
+    forall {creator, requested} <- {creator, requested} do
+      HalC2.Prop.scratch_home("auth-delegation")
+      HalC2.Prop.start_services([{Store, path: Store.home_path()}, Auth])
+      effective = requested || @standard
+
+      valid? =
+        effective != [] and effective == Enum.uniq(effective) and
+          Enum.all?(effective, &(&1 in @admin)) and Enum.all?(effective, &(&1 in creator))
+
+      input = if requested == nil, do: %{}, else: %{"scopes" => requested}
+
+      outcome =
+        case Auth.create_pairing_link(input, creator) do
+          {:ok, %{"credential" => credential}} ->
+            [listed] = Auth.pairing_links()
+            {:ok, _, _, granted} = Auth.exchange(credential)
+            valid? and listed["scopes"] == effective and granted == effective
+
+          {:error, :invalid_scope} ->
+            not valid? and Auth.pairing_links() == []
+
+          _ ->
+            false
+        end
+
+      HalC2.Prop.stop_services()
+      outcome
     end
   end
 
@@ -112,6 +153,7 @@ defmodule HalC2.AuthPropTest do
 
           [
             {3, {:call, __MODULE__, :bearer_request, [seen]}},
+            {3, {:call, __MODULE__, :renew, [seen]}},
             {4, {:call, __MODULE__, :issue_ticket, [n, oneof([:token, :session]), seen]}},
             {3, {:call, __MODULE__, :revoke_client, [seen]}},
             {1, {:call, __MODULE__, :revoke_others, [seen]}},
@@ -294,6 +336,12 @@ defmodule HalC2.AuthPropTest do
 
   def next_state(state, _r, {:call, _, :revoke_client, [h]}), do: drop_sessions(state, [h])
 
+  def next_state(state, _r, {:call, _, :renew, [h]}) do
+    if valid?(state, h),
+      do: put_in(state.sessions[h].expires, renewed(state, h)),
+      else: state
+  end
+
   def next_state(state, _r, {:call, _, :revoke_others, [keep]}),
     do: drop_sessions(state, Map.keys(state.sessions) -- [keep])
 
@@ -335,11 +383,15 @@ defmodule HalC2.AuthPropTest do
     now = state.clock
     live = fn map -> map |> Enum.reject(fn {_, v} -> v.expires <= now end) |> Map.new() end
 
+    # A session that ran out takes the sockets it opened with it.
+    ran_out = for {h, v} <- state.sessions, v.expires <= now, do: h
+
     %{
       state
       | links: live.(state.links),
         sessions: live.(state.sessions),
-        tickets: live.(state.tickets)
+        tickets: live.(state.tickets),
+        sockets: Map.drop(state.sockets, ran_out)
     }
   end
 
@@ -350,6 +402,12 @@ defmodule HalC2.AuthPropTest do
   end
 
   def next_state(state, _r, _call), do: state
+
+  # A renewal moves the expiry to now plus the session's lifetime, never earlier.
+  defp renewed(state, h) do
+    session = state.sessions[h]
+    max(session.expires, state.clock + if(session.key, do: @dpop_ttl, else: @session_ttl))
+  end
 
   defp subset?(nil, _granted), do: true
   defp subset?(req, granted), do: Enum.all?(req, &(&1 in granted))
@@ -427,14 +485,16 @@ defmodule HalC2.AuthPropTest do
     end
   end
 
-  def postcondition(state, {:call, _, :clients, []}, result) do
+  # A client whose session ran out stays listed while its socket is open.
+  def postcondition(state, {:call, _, :clients, []}, {result, ordered?}) do
     expected =
-      for {h, s} <- state.sessions, s.expires > state.clock do
+      for {h, s} <- state.sessions,
+          s.expires > state.clock or Map.get(state.sockets, h, 0) > 0 do
         {h, s.scopes, s.expires, if(s.key, do: "dpop-access-token", else: "bearer-access-token"),
          Map.get(state.sockets, h, 0) > 0}
       end
 
-    result == Enum.sort(expected)
+    ordered? and result == Enum.sort(expected)
   end
 
   def postcondition(state, {:call, _, :list_static, []}, result) do
@@ -468,6 +528,12 @@ defmodule HalC2.AuthPropTest do
     if valid?(state, h) and state.sessions[h].key == nil,
       do: result == {:ok, h},
       else: result == {:error, "invalid_credential", nil}
+  end
+
+  def postcondition(state, {:call, _, :renew, [h]}, result) do
+    if valid?(state, h),
+      do: result == {:ok, renewed(state, h)},
+      else: result == :error
   end
 
   def postcondition(_state, {:call, _, :bad_credential, [kind]}, result) do
@@ -517,8 +583,14 @@ defmodule HalC2.AuthPropTest do
     end
   end
 
-  def postcondition(state, {:call, _, :prune, []}, {removed, remaining}) do
+  def postcondition(state, {:call, _, :prune, []}, {removed, remaining, closed, announced}) do
     now = state.clock
+
+    ran_out =
+      Enum.sort(
+        for {h, v} <- state.sessions, v.expires <= now, Map.get(state.sockets, h, 0) > 0, do: h
+      )
+
     count = fn map -> Enum.count(map, fn {_, v} -> v.expires <= now end) end
     threshold = div(now, 1000) - 305
 
@@ -530,7 +602,8 @@ defmodule HalC2.AuthPropTest do
       remaining.pairing == map_size(state.links) - count.(state.links) and
       remaining.sessions == map_size(state.sessions) - count.(state.sessions) and
       remaining.tickets == map_size(state.tickets) - count.(state.tickets) and
-      remaining.proofs <= live_proofs
+      remaining.proofs <= live_proofs and closed == ran_out and
+      announced == Enum.sort(for {h, v} <- state.sessions, v.expires <= now, do: h)
   end
 
   # --- system under test --------------------------------------------------------
@@ -595,7 +668,22 @@ defmodule HalC2.AuthPropTest do
     end
   end
 
-  def clients, do: summarize(Auth.clients(), true)
+  # The list sorted by `summarize/2`, and whether the MC listed it administrators first,
+  # then the connected, then the newest.
+  def clients do
+    rows = Auth.clients()
+    rank = &{"access:write" not in &1["scopes"], not &1["connected"]}
+
+    ordered? =
+      rows
+      |> Enum.chunk_every(2, 1, :discard)
+      |> Enum.all?(fn [a, b] ->
+        rank.(a) < rank.(b) or (rank.(a) == rank.(b) and a["issuedAt"] >= b["issuedAt"])
+      end)
+
+    {summarize(rows, true), ordered?}
+  end
+
   def list_static, do: summarize(Auth.list_sessions(Store.path()), false)
 
   defp summarize(rows, connected?) do
@@ -627,6 +715,13 @@ defmodule HalC2.AuthPropTest do
   def bearer_request(h) do
     {_, access} = Reg.get({:session, h})
     request("Bearer " <> access, nil)
+  end
+
+  # `POST /api/auth/session/renew` past authentication (modelled by `bearer_request` and
+  # `send_proof`): the session row as the request found it.
+  def renew(h) do
+    {id, _} = Reg.get({:session, h})
+    Auth.renew(%{id: id})
   end
 
   def bad_credential(:none), do: request(nil, nil)
@@ -717,7 +812,16 @@ defmodule HalC2.AuthPropTest do
   def advance(ms), do: Reg.advance(ms)
 
   def prune do
+    # Watchers are told each expired client is gone, so a live view stops listing it.
+    Auth.subscribe(self())
+    _ = drain_removed([])
     removed = Auth.prune()
+    _ = :sys.get_state(Auth)
+    gone = drain_removed([])
+    Auth.unsubscribe(self())
+
+    announced =
+      for {{:session, h}, {id, _}} <- :ets.tab2list(:auth_prop_handles), id in gone, do: h
 
     remaining = %{
       pairing: count("auth_pairing"),
@@ -726,7 +830,19 @@ defmodule HalC2.AuthPropTest do
       proofs: :ets.info(Auth.Dpop.Proofs, :size)
     }
 
-    {removed, remaining}
+    {removed, remaining, closed_sockets(), Enum.sort(announced)}
+  end
+
+  defp drain_removed(acc) do
+    receive do
+      {:hal_c2_auth_access, %{"type" => "clientRemoved", "payload" => %{"sessionId" => id}}} ->
+        drain_removed([id | acc])
+
+      {:hal_c2_auth_access, _} ->
+        drain_removed(acc)
+    after
+      0 -> acc
+    end
   end
 
   defp count(table) do
@@ -963,6 +1079,36 @@ defmodule HalC2.AuthConcurrentPropTest do
   def postcondition(state, {:call, _, :lookup, [h]}, result),
     do: result == h in state.sessions
 
+  property "an exchange proof is claimed once however many valid exchanges race",
+    numtests: HalC2.Prop.numtests(100) do
+    forall callers <- integer(2, 4) do
+      trap_exit do
+        previous = Application.fetch_env(:hal_c2, :desktop_token)
+        Application.put_env(:hal_c2, :desktop_token, "desktop-token")
+        HalC2.Prop.scratch_home("auth-exchange-proof")
+        HalC2.Prop.start_services([{Store, path: Store.home_path()}, Auth])
+        proof = %{thumbprint: "key", jti: "shared-proof", iat: div(Auth.now(), 1000)}
+
+        tasks =
+          for _ <- 1..callers do
+            Task.async(fn ->
+              Auth.exchange("desktop-token", %{proof_jkt: proof.thumbprint, proof: proof})
+            end)
+          end
+
+        results = Enum.map(tasks, &Task.await/1)
+        HalC2.Prop.stop_services()
+
+        if match?({:ok, _}, previous),
+          do: Application.put_env(:hal_c2, :desktop_token, elem(previous, 1)),
+          else: Application.delete_env(:hal_c2, :desktop_token)
+
+        Enum.count(results, &match?({:ok, _, _, _}, &1)) == 1 and
+          Enum.count(results, &(&1 == {:error, :dpop, :replay})) == callers - 1
+      end
+    end
+  end
+
   # --- system under test ---
 
   def redeem(h) do
@@ -981,4 +1127,93 @@ defmodule HalC2.AuthConcurrentPropTest do
     {_, access} = Reg.get({:session, h})
     match?({:ok, _}, Auth.session(access))
   end
+end
+
+defmodule HalC2.AuthDevTokenPropTest do
+  @moduledoc """
+  The configured development credential becomes the only reusable dev session when Auth
+  restarts. Configuring a value alone changes nothing until that restart.
+  """
+
+  use ExUnit.Case, async: false
+  use PropCheck
+  use PropCheck.StateM
+
+  alias HalC2.Auth
+  alias HalC2.Store
+
+  @moduletag timeout: :infinity
+  @tokens ["dev-token-a", "dev-token-b"]
+  @standard ~w(orchestration:read orchestration:operate terminal:operate review:write relay:read)
+  @admin @standard ++ ~w(access:read access:write relay:write)
+
+  property "only the configured dev token survives a restart",
+    numtests: HalC2.Prop.numtests(100) do
+    forall cmds <- commands(__MODULE__) do
+      trap_exit do
+        previous = Application.fetch_env(:hal_c2, :dev_auth_token)
+        Application.delete_env(:hal_c2, :dev_auth_token)
+        HalC2.Prop.scratch_home("auth-dev-token")
+        HalC2.Prop.start_services([{Store, path: Store.home_path()}, Auth])
+        {history, state, result} = run_commands(__MODULE__, cmds)
+        HalC2.Prop.stop_services()
+        restore_dev_token(previous)
+
+        (result == :ok)
+        |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
+        |> aggregate(command_names(cmds))
+      end
+    end
+  end
+
+  def initial_state, do: %{configured: nil, active: nil}
+
+  def command(_state) do
+    frequency([
+      {2, {:call, __MODULE__, :configure, [oneof([nil | @tokens])]}},
+      {2, {:call, __MODULE__, :restart, []}},
+      {4, {:call, __MODULE__, :present, [oneof(@tokens)]}}
+    ])
+  end
+
+  def precondition(_state, _call), do: true
+
+  def next_state(state, _result, {:call, _, :configure, [token]}),
+    do: %{state | configured: token}
+
+  def next_state(state, _result, {:call, _, :restart, []}),
+    do: %{state | active: state.configured}
+
+  def next_state(state, _result, _call), do: state
+
+  def postcondition(_state, {:call, _, name, _}, result) when name in [:configure, :restart],
+    do: result == :ok
+
+  def postcondition(state, {:call, _, :present, [token]}, result) do
+    if state.active == token,
+      do: result == {:ok, Enum.sort(@admin)},
+      else: result == :error
+  end
+
+  def configure(nil) do
+    Application.delete_env(:hal_c2, :dev_auth_token)
+    :ok
+  end
+
+  def configure(token) do
+    Application.put_env(:hal_c2, :dev_auth_token, token)
+    :ok
+  end
+
+  def restart, do: HalC2.Prop.restart_service(Auth)
+
+  def present(token) do
+    case Auth.session(token) do
+      {:ok, session} -> {:ok, Enum.sort(session.scopes)}
+      :error -> :error
+    end
+  end
+
+  defp restore_dev_token({:ok, token}), do: Application.put_env(:hal_c2, :dev_auth_token, token)
+  defp restore_dev_token(:error), do: Application.delete_env(:hal_c2, :dev_auth_token)
 end

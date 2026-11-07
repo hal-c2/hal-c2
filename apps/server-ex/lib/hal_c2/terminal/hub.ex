@@ -8,11 +8,16 @@ defmodule HalC2.Terminal.Hub do
   as `TerminalMetadataStreamEvent`. While any shell runs, one `ps` per second finds
   each shell's child process and tells the terminal when it changes, so its label
   can show the running command.
+
+  It also holds what outlives one terminal's process: who follows a closed terminal
+  until it opens again (`closed/3`), and how many ended terminals stay in memory.
   """
 
   use GenServer
 
   @poll_ms 1_000
+  @ended_limit 128
+  @ended ~w(exited error)
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -24,8 +29,13 @@ defmodule HalC2.Terminal.Hub do
   @doc "Records a terminal's current summary; `session` is its process."
   def upsert(summary, session), do: GenServer.cast(__MODULE__, {:upsert, summary, session})
 
-  def remove(thread_id, terminal_id),
-    do: GenServer.cast(__MODULE__, {:remove, {thread_id, terminal_id}})
+  @doc "A terminal has closed; `followers` are handed to its next process when it reports."
+  def closed(thread_id, terminal_id, followers),
+    do: GenServer.cast(__MODULE__, {:closed, {thread_id, terminal_id}, followers})
+
+  @doc "`pid` no longer follows a closed terminal."
+  def forget(thread_id, terminal_id, pid),
+    do: GenServer.cast(__MODULE__, {:forget, {thread_id, terminal_id}, pid})
 
   @doc "Every terminal's summary, without watching."
   def summaries do
@@ -36,8 +46,16 @@ defmodule HalC2.Terminal.Hub do
 
   @impl true
   def init(nil) do
-    {:ok, %{terminals: %{}, sessions: %{}, watchers: %{}, activity: %{}, polling: false},
-     {:continue, :resync}}
+    {:ok,
+     %{
+       terminals: %{},
+       sessions: %{},
+       watchers: %{},
+       activity: %{},
+       polling: false,
+       # Closed terminal => %{following pid => monitor}.
+       followers: %{}
+     }, {:continue, :resync}}
   end
 
   # A restarted hub starts empty while the terminals live on: each running terminal is
@@ -81,16 +99,37 @@ defmodule HalC2.Terminal.Hub do
 
     broadcast(state, %{"type" => "upsert", "terminal" => summary})
 
+    {followers, waiting} = Map.pop(state.followers, key, %{})
+    for {_pid, ref} <- followers, do: Process.demonitor(ref, [:flush])
+    if followers != %{}, do: send(session, {:followers, Map.keys(followers)})
+
     state = %{
       state
       | terminals: Map.put(state.terminals, key, {summary, session}),
-        sessions: sessions
+        sessions: sessions,
+        followers: waiting
     }
 
+    if summary["status"] in @ended, do: evict_ended(state)
     {:noreply, maybe_poll(state)}
   end
 
-  def handle_cast({:remove, key}, state), do: {:noreply, drop(state, key)}
+  def handle_cast({:closed, key, followers}, state) do
+    followers =
+      if followers == [],
+        do: state.followers,
+        else: Map.put(state.followers, key, Map.new(followers, &{&1, Process.monitor(&1)}))
+
+    {:noreply, drop(%{state | followers: followers}, key)}
+  end
+
+  def handle_cast({:forget, key, pid}, state) do
+    followers = Map.get(state.followers, key, %{})
+    if ref = followers[pid], do: Process.demonitor(ref, [:flush])
+
+    {:noreply,
+     %{state | followers: put_followers(state.followers, key, Map.delete(followers, pid))}}
+  end
 
   @impl true
   def handle_info({:DOWN, ref, :process, pid, _}, state) do
@@ -109,7 +148,12 @@ defmodule HalC2.Terminal.Hub do
         end
 
       true ->
-        {:noreply, state}
+        followers =
+          Enum.reduce(state.followers, state.followers, fn {key, pids}, acc ->
+            put_followers(acc, key, Map.delete(pids, pid))
+          end)
+
+        {:noreply, %{state | followers: followers}}
     end
   end
 
@@ -136,6 +180,27 @@ defmodule HalC2.Terminal.Hub do
   end
 
   def handle_info(_other, state), do: {:noreply, state}
+
+  # A hub from before followers has no field for them.
+  @impl true
+  def code_change(_old, state, _extra), do: {:ok, Map.put_new(state, :followers, %{})}
+
+  defp put_followers(followers, key, pids) when pids == %{}, do: Map.delete(followers, key)
+  defp put_followers(followers, key, pids), do: Map.put(followers, key, pids)
+
+  # An ended terminal is only there to be read, and its scrollback stays on disk, so past
+  # the limit those that changed least recently are told to go.
+  defp evict_ended(state) do
+    limit = Application.get_env(:hal_c2, :terminal_ended_limit, @ended_limit)
+
+    ended =
+      for {_key, {%{"status" => status, "updatedAt" => at}, session}} <- state.terminals,
+          status in @ended,
+          do: {at, session}
+
+    for {_at, session} <- ended |> Enum.sort() |> Enum.take(max(length(ended) - limit, 0)),
+        do: send(session, :evict)
+  end
 
   defp drop(state, key) do
     case Map.pop(state.terminals, key) do
@@ -173,7 +238,9 @@ defmodule HalC2.Terminal.Hub do
 
   # `{first child by parent pid, command by pid}` from `ps`, which lists by pid.
   defp process_table do
-    ps = Enum.find(["/bin/ps", "/usr/bin/ps"], &File.exists?/1) || "ps"
+    ps =
+      Application.get_env(:hal_c2, :terminal_ps) ||
+        Enum.find(["/bin/ps", "/usr/bin/ps"], &File.exists?/1) || "ps"
 
     case System.cmd(ps, ["-eo", "pid=,ppid=,comm="], stderr_to_stdout: true) do
       {out, 0} ->

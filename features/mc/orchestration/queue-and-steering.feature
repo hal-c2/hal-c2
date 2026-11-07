@@ -1,4 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16926
+#   https://github.com/pingdotgg/t3code/pull/21473
+#   https://github.com/pingdotgg/t3code/pull/15691
+#   https://github.com/pingdotgg/t3code/pull/17773
+#   https://github.com/pingdotgg/t3code/pull/20184
+#   https://github.com/pingdotgg/t3code/pull/18824
+#   https://github.com/pingdotgg/t3code/pull/19210
+#   https://github.com/pingdotgg/t3code/pull/13764 (covered: the MC sends queued runs, so a thread the user is not viewing still sends when its turn ends)
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (message.dispatch dispatchMode and deliveryIntent,
 #     queued-run.cancel, queued-run.edit, queued-run.reorder, queued-message.promote-to-steer,
@@ -49,7 +57,15 @@ Feature: Queueing, steering and restarting
     When the user sends "Next" to "t1" with automatic delivery
     Then "Next" waits in the queue
 
+  # Upstream #15691: automatic messages queue in the gap between a run's provider turns instead of being rejected.
   @backlog @mc
+  Scenario: An automatic message queues while a run is between provider turns
+    Given "t1" has an active run whose provider turn has finished and whose next turn has not started
+    When the user sends "Next" to "t1" with automatic delivery
+    Then "Next" waits in the queue
+    And the message is not rejected
+
+  @mc
   Scenario Outline: Queueing needs the provider the message is queued for to support a queue
     Given "t1" has a running turn on a provider that <active>
     When the user queues "Next" for a provider that <selected>
@@ -66,6 +82,22 @@ Feature: Queueing, steering and restarting
     Given "t1" has a running turn on "codex"
     When the user sends "Later" to "t1" to queue after the active turn
     Then "Later" waits at the end of the queue
+
+  @backlog @mc @plugin-claude
+  Scenario: A steer leaves Claude's running subagents running
+    Given "t1" has a running turn on "claudeAgent" with a subagent it started in the foreground
+    When the user sends "Also" to "t1" as a steer
+    Then the subagent moves to the background and keeps running
+    And "Also" joins the running turn
+    And the subagent's result wakes "t1" when it finishes
+
+  @backlog @mc @plugin-codex
+  Scenario: A Codex steer with a different model selection joins the running turn
+    Given "t1" has a running turn on "codex" with subagents running
+    When the user sends "Also" to "t1" as a steer with a different reasoning effort
+    Then "Also" joins the running turn instead of restarting it
+    And the subagents keep running
+    And the new selection is used from the next turn
 
   @mc
   Scenario: An explicit steer that the provider cannot take interrupts and goes first
@@ -104,6 +136,39 @@ Feature: Queueing, steering and restarting
     Then the run for "Over to Claude" starts with ordinal 2
     And thread "t1" is on "claudeAgent"
 
+  # What the MC queued for the agent before the agent switched provider (#1048).
+  @mc
+  Scenario: A delegated result queued before a switch runs on the provider the thread switched to
+    Given "t1" has a running turn on "codex"
+    And a delegated task result for "t1" waits in the queue
+    When the agent of "t1" switches it to "claudeAgent"
+    And the running turn completes
+    Then the turn for the woken agent runs on "claudeAgent"
+    And thread "t1" is on "claudeAgent"
+
+  # A provider's wake finishes that provider's background work; it is no choice of provider.
+  @mc
+  Scenario: A provider's wake after a switch runs on that provider and leaves the switch standing
+    Given "t1" has a running turn on "codex"
+    And a background wake from "codex" for "t1" waits in the queue
+    When the agent of "t1" switches it to "claudeAgent"
+    And the running turn completes
+    Then the turn for the woken agent runs on "codex"
+    And thread "t1" is on "claudeAgent"
+
+  @mc
+  Scenario: A provider's wake on a switched idle thread runs on that provider and leaves the switch standing
+    Given "t1" has a running turn on "codex"
+    And the running turn completes
+    When the agent of "t1" switches it to "claudeAgent"
+    And a background wake from "codex" for "t1" arrives while no turn is running
+    Then the turn for the woken agent runs on "codex"
+    And thread "t1" is on "claudeAgent"
+    When the woken turn completes
+    And the user sends "Where were we?" to "t1" with automatic delivery
+    Then "Where were we?" runs on "claudeAgent"
+    And Claude receives the woken turn as earlier conversation before "Where were we?"
+
   @mc
   Scenario Outline: A restart interrupts the active turn and goes first
     Given "t1" has a running turn and a queued message "Old"
@@ -117,7 +182,7 @@ Feature: Queueing, steering and restarting
       | with restart delivery        |
       | to restart the active turn   |
 
-  @backlog @mc
+  @mc
   Scenario: A restart whose interrupted turn never ends fails instead of running two turns
     Given "t1" has a running turn
     When the user sends "Instead" to "t1" to restart the active turn and the provider never ends the interrupted turn
@@ -234,6 +299,13 @@ Feature: Queueing, steering and restarting
     When the user edits the queued message removing the screenshot and adding a file reference
     Then the queued message carries only the file reference
 
+  @mc @backlog
+  Scenario: An image added while editing a queued message keeps the earlier image intact
+    Given "t1" has a queued message with the image "before.png"
+    When the user edits the queued message adding the image "after.png"
+    Then the queued message carries both images
+    And "before.png" still reads as it did
+
   @mc
   Scenario: Reordering a queued message before another
     Given "t1" has queued messages "A", "B" and "C"
@@ -268,6 +340,31 @@ Feature: Queueing, steering and restarting
     And the running turn is interrupted
     And "Hurry" runs on "claudeAgent"
 
+  # Upstream #16926: a queued message promoted to a steer after Stop could land on the stopping
+  # run and be lost.
+  @backlog @mc @priority-high
+  Scenario Outline: A turn being stopped cannot be steered into
+    Given the user stopped the running turn of "t1" and the provider is still stopping it
+    And "Next" is queued on "t1"
+    When the user tries to <action>
+    Then the command is refused
+    And "Next" is still queued and held
+
+    Examples:
+      | action                              |
+      | promote "Next" to a steer           |
+      | send "Also" to "t1" as a steer      |
+      | send "Instead" to "t1" with restart |
+
+  # Upstream #16926: an ordinary send during the Stop waits in the queue instead of steering.
+  @backlog @mc @priority-high
+  Scenario: A message sent while a turn is being stopped queues behind earlier messages
+    Given the user stopped the running turn of "t1" and the provider is still stopping it
+    And "Next" is queued on "t1"
+    When the user sends "Also" to "t1"
+    Then "Also" is queued after "Next" without steering the stopping turn
+    And "Next" starts once the turn has stopped
+
   @mc
   Scenario: Queued messages wait after an MC restart until the user resumes the queue
     Given "t1" had a queued message when the MC restarted
@@ -281,7 +378,7 @@ Feature: Queueing, steering and restarting
     Then no queued message is held
     And a run for "A" starts
 
-  @mc @shared @backlog-mobile
+  @mc @shared
   Scenario: A usage limit keeps the queue as it was
     Given "t1" has a running turn and queued messages "one" and "two"
     When the provider stops "t1" because its usage limit was reached
@@ -294,8 +391,17 @@ Feature: Queueing, steering and restarting
     When another run of "t1" ends
     Then "A" is still queued
 
+  # Upstream #21473: a run started by a message the user sent now releases the hold, so only a
+  # run the user did not start leaves it. Replaces the scenario above once the MC carries it.
+  @backlog @mc @priority-high
+  Scenario: A held queue does not start when a run the user did not start ends
+    Given "t1" has a held queued message "A"
+    When another agent's message reaches "t1" and its run ends
+    Then "A" is still queued
+
   # Runs are numbered in the order they start: checkpoints, handoffs and windowed
   # history count by it.
+  # Upstream #17773: queued messages land after a resume that ran before them
   @mc
   Scenario: A held queued message that a newer message passed starts after it
     Given "t1" has a held queued message "A"
@@ -305,7 +411,17 @@ Feature: Queueing, steering and restarting
     And the run for "Something else" has ordinal 2
     And the thread's latest run is the run for "A"
 
-  @mc @backlog
+  # Upstream #21473: the newer message the user sent releases the hold, so "A" starts after it
+  # without a resume, still numbered after it. Replaces the scenario above once the MC carries it.
+  @backlog @mc @priority-high
+  Scenario: A held queued message starts on its own after a newer message the user sent
+    Given "t1" has a held queued message "A"
+    When the user sends "Something else" to "t1" and its run ends
+    Then the run for "A" starts with ordinal 3
+    And the run for "Something else" has ordinal 2
+    And the thread's latest run is the run for "A"
+
+  @mc
   Scenario: A queued delegated task result runs before the user's queued messages
     Given "t1" has a running turn and a queued message "Next"
     And a delegated task of "t1" finished, so its result is queued after "Next"
@@ -313,7 +429,7 @@ Feature: Queueing, steering and restarting
     Then the turn carrying the task result starts first
     And "Next" starts after it
 
-  @mc @backlog
+  @mc
   Scenario Outline: A queued delegated task result cannot be handled like a queued message
     Given "t1" has a running turn and a queued delegated task result
     When the user tries to <action> the queued result
@@ -325,13 +441,20 @@ Feature: Queueing, steering and restarting
       | move it in the queue    | Automatic completion deliveries cannot be reordered.         |
       | edit                    | Automatic completion deliveries cannot be edited.            |
 
-  @mc @backlog
+  @mc
+  Scenario: A restart goes ahead of the user's queued messages but behind a queued task result
+    Given "t1" has a queued delegated task result and a queued message "Next"
+    When the user sends "Instead" to "t1" with restart delivery
+    Then the turn carrying the task result starts when the interrupted run ends
+    And "Instead" and "Next" wait behind it in that order
+
+  @mc
   Scenario: A queued message cannot be moved ahead of a queued delegated task result
     Given "t1" has a queued delegated task result and a queued message "Next"
     When the user moves "Next" before the queued result
     Then the command fails with "Queued messages cannot be reordered ahead of automatic completion delivery."
 
-  @mc @backlog
+  @mc
   Scenario: Cancelling a queued delegated task result gives up waking the agent for it
     Given "t1" has a running turn and a queued result for delegated tasks "one" and "two"
     When the user cancels the queued result
@@ -339,28 +462,82 @@ Feature: Queueing, steering and restarting
     And the agent of "t1" is not woken again for "one" or "two"
     And their results can still be read from each task's status
 
-  @mc @backlog
+  @mc
   Scenario: A message queued while the queue is held is held too
     Given "t1" has a held queued message "A"
     When the user queues "B" on "t1"
     Then "B" is held behind "A"
     And no run starts until the user resumes the queue
 
-  @mc @backlog
+  # Upstream #21473: a message the user sends releases a held queue, so nothing queued after it
+  # inherits the hold. Replaces the scenario above once the MC carries it.
+  @backlog @mc @priority-high
+  Scenario: A message the user sends resumes a held queue
+    Given "t1" has a held queued message "A"
+    When the user sends "B" to "t1"
+    Then no queued message is held
+    And "A" starts after the run for "B" ends
+    And a delegated task result queued behind "B" is not held
+
+  # Upstream #21473: a Stop holds the queue as a restart does.
+  @backlog @mc @priority-high
+  Scenario: Stopping a turn holds the queue
+    Given "t1" has a running turn and a queued message "A"
+    When the user stops the turn
+    Then "A" is held
+    And no run starts for it until the user resumes the queue or sends a message
+
+  # Upstream #21473: only the user coming back releases the hold.
+  @backlog @mc @priority-high
+  Scenario Outline: What is not the user sending a message leaves the queue held
+    Given "t1" has a held queued message "A"
+    When <what> reaches "t1"
+    Then "A" is still held
+
+    Examples:
+      | what                                             |
+      | a steer the user sent                            |
+      | the prompt of a scheduled task the user created  |
+      | the MC continuing the thread after a usage limit |
+      | the MC continuing the thread after it restarted  |
+
+  # Upstream #21473: messages held because the worktree could not be set up would otherwise start
+  # in the project checkout.
+  @backlog @mc @priority-high
+  Scenario: A queue held because the worktree could not be set up stays held when the user sends
+    Given "t1" has a held queued message "A" because its worktree could not be set up
+    When the user sends "B" to "t1"
+    Then "A" is still held until "t1" has a worktree
+
+  # Only what the user queues waits on a held queue: what the agent is sent still wakes it.
+  @mc
+  Scenario Outline: What the agent is sent while the queue is held still wakes it
+    Given "t1" has a held queued message "A"
+    When <what> reaches "t1" while no turn is running
+    Then a turn for it starts
+    And "A" is still queued
+
+    Examples:
+      | what                        |
+      | a delegated task result     |
+      | a background command's end  |
+      | another agent's message     |
+
+  @mc
   Scenario: A queued message that could not start says so in the timeline
     Given "t1" has a running turn and a queued message "Next"
     When the running turn completes and the provider for "Next" cannot be started
     Then the run for "Next" fails
     And the timeline shows an error titled "Queued provider could not start" with the reason
 
-  @mc @backlog
+  @mc
   Scenario: A steer that arrives after its turn finished starts a new turn
     Given "t1" had a running turn that completed
     When a steer the user sent for that turn reaches the MC afterwards
     Then the message is not lost
     And it starts a new turn of "t1"
 
-  @mc @backlog
+  @mc
   Scenario Outline: A steer or restart must name the thread's active turn
     Given "t1" has a running turn and an older turn that <state>
     When the user sends "Now" to "t1" as a <delivery> of the older turn
@@ -373,7 +550,7 @@ Feature: Queueing, steering and restarting
       | was interrupted | steer    |
       | was interrupted | restart  |
 
-  @mc @backlog
+  @mc
   Scenario Outline: Compacting and signing out cannot be steered into a turn
     Given "t1" has a running turn on "codex"
     When the user sends "<command>" by itself to "t1" as a steer
@@ -384,7 +561,7 @@ Feature: Queueing, steering and restarting
       | /compact | Context compaction must run as a separate turn. Queue it or wait for the active turn to finish. |
       | /logout  | Signing out must run as a separate turn. Queue it or wait for the active turn to finish.        |
 
-  @mc @backlog
+  @mc
   Scenario Outline: A turn that is compacting or signing out cannot be steered
     Given "t1" has a running turn started by "<command>" sent by itself
     When the user sends "Also check the docs" to "t1" as a steer
@@ -395,14 +572,35 @@ Feature: Queueing, steering and restarting
       | /compact | Wait for context compaction to finish before steering the thread. |
       | /logout  | Wait for sign-out to finish before steering the thread.           |
 
+  # Upstream #20184 queues these steers instead of refusing them, so the message is no
+  # longer stuck in the composer. Replaces the scenario above once the MC carries it.
   @mc @backlog
+  Scenario Outline: A steer sent while a thread compacts or signs out is queued
+    Given "t1" has a running turn started by "<command>" sent by itself
+    When the user sends "Also check the docs" to "t1" as a steer
+    Then "Also check the docs" is queued to run after the active turn
+    And it runs once the "<command>" turn finishes
+
+    Examples:
+      | command  |
+      | /compact |
+      | /logout  |
+
+  @shared @backlog
+  Scenario: The composer offers to queue while the thread compacts
+    Given the user's follow-up behaviour is to steer
+    And "t1" is running "/compact"
+    When the user writes a follow-up, with or without the steer modifier held
+    Then the composer's send action queues it
+
+  @mc
   Scenario: A queued message cannot be edited down to nothing
     Given "t1" has a queued message "Next" with no attachments
     When the user edits the queued message to empty text
     Then the command fails saying the queued run cannot be edited to an empty message
     And the queued message still reads "Next"
 
-  @mc @backlog
+  @mc
   Scenario Outline: The queue of an archived thread cannot be worked
     Given "t1" has a queued message "Next" and is archived
     When a client tries to <action>

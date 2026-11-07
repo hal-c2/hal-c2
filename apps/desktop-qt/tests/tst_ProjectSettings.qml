@@ -136,5 +136,28 @@ Item {
             Shell.state = Object.assign({}, Shell.state, { route: route(2) });
             tryCompare(scroll, "contentY", revealed);
         }
+
+        // "Where this comes from" sits in the Default model row, under its
+        // description and flush with its words, and opening its layers leaves
+        // the model's picker where it was.
+        function test_where_the_model_comes_from_is_under_its_description() {
+            const inheritance = { layers: [{ key: "environment", label: "Environment", value: "Automatic", effective: true },
+                                           { key: "project", label: "Project", value: "Not set", effective: false }] };
+            Shell.state = { settingsScope: { editable: true, kind: "project" }, projectSettings: root.state({}) };
+            const page = createTemporaryObject(pageComponent, root);
+            const row = findChild(page, "model");
+            const inspect = findChild(row, "inspect");
+            const description = findChild(row, "description");
+            const control = findChild(row, "control");
+            verify(inspect !== null, "the link is part of the row it explains");
+            tryVerify(() => inspect.width > 0 && description.width > 0);
+            compare(inspect.mapToItem(row, 0, 0).x, description.mapToItem(row, 0, 0).x);
+            verify(inspect.mapToItem(row, 0, 0).y >= description.mapToItem(row, 0, description.height).y,
+                   "the link is under the description");
+            const pickerTop = control.mapToItem(row, 0, 0).y;
+            Shell.state = Object.assign({}, Shell.state, { projectSettings: root.state({ model: Object.assign({}, root.state({}).model, { inheritance: inheritance }) }) });
+            tryVerify(() => findChild(row, "layer:project") !== null);
+            compare(control.mapToItem(row, 0, 0).y, pickerTop);
+        }
     }
 }

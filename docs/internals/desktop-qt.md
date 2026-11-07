@@ -25,7 +25,7 @@ NativeShell (McClient) ── WebSocket (protocol 3) ─────────
   the MC it started.
 - **The host starts the MC.** A release
   (`HAL_C2_MC_RELEASE`, else the bundled `hal-c2-mc/`) runs `bin/hal_c2
-start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
+  start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   Either gets `HAL_C2_BOOTSTRAP_STDIN=1` and one JSON line on stdin (port, host
   `127.0.0.1`, `halC2Home` from `--base-dir`; `HalC2.Desktop`), and
   `HAL_C2_NODE_COMMAND` names the host's Node for the MC's JavaScript
@@ -110,7 +110,7 @@ The bricks come in two layers. Chrome bricks each own one piece of the window
 and read one key of `Shell.state`: `Sidebar`, `Workspace` (the header
 strip), `Composer`, `RightPanel`, `SettingsNav`, `ClusterSettings`,
 `ConnectionsSettings`, `GitActions`, `Notifications`, `ContextMenuHost`, plus
-`CentreHost` (the view `route.kind` names), `SettingsHost`, `DefaultShell` and
+`CentreHost` (the view `route.kind` names, and a thread's stage), `SettingsHost`, `DefaultShell` and
 `ShellErrorOverlay`. `TerminalDrawer` reads the native
 `Terminals` controller instead (see the terminal drawer below), and `Timeline`
 renders a native `Threads` timeline (see the thread store below). `RightPanel`'s
@@ -143,7 +143,8 @@ bar row still use that brick.
 ## Setup
 
 Requirements: CMake ≥ 3.21, Ninja, a C++20 compiler, Qt ≥ 6.9 with
-`WebSockets` and `Sql` with its SQLite driver, Node (the host runs from TypeScript source).
+`WebSockets` and `Sql` with its SQLite driver, Node (the host runs from TypeScript source), and
+Rust's `cargo` for the code highlighter (`native/syntax`, linked in by `cmake/Syntax.cmake`).
 
 - macOS: `brew install qt` (6.11 at time of writing).
 - Linux: the distro's Qt 6 with its WebSockets module, or the official
@@ -622,10 +623,10 @@ project scripts' `previewUrl`s and this device's last ten pages
 (`previewRecentPages`), with `preview.navigate`. Moving another tab to QML is a line in `js/panelTabs.js` plus its kind
 in `RightPanelController::nativeKinds`.
 
-The desktop embeds no browser. QtWebView is WebEngine underneath on Linux,
-with no input injection, zoom or popup control, so it cannot host the agent's
-preview tabs. The embedding scenarios in
-`features/preview/surfaces.feature` are `@backlog-desktop` for that reason.
+The desktop embeds QtWebEngine (a required dependency) for the browser tab,
+as QtWebView is WebEngine underneath on Linux with no input injection, zoom or
+popup control. The phone client links no WebEngine and opens pages in the
+system browser (`Browser::supported`, set by the desktop's main.cpp).
 
 The Pull request review tab (`pull-request:<host>/<repository>#<number>`,
 titled "PR #n") is `PullRequestReviewPanel` over the controller's

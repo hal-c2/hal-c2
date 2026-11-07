@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18830 (dropped)
 #   docs/user/mobile-notifications.md (publishing must be on, HAL-C2 Connect required, 15-minute results)
 #   packages/contracts/src/relay.ts (RelayAgentAwarenessPhase, RelayAgentActivityState,
 #     RelayAgentActivityPublishRequest, RelayAgentActivityPublishProofInvalidReason,
@@ -93,6 +94,14 @@ Feature: Publishing agent activity
     When an agent completes its turn
     Then the turn completes as usual
     And the MC tries the next update when it happens
+
+  # Dropped with HAL-C2 Connect.
+  @dropped @mc
+  Scenario: A publish the relay never finishes answering does not hold up other threads
+    Given the relay accepts an update for "t1" but never finishes its answer
+    When 10 seconds pass
+    Then the publish for "t1" counts as failed and is retried later
+    And updates for other threads are published meanwhile
 
   @dropped @mc
   Scenario Outline: Only changes to what the agent is doing are published

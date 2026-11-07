@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24769
+#   https://github.com/pingdotgg/t3code/pull/21307
+#   https://github.com/pingdotgg/t3code/pull/11943
+#   https://github.com/pingdotgg/t3code/pull/18604
 #   https://github.com/pingdotgg/t3code/pull/13340
 #   docs/user/mobile-notifications.md
 #   packages/contracts/src/rpc.ts (hal-c2.registerPush, hal-c2.unregisterPush)
@@ -6,6 +10,9 @@
 #   apps/mobile/src/features/settings/SettingsNotificationsRouteScreen.tsx
 #   apps/mobile/modules/hal-c2-agent-notifications
 #   apps/mobile/src/Stack.tsx (notification navigation)
+#   https://github.com/pingdotgg/t3code/pull/12048
+#   https://github.com/pingdotgg/t3code/pull/12052
+#   https://github.com/pingdotgg/t3code/pull/21405
 # The @dropped scenarios were HAL-C2 Connect's relay push (and connections/agent-activity-publishing.feature);
 # the MC now pushes through the user's UnifiedPush distributor. This file covers what the phone does with it.
 
@@ -88,7 +95,29 @@ Feature: Push notifications and live agent activity
       | fails                    |
       | needs the user's input   |
 
+  # Upstream #24769: a run that ended and was continued a moment later pushed "completed", and
+  # pushed it again when the work really finished.
+  @backlog @mc @mobile @priority-high
+  Scenario Outline: A finished turn is pushed only once the thread has stayed done
+    Given device notifications are on and the app is in the background
+    When an agent in "Fix checkout" finishes its turn and <then> within 5 seconds
+    Then <pushed>
+
+    Examples:
+      | then                         | pushed                                              |
+      | the next run starts          | no alert says "Fix checkout" completed              |
+      | nothing more happens         | one alert says "Fix checkout" completed             |
+      | the thread settles           | one alert says "Fix checkout" completed             |
+
+  # Upstream #24769
+  @backlog @mc @mobile
+  Scenario: A failed run is pushed at once
+    Given device notifications are on and the app is in the background
+    When an agent in "Fix checkout" fails
+    Then the alert is pushed without waiting
+
   # The MC pushes on its own, so a restart must not replay work it already reported.
+  # Upstream #13340: stopped the server replaying old agent alerts on restart
   @mc @mobile
   Scenario: A restarted MC does not alert about work that finished before it started
     Given "My MacBook" has several threads whose turns finished days ago
@@ -98,7 +127,9 @@ Feature: Push notifications and live agent activity
 
   # What a machine had when it joined the cluster is not news either, but its first
   # finished turn is, even when it joined with no threads at all.
-  @mc @mobile
+  # The phone sees only one environment, so it cannot join a second machine to the
+  # cluster yet (#1092); the MC's half runs under features/mc.
+  @mc @mobile @backlog-mobile
   Scenario: A machine that joins the cluster with no threads alerts about its first finished turn
     Given device notifications are on
     And "Studio" joins the cluster with no threads
@@ -154,12 +185,40 @@ Feature: Push notifications and live agent activity
     When the user sends a message in "Fix checkout"
     Then the lock screen shows that agent work is in progress
 
+  # Upstream #11943: an idle live activity ends once its 15-minute display window is over.
   @mobile
   Scenario: The live activity follows the agent and shows the result
     Given the lock screen shows agent work in progress for "Fix checkout"
     When the agent finishes its turn
     Then the lock screen shows that the agent work completed
     And the result stays visible for up to 15 minutes
+
+  # Upstream #21405: updates to the live activity are held back to one every 15 seconds, so it
+  # could say "Connecting" for a whole turn; a change of what the work is doing is not held.
+  @backlog @mc @mobile
+  Scenario: The live activity shows a change of phase at once
+    Given the lock screen shows "Fix checkout" connecting
+    When the agent in "Fix checkout" starts working a second later
+    Then the lock screen shows it working without waiting for the next update
+    But a change of only its elapsed time waits for the next update
+
+  # Upstream #21307: ended Live Activities stayed on the lock screen after opening the app or signing out.
+  @backlog @mobile @priority-low
+  Scenario: An ended live activity is cleared when the user opens the app or signs out
+    Given the lock screen still shows a live activity whose agent work completed
+    When the user opens the app or signs out
+    Then that live activity is removed
+    And a live activity for agent work still running stays
+
+  # Upstream #18604: a settled thread kept its Done row; settling now removes it, and
+  # unsettling does not send another Done alert.
+  @backlog @mc @mobile
+  Scenario: Settling a finished thread takes it off the live activity
+    Given the lock screen shows "Fix checkout" as done and "Add search" as running
+    When the user settles "Fix checkout"
+    Then the lock screen shows only "Add search"
+    When the user unsettles "Fix checkout"
+    Then no new alert says "Fix checkout" is done
 
   @mobile
   Scenario: Only one live activity is shown per phone
@@ -622,3 +681,17 @@ Feature: Push notifications and live agent activity
     Given the user set quiet hours that let approval requests through
     When an agent needs approval during quiet hours
     Then the phone shows an alert
+
+  # Upstream #12048: stacked agent alerts by thread on both platforms
+  @backlog @mobile
+  Scenario: Agent alerts stack by thread
+    Given a thread sends many alerts
+    Then they group into one stack for that thread
+    And other threads' alerts are not pushed out of the notification list
+
+  # Upstream #12052: Android suppresses only the on-screen thread's alert
+  @backlog @mobile
+  Scenario: Only the open thread's alert is suppressed
+    Given the app is in the foreground on a thread
+    When alerts arrive for that and other threads
+    Then only the open thread's alert is suppressed

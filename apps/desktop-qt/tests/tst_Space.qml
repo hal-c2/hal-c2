@@ -19,6 +19,13 @@ Item {
         }
     }
 
+    // Reads the clipboard back.
+    TextEdit {
+        id: pasteTarget
+        visible: false
+        textFormat: TextEdit.PlainText
+    }
+
     function block(id, text, more) {
         return Object.assign({ id: id, kind: "paragraph", text: text, checked: false, linkedPageId: "", linkedTitle: "", byAgent: false, openComments: 0, level: 0, language: "", imageId: "", imageState: "", imageUrl: "", imageWidth: 0, imageHeight: 0 }, more);
     }
@@ -41,11 +48,47 @@ Item {
             blocks: [root.block("b1", "One"), root.block("b2", "Two"), root.block("b3", "Three")],
             page: { id: "page-1", title: "Roadmap", parentPageId: "", trashed: false, sourceThreadId: "", sourceThreadTitle: "" }
         }, more));
+        // The prompt aimed at the open page, as ComposerController publishes it.
+        Shell.state = Object.assign({}, Shell.state, {
+            composer: Object.assign({}, Shell.state.composer, {
+                target: "page#page-1",
+                routeKind: "page",
+                pageId: "page-1",
+                project: { id: "shop", title: "shop" },
+                projects: [{ id: "shop", title: "shop" }, { id: "docs", title: "docs" }],
+                followUpBehavior: ""
+            })
+        });
         return test.createTemporaryObject(workspaceComponent, root);
+    }
+
+    // The controller's part of a page's prompt (ComposerController::submitPage):
+    // words that are not an ask come back to the page to be written.
+    Connections {
+        target: Shell
+        function onActionRequested(action, payload) {
+            if (action === "composer.submit" && Shell.state.composer.routeKind === "page" && !/^@agent(\s|$)/i.test(payload.text.trim()) && payload.text.trim() !== "")
+                Shell.actionRequested("space.prompt.write", { pageId: Shell.state.composer.pageId, text: payload.text.trim() });
+        }
     }
 
     function dispatched(action) {
         return Shell.dispatchedActions.filter(entry => entry.action === action).map(entry => entry.payload);
+    }
+
+    // Whether `name` is in `view` and shown.
+    function showing(view, name) {
+        const item = test.findChild(view, name);
+        return item !== null && item.visible;
+    }
+
+    // The source editor of the block with `text`, shown as a click on its
+    // drawn text shows it.
+    function editorOf(view, text) {
+        const shown = test.findChild(view, "spaceBlock:" + text);
+        if (shown.editor === null)
+            shown.edit();
+        return shown.editor;
     }
 
     TestCase {
@@ -179,7 +222,7 @@ Item {
             verify(findChild(chart, "spaceChartLine") === null);
             verify(!findChild(chart, "spaceChartUnmatched").visible);
             verify(!findChild(chart, "spaceChartLegend").visible, "one series needs no legend");
-            verify(!findChild(view, "spaceBlockEditor:" + chartBlock("bar").text).visible, "a chart is not edited as text");
+            verify(!root.showing(view, "spaceBlockEditor:" + chartBlock("bar").text), "a chart is not edited as text");
         }
 
         function test_a_chart_keeps_a_long_label_inside_the_plot() {
@@ -245,19 +288,19 @@ Item {
         function test_a_visualize_request_asks_the_mc_and_is_not_written_as_a_block() {
             const view = root.research({});
             const composer = findChild(view, "spaceComposer");
-            composer.forceActiveFocus();
-            composer.text = "/visualize weekly turns";
+            composer.focusInput();
+            composer.editor.text = "/visualize weekly turns";
             verify(!findChild(view, "spaceSlashMenu").visible);
             keyClick(Qt.Key_Return);
             compare(root.dispatched("space.block.visualize"), [{ pageId: "page-1", request: "/visualize weekly turns" }]);
             compare(root.dispatched("space.block.insert").length, 0);
-            compare(composer.text, "");
+            compare(composer.editor.text, "");
         }
 
         function test_the_slash_menu_starts_a_visualize_request() {
             const view = root.research({});
             const composer = findChild(view, "spaceComposer");
-            composer.forceActiveFocus();
+            composer.focusInput();
             keyClick("/");
             keyClick("v");
             const slash = findChild(view, "spaceSlashMenu");
@@ -265,7 +308,7 @@ Item {
             compare(slash.shown.map(entry => entry.kind), ["chart"]);
             keyClick(Qt.Key_Return);
             tryVerify(() => !slash.visible);
-            compare(composer.text, "/visualize ");
+            compare(composer.editor.text, "/visualize ");
             keyClick(Qt.Key_Return);
             compare(root.dispatched("space.block.visualize").length, 0);
         }
@@ -276,14 +319,14 @@ Item {
             tryVerify(() => again !== null);
             again.clicked();
             const composer = findChild(view, "spaceComposer");
-            compare(composer.text, "/visualize signups");
+            compare(composer.editor.text, "/visualize signups");
             const hint = findChild(view, "spaceReplacing");
             tryVerify(() => hint.visible);
             mouseClick(hint);
             tryVerify(() => !hint.visible);
-            compare(composer.text, "");
+            compare(composer.editor.text, "");
             again.clicked();
-            composer.forceActiveFocus();
+            composer.focusInput();
             keyClick(Qt.Key_Return);
             compare(root.dispatched("space.block.visualize"), [{ pageId: "page-1", request: "/visualize signups", blockId: "c1" }]);
         }
@@ -297,16 +340,16 @@ Item {
             const composer = findChild(view, "spaceComposer");
             again.clicked();
             tryVerify(() => hint.visible);
-            composer.text = "A plain paragraph";
-            composer.forceActiveFocus();
+            composer.editor.text = "A plain paragraph";
+            composer.focusInput();
             keyClick(Qt.Key_Return);
             tryVerify(() => !hint.visible);
             again.clicked();
             tryVerify(() => hint.visible);
             findChild(view, "spaceBlock:" + blocks[1].text).addBelowRequested("b2");
             tryVerify(() => !hint.visible);
-            composer.text = "/visualize signups";
-            composer.forceActiveFocus();
+            composer.editor.text = "/visualize signups";
+            composer.focusInput();
             keyClick(Qt.Key_Return);
             compare(root.dispatched("space.block.visualize"), [{ pageId: "page-1", request: "/visualize signups", afterBlockId: "b2" }]);
         }
@@ -563,7 +606,7 @@ Item {
         function test_a_slash_picks_the_kind_of_the_next_block() {
             const view = root.research({});
             const composer = findChild(view, "spaceComposer");
-            composer.forceActiveFocus();
+            composer.focusInput();
             keyClick("/");
             keyClick("c");
             keyClick("h");
@@ -573,7 +616,7 @@ Item {
             compare(slash.shown.map(entry => entry.kind), ["checklist"]);
             keyClick(Qt.Key_Return);
             tryVerify(() => !slash.visible);
-            compare(composer.text, "");
+            compare(composer.editor.text, "");
             compare(findChild(view, "spaceNewKind").text, "Checklist");
             keyClick("S");
             keyClick("h");
@@ -623,7 +666,7 @@ Item {
             const diagram = findChild(view, "spaceDiagram:" + row.text);
             verify(diagram.visible);
             compare(findChild(diagram, "mermaidImage").width, 200);
-            verify(!findChild(view, "spaceBlockEditor:" + row.text).visible);
+            verify(!root.showing(view, "spaceBlockEditor:" + row.text));
             verify(!note.visible);
 
             // The source is the way to edit it, and what is saved is drawn.
@@ -690,20 +733,23 @@ Item {
                 root.block("p1", "```mermaid\nflowchart LR\n  A --> B\n```"),
                 root.block("t1", "| mermaid |\n| --- |", { kind: "table" })
             ] });
-            tryVerify(() => findChild(view, "spaceBlockEditor:| mermaid |\n| --- |"), 1000, "every block is on the page");
-            compare(Object.keys(Diagrams.asked).length, 0);
+            tryVerify(() => findChild(view, "spaceBlockText:| mermaid |\n| --- |"), 1000, "every block is on the page");
+            // A paragraph is drawn as the chat's Markdown, where a fence is code.
+            compare(Object.keys(Diagrams.asked), ["dark\nflowchart LR\n  A --> B"]);
         }
 
         function test_return_writes_an_edited_block_and_escape_drops_the_edit() {
             const view = root.research({});
-            const editor = findChild(view, "spaceBlockEditor:One");
-            editor.forceActiveFocus();
+            let editor = root.editorOf(view, "One");
             editor.selectAll();
             keyClick("X");
             keyClick(Qt.Key_Escape);
-            compare(editor.text, "One");
             compare(root.dispatched("space.block.update").length, 0);
-            editor.forceActiveFocus();
+            const shown = findChild(view, "spaceBlock:One");
+            compare(shown.editor, null, "the block is drawn again");
+            compare(findChild(shown, "spaceBlockText:One").text, "One");
+            editor = root.editorOf(view, "One");
+            compare(editor.text, "One");
             editor.selectAll();
             keyClick("F");
             keyClick(Qt.Key_Return);
@@ -725,6 +771,76 @@ Item {
             compare(root.dispatched("space.block.update").length, 0);
             keyClick(Qt.Key_Return, Qt.ControlModifier);
             compare(root.dispatched("space.block.update"), [{ blockId: "b1", text: table + "\n|" }]);
+        }
+
+        // features/space/markdown.feature, Tables and Code (#854): a table and
+        // a code block are drawn as the chat draws them until they are edited,
+        // then edited as their source.
+        function test_a_table_is_drawn_as_a_grid_and_edited_as_its_source() {
+            const table = "| Step | Owner | Done |\n| :--- | :---: | ---: |\n| **MC** | a \\| b | 3 |";
+            const view = root.research({ blocks: [root.block("b1", table, { kind: "table" })] });
+            tryVerify(() => findChild(view, "spaceBlockText:" + table) !== null);
+            const shown = findChild(view, "spaceBlock:" + table);
+            compare(shown.editor, null, "a drawn table holds no editor");
+            const grid = findChild(findChild(shown, "spaceBlockText:" + table), "markdownTable");
+            verify(grid !== null && grid.visible, "the table is a grid");
+            compare(grid.spec.header.length, 3);
+            compare(grid.spec.align, ["left", "center", "right"]);
+            verify(/<(b|strong)>MC<\/(b|strong)>/.test(grid.spec.rows[0][0]), grid.spec.rows[0][0]);
+            compare(grid.spec.rows[0][1], "a | b");
+
+            // A click on a cell edits the table's source, line for line.
+            mouseClick(grid, 20, 10);
+            const editor = shown.editor;
+            verify(editor !== null && editor.activeFocus);
+            compare(editor.text, table);
+            compare(editor.wrapMode, TextEdit.NoWrap);
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.block.update").length, 0, "Return starts a line");
+            keyClick(Qt.Key_Escape);
+            compare(shown.editor, null, "left, it is drawn again");
+        }
+
+        function test_a_code_block_is_drawn_as_code_and_copied_without_its_fence() {
+            const code = "const a = 1;\n```\nnot the end";
+            const view = root.research({ blocks: [root.block("b1", code, { kind: "code", language: "ts" })] });
+            tryVerify(() => findChild(view, "spaceBlockText:" + code) !== null);
+            const shown = findChild(view, "spaceBlock:" + code);
+            const drawn = findChild(shown, "spaceBlockText:" + code);
+            compare(drawn.text, "````ts\n" + code + "\n````", "a fence longer than the one it holds");
+            const box = findChild(drawn, "markdownCode");
+            verify(box !== null);
+            compare(box.code, code);
+            compare(findChild(box, "codeLabel").text, "ts");
+            compare(findChild(box, "codeText").font.family, Theme.fontMono.length > 0 ? Theme.fontMono : "monospace");
+
+            // Its copy is the brick's, and copying edits nothing.
+            tryVerify(() => box.height > 30 && drawn.height >= box.height, 1000, "the code is laid out");
+            mouseClick(findChild(box, "copyCode"));
+            compare(shown.editor, null, "copying does not edit");
+            pasteTarget.text = "";
+            pasteTarget.paste();
+            compare(pasteTarget.text, code);
+
+            // Elsewhere edits the code, as before: Ctrl+Return writes it.
+            mouseClick(findChild(box, "codeText"), 4, 4);
+            const editor = shown.editor;
+            verify(editor !== null && editor.activeFocus);
+            compare(editor.text, code);
+            compare(editor.font.family, Theme.fontMono.length > 0 ? Theme.fontMono : "monospace");
+            editor.cursorPosition = editor.length;
+            keyClick("!");
+            keyClick(Qt.Key_Return, Qt.ControlModifier);
+            compare(root.dispatched("space.block.update"), [{ blockId: "b1", text: code + "!" }]);
+        }
+
+        // Math stays the source the MC fences (a diagram its picture, above).
+        function test_math_is_not_drawn_as_code() {
+            const view = root.research({ blocks: [root.block("m1", "E = mc^2", { kind: "code", language: "math", markdownAbove: "$$", markdownBelow: "$$" })] });
+            tryVerify(() => findChild(view, "spaceBlock:E = mc^2") !== null);
+            const shown = findChild(view, "spaceBlock:E = mc^2");
+            verify(shown.editor !== null, "math is its source");
+            compare(findChild(shown, "spaceBlockText:E = mc^2"), null);
         }
 
         function test_a_scrolled_raw_block_comes_back_when_its_lines_get_shorter() {
@@ -749,18 +865,19 @@ Item {
             const levels = [1, 2, 3, 4, 5, 6];
             const headings = levels.map(level => root.block("h" + level, "Level " + level, { kind: "heading", level: level }));
             const view = root.research({ blocks: headings.concat([root.block("h", "Plain", { kind: "heading" })]) });
-            tryVerify(() => findChild(view, "spaceBlockEditor:Plain") !== null);
-            const sizes = levels.map(level => findChild(view, "spaceBlockEditor:Level " + level).font.pixelSize);
+            tryVerify(() => findChild(view, "spaceBlockText:Plain") !== null);
+            const sizes = levels.map(level => findChild(view, "spaceBlockText:Level " + level).fontSize);
             for (let i = 1; i < sizes.length; ++i)
                 verify(sizes[i] < sizes[i - 1], "level " + (i + 1) + " is smaller than level " + i + ": " + sizes);
             // Level 2 is the page's usual heading, and so is a heading with no level.
-            compare(findChild(view, "spaceBlockEditor:Plain").font.pixelSize, sizes[1]);
+            compare(findChild(view, "spaceBlockText:Plain").fontSize, sizes[1]);
+            // Its source is written at the size it is drawn.
+            compare(root.editorOf(view, "Level 1").font.pixelSize, sizes[0]);
         }
 
         function test_what_the_user_is_writing_is_not_overwritten_by_the_stream() {
             const view = root.research({});
-            const editor = findChild(view, "spaceBlockEditor:One");
-            editor.forceActiveFocus();
+            const editor = root.editorOf(view, "One");
             editor.selectAll();
             keyClick("M");
             // Another client changes the block while the user writes in it.
@@ -798,11 +915,174 @@ Item {
             compare(sidebar.movesFor(2).map(page => page.title), ["Roadmap", "Q3"]);
         }
 
+        // features/space/markdown.feature, Inline formatting: a text block is
+        // drawn through the chat's Markdown brick, untrusted, until it is edited.
+        function test_a_block_is_drawn_with_its_inline_formatting() {
+            const source = "Ship **soon**, ~~later~~ with `mix test` and [the docs](https://example.com \"Docs\")";
+            const view = root.research({ blocks: [root.block("b1", source)] });
+            const shown = findChild(view, "spaceBlock:" + source);
+            compare(shown.editor, null, "an idle block holds no editor");
+            const drawn = findChild(shown, "spaceBlockText:" + source);
+            verify(drawn.visible);
+            verify(!drawn.trusted);
+            const html = findChild(drawn, "markdownProse").text;
+            verify(/<(b|strong)>soon<\/(b|strong)>/.test(html), html);
+            verify(/<s>later<\/s>/.test(html), html);
+            verify(/class="c"[^>]*>(<span[^>]*> <\/span>)?mix test</.test(html), "inline code: " + html);
+            verify(html.includes("href=\"https://example.com\""), html);
+            verify(!html.includes("**") && !html.includes("~~"), "no markers show: " + html);
+        }
+
+        // An image is a link to it, and nothing is fetched until it is followed.
+        function test_a_link_in_a_block_never_loads_anything_by_itself() {
+            const source = "![cat](https://example.com/cat.png)";
+            const view = root.research({ blocks: [root.block("b1", source)] });
+            const html = findChild(findChild(view, "spaceBlockText:" + source), "markdownProse").text;
+            verify(!html.includes("<img"), html);
+            verify(html.includes("href=\"https://example.com/cat.png\""), html);
+            compare(Shell.openedExternally, []);
+        }
+
+        // features/space/markdown.feature, Lists: an item's further lines stay
+        // in it, and a text the brick would read as no item (a rule of the
+        // bullet's dashes, a quote, a table) is drawn after its marker in the lead.
+        function test_an_item_keeps_text_that_reads_as_no_item() {
+            const item = { kind: "bullet", markdownLead: "- " };
+            const view = root.research({ blocks: [root.block("b1", "--", item), root.block("b2", "> quoted", item), root.block("b4", "\t> tabbed", item), root.block("b5", "Name | Age\n---|---", item), root.block("b6", "| just text", item), root.block("b3", "First\n\nSecond", item)] });
+            tryVerify(() => findChild(view, "spaceBlock:First\n\nSecond") !== null);
+            for (const text of ["--", "> quoted", "\t> tabbed", "Name | Age\n---|---"]) {
+                const shown = findChild(view, "spaceBlock:" + text);
+                compare(shown.marker, "", text);
+                compare(findChild(shown, "spaceBlockText:" + text).text, text);
+                compare(findChild(view, "spaceMarkdownLead:" + text).text, "- ", text);
+            }
+            // A pipe over no delimiter row is no table: the item is drawn.
+            compare(findChild(view, "spaceBlock:| just text").marker, "- ");
+            const both = findChild(view, "spaceBlock:First\n\nSecond");
+            compare(both.marker, "- ");
+            compare(findChild(both, "spaceBlockText:First\n\nSecond").text, "- First\n  \n  Second");
+        }
+
+        // A click on a link opens it as a link in the chat does; anywhere else
+        // in the text edits its source, with the caret where it was clicked.
+        function test_a_click_opens_a_link_and_elsewhere_edits_the_source() {
+            const source = "[docs](https://example.com) and more words after it";
+            const view = root.research({ blocks: [root.block("b1", source)] });
+            const shown = findChild(view, "spaceBlock:" + source);
+            const drawn = findChild(shown, "spaceBlockText:" + source);
+            const prose = findChild(drawn, "markdownProse");
+            const link = drawn.mapFromItem(prose, 4, prose.height / 2);
+            compare(drawn.linkAt(link.x, link.y), "https://example.com");
+            mouseClick(drawn, link.x, link.y);
+            compare(Shell.openedExternally, ["https://example.com"]);
+            compare(shown.editor, null, "a link is followed, not edited");
+
+            mouseClick(drawn, prose.implicitWidth - 2, prose.height / 2);
+            const editor = shown.editor;
+            verify(editor !== null);
+            verify(editor.activeFocus);
+            compare(editor.text, source);
+            compare(Shell.openedExternally, ["https://example.com"]);
+            // Leaving it draws it again.
+            editor.focus = false;
+            compare(shown.editor, null);
+            verify(findChild(shown, "spaceBlockText:" + source).visible);
+        }
+
+        // A link to a path or an anchor, which nothing opens, edits like any
+        // text, and shows no hand.
+        function test_a_link_nothing_opens_edits_the_source() {
+            const source = "[spec](./spec.md) and more words after it";
+            const view = root.research({ blocks: [root.block("b1", source)] });
+            const shown = findChild(view, "spaceBlock:" + source);
+            const drawn = findChild(shown, "spaceBlockText:" + source);
+            const prose = findChild(drawn, "markdownProse");
+            const link = drawn.mapFromItem(prose, 4, prose.height / 2);
+            compare(drawn.linkAt(link.x, link.y), "./spec.md");
+            mouseMove(drawn, link.x, link.y);
+            compare(findChild(shown, "spaceBlockPointer").cursorShape, Qt.IBeamCursor);
+            mouseClick(drawn, link.x, link.y);
+            compare(Shell.openedExternally, []);
+            verify(shown.editor !== null && shown.editor.activeFocus);
+            compare(shown.editor.text, source);
+        }
+
+        // Where plain words are drawn as written, the caret lands on the word clicked.
+        function test_the_caret_lands_where_the_drawn_text_was_clicked() {
+            const source = "Plain words in a row";
+            const view = root.research({ blocks: [root.block("b1", source)] });
+            tryVerify(() => findChild(view, "spaceBlockText:" + source) !== null);
+            const shown = findChild(view, "spaceBlock:" + source);
+            const drawn = findChild(shown, "spaceBlockText:" + source);
+            const prose = findChild(drawn, "markdownProse");
+            const at = drawn.mapFromItem(prose, prose.implicitWidth - 2, prose.height / 2);
+            mouseClick(drawn, at.x, at.y);
+            verify(shown.editor.activeFocus);
+            verify(shown.editor.cursorPosition >= source.length - 1, "the caret is at the click: " + shown.editor.cursorPosition);
+        }
+
+        // The keyboard reaching a drawn block edits it, the caret at its end.
+        function test_focusing_a_drawn_block_edits_its_source() {
+            const view = root.research({});
+            tryVerify(() => findChild(view, "spaceBlock:Two") !== null);
+            const shown = findChild(view, "spaceBlock:Two");
+            findChild(shown, "spaceBlockText:Two").parent.forceActiveFocus();
+            verify(shown.editor !== null && shown.editor.activeFocus);
+            compare(shown.editor.cursorPosition, 3);
+            keyClick("s");
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.block.update"), [{ blockId: "b2", text: "Twos" }]);
+            compare(shown.editor, null);
+        }
+
+        // A ticked item is drawn struck out, a heading at its size.
+        function test_a_ticked_item_is_drawn_struck_out() {
+            const view = root.research({ blocks: [root.block("b1", "Ship *it*", { kind: "checklist", checked: true }), root.block("b2", "Plan", { kind: "heading", level: 1 })] });
+            tryVerify(() => findChild(view, "spaceBlockText:Plan") !== null);
+            verify(findChild(view, "spaceBlockText:Ship *it*").struck);
+            verify(!findChild(view, "spaceBlockText:Plan").struck);
+            compare(findChild(view, "spaceBlockText:Plan").fontWeight, Font.DemiBold);
+        }
+
+        // A page of hundreds of blocks: the ones drawn hold Text, no TextEdit,
+        // until one is edited. Logs the time to lay the page out and scroll it.
+        function test_a_long_page_draws_its_blocks_without_editors() {
+            const blocks = [];
+            for (let i = 0; i < 400; ++i)
+                blocks.push(root.block("b" + i, "Block " + i + " has **bold**, `code` and [a link](https://example.com/" + i + ")", { kind: i % 10 === 0 ? "heading" : i % 7 === 0 ? "checklist" : "paragraph" }));
+            const started = Date.now();
+            const view = root.research({ blocks: blocks });
+            const list = findChild(view, "spaceBlocks");
+            tryVerify(() => list.count === 400);
+            list.forceLayout();
+            const laidOut = Date.now() - started;
+            const editors = item => {
+                let count = item.cursorRectangle !== undefined ? 1 : 0;
+                for (const child of item.children)
+                    count += editors(child);
+                return count;
+            };
+            let seen = 0;
+            const scrolled = Date.now();
+            for (let at = 0; at < 400; at += 20) {
+                list.positionViewAtIndex(at, ListView.Beginning);
+                list.forceLayout();
+                for (const child of list.contentItem.children) {
+                    if (child.blockId === undefined)
+                        continue;
+                    ++seen;
+                    compare(editors(child), 0, "block " + child.text + " holds no TextEdit");
+                }
+            }
+            console.log("400-block page: laid out in " + laidOut + " ms, scrolled through in " + (Date.now() - scrolled) + " ms");
+            verify(seen > 0);
+        }
+
         function test_a_trashed_page_is_read_only_with_the_way_back() {
             const view = root.research({ page: { id: "page-1", title: "Roadmap", parentPageId: "", trashed: true, sourceThreadId: "", sourceThreadTitle: "" } });
             verify(findChild(view, "spaceTrashedBanner").visible);
             verify(!findChild(view, "spaceComposer").visible);
-            verify(findChild(view, "spaceBlockEditor:One").readOnly);
+            verify(root.editorOf(view, "One").readOnly);
             mouseClick(findChild(view, "spacePageRestore"));
             mouseClick(findChild(view, "spacePageDelete"));
             compare(Shell.dispatchedActions.map(entry => entry.action), ["space.page.restore", "space.page.delete"]);
@@ -858,18 +1138,17 @@ Item {
                                    file: Object.assign({ projectId: "shop", projectTitle: "Shop", path: "docs/roadmap.md", missing: false, unwritten: false, conflictAt: "" }, file) });
         }
 
-        function test_a_page_that_is_a_file_says_which_with_the_ways_to_it_and_out() {
+        function test_a_page_that_is_a_file_says_which_with_the_way_to_it() {
             const view = root.research({ page: filed({}) });
             verify(findChild(view, "spacePageFile").visible);
             compare(findChild(view, "spacePageFilePath").text, "The file docs/roadmap.md of Shop");
+            compare(findChild(view, "spaceTrailSpace").text, "Shop");
             verify(!findChild(view, "spacePageFileGone").visible);
             verify(!findChild(view, "spacePageFileConflict").visible);
             mouseClick(findChild(view, "spacePageFileShow"));
             mouseClick(findChild(view, "spacePageActions"));
             verify(findChild(view, "spaceShowFile").visible);
-            findChild(view, "spaceUnlinkFile").triggered();
-            compare(Shell.dispatchedActions.map(entry => entry.action), ["space.page.showFile", "space.page.unlinkFile"]);
-            compare(dispatched("space.page.unlinkFile"), [{ pageId: "page-1" }]);
+            compare(Shell.dispatchedActions.map(entry => entry.action), ["space.page.showFile"]);
         }
 
         function test_an_ordinary_page_says_nothing_of_a_file() {
@@ -877,7 +1156,86 @@ Item {
             verify(!findChild(view, "spacePageFile").visible);
             mouseClick(findChild(view, "spacePageActions"));
             verify(!findChild(view, "spaceShowFile").visible);
-            verify(!findChild(view, "spaceUnlinkFile").visible);
+        }
+
+        // "shop" with Space files, as SpaceProjects lists it: collapsed, or open on its tree.
+        function sections(expanded, more) {
+            const rows = [{ id: "project:shop", kind: "project", projectId: "shop", path: "", name: "shop", depth: 0, expanded: expanded, pageId: "" }];
+            if (expanded)
+                rows.push({ id: "folder:shop:docs", kind: "folder", projectId: "shop", path: "docs", name: "docs", depth: 1, expanded: true, pageId: "" },
+                          { id: "file:shop:docs/guide.md", kind: "file", projectId: "shop", path: "docs/guide.md", name: "guide.md", depth: 2, expanded: false, pageId: "page-9" },
+                          { id: "file:shop:README.md", kind: "file", projectId: "shop", path: "README.md", name: "README.md", depth: 1, expanded: false, pageId: "" });
+            return root.research(Object.assign({ projects: rows }, more));
+        }
+
+        function test_a_project_section_comes_after_the_spaces_pages_and_expands_on_a_click() {
+            const view = sections(false);
+            const list = findChild(view, "spaceProjects");
+            verify(list.visible);
+            tryVerify(() => findChild(view, "spaceProject:shop") !== null);
+            // The layout gives the list its height a polish after the header exists.
+            tryVerify(() => list.height >= findChild(view, "spaceProject:shop").height);
+            const tree = findChild(view, "spacePageTree");
+            verify(list.mapToItem(view, 0, 0).y >= tree.mapToItem(view, 0, 0).y + tree.height);
+            verify(findChild(view, "spaceProjectFile:shop:README.md") === null);
+            mouseClick(findChild(view, "spaceProject:shop"));
+            compare(dispatched("space.project.setExpanded"), [{ projectId: "shop", expanded: true }]);
+        }
+
+        function test_an_expanded_section_shows_its_files_by_folder_and_collapses_on_a_click() {
+            const view = sections(true);
+            tryVerify(() => findChild(view, "spaceProjectFile:shop:README.md") !== null);
+            const folder = findChild(view, "spaceProjectFolder:shop:docs");
+            const guide = findChild(view, "spaceProjectFile:shop:docs/guide.md");
+            verify(guide.y > folder.y);
+            verify(findChild(view, "spaceProjectFile:shop:README.md").y > guide.y);
+            mouseClick(findChild(view, "spaceProject:shop"));
+            compare(dispatched("space.project.setExpanded"), [{ projectId: "shop", expanded: false }]);
+        }
+
+        function test_a_folder_in_a_section_folds_on_a_click() {
+            const view = sections(true);
+            tryVerify(() => findChild(view, "spaceProjectFolder:shop:docs") !== null);
+            const folder = findChild(view, "spaceProjectFolder:shop:docs");
+            compare(folder.Accessible.name, "Collapse docs");
+            mouseClick(folder);
+            compare(dispatched("space.project.setExpanded"), [{ projectId: "shop", path: "docs", expanded: false }]);
+            compare(dispatched("space.openFile"), []);
+        }
+
+        function test_a_section_and_a_folder_fold_from_the_keyboard() {
+            const view = sections(true);
+            tryVerify(() => findChild(view, "spaceProjectFolder:shop:docs") !== null);
+            const folder = findChild(view, "spaceProjectFolder:shop:docs");
+            folder.forceActiveFocus();
+            keyClick(Qt.Key_Right);
+            compare(dispatched("space.project.setExpanded"), []);
+            keyClick(Qt.Key_Left);
+            compare(dispatched("space.project.setExpanded"), [{ projectId: "shop", path: "docs", expanded: false }]);
+            Shell.dispatchedActions = [];
+            findChild(view, "spaceProject:shop").forceActiveFocus();
+            keyClick(Qt.Key_Space);
+            compare(dispatched("space.project.setExpanded"), [{ projectId: "shop", expanded: false }]);
+            Shell.dispatchedActions = [];
+            findChild(view, "spaceProjectFile:shop:README.md").forceActiveFocus();
+            keyClick(Qt.Key_Return);
+            compare(dispatched("space.openFile"), [{ projectId: "shop", relativePath: "README.md" }]);
+        }
+
+        function test_a_file_in_a_section_is_edited_as_a_page_and_shows_as_chosen() {
+            const view = sections(true);
+            tryVerify(() => findChild(view, "spaceProjectFile:shop:README.md") !== null);
+            mouseClick(findChild(view, "spaceProjectFile:shop:README.md"));
+            compare(dispatched("space.openFile"), [{ projectId: "shop", relativePath: "README.md" }]);
+            verify(!findChild(view, "spaceProjectFile:shop:docs/guide.md").selected);
+            Spaces.fileSpaceId = "project-space-shop";
+            Spaces.pageId = "page-9";
+            verify(findChild(view, "spaceProjectFile:shop:docs/guide.md").selected);
+        }
+
+        function test_no_project_has_space_files_and_no_section_shows() {
+            const view = root.research();
+            verify(!findChild(view, "spaceProjects").visible);
         }
 
         function test_a_page_whose_file_is_gone_says_so_and_whether_it_was_edited_since() {
@@ -983,8 +1341,9 @@ Item {
         function test_an_empty_space_says_so_and_offers_a_first_page() {
             const view = root.research({ pages: [], blocks: [], page: {} });
             verify(!findChild(view, "spacePage").visible);
-            compare(findChild(view, "spaceEmptyText").text, "Research has no pages yet.");
-            mouseClick(findChild(view, "spaceEmptyNewPage"));
+            const empty = findChild(view, "spaceEmpty");
+            compare(empty.title, "Research has no pages yet");
+            mouseClick(findChild(empty, "emptyStateAction"));
             const field = findChild(view, "spaceNameField");
             verify(field.visible);
             keyClick("R");
@@ -994,7 +1353,7 @@ Item {
 
         function test_a_subpage_made_from_the_link_menu_is_linked() {
             const view = root.research({});
-            findChild(view, "spaceComposer").forceActiveFocus();
+            findChild(view, "spaceComposer").focusInput();
             keyClick("/");
             keyClick("l");
             keyClick(Qt.Key_Return);
@@ -1010,8 +1369,10 @@ Item {
 
         function test_an_unreachable_mc_is_said_rather_than_an_empty_space() {
             const view = root.research({ status: "unreachable", pages: [], blocks: [], page: {} });
-            compare(findChild(view, "spaceEmptyText").text, "The MC cannot be reached, so its Spaces cannot be shown.");
-            verify(!findChild(view, "spaceEmptyNewPage").visible);
+            const empty = findChild(view, "spaceEmpty");
+            compare(empty.status, "error");
+            compare(empty.description, "The MC cannot be reached. Its Spaces show again once it answers.");
+            verify(!findChild(empty, "emptyStateAction").visible);
         }
 
         function test_renaming_the_page_writes_its_new_title() {
@@ -1025,78 +1386,66 @@ Item {
             compare(root.dispatched("space.page.rename"), [{ pageId: "page-1", title: "P" }]);
         }
 
-        function test_the_composer_asks_an_agent_and_writes_no_block() {
+        // The controller sends an ask (ComposerController::submitPage); the page writes no block.
+        function test_the_prompt_sends_an_ask_and_writes_no_block() {
             const view = root.research({});
-            findChild(view, "spaceComposer").forceActiveFocus();
+            findChild(view, "spaceComposer").focusInput();
             for (const key of "@agent tidy")
                 keyClick(key);
             keyClick(Qt.Key_Return);
-            compare(root.dispatched("space.agent.ask"), [{ pageId: "page-1", request: "@agent tidy" }]);
+            compare(root.dispatched("composer.submit").map(entry => entry.text), ["@agent tidy"]);
             compare(root.dispatched("space.block.insert"), []);
-            compare(findChild(view, "spaceComposer").text, "@agent tidy");
-            Spaces.agentAskAnswered("page-1", "@agent tidy", true);
-            compare(findChild(view, "spaceComposer").text, "");
         }
 
-        function test_an_ask_the_mc_refuses_keeps_its_words() {
+        function test_an_ask_says_the_project_it_runs_in_and_can_change_it() {
             const view = root.research({});
-            findChild(view, "spaceComposer").forceActiveFocus();
-            for (const key of "@agent tidy")
+            const project = findChild(view, "spaceAskProject");
+            const kind = findChild(view, "spaceNewKind");
+            verify(!project.visible);
+            verify(kind.visible);
+            findChild(view, "spaceComposer").focusInput();
+            for (const key of "@agent ")
                 keyClick(key);
-            keyClick(Qt.Key_Return);
-            Spaces.agentAskAnswered("page-1", "@agent tidy", false);
-            compare(findChild(view, "spaceComposer").text, "@agent tidy");
-        }
-
-        function test_words_changed_while_an_ask_is_answered_are_kept() {
-            const view = root.research({});
-            findChild(view, "spaceComposer").forceActiveFocus();
-            for (const key of "@agent tidy")
-                keyClick(key);
-            keyClick(Qt.Key_Return);
-            keyClick("!");
-            Spaces.agentAskAnswered("page-1", "@agent tidy", true);
-            compare(findChild(view, "spaceComposer").text, "@agent tidy!");
+            tryVerify(() => project.visible);
+            verify(!kind.visible);
+            compare(project.text, "shop");
+            // The row of actions places the button once it shows.
+            waitForPolish(project.parent);
+            mouseClick(project);
+            const menu = findChild(view, "spaceAskProjectMenu");
+            tryVerify(() => menu.opened && menu.count === 2);
+            menu.itemAt(1).triggered();
+            compare(root.dispatched("composer.project.set"), [{ projectId: "docs" }]);
         }
 
         function test_a_word_that_only_starts_like_the_mention_is_a_block() {
             const view = root.research({});
-            findChild(view, "spaceComposer").forceActiveFocus();
+            findChild(view, "spaceComposer").focusInput();
             for (const key of "@agents")
                 keyClick(key);
+            verify(!findChild(view, "spaceAskProject").visible);
             keyClick(Qt.Key_Return);
-            compare(root.dispatched("space.agent.ask"), []);
             compare(root.dispatched("space.block.insert").length, 1);
         }
 
-        function test_an_ask_the_page_cannot_take_yet_keeps_its_words() {
-            const view = root.research({ agent: { status: "running", request: "tidy", threadId: "t9" } });
-            const composer = findChild(view, "spaceComposer");
-            composer.forceActiveFocus();
-            for (const key of "@agent more")
-                keyClick(key);
-            keyClick(Qt.Key_Return);
-            compare(composer.text, "@agent more");
-        }
-
-        function test_the_way_in_starts_the_words_of_an_ask() {
-            const view = root.research({});
-            Spaces.agentAskRequested();
-            const composer = findChild(view, "spaceComposer");
-            compare(composer.text, "@agent ");
-            verify(composer.activeFocus);
-        }
-
-        function test_the_way_in_keeps_a_draft() {
+        // The page's menu starts an ask from what is typed; the controller puts `@agent` ahead of it.
+        function test_the_page_menu_starts_an_ask_from_the_draft() {
             const view = root.research({});
             const composer = findChild(view, "spaceComposer");
-            composer.text = "the plan";
-            Spaces.agentAskRequested();
-            compare(composer.text, "@agent the plan");
-            compare(composer.cursorPosition, "@agent ".length);
-            Spaces.agentAskRequested();
-            compare(composer.text, "@agent the plan");
-            verify(composer.activeFocus);
+            composer.editor.text = "the plan";
+            findChild(view, "spaceAskAgent").triggered();
+            compare(root.dispatched("composer.ask").length, 1);
+            compare(Shell.state.composer.text, "the plan");
+            const actions = Shell.dispatchedActions.map(entry => entry.action);
+            verify(actions.lastIndexOf("composer.text.set") < actions.indexOf("composer.ask"));
+        }
+
+        function test_words_the_controller_sends_back_are_written() {
+            const view = root.research({});
+            Shell.actionRequested("space.prompt.write", { pageId: "page-1", text: "Ship" });
+            compare(root.dispatched("space.block.insert").map(entry => entry.text), ["Ship"]);
+            Shell.actionRequested("space.prompt.write", { pageId: "page-9", text: "Elsewhere" });
+            compare(root.dispatched("space.block.insert").length, 1);
         }
 
         function test_a_working_agent_can_be_followed_and_stopped() {
@@ -1248,10 +1597,10 @@ Item {
             const view = root.research({ blocks: [root.block("b1", "Mine"), root.block("b2", "Three **threads**", { kind: "generated" })] });
             tryVerify(() => findChild(view, "spaceBlock:Three **threads**") !== null);
             const generated = findChild(view, "spaceBlock:Three **threads**");
-            verify(!findChild(generated, "spaceBlockEditor:Three **threads**").visible);
+            verify(!root.showing(generated, "spaceBlockEditor:Three **threads**"));
             tryVerify(() => findChild(generated, "spaceGenerated") !== null);
             compare(findChild(generated, "spaceGenerated").text, "Three **threads**");
-            verify(findChild(view, "spaceBlockEditor:Mine").visible);
+            verify(findChild(view, "spaceBlockText:Mine").visible);
             // It can still be moved, deleted and commented on.
             verify(findChild(generated, "spaceDeleteBlock:Three **threads**").visible);
             verify(findChild(generated, "spaceComment:Three **threads**") !== null);
@@ -1259,7 +1608,7 @@ Item {
 
         function test_an_image_block_is_placed_from_the_spaces_images() {
             const view = root.research({ images: [root.imageRow("image-1", "cat.png")] });
-            findChild(view, "spaceComposer").forceActiveFocus();
+            findChild(view, "spaceComposer").focusInput();
             keyClick("/");
             keyClick("i");
             keyClick("m");
@@ -1329,33 +1678,72 @@ Item {
             tryCompare(nameOf("spaceImage:dog.png"), "y", nameOf("spaceImage:cat.png").y);
         }
 
-        function test_the_generate_dialog_offers_only_who_can_generate() {
-            Shell.state = Object.assign({}, Shell.state, { space: { imageProviders: { providers: [{ instanceId: "codex", status: "ready" }, { instanceId: "claudeAgent", status: "unsupported" }], selection: { instanceId: "codex", model: "gpt-5" } } } });
+        // The images open, and ComposerController aims the prompt at them
+        // (ComposerController::imagesComposerState, imagePickerInstances).
+        function openImages(more) {
             const view = root.research({});
             mouseClick(findChild(view, "spaceImages"));
-            mouseClick(findChild(view, "spaceImageGenerate"));
-            const dialog = findChild(view, "spaceImageDialog");
-            tryVerify(() => dialog.opened);
-            compare(root.dispatched("space.image.providers").length, 1);
-            compare(dialog.ready, ["codex"]);
-            compare(findChild(dialog.contentItem, "spaceImageModel").onlyInstances, ["codex"]);
-            compare(findChild(dialog.contentItem, "spaceImageNotHere").text, "Not supported here: claudeAgent");
-            verify(!findChild(dialog.contentItem, "spaceImageSubmit").enabled);
-            findChild(dialog.contentItem, "spaceImagePrompt").text = "a red fox";
-            mouseClick(findChild(dialog.contentItem, "spaceImageSubmit"));
-            compare(root.dispatched("space.image.generate"), [{ prompt: "a red fox", modelSelection: { instanceId: "codex", model: "gpt-5" } }]);
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, {
+                    target: "images#space-1",
+                    routeKind: "images",
+                    spaceId: "space-1",
+                    text: "",
+                    placeholder: "What should the image show?",
+                    canSend: false,
+                    sendDisabledReason: null,
+                    selectedInstanceId: "codex",
+                    selectedModel: "auto",
+                    options: [],
+                    runtimeModes: [],
+                    showInteractionModeToggle: false,
+                    showContextStrip: false
+                }, more),
+                modelPicker: Object.assign({}, Shell.state.modelPicker, {
+                    favorites: false,
+                    multiple: null,
+                    instances: [
+                        { instanceId: "codex", driverKind: "codex", displayName: "Codex", accentColor: null, iconUrl: null, initials: "C", showBadge: false, status: "ready", isAvailable: true, unavailableReason: null,
+                          models: [{ slug: "auto", name: "GPT Image", shortName: null, subProvider: null, isFavorite: false, isCustom: false, isNew: false, isLegacy: false, isUnavailable: false, disabledReason: null }] },
+                        { instanceId: "grok", driverKind: "grok", displayName: "Grok", accentColor: null, iconUrl: null, initials: "G", showBadge: false, status: "ready", isAvailable: true, unavailableReason: null,
+                          models: [{ slug: "auto", name: "Grok Imagine", shortName: null, subProvider: null, isFavorite: false, isCustom: false, isNew: false, isLegacy: false, isUnavailable: false, disabledReason: null },
+                                   { slug: "grok-imagine-image-2.0", name: "Grok Imagine Image 2.0", shortName: null, subProvider: null, isFavorite: false, isCustom: false, isNew: false, isLegacy: false, isUnavailable: false, disabledReason: null }] }
+                    ]
+                })
+            });
+            return view;
         }
 
-        function test_the_generate_dialog_says_when_no_one_can_generate() {
-            Shell.state = Object.assign({}, Shell.state, { space: { imageProviders: { providers: [{ instanceId: "claudeAgent", status: "unsupported" }], selection: null } } });
-            const view = root.research({});
-            mouseClick(findChild(view, "spaceImages"));
-            mouseClick(findChild(view, "spaceImageGenerate"));
-            const dialog = findChild(view, "spaceImageDialog");
-            tryVerify(() => dialog.opened);
-            verify(findChild(dialog.contentItem, "spaceImageNoProvider").visible);
-            findChild(dialog.contentItem, "spaceImagePrompt").text = "a red fox";
-            verify(!findChild(dialog.contentItem, "spaceImageSubmit").enabled);
+        function test_the_images_have_the_prompt_area_with_image_models() {
+            const view = openImages();
+            const composer = findChild(view, "spaceImagesComposer");
+            tryVerify(() => composer.visible);
+            verify(!findChild(view, "spaceComposer").ready);
+            verify(!findChild(composer, "attachButton").visible);
+            verify(!findChild(composer, "runtimeModePicker").visible);
+            compare(composer.editor.placeholderText, "What should the image show?");
+            const picker = findChild(composer, "modelPicker");
+            compare(picker.instances.map(instance => instance.instanceId), ["codex", "grok"]);
+            verify(!picker.favorites);
+            compare(picker.triggerTitle, "GPT Image");
+            composer.focusInput();
+            composer.editor.text = "a red fox";
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("composer.submit").map(entry => entry.text), ["a red fox"]);
+        }
+
+        function test_the_images_prompt_says_when_no_one_can_generate() {
+            const view = openImages({
+                placeholder: "No provider here can generate images. Set up Codex or Grok in Settings.",
+                sendDisabledReason: "No provider can generate images",
+                selectedInstanceId: null,
+                selectedModel: null
+            });
+            Shell.state = Object.assign({}, Shell.state, { modelPicker: Object.assign({}, Shell.state.modelPicker, { instances: [] }) });
+            const composer = findChild(view, "spaceImagesComposer");
+            tryVerify(() => composer.visible);
+            compare(composer.editor.placeholderText, "No provider here can generate images. Set up Codex or Grok in Settings.");
+            verify(!findChild(composer, "modelPicker").enabled);
         }
 
         function test_a_page_from_a_thread_names_its_thread() {
@@ -1375,6 +1763,40 @@ Item {
             const viewers = findChild(view, "spaceViewers");
             verify(viewers.visible);
             compare(viewers.text, "Also here: HAL-C2 on SM-F741B, the agent of “Work”");
+        }
+
+        // features/space/pages.feature: the Space picker is on the header line a
+        // thread's header shares, its hairline level with the thread's, and the
+        // view tells the layout it draws that line (no band above it).
+        function test_the_space_header_is_on_the_thread_headers_line() {
+            const view = root.research({});
+            verify(view.titleBar, "the view draws its own header line");
+            const header = findChild(view, "spaceHeader");
+            const line = findChild(view, "spaceHeaderLine");
+            tryVerify(() => header.height > 0);
+            compare(header.height, Theme.headerHeight);
+            compare(header.mapToItem(view, 0, 0).y, 0);
+            compare(line.mapToItem(view, 0, 0).y, Theme.headerHeight);
+            const picker = findChild(view, "spacePicker");
+            const pickerCentre = picker.mapToItem(view, 0, picker.height / 2).y;
+            verify(Math.abs(pickerCentre - Theme.headerHeight / 2) <= 1, "the picker centres on the line: " + pickerCentre);
+            verify(findChild(view, "spacePageTree").mapToItem(view, 0, 0).y > Theme.headerHeight,
+                   "the pages start under the line");
+        }
+
+        // features/space/pages.feature: a project list taller than its room
+        // shows the thin scrollbar, and a short one none.
+        function test_an_overflowing_project_list_shows_a_scrollbar() {
+            const rows = [{ id: "project:shop", kind: "project", projectId: "shop", path: "", name: "shop", depth: 0, expanded: true, pageId: "" }];
+            for (let n = 0; n < 60; ++n)
+                rows.push({ id: "file:shop:f" + n + ".md", kind: "file", projectId: "shop", path: "f" + n + ".md", name: "f" + n + ".md", depth: 1, expanded: false, pageId: "" });
+            const view = root.research({ projects: rows });
+            const list = findChild(view, "spaceProjects");
+            tryVerify(() => list.height > 0 && list.contentHeight > list.height);
+            tryVerify(() => findChild(list, "scrollThumb").visible);
+            Spaces.load(Object.assign({}, { projects: rows.slice(0, 1) }));
+            tryVerify(() => list.contentHeight > 0 && list.contentHeight <= list.height);
+            verify(!findChild(list, "scrollThumb").visible);
         }
     }
 }

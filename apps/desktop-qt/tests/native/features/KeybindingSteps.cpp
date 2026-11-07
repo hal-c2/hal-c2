@@ -20,6 +20,7 @@
 
 #include <algorithm>
 
+#include "FakeTerminals.h"
 #include "Brick.h"
 #include "CommandPaletteController.h"
 #include "ComposerBrick.h"
@@ -236,6 +237,7 @@ void pressSequence(World& world, const QString& sequence) {
   // As ShellWindow enables its shortcuts.
   const auto focused = [&state](const char* what) { return state.focus.value(QLatin1String(what)).toBool(); };
   const bool enabled = shortcut.value(focused("terminal")   ? QStringLiteral("terminal")
+                                      : focused("preview")  ? QStringLiteral("preview")
                                       : focused("composer") ? QStringLiteral("composer")
                                       : focused("editable") ? QStringLiteral("editable")
                                                             : QStringLiteral("chrome")).toBool();
@@ -250,6 +252,10 @@ void pressSequence(World& world, const QString& sequence) {
 }
 
 }  // namespace
+
+void bindKey(World& world, const QString& key, const QString& command) {
+  addRule(world, key, command);
+}
 
 bool sendKey(World& world, QEvent::Type type, int key, Qt::KeyboardModifiers modifiers, bool autoRepeat) {
   KeyWindow* window = world.mc.part<KeyTarget>().window.get();
@@ -440,9 +446,13 @@ const Steps steps([] {
   const QString q = kQuoted;
 
   // Where the keyboard is.
-  step(QStringLiteral("the user is (anywhere|outside a terminal|in a terminal|with the model picker open)"),
+  step(QStringLiteral("the user is (anywhere|outside a terminal|in a terminal|in the preview|with the model picker open)"),
        [](World& world, const Captures& c, const Table&) {
-         setFocus(world, c[0] == QLatin1String("in a terminal") ? QVariantMap{{QStringLiteral("terminal"), true}} : QVariantMap{},
+         // In the preview: a browser tab's page has the keyboard (ShellWindow's previewFocused).
+         setFocus(world,
+                  c[0] == QLatin1String("in a terminal")    ? QVariantMap{{QStringLiteral("terminal"), true}}
+                  : c[0] == QLatin1String("in the preview") ? QVariantMap{{QStringLiteral("preview"), true}}
+                                                            : QVariantMap{},
                   c[0] == QLatin1String("with the model picker open"));
        });
   step(QStringLiteral("(?:the native chrome has keyboard focus|the user is in the desktop app|anything|the terminal is closed)"),
@@ -479,6 +489,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user is on (macOS|Linux|Windows)"), [](World& world, const Captures& c, const Table&) {
     setMac(world, c[0] == QLatin1String("macOS"));
+    terminalfake::setTerminalPlatform(world, c[0]);
   });
 
   // Threads of their own for the scenarios with no Background.
@@ -713,12 +724,16 @@ const Steps steps([] {
   step(QStringLiteral("only bindings whose (command|label|key|condition|source) matches are listed"),
        [](World& world, const Captures& c, const Table&) {
          const QString query = keys(world).query.toLower();
-         const QString field = c[0] == QLatin1String("condition") ? QStringLiteral("when") : c[0];
+         // A condition is searched as typed and as the words the page shows.
+         const QStringList fields = c[0] == QLatin1String("condition") ? QStringList{QStringLiteral("when"), QStringLiteral("whenLabel")}
+                                                                       : QStringList{c[0]};
          // KeybindingsSettings lists the rows whose `search` holds the query.
          for (const QVariant& value : rows(world)) {
            const QVariantMap row = value.toMap();
            const bool listed = row.value(QStringLiteral("search")).toString().contains(query);
-           const bool matches = row.value(field).toString().toLower().contains(query);
+           const bool matches = std::any_of(fields.cbegin(), fields.cend(), [&](const QString& field) {
+             return row.value(field).toString().toLower().contains(query);
+           });
            expect(listed == matches, QStringLiteral("%1 %2 listed").arg(show(row), listed ? QStringLiteral("is") : QStringLiteral("is not")));
          }
        });
@@ -756,6 +771,14 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user types the condition %1").arg(q), [](World& world, const Captures& c, const Table&) {
     keys(world).condition = c[0];
+  });
+  step(QStringLiteral("the condition %1 reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    ensureShell(world);
+    expect(keymap(world)->whenLabel(c[0]) == c[1], keymap(world)->whenLabel(c[0]));
+  });
+  step(QStringLiteral("an empty condition reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    ensureShell(world);
+    expect(keymap(world)->whenLabel(QString()) == c[0], keymap(world)->whenLabel(QString()));
   });
   step(QStringLiteral("%1 is flagged as unknown").arg(q), [](World& world, const Captures& c, const Table&) {
     const QStringList unknown = keymap(world)->unknownVariables(keys(world).condition);

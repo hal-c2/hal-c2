@@ -350,6 +350,30 @@ private slots:
     QVERIFY(queued.held);
   }
 
+  // A queued message with attachments listed only its text, so the card
+  // showed none of them; each row now carries its message and attachments.
+  void aQueuedRowCarriesItsAttachments() {
+    const QJsonObject run{{QStringLiteral("id"), QStringLiteral("run-a")}, {QStringLiteral("status"), QStringLiteral("queued")},
+                          {QStringLiteral("queuePosition"), 0}, {QStringLiteral("userMessageId"), QStringLiteral("message:a")}};
+    const QJsonArray attachments{
+        QJsonObject{{QStringLiteral("id"), QStringLiteral("shot")}, {QStringLiteral("type"), QStringLiteral("image")},
+                    {QStringLiteral("name"), QStringLiteral("shot.png")}, {QStringLiteral("mimeType"), QStringLiteral("image/png")}},
+        QJsonObject{{QStringLiteral("id"), QStringLiteral("notes")}, {QStringLiteral("type"), QStringLiteral("file")},
+                    {QStringLiteral("name"), QStringLiteral("notes.md")}, {QStringLiteral("mimeType"), QStringLiteral("text/markdown")}}};
+    const composer::Queued queued = composer::queued(
+        {run}, {{QStringLiteral("message:a"),
+                 {{QStringLiteral("id"), QStringLiteral("message:a")}, {QStringLiteral("text"), QString()},
+                  {QStringLiteral("attachments"), attachments}}}});
+    QCOMPARE(queued.queue.size(), 1);
+    const QVariantMap row = queued.queue.first().toMap();
+    QCOMPARE(row.value(QStringLiteral("messageId")).toString(), QStringLiteral("message:a"));
+    const QVariantList shown = row.value(QStringLiteral("attachments")).toList();
+    QCOMPARE(shown.size(), 2);
+    QCOMPARE(shown.at(0).toMap().value(QStringLiteral("kind")).toString(), QStringLiteral("image"));
+    QCOMPARE(shown.at(1).toMap().value(QStringLiteral("kind")).toString(), QStringLiteral("file"));
+    QCOMPARE(shown.at(1).toMap().value(QStringLiteral("name")).toString(), QStringLiteral("notes.md"));
+  }
+
   // A held queue whose only listed runs wait on a notification or a provider
   // wake (no user message) is held all the same: those runs have no other way
   // on, so `queued()` lists them as waiting and turnState offers the resume.
@@ -604,6 +628,25 @@ private slots:
     shell.mc.catchUp();
     QTRY_COMPARE(shell.native->store()->thread(shell.key)->runtimeMode, QStringLiteral("auto-accept-edits"));
     QCOMPARE(shown(), QStringLiteral("auto-accept-edits"));
+  }
+
+  // A thread that named no provider was switched to the composer's model on
+  // its first send, a provider.switch the user never asked for, ahead of the
+  // message. The message's own model is what the MC runs it on.
+  void aThreadWithNoProviderIsNotSwitchedOnItsFirstSend() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    QVERIFY(shell.native->store()->thread(shell.key)->modelSelection.isEmpty());
+    shell.type(QStringLiteral("first prompt"));
+    shell.submit(QStringLiteral("first prompt"));
+    QTRY_COMPARE(shell.dispatched(), 1);
+    QStringList types;
+    for (const QJsonObject& command : std::as_const(shell.mc.commands)) types.append(command.value(QLatin1String("type")).toString());
+    QCOMPARE(types, QStringList{QStringLiteral("message.dispatch")});
+    const QJsonObject message = shell.mc.commands.constLast();
+    QCOMPARE(message.value(QLatin1String("modelSelection")).toObject().value(QLatin1String("instanceId")).toString(), QStringLiteral("codex"));
   }
 };
 

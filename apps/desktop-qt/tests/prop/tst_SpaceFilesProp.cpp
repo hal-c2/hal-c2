@@ -10,9 +10,11 @@
 // project asked for is asked again on each connection. `space.page.syncFile` goes
 // out once each time a file-backed page comes on show, and not again while it
 // stays there, whatever else the Space's copy brings. Opening a file (answered
-// or refused) opens the Space on its page, says that page in `written` for the
-// phone's Space screen, and clears `written` first, so the same page said again
-// is a change.
+// or refused) clears `written` first, so the same page said again is a change;
+// answered, it opens the Space and says the file's page in `written` for the
+// phone's Space screen. That page is its project's Space's, which this fake never
+// serves, so the Space's own page stays on show (tst_SpaceProjectsProp covers the
+// rest).
 
 #include "Prop.h"
 
@@ -91,8 +93,10 @@ struct Shell {
   QMap<QString, int> arrived;
   QStringList syncs;
   QStringList written;
-  // How the MC answers the next `space.page.openFile`: the page, or "" to refuse it.
+  // How the MC answers the next `space.page.openFile`: the page, or "" to refuse it;
+  // and how many it answered.
   QString opens;
+  int answeredOpens = 0;
 
   Shell() {
     QObject::connect(&bridge, &ShellBridge::stateEntryChanged, &bridge, [this](const QString& key, const QVariant& value) {
@@ -101,8 +105,9 @@ struct Shell {
       if (now != (written.isEmpty() ? QString() : written.last())) written.append(now);
     });
     mc.onRpc(QStringLiteral("space.page.openFile"), [this](const FakeMc::Rpc& rpc) {
+      ++answeredOpens;
       if (opens.isEmpty()) return mc.refuse(rpc, QStringLiteral("There is no such file."));
-      mc.reply(rpc, QJsonObject{{QStringLiteral("spaceId"), kSpaceId},
+      mc.reply(rpc, QJsonObject{{QStringLiteral("spaceId"), QStringLiteral("project-1")},
                                 {QStringLiteral("page"), QJsonObject{{QStringLiteral("id"), opens}}},
                                 {QStringLiteral("created"), false}});
     });
@@ -287,8 +292,8 @@ struct Filed : Command {
   void show(std::ostream& os) const override { os << "Filed(" << page.toStdString() << ", " << filed << ")"; }
 };
 
-// The user opens a project file, which the MC answers with one of the Space's
-// pages or refuses.
+// The user opens a project file, which the MC answers with a page of the
+// project's Space or refuses.
 struct OpenFile : Command {
   QString project = oneOf(kProjects);
   QString page = *rc::gen::weightedElement<QString>({{1, QString()}, {2, kPages.first()}, {2, kPages.last()}});
@@ -299,16 +304,17 @@ struct OpenFile : Command {
     model.written.append(page);
     model.open = true;
     model.settleSync();
-    model.page = page;
-    model.settleSync();
     model.ask(project);
   }
   void run(const Model& model, Shell& shell) const override {
     Model expected = model;
     apply(expected);
     shell.opens = page;
+    const int answered = shell.answeredOpens;
     RC_ASSERT(shell.space()->handle(QStringLiteral("space.openFile"),
                                     QVariantMap{{QStringLiteral("projectId"), project}, {QStringLiteral("relativePath"), QStringLiteral("guide.md")}}));
+    // Answered as this command says, not as the next one does.
+    RC_ASSERT(prop::until([&] { return shell.answeredOpens > answered; }));
     shell.check(expected);
   }
   void show(std::ostream& os) const override { os << "OpenFile(" << project.toStdString() << ", " << (page.isEmpty() ? "refused" : page.toStdString()) << ")"; }

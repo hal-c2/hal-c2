@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20415
+#   https://github.com/pingdotgg/t3code/pull/20388
+#   https://github.com/pingdotgg/t3code/pull/17116
+#   https://github.com/pingdotgg/t3code/pull/17559
+#   https://github.com/pingdotgg/t3code/pull/16551
 #   docs/user/source-control.md (GitHub stacks)
 #   packages/contracts/src/pullRequest.ts (PullRequestStack, expectedStackHeads)
 #   packages/contracts/src/rpc.ts (pullRequests.stack, pullRequests.runAction)
@@ -27,6 +32,13 @@ Feature: Stacked pull requests
   Scenario: Reading a pull request's stack
     When the user asks for the stack of pull request 42
     Then the layers 41, 42 and 43 are listed in order with their heads
+
+  # Upstream #20415: older layers kept the shorter stack after a new layer was linked.
+  @backlog @mc
+  Scenario: Every linked layer learns of a layer added on top
+    Given pull requests 41, 42 and 43 are each linked to a thread
+    When pull request 44 is stacked on 43 and linked to a thread
+    Then the threads of 41, 42 and 43 each show the layers 41, 42, 43 and 44
 
   @mc
   Scenario: Merging a layer merges the open layers below it
@@ -283,11 +295,21 @@ Feature: Stacked pull requests
     And told the remote branches are rebased from bottom to top onto "main", rewriting branch history and maybe restarting checks
     And told that if a layer fails, earlier updates remain
 
+  # Upstream #17116: the stack merge and rebase dialogs close on confirm and report through toasts
   @backlog @desktop
-  Scenario: A stack action that is running cannot be repeated or dismissed
-    Given the user confirmed a stack merge and it is running
-    Then the confirmation button reads "Working…"
-    And it cannot be pressed again, cancelled or closed
+  Scenario: A confirmed stack action runs in the background and cannot be started twice
+    When the user confirms a stack merge
+    Then the confirmation closes at once
+    And the user is told "Merging stack..." until the merge ends, then how it ended
+    And the stack's actions are disabled while it runs
+
+  # Upstream #17559: a pull request's merge actions stay visible while its stack lookup refreshes
+  @backlog @desktop
+  Scenario: A pull request's merge actions stay while its stack is refreshed
+    Given a pull request that is not part of a stack offers "Auto-merge"
+    When its stack is refreshed in the background
+    Then "Auto-merge" stays offered throughout
+    And a stacked pull request keeps offering "Merge stack" throughout
 
   @backlog @desktop
   Scenario Outline: A stack action tells the user how it ended
@@ -438,3 +460,20 @@ Feature: Stacked pull requests
     When the user merges the stack at pull request 43
     Then the user is told "GitHub returned an unreadable stack operation response."
     And nothing is changed
+
+  # Upstream #16551: Rebase stack cascades, moving each layer onto the rebased layer below
+  @backlog @mc
+  Scenario: Rebasing the stack moves each layer's own commits onto the rebased layer below
+    Given a stack of three layers where the base branch has moved
+    When the user rebases the stack
+    Then each layer, bottom to top, is rebased onto the new head of the layer below it
+    And a layer replays only its own commits, so a layer above does not conflict with the old copy of the one below
+    And the user's checkout does not move
+
+  # Upstream #20388: reading only the first saved layer list put new layers first and chose the
+  # wrong current pull request.
+  @backlog @mc
+  Scenario: A stack follows the saved layer list that covers the most layers
+    Given pull request 18 saved the layers 18 and 20, and pull request 84 saved 18, 20, 83 and 84
+    When the user opens the stack from pull request 84
+    Then the layers are 18, 20, 83 and 84, and 84 is the current one

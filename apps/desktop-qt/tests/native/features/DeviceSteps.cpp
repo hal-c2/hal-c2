@@ -28,6 +28,7 @@
 
 #include "Brick.h"
 #include "DevicePanelSteps.h"
+#include "PullRequestSteps.h"
 #include "DeviceStream.h"
 #include "DeviceTools.h"
 #include "FFmpeg.h"
@@ -197,6 +198,8 @@ struct FakeHub {
   int refuse = 0;
   // The device has sent no picture yet.
   bool silent = false;
+  // Each device's video requests when a step began that must keep its stream.
+  QHash<QString, qsizetype> kept;
   // Its video is not one the desktop can decode.
   bool undecodable = false;
   // Every request that reached the proxy: "<target> <authorization>".
@@ -542,8 +545,28 @@ ThreadDevices& devices(World& world) {
   return *panel(world).device();
 }
 
+// The device tab the steps look at: the panel's active one, else the
+// floating device, else any device tab the panel has.
+DeviceTab* shownTab(World& world) {
+  ThreadDevices& all = devices(world);
+  const QVariant panel = world.state(QStringLiteral("panel"));
+  if (DeviceTab* tab = all.tab(at(panel, QStringLiteral("activeId")).toString())) return tab;
+  if (DeviceTab* tab = all.tab(at(panel, QStringLiteral("floatingDevice")).toString())) return tab;
+  const QVariantMap tabs = all.tabsView();
+  return tabs.isEmpty() ? nullptr : qobject_cast<DeviceTab*>(tabs.first().value<QObject*>());
+}
+
+// Its stream, or an idle one when no device tab is open.
 DeviceStream& deviceStream(World& world) {
-  return *devices(world).stream();
+  static auto* idle = new DeviceStream(nullptr);
+  DeviceTab* tab = shownTab(world);
+  return tab ? *tab->stream() : *idle;
+}
+
+// The shown tab's device, or an invalid variant.
+QVariant screenOf(World& world) {
+  DeviceTab* tab = shownTab(world);
+  return tab ? tab->screen() : QVariant();
 }
 
 QVariantMap view(World& world) {
@@ -575,7 +598,11 @@ void addDevice(World& world, const QString& platform, const QString& name, bool 
 // The Device tab as the desktop draws it, over the scenario's ThreadDevices.
 Brick& devicePanel(World& world) {
   if (!world.brick) {
-    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nDevicePanel {}\n", QSize(420, 900));
+    // The body of the tab the panel shows, as RightPanel gives it.
+    world.brick = std::make_unique<Brick>(world,
+                                          "import QtQuick\nimport HalC2.Bricks\nimport HalC2.Shell\n"
+                                          "DevicePanel { tabId: Shell.state.panel?.floatingDevice ?? Shell.state.panel?.activeId ?? \"\" }\n",
+                                          QSize(420, 900));
     world.brick->root()->setProperty("source", QVariant::fromValue<QObject*>(&devices(world)));
   }
   return *world.brick;
@@ -694,6 +721,57 @@ void waitForScreen(World& world, const QString& name) {
   expect(red(drawnAtScreen(world)), describeScreen(world));
 }
 
+// The video requests made for the device named `name`.
+qsizetype videoRequestsOf(World& world, const QString& name) {
+  const QString id = deviceNamed(fakeHub(world), name).value(QLatin1String("id")).toString();
+  qsizetype count = 0;
+  for (const QString& request : std::as_const(fakeHub(world).requests))
+    count += (request.contains(QLatin1String("/stream.avcc")) || request.contains(QLatin1String("/serve-emu/ws"))) && request.contains(id);
+  return count;
+}
+
+// Remembers each device's video requests, for "keeps its stream".
+void keepStreams(World& world) {
+  FakeHub& hub = fakeHub(world);
+  hub.kept.clear();
+  for (const QJsonValue& device : std::as_const(hub.devices)) {
+    const QString name = device.toObject().value(QLatin1String("name")).toString();
+    hub.kept.insert(name, videoRequestsOf(world, name));
+  }
+}
+
+DeviceStream& streamOf(World& world, const QString& name) {
+  DeviceTab* tab = devices(world).tab(tabOf(world, name));
+  expect(tab, QStringLiteral("no tab for %1: %2").arg(name, describe(world)));
+  return *tab->stream();
+}
+
+QVariantMap stageOf(World& world) { return at(world.state(QStringLiteral("panel")), QStringLiteral("stage")).toMap(); }
+
+// Both devices' tabs on the stage, in columns.
+void sideBySide(World& world, const QString& left, const QString& right) {
+  showDeviceTab(world, left);
+  showDeviceTab(world, right);
+  world.bridge().dispatch(QStringLiteral("rightPanel.dock"), QVariantMap{{QStringLiteral("id"), tabOf(world, left)}, {QStringLiteral("dock"), QStringLiteral("stage")}});
+  world.bridge().dispatch(QStringLiteral("rightPanel.dock"), QVariantMap{{QStringLiteral("id"), tabOf(world, right)},
+                                                                         {QStringLiteral("dock"), QStringLiteral("stage")},
+                                                                         {QStringLiteral("pane"), 0},
+                                                                         {QStringLiteral("zone"), QStringLiteral("right")}});
+  world.sync();
+  const QVariantList wanted{tabOf(world, left), tabOf(world, right)};
+  world.waitFor([&] {
+    const QVariantMap stage = stageOf(world);
+    return stage.value(QStringLiteral("layout")) == QLatin1String("columns") && stage.value(QStringLiteral("panes")).toList() == wanted;
+  }, [&] { return show(stageOf(world)); });
+}
+
+void bothStream(World& world, const QString& one, const QString& other) {
+  world.waitFor([&] {
+    return streamOf(world, one).status() == QLatin1String("streaming") && streamOf(world, other).status() == QLatin1String("streaming");
+  }, [&] { return describe(world); });
+}
+
+
 void watch(World& world, const QString& name) {
   showDeviceTab(world, name);
   waitForScreen(world, name);
@@ -756,7 +834,9 @@ bool near(double value, double wanted) {
 }
 
 DeviceTools& tools(World& world) {
-  return *devices(world).tools();
+  static auto* none = new DeviceTools(nullptr);
+  DeviceTab* tab = shownTab(world);
+  return tab ? *tab->tools() : *none;
 }
 
 QVariantMap toolsView(World& world) {
@@ -965,7 +1045,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the tab says it is connecting to the device"), [](World& world, const Captures&, const Table&) {
     world.sync();
-    expect(deviceStream(world).status() == QLatin1String("connecting") && view(world).value(QStringLiteral("screen")).isValid() &&
+    expect(deviceStream(world).status() == QLatin1String("connecting") && screenOf(world).isValid() &&
                devicePanel(world).item(QStringLiteral("deviceStatus"))->isVisible(),
            describe(world));
   });
@@ -1019,6 +1099,67 @@ const Steps steps([] {
     const qsizetype asked = videoRequests(world);
     world.sync();
     expect(videoRequests(world) == asked, describe(world));
+  });
+
+  // Several at once.
+  step(QStringLiteral("the user puts %1 and %1 side by side in the centre").arg(q), [](World& world, const Captures& c, const Table&) {
+    sideBySide(world, c[0], c[1]);
+  });
+  step(QStringLiteral("%1 and %1 both stream at once").arg(q), [](World& world, const Captures& c, const Table&) { bothStream(world, c[0], c[1]); });
+  step(QStringLiteral("%1 and %1 stream side by side in the centre").arg(q), [](World& world, const Captures& c, const Table&) {
+    sideBySide(world, c[0], c[1]);
+    bothStream(world, c[0], c[1]);
+  });
+  step(QStringLiteral("the user opens it side by side with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    Brick& panel = devicePanel(world);
+    world.waitFor([&] { return panel.item(QStringLiteral("deviceCompare"))->isVisible(); }, [&] { return describe(world); });
+    panel.click(QStringLiteral("deviceCompare"));
+    const QString entry = QStringLiteral("deviceCompare-") + tabOf(world, c[0]);
+    world.waitFor([&] { return panel.shows(c[0]) && panel.item(entry)->isVisible(); }, [&] { return describe(world); });
+    panel.click(entry);
+    world.sync();
+  });
+  step(QStringLiteral("%1 and %1 show side by side in the centre").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantList wanted{tabOf(world, c[0]), tabOf(world, c[1])};
+    world.waitFor([&] {
+      const QVariantMap stage = stageOf(world);
+      return stage.value(QStringLiteral("layout")) == QLatin1String("columns") && stage.value(QStringLiteral("panes")).toList() == wanted;
+    }, [&] { return show(stageOf(world)); });
+  });
+  step(QStringLiteral("the user shows only %1 on the stage").arg(q), [](World& world, const Captures& c, const Table&) {
+    keepStreams(world);
+    const qsizetype pane = stageOf(world).value(QStringLiteral("panes")).toList().indexOf(QVariant(tabOf(world, c[0])));
+    world.bridge().dispatch(QStringLiteral("stage.focusPane"), QVariantMap{{QStringLiteral("pane"), int(pane)}});
+    world.bridge().dispatch(QStringLiteral("stage.layout"), QVariantMap{{QStringLiteral("layout"), QStringLiteral("single")}});
+    world.sync();
+  });
+  step(QStringLiteral("the user closes the device %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    keepStreams(world);
+    world.bridge().dispatch(QStringLiteral("rightPanel.close"), QVariantMap{{QStringLiteral("id"), tabOf(world, c[0])}});
+    world.sync();
+  });
+  step(QStringLiteral("the user moves %1 to the centre").arg(q), [](World& world, const Captures& c, const Table&) {
+    keepStreams(world);
+    world.bridge().dispatch(QStringLiteral("rightPanel.dock"), QVariantMap{{QStringLiteral("id"), tabOf(world, c[0])}, {QStringLiteral("dock"), QStringLiteral("stage")}});
+    world.sync();
+    world.waitFor([&] { return stageOf(world).value(QStringLiteral("panes")).toList().contains(QVariant(tabOf(world, c[0]))); },
+                  [&] { return show(stageOf(world)); });
+  });
+  step(QStringLiteral("%1 streams nothing").arg(q), [](World& world, const Captures& c, const Table&) {
+    DeviceTab* tab = devices(world).tab(tabOf(world, c[0]));
+    world.waitFor([&] { return !tab || tab->stream()->status() == QLatin1String("idle"); }, [&] { return describe(world); });
+    const qsizetype asked = videoRequestsOf(world, c[0]);
+    world.sync();
+    expect(videoRequestsOf(world, c[0]) == asked, describe(world));
+  });
+  step(QStringLiteral("%1 keeps its stream").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    expect(streamOf(world, c[0]).status() == QLatin1String("streaming") && videoRequestsOf(world, c[0]) == fakeHub(world).kept.value(c[0]),
+           QStringLiteral("%1 asked for video %2 times, %3 before; %4")
+               .arg(c[0])
+               .arg(videoRequestsOf(world, c[0]))
+               .arg(fakeHub(world).kept.value(c[0]))
+               .arg(describe(world)));
   });
 
   // Driving.
@@ -1494,7 +1635,7 @@ const Steps backlogSteps([] {
     world.sync();
   });
   step(QStringLiteral("the tab's header reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.waitFor([&] { return at(view(world).value(QStringLiteral("screen")), QStringLiteral("description")) == c[0] && devicePanel(world).shows(c[0]); },
+    world.waitFor([&] { return at(screenOf(world), QStringLiteral("description")) == c[0] && devicePanel(world).shows(c[0]); },
                   [&] { return describe(world); });
   });
 
@@ -2102,6 +2243,8 @@ const Steps backlogSteps([] {
     }, [&] { return describe(world); });
   });
   step(QStringLiteral("it says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // How many threads a pull request's review says link it.
+    if (pullRequestReviewSays(world, c[0])) return;
     world.waitFor([&] { return devicePanel(world).shows(c[0]); }, [&] { return describe(world); });
   });
   step(QStringLiteral("the MC can retry a single machine"), [](World& world, const Captures&, const Table&) {
@@ -2349,6 +2492,8 @@ const Steps backlogSteps([] {
     world.sync();
   });
   step(QStringLiteral("its tools show its own settings and an empty location"), [](World& world, const Captures&, const Table&) {
+    // Each device tab has its own drawer, closed until opened.
+    openTools(world);
     world.waitFor([&] {
       return toolsView(world).value(QStringLiteral("loaded")).toBool() &&
              toolsView(world).value(QStringLiteral("settings")).toMap().value(QStringLiteral("appearance")) == QStringLiteral("dark") &&
@@ -2798,7 +2943,7 @@ const Steps backlogSteps([] {
   };
   const auto showIn3d = [bodyItem](World& world) {
     // The device's own tab first, when the Given only opened it.
-    if (!view(world).value(QStringLiteral("screen")).isValid()) {
+    if (!screenOf(world).isValid()) {
       FakeHub& hub = fakeHub(world);
       if (!hub.sessions.isEmpty()) {
         const QString id = hub.sessions.last().toObject().value(QLatin1String("deviceId")).toString();
@@ -2899,7 +3044,7 @@ const Steps backlogSteps([] {
     openSession(world.mc, deviceNamed(fakeHub(world), QStringLiteral("iPad Pro 13-inch")));
     showDeviceTab(world, QStringLiteral("iPad Pro 13-inch"));
     waitForScreen(world, QStringLiteral("iPad Pro 13-inch"));
-    if (attached) devicePanel(world).root()->setProperty("keyboardAttached", true);
+    if (attached) shownTab(world)->setKeyboardAttached(true);
     if (in3d) showIn3d(world);
     world.sync();
   };
@@ -3018,14 +3163,14 @@ bool deviceChooses(World& world, const QString& what) {
     if (!devices(world).view().value(QStringLiteral("wizard")).isValid()) return false;
     devicePanel(world).click(QStringLiteral("wizardBack"));
   } else if (what == QLatin1String("Dark") || what == QLatin1String("Light") || what == QLatin1String("Clear") || what == QLatin1String("Tinted")) {
-    if (!devices(world).tools()->view().value(QStringLiteral("open")).toBool()) return false;
+    if (!tools(world).view().value(QStringLiteral("open")).toBool()) return false;
     const QString control = what == QLatin1String("Dark") || what == QLatin1String("Light") ? QStringLiteral("Appearance") : QStringLiteral("Liquid Glass");
     devicePanel(world).click(QStringLiteral("toolsChoice-") + control + QLatin1Char('-') + what);
   } else if (what == QLatin1String("Close tools")) {
-    if (!devices(world).tools()->view().value(QStringLiteral("open")).toBool()) return false;
+    if (!tools(world).view().value(QStringLiteral("open")).toBool()) return false;
     devicePanel(world).click(QStringLiteral("toolsClose"));
   } else if (what == QLatin1String("Terminate") || what == QLatin1String("Relaunch") || what == QLatin1String("Set") || what == QLatin1String("Clear")) {
-    if (!devices(world).tools()->view().value(QStringLiteral("open")).toBool()) return false;
+    if (!tools(world).view().value(QStringLiteral("open")).toBool()) return false;
     devicePanel(world).click(what == QLatin1String("Terminate")   ? QStringLiteral("toolsTerminate")
                              : what == QLatin1String("Relaunch") ? QStringLiteral("toolsRelaunch")
                              : what == QLatin1String("Set")      ? QStringLiteral("toolsLocationSet")
@@ -3044,7 +3189,7 @@ bool deviceOpens(World& world, const QString& what) {
   // named "Tools" has no session in the fake hub. The hub is only looked
   // at: fakeHub() would set one up (and rename the MC) in every world.
   const FakeHub& hub = world.mc.part<FakeHub>();
-  const bool showing = controller->device()->view().value(QStringLiteral("screen")).isValid();
+  const bool showing = screenOf(world).isValid();
   if (!showing && (!hub.used || hub.sessions.isEmpty())) return false;
   // The device's own tab first, when the scenario only opened the device.
   if (!showing) {
@@ -3082,7 +3227,7 @@ bool deviceOpens(World& world, const QString& what) {
 
 bool checkDeviceCannotChoose(World& world, const QString& what) {
   if (!world.brick || what != QLatin1String("Send")) return false;
-  if (!devices(world).tools()->view().value(QStringLiteral("open")).toBool()) return false;
+  if (!tools(world).view().value(QStringLiteral("open")).toBool()) return false;
   expect(!devicePanel(world).item(QStringLiteral("toolsPushSend"))->isEnabled(), describe(world));
   return true;
 }

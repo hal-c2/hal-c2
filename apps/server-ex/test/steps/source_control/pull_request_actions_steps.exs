@@ -419,7 +419,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestActions do
 
     removed = World.cli_calls(context, "--method DELETE repos/acme/shop/issues/#{number}/labels/")
     assert [%{"args" => args}] = removed
-    assert List.last(args) == "repos/acme/shop/issues/#{number}/labels/bug"
+    assert List.last(args -- ["--include"]) == "repos/acme/shop/issues/#{number}/labels/bug"
     context
   end
 

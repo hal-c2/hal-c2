@@ -22,6 +22,7 @@
 #   docs/internals/desktop-qt.md (web engine profile, shell directory)
 #   docs/operations/development.md (State and ports)
 #   docs/user/install.md (Coming from T3 Code)
+#   https://github.com/pingdotgg/t3code/pull/15009
 
 Feature: Where HAL-C2 keeps its files
   HAL-C2 follows the XDG Base Directory layout on every platform. Settings, data the
@@ -398,6 +399,12 @@ Feature: Where HAL-C2 keeps its files
       Then the threads, settings, provider sign-ins and secrets are all still there
       And downloaded tools are fetched again when they are next needed
 
+    @backlog @mc
+    Scenario: A settings file that is a symbolic link stays one when saved
+      Given settings.json is a symbolic link into a dotfiles repository
+      When settings are saved
+      Then the target file is rewritten and the link remains
+
   Rule: The desktop app's and the hosted server's files are sorted by kind
 
     Background:
@@ -506,7 +513,7 @@ Feature: Where HAL-C2 keeps its files
         | XDG_STATE_HOME is not set             | ~/.local/state/hal-c2/ssh-launch    |
         | XDG_STATE_HOME is "/var/lib/me/state" | /var/lib/me/state/hal-c2/ssh-launch |
 
-    @desktop @backlog-desktop
+    @desktop @backlog-desktop @priority-low
     Scenario Outline: A WSL distro keeps its runtime state in its own state directory
       Given a WSL distro where <setting>
       When the desktop app starts a server inside that distro

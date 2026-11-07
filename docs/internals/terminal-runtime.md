@@ -19,6 +19,20 @@ Client buffers have a separate 512 KiB cap
 ([`TerminalController`](../../apps/desktop-qt/src/native/TerminalController.cpp)). Measure
 throughput with full scrollback when changing this path.
 
+A client that falls behind is held back per subscription at the socket, not at the PTY: a
+subscription made with `"acks": true`
+([`OutputWindow`](../../apps/server-ex/lib/hal_c2/terminal/output_window.ex)) stops being sent
+output once 64 KiB waits unacknowledged, and gets one snapshot when it has acknowledged what it
+was sent. The shell is not paused, because another client may be keeping up and a paused PTY
+would stall it too; bounded history is what the slow client catches up from. A snapshot's history
+does not count against the 64 KiB: output held right after a large snapshot would make a client
+that keeps up catch up from snapshot to snapshot.
+
+The TUI acknowledges what its emulator has parsed, never what it has painted, so a terminal that
+is not on screen still takes output. A terminal with no pane has no subscription, and so no window,
+and catches up from a snapshot when it is shown again
+([`terminalState`](../../apps/tui/src/host/terminalState.ts)).
+
 ## Renderer ownership
 
 The phone and the Qt desktop use the same `libghostty-vt` C ABI for terminal behavior. Platform

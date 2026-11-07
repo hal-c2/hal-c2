@@ -342,7 +342,8 @@ defmodule HalC2.Steps.Platform.EventStore do
     idle_stop(id)
     assert {seq, %StreamState{} = snapshot} = Store.get_snapshot(context.mc.store, id)
     assert seq == state.seq
-    assert snapshot == state
+    # Where the stream's cold rows are is not part of it.
+    assert snapshot == %{state | src: nil}
     context
   end
 
@@ -352,7 +353,8 @@ defmodule HalC2.Steps.Platform.EventStore do
     expected = thread_state(context)
     idle_stop(id)
     assert Store.get_snapshot(context.mc.store, id)
-    sql!(context, "DELETE FROM snapshots")
+    sql!(context, "DELETE FROM hot_snapshots")
+    sql!(context, "DELETE FROM cold")
     assert Store.get_snapshot(context.mc.store, id) == nil
     Map.put(context, :expected, expected)
   end
@@ -394,7 +396,7 @@ defmodule HalC2.Steps.Platform.EventStore do
       |> Map.drop([:created, :changed, :deleted, :since])
       |> Map.merge(%{__struct__: StreamState, v: 1})
 
-    :ok = Store.put_snapshot(id, state.seq, old)
+    put_legacy(context, id, state.seq, old)
     Map.put(context, :expected, state)
   end
 
@@ -404,7 +406,7 @@ defmodule HalC2.Steps.Platform.EventStore do
 
   step "the snapshot is migrated to the current format", context do
     loaded = context.loaded
-    assert %StreamState{v: 3, created: created} = loaded
+    assert %StreamState{v: 4, created: created} = loaded
     # Loaded from the snapshot (a fold of the log records creation order).
     assert created == %{}
     # Nothing is known of what changed before the snapshot: a client behind it starts over.
@@ -412,6 +414,144 @@ defmodule HalC2.Steps.Platform.EventStore do
     assert StreamState.changed_since(loaded, loaded.seq - 1) == :unknown
     assert loaded.entities == context.expected.entities
     assert loaded.seq == context.expected.seq
+    # Migrated once: the older MC's snapshot gives way to the current one.
+    id = World.thread_id(context, "main")
+    assert {_, %StreamState{v: 4}} = Store.get_snapshot(context.mc.store, id)
+    assert Store.legacy_snapshot(context.mc.store, id, 1_000_000_000) == nil
+    context
+  end
+
+  # --- hot and cold ---------------------------------------------------------------------
+
+  step "a thread has finished {int} runs of {int} items while memory holds {int}",
+       %{args: [runs, items, hot]} = context do
+    previous = Application.get_env(:hal_c2, :stream_hot_items)
+    Application.put_env(:hal_c2, :stream_hot_items, hot)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if previous,
+        do: Application.put_env(:hal_c2, :stream_hot_items, previous),
+        else: Application.delete_env(:hal_c2, :stream_hot_items)
+    end)
+
+    id = World.thread_id(context, "main")
+    # The thread's stream started before memory was made this small.
+    idle_stop(id)
+
+    for i <- 1..runs do
+      run = "run-cold-#{i}"
+
+      commit(context, [
+        {"run", run, %{"s" => %{"id" => run, "ordinal" => 1_000 + i, "status" => "running"}}},
+        {"message", "#{run}-m",
+         %{"s" => %{"id" => "#{run}-m", "runId" => run, "text" => "q#{i}"}}}
+        | for(
+            j <- 1..items,
+            do:
+              {"turn-item", "#{run}-#{j}",
+               %{
+                 "s" => %{
+                   "id" => "#{run}-#{j}",
+                   "runId" => run,
+                   "threadId" => id,
+                   "text" => "#{i}.#{j}"
+                 }
+               }}
+          )
+      ])
+
+      commit(context, [{"run", run, %{"s" => %{"status" => "completed"}}}])
+    end
+
+    Map.put(context, :hot, hot)
+  end
+
+  step "the MC holds only the latest runs' items in memory", context do
+    state = thread_state(context)
+    assert state.floor != nil
+    assert map_size(StreamState.get(state, "turn-item")) <= 2 * context.hot
+    context
+  end
+
+  step "the client receives every entity of a fold of the log", context do
+    whole =
+      context.mc.store
+      |> Store.reduce_stream(
+        World.thread_id(context, "main"),
+        0,
+        StreamState.new(),
+        &StreamState.apply_event(&2, &1)
+      )
+
+    expected =
+      for {kind, id, entity} <- StreamState.rows(whole),
+          do: [kind, id, HalC2.Web.Wire.entity(kind, entity)]
+
+    assert Enum.sort(context.rows) == Enum.sort(expected)
+    context
+  end
+
+  step "a client reads the thread's entities {int} at a time", %{args: [limit]} = context do
+    id = World.thread_id(context, "main")
+
+    {rows, pages, context} = read_rows(context, id, limit, nil, [], 0)
+    Map.merge(context, %{rows: rows, pages: pages, limit: limit})
+  end
+
+  step "pages of {int} rows", %{args: [page]} = context do
+    Application.put_env(:hal_c2, :thread_rows_page, page)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :thread_rows_page) end)
+    Map.put(context, :page, page)
+  end
+
+  step "a client from before paging reads the thread's entities", context do
+    {reply, context} =
+      World.call!(context, "hal-c2.threadRows", %{"threadId" => World.thread_id(context, "main")})
+
+    assert reply["next"] == nil
+    Map.merge(context, %{rows: reply["rows"], pages: 1})
+  end
+
+  step "it got each entity once in the order they were created, in one reply", context do
+    assert context.pages == 1 and length(context.rows) > context.page
+    each_entity_once(context)
+  end
+
+  step "it took more than one page, each entity once in the order they were created",
+       context do
+    assert context.pages > 1
+    each_entity_once(context)
+  end
+
+  defp each_entity_once(context) do
+    whole =
+      Store.reduce_stream(
+        context.mc.store,
+        World.thread_id(context, "main"),
+        0,
+        StreamState.new(),
+        &StreamState.apply_event(&2, &1)
+      )
+
+    assert context.rows ==
+             for(
+               {kind, id, entity} <- StreamState.rows(whole),
+               do: [kind, id, HalC2.Web.Wire.entity(kind, entity)]
+             )
+
+    context
+  end
+
+  step "the thread's older runs are read from disk after a restart", context do
+    id = World.thread_id(context, "main")
+    idle_stop(id)
+    state = thread_state(context)
+    assert state.floor != nil
+    assert StreamState.fetch(state, "turn-item", "run-cold-1-1")["text"] == "1.1"
+
+    assert Enum.count(StreamState.all(state, "turn-item")) >=
+             map_size(StreamState.get(state, "turn-item"))
+
     context
   end
 
@@ -516,7 +656,7 @@ defmodule HalC2.Steps.Platform.EventStore do
 
     sql!(
       context,
-      "DELETE FROM snapshots WHERE stream IN (SELECT key FROM streams WHERE id LIKE 'th-old-%')"
+      "DELETE FROM hot_snapshots WHERE stream IN (SELECT key FROM streams WHERE id LIKE 'th-old-%')"
     )
 
     stored = Store.list_shell(context.mc.store)
@@ -627,6 +767,7 @@ defmodule HalC2.Steps.Platform.EventStore do
 
   step "an older MC opens it", context do
     for child <- [
+          HalC2.Orchestration.Wake,
           HalC2.RuntimeRecord,
           HalC2.Web,
           HalC2.Shell,
@@ -668,6 +809,23 @@ defmodule HalC2.Steps.Platform.EventStore do
   defp thread_state(context),
     do: Streams.Server.state(Streams.ensure(World.thread_id(context, "main")))
 
+  # Reads a thread's rows a page at a time, as a client walks `next`.
+  defp read_rows(context, id, limit, cursor, rows, pages) do
+    {reply, context} =
+      World.call!(context, "hal-c2.threadRows", %{
+        "threadId" => id,
+        "after" => cursor,
+        "limit" => limit
+      })
+
+    assert length(reply["rows"]) <= limit
+    rows = rows ++ reply["rows"]
+
+    if reply["next"],
+      do: read_rows(context, id, limit, reply["next"], rows, pages + 1),
+      else: {rows, pages + 1, context}
+  end
+
   defp log(context, id, after_seq \\ 0),
     do: Store.reduce_stream(context.mc.store, id, after_seq, [], &[&1 | &2]) |> Enum.reverse()
 
@@ -706,6 +864,26 @@ defmodule HalC2.Steps.Platform.EventStore do
   end
 
   # Lets a stream process go idle, as it does after `idle_stop` with no subscribers.
+  # A snapshot as an older MC wrote it, in the table it wrote to.
+  defp put_legacy(context, id, seq, state) do
+    blob = :erlang.term_to_binary(state, [:compressed])
+
+    with_db(context, [], fn db ->
+      :ok = Sqlite3.execute(db, "PRAGMA busy_timeout = 5000")
+      :ok = Sqlite3.execute(db, "DELETE FROM hot_snapshots")
+
+      {:ok, stmt} =
+        Sqlite3.prepare(db, """
+        INSERT INTO snapshots (stream, seq, state) SELECT key, ?2, ?3 FROM streams WHERE id = ?1
+        ON CONFLICT(stream) DO UPDATE SET seq = excluded.seq, state = excluded.state
+        """)
+
+      :ok = Sqlite3.bind(stmt, [id, seq, {:blob, blob}])
+      :done = Sqlite3.step(db, stmt)
+      :ok = Sqlite3.release(db, stmt)
+    end)
+  end
+
   defp idle_stop(id) do
     pid = Streams.ensure(id)
     ref = Process.monitor(pid)

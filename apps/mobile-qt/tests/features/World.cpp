@@ -16,12 +16,16 @@
 #include <QThread>
 #include <qpa/qwindowsysteminterface.h>
 
+#include "ComposerController.h"
 #include "ConnectionHealthController.h"
 #include "Harness.h"
 #include "Maintenance.h"
 #include "NativeShell.h"
+#include "SavedEnvironmentsController.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
+#include "ThreadMenuController.h"
+#include "ThreadStore.h"
 
 namespace {
 
@@ -47,35 +51,42 @@ QQuickItem* search(QQuickItem* item, const std::function<bool(QQuickItem*)>& mat
   return nullptr;
 }
 
-// The object named `objectName` among what `object` owns and, for an item,
-// draws: an item or not. A Popup is a QObject, owned by the window, the item
-// or the content of the popup it was declared in, and a closed popup's
-// content is in no window. A popup's content can lead back to the popup, so
-// `seen` keeps the walk from going round.
-QObject* searchObjects(QObject* object, const QString& objectName, QSet<QObject*>& seen) {
+// The first object for which `matches` holds among what `object` owns and,
+// for an item, draws: an item or not. A Popup is a QObject, owned by the
+// window, the item or the content of the popup it was declared in, and a
+// closed popup's content is in no window. A popup's content can lead back to
+// the popup, so `seen` keeps the walk from going round.
+QObject* searchObjects(QObject* object, const std::function<bool(QObject*)>& matches, QSet<QObject*>& seen) {
   if (seen.contains(object)) return nullptr;
   seen.insert(object);
-  if (object->objectName() == objectName) return object;
+  if (matches(object)) return object;
   const auto* item = qobject_cast<QQuickItem*>(object);
   const QObjectList owned = object->children();
   for (QObject* child : owned) {
     if (qobject_cast<QQuickItem*>(child)) continue;
-    if (QObject* found = searchObjects(child, objectName, seen)) return found;
+    if (QObject* found = searchObjects(child, matches, seen)) return found;
   }
   if (item) {
     const QList<QQuickItem*> children = item->childItems();
     for (QQuickItem* child : children) {
-      if (QObject* found = searchObjects(child, objectName, seen)) return found;
+      if (QObject* found = searchObjects(child, matches, seen)) return found;
     }
   } else if (auto* content = object->property("contentItem").value<QQuickItem*>()) {
-    if (QObject* found = searchObjects(content, objectName, seen)) return found;
+    if (QObject* found = searchObjects(content, matches, seen)) return found;
   }
   return nullptr;
 }
 
-QObject* searchObjects(QObject* object, const QString& objectName) {
+QObject* searchObjects(QObject* object, const std::function<bool(QObject*)>& matches) {
   QSet<QObject*> seen;
-  return searchObjects(object, objectName, seen);
+  return searchObjects(object, matches, seen);
+}
+
+// The popup named `objectName` for which `holds` is true. Bricks share popups'
+// names (a FileEntryMenu is in the Files screen and in the timeline), so one
+// of them may be up while another is not.
+QObject* searchPopup(QObject* window, const QString& objectName, const char* holds) {
+  return searchObjects(window, [&](QObject* candidate) { return candidate->objectName() == objectName && candidate->property(holds).toBool(); });
 }
 
 void collectTexts(QQuickItem* item, QStringList& texts) {
@@ -121,12 +132,16 @@ void World::open() {
   if (m_app) return;
   QWindowSystemInterface::handleApplicationStateChanged<QWindowSystemInterface::SynchronousDelivery>(Qt::ApplicationActive);
   push->opened();
+  SavedEnvironmentsController::setSecretStoreFactory([keys = secrets](const QString&) { return std::make_unique<MemorySecretStore>(keys); });
   m_app = std::make_unique<MobileApp>(
       MobileApp::Options{m_home.path(), QStringLiteral(HAL_C2_QML_DIR), QStringLiteral(HAL_C2_MOBILE_QML_DIR), kTestPhone, camera, push});
   // The scenarios' seams: a dropped connection is tried again at once, and
   // nothing leaves the test for the system's browser or clipboard.
   m_app->native().client()->setRetryDelays({20});
-  m_app->bridge().setUrlOpener([this](const QUrl& url) { openedUrls.append(url); });
+  m_app->bridge().setUrlOpener([this](const QUrl& url) {
+    openedUrls.append(url);
+    return true;
+  });
   m_app->native().shared<ConnectionHealthController>()->setClipboardWriter([this](const QString& text) {
     clipboard = text;
     return true;
@@ -137,8 +152,16 @@ void World::open() {
   });
   // Releases are the environment's fake index, never GitHub's.
   m_app->maintenance().setReleaseIndex(mc.origin().toString() + QStringLiteral("/releases?page=%1"));
-  m_app->bridge().setClipboardWriter([this](const QString& text) { clipboard = text; });
+  m_app->bridge().setClipboardWriter([this](const QString& text) {
+    clipboard = text;
+    return true;
+  });
   m_app->native().controller<FileActionsController>()->setClipboardWriter([this](const QString& text) {
+    clipboard = text;
+    return true;
+  });
+  // What the thread's menu and a plan copy.
+  m_app->native().controller<ThreadMenuController>()->setClipboardWriter([this](const QString& text) {
     clipboard = text;
     return true;
   });
@@ -196,6 +219,12 @@ void World::resize(int width, int height) {
           [&] { return QStringLiteral("a %1x%2 window; it is %3x%4").arg(width).arg(height).arg(window().width()).arg(window().height()); });
 }
 
+void World::setTime(const QDateTime& time) {
+  const QDateTime now = time.toUTC();
+  native().controller<ThreadStore>()->setClock([now] { return now; });
+  native().controller<ComposerController>()->setClock([now] { return now; });
+}
+
 MobileApp& World::app() {
   open();
   return *m_app;
@@ -232,21 +261,27 @@ QQuickItem* World::item(const QString& objectName) {
   return found;
 }
 
+void World::openConnectionNotice() {
+  QQuickItem* notice = item(QStringLiteral("connectionNotice"));
+  if (!notice->property("open").toBool()) tap(QStringLiteral("connectionNoticeButton"));
+  waitFor([&] { return notice->property("open").toBool(); },
+          [&] { return QStringLiteral("the connection notice to open; the screen shows: %1").arg(texts().join(QStringLiteral(" | "))); });
+}
+
 bool World::popupShowing(const QString& objectName) {
-  const QObject* popup = searchObjects(&window(), objectName);
-  expect(popup != nullptr, QStringLiteral("the window has no %1").arg(objectName));
-  return popup->property("visible").toBool();
+  expect(popup(objectName) != nullptr, QStringLiteral("the window has no %1").arg(objectName));
+  return searchPopup(&window(), objectName, "visible") != nullptr;
 }
 
 QObject* World::popup(const QString& objectName) {
-  return searchObjects(&window(), objectName);
+  if (QObject* shown = searchPopup(&window(), objectName, "visible")) return shown;
+  return searchObjects(&window(), [&](QObject* candidate) { return candidate->objectName() == objectName; });
 }
 
 void World::awaitPopup(const QString& objectName, bool open) {
   waitFor(
       [&] {
-        const QObject* popup = searchObjects(&window(), objectName);
-        return popup && (open ? popup->property("opened").toBool() : !popup->property("visible").toBool());
+        return open ? searchPopup(&window(), objectName, "opened") != nullptr : popup(objectName) != nullptr && searchPopup(&window(), objectName, "visible") == nullptr;
       },
       [&] { return QStringLiteral("%1 to %2; the screen says: %3").arg(objectName, open ? QStringLiteral("open") : QStringLiteral("close"), texts().join(QStringLiteral(" | "))); });
 }

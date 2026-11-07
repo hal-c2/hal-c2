@@ -28,7 +28,7 @@ Rectangle {
     color: Theme.palette.color("surface", "#0f0f11")
     border.color: borderColor
     border.width: 1
-    radius: 8
+    radius: Theme.radiusMd
 
     onVisibleChanged: {
         if (visible) {
@@ -47,7 +47,7 @@ Rectangle {
         Text {
             text: qsTr("Set up devices")
             color: root.foreground
-            font.pixelSize: Math.round(15 * Theme.fontScale)
+            font.pixelSize: Theme.type.title.size
             font.weight: Font.Medium
         }
         Text {
@@ -55,11 +55,11 @@ Rectangle {
             wrapMode: Text.Wrap
             text: qsTr("Review what runs on this environment before using simulators and emulators.")
             color: root.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         Row {
-            spacing: 6
+            spacing: Theme.space.sm
 
             Repeater {
                 model: root.steps
@@ -94,7 +94,7 @@ Rectangle {
             Text {
                 text: qsTr("Enable the device hub")
                 color: root.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
             Item {
@@ -108,7 +108,7 @@ Rectangle {
                     wrapMode: Text.Wrap
                     text: qsTr("Enable this environment to open simulators and emulators, whether they run here or on a remote device host.")
                     color: root.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
                 ShellSwitch {
                     id: hubSwitch
@@ -126,7 +126,7 @@ Rectangle {
                 visible: text.length > 0
                 text: root.wizard ? root.wizard.hubStatus : ""
                 color: root.muted
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
             }
         }
 
@@ -139,7 +139,7 @@ Rectangle {
             Text {
                 text: qsTr("Check simulator support")
                 color: root.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
             Repeater {
@@ -152,7 +152,7 @@ Rectangle {
 
                     width: parent.width
                     height: 52
-                    radius: 6
+                    radius: Theme.radiusSm
                     color: "transparent"
                     border.color: root.borderColor
 
@@ -165,7 +165,7 @@ Rectangle {
                         Text {
                             text: platformRow.modelData.platform
                             color: root.foreground
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             font.weight: Font.Medium
                         }
                         Text {
@@ -174,7 +174,7 @@ Rectangle {
                             wrapMode: Text.Wrap
                             text: platformRow.modelData.message
                             color: root.muted
-                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                            font.pixelSize: Theme.type.caption.size
                         }
                     }
                 }
@@ -184,7 +184,7 @@ Rectangle {
                 wrapMode: Text.Wrap
                 text: qsTr("You can use either platform. Fixing a missing platform does not block the other one.")
                 color: root.muted
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
             }
             ShellButton {
                 objectName: "wizardCheckAgain"
@@ -203,7 +203,7 @@ Rectangle {
             Text {
                 text: qsTr("Allow agent control")
                 color: root.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
             Item {
@@ -217,7 +217,7 @@ Rectangle {
                     wrapMode: Text.Wrap
                     text: qsTr("Allow new agent sessions in this environment to start and control local and remote devices, with required tools set up automatically.")
                     color: root.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
                 ShellSwitch {
                     id: agentSwitch
@@ -235,14 +235,14 @@ Rectangle {
                 visible: text.length > 0
                 text: root.wizard ? root.wizard.agentStatus : ""
                 color: root.muted
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
             }
             Text {
                 width: parent.width
                 wrapMode: Text.Wrap
                 text: qsTr("Leave this off to keep manual device controls without giving agents access.")
                 color: root.muted
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
             }
         }
 
@@ -253,7 +253,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: root.wizard ? root.wizard.error : ""
             color: root.errorColor
-            font.pixelSize: Math.round(11 * Theme.fontScale)
+            font.pixelSize: Theme.type.caption.size
         }
 
         Item {

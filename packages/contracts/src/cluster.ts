@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 
 /**
  * One person's machines as one cluster (apps/server-ex `HalC2.Cluster`). A machine
- * joins with an invite, a one-time pairing link from any member; members then
+ * joins with a cluster-only one-time invite from any member; members then
  * reach each other over pinned mutual TLS with nothing else to set up.
  */
 
@@ -15,6 +15,10 @@ export const ClusterMember = Schema.Struct({
   /** The HAL-C2 version it last reported. Members connect whatever versions they run. */
   version: Schema.optional(Schema.NullOr(Schema.String)),
   connected: Schema.Boolean,
+  /** Switched off (`cluster.switch`): kept, but cut off from every member until switched on. */
+  off: Schema.optional(Schema.Boolean),
+  /** Not reached for minutes, so tried only now and then until `cluster.reconnect`. */
+  offline: Schema.optional(Schema.Boolean),
 });
 export type ClusterMember = typeof ClusterMember.Type;
 
@@ -45,7 +49,7 @@ export const ClusterInviteInput = Schema.Struct({
 export type ClusterInviteInput = typeof ClusterInviteInput.Type;
 
 export const ClusterInvite = Schema.Struct({
-  /** A pairing link granting `access:write`, good once. */
+  /** A cluster-only invite, good once; it cannot be exchanged for a client session. */
   link: Schema.String,
   expiresAt: Schema.String,
   /** Only this machine can reach the link: the node listens on loopback. */
@@ -58,6 +62,12 @@ export type ClusterJoinInput = typeof ClusterJoinInput.Type;
 
 export const ClusterRemoveInput = Schema.Struct({ id: Schema.String });
 export type ClusterRemoveInput = typeof ClusterRemoveInput.Type;
+
+export const ClusterSwitchInput = Schema.Struct({ id: Schema.String, on: Schema.Boolean });
+export type ClusterSwitchInput = typeof ClusterSwitchInput.Type;
+
+export const ClusterReconnectInput = Schema.Struct({ id: Schema.String });
+export type ClusterReconnectInput = typeof ClusterReconnectInput.Type;
 
 /** How one member's update to the version the asked MC runs went. */
 export const ClusterMemberUpdate = Schema.Struct({

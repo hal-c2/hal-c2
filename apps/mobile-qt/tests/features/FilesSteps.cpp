@@ -26,6 +26,9 @@
 #include "WorkspaceFiles.h"
 #include "World.h"
 
+// An image a tool call viewed, when the scenario is about one (ToolCallSteps.cpp).
+bool expectViewedImage(World& world);
+
 namespace {
 
 #define S QStringLiteral
@@ -296,6 +299,7 @@ const Steps steps([] {
        });
   step(S("the user retries"), [](World& world, const Captures&, const Table&) { world.tap(S("fileRetry")); });
   step(S("the image is shown"), [](World& world, const Captures&, const Table&) {
+    if (expectViewedImage(world)) return;
     world.waitFor(
         [&] {
           QQuickItem* image = world.find(S("fileImage"));
@@ -313,7 +317,7 @@ const Steps steps([] {
   // --- The way out of the phone's files.
   step(S("the user steps back from the file"), [](World& world, const Captures&, const Table&) { world.back(); });
   step(S("the thread is on screen again, and its files can be opened again"), [](World& world, const Captures&, const Table&) {
-    world.item(S("centreHost"));
+    world.item(S("routeView"));
     expect(!world.find(S("filesPanel")) && shownThread(world) == kThreadTitle, S("the screen says: %1").arg(world.texts().join(S(" | "))));
     world.tap(S("openFiles"));
     world.item(S("filesPanel"));

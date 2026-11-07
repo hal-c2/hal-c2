@@ -11,7 +11,7 @@ Rectangle {
 
     implicitWidth: pillText.implicitWidth + 12
     implicitHeight: 18
-    radius: 9
+    radius: Theme.radiusPill
     color: Theme.palette.color("secondary", "#27272a")
     border.width: 1
     border.color: Theme.palette.color("border", "#3f3f46")
@@ -22,7 +22,7 @@ Rectangle {
         anchors.centerIn: parent
         text: pill.stage !== null ? (pill.stage.label ?? "") : ""
         color: Theme.palette.color("secondaryForeground", "#e4e4e7")
-        font.pixelSize: Math.round(10 * Theme.fontScale)
+        font.pixelSize: Theme.type.caption.size
         font.weight: Font.DemiBold
     }
 }

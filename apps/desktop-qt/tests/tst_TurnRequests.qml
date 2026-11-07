@@ -235,6 +235,25 @@ Item {
             compare(lastAction().payload.runId, "run-3");
         }
 
+        // A queued message shows its attachments, and selecting one opens it
+        // large in the attachment viewer, as in the timeline.
+        function test_queuedAttachmentsShowAndOpen() {
+            const requests = createTemporaryObject(requestsComponent, root);
+            Shell.publishTurn({ queue: [{ runId: "run-2", text: "", attachments: [
+                { id: "shot", name: "shot.png", mimeType: "image/png", kind: "image", url: "" },
+                { id: "notes", name: "notes.md", mimeType: "text/markdown", kind: "file" }] }] });
+            waitForRendering(root);
+            verify(findChild(requests, "queueAttachment-shot").visible);
+            verify(findChild(requests, "queueAttachment-notes").visible);
+            mouseClick(findChild(requests, "queueAttachment-notes"));
+            compare(lastAction().action, "attachment.sent.view");
+            compare(lastAction().payload.id, "notes");
+            compare(lastAction().payload.name, "notes.md");
+            mouseClick(findChild(requests, "queueAttachment-shot"));
+            compare(lastAction().payload.id, "shot");
+            compare(lastAction().payload.mimeType, "image/png");
+        }
+
         // The MC keeps a queue after a restart; the card says so and offers
         // to resume it, once at a time.
         function test_aHeldQueueCanBeResumed() {
@@ -304,7 +323,8 @@ Item {
             const list = findChild(requests, "queueList");
             compare(list.contentY, 0);
             findChild(requests, "queueRemove-run-8").forceActiveFocus(Qt.TabFocusReason);
-            const row = findChild(requests, "queueText-run-8").parent;
+            // The queued message's delegate: its text row, then its attachments.
+            const row = findChild(requests, "queueText-run-8").parent.parent;
             verify(row.y + row.height <= list.contentY + list.height);
             verify(row.y >= list.contentY);
             findChild(requests, "queueEdit-run-1").forceActiveFocus(Qt.BacktabFocusReason);

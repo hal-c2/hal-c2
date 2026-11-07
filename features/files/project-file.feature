@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19949
+#   https://github.com/pingdotgg/t3code/pull/19166
 #   docs/user/project-settings.md (Import actions, Submodules)
 #   packages/contracts/src/halC2ProjectFile.ts
 #   packages/shared/src/halC2ProjectFile.ts (parseHalC2ProjectFile)
@@ -55,26 +57,25 @@ Feature: The hal-c2.json project file
     Then its submodules are filled at every level
 
   @mc
-  Scenario: A new worktree runs the setup script hal-c2.json marks
+  Scenario: A cloned repository's setup script waits until imported
     Given the checkout's hal-c2.json marks "Setup" to run on new worktrees
     And "shop" has no saved actions
     When a thread starts in a new worktree of "shop"
-    Then "Setup" runs in the new worktree
+    Then the new worktree skips the setup script until it is imported
 
-  # A branch cannot choose which setup command runs. The command still runs against
-  # the branch's files, the same as a saved setup script.
+  # A checked-in setup action runs only after the user imports or saves it.
   @mc
-  Scenario: A branch cannot change which setup command runs
+  Scenario: A branch's changed setup script waits until imported
     Given the checkout's hal-c2.json marks "Setup" to run on new worktrees
     And the branch "contrib" changes the command of "Setup"
     When a thread starts in a new worktree of "shop" from "contrib"
-    Then the new worktree skips the setup script because it differs from the main checkout's
+    Then the new worktree skips the setup script until it is imported
 
   @mc
-  Scenario: A setup script only a branch's hal-c2.json has does not run
+  Scenario: A setup script only a branch's hal-c2.json has waits until imported
     Given the branch "contrib" adds a hal-c2.json marking "Setup" to run on new worktrees
     When a thread starts in a new worktree of "shop" from "contrib"
-    Then the new worktree skips the setup script because it differs from the main checkout's
+    Then the new worktree skips the setup script until it is imported
 
   @mc
   Scenario: A saved setup script wins over hal-c2.json
@@ -84,8 +85,9 @@ Feature: The hal-c2.json project file
     Then "Install" runs in the new worktree
 
   @mc
-  Scenario: The first setup script in hal-c2.json is the one that runs
+  Scenario: The first setup script imported from hal-c2.json is the one that runs
     Given the checkout's hal-c2.json marks "Setup" and then "Setup (Windows)" to run on new worktrees
+    And "shop" imports its setup actions from hal-c2.json
     When a thread starts in a new worktree of "shop"
     Then "Setup" runs in the new worktree
 
@@ -136,6 +138,7 @@ Feature: The hal-c2.json project file
     Then the user is warned that hal-c2.json is invalid
     And no actions are offered from it
 
+  # Upstream #19166: a block comment holding a URL hid the project file's settings; comments are now stripped in one pass.
   @desktop
   Scenario: hal-c2.json may contain comments
     Given the checkout's hal-c2.json has comments and declares the action "Dev"
@@ -151,7 +154,7 @@ Feature: The hal-c2.json project file
 
   # Legacy: apps/server/src/project/HalC2ProjectFileLoader.ts (HAL_C2_PROJECT_FILE_NAMES)
   # Likely already implemented: apps/server-ex/lib/hal_c2/project_file.ex
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A checkout that only has the old t3.json is read from it
     Given the checkout has a "t3.json" declaring the action "Dev" and no hal-c2.json
     When the user looks at the actions of "shop"
@@ -164,3 +167,11 @@ Feature: The hal-c2.json project file
     When the user looks at the actions of "shop"
     Then no actions are offered from either file
     And a warning is logged that the project file could not be read
+
+  # Upstream #19949: a missing t3.json is not a failed read.
+  @backlog @mc
+  Scenario: A project without hal-c2.json or t3.json is not reported as failing to read it
+    Given the project has neither hal-c2.json nor t3.json
+    When the MC reads the project's settings
+    Then the project uses the defaults
+    And no read failure is reported or logged

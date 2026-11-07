@@ -23,9 +23,34 @@ Popup {
     x: Math.round(((parent?.width ?? width) - width * scale) / 2)
     y: Math.round((parent?.height ?? 0) * 0.12)
     width: Math.min(640, (parent?.width ?? 672) / scale - 32)
-    height: Math.min(480, ((parent?.height ?? 512) - y) / scale - 16)
+    // As tall as its rows, up to the room below it, ending on a whole row.
+    readonly property real room: Math.min(480, ((parent?.height ?? 512) - y) / scale - 16)
+    property real fit: room
+    height: Math.min(implicitHeight, room, fit)
+    onRoomChanged: Qt.callLater(refit)
     padding: 8
     closePolicy: Popup.CloseOnPressOutside
+
+    // fit: the tallest height within room whose list, at rest, ends on the
+    // bottom of a row; a group's header goes with the row under it. The list
+    // is the last thing in the column, so only the padding sits below it.
+    // Set from the list's signals rather than bound, since the rows it reads
+    // are laid out again whenever the height changes. Run once a change
+    // settles, after the list has placed its rows: moving into a submenu swaps
+    // the rows and then shows the title above the search.
+    function refit() {
+        list.forceLayout();
+        const top = topPadding + list.y;
+        let end = 0;
+        for (let i = 0; i < list.count; ++i) {
+            const row = list.itemAtIndex(i);
+            const bottom = row ? row.y + row.height - list.originY : Infinity;
+            if (top + bottom + bottomPadding > room)
+                break;
+            end = bottom;
+        }
+        fit = end > 0 ? top + end + bottomPadding : room;
+    }
 
     Component.onCompleted: PaletteModel.setSettingsSections(Pages.paletteEntries(Qt.platform.os))
 
@@ -53,14 +78,12 @@ Popup {
         if (PaletteModel.open) PaletteModel.dismiss();
     }
 
-    background: Rectangle {
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.color: Theme.palette.color("border", "#27272a")
-        radius: Math.min(Theme.radius, 16)
-    }
+    background: ShellPopoverSurface {}
 
     // A Popup is no Item, so its name is on its content.
     contentItem: ColumnLayout {
+        // Its keys stay the window's (ShellWindow.popupHoldsKeys).
+        objectName: "commandPaletteContent"
         spacing: 8
         Accessible.role: Accessible.Pane
         Accessible.name: qsTr("Command palette")
@@ -70,7 +93,7 @@ Popup {
             visible: PaletteModel.submenu.length > 0
             text: PaletteModel.submenu
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: Math.round(11 * Theme.fontScale)
+            font.pixelSize: Theme.type.caption.size
             font.weight: Font.DemiBold
             leftPadding: 4
         }
@@ -135,7 +158,7 @@ Popup {
             Layout.fillWidth: true
             text: PaletteModel.status
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: Math.round(11 * Theme.fontScale)
+            font.pixelSize: Theme.type.caption.size
             leftPadding: 4
             elide: Text.ElideRight
         }
@@ -150,7 +173,7 @@ Popup {
                 Layout.fillWidth: true
                 text: PaletteModel.status
                 color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
                 leftPadding: 4
                 elide: Text.ElideRight
             }
@@ -170,7 +193,7 @@ Popup {
                     focusPolicy: Qt.NoFocus
                     implicitHeight: 24
                     implicitWidth: 32
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                     ToolTip.visible: hovered
                     ToolTip.text: modelData.tip
                     Accessible.name: modelData.tip
@@ -187,6 +210,7 @@ Popup {
             Accessible.name: qsTr("Commands")
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.preferredHeight: count > 0 ? contentHeight : empty.implicitHeight + 24
             clip: true
             model: PaletteModel
             currentIndex: PaletteModel.highlighted
@@ -194,6 +218,17 @@ Popup {
             property var pointer: null
 
             boundsBehavior: Flickable.StopAtBounds
+            onContentHeightChanged: Qt.callLater(popup.refit)
+            onCountChanged: Qt.callLater(popup.refit)
+            onYChanged: Qt.callLater(popup.refit)
+            onOriginYChanged: Qt.callLater(popup.refit)
+
+            // The palette ends on a whole row; the edge says there is more.
+            ShellScrollEdge {
+                id: edge
+
+                target: list
+            }
 
             // Only a pointer that moves takes the highlight: rows that load or
             // scroll under a resting one leave Enter on what was typed. It is
@@ -220,7 +255,7 @@ Popup {
                 text: section
                 elide: Text.ElideRight
                 color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
                 font.weight: Font.DemiBold
             }
 
@@ -245,19 +280,20 @@ Popup {
                 // A row that cannot run here is faded and read as unavailable.
                 enabled: row.runnable
                 opacity: row.runnable ? 1 : 0.5
-                radius: Math.min(Theme.radius, 8)
+                radius: Theme.radiusMd
                 color: index === PaletteModel.highlighted ? Theme.palette.color("accentSurface", "#2a2a30") : "transparent"
 
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 8
-                    anchors.rightMargin: 8
+                    // The shortcut column keeps a gutter clear of the bar.
+                    anchors.rightMargin: edge.scrolls ? edge.reserve + Theme.space.md : Theme.space.sm
                     spacing: 8
 
                     Text {
                         text: row.title
                         color: Theme.palette.color("text", "#e4e4e7")
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         elide: Text.ElideRight
                         Layout.maximumWidth: row.width * 0.6
                     }
@@ -267,20 +303,21 @@ Popup {
                         Layout.fillWidth: true
                         text: row.description
                         color: Theme.palette.color("textMuted", "#a1a1aa")
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         elide: Text.ElideRight
                     }
                     Text {
                         visible: row.current
                         text: qsTr("Current")
                         color: Theme.palette.color("textMuted", "#a1a1aa")
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                     }
                     Text {
+                        objectName: "commandPaletteShortcut"
                         visible: text.length > 0
                         text: row.shortcut
                         color: Theme.palette.color("textMuted", "#a1a1aa")
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                     }
                 }
 
@@ -297,11 +334,13 @@ Popup {
             }
 
             Text {
+                id: empty
+
                 anchors.centerIn: parent
                 visible: list.count === 0
                 text: PaletteModel.emptyText
                 color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
         }
     }

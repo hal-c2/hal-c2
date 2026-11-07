@@ -19,10 +19,19 @@ defmodule HalC2.Web.Socket do
   with it, so the client is sent a `resync` and resubscribes from what it holds;
   one whose MC left the cluster is an `error`, and the client follows it again once
   that MC is back.
+
+  Following a stream is the one subscribe whose cost grows with the data (a long
+  thread resumed from an old offset), so it runs off this process (`following`):
+  the socket keeps answering pings and other frames meanwhile, and what the stream
+  sends before the follow is answered is held until it is.
+
+  Each socket logs when it opens and closes, under the trace id of the client's
+  attempt (its handshake's `traceparent`).
   """
 
   @behaviour WebSock
 
+  alias HalC2.Terminal.OutputWindow
   alias HalC2.Web.Protocol
 
   require Logger
@@ -31,7 +40,7 @@ defmodule HalC2.Web.Socket do
 
   # Sockets are Bandit's processes, so a code upgrade in place (`HalC2.Upgrade`) runs no
   # `code_change/3` for them: each callback first brings an older state up to date.
-  @state_version 9
+  @state_version 11
 
   # The services `watch_spec/1` subscribes to as `{kind, mc}`, by kind.
   @services %{
@@ -82,10 +91,21 @@ defmodule HalC2.Web.Socket do
     # A socket opened with a ticket belongs to that client's session.
     session = opts[:session]
     if session, do: HalC2.Auth.connected(session)
+    trace = opts[:trace]
+    if trace, do: Logger.metadata(trace_id: trace)
+
+    Logger.info(
+      "socket open (trace #{trace || "none"}, #{if session, do: "paired session", else: "MC token"})"
+    )
 
     state = %{
       v: @state_version,
       session: session,
+      trace: trace,
+      opened_at: System.monotonic_time(:millisecond),
+      # Stream follows still on their way (`subscribe/4`), by the follow's tag:
+      # %{id, stream_id, mc, shape, held: [messages, newest first], more: items asked, parted: bool}.
+      following: %{},
       # What the session may do; the MC's own token may do anything.
       scopes: session_scopes(session),
       subs: %{},
@@ -98,6 +118,8 @@ defmodule HalC2.Web.Socket do
       terminals: %{},
       # MC => the keys of its terminals lost with it, attached again when it is back.
       lost: %{},
+      # The subscription of a terminal client that acknowledges => its output window.
+      terminal_windows: %{},
       buffers: %{},
       shell: %{},
       flush_scheduled: false
@@ -132,6 +154,9 @@ defmodule HalC2.Web.Socket do
       {:ok, {:more, id, items}} ->
         {:ok, more(state, id, items)}
 
+      {:ok, {:ack, id, sequence}} ->
+        terminal_ack(state, id, sequence)
+
       {:ok, {:unsub, id}} ->
         {:ok, unsubscribe(state, id)}
 
@@ -157,6 +182,9 @@ defmodule HalC2.Web.Socket do
     case {state.by_stream, message, tag} do
       {%{^stream_id => {id, ^tag}}, _, _} ->
         stream_message(state, id, message)
+
+      {_, _, _} when is_map_key(:erlang.map_get(:following, state), tag) ->
+        {:ok, hold(state, tag, message)}
 
       {_, {:live, _, _}, {mc, _ref}} ->
         :erpc.cast(mc, HalC2.Streams, :unsubscribe, [stream_id, self(), tag])
@@ -315,6 +343,11 @@ defmodule HalC2.Web.Socket do
     {:push, Protocol.encode(frame), state}
   end
 
+  def handle_info({:hal_c2_followed, tag, result}, state), do: followed(state, tag, result)
+
+  # The MCs parted while a follow to `mc` was out (`subscribe/4`).
+  def handle_info({:nodedown, mc}, state), do: {:ok, parted(state, mc)}
+
   def handle_info(:flush, state) do
     {frames, state} = flush(state)
     {shell_frames, state} = flush_shell(state)
@@ -369,20 +402,39 @@ defmodule HalC2.Web.Socket do
   def handle_info(_other, state), do: {:ok, state}
 
   @impl true
-  def terminate(_reason, state) do
+  def terminate(reason, state) do
     state = migrate(state)
+    held = System.monotonic_time(:millisecond) - state.opened_at
+
+    Logger.info(
+      "socket closed (trace #{state.trace || "none"}): #{close_reason(reason)} after #{held} ms, " <>
+        "#{map_size(state.subs) + map_size(state.following)} subscriptions"
+    )
+
     # Each unsubscribe sees the last one's state, so the last of several sharing
     # one watch (a terminal, an MC's config) is the one that ends it. Nothing on
     # this socket attaches again, so a terminal detach needs no ordering here:
     # it is cast, and the terminal's monitor drops this socket in any case.
-    Enum.reduce(Map.keys(state.subs), state, &unsubscribe(&2, &1, false))
+    state = Enum.reduce(Map.keys(state.subs), state, &unsubscribe(&2, &1, false))
+
+    Enum.reduce(state.following, state, fn {_tag, follow}, state ->
+      unsubscribe(state, follow.id, false)
+    end)
+
     :ok
   end
 
+  defp close_reason(:normal), do: "closed by the MC"
+  defp close_reason(:remote), do: "closed by the client"
+  defp close_reason(:timeout), do: "the client went quiet"
+  defp close_reason(:shutdown), do: "the MC is stopping"
+  defp close_reason({:error, reason}), do: "failed: #{inspect(reason)}"
+  defp close_reason(other), do: inspect(other)
+
   # Runs a client RPC on the MC that owns the environment, off this process so a
   # slow command never holds up streaming.
-  # Each call needs the scope the contract declares for it (`HalC2.Rpc.required_scope/2`),
-  # checked here, before the call goes to whichever member owns the environment.
+  # Most calls need the scopes the contract declares for them (`HalC2.Rpc.required_scopes/2`),
+  # checked here. A file write's root-dependent scope is checked on the environment's MC.
   # The desktop app's reports go to its MC from here, in the order it sent them.
   defp rpc(state, id, environment, "server.reportDesktopUpdateStatus", payload)
        when is_map(payload) do
@@ -398,10 +450,25 @@ defmodule HalC2.Web.Socket do
   defp rpc(state, id, environment, method, payload),
     do: scoped_rpc(state, id, environment, method, payload)
 
-  defp scoped_rpc(state, id, environment, method, payload) do
-    scope = HalC2.Rpc.required_scope(method, payload)
+  defp scoped_rpc(state, id, environment, method, payload),
+    do: check_scopes(state, id, environment, method, payload, local_scopes(method, payload))
 
-    if allowed?(state, scope) do
+  # Whether a relative write's root is a project belongs to the environment's MC, which
+  # checks it again with the caller's scopes (`HalC2.Rpc.handle_with_scopes/3`); a write
+  # by full path is refused here, before it is routed anywhere.
+  defp local_scopes("projects.writeFile" = method, %{"relativePath" => path})
+       when is_binary(path) do
+    if Path.type(path) == :absolute,
+      do: ["terminal:operate"],
+      else: [HalC2.Rpc.required_scope(method)]
+  end
+
+  defp local_scopes(method, payload), do: HalC2.Rpc.required_scopes(method, payload)
+
+  defp check_scopes(state, id, environment, method, payload, scopes) do
+    scope = Enum.find(scopes, fn scope -> not allowed?(state, scope) end)
+
+    if scope == nil do
       run_rpc(state, id, environment, method, payload)
     else
       error = %{
@@ -456,6 +523,12 @@ defmodule HalC2.Web.Socket do
   defp call_mc(state, socket, mc, method, payload, timeout) do
     {module, fun, args} =
       cond do
+        method == "projects.writeFile" ->
+          {HalC2.Rpc, :handle_with_scopes, [method, payload || %{}, state.scopes]}
+
+        method == "hal-c2.createPairingLink" ->
+          {HalC2.Rpc, :handle, [method, payload || %{}, state.scopes]}
+
         method in @session_methods ->
           {HalC2.Rpc, :handle, [method, payload || %{}, state.session]}
 
@@ -496,6 +569,7 @@ defmodule HalC2.Web.Socket do
 
   defp subscribe(state, id, :shell, %{have: have}) do
     %{mcs: mcs, rows: rows} = HalC2.Shell.subscribe(self(), have)
+    offline = HalC2.Cluster.Discovery.offline()
 
     frame = %{
       "t" => "shell",
@@ -505,6 +579,7 @@ defmodule HalC2.Web.Socket do
           %{
             "mc" => Atom.to_string(mc.mc),
             "online" => mc.online,
+            "trying" => mc.online or (mc.environment || %{})["environmentId"] not in offline,
             "environment" => mc.environment,
             "epoch" => mc.epoch,
             "rev" => mc.rev,
@@ -577,36 +652,42 @@ defmodule HalC2.Web.Socket do
     end
   end
 
+  # The follow runs in a process of its own (`follow/5`) and is answered by
+  # `{:hal_c2_followed, tag, result}` (`followed/3`). Until then the subscription is in
+  # `following`, and what its stream sends is held for it there.
   defp subscribe(state, id, {:stream, mc, stream_id} = shape, resume) do
-    if Map.has_key?(state.by_stream, stream_id) do
+    pending? = Enum.any?(state.following, fn {_, follow} -> follow.stream_id == stream_id end)
+
+    if Map.has_key?(state.by_stream, stream_id) or pending? do
       {:push, Protocol.encode(error_frame(id, "already subscribed")), state}
     else
       # Names the MC too, for ending the subscription if this follow gives up.
       tag = {mc, make_ref()}
       client = resume |> Map.take([:handle, :window, :kinds]) |> Map.put(:tag, tag)
+      socket = self()
+
+      # The MCs may part while the follow is out: watched from here, so a follow they
+      # parted during fails even if they meet again before its answer is read
+      # (`handle_info/2`'s `:nodedown`).
+      if watch_node?(mc), do: Node.monitor(mc, true)
 
       # The owning MC may be gone or slow; the client retries when it is back.
-      case follow(mc, stream_id, resume.offset, client) do
-        {:ok, server, ref} ->
-          monitors = Map.put(state.monitors, ref, {id, server})
+      spawn(fn ->
+        result = remote(mc, HalC2.Streams, :follow, [stream_id, socket, resume.offset, client])
+        send(socket, {:hal_c2_followed, tag, result})
+      end)
 
-          # Until `live`, events are the stream's replay from `offset`: bounded by the
-          # stream, and resyncing on them would only ask for the same replay again.
-          {:ok,
-           %{
-             state
-             | subs: Map.put(state.subs, id, shape),
-               by_stream: Map.put(state.by_stream, stream_id, {id, tag}),
-               monitors: monitors,
-               buffers: Map.put(state.buffers, id, %{events: [], bytes: 0, replay: true})
-           }}
+      follow = %{
+        id: id,
+        stream_id: stream_id,
+        mc: mc,
+        shape: shape,
+        held: [],
+        more: 0,
+        parted: false
+      }
 
-        {:error, reason} ->
-          # A call that gave up may still be taken, and would feed a socket that is
-          # not following the stream.
-          :erpc.cast(mc, HalC2.Streams, :unsubscribe, [stream_id, self(), tag])
-          {:push, Protocol.encode(error_frame(id, reason)), state}
-      end
+      {:ok, %{state | following: Map.put(state.following, tag, follow)}}
     end
   end
 
@@ -627,16 +708,25 @@ defmodule HalC2.Web.Socket do
   # here. Several subscriptions of this socket may follow one terminal (a page
   # in each window, or one made before the last is gone), each with the
   # sequence of the snapshot it was sent.
-  defp subscribe(state, id, {:terminal, mc, input}, _offset) do
+  defp subscribe(state, id, {:terminal, mc, input}, resume) do
     key = {input["threadId"], input["terminalId"]}
 
     case remote(mc, HalC2.Terminal, :attach, [input, self()]) do
       {:ok, {:ok, snapshot}} ->
         frame = %{"type" => "snapshot", "snapshot" => snapshot}
 
+        windows =
+          if match?(%{acks: true}, resume) do
+            {:send, window} = OutputWindow.offer(OutputWindow.new(), frame)
+            Map.put(state.terminal_windows, id, window)
+          else
+            Map.delete(state.terminal_windows, id)
+          end
+
         state = %{
           state
-          | subs: Map.put(state.subs, id, {:terminal, mc, key}),
+          | terminal_windows: windows,
+            subs: Map.put(state.subs, id, {:terminal, mc, key}),
             by_terminal:
               Map.update(
                 state.by_terminal,
@@ -869,28 +959,109 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  # A stream that took the follow lets it go if the MCs part, and they may meet again
-  # before the answer is read and the stream monitored: a follow they parted during
-  # fails, as one they parted before the answer does.
-  defp follow(mc, stream_id, offset, client) do
-    watch? = mc != node() and Node.alive?()
-    if watch?, do: Node.monitor(mc, true)
+  defp watch_node?(mc), do: mc != node() and Node.alive?()
 
-    result =
-      case remote(mc, HalC2.Streams, :follow, [stream_id, self(), offset, client]) do
-        {:ok, {:ok, server}} -> {:ok, server, Process.monitor(server)}
-        {:error, reason} -> {:error, reason}
-      end
+  # What a stream sent for a follow still on its way, kept for when it is answered.
+  defp hold(state, tag, message),
+    do: update_in(state.following[tag].held, &[message | &1])
 
-    if watch?, do: Node.monitor(mc, false)
+  # A follow was answered. One whose subscription went meanwhile (an `unsub`) lets the
+  # stream go, if it took it. One the MCs parted during fails, as one they parted before
+  # the answer does. A taken one goes live: its stream monitored, then what it sent so
+  # far handled in order, as if it had come after.
+  defp followed(state, tag, result) do
+    case Map.pop(state.following, tag) do
+      {nil, _} ->
+        with {:ok, {:ok, server}} <- result,
+             do: GenServer.cast(server, {:unsubscribe, self(), tag})
 
-    receive do
-      {:nodedown, ^mc} ->
-        with {:ok, _server, ref} <- result, do: Process.demonitor(ref, [:flush])
-        {:error, "MC unavailable: noconnection"}
-    after
-      0 -> result
+        {:ok, state}
+
+      {follow, following} ->
+        state = %{state | following: following}
+        parted? = unwatch_node(follow.mc) or follow.parted
+
+        case result do
+          {:ok, {:ok, server}} when not parted? ->
+            go_live(state, follow, tag, server)
+
+          _ ->
+            reason =
+              case result do
+                {:error, reason} when not parted? -> reason
+                _ -> "MC unavailable: noconnection"
+              end
+
+            # A call that gave up may still be taken, and would feed a socket that is
+            # not following the stream.
+            :erpc.cast(follow.mc, HalC2.Streams, :unsubscribe, [follow.stream_id, self(), tag])
+            {:push, Protocol.encode(error_frame(follow.id, reason)), state}
+        end
     end
+  end
+
+  defp go_live(state, follow, tag, server) do
+    %{id: id, stream_id: stream_id} = follow
+    ref = Process.monitor(server)
+    buffer = %{events: [], bytes: 0, replay: true}
+    buffer = if follow.more > 0, do: Map.put(buffer, :pending_more, follow.more), else: buffer
+
+    # Until `live`, events are the stream's replay from `offset`: bounded by the
+    # stream, and resyncing on them would only ask for the same replay again.
+    state = %{
+      state
+      | subs: Map.put(state.subs, id, follow.shape),
+        by_stream: Map.put(state.by_stream, stream_id, {id, tag}),
+        monitors: Map.put(state.monitors, ref, {id, server}),
+        buffers: Map.put(state.buffers, id, buffer)
+    }
+
+    {frames, state} =
+      follow.held
+      |> Enum.reverse()
+      |> Enum.flat_map_reduce(state, fn message, state ->
+        # A resync among them ended the subscription: what follows is not its.
+        case state.by_stream do
+          %{^stream_id => {^id, ^tag}} ->
+            case stream_message(state, id, message) do
+              {:ok, state} -> {[], state}
+              {:push, frames, state} -> {List.wrap(frames), state}
+            end
+
+          _ ->
+            {[], state}
+        end
+      end)
+
+    if frames == [], do: {:ok, state}, else: {:push, frames, state}
+  end
+
+  # Stops watching `mc` for one follow, answering whether it parted from this MC
+  # meanwhile. Each follow's monitor sends a `:nodedown` of its own, so the one read
+  # here leaves the others theirs.
+  defp unwatch_node(mc) do
+    if watch_node?(mc) do
+      Node.monitor(mc, false)
+
+      receive do
+        {:nodedown, ^mc} -> true
+      after
+        0 -> false
+      end
+    else
+      false
+    end
+  end
+
+  # The MCs parted: every follow to `mc` still on its way fails when it is answered.
+  defp parted(state, mc) do
+    following =
+      Map.new(state.following, fn
+        {tag, %{mc: ^mc} = follow} -> {tag, %{follow | parted: true}}
+        entry -> entry
+      end)
+
+    %{state | following: following}
   end
 
   # Calls an MC without ever taking this socket down: an unreachable MC, or one
@@ -1018,6 +1189,18 @@ defmodule HalC2.Web.Socket do
     %{state | by_terminal: by_terminal, v: 8}
   end
 
+  # Version 10: a terminal subscription may acknowledge its output.
+  # Version 11: stream follows run off the socket, and its open is logged under a trace.
+  defp migrate(%{v: 10} = state),
+    do:
+      state
+      |> Map.merge(%{following: %{}, trace: nil, opened_at: System.monotonic_time(:millisecond)})
+      |> Map.put(:v, 11)
+      |> migrate()
+
+  defp migrate(%{v: 9} = state),
+    do: state |> Map.merge(%{terminal_windows: %{}, v: 10}) |> migrate()
+
   # Version 9: followed terminals are monitored, and those lost with their MC kept.
   defp migrate(%{v: 8} = state),
     do: state |> Map.merge(%{terminals: %{}, lost: %{}, v: 9}) |> migrate()
@@ -1137,29 +1320,101 @@ defmodule HalC2.Web.Socket do
     held? = event["type"] in ~w(output snapshot restarted cleared exited closed activity)
     snapshot? = event["type"] == "snapshot"
 
-    {frames, subs} =
-      Enum.map_reduce(subs, subs, fn
+    {frames, {subs, windows}} =
+      Enum.map_reduce(subs, {subs, state.terminal_windows}, fn
         # A snapshot below the floor is a new incarnation of the terminal
         # (its process restarted its sequence at 0 after a close): the
         # subscription restarts from it instead of being starved until the
         # sequence climbs back past the old floor.
-        {id, floor}, acc
+        {id, floor}, {acc, windows}
         when snapshot? and is_integer(seq) and is_integer(floor) and seq < floor ->
-          {Protocol.encode(%{"t" => "terminal", "id" => id, "event" => event}),
-           Map.put(acc, id, seq)}
+          {_, windows} = offer_window(windows, id, event)
+          {terminal_frame(id, event), {Map.put(acc, id, seq), windows}}
 
         {_id, floor}, acc
         when held? and is_integer(seq) and is_integer(floor) and seq <= floor ->
           {nil, acc}
 
-        {id, floor}, acc ->
-          acc = if is_integer(seq), do: Map.put(acc, id, max(floor || seq, seq)), else: acc
-          {Protocol.encode(%{"t" => "terminal", "id" => id, "event" => event}), acc}
+        {id, floor}, {acc, windows} ->
+          acc =
+            cond do
+              # The terminal's next process counts its sequences from the start.
+              event["type"] == "closed" -> Map.put(acc, id, nil)
+              is_integer(seq) -> Map.put(acc, id, max(floor || seq, seq))
+              true -> acc
+            end
+
+          case offer_window(windows, id, event) do
+            {:send, windows} -> {terminal_frame(id, event), {acc, windows}}
+            {:hold, windows} -> {nil, {acc, windows}}
+          end
       end)
+
+    state = %{state | terminal_windows: windows}
+    state = if subs == %{}, do: state, else: put_in(state.by_terminal[key], subs)
+    state = if snapshot?, do: follow_process(state, key, subs), else: state
 
     case Enum.reject(frames, &is_nil/1) do
       [] -> {:ok, state}
-      frames -> {:push, frames, %{state | by_terminal: Map.put(state.by_terminal, key, subs)}}
+      frames -> {:push, frames, state}
+    end
+  end
+
+  # A snapshot nobody attached for can be a new process, the terminal having closed and
+  # opened again, which these subscriptions watch from now on.
+  defp follow_process(state, key, subs) do
+    with {id, _floor} <- Enum.at(subs, 0),
+         %{^id => {:terminal, mc, ^key}} <- state.subs do
+      watch_terminal(state, mc, key)
+    else
+      _ -> state
+    end
+  end
+
+  defp terminal_frame(id, event),
+    do: Protocol.encode(%{"t" => "terminal", "id" => id, "event" => event})
+
+  # A subscription with no window does not acknowledge, and is sent everything.
+  defp offer_window(windows, id, event) do
+    case windows do
+      %{^id => window} ->
+        {verdict, window} = OutputWindow.offer(window, event)
+        {verdict, Map.put(windows, id, window)}
+
+      _ ->
+        {:send, windows}
+    end
+  end
+
+  # A subscription that caught up gets what it missed as a new snapshot, from the same
+  # attach a new subscription makes: its floor moves to the snapshot, so nothing the
+  # terminal is still sending is told twice. When that attach fails, the subscription
+  # starts over by a `resync`, as for a terminal that went down, rather than being
+  # sent everything from then on with a gap where it was held.
+  defp terminal_ack(state, id, sequence) do
+    with %{^id => window} <- state.terminal_windows,
+         {:caught_up, window} <- OutputWindow.ack(window, sequence),
+         %{^id => {:terminal, mc, {thread_id, terminal_id} = key}} <- state.subs,
+         input = %{"threadId" => thread_id, "terminalId" => terminal_id},
+         {:ok, {:ok, snapshot}} <- remote(mc, HalC2.Terminal, :attach, [input, self()]) do
+      frame = %{"type" => "snapshot", "snapshot" => snapshot}
+      {:send, window} = OutputWindow.offer(window, frame)
+
+      {:push, terminal_frame(id, frame),
+       %{
+         state
+         | terminal_windows: Map.put(state.terminal_windows, id, window),
+           by_terminal: put_in(state.by_terminal, [key, id], snapshot["sequence"])
+       }}
+    else
+      {:ok, %OutputWindow{} = window} ->
+        {:ok, put_in(state.terminal_windows[id], window)}
+
+      %{} ->
+        {:ok, state}
+
+      _failed ->
+        {:push, Protocol.encode(%{"t" => "resync", "id" => id}), unsubscribe(state, id, false)}
     end
   end
 
@@ -1234,7 +1489,7 @@ defmodule HalC2.Web.Socket do
     do: {:ok, state}
 
   defp lose_terminal(state, mc, key) do
-    # The 3-tuple messages of `node_type`, which `follow/4`'s `{:nodedown, mc}` is not.
+    # The 3-tuple messages of `node_type`, which a stream follow's `{:nodedown, mc}` is not.
     # Turned off by the `nodeup` that empties `lost`.
     if state.lost == %{}, do: :ok = :net_kernel.monitor_nodes(true, node_type: :all)
     lost = Map.update(state.lost, mc, [key], &Enum.uniq([key | &1]))
@@ -1270,6 +1525,7 @@ defmodule HalC2.Web.Socket do
         %{
           state
           | subs: Map.drop(state.subs, ids),
+            terminal_windows: Map.drop(state.terminal_windows, ids),
             by_terminal: Map.delete(state.by_terminal, key)
         },
         key
@@ -1319,6 +1575,13 @@ defmodule HalC2.Web.Socket do
   # held in the subscription's buffer and forwarded when `live` arrives.
   defp more(state, id, items) do
     case state.subs do
+      # Asked before its follow was answered: forwarded once it is live.
+      _ when not is_map_key(state.subs, id) ->
+        case pending_follow(state, id) do
+          {tag, _} -> update_in(state.following[tag].more, &(&1 + items))
+          nil -> state
+        end
+
       %{^id => {:stream, _mc, _stream_id}} ->
         if get_in(state.buffers, [id, :replay]) == true do
           buffer = state.buffers[id]
@@ -1350,6 +1613,8 @@ defmodule HalC2.Web.Socket do
   # `ordered?` is the terminal detach's: only an unsubscribe a later attach on
   # this socket could follow pays for the ordered call.
   defp unsubscribe(state, id, ordered? \\ true) do
+    state = %{state | terminal_windows: Map.delete(state.terminal_windows, id)}
+
     case Map.pop(state.subs, id) do
       {{:terminal, mc, {thread_id, terminal_id} = key}, subs} ->
         case Map.delete(Map.get(state.by_terminal, key, %{}), id) do
@@ -1444,7 +1709,16 @@ defmodule HalC2.Web.Socket do
         %{state | subs: subs, shell: %{}}
 
       {nil, _subs} ->
-        state
+        case pending_follow(state, id) do
+          # The follow may yet be taken: told here, and again by `followed/3` if it is.
+          {tag, follow} ->
+            :erpc.cast(follow.mc, HalC2.Streams, :unsubscribe, [follow.stream_id, self(), tag])
+            unwatch_node(follow.mc)
+            %{state | following: Map.delete(state.following, tag)}
+
+          nil ->
+            state
+        end
 
       {shape, subs} ->
         unwatch(%{state | subs: subs}, id, shape)
@@ -1707,6 +1981,9 @@ defmodule HalC2.Web.Socket do
   end
 
   # Drops a subscription whose service went away, telling that service nothing.
+  defp pending_follow(state, id),
+    do: Enum.find(state.following, fn {_tag, follow} -> follow.id == id end)
+
   defp forget_stream(state, id) do
     case Map.pop(state.subs, id) do
       {{:space_presence, _mc, _space, _page, _device} = shape, subs} ->
@@ -1957,7 +2234,17 @@ defmodule HalC2.Web.Socket do
       "id" => id,
       "mc" => to_string(mc),
       "online" => false,
+      "trying" => false,
       "removed" => true
+    }
+
+  defp shell_message(id, {:mc, mc, :offline}),
+    do: %{
+      "t" => "shell.mc",
+      "id" => id,
+      "mc" => to_string(mc),
+      "online" => false,
+      "trying" => false
     }
 
   defp shell_message(id, {:mc, mc, status}),
@@ -1965,6 +2252,7 @@ defmodule HalC2.Web.Socket do
       "t" => "shell.mc",
       "id" => id,
       "mc" => to_string(mc),
-      "online" => status in [:up, true]
+      "online" => status in [:up, true],
+      "trying" => true
     }
 end

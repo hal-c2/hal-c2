@@ -75,6 +75,12 @@ QVariantList pickerInstances(const QList<Instance>& list, const ModelPrefs& pref
                              const QString& selectedModel, bool started,
                              const QString& currentInstance, const QString& currentModel);
 
+// Whether `space.image.providers`' answer offers `model` from a ready `instanceId`.
+bool offersImageModel(const QVariantMap& offer, const QString& instanceId, const QString& model);
+// `modelPicker.instances` for a Space's images: each provider of the answer,
+// drawn as the catalogue draws it, with its image models.
+QVariantList imagePickerInstances(const QVariantMap& offer, const QList<Instance>& catalogue);
+
 // The selected model's option descriptors with their current values.
 QJsonArray descriptors(const QJsonObject& model, const QJsonArray& selections, bool planModeEnabled);
 // `composer.options`.
@@ -135,7 +141,8 @@ std::optional<int> scoreQueryMatch(const QString& value, const QString& query, i
 
 // What waits behind the running turn, from the thread's runs and the messages
 // the timeline holds, each in the order it runs: the user's queued follow-ups
-// (`runId`, `text`), and what the MC queued for the agent itself, a delegated
+// (`runId`, `messageId`, `text`, `attachments`: [{id, name, mimeType, kind
+// ("image" | "file")}]), and what the MC queued for the agent itself, a delegated
 // task's result or the provider's wake-up (`runId`, `summary`, `outcome`), which
 // is not the user's to edit, steer with or remove. A run whose message has not
 // arrived yet is in neither: which it is, and what it says, comes with the
@@ -150,5 +157,15 @@ struct Queued {
   bool shownHeld() const { return held && (!queue.isEmpty() || !waiting.isEmpty()); }
 };
 Queued queued(const QList<QJsonObject>& runs, const QHash<QString, QJsonObject>& messages);
+
+// What "/usage-limits" answers with for `instanceId`: every account of its
+// driver, from the environment's providers and its hubs (`sources`), the same
+// account reported both ways once. Each account has the hub it came through as
+// `source` (empty for the environment's own), a `label` ("Codex · Work", or the
+// hub's account id; `sensitive` when it holds an email, hidden until asked for),
+// a `plan`, and its `windows` ({label, usedPercent, remainingPercent, resetsAt})
+// or a `notice` instead. `summary` is the one account, {label: "3 accounts"}, or
+// an empty label when there are none; a hub that cannot be read is in `notices`.
+QVariantMap usageLimitsReport(const QString& instanceId, const QJsonArray& providers, const QJsonArray& sources);
 
 }  // namespace composer

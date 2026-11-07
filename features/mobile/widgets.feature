@@ -1,12 +1,16 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15941
 #   apps/mobile/src/features/widgets/ (SubscriptionUsage and AgentActivity widgets)
 #   apps/mobile/modules/hal-c2-subscription-widget
 #   apps/mobile/app.config.ts (expo-widgets families, frequent updates, push updates)
 #   apps/mobile/src/features/usage/ (subscription usage coordinator)
 #   apps/mobile/src/widgets/ (subscriptionUsageSnapshot.ts, SubscriptionUsage.tsx, AgentActivity.tsx, SubscriptionUsageCoordinator.tsx, useSubscriptionUsage.ts)
+#   https://github.com/pingdotgg/t3code/pull/13474 (Android usage widget scrolls, counts its limits, leaves out unconfigured providers)
+#   https://github.com/pingdotgg/t3code/pull/12047
 # Provider usage limits are specified in features/providers/. This file covers the
 # home screen and lock screen widgets that show them on a phone.
 
+@priority-low
 Feature: Home screen and lock screen widgets
   Widgets show subscription limits and agent activity without opening the app. They say
   plainly when their data is stale and open the app at the right place when tapped.
@@ -22,6 +26,14 @@ Feature: Home screen and lock screen widgets
       | Codex    | Both    | session and weekly    |
       | Codex    | Session | session               |
       | Claude   | Weekly  | weekly                |
+
+  # Upstream #15941: widgets used the phone's palette even when the app used another appearance.
+  @backlog @mobile
+  Scenario: The usage widget follows the app's appearance
+    Given the phone is in light mode and the user set HAL-C2 to dark
+    When the usage widget is shown
+    Then it uses HAL-C2's dark palette
+    And it changes when the user changes HAL-C2's appearance
 
   @backlog @mobile
   Scenario Outline: The usage widget fits every widget size
@@ -99,28 +111,38 @@ Feature: Home screen and lock screen widgets
     Then the app opens on the usage limits
 
   @backlog @mobile
-  Scenario: Resizing the usage widget on an Android home screen changes how many limits it shows
+  Scenario: Resizing the usage widget on an Android home screen changes how many rows it shows at once
     Given the user is on an Android phone
     And several providers report two limits each
     When the user makes the usage widget taller
-    Then the widget shows more limits
+    Then the widget shows more rows at once
     When the user makes the usage widget shorter
-    Then the widget shows fewer limits
+    Then the widget shows fewer rows at once
 
   @backlog @mobile
-  Scenario: A widget that is too short shows every provider before any second limit
+  Scenario: A widget that is too short lists each provider's first limit before any second limit
     Given the user is on an Android phone
     And "Codex" and "Claude" each report a session and a weekly limit
-    And the usage widget has room for two limits
-    Then the widget shows the session limit of "Codex" and of "Claude"
-    And no weekly limit is shown
+    And the usage widget has room for two rows
+    Then the first rows show the session limit of "Codex" and of "Claude"
+    And the weekly limits are reached by scrolling
 
+  # Upstream #13474: Android usage widgets scroll, count their limits and omit unconfigured providers
   @backlog @mobile
-  Scenario: A widget that cannot fit every limit counts the rest
+  Scenario: A widget that cannot fit every limit scrolls to the rest
     Given the user is on an Android phone
     And the providers report six limits in total
     And the usage widget has room for four
-    Then the widget says 2 more
+    Then the widget header counts 6 limits
+    And the user can scroll to each of them
+
+  # Upstream #13474: Android usage widgets scroll, count their limits and omit unconfigured providers
+  @backlog @mobile
+  Scenario: The usage widget leaves out providers the user has not configured
+    Given Codex and OpenCode are configured and Claude is not
+    When the user looks at the usage widget
+    Then the widget shows Codex and OpenCode
+    And Claude is not shown
 
   @backlog @mobile
   Scenario Outline: The usage widget says when it last checked
@@ -130,7 +152,7 @@ Feature: Home screen and lock screen widgets
 
     Examples:
       | state                         | footer                         |
-      | was last checked at 14:05      | As of the time of that check   |
+      | was last checked at 14:05      | Last checked 14:05             |
       | has no time of its last check | Last checked unavailable       |
 
   @backlog @mobile
@@ -209,3 +231,10 @@ Feature: Home screen and lock screen widgets
     Given the activity widget lists one agent working and one waiting for approval
     When the user taps the widget outside any single agent
     Then the thread waiting for approval is shown
+
+  # Upstream #12047: the agent Live Activity degrades once its content goes stale
+  @backlog @mobile
+  Scenario: Stale agent status says out of date
+    Given a live agent status that has not updated for ten minutes
+    Then in-flight rows read "Out of date" and the header "Agent status out of date"
+    And completed and failed rows keep their state

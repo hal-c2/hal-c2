@@ -1,4 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19483
+#   https://github.com/pingdotgg/t3code/pull/22072
+#   https://github.com/pingdotgg/t3code/pull/20391
+#   https://github.com/pingdotgg/t3code/pull/17364
+#   https://github.com/pingdotgg/t3code/pull/15537
+#   https://github.com/pingdotgg/t3code/pull/18789
+#   https://github.com/pingdotgg/t3code/pull/11337
+#   https://github.com/pingdotgg/t3code/pull/25457
 #   docs/user/question-attachments.md
 #   apps/tui/src/userInput.ts
 #   apps/tui/src/components/ChatView.tsx (question panel, defer and reopen)
@@ -57,12 +65,12 @@ Feature: Answering the agent's questions from the composer
     When the agent asks two long questions in place of the first
     Then the questions, their options and the answer button sit above the composer's editor
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: A question can be dismissed without an answer
     When the user dismisses the question without answering
     Then the agent is told the question was dismissed
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: A question that could not be dismissed stays and says why
     Given the environment refuses to dismiss the question
     When the user dismisses the question without answering
@@ -77,13 +85,21 @@ Feature: Answering the agent's questions from the composer
     Then the agent receives "use this schema" with "schema.sql"
     And the normal draft still reads "unrelated"
 
+  # Upstream #15537: the strip was hidden while a question was open, so a dropped image
+  # was staged and sent with no tile.
+  @backlog @desktop @mobile
+  Scenario: A file attached to an open question shows before the answer is sent
+    Given the agent's question is waiting for an answer
+    When the user drops "diagram.png" onto the thread
+    Then "diagram.png" shows with the answer before it is sent
+
   @desktop @mobile @backlog-mobile
   Scenario: A question with only fixed choices takes no attachments
     Given the question only allows its listed options
     When the user tries to attach a file
     Then the user is told this question cannot accept attachments
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: A failed answer keeps what the user wrote
     Given the user typed "MySQL"
     When submitting the answer fails
@@ -103,12 +119,20 @@ Feature: Answering the agent's questions from the composer
     When the user opens the question panel again
     Then the question and what the user already answered are shown
 
-  @backlog @mobile
+  # Upstream #20391: pending questions no longer squash the composer on narrow windows
+  @backlog @desktop @mobile
+  Scenario: The composer stays open while a question waits on a narrow window
+    Given a narrow window
+    When the agent asks a question
+    Then the composer stays expanded while the question waits
+    And it collapses again once the question is answered
+
+  @backlog @mobile @priority-high
   Scenario: A question that can no longer be answered disables its controls
     Given the agent asked a question and its session can no longer take the answer
     Then the user cannot submit an answer to it
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A question already being answered cannot be submitted twice
     Given the user submitted the answer to "Which database?"
     And the answer is still on its way to the agent
@@ -134,14 +158,29 @@ Feature: Answering the agent's questions from the composer
     Then the user is told "Wait for attachments to finish uploading, or remove failed uploads."
     And the question stays open with what the user wrote
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A question answered elsewhere while the user picks a file drops that file
     Given the user is choosing a file for the answer to "Which schema?"
     When another client answers the question
     Then the chosen file is not attached to anything
     And the user is not left with a question that is no longer pending
 
-  @backlog @mobile
+  # Upstream #25457: a question's half-written answer is let go when the question ends, wherever it ends.
+  @backlog @shared
+  Scenario Outline: A question that ends while its thread is not open lets go of its half-written answer
+    Given the user typed an answer and attached a file to "Which database?" without sending
+    And the user opened another thread
+    When <ending>
+    Then the typed answer and the file are gone, after a restart too
+    And when the agent asks a new question it starts from its suggested answer
+
+    Examples:
+      | ending                                    |
+      | another client answers the question       |
+      | the user stops the turn                   |
+      | the turn ends without an answer           |
+
+  @backlog @mobile @priority-high
   Scenario: An answered question stays in the conversation with its answers and files
     Given the user answered "Which schema?" with "use this one" and attached "schema.sql"
     When the user reads the conversation
@@ -156,20 +195,33 @@ Feature: Answering the agent's questions from the composer
     When the user is typing an answer and presses 2
     Then "2" is typed into the answer and no option is picked
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: Picking an option of a single-choice question moves on to the next question
     Given the agent asked "Which database?" and "Which cache?" in one request
     When the user picks "Postgres"
     Then "Which cache?" is shown with "Postgres" kept as the first answer
 
-  @backlog @desktop
+  # Upstream #17364: the move after a pick was still pending when the user moved by hand,
+  # and it then skipped or undid that move.
+  @backlog @desktop @priority-low
+  Scenario Outline: Moving by hand right after a pick is not moved again
+    Given the agent asked "Which database?", "Which cache?" and "Which queue?" in one request
+    When the user picks "Postgres" and at once <moves>
+    Then "<shown>" is still shown a moment later
+
+    Examples:
+      | moves                                  | shown          |
+      | presses Next                           | Which cache?   |
+      | goes back to a question already shown  | Which database? |
+
+  @backlog @desktop @priority-high
   Scenario: A question that allows several answers waits for the user to move on
     Given the question allows several answers
     Then the user is told "Select one or more options."
     When the user picks "Postgres"
     Then "Which database?" is still shown so "SQLite" can be picked too
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: Several questions are stepped through and answered together
     Given the agent asked "Which database?" and "Which cache?" in one request
     Then the question is marked "1/2" and the user can go on to the next question
@@ -177,14 +229,14 @@ Feature: Answering the agent's questions from the composer
     Then the user can go back to the previous question to change its answer
     And submitting sends both answers to the agent together
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: The first question still unanswered is the one shown
     Given the agent asked "Which database?" and "Which cache?" in one request
     And the user answered "Which database?" and left the thread
     When the user opens the thread again
     Then "Which cache?" is shown
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Picking an option after typing an answer gives the typed text back to the draft
     Given the thread's draft reads "unrelated"
     And the user typed "MySQL" as the answer
@@ -192,12 +244,12 @@ Feature: Answering the agent's questions from the composer
     Then the answer is "Postgres"
     And the thread's draft reads "unrelated" followed by "MySQL"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A file alone answers a question that allows a typed answer
     When the user attaches "schema.sql" and submits without picking or typing anything
     Then the agent receives "schema.sql" as the answer
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The questions of one request share the attachment limit
     Given the agent asked "Which database?" and "Which cache?" in one request
     And the answer to "Which database?" already carries the most attachments a message can
@@ -213,12 +265,12 @@ Feature: Answering the agent's questions from the composer
     When the user shows the question again
     Then the options and what the user already picked are shown
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: A question asked during a turn still lets the user stop the turn
     Given the agent asked the question while its turn is still running
     Then the user can stop the turn as well as answer the question
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Files cannot be removed from an answer that is on its way
     Given the user typed "use this schema" and attached "schema.sql"
     When the user submits the answer and the agent has not taken it yet
@@ -259,10 +311,38 @@ Feature: Answering the agent's questions from the composer
     When the user submits without picking an option
     Then nothing is sent
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Questions in one request are sent only when each has an answer
     Given the agent asked "Which database?" and "Which cache?" in one request
     And the user answered only "Which database?"
     Then the answers cannot be submitted
     When the user answers "Which cache?" too
     Then both answers are sent together
+
+  @backlog @desktop
+  Scenario: A thread dropped while answering goes with the answer
+    When the user drops the thread "Schema notes" on the composer while answering "Which database?"
+    Then the answer to "Which database?" links "Schema notes"
+    And the composer's own draft is unchanged
+
+  @backlog @shared
+  Scenario: A skill picked in an answer becomes a chip and typing goes on after it
+    When the user types "$bro" in the answer to "Which database?" and picks the skill "bro"
+    Then the answer shows the skill "bro" as a chip and the skill picker closes
+    And what the user types next follows the chip
+
+  # Upstream #22072: folder references work in typed answers too, not in choice-only questions.
+  @backlog @desktop
+  Scenario: A folder dropped or pasted into a typed answer references its path
+    Given the agent asks a question that takes a typed answer
+    When the user pastes the folder "/work/shop/src" into the answer
+    Then the answer references "/work/shop/src"
+
+  # Upstream #19483: deleted chips returned after the answer moved back to the composer and a reload.
+  @backlog @desktop
+  Scenario: A chip deleted from a typed answer does not come back
+    Given the user typed an answer with the file references "cart.ts" and "auth.ts"
+    And deleted "auth.ts" from it
+    When the user picks an option, moving the typed answer back to the composer
+    And reloads the app
+    Then the composer references "cart.ts" and not "auth.ts"

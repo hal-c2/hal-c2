@@ -2,6 +2,7 @@
 #   apps/desktop-qt/src/native/NavigationController.cpp (the route, back stack and restore)
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (title, settings and cluster from `route`)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake MC)
+#   https://github.com/pingdotgg/t3code/pull/13516 (launch-at-settings Back dropped; see the scenario below)
 #   Shared domain: settings/search-and-navigation.feature owns leaving settings and moving
 #   between sections, navigation/windows.feature the window title, and
 #   composer/sending-turns.feature that the composer acts on the thread the window shows.
@@ -78,6 +79,11 @@ Feature: The desktop shell decides where the window is
       And the user can go back
       When the user goes back from settings
       Then the window shows "env-a:t1"
+
+    # T3 Code's #13516 sends Back from settings opened at launch to the thread list. HAL-C2 keeps the
+    # new draft that "Back with nowhere to return to" records in settings/search-and-navigation.feature.
+    @dropped @desktop
+    Scenario: Back from settings opened at launch goes to the thread list
 
   # The embedded page is gone, and with it its own links, back button and reloads.
   @dropped

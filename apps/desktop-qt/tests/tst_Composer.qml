@@ -49,6 +49,33 @@ Item {
             compare(input.text, qsTr("Plan & review (v2)"));
         }
 
+        // A click anywhere in the input area, the band under a short prompt
+        // included, puts the caret in the prompt, whatever had focus.
+        function test_aClickInTheInputAreaFocusesThePrompt_data() {
+            return [
+                { tag: "on the text", at: input => input.mapToItem(root, 4, input.height / 2) },
+                { tag: "the scroll view's bottom edge", at: input => input.parent.parent.mapToItem(root, input.parent.parent.width / 2, input.parent.parent.height - 3) },
+                { tag: "under the text", at: input => input.parent.parent.mapToItem(root, input.parent.parent.width - 20, input.parent.parent.height + 6) }
+            ];
+        }
+
+        function test_aClickInTheInputAreaFocusesThePrompt(data) {
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, {
+                    placeholder: "Ask anything, @tag files/folders, $use skills, or / for commands ".repeat(4)
+                })
+            });
+            const composer = createTemporaryObject(composerComponent, root);
+            const input = findChild(composer, "input");
+            const other = findChild(composer, "modelPicker");
+            waitForRendering(composer);
+            other.forceActiveFocus();
+            verify(!input.activeFocus);
+            const point = data.at(input);
+            mouseClick(root, point.x, point.y);
+            tryVerify(() => input.activeFocus);
+        }
+
         function test_eachModelOptionShowsOnce() {
             // The real composer state is a QVariantMap: each read of options
             // hands out fresh objects, so the options are built per read here too.
@@ -76,11 +103,30 @@ Item {
             const label = findChild(composer, "suggestionsEmpty");
             verify(label.visible);
             compare(label.text, empty);
-            verify(label.height > 0);
-            // The box around it holds the label, not a sliver.
+            // One quiet row, left-aligned where a suggestion's label starts.
             const box = label.parent;
-            verify(box.height >= label.height + 16, "box " + box.height + " label " + label.height);
+            compare(box.height, Theme.control.md + Theme.space.xs * 2);
+            compare(label.horizontalAlignment, Text.AlignLeft);
+            compare(label.x, Theme.space.xs + Theme.space.md);
             verify(label.y >= 0 && label.y + label.height <= box.height);
+        }
+
+        function test_suggestionsAnchorToTheCard() {
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), {
+                triggerKind: "path", suggestionsEmptyText: null,
+                suggestions: [{ label: "README.md", description: "" }, { label: "src/", description: "" }]
+            }), workspace: null };
+            let composer = createTemporaryObject(composerComponent, root, { width: 800 });
+            const popover = findChild(composer, "suggestionsPopover");
+            const card = findChild(composer, "composerCard");
+            tryVerify(() => popover.visible && popover.height > 0);
+            // Edges flush with the prompt's, inside the card's padding.
+            compare(popover.x, card.x + Theme.space.md);
+            compare(popover.width, card.width - Theme.space.md * 2);
+            // A popover over the card, not a tab on it: a 4px gap, and as
+            // tall as its whole rows.
+            compare(card.y - (popover.y + popover.height), Theme.space.xs);
+            compare(popover.height, Theme.control.md * 2 + Theme.space.xs * 2);
         }
 
         function test_theBranchPickerSizesToItsBranches() {
@@ -102,36 +148,209 @@ Item {
             picker.close();
         }
 
-        function test_wrappedToolbarLinesDoNotOpenWithABar() {
-            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), {
+        // A model with every chip the toolbar can carry.
+        function crowded(extra) {
+            return { composer: Object.assign({}, Shell.defaultComposer(), {
                 options: [
-                    { id: "reasoningEffort", label: "Reasoning", type: "select", value: "high", choices: [{ id: "high", label: "High" }] },
+                    { id: "reasoningEffort", label: "Reasoning", type: "select", value: "high", choices: [{ id: "low", label: "Low" }, { id: "high", label: "High" }] },
+                    { id: "contextWindow", label: "Context", type: "select", value: "1m", choices: [{ id: "200k", label: "200K" }, { id: "1m", label: "1M" }] },
                     { id: "fastMode", label: "Fast Mode", type: "boolean", value: true, choices: [] }
                 ],
-                runtimeModes: [{ value: "full-access", label: "Full access" }], runtimeMode: "full-access",
+                runtimeModes: [{ value: "approval-required", label: "Ask first" }, { value: "full-access", label: "Full access" }],
                 showInteractionModeToggle: true
-            }), workspace: null };
-            let composer = createTemporaryObject(composerComponent, root, { width: 300 });
+            }, extra ?? {}), workspace: null };
+        }
+
+        function shownChips(composer) {
+            const row = findChild(composer, "toolbarChips");
+            const shown = [];
+            for (let i = 0; i < row.children.length; ++i) {
+                const chip = row.children[i];
+                if (chip.visible && chip.objectName.length > 0) shown.push(chip);
+            }
+            return shown;
+        }
+
+        // However narrow, the toolbar is one line: what does not fit folds
+        // into the overflow chip, the context window first and the effort
+        // next, and a chip that folded stays folded as the composer narrows.
+        function test_aNarrowToolbarFoldsInsteadOfWrapping() {
+            Shell.state = crowded();
+            let composer = createTemporaryObject(composerComponent, root);
+            const toolbar = findChild(composer, "toolbar");
+            const send = findChild(composer, "primaryAction");
+            const overflow = findChild(composer, "composerOverflow");
             waitForRendering(composer);
-            const flow = findChild(composer, "toolbarControls");
-            verify(!!flow);
-            let lines = new Set();
-            for (let i = 0; i < flow.children.length; ++i) {
-                const chunk = flow.children[i];
-                if (!chunk.visible) continue;
-                lines.add(chunk.y);
-                for (let j = 0; j < chunk.children.length; ++j) {
-                    const bar = chunk.children[j];
-                    if (bar.objectName === "toolbarSeparator" && chunk.x === 0) compare(bar.opacity, 0);
-                    else if (bar.objectName === "toolbarSeparator") compare(bar.opacity, 1);
+            compare(composer.foldCount, 0, "a wide composer folds nothing");
+            verify(!overflow.visible);
+            let before = [];
+            for (let width = 800; width >= 240; width -= 20) {
+                composer.width = width;
+                waitForRendering(composer);
+                const folded = composer.folded.map(chip => chip.objectName);
+                compare(folded.slice(0, before.length), before, "at " + width + " the chips folded before stay folded");
+                before = folded;
+                compare(overflow.visible, folded.length > 0);
+                for (const chip of shownChips(composer)) {
+                    verify(folded.indexOf(chip.objectName) < 0, chip.objectName + " folded and shown at " + width);
+                    const right = chip.mapToItem(toolbar, chip.width, 0).x;
+                    verify(right <= send.mapToItem(toolbar, 0, 0).x, chip.objectName + " runs under Send at " + width);
+                    compare(chip.mapToItem(toolbar, 0, chip.height / 2).y, toolbar.height / 2, chip.objectName + " is on the toolbar's one line");
                 }
             }
-            verify(lines.size > 1, "the toolbar wrapped");
+            compare(before[0], "optionPicker:contextWindow");
+            compare(before[1], "effortPicker");
+            verify(before.length >= 4, "the narrowest composer folds the toggles too");
+        }
+
+        function overflowRow(menu, name) {
+            for (let i = 0; i < menu.count; ++i) {
+                const item = menu.itemAt(i);
+                if (item.objectName === name || item.subMenu?.objectName === name) return item;
+            }
+            return null;
+        }
+
+        // The overflow chip's menu holds the folded controls in toolbar
+        // order: a picker opens its choices, a toggle flips; its chip, pressed
+        // again, closes it.
+        function test_theOverflowMenuOffersTheFoldedControls() {
+            Shell.state = crowded();
+            let composer = createTemporaryObject(composerComponent, root, { width: 260, y: 350, height: 350 });
+            waitForRendering(composer);
+            const overflow = findChild(composer, "composerOverflow");
+            verify(overflow.visible);
+            mouseClick(overflow);
+            const menu = composer.overflowMenu;
+            verify(menu !== null);
+            tryVerify(() => menu.opened);
+            compare(menu.count, composer.folded.length);
+            compare(menu.itemAt(0).subMenu.objectName, "composerOverflow:effortPicker", "toolbar order puts the effort first");
+            compare(menu.itemAt(0).subMenu.detail, "High");
+
+            const effort = overflowRow(menu, "composerOverflow:effortPicker").subMenu;
+            compare(effort.count, 2);
+            verify(effort.itemAt(1).current, "the chosen effort is checked");
+            effort.itemAt(0).triggered();
+            let sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
+            compare(sent.action, "composer.option.set");
+            compare(sent.payload.id, "reasoningEffort");
+            compare(sent.payload.value, "low");
+
+            const fast = overflowRow(menu, "composerOverflow:optionToggle:fastMode");
+            if (fast !== null) {
+                compare(fast.iconName, "check", "an on toggle is checked in the icon column");
+                compare(fast.detail, "On", "a folded toggle says whether it is on");
+                fast.triggered();
+                sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
+                compare(sent.action, "composer.option.set");
+                compare(sent.payload.value, false);
+            }
+
+            if (composer.overflowMenu === null) {
+                mouseClick(overflow);
+                tryVerify(() => composer.overflowMenu !== null && composer.overflowMenu.opened);
+            }
+            const again = composer.overflowMenu;
+            mouseClick(overflow);
+            tryVerify(() => composer.overflowMenu === null, 1000, "pressing the chip again closes its menu");
+            compare(overflow.checked, false);
+            verify(again !== null);
+        }
+
+        // Plan, folded, is a row of the menu that asks for plan mode.
+        function test_planFoldedIntoTheMenuSwitchesMode() {
+            Shell.state = crowded();
+            let composer = createTemporaryObject(composerComponent, root, { width: 240 });
+            waitForRendering(composer);
+            verify(composer.folded.some(chip => chip.objectName === "planToggle"));
+            composer.openOverflow(null);
+            const plan = overflowRow(composer.overflowMenu, "composerOverflow:planToggle");
+            verify(plan !== null);
+            compare(plan.text, "Plan");
+            compare(plan.iconName, "", "an off toggle has no check");
+            compare(plan.detail, "Off", "a folded toggle says when it is off");
+            plan.triggered();
+            const sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
+            compare(sent.action, "composer.interactionMode.set");
+            compare(sent.payload.mode, "plan");
+        }
+
+        // The effort's shortcut still works when the effort has folded: it
+        // opens the overflow menu on the effort's row.
+        function test_theEffortShortcutReachesAFoldedEffort() {
+            Shell.state = crowded();
+            let composer = createTemporaryObject(composerComponent, root, { width: 260 });
+            waitForRendering(composer);
+            verify(composer.folded.some(chip => chip.objectName === "effortPicker"));
+            composer.openControl("composer.effort");
+            const menu = composer.overflowMenu;
+            verify(menu !== null);
+            compare(menu.itemAt(menu.currentIndex).subMenu.objectName, "composerOverflow:effortPicker");
+            composer.openControl("composer.effort");
+            compare(composer.overflowMenu, menu, "a second shortcut keeps the one menu");
+        }
+
+        // Send is the accent only with something to send; a turn running
+        // with nothing to send makes it Stop.
+        function test_sendIsTheAccentOnlyWithSomethingToSend() {
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), { canSend: false }), workspace: null };
+            let composer = createTemporaryObject(composerComponent, root);
             const send = findChild(composer, "primaryAction");
-            const last = Math.max(...Array.from(lines));
-            const lastBottom = flow.mapToItem(composer, 0, last).y + 32;
-            const sendBottom = send.mapToItem(composer, 0, 0).y + send.height;
-            verify(Math.abs(sendBottom - lastBottom) < 16, "Send sits by the last line");
+            const accent = send.accent;
+            verify(!send.enabled, "an empty prompt cannot send");
+            verify(Qt.colorEqual(send.background.color, composer.chipFill));
+            verify(!Qt.colorEqual(send.background.color, accent));
+
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), { canSend: true, text: "hi" }), workspace: null };
+            tryVerify(() => send.enabled && send.sendable);
+            compare(send.Accessible.name, "Send");
+            verify(Qt.colorEqual(send.background.color, accent));
+
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), { canSend: false, text: "", isRunning: true }), workspace: null };
+            tryVerify(() => send.stopMode);
+            const input = findChild(composer, "input");
+            input.text = "";
+            compare(send.Accessible.name, "Stop");
+            verify(send.enabled);
+            verify(findChild(send, "stopGlyph").visible);
+            verify(!Qt.colorEqual(send.background.color, accent), "Stop is not the accent");
+            const count = Shell.dispatchedActions.length;
+            mouseClick(send);
+            verify(Shell.dispatchedActions.slice(count).some(entry => entry.action === "composer.interrupt"));
+            verify(Shell.dispatchedActions.slice(count).every(entry => entry.action !== "composer.submit"));
+        }
+
+        // The placeholder is one line however long it is, so an empty
+        // prompt is no taller for it.
+        function test_aLongPlaceholderStaysOneLine() {
+            const state = placeholder => ({ composer: Object.assign({}, Shell.defaultComposer(), { placeholder: placeholder }), workspace: null });
+            Shell.state = state("Ask");
+            let composer = createTemporaryObject(composerComponent, root, { width: 320 });
+            const input = findChild(composer, "input");
+            waitForRendering(composer);
+            const short = input.implicitHeight;
+            Shell.state = state("Ask anything, @tag files/folders, $use skills, or / for commands, and keep going well past the edge");
+            waitForRendering(composer);
+            compare(input.implicitHeight, short);
+        }
+
+        // An empty prompt rests at two lines and a long one grows to 40% of
+        // the window, then scrolls.
+        function test_thePromptGrowsToFortyPercentOfTheWindow() {
+            let composer = createTemporaryObject(composerComponent, root);
+            const input = findChild(composer, "input");
+            const scroll = findChild(composer, "promptScroll");
+            waitForRendering(composer);
+            const rest = scroll.height;
+            input.text = "one";
+            waitForRendering(composer);
+            compare(scroll.height, rest, "one line keeps the resting height");
+            input.text = "line\n".repeat(60);
+            waitForRendering(composer);
+            verify(scroll.height > rest * 3, "a long prompt grows");
+            const card = findChild(composer, "composerCard");
+            verify(card.height <= Math.round(composer.Window.height * 0.4) + 1, "the card stays within 40% of the window");
         }
 
         function test_fastModeSaysItIsOn() {
@@ -230,6 +449,12 @@ Item {
             const sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
             compare(sent.action, "composer.submit");
             compare(sent.payload.intent, "foreground");
+
+            // Editing a queued message saves it: no Steer or Queue cue while it lasts.
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, { editingQueuedRunId: "run-2" })
+            });
+            compare(primary.followUp, "");
         }
 
         // Scenario: Page Up and Page Down from the composer scroll the conversation

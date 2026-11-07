@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/12567
+#   https://github.com/pingdotgg/t3code/pull/24760
+#   https://github.com/pingdotgg/t3code/pull/22615
 #   apps/web/src/components/settings/NotificationSettings.tsx
 #   apps/web/src/threadNotifications.ts
 #   apps/web/src/assets/notification-completion.mp3, notification-input.mp3 (the sounds)
@@ -33,7 +36,7 @@ Feature: Thread notifications
     # The web app bundled its own completion and input sounds (apps/web/src/assets/*.mp3).
     # The Qt desktop (main.cpp) only asks the Linux sound theme's player, so another system
     # or a Linux desktop without one stays silent.
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: The notification sound plays on every system
       Given the notification mode is "Sound only"
       And the user is on <system>
@@ -55,14 +58,14 @@ Feature: Thread notifications
       Then the notification mode is unchanged
       And the user is told to allow notifications and that sound only is still available
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Notifications need a secure page in a web browser
       Given the user is using HAL-C2 over plain HTTP in a web browser
       When the user chooses notifications only
       Then the user is told notifications need HTTPS or the desktop app and that sound only is still available
 
     # Legacy: apps/web/src/components/settings/NotificationSettings.tsx (permission request throws)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A permission request that cannot be made keeps the mode and offers sound only
       Given the system cannot show the permission request
       When the user chooses notifications with sound
@@ -86,6 +89,18 @@ Feature: Thread notifications
         | asks a question          | Input needed        |
         | hits its usage limit     | Usage limit reached |
 
+    # Upstream #24760: a run that ends right before its continuation sent a false, sometimes
+    # repeated, "Thread completed".
+    @backlog @desktop @mobile
+    Scenario: "Thread completed" waits until the thread has stayed done
+      Given the notification mode is "Notifications only"
+      And HAL-C2 is in the background
+      When "Fix login" finishes and its next run starts within two seconds
+      Then no "Thread completed" notification is shown for "Fix login"
+      When "Fix login" finishes and stays done for two seconds
+      Then exactly one "Thread completed" notification names "Fix login"
+
+    # Upstream #12567: clicking a thread notification restores and raises the window.
     @desktop
     Scenario: Clicking a notification opens the thread
       Given a system notification for "Fix login" is shown
@@ -121,7 +136,7 @@ Feature: Thread notifications
       Then the notifications are dismissed and the badge is cleared
 
     # Likely already implemented: apps/desktop-qt/src/native/AlertController.cpp
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: A thread that stays waiting does not notify again
       Given the notification mode is "Notifications only"
       And HAL-C2 is in the background
@@ -159,6 +174,18 @@ Feature: Thread notifications
         | fails                | input      |
         | hits its usage limit | input      |
 
+    # Upstream #22615: a run the user stopped by hand is not announced as finished; one that
+    # finishes on its own still is.
+    @backlog @mc @desktop @mobile
+    Scenario: A run the user stopped does not announce that it finished
+      Given the notification mode is "Sound and notifications"
+      And HAL-C2 is in the background
+      When the user stops the run in "Fix login" and it ends
+      Then no completion sound plays
+      And no notification says "Fix login" finished
+      When the next run in "Fix login" finishes on its own
+      Then the completion sound plays
+
     @backlog @desktop
     Scenario: A toast is not shown when in-app notifications are off
       Given in-app notifications are off
@@ -178,20 +205,20 @@ Feature: Thread notifications
       When "Fix login" finishes
       Then the toast titled "Thread completed" is shown as a success
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Changing the notification mode clears waiting notifications
       Given two system notifications are waiting
       When the user changes the notification mode
       Then the notifications are dismissed and the badge is cleared
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Removing an environment clears its waiting notifications
       Given a system notification is waiting for a thread on the environment "work"
       When the user removes the environment "work"
       Then that notification is dismissed
       And the badge no longer counts it
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A badge over nine says so
       Given ten system notifications are waiting
       Then the badge reads "9+" where the platform draws the count

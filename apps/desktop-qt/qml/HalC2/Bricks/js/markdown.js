@@ -409,11 +409,22 @@ function renderInline(src, ctx, inLink) {
     return nodesHtml(nodes, !!inLink);
 }
 
-// Inline code: a background span with a thin space of padding either side
-// (plain spaces, so a copied selection carries no odd characters).
+// Inline code: a span the theme tints, which is all that marks it, with no
+// padding of spaces (beside a bracket or a full stop they read as stray
+// spaces). It is one run: nowrap keeps its spaces, and as Qt also breaks
+// after punctuation, a word joiner follows each mark (`plain` drops them
+// from copies and citations). A span longer than SHORT_CODE, which may not
+// fit a phone's measure, may still break after a slash or a hyphen.
+var SHORT_CODE = 40;
 function codeSpan(code) {
-    var pad = "<span style=\"font-size:9px;white-space:pre\"> </span>";
-    return "<span class=\"c\" style=\"white-space:pre-wrap\">" + pad + escapeHtml(code) + pad + "</span>";
+    var held = code.length > SHORT_CODE ? /([!-,.:-@\[-`{-~])(?=.)/g : /([!-\/:-@\[-`{-~])(?=.)/g;
+    return "<span class=\"c\" style=\"white-space:nowrap\">" + escapeHtml(code.replace(held, "$1\u2060")) + "</span>";
+}
+
+// Drawn text as the reader means it: without the word joiners that hold
+// inline code together, with plain spaces and newlines.
+function plain(text) {
+    return text.replace(/\u2060/g, "").replace(/\u00a0/g, " ").replace(/[\u2028\u2029]/g, "\n");
 }
 
 // The visible text of inline markdown, for CSV copies.
@@ -902,8 +913,10 @@ function fold(out, prose, entries, streaming) {
 // What parsing and rendering read: `refs` maps a link definition's label to
 // its address, `used` collects the labels a render looked up and `defined` the
 // ones a parse defined, when someone asks. `tasks` lets task links through.
-function context(lineBreaks, refs, tasks) {
-    return { refs: refs, lineBreaks: lineBreaks, tasks: tasks, olDepth: 0, ulDepth: 0, used: null, defined: null };
+// `outer` counts the lists ({ ul, ol }) the text sits inside, whose nesting
+// its own lists take their markers from.
+function context(lineBreaks, refs, tasks, outer) {
+    return { refs: refs, lineBreaks: lineBreaks, tasks: tasks, olDepth: outer.ol, ulDepth: outer.ul, used: null, defined: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -976,11 +989,11 @@ function withCitations(text) {
 // the quote as selected, and its UTF-16 place and surroundings in the text
 // with each whitespace run read as one space (createAssistantTextSelector).
 function selector(text, rawStart, rawEnd) {
-    var quote = text.slice(rawStart, rawEnd);
+    var quote = plain(text.slice(rawStart, rawEnd));
     if (quote.trim().length === 0)
         return null;
     var normalize = function (value) {
-        return value.replace(/\s+/g, " ");
+        return value.replace(/\u2060/g, "").replace(/\s+/g, " ");
     };
     var splitsPair = function (value, offset) {
         var before = value.charCodeAt(offset - 1);
@@ -1017,8 +1030,8 @@ function takeTally() {
 }
 
 // The segments of a whole text, read in one go.
-function read(text, lineBreaks, streaming, tasks) {
-    var ctx = context(lineBreaks, new Map(), tasks);
+function read(text, lineBreaks, streaming, tasks, outer) {
+    var ctx = context(lineBreaks, new Map(), tasks, outer);
     var lines = withCitations(text).replace(/\r\n?/g, "\n").split("\n").map(expandTabs);
     var blocks = parseBlocks(lines, ctx);
     tally.chars += text.length;
@@ -1038,15 +1051,15 @@ function read(text, lineBreaks, streaming, tasks) {
 var cache = new Map();
 var CACHE_LIMIT = 200;
 
-function finished(text, lineBreaks, tasks) {
-    var key = (lineBreaks ? "b" : "-") + (tasks ? "t" : "-") + text;
+function finished(text, lineBreaks, tasks, outer) {
+    var key = (lineBreaks ? "b" : "-") + (tasks ? "t" : "-") + outer.ul + "." + outer.ol + ":" + text;
     var hit = cache.get(key);
     if (hit !== undefined) {
         cache.delete(key);
         cache.set(key, hit);
         return hit;
     }
-    var result = read(text, lineBreaks, false, tasks);
+    var result = read(text, lineBreaks, false, tasks, outer);
     cache.set(key, result);
     if (cache.size > CACHE_LIMIT)
         cache.delete(cache.keys().next().value);
@@ -1063,10 +1076,11 @@ function finished(text, lineBreaks, tasks) {
 // One thing reaches back over settled blocks: a link definition turns every
 // earlier `[label]` into a link. Each block remembers the labels it looked up,
 // and a definition that appears, changes or goes renders those blocks again.
-function following(lineBreaks, tasks) {
+function following(lineBreaks, tasks, outer) {
     return {
         lineBreaks: lineBreaks,
         tasks: tasks,
+        outer: outer,
         length: -1, // of the text as last read
         cut: 0, // where the first unsettled block starts in the text
         refs: new Map(), // every link definition
@@ -1168,7 +1182,7 @@ function readTail(live, text) {
     before.forEach(function (url, label) {
         refs.delete(label);
     });
-    var ctx = context(live.lineBreaks, refs, live.tasks);
+    var ctx = context(live.lineBreaks, refs, live.tasks, live.outer);
     var parsed = [];
     var i = 0;
     while (i < lines.length) {
@@ -1306,6 +1320,26 @@ function state() {
     return { text: null, live: null, kept: null, stable: 0 };
 }
 
+// The shells a reply's code block may name to offer "Run in terminal".
+var SHELL_LANGUAGE = /^(?:sh|bash|zsh|fish|shell|powershell|pwsh)$/;
+// Control and invisible format characters (Unicode Cc and Cf, spelled out:
+// the engine has no \p{}), a line break among them: any of them can make the
+// command drawn differ from what the terminal would get.
+var HIDDEN = /[\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890\u0891\u08e2\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb]|\ud804[\udcbd\udccd]|\ud80d[\udc30-\udc3f]|\ud82f[\udca0-\udca3]|\ud834[\udd73-\udd7a]|\udb40[\udc01\udc20-\udc7f]/;
+
+// The command a closed shell code block runs, trimmed, or "" when it is not
+// one complete command: another language, empty, several lines, a trailing
+// backslash, or a hidden character (pingdotgg/t3code#13060). A segment that is
+// still `open` (its fence unclosed, or the reply still streaming) runs nothing.
+function shellCommand(seg) {
+    if (!seg || seg.kind !== "code" || seg.open || !SHELL_LANGUAGE.test(seg.language || ""))
+        return "";
+    var command = (seg.code || "").trim();
+    if (command.length === 0 || command.charAt(command.length - 1) === "\\" || HIDDEN.test(seg.code))
+        return "";
+    return command;
+}
+
 // The segments of a reply, each { kind, html, code, language, title, open,
 // indent, gap, payload, alert }: `gap` is the space above it (the larger of the
 // two margins that meet, zero for the first). While streaming, every top-level
@@ -1322,19 +1356,20 @@ function segments(text, options, state) {
     var lineBreaks = !!opts.lineBreaks;
     var streaming = !!opts.streaming;
     var tasks = !!opts.tasks;
+    var outer = { ul: opts.ulDepth || 0, ol: opts.olDepth || 0 };
     if (!state)
-        return streaming ? read(text, lineBreaks, true, tasks) : finished(text, lineBreaks, tasks);
+        return streaming ? read(text, lineBreaks, true, tasks, outer) : finished(text, lineBreaks, tasks, outer);
     var before = state.text;
     var grown = before !== null && text.length >= before.length && text.startsWith(before);
     state.text = text;
-    if (state.live !== null && !(grown && state.live.lineBreaks === lineBreaks && state.live.tasks === tasks))
+    if (state.live !== null && !(grown && state.live.lineBreaks === lineBreaks && state.live.tasks === tasks && state.live.outer.ul === outer.ul && state.live.outer.ol === outer.ol))
         state.live = null;
     // A text is followed while it streams, and once it has grown.
     if (state.live === null && (streaming || (grown && before.length > 0 && text.length > before.length)))
-        state.live = following(lineBreaks, tasks);
+        state.live = following(lineBreaks, tasks, outer);
     try {
         if (state.live === null) {
-            var result = finished(text, lineBreaks, tasks);
+            var result = finished(text, lineBreaks, tasks, outer);
             state.stable = result === state.kept ? result.length : 0;
             state.kept = result;
             return result;
@@ -1355,8 +1390,8 @@ function segments(text, options, state) {
 // Rendering helpers for the brick
 
 // The look prose and table cells share, from the theme, by what it styles:
-// links, headings by their class (h6 muted), the inline code fill (`c`)
-// and the rule.
+// links, headings by their class (h6 muted), inline code (`c`, its fill and
+// size) and the rule.
 function styleRules(theme) {
     var heading = "font-weight:600;color:" + theme.heading + ";";
     return {
@@ -1367,7 +1402,7 @@ function styleRules(theme) {
         h4: heading + "font-size:14px;line-height:18.2px",
         h5: heading + "font-size:14px;line-height:18.2px",
         h6: "font-weight:600;color:" + theme.muted + ";font-size:14px;line-height:18.2px",
-        c: "background-color:" + theme.codeFill + ";color:" + theme.heading + ";font-size:12px;font-family:" + theme.mono,
+        c: "background-color:" + theme.codeFill + ";color:" + theme.heading + ";font-size:" + (theme.codeSize || 13) + "px;font-family:" + theme.mono,
         hr: "background-color:" + theme.rule
     };
 }

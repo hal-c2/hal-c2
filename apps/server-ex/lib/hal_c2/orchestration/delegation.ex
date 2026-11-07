@@ -300,7 +300,7 @@ defmodule HalC2.Orchestration.Delegation do
     with [_ | _] = runs <- StreamState.list(child, "run"),
          true <- quiet?(child),
          {status, run, ended_at} <- last_end(runs) do
-      result = result_for(child, run, status)
+      result = result_for(child_id, run, status)
       # Before the result starts the caller's turn, so a link its agent makes from the
       # report finds the child's already there, with what the child heard of it.
       hand_over_pull_requests(child_id)
@@ -352,12 +352,12 @@ defmodule HalC2.Orchestration.Delegation do
     for %{"origin" => "app_owned", "childThreadId" => child_id, "status" => status} = task <-
           StreamState.list(stream(parent_id), "subagent"),
         status not in @terminal and is_binary(child_id),
-        {ended, run, ended_at, child} <- [stopped(child_id, boot?)],
+        {ended, run, ended_at} <- [stopped(child_id, boot?)],
         settle(
           parent_id,
           task,
           ended,
-          if(run, do: result_for(child, run, ended)),
+          if(run, do: result_for(child_id, run, ended)),
           "disposed",
           :once,
           ended_at
@@ -442,9 +442,9 @@ defmodule HalC2.Orchestration.Delegation do
     runs = StreamState.list(child, "run")
 
     cond do
-      boot? and StreamState.get(child, "thread")[child_id] == nil -> {"failed", nil, nil, child}
+      boot? and StreamState.get(child, "thread")[child_id] == nil -> {"failed", nil, nil}
       runs == [] or not quiet?(child) -> nil
-      true -> with {ended, run, at} <- last_end(runs), do: {ended, run, at, child}
+      true -> last_end(runs)
     end
   end
 
@@ -928,7 +928,7 @@ defmodule HalC2.Orchestration.Delegation do
                })
              end),
              Orchestration.upsert(state, "node", task["id"], finish),
-             StreamState.get(state, "turn-item")[item_id] &&
+             StreamState.fetch(state, "turn-item", item_id) &&
                Orchestration.upsert(state, "turn-item", item_id, fn item ->
                  Map.merge(item, %{
                    "status" => status,
@@ -953,9 +953,10 @@ defmodule HalC2.Orchestration.Delegation do
   # A disposed task, and one whose caller is archived or deleted, wakes nobody. A
   # task that wakes only an idle caller (`settled_only`) ending while the caller
   # works is only acknowledged, which is the caller's wait reading it (`wait/3`).
-  # Otherwise the result joins a wake still queued for the run that started it, or
-  # starts one, at most two wakes per such run: later results stay readable from
-  # the task's status instead of waking the caller again and again.
+  # Otherwise the result joins a wake still queued for the run that started it,
+  # waits for the one follow-up wake after a wake of that run still with the caller
+  # (`flush_pending/1`), or starts one. Every result reaches the caller once, and
+  # results that land while it works share one wake.
   defp plan_wake(state, parent_id, task, status, result) do
     thread = StreamState.get(state, "thread")[parent_id] || %{}
     task = Map.merge(task, %{"status" => status, "result" => result})
@@ -977,9 +978,6 @@ defmodule HalC2.Orchestration.Delegation do
       # one follow-up wake that runs when it ends (`flush_pending/1`).
       wake_in_flight?(state, task["runId"]) ->
         {"pending", [], {nil, nil}}
-
-      settled_wake_count(state, task["runId"]) >= 2 ->
-        {"acknowledged", [], {nil, nil}}
 
       true ->
         command = wake_command(state, parent_id, thread, [task])
@@ -1004,9 +1002,8 @@ defmodule HalC2.Orchestration.Delegation do
             {_delivery, changes, sent} = join_wake(state, queued, current)
             {changes ++ delivered_change(state, current), sent}
 
-          settled_wake_count(state, current["runId"]) >= 2 and
-              not wake_in_flight?(state, current["runId"]) ->
-            {[], nil}
+          wake_in_flight?(state, current["runId"]) ->
+            {pending_change(state, current), nil}
 
           true ->
             command = wake_command(state, parent_id, thread, [current])
@@ -1023,11 +1020,15 @@ defmodule HalC2.Orchestration.Delegation do
     :ok
   end
 
-  defp delivered_change(state, task) do
+  defp delivered_change(state, task), do: delivery_change(state, task, "delivered")
+
+  defp pending_change(state, task), do: delivery_change(state, task, "pending")
+
+  defp delivery_change(state, task, delivery) do
     [
       Orchestration.upsert(state, "subagent", task["id"], fn entity ->
         Map.merge(entity, %{
-          "completionDelivery" => %{"state" => "delivered", "observedByRunId" => nil},
+          "completionDelivery" => %{"state" => delivery, "observedByRunId" => nil},
           "updatedAt" => Entities.now()
         })
       end)
@@ -1086,20 +1087,8 @@ defmodule HalC2.Orchestration.Delegation do
 
   defp queued_wake(_state, _parent_run_id), do: nil
 
-  # Wakes for a run that have run their course, and whether one is with the
-  # caller now. Cancelled wakes never woke it, so they count for neither:
-  # only wakes that actually ran count as settled.
-  defp settled_wake_count(state, parent_run_id) when is_binary(parent_run_id) do
-    runs = StreamState.get(state, "run")
-
-    Enum.count(StreamState.list(state, "message"), fn message ->
-      get_in(message, ["delegatedCompletion", "parentRunId"]) == parent_run_id and
-        (runs[message["runId"]] || %{})["status"] in ~w(completed failed interrupted)
-    end)
-  end
-
-  defp settled_wake_count(_state, _parent_run_id), do: 0
-
+  # Whether a wake for a run is with the caller now: its result message joined a
+  # running turn, or its own run started.
   defp wake_in_flight?(state, parent_run_id) when is_binary(parent_run_id) do
     runs = StreamState.get(state, "run")
 
@@ -1431,8 +1420,9 @@ defmodule HalC2.Orchestration.Delegation do
           into: MapSet.new(),
           do: run["id"]
 
+    # Older runs' messages too: the latest runs may have said nothing.
     child
-    |> StreamState.list("message")
+    |> StreamState.all("message")
     |> Enum.filter(
       &(&1["role"] == "assistant" and MapSet.member?(kept, &1["runId"]) and
           String.trim(&1["text"] || "") != "")
@@ -1444,10 +1434,11 @@ defmodule HalC2.Orchestration.Delegation do
   # Why a child that never started ended: its worktree could not be prepared, or the
   # preparation was cancelled. Nil for any other run, a queued one cancelled included.
   defp preparation_failure(child, %{"id" => run_id}) do
-    items = StreamState.get(child, "turn-item")
-
-    case {items["turn-item:workspace-preparation-failure:#{run_id}"],
-          items["turn-item:workspace-preparation:#{run_id}"]} do
+    case {StreamState.fetch(
+            child,
+            "turn-item",
+            "turn-item:workspace-preparation-failure:#{run_id}"
+          ), StreamState.fetch(child, "turn-item", "turn-item:workspace-preparation:#{run_id}")} do
       {%{"failure" => %{"message" => message}}, _} -> "Workspace preparation failed: #{message}"
       {_, %{"status" => "cancelled"}} -> "Workspace preparation was cancelled."
       _ -> nil
@@ -1456,10 +1447,13 @@ defmodule HalC2.Orchestration.Delegation do
 
   defp preparation_failure(_child, _run), do: nil
 
-  # What a task's result is, however its end reaches the caller.
-  defp result_for(child, run, status) do
-    preparation_failure(child, run) || failure_text(child, run, status) || answer(child) ||
-      no_answer_text(status)
+  # What a task's result is, however its end reaches the caller: read from the child's
+  # stream as one, its older runs' messages included (`HalC2.Streams.read/2`).
+  defp result_for(child_id, run, status) do
+    HalC2.Streams.read(child_id, fn child ->
+      preparation_failure(child, run) || failure_text(child, run, status) || answer(child) ||
+        no_answer_text(status)
+    end)
   end
 
   # A failed run's own word on why: its latest error item, which outranks any
@@ -1468,8 +1462,11 @@ defmodule HalC2.Orchestration.Delegation do
 
   defp failure_text(child, %{"id" => run_id}, "failed") do
     child
-    |> StreamState.list("turn-item")
-    |> Enum.filter(&(&1["type"] == "error" and &1["runId"] == run_id))
+    |> StreamState.run_rows([run_id])
+    |> Enum.flat_map(fn
+      {"turn-item", _, %{"type" => "error"} = item} -> [item]
+      _ -> []
+    end)
     |> Enum.sort_by(&(&1["ordinal"] || 0))
     |> List.last(%{})
     |> Map.get("failure")

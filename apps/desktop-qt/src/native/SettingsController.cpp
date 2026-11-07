@@ -70,6 +70,7 @@ const QList<Row>& rows() {
       {"continueThreadsAfterServerUpdate", false, false},
       {"newWorktreesStartFromOrigin", false, true},
       {"addProjectBaseDirectory", false, QString()},
+      {"enableAgentBrowserAccess", false, true},
       {"confirmThreadUnpin", true, false},
       {"confirmThreadArchive", true, false},
       {"confirmThreadDelete", true, true},
@@ -153,7 +154,11 @@ void SettingsController::follow() {
 void SettingsController::onConfig(const QJsonObject& frame) {
   const QString type = frame.value(QLatin1String("t")).toString();
   if (type == QLatin1String("config")) {
-    const QJsonObject config = frame.value(QLatin1String("config")).toObject();
+    QJsonObject config = frame.value(QLatin1String("config")).toObject();
+    // The hubs come in their own frame after it.
+    if (m_config.contains(QLatin1String("usageLimitSources"))) {
+      config.insert(QStringLiteral("usageLimitSources"), m_config.value(QLatin1String("usageLimitSources")));
+    }
     if (config != m_config) {
       m_config = config;
       emit configChanged();
@@ -174,6 +179,9 @@ void SettingsController::onConfig(const QJsonObject& frame) {
     emit keybindingsPushed();
   } else if (type == QLatin1String("config.themes")) {
     setThemes(frame.value(QLatin1String("themes")).toArray());
+  } else if (type == QLatin1String("config.usageLimitSources")) {
+    // Read when "/usage-limits" answers, so the hubs' quotas moving repaints nothing.
+    m_config.insert(QStringLiteral("usageLimitSources"), frame.value(QLatin1String("sources")));
   }
 }
 

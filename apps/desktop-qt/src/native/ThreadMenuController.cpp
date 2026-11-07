@@ -134,9 +134,18 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
          QStringLiteral("message-square-plus")},
         false);
   }
+  // The keys that run an item, from where the palette reads them, shown only
+  // on the open thread's menu: they act on the open thread, not on another
+  // row the menu was opened from.
+  const bool viewed = shell->controller<NavigationController>()->threadKey() == key;
+  const auto keyed = [viewed, shell](Item item, const QString& command) {
+    if (viewed) item.shortcut = shell->controller<KeybindingController>()->shortcutLabel(command);
+    return item;
+  };
   if (supports.pinning) {
-    add(thread->pinnedAt ? Item{QStringLiteral("unpin"), QStringLiteral("Unpin thread"), QStringLiteral("pin-off")}
-                         : Item{QStringLiteral("pin"), QStringLiteral("Pin thread"), QStringLiteral("pin")});
+    add(keyed(thread->pinnedAt ? Item{QStringLiteral("unpin"), QStringLiteral("Unpin thread"), QStringLiteral("pin-off")}
+                               : Item{QStringLiteral("pin"), QStringLiteral("Pin thread"), QStringLiteral("pin")},
+              QStringLiteral("thread.pin")));
   }
   // Arranging, where the thread has a place to move to.
   if (sidebar->canMove(key, true) || sidebar->canMove(key, false)) {
@@ -149,8 +158,9 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
   }
   if (supports.settlement) {
     const bool settled = thread->settledOverride == QLatin1String("settled");
-    add({settled ? QStringLiteral("unsettle") : QStringLiteral("settle"),
-         settled ? QStringLiteral("Un-settle thread") : QStringLiteral("Settle thread"), QStringLiteral("circle-check")});
+    add(keyed({settled ? QStringLiteral("unsettle") : QStringLiteral("settle"),
+               settled ? QStringLiteral("Un-settle thread") : QStringLiteral("Settle thread"), QStringLiteral("circle-check")},
+              QStringLiteral("thread.settle")));
   }
   if (supports.snooze) {
     if (sidebar::effectiveSnoozed(*thread, nowMs)) {
@@ -179,6 +189,17 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
     add(regenerate);
   }
   add({QStringLiteral("mark-unread"), QStringLiteral("Mark unread"), QStringLiteral("mail-open")});
+  // Whether the MC may settle this thread on its own (pingdotgg/t3code#11846).
+  if (m_store->supports(thread->environmentId, QStringLiteral("threadAutoSettleOptOut"))) {
+    const bool enabled = row.value(QLatin1String("autoSettleDisabledAt")).toString().isEmpty();
+    Item autoSettle{QStringLiteral("auto-settle"), QStringLiteral("Auto-settle behavior"), QStringLiteral("timer")};
+    Item on{QStringLiteral("auto-settle:enabled"), QStringLiteral("Enabled")};
+    on.checked = enabled;
+    Item off{QStringLiteral("auto-settle:disabled"), QStringLiteral("Disabled")};
+    off.checked = !enabled;
+    autoSettle.children = {on, off};
+    add(autoSettle);
+  }
   const std::optional<QString> projectKey = sidebar->logicalProjectKey(thread->environmentId, thread->projectId);
   if (!header && projectKey) {
     const bool scoped = sidebar->scope() == projectKey;
@@ -437,6 +458,12 @@ void ThreadMenuController::choose(const QString& key, const QString& id, double 
             QStringLiteral("Failed to regenerate thread title"));
   } else if (id == QLatin1String("mark-unread")) {
     m_bridge->dispatch(QStringLiteral("thread.markUnread"), keyed);
+  } else if (id == QLatin1String("auto-settle:enabled") || id == QLatin1String("auto-settle:disabled")) {
+    command(key,
+            {{QStringLiteral("type"), QStringLiteral("thread.auto-settle.set")},
+             {QStringLiteral("threadId"), thread->id},
+             {QStringLiteral("enabled"), id == QLatin1String("auto-settle:enabled")}},
+            QStringLiteral("Failed to update auto-settle"));
   } else if (id == QLatin1String("filter-by-project")) {
     const auto projectKey = shell->sidebar()->logicalProjectKey(thread->environmentId, thread->projectId);
     const bool scoped = shell->sidebar()->scope() == projectKey;
@@ -685,7 +712,8 @@ void ThreadMenuController::present() {
   const auto thread = key.isEmpty() ? std::nullopt : m_store->thread(key);
   const QString url = thread ? pullRequestUrl(key) : QString();
   commands->setTitle(kCopyReference, url.isEmpty() ? tr("Copy thread ID") : tr("Copy PR link"));
-  commands->setDescription(kCopyReference, url.isEmpty() && thread ? thread->id : url);
+  // The palette names the thread it copies from, never its id.
+  commands->setDescription(kCopyReference, url.isEmpty() && thread ? thread->title : url);
   commands->setListed(kCopyReference, thread.has_value());
   const auto project = thread ? m_store->project(thread->environmentId + QLatin1Char(':') + thread->projectId) : std::nullopt;
   commands->setDescription(kProjectSettingsCommand, project ? project->title : QString());

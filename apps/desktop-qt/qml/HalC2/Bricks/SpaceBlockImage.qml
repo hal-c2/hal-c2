@@ -29,7 +29,7 @@ Rectangle {
     }
 
     height: showing ? Math.min(naturalWidth > 0 ? width * naturalHeight / naturalWidth : 240, 540) : 44
-    radius: Math.min(Theme.radius, 8)
+    radius: Theme.radiusMd
     color: Theme.palette.color("muted", "#27272a")
     clip: true
 
@@ -49,8 +49,8 @@ Rectangle {
 
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: 10
-        anchors.rightMargin: 6
+        anchors.leftMargin: Theme.space.sm
+        anchors.rightMargin: Theme.space.sm
         visible: holder.says !== ""
         spacing: 8
 
@@ -66,7 +66,7 @@ Rectangle {
             text: holder.says
             elide: Text.ElideRight
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
         }
 
         ShellButton {

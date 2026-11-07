@@ -1,5 +1,15 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19646
+#   https://github.com/pingdotgg/t3code/pull/24299
+#   https://github.com/pingdotgg/t3code/pull/23169
+#   https://github.com/pingdotgg/t3code/pull/22846
+#   https://github.com/pingdotgg/t3code/pull/16303
+#   https://github.com/pingdotgg/t3code/pull/19023
+#   https://github.com/pingdotgg/t3code/pull/19131
+#   https://github.com/pingdotgg/t3code/pull/15571
+#   https://github.com/pingdotgg/t3code/pull/15442
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/24172
 #   packages/contracts/src/orchestrationV2.ts (message.dispatch, message.updated, run.created,
 #     run.updated, run-attempt.created, run-attempt.updated, node.updated, turn-item.updated,
 #     provider-session.attached, provider-session.updated, provider-session.detach,
@@ -180,6 +190,14 @@ Feature: Runs and turns
     When the provider finishes the reply
     Then the whole reply is written at once, whatever was held back
 
+  # Upstream #19023: a held-back reply written at turn end stays where it was said.
+  @backlog @mc
+  Scenario: A held-back reply cut off by a steer keeps its place
+    Given the agent's reply is partly held back
+    And the user steers the turn before the reply finishes
+    When the turn ends and the held-back reply is written
+    Then the reply appears before the steer and what followed it, where the agent said it
+
   @mc
   Scenario: Tool output streams without waiting for a paragraph
     Given "t1" has a running turn
@@ -214,10 +232,76 @@ Feature: Runs and turns
     And "t1" can take its next message
 
   @mc
+  Scenario: A provider that dies while starting the turn says why
+    Given the provider process exits saying "Config files in mise.toml are not trusted." while "t1" starts a turn
+    Then the run is failed, and its error ends with "It said:\nConfig files in mise.toml are not trusted."
+
+  # Upstream #16303: known reasons a provider refused a turn were hidden behind a generic failure.
+  @backlog @mc @priority-low
+  Scenario Outline: A turn the provider refuses to start says why
+    Given the provider refuses to start the turn of "t1" because <cause>
+    Then the run is failed with "<message>"
+    And the provider's own details are not shown as the message
+
+    Examples:
+      | cause                                 | message                                                    |
+      | an attached file could not be read    | An attachment could not be read. Attach it again.          |
+      | it is still running the previous turn | The previous turn is still running. Wait for it to finish. |
+
+  # Upstream #23169: a full disk or a database error failed the run while the provider kept
+  # working, and every follow-up failed because the old provider turn was still running.
+  @backlog @mc @priority-high
+  Scenario: A run whose events cannot be recorded stops its provider turn
+    Given "t1" has a running turn
+    When the MC fails to record the turn's events
+    Then the run is failed and the provider turn is interrupted together
+    And "t1" can take its next message in the same provider conversation
+
+  # Upstream #19646: a run whose failure could not be written stayed running after storage recovered.
+  @backlog @mc @priority-high
+  Scenario: A run failure that could not be recorded is recorded once storage recovers
+    Given "t1" has a running turn
+    When the MC fails to record the turn's events and then fails to record the run's failure
+    And the database recovers
+    Then the run is recorded as failed at the time it failed
+    And "t1" no longer shows a running turn
+
+  @backlog @mc
+  Scenario: A follow-up first stops a provider turn an earlier failed run left running
+    Given an earlier run of "t1" failed while its provider turn kept running
+    When the user sends "t1" another message
+    Then the left-over provider turn is interrupted first
+    And the new turn runs in the same provider conversation
+
+  # Upstream #22846: the failure path wrote a turn that had already completed or failed as
+  # interrupted, and wrote it even when the interrupt itself failed.
+  @backlog @mc @priority-high
+  Scenario Outline: A run whose events cannot be recorded keeps how its provider turn ended
+    Given the provider turn of "t1" <state>
+    When the MC fails to record the turn's events and interrupts the provider turn
+    Then the provider turn reads as <outcome>
+
+    Examples:
+      | state                    | outcome                                         |
+      | had already completed    | completed                                       |
+      | had already failed       | failed                                          |
+      | was still running        | interrupted                                     |
+      | could not be interrupted | running, so the next message stops it first     |
+
+  @mc
   Scenario: A provider session that cannot be opened fails the run
     Given the provider's session cannot be opened while "t1" starts a turn
     Then the run is failed
     And "t1" can take its next message
+
+  # Upstream #19131: a run fails when its provider stream ends without a terminal event
+  @mc @priority-high
+  Scenario: A provider stream that ends without ending its turn fails the run
+    Given "t1" has a running turn with a subagent still running
+    When the provider's event stream ends without saying the turn ended
+    Then the run and its subagents are failed
+    And "t1" can take its next message
+    But a stream the MC ends because it is shutting down leaves the run for recovery
 
   # A delete, or a start that gave up waiting on the provider, ends a run while its
   # provider turn still starts or ends; that end stands.
@@ -248,7 +332,7 @@ Feature: Runs and turns
     Then the plugin opens the session again
     And the run fails only once the plugin gives up
 
-  @mc @shared @backlog-mobile
+  @mc @shared @backlog-mobile @priority-high
   Scenario: A failed turn keeps the output it had already produced
     Given the provider streamed part of its answer to "t1" and then failed
     When the failure is recorded
@@ -283,7 +367,7 @@ Feature: Runs and turns
       | the provider gives up on its usage limit     | Usage limit reached    |
       | the user stops the turn while it is retrying | Provider retry stopped |
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A failed turn says what the user can do about it
     When a turn of "t1" fails because <cause>
     Then the run fails with "<message>"
@@ -297,19 +381,20 @@ Feature: Runs and turns
       | the MC cannot tell whether handed-over history arrived  | HAL-C2 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.       |
       | of an internal error the provider did not explain       | Provider turn failed.                                                                                                    |
 
-  @backlog @mc
+  @mc @priority-high
   Scenario Outline: A failure message never shows credentials
     When the provider fails a turn of "t1" with a message holding <secret>
     Then the failure the thread records shows <shown>
 
     Examples:
-      | secret                                     | shown                                    |
-      | a URL with a user name, password and query | the URL without its credentials or query |
-      | a bearer or basic authorization value      | "[REDACTED]" in place of the value       |
-      | an API key, token, password or secret      | "[REDACTED]" in place of the value       |
-      | a URL that cannot be read                  | "[REDACTED_URL]" in place of the URL     |
+      | secret                                         | shown                                    |
+      | a URL with a user name, password and query     | the URL without its credentials or query |
+      | a bearer or basic authorization value          | "[REDACTED]" in place of the value       |
+      | an API key, token, password or secret          | "[REDACTED]" in place of the value       |
+      | a prefixed key, client secret or refresh token | "[REDACTED]" in place of the value       |
+      | a URL that cannot be read                      | "[REDACTED_URL]" in place of the URL     |
 
-  @backlog @mc
+  @mc @priority-low
   Scenario: A very long failure message is cut short
     When the provider fails a turn of "t1" with a message longer than 4,096 characters
     Then the failure the thread records is at most 4,096 characters and ends with "…"
@@ -359,7 +444,25 @@ Feature: Runs and turns
     Then the run fails with "Cannot compact an empty thread" and "Start a conversation before compacting this thread."
     And nothing is sent to the provider
 
+  # Upstream #24172: a fork's first /compact was refused as an empty thread.
   @backlog @mc
+  Scenario Outline: A fork's first compact compacts the history it inherited
+    Given "t2" is a <kind> fork of "t1" with no turns of its own
+    When the user sends "/compact" to "t2"
+    Then the provider is asked to compact the history "t2" inherited
+
+    Examples:
+      | kind     |
+      | native   |
+      | portable |
+
+  @backlog @mc
+  Scenario: A portable fork whose handoff carries no messages cannot compact
+    Given "t2" is a portable fork of "t1" whose handoff carries no messages
+    When the user sends "/compact" to "t2"
+    Then the run fails with "Cannot compact an empty thread"
+
+  @mc @priority-high
   Scenario: A workspace that is missing or is not a folder fails the turn before the provider starts
     Given the workspace of "t1" is not a worktree and its folder is gone
     When the user sends "Hi" to "t1"
@@ -427,14 +530,29 @@ Feature: Runs and turns
     When the user uploads feedback for "t1"
     Then it fails with "Provider 'claudeAgent' does not support feedback uploads."
 
-  @backlog @mc
+  @mc @priority-high
   Scenario: An interrupt is recorded as a request and then as its outcome
     Given "t1" has a running turn
     When the user interrupts the run giving the reason "wrong branch"
     Then the run records an item titled "Interrupt requested" saying "wrong branch"
     And once the provider stops, an item titled "Interrupted" saying "Run interrupted by user"
 
+  # Upstream #24299: every interrupt said "Run interrupted by user", even one an agent asked for.
+  # Replaces the outcome text of the scenario above once the MC carries it.
   @backlog @mc
+  Scenario Outline: An interrupt's outcome says who stopped the run
+    Given "t1" has a running turn
+    When <who>
+    Then once the provider stops, an item titled "Interrupted" says "<says>"
+
+    Examples:
+      | who                                                     | says                                 |
+      | the user presses Stop                                   | Stopped by user                      |
+      | an agent stops it through HAL-C2's tools                | Stopped by an agent                  |
+      | an agent stops it through HAL-C2's tools with "wrong branch" | Stopped by an agent: wrong branch |
+      | the provider ends the run with no stop asked for        | Stopped by the provider              |
+
+  @mc @priority-low
   Scenario: An interrupt without a reason says only that it was requested
     Given "t1" has a running turn
     When the user interrupts the run without a reason
@@ -484,9 +602,25 @@ Feature: Runs and turns
     Then the run fails with "Run preparation failed."
     And the internal error text is not shown on the run
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Output of another thread on a shared provider process stays off this run
     Given "t1" and thread "t2" share one provider process and both have a running turn
     When the provider reports output for the turn of "t2"
     Then nothing is recorded on the run of "t1"
     And the output is recorded on the run of "t2"
+
+  # Upstream #15442: Stop recovers a run whose provider is gone
+  @mc @priority-high
+  Scenario: Stop settles a run whose provider disappeared before it finished
+    Given a run is still active because its provider vanished before reporting an end
+    When the user stops the thread
+    Then the run is settled as stopped with its partial output kept
+    And its pending requests are closed and its checkpoint is captured
+    And a late result from the provider cannot undo the stop or replace a newer attempt
+
+  # Upstream #15571: an interrupted provider start cleans up its session
+  @mc @priority-high
+  Scenario: Stopping during a slow provider start leaves no session behind
+    Given a provider session is still starting
+    When the user stops the thread before the start completes
+    Then the half-started provider session is cleaned up

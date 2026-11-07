@@ -1,8 +1,16 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19974
+#   https://github.com/pingdotgg/t3code/pull/20182
+#   https://github.com/pingdotgg/t3code/pull/22012
+#   https://github.com/pingdotgg/t3code/pull/18784
+#   https://github.com/pingdotgg/t3code/pull/18159
+#   https://github.com/pingdotgg/t3code/pull/12402
+#   https://github.com/pingdotgg/t3code/pull/24912
 #   apps/server-ex/lib/hal_c2/devices.ex (device.list, device.open, device.close, device.shutdown,
 #     device.detail, device.action, device.testHost, devices shape, platform reasons)
 #   apps/server-ex/lib/hal_c2/devices/actions.ex (per-platform actions, DeviceActionUnavailableError)
 #   apps/server-ex/lib/hal_c2/devices/proxy.ex (/api/device-hub/*, route allowlist, scopes, cluster relay)
+#   apps/server-ex/lib/hal_c2/web/entry.ex (/api/device-hub/* is served ahead of the router)
 #   apps/server-ex/lib/hal_c2/mcp/devices.ex (device_list, device_open, device_screenshot, device_close,
 #     agent device access with the project override, quick start)
 #   docs/user/devices.md (Agents and devices: a device an agent opens floats over the chat)
@@ -39,6 +47,7 @@ Feature: Device hub on an MC
     Then the MC installs the device hub under its home's tools folder
     And runs it on a loopback port
 
+  # Upstream #18159: Apple device discovery is skipped on non-Mac hosts
   @mc
   Scenario Outline: A platform the machine cannot run explains why
     Given <situation>
@@ -54,8 +63,7 @@ Feature: Device hub on an MC
       | the SDK lacks the emulator             | Android  | Android Emulator is missing              |
 
   # Legacy: apps/server/src/device/LocalDeviceHost.test.ts (Android SDK availability)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/devices.ex (platform_reason, android_sdk)
-  @backlog @mc
+  @mc
   Scenario Outline: An Android SDK without current command-line tools says what to install
     Given an Android SDK with platform tools and the emulator, <tools>
     When a client lists devices
@@ -69,8 +77,7 @@ Feature: Device hub on an MC
 
   # Legacy: apps/server/src/device/LocalDeviceHost.test.ts (standard macOS SDK without ANDROID_HOME,
   #   detected tools put on the helper PATH)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/devices.ex (android_sdk, host_env)
-  @backlog @mc
+  @mc
   Scenario: The Android SDK is found where Android Studio puts it
     Given no ANDROID_HOME is set
     And the SDK is in the user's home under Library/Android/sdk with every tool installed
@@ -79,8 +86,7 @@ Feature: Device hub on an MC
     And the device tools run with the SDK's platform-tools and emulator folders ahead of PATH
 
   # Legacy: apps/server/src/device/LocalDeviceHost.test.ts (Node.js missing, nothing installed)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/devices.ex (node_executable)
-  @backlog @mc
+  @mc
   Scenario: Device support without Node.js says how to fix it
     Given the MC's machine has no node on its PATH
     When a client opens a device for the first time
@@ -105,9 +111,23 @@ Feature: Device hub on an MC
     When a client opens a device id the hub does not list
     Then the MC answers that the device was not found
 
+  # Upstream #18784: a missing ffmpeg left the emulator's stream blank without a word; it is
+  # checked when an emulator is opened, and physical devices do not need it.
+  @mc @backlog
+  Scenario Outline: An Android emulator that cannot be streamed says what is missing
+    Given the device host has <ffmpeg>
+    When a client opens an Android emulator in a thread
+    Then it fails saying <missing> is needed to stream the emulator
+    And the emulator is not booted
+    But physical Android devices still open
+
+    Examples:
+      | ffmpeg                             | missing             |
+      | no ffmpeg                          | ffmpeg              |
+      | an ffmpeg without the x264 encoder | ffmpeg with libx264 |
+
   # Legacy: apps/server/src/device/DeviceService.test.ts (stopped AVD boot, boot progress)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/devices.ex (avds, booting)
-  @backlog @mc
+  @mc
   Scenario: A stopped Android virtual device boots under its running serial
     Given an Android virtual device "Pixel_API_35" that is not running
     And a client has asked the MC to set up device support
@@ -118,8 +138,7 @@ Feature: Device hub on an MC
     And the device is listed once, under that serial
 
   # Legacy: apps/server/src/device/DeviceService.test.ts (capture recovery after close and shutdown)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/devices.ex (post_shutdown ios)
-  @backlog @mc
+  @mc
   Scenario Outline: A simulator closed or powered off streams afresh when it is opened again
     Given a thread with an open iOS simulator that is being streamed
     When a client <action>
@@ -132,8 +151,7 @@ Feature: Device hub on an MC
       | shuts the simulator down                |
 
   # Legacy: apps/server/src/device/DeviceService.test.ts (serve-sim rejects a shutdown)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/devices.ex (post_shutdown)
-  @backlog @mc
+  @mc
   Scenario Outline: A shutdown the hub rejects stands only when the simulator is off
     Given a booted iOS simulator in the MC's device list
     And the hub rejects the shutdown request
@@ -149,8 +167,7 @@ Feature: Device hub on an MC
       | missing from a partial list | fails  | booted    |
 
   # Legacy: apps/server/src/device/DeviceService.test.ts (shutdown refresh failure)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/devices.ex (shutdown_device)
-  @backlog @mc
+  @mc
   Scenario: A shutdown stands when the device list cannot be read afterwards
     Given a thread with an open emulator
     And the hub cannot list devices once the emulator is off
@@ -159,7 +176,7 @@ Feature: Device hub on an MC
     And the thread lists no devices
     And the emulator is listed as not booted
 
-  @backlog @mc
+  @mc
   Scenario Outline: A device that cannot boot is not opened and the user is told why
     Given a shut-down <platform> device and <situation>
     When a client opens it in a thread
@@ -167,14 +184,31 @@ Feature: Device hub on an MC
     And the user is told <reason>
 
     Examples:
-      | platform | situation                                | reason                             |
-      | iOS      | the disk is full                         | the device ran out of disk space   |
-      | Android  | the disk is full                         | the device ran out of disk space   |
-      | iOS      | the boot takes longer than three minutes | the boot timed out                 |
-      | Android  | the boot takes longer than three minutes | the boot timed out                 |
-      | iOS      | the simulator fails to launch            | the device failed to launch        |
+      | platform | situation                                           | reason                           |
+      | iOS      | the disk is full                                    | the device ran out of disk space |
+      | Android  | the disk is full                                    | the device ran out of disk space |
+      | iOS      | the boot takes longer than three minutes            | the boot timed out               |
+      | Android  | the boot takes longer than three minutes            | the boot timed out               |
+      | iOS      | its stream takes longer than three minutes to start | the boot timed out               |
+      | iOS      | the simulator fails to launch                       | the device failed to launch      |
 
+  # Upstream #22012: emulators without image-file cameras boot with emulated cameras
   @backlog @mc
+  Scenario: An Android emulator that cannot use image cameras still boots
+    Given an Android emulator whose cameras cannot show an image file
+    When a client opens it in a thread
+    Then the emulator boots with emulated cameras
+    And launch arguments the user set for it still apply
+
+  # Upstream #22012: a failed boot shows what the device hub reported, capped at 2,000 characters
+  @backlog @mc
+  Scenario: A failed boot shows what the device tools reported
+    Given a shut-down Android device whose emulator exits while booting
+    When a client opens it in a thread
+    Then the open fails with the emulator's own output, cut to 2,000 characters
+    And an agent that opened it is told the same
+
+  @mc
   Scenario: Turning device support off while a device boots fails the open
     Given a device is booting for a thread
     When the user turns device support off
@@ -241,8 +275,7 @@ Feature: Device hub on an MC
       | setLiquidGlass | Android  |
 
   # Legacy: apps/server/src/device/DeviceActions.test.ts (supportsAction, runDeviceAction)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/devices/actions.ex
-  @backlog @mc
+  @mc
   Scenario Outline: An accessibility toggle belongs to one platform
     When a client turns <toggle> on for a booted <platform> device
     Then the MC answers <answer>
@@ -256,8 +289,7 @@ Feature: Device hub on an MC
       | network access | iOS      | that the action is unavailable on that platform  |
 
   # Legacy: apps/server/src/device/DeviceActions.test.ts (rotation, push payload)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/devices/actions.ex (orientation, push)
-  @backlog @mc
+  @mc
   Scenario Outline: A rotation reaches an emulator and a physical phone differently
     When a client sets the orientation of <device> to landscape
     Then the MC <how>
@@ -267,34 +299,41 @@ Feature: Device hub on an MC
       | an Android emulator        | tilts the emulator's accelerometer to that side     |
       | a physical Android phone   | locks the phone's rotation to that side             |
 
+  # Upstream #20182: Portrait and Landscape follow the screen's shape on landscape-native tablets
   @backlog @mc
+  Scenario: Portrait and landscape are right on an Android tablet that is wide by nature
+    Given an Android tablet whose natural screen is wider than it is tall
+    When a client sets its orientation to portrait
+    Then the screen is taller than it is wide
+    And landscape makes it wider than it is tall
+
+  @mc
   Scenario: A plain push message arrives as a notification alert
     When a client sends the push "Hello" to an app on a booted iOS simulator
     Then the simulator receives a notification whose alert is "Hello"
     And a client that sends a full payload has that payload delivered as written
 
   # Legacy: apps/server/src/device/DeviceActions.test.ts (missing helper, exit codes, unreadable settings)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/devices/actions.ex (requires a helper)
-  @backlog @mc
+  @mc
   Scenario: An accessibility change that needs a helper the install lacks says so
     Given the hub install has no accessibility helper
     When a client sets a colour filter on a booted iOS device
     Then the MC answers that the action requires a helper and to set up device support again
 
-  @backlog @mc
+  @mc
   Scenario: A device command that fails is reported without its output
     Given a booted iOS device whose appearance command exits with an error and a message
     When a client sets its appearance to dark
     Then the MC answers that the appearance change failed with the exit code
     And the answer does not repeat the command's own message
 
-  @backlog @mc
+  @mc
   Scenario: A setting the MC cannot read is left unknown instead of failing the read
     Given a booted device whose settings commands all fail
     When a client asks for its detail
     Then the detail is returned with no settings and no foreground app
 
-  @backlog @mc
+  @mc
   Scenario Outline: A client changes a device's appearance or accessibility setting
     When a client sets <setting> on a booted <platform> device to <value>
     Then the MC answers with the device's detail after the change
@@ -306,9 +345,9 @@ Feature: Device hub on an MC
       | reduce motion     | iOS      | on          |
       | reduce motion     | Android  | on          |
       | increase contrast | iOS      | on          |
-      | Liquid Glass      | iOS      | off         |
+      | Liquid Glass      | iOS      | tinted      |
 
-  @backlog @mc
+  @mc
   Scenario Outline: A client grants or revokes an app permission on a booted device
     When a client sets the <permission> permission to <state> on a booted <platform> device
     Then the MC answers with the device's detail after the change
@@ -319,7 +358,7 @@ Feature: Device hub on an MC
       | notifications | granted | Android  |
       | location      | revoked | Android  |
 
-  @backlog @mc
+  @mc
   Scenario Outline: A client sets a device's location and later clears it
     When a client sets the location of a booted <platform> device to "<place>"
     And a client clears the location of that device
@@ -330,7 +369,7 @@ Feature: Device hub on an MC
       | iOS      | Reykjavik    |
       | Android  | Reykjavik    |
 
-  @backlog @mc
+  @mc
   Scenario Outline: A client stops an app that is running on a booted device
     When a client stops "the shop app" on a booted <platform> device
     Then the MC answers with the device's detail after the action
@@ -393,8 +432,7 @@ Feature: Device hub on an MC
 
   # Legacy: apps/server/src/device/DeviceHubProxy.ts, DeviceHubProxy.test.ts (controlsDevice,
   #   read-only sessions get 403 on the input sockets and no upstream request is made)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/devices/proxy.ex (controls)
-  @backlog @mc
+  @mc
   Scenario Outline: A session that may only read can watch the device list but not drive a device
     Given a session with the read scope and without the operate scope
     When it opens the WebSocket "<socket>" through the device proxy
@@ -409,8 +447,7 @@ Feature: Device hub on an MC
 
   # Legacy: apps/server/src/device/DeviceHubProxy.ts (ALLOWED_WS_PATHS, controlsDevice on stream-mode
   #   and stream-settings)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/devices/proxy.ex (@mutable, controls)
-  @backlog @mc
+  @mc
   Scenario Outline: Changing the Android stream's mode or settings needs the operate scope
     Given a session with the read scope and without the operate scope
     When it <method> "<path>" through the device proxy
@@ -425,8 +462,7 @@ Feature: Device hub on an MC
 
   # Legacy: apps/server/src/device/DeviceHubProxy.ts, DeviceHubProxy.test.ts (header allow-list,
   #   wsTicket and hostId removed from the upstream query, the upstream response released)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/devices/proxy.ex (@dropped_request, @credentials)
-  @backlog @mc
+  @mc
   Scenario: The hub never sees the client's credentials
     Given a client that authorises with a WebSocket ticket in the query, a cookie and a bearer header
     When it requests a device route through the proxy
@@ -434,8 +470,7 @@ Feature: Device hub on an MC
     And it has no host id parameter, which belongs to the MC
 
   # Legacy: apps/server/src/device/DeviceHubProxy.ts (Origin is rewritten to the hub's own)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/devices/proxy.ex (relay_init origin)
-  @backlog @mc
+  @mc
   Scenario: A mutation reaches a hub that checks where it came from
     Given the Android hub refuses a change whose origin is not its own
     When a client with the operate scope posts a stream setting through the device proxy
@@ -443,8 +478,7 @@ Feature: Device hub on an MC
 
   # Legacy: apps/server/src/device/DeviceHubProxy.ts (WebSocket pump: whichever side closes first ends
   #   the other; 10 s to open)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/devices/proxy.ex (ProxySocket, await_upgrade)
-  @backlog @mc
+  @mc
   Scenario Outline: A relayed device socket ends when either end does
     Given a client has a device socket open through the proxy
     When <ending>
@@ -457,14 +491,13 @@ Feature: Device hub on an MC
       | the hub fails to answer the upgrade within ten seconds |
 
   # Legacy: apps/server/src/device/DeviceHubProxy.ts (cache-control: no-store, no-transform)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/devices/proxy.ex (relay)
-  @backlog @mc
+  @mc
   Scenario: A live stream is never cached or recompressed on the way to the client
     When a client opens a device's MJPEG stream through the proxy
     Then the response says it must not be stored or transformed
     And frames reach the client as the hub sends them
 
-  @backlog @mc
+  @mc
   Scenario: A device hub that exits is restarted, waiting longer after each quick exit
     Given the device hub is running
     When the hub exits
@@ -513,6 +546,21 @@ Feature: Device hub on an MC
     When the agent asks for a device screenshot
     Then it receives the screen as an image with its width and height
 
+  # Upstream #24912: on a two-screen simulator such as the iPhone Duo the capture picked a
+  # display without looking at the fold, giving a black picture or a failed capture.
+  @backlog @mc @desktop @priority-low
+  Scenario Outline: A screenshot of a foldable simulator captures the screen that is on
+    Given the thread has a foldable iOS Simulator open that booted <booted>
+    And the simulator is now <now>
+    When a screenshot of the device is taken
+    Then it shows the screen that is on, not a black picture or an error
+
+    Examples:
+      | booted   | now      |
+      | folded   | folded   |
+      | folded   | unfolded |
+      | unfolded | folded   |
+
   @mc
   Scenario: A screenshot with no open device asks the agent to open one
     Given no device is open in the agent's thread
@@ -520,16 +568,14 @@ Feature: Device hub on an MC
     Then the agent is told to open a device first
 
     # Legacy: apps/server/src/device/DeviceService.test.ts (discovery after a restart)
-    # Likely already implemented: apps/server-ex/lib/hal_c2/devices.ex (device_list rediscovery)
-    @backlog @mc
+    @mc
     Scenario: A named device can be captured right after the MC restarts
       Given device support is on and no client has listed devices since the MC started
       When a screenshot of a device is asked for by its id
       Then the MC finds the device itself
       And answers with its screen image
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/devices.ex (write_shim)
-    @backlog @mc
+    @mc
     Scenario: A device command run before any device is opened is refused with a pointer to open one
       Given an agent has not opened a device in its thread
       When the agent runs a device command without the device's config and session
@@ -554,8 +600,26 @@ Feature: Device hub on an MC
     When an agent opens a device in the thread the user is watching
     Then the device floats over the conversation, the way an agent-driven browser does
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A device an agent opens waits in the side panel when auto-show is off
     Given auto-show floating preview is off
     When an agent opens a device in the thread the user is watching
     Then the device opens as a side panel tab instead of floating
+
+  @mc
+  Scenario: The device hub finds the runtime directory on Linux
+    Given an MC on Linux started without XDG_RUNTIME_DIR
+    And "/run/user/<uid>" exists and is owned by that user
+    When the hub looks for the emulator's token
+    Then it uses that directory
+    And an explicit value is kept
+
+  # Upstream #19974: a failed listing of Android virtual devices keeps the devices already found and warns.
+  @backlog @mc
+  Scenario: A failed listing of Android virtual devices keeps the devices already found
+    Given the device hub found a connected Android phone
+    When listing the Android virtual devices fails
+    Then the phone is still listed and can be opened
+    And the device list warns that virtual devices could not be listed
+    When a later listing succeeds
+    Then the warning is gone

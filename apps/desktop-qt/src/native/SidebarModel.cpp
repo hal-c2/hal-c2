@@ -8,6 +8,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <utility>
+#include <vector>
 
 namespace sidebar {
 
@@ -54,28 +56,44 @@ int compareIdentity(const Thread& left, const Thread& right) {
   return QString::compare(left.environmentId, right.environmentId);
 }
 
-void sortPinned(QList<Thread>& threads) {
-  std::stable_sort(threads.begin(), threads.end(), [](const Thread& left, const Thread& right) {
-    // User-arranged keys first, keyless pins newest-created below.
-    if (left.pinOrderKey.has_value() != right.pinOrderKey.has_value()) {
-      return left.pinOrderKey.has_value();
-    }
-    if (left.pinOrderKey) {
-      if (*left.pinOrderKey != *right.pinOrderKey) return *left.pinOrderKey < *right.pinOrderKey;
-    } else {
-      const qint64 leftMs = sortableMs(left.createdAt);
-      const qint64 rightMs = sortableMs(right.createdAt);
-      if (leftMs != rightMs) return leftMs > rightMs;
-    }
-    return compareIdentity(left, right) < 0;
+// Stable-sorts `threads` by a timestamp read once per thread, not once per
+// comparison: parsing ISO text is the cost, and the lists run to thousands.
+// `before(leftMs, rightMs, left, right)` orders two threads.
+template <class MsOf, class Before>
+void sortByMs(QList<Thread>& threads, MsOf msOf, Before before) {
+  std::vector<std::pair<qint64, qsizetype>> order;
+  order.reserve(size_t(threads.size()));
+  for (qsizetype i = 0; i < threads.size(); ++i) order.emplace_back(msOf(threads.at(i)), i);
+  std::stable_sort(order.begin(), order.end(), [&](const auto& left, const auto& right) {
+    return before(left.first, right.first, threads.at(left.second), threads.at(right.second));
   });
+  QList<Thread> sorted;
+  sorted.reserve(threads.size());
+  for (const auto& [ms, i] : order) sorted.append(std::move(threads[i]));
+  threads = std::move(sorted);
+}
+
+void sortPinned(QList<Thread>& threads) {
+  sortByMs(threads, [](const Thread& thread) { return sortableMs(thread.createdAt); },
+           [](qint64 leftMs, qint64 rightMs, const Thread& left, const Thread& right) {
+             // User-arranged keys first, keyless pins newest-created below.
+             if (left.pinOrderKey.has_value() != right.pinOrderKey.has_value()) {
+               return left.pinOrderKey.has_value();
+             }
+             if (left.pinOrderKey) {
+               if (*left.pinOrderKey != *right.pinOrderKey) return *left.pinOrderKey < *right.pinOrderKey;
+             } else if (leftMs != rightMs) {
+               return leftMs > rightMs;
+             }
+             return compareIdentity(left, right) < 0;
+           });
 }
 
 void sortActive(QList<Thread>& threads) {
   const auto anchor = [](const Thread& thread) {
     return std::max(sortableMs(thread.createdAt), sortableMs(thread.unsettledAt));
   };
-  std::stable_sort(threads.begin(), threads.end(), [&anchor](const Thread& left, const Thread& right) {
+  sortByMs(threads, anchor, [](qint64 leftMs, qint64 rightMs, const Thread& left, const Thread& right) {
     // New and reopened threads lead; arranged threads follow their keys.
     if (left.activeOrderKey.has_value() != right.activeOrderKey.has_value()) {
       return !left.activeOrderKey.has_value();
@@ -84,10 +102,8 @@ void sortActive(QList<Thread>& threads) {
       if (*left.activeOrderKey != *right.activeOrderKey) {
         return *left.activeOrderKey < *right.activeOrderKey;
       }
-    } else {
-      const qint64 leftMs = anchor(left);
-      const qint64 rightMs = anchor(right);
-      if (leftMs != rightMs) return leftMs > rightMs;
+    } else if (leftMs != rightMs) {
+      return leftMs > rightMs;
     }
     return compareIdentity(left, right) < 0;
   });
@@ -116,12 +132,11 @@ Nullable settledTimestamp(const Thread& thread) {
 }
 
 void sortSettled(QList<Thread>& threads) {
-  std::stable_sort(threads.begin(), threads.end(), [](const Thread& left, const Thread& right) {
-    const qint64 leftMs = sortableMs(settledTimestamp(left));
-    const qint64 rightMs = sortableMs(settledTimestamp(right));
-    if (leftMs != rightMs) return leftMs > rightMs;
-    return QString::compare(left.id, right.id) < 0;
-  });
+  sortByMs(threads, [](const Thread& thread) { return sortableMs(settledTimestamp(thread)); },
+           [](qint64 leftMs, qint64 rightMs, const Thread& left, const Thread& right) {
+             if (leftMs != rightMs) return leftMs > rightMs;
+             return QString::compare(left.id, right.id) < 0;
+           });
 }
 
 bool latestRunSettled(const Thread& thread) {
@@ -191,6 +206,7 @@ Thread threadFromRow(const QString& environmentId, const QJsonObject& row) {
   thread.pluginId = plugin.value(QLatin1String("id")).toString();
   thread.pluginKind = plugin.value(QLatin1String("kind")).toString();
   thread.listed = plugin.value(QLatin1String("listed")).toBool(true);
+  thread.createdBy = row.value(QLatin1String("createdBy")).toString();
 
   const QString status = row.value(QLatin1String("status")).toString(QStringLiteral("idle"));
   if (thread.latestRunId) {
@@ -396,12 +412,11 @@ Partition partition(const QList<Thread>& threads, const std::optional<QSet<QStri
   sortPinned(result.pinned);
   sortActive(result.active);
   // Soonest wake first; a tie reads the same whichever MC sent its rows first.
-  std::sort(result.snoozed.begin(), result.snoozed.end(), [](const Thread& left, const Thread& right) {
-    const qint64 leftMs = sortableMs(left.snoozedUntil);
-    const qint64 rightMs = sortableMs(right.snoozedUntil);
-    if (leftMs != rightMs) return leftMs < rightMs;
-    return compareIdentity(left, right) < 0;
-  });
+  sortByMs(result.snoozed, [](const Thread& thread) { return sortableMs(thread.snoozedUntil); },
+           [](qint64 leftMs, qint64 rightMs, const Thread& left, const Thread& right) {
+             if (leftMs != rightMs) return leftMs < rightMs;
+             return compareIdentity(left, right) < 0;
+           });
   sortSettled(result.settled);
   return result;
 }
@@ -983,9 +998,7 @@ Nullable resolveCustomSnooze(const CustomSnooze& input, const QDateTime& now, co
 // same separator, so both are replaced. The stamp and the snooze labels built
 // from it are short labels where a break at that space costs nothing, so they
 // give up the no-break property; this is why it is done here and not in the
-// timeline's stamp alone. The two QML stamps that cannot call this helper
-// (ComposerUsageLimits.qml, ConnectionsSettings.qml) repeat the same
-// character set in a regex; extend both if this set ever grows.
+// timeline's stamp alone. QML reaches it through Format.qml.
 QString plainSpaces(QString text) {
   return text.replace(QChar(0x202F), QLatin1Char(' ')).replace(QChar(0x00A0), QLatin1Char(' '));
 }

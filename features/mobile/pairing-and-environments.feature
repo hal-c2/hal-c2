@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17677
+#   https://github.com/pingdotgg/t3code/pull/15107
+#   https://github.com/pingdotgg/t3code/pull/17092
+#   https://github.com/pingdotgg/t3code/pull/16019
+#   https://github.com/pingdotgg/t3code/pull/19331
+#   https://github.com/pingdotgg/t3code/pull/19354
 #   apps/mobile/src/features/connection/pairing.ts (host + token, QR payload, scheme defaults)
 #   apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx (Scan QR Code, pairing code)
 #   apps/mobile/src/features/connection/ConnectionsRouteScreen.tsx
@@ -159,7 +165,7 @@ Feature: Pairing a phone with environments
     Then the environment is added to the phone
 
   # Likely already implemented: apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: An environment cannot be added without an address
     Given the pairing form has no address
     Then the user cannot add the environment
@@ -203,21 +209,43 @@ Feature: Pairing a phone with environments
     Then the user is shown a notice titled "Client not supported" that says why
     And no environment is added
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The pairing form is emptied once the environment is added
     Given the pairing form has an address and a pairing code
     When the user adds the environment
     Then the environment is added to the phone
     And the pairing form is empty
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A pairing that fails without a reason says so plainly
     Given the environment fails the pairing without saying why
     When the user tries to pair with it
     Then the user is told "Failed to pair with the environment."
     And no environment is added
 
+  # Upstream #17092: the failure banner pushed the form around, and opening the sheet asked for the camera.
   @backlog @mobile
+  Scenario: A pairing failure is shown in the form and clears when the user edits it
+    Given the pairing token has already been used
+    When the user tries to pair with it
+    Then the failure is shown in the pairing form where its note was, without moving the fields
+    When the user edits the pairing code
+    Then the failure is no longer shown
+
+  @backlog @mobile @priority-low
+  Scenario: Adding an environment asks for the camera only when the user chooses to scan
+    Given the app has not been granted camera access
+    When the user opens the screen to add an environment
+    Then the phone does not ask for camera access
+    When the user chooses to scan a pairing code
+    Then the phone asks for camera access
+
+  @backlog @mobile
+  Scenario: Adding an environment shows that it is connecting
+    When the user tries to pair with an environment
+    Then the add action shows it is connecting until the pairing succeeds or fails
+
+  @backlog @mobile @priority-low
   Scenario: An iPhone that is refused local network access is told how to allow it
     Given the phone has not allowed HAL-C2 to find devices on the local network
     When the user tries to pair with an environment on the local network
@@ -330,7 +358,7 @@ Feature: Pairing a phone with environments
     Then the user is told the link is not a pairing link
     And no environment is added
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: The user renames an environment on the phone
     Given the phone is paired with an environment labelled "devbox"
     When the user renames it to "My MacBook"
@@ -368,7 +396,7 @@ Feature: Pairing a phone with environments
     Then the trace id is on the clipboard
 
   # Likely already implemented: apps/mobile/src/features/connection/ConnectionEnvironmentRow.tsx
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: The user switches an environment off without removing it
     Given the phone is paired with "My MacBook"
     When the user switches "My MacBook" off
@@ -384,7 +412,7 @@ Feature: Pairing a phone with environments
     Then the phone shows no connection problem for "My MacBook"
     And the phone's overall connection follows "Office Mac" alone
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: The user switches an environment back on
     Given "My MacBook" is switched off
     When the user switches "My MacBook" on
@@ -397,11 +425,42 @@ Feature: Pairing a phone with environments
     When the user opens the details of "My MacBook"
     Then reconnecting is not offered until "My MacBook" is switched on
 
+  # Upstream #15107: an environment found incompatible stayed blocked after its server was
+  # updated; switching it on checks it again.
   @backlog @mobile
-  Scenario: An environment the app cannot talk to cannot be switched on
-    Given an environment runs a server version the app does not support
-    Then the user cannot switch it on
-    And it is explained as not supported rather than shown as off
+  Scenario: An environment found incompatible is checked again when switched on
+    Given the phone found that "Office Mac" runs a server version the app does not support
+    Then "Office Mac" is explained as not supported rather than shown as off
+    When HAL-C2 on "Office Mac" is updated and the user switches "Office Mac" on
+    Then the phone checks "Office Mac" again and connects
+
+  # Upstream #15107: a check that still finds the versions apart switches it back off.
+  @backlog @mobile
+  Scenario: Switching on an environment that still does not match switches it off again
+    Given the phone found that "Office Mac" runs a server version the app does not support
+    When the user switches "Office Mac" on
+    Then the phone checks "Office Mac" again
+    And "Office Mac" is switched off again and explained as not supported
+
+  # Upstream #15107: the row no longer keeps its switch disabled; switching on checks again.
+  @backlog @mobile
+  Scenario Outline: An incompatible environment's row says which side to update
+    Given the environment "Office Mac" runs <host version> than the app supports
+    When the user opens the list of environments
+    Then the row for "Office Mac" says <guidance>
+    And a long sentence can be tapped to read it in full
+
+    Examples:
+      | host version     | guidance                                                     |
+      | a newer server   | to update the app or use a compatible release to connect     |
+      | an older server  | to update HAL-C2 on "Office Mac" to connect                  |
+
+  @backlog @mobile
+  Scenario: Pairing a switched-off environment again switches it back on
+    Given "My MacBook" is switched off
+    When the user pairs with "My MacBook" again
+    Then "My MacBook" is switched on
+    And the phone connects to "My MacBook"
 
   @backlog @mobile
   Scenario: The user changes the address of an environment on the phone
@@ -613,7 +672,7 @@ Feature: Pairing a phone with environments
     Then the full error is shown
     And the user can copy its trace ID
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: The user chooses how an environment may use GitHub
     Given the phone is paired with "My MacBook"
     When the user sets GitHub access for "My MacBook" to "<level>"
@@ -653,7 +712,7 @@ Feature: Pairing a phone with environments
     Then "Office Mac" is not added
     And the environments the phone already had are not erased
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: The environment lists the phone by what kind of device it is
     Given the user pairs from <device> running <system>
     When the user looks at the environment's authorized clients
@@ -665,8 +724,28 @@ Feature: Pairing a phone with environments
       | a Pixel 9       | Android 15.2.1 | phone  | Android | 15    | Pixel 9           |
       | an iPad Pro     | iPadOS 18.2    | tablet | iOS     | 18    | iPad Pro 13-inch  |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The environment is told the app version the phone runs
     Given the phone runs app version "1.2.3"
     When the user pairs with "My MacBook"
     Then "My MacBook" lists the phone with the app version "1.2.3"
+
+  @backlog @mobile @priority-low
+  Scenario Outline: Adding an environment offers scanning wherever it starts
+    Given the app runs on <device>
+    When the user adds an environment from <entry>
+    Then the pairing screen is titled and offers to scan a pairing code
+
+    Examples:
+      | device   | entry                          |
+      | a tablet | the new task screen            |
+      | a tablet | settings                       |
+      | a phone  | the new task screen            |
+
+  # Upstream #17677: an environment's switch takes its own taps.
+  @backlog @mobile @priority-low
+  Scenario: Switching an environment off from the list does not open it
+    Given the environments "Alpha" and "Beta" are on
+    When the user switches "Alpha" off in the list of environments
+    Then "Alpha" is off and "Beta" stays on
+    And "Alpha"'s details are not opened

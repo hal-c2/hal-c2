@@ -59,7 +59,9 @@ Feature: Reading a thread in the terminal
     Given the agent changed "src/a.ts" and two other files in one tool call
     Then the row shows "src/a.ts" and that two more files changed
 
-  @tui
+  # The web's timer wins: timeline/streaming.feature, "A running turn shows how long the
+  # agent has been working". The time moves once a second, never between.
+  @dropped @tui
   Scenario: A running turn shows a static working indicator
     Given the agent is working
     Then the timeline shows that the agent is working with the elapsed seconds
@@ -147,11 +149,13 @@ Feature: Reading a thread in the terminal
                                                    ╭───────────────╮
                                                    │ Fix the build │
                                                    ╰───────────────╯
+                                                              <time>
 
       $ Ran command ✓  bun run build
 
 
       Fixed.
+      ⧉ Copy · <time>
       """
 
   @tui
@@ -176,6 +180,7 @@ Feature: Reading a thread in the terminal
       │ ⌄ Show full    │
       │ message        │
       ╰────────────────╯
+                  <time>
       """
 
   @tui
@@ -191,6 +196,7 @@ Feature: Reading a thread in the terminal
       const answer = 42;
 
       Done.
+      ⧉ Copy · <time>
       """
     And the list markers are bold in the accent colour
 

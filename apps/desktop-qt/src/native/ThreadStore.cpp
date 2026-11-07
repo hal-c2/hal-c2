@@ -1,6 +1,7 @@
 #include "ThreadStore.h"
 
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QTimeZone>
 
 #include "LocalCache.h"
@@ -9,6 +10,8 @@
 #include "McClient.h"
 #include "SettingsController.h"
 #include "ShellStore.h"
+#include "SidebarModel.h"
+#include "WorkspaceController.h"
 
 namespace {
 const NativeControllerRegistrar<ThreadStore> registrar(QStringLiteral("threads"), {}, "Threads");
@@ -17,6 +20,15 @@ const NativeControllerRegistrar<ThreadStore> registrar(QStringLiteral("threads")
 ThreadStore::ThreadStore(ShellBridge*, McClient* client, ShellStore* store, QObject* parent)
     : QObject(parent), m_client(client), m_store(store) {
   connect(store, &ShellStore::changed, this, &ThreadStore::retry);
+  // Background work and a fork's source (or its title) can change on the
+  // shell's thread row after the timeline opened.
+  connect(store, &ShellStore::changed, this, [this] {
+    for (auto it = m_threads.cbegin(); it != m_threads.cend(); ++it) {
+      if (!it->model) continue;
+      it->model->setBackgroundWork(m_store->threadRow(it.key()).value(QLatin1String("pendingBackgroundTasks")).toArray());
+      it->model->threadRowsChanged();
+    }
+  });
   // Threads shown from what was kept of another MC go with its thread list;
   // their copies stay in the cache for when the client is opened there again.
   connect(store, &ShellStore::originChanged, this, [this] {
@@ -126,8 +138,31 @@ void ThreadStore::setLocale(const QLocale& locale) {
   emit timesChanged();
 }
 
+void ThreadStore::setFolds(TimelineModel::Folds folds) {
+  m_folds = folds;
+  for (const Followed& followed : std::as_const(m_threads)) {
+    if (followed.model) configure(followed.model);
+  }
+}
+
 QString ThreadStore::upcoming(const QDateTime& at) const {
   return upcomingStamp(at, now(), m_timestampFormat, m_locale);
+}
+
+QString ThreadStore::formatTime(const QDateTime& at) const {
+  return at.isValid() ? sidebar::timeOfDay(at.toLocalTime(), m_timestampFormat, m_locale) : QString();
+}
+
+QString ThreadStore::formatDate(const QDateTime& at) const {
+  return shortDate(at, now(), m_locale);
+}
+
+QString ThreadStore::formatDateTime(const QDateTime& at) const {
+  return shortDateTime(at, now(), m_timestampFormat, m_locale);
+}
+
+QString ThreadStore::formatRelative(const QDateTime& at) const {
+  return relativeTime(at, now());
 }
 
 void ThreadStore::readSettings() {
@@ -143,6 +178,8 @@ void ThreadStore::readSettings() {
 void ThreadStore::configure(TimelineModel* model) const {
   model->setTimestampFormat(m_timestampFormat);
   model->setLocale(m_locale);
+  model->setFolds(m_folds);
+  model->setBackgroundWork(m_store->threadRow(model->threadKey()).value(QLatin1String("pendingBackgroundTasks")).toArray());
   // The other threads of its environment, by the titles the shell lists.
   const QString key = model->threadKey();
   const QString environment = key.left(key.indexOf(QLatin1Char(':')) + 1);
@@ -157,11 +194,24 @@ void ThreadStore::configure(TimelineModel* model) const {
   model->setThreadTitles([store = m_store, environment](const QString& threadId) {
     return store->threadRow(environment + threadId).value(QLatin1String("title")).toString();
   });
+  model->setThreadRows([store = m_store, environment](const QString& threadId) { return store->threadRow(environment + threadId); });
+  model->setProjectTitles([store = m_store, environment](const QString& projectId) {
+    return store->projectRow(environment.chopped(1), projectId).value(QLatin1String("title")).toString();
+  });
+  // The provider names and models a handoff or subagent reads by.
+  model->setProviders([shell = NativeShell::of(this)]() -> QJsonArray {
+    const auto* workspace = shell ? shell->controller<WorkspaceController>() : nullptr;
+    return workspace ? workspace->environmentConfig().value(QLatin1String("providers")).toArray() : QJsonArray();
+  });
 }
 
 void ThreadStore::open(const QString& threadKey) {
   if (threadKey == m_active) return;
-  if (!m_active.isEmpty() && m_threads.contains(m_active)) m_leftAt.insert(m_active, now());
+  if (!m_active.isEmpty() && m_threads.contains(m_active)) {
+    m_leftAt.insert(m_active, now());
+    // Kept warm, a thread left holds about what it opens with: it opens at its end.
+    if (TimelineModel* left = m_threads.value(m_active).model) left->keepFrom(left->rowCount() - 1);
+  }
   // One left too long ago is loaded again, the one being opened included.
   m_active.clear();
   evictIdle();
@@ -182,6 +232,14 @@ void ThreadStore::open(const QString& threadKey) {
               [this, threadKey, model = followed.model.data()](const QString& id) { signAttachment(model, threadKey, id); });
       connect(followed.model, &TimelineModel::earlierWanted, this, [this, threadKey](int items) {
         m_client->more(m_threads.value(threadKey).subscription, items);
+      });
+      // The MC holds a window per subscription and only ever lowers its floor
+      // (`more`): a raised one is a new subscription, resumed from the offset held.
+      connect(followed.model, &TimelineModel::windowRaised, this, [this, threadKey] {
+        const auto it = m_threads.find(threadKey);
+        if (it == m_threads.end() || !it->subscription) return;
+        unfollow(*it);
+        follow(threadKey);
       });
       LocalCache* kept = cache();
       followed.model->setCache(kept);
@@ -242,10 +300,23 @@ void ThreadStore::reload(const QString& threadKey) {
 
 // A signed address stops working a little before the MC says, so an image
 // asked for at the last moment still loads.
+// An id "workspace-file:<path>" is an image a tool call viewed in the
+// thread's workspace; "native-app-icon:<app>" the icon of an app a call drove
+// on the environment's machine, the app as the call names it.
 void ThreadStore::signAttachment(TimelineModel* model, const QString& threadKey, const QString& id) {
-  const QJsonObject resource{{QStringLiteral("_tag"), QStringLiteral("attachment")},
-                             {QStringLiteral("attachmentId"), id},
-                             {QStringLiteral("disposition"), QStringLiteral("inline")}};
+  static const QLatin1String kWorkspaceFile("workspace-file:");
+  static const QLatin1String kAppIcon("native-app-icon:");
+  const QJsonObject resource =
+      id.startsWith(kWorkspaceFile)
+          ? QJsonObject{{QStringLiteral("_tag"), QStringLiteral("workspace-file")},
+                        {QStringLiteral("threadId"), threadKey.mid(threadKey.indexOf(QLatin1Char(':')) + 1)},
+                        {QStringLiteral("path"), id.mid(kWorkspaceFile.size())}}
+      : id.startsWith(kAppIcon)
+          ? QJsonObject{{QStringLiteral("_tag"), QStringLiteral("native-app-icon")},
+                        {QStringLiteral("app"), QJsonDocument::fromJson(id.mid(kAppIcon.size()).toUtf8()).object()}}
+          : QJsonObject{{QStringLiteral("_tag"), QStringLiteral("attachment")},
+                        {QStringLiteral("attachmentId"), id},
+                        {QStringLiteral("disposition"), QStringLiteral("inline")}};
   m_client->call(model, threadKey.left(threadKey.indexOf(QLatin1Char(':'))), QStringLiteral("assets.createUrl"),
                  QJsonObject{{QStringLiteral("resource"), resource}},
                  [this, model, id](const QJsonValue& result, const std::optional<QString>& error) {

@@ -154,9 +154,13 @@ void dragLeave(World& world) {
   world.sync();
 }
 
+// The conversation's hint: the Composer's card has a ConversationDrop of its
+// own (composerDrop, off here), whose hint goes by the same name.
 bool dropHintShown(World& world) {
   Brick& brick = composerBrick(world);
-  return brick.item(QStringLiteral("conversationDropHint"))->isVisible() && brick.shows(QStringLiteral("Drop files to attach"));
+  auto* hint = brick.item(QStringLiteral("conversationDrop"))->findChild<QQuickItem*>(QStringLiteral("conversationDropHint"));
+  expect(hint != nullptr, QStringLiteral("the conversation's drop has no hint"));
+  return hint->isVisible() && brick.shows(QStringLiteral("Drop files to attach"));
 }
 
 QVariantMap attachment(World& world, const QString& name) {

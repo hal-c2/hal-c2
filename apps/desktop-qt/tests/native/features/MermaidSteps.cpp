@@ -1,6 +1,7 @@
 // Mermaid diagrams (features/timeline/markdown.feature,
-// features/files/file-viewer-and-editing.feature) as the desktop draws them:
-// the fake MC answers `mermaid.render` the way the MC's renderer does, the
+// features/files/file-viewer-and-editing.feature, and a page's in
+// features/space/markdown.feature, whose steps are SpaceSteps') as the desktop
+// draws them: the fake MC answers `mermaid.render` the way the MC's renderer does, the
 // shell's MermaidController (the `Diagrams` singleton) asks it, and the steps
 // read back the MermaidDiagram bricks of whatever brick the scenario shows
 // (a reply in the timeline, or the Files tab's rendered view).
@@ -26,11 +27,17 @@ const QString kSvg = QStringLiteral(
     "<rect x=\"1\" y=\"1\" width=\"158\" height=\"58\" rx=\"6\" fill=\"none\" stroke=\"#888\"/></svg>");
 
 // packages/contracts mermaid.ts's answers: a bracket opened and not closed is
-// the mistake the scenarios make, on the line it is on; anything else is drawn.
+// the mistake the scenarios make, on the line it is on; "block-beta" is a type
+// the renderer cannot draw (native/mermaid's words); anything else is drawn.
 const FakeMc::Extension extension([](FakeMc& mc) {
   mc.onRpc(QStringLiteral("mermaid.render"), [&mc](const FakeMc::Rpc& rpc) {
     const QString source = rpc.payload.value(QLatin1String("source")).toString();
     const QString kind = source.section(QRegularExpression(QStringLiteral("\\s")), 0, 0, QString::SectionSkipEmpty);
+    if (kind == QLatin1String("block-beta")) {
+      mc.reply(rpc, QJsonObject{{QStringLiteral("status"), QStringLiteral("unsupported")}, {QStringLiteral("kind"), kind},
+                                {QStringLiteral("reason"), kind + QStringLiteral(" diagrams cannot be drawn yet.")}});
+      return;
+    }
     const QStringList lines = source.split(QLatin1Char('\n'));
     for (qsizetype at = 0; at < lines.size(); ++at) {
       if (lines.at(at).count(QLatin1Char('[')) > lines.at(at).count(QLatin1Char(']'))) {
@@ -78,7 +85,7 @@ const Steps steps([] {
     world.waitFor([&] { return mermaid::drawn(world).size() == 1; }, [&] { return describeNotes(world); });
   });
   // The terminal's; the desktop draws the diagram.
-  step(QStringLiteral("in the terminal the diagram's source is shown, named as a %1 diagram").arg(q), [](World&, const Captures&, const Table&) {});
+  step(QStringLiteral("in the terminal the diagram is drawn in characters, or its source is shown, named as a %1 diagram").arg(q), [](World&, const Captures&, const Table&) {});
   step(QStringLiteral("the user is told where the mistake is"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] {
       const QList<QQuickItem*> notes = mermaid::shown(world, QStringLiteral("mermaidStatus"));

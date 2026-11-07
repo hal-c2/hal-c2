@@ -58,7 +58,7 @@ Rectangle {
         visible: overlay.model.rows.length === 0
         text: overlay.model.status === "loading"
             ? "loading…"
-            : overlay.model.status === "error" ? "failed to load" : "nothing to choose"
+            : overlay.model.status === "error" ? "failed to load" : overlay.model.emptyText
         color: overlay.model.status === "error" ? Theme.colors.error : Theme.colors.dim
     }
 

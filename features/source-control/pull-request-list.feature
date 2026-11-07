@@ -1,9 +1,31 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23887
+#   https://github.com/pingdotgg/t3code/pull/23034
+#   https://github.com/pingdotgg/t3code/pull/22633
+#   https://github.com/pingdotgg/t3code/pull/23922
+#   https://github.com/pingdotgg/t3code/pull/23923
+#   https://github.com/pingdotgg/t3code/pull/23924
+#   https://github.com/pingdotgg/t3code/pull/22782
+#   https://github.com/pingdotgg/t3code/pull/19177
+#   https://github.com/pingdotgg/t3code/pull/18813
+#   https://github.com/pingdotgg/t3code/pull/19179
+#   https://github.com/pingdotgg/t3code/pull/19180
+#   https://github.com/pingdotgg/t3code/pull/17681
+#   https://github.com/pingdotgg/t3code/pull/17725
+#   https://github.com/pingdotgg/t3code/pull/18126 (the phone's pull requests page beside its threads)
+#   https://github.com/pingdotgg/t3code/pull/18372 (the same page on Android)
+#   https://github.com/pingdotgg/t3code/pull/17774
+#   https://github.com/pingdotgg/t3code/pull/19224
+#   https://github.com/pingdotgg/t3code/pull/19934
+#   https://github.com/pingdotgg/t3code/pull/15851
+#   https://github.com/pingdotgg/t3code/pull/16280
 #   docs/user/source-control.md (Pull requests page)
 #   packages/contracts/src/pullRequest.ts (PullRequestListInput, PullRequestListResult, PullRequestProviderSummary, PullRequestUnavailableError)
 #   packages/contracts/src/rpc.ts (pullRequests.list, pullRequests.listStats, pullRequests.summary, pullRequests.invalidate, pullRequests.subscribeRefreshes)
 #   apps/server-ex/lib/hal_c2/pull_requests.ex (list, list_stats, summary, invalidate)
 #   apps/server-ex/lib/hal_c2/pull_requests/refreshes.ex
+#   apps/server-ex/lib/hal_c2/github.ex (gh/3: every call past one rate limit gate; asked/1)
+#   apps/server-ex/lib/hal_c2/github/limits.ex
 #   apps/server-ex/lib/hal_c2/pull_requests/github.ex (list: paged reads that shrink when GitHub gives up)
 #   apps/web/src/hooks/useLiveRefresh.ts, apps/web/src/hooks/usePullRequestChecksRefresh.ts (when an open view reads again)
 #   apps/web/src/components/pullRequest/pullRequestList.logic.ts
@@ -33,6 +55,10 @@
 #   apps/server/src/pullRequest/BitbucketPullRequestApi.ts, bitbucketPullRequestJson.ts
 #   apps/server/src/sourceControl/gitLabMergeRequests.ts, forgejoPullRequests.ts, azureDevOpsPullRequests.ts, bitbucketPullRequests.ts (draft markers, web addresses)
 #   apps/web/src/components/ChatView.tsx (a pull request tab beside a thread on an environment that cannot read pull requests)
+#   https://github.com/pingdotgg/t3code/pull/15549
+#   https://github.com/pingdotgg/t3code/pull/25008
+#   https://github.com/pingdotgg/t3code/pull/25713
+#   https://github.com/pingdotgg/t3code/pull/21389
 
 Feature: Browsing pull requests
   The pull requests page gathers pull requests from every project in the workspace, with
@@ -81,6 +107,48 @@ Feature: Browsing pull requests
       | the author "octocat"           |
       | the author being the user      |
 
+  # Upstream #23922: only GitHub was asked to filter; other hosts listed their newest rows and the
+  # MC dropped the misses, so a filtered page could hold two rows out of a hundred.
+  @backlog @mc
+  Scenario Outline: The host narrows the list by label, author and draft where it can
+    Given "acme/shop" is on <host> and has 100 open pull requests, 30 of them labelled "bug"
+    When the user lists open pull requests with the label "bug"
+    Then <host> is asked only for pull requests labelled "bug"
+    And the 30 of them are listed
+
+    Examples:
+      | host    |
+      | GitLab  |
+      | Forgejo |
+      | GitCafe |
+
+  # Upstream #23923: a filter the host could not apply left the first page with a couple of rows.
+  @backlog @mc
+  Scenario: A filter the host cannot apply still fills the page
+    Given the host of "acme/shop" cannot filter by author
+    When the user lists pull requests by the author "octocat"
+    Then the MC reads further pages of "acme/shop" until the page is full
+    And it stops after five reads when the filter matches little
+    And the list offers more when more is left
+
+  # Upstream #23924: the pickers only offered labels and authors from rows already loaded.
+  @backlog @desktop @mobile
+  Scenario Outline: The <filter> picker searches the host
+    Given the user is on the pull requests page
+    When the user searches the <filter> picker for "native"
+    Then it offers the matching <values> of every listed repository's host, beside those of the loaded rows
+
+    Examples:
+      | filter | values                    |
+      | label  | labels                    |
+      | author | people who can be authors |
+
+  @backlog @desktop @mobile @priority-low
+  Scenario: Hosts without labels or a people listing offer the authors already loaded
+    Given every listed repository is on Bitbucket or Azure DevOps
+    When the user opens the author picker on the pull requests page
+    Then it offers the authors of the loaded pull requests
+
   @mc
   Scenario: Searching every host
     When the user searches pull requests for "tax label:bug"
@@ -123,7 +191,7 @@ Feature: Browsing pull requests
     When the user lists pull requests
     Then GitLab is listed as not configured with "This host cannot be browsed here yet."
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Listing change requests on other hosts
     Given the project "infra" has its remote on <host>
     When the user lists open pull requests
@@ -136,6 +204,109 @@ Feature: Browsing pull requests
       | Azure DevOps |
       | Bitbucket    |
 
+  # Upstream #17681 adds GitCafe (git.cafe) as a host. Line comments in reviews, commit diffs and
+  # updating a branch outside a stack are refused for now; #23034 added reviewers and labels.
+  @backlog @mc @priority-low
+  Scenario: GitCafe pull requests are listed, read and reviewed
+    Given the project "cafe" has its remote on git.cafe
+    When the user lists open pull requests, filtered to Authored or Reviewing
+    Then the open pull requests of "cafe" are listed for that filter
+    And a pull request's detail, activity, diff, checks and stack can be read
+    And the user can comment, reply, resolve a conversation, submit a review and merge
+
+  @backlog @mc @priority-low
+  Scenario Outline: GitCafe's token is sent only to GitCafe
+    Given GitCafe's token comes from <source>
+    When the MC talks to <host>
+    Then the token <sent>
+
+    Examples:
+      | source                                    | host                         | sent        |
+      | CAFE_TOKEN with CAFE_HOST naming git.cafe | git.cafe                     | is sent     |
+      | the cafe CLI's git credential helper      | git.cafe                     | is sent     |
+      | CAFE_TOKEN with CAFE_HOST naming git.cafe | a page git.cafe redirects to | is not sent |
+
+  @backlog @mc @shared @priority-low
+  Scenario: A thread's linked git.cafe pull request is shown as GitCafe
+    Given a thread links "https://git.cafe/acme/shop/pulls/7"
+    When the user looks at the thread's pull request
+    Then it is shown as a GitCafe pull request, not a Forgejo one
+
+  # Upstream #22633: git.cafe lists no line totals, so linked rows showed none. The list itself
+  # stays without them, since counting takes seconds per pull request there.
+  @backlog @mc @shared @priority-low
+  Scenario: A linked GitCafe pull request shows its line counts
+    Given a thread links a GitCafe pull request that adds 159 lines and removes 37
+    When the user looks at the thread's pull request
+    Then it shows "+159 -37"
+    And the lines are counted again only after a push or a change of base
+
+  @backlog @mc @priority-low
+  Scenario: A GitCafe pull request whose changes cannot be read shows no line counts
+    Given a thread links a GitCafe pull request whose changed lines git.cafe fails to return
+    When the user looks at the thread's pull request
+    Then it shows no line counts rather than "+0 -0"
+
+  # Upstream #23034: reviewers and labels on GitCafe, read from their own endpoints since the
+  # pull request read carries neither.
+  @backlog @mc @shared @priority-low
+  Scenario: A GitCafe pull request's reviewers and labels can be read and changed
+    Given an open GitCafe pull request the user may edit
+    When the user opens it
+    Then its reviewers and labels are shown
+    And the user can request a reviewer other than the author and apply a repository label
+
+  @backlog @mc @priority-low
+  Scenario: A GitCafe reviewer change made meanwhile elsewhere is not overwritten
+    Given the user is requesting a reviewer on a GitCafe pull request
+    When someone else changes its reviewers before the request is written
+    Then the user's change fails and the other change is kept
+
+  @backlog @mc @priority-low
+  Scenario: A GitCafe token that may not read reviewers still opens the pull request
+    Given GitCafe's token lacks the right to read reviewers
+    When the user opens a GitCafe pull request
+    Then it opens with no reviewers shown
+
+  @backlog @mc @priority-low
+  Scenario Outline: A GitCafe pull request opens whatever git.cafe says about conflicts
+    Given git.cafe reports the pull request's conflicts as "<state>"
+    When the user opens it
+    Then it opens and its mergeability is <shown>
+
+    Examples:
+      | state       | shown       |
+      | none        | mergeable   |
+      | pending     | unknown     |
+      | conflicting | conflicting |
+      | something   | unknown     |
+
+  # Upstream #23887: an audit of the GitCafe driver against git.cafe.
+  @backlog @mc @priority-low
+  Scenario: GitCafe's Authored filter lists only the user's pull requests
+    Given the user signed in to GitCafe, whose profile is linked to GitHub
+    When the user lists GitCafe pull requests filtered to Authored
+    Then only pull requests the user opened are listed, including those opened through the GitHub sync
+
+  @backlog @mc @shared @priority-low
+  Scenario: A GitCafe merge that git.cafe is still finishing shows as armed
+    Given the user merged a GitCafe pull request and git.cafe is still finishing the merge
+    When the user looks at the pull request
+    Then it shows as set to merge, with no Merge and no way to cancel
+    And it reads as merged once git.cafe finishes
+
+  @backlog @mc @shared @priority-low
+  Scenario: The author of a GitCafe pull request may only comment in a review
+    Given the user opened a GitCafe pull request
+    When the user starts a review of it
+    Then only Comment is offered, not Approve or Request changes
+
+  @backlog @mc @priority-low
+  Scenario: A closed GitCafe pull request whose commits are gone still shows its timeline
+    Given a closed GitCafe pull request whose commits git.cafe no longer has
+    When the user opens its timeline
+    Then its comments and reviews are shown without commits
+
   @mc
   Scenario Outline: The list explains why a host cannot be read
     Given <condition>
@@ -147,12 +318,37 @@ Feature: Browsing pull requests
       | the GitHub CLI is not installed         | the GitHub CLI is required and how to install it |
       | the GitHub CLI is not signed in         | the user should run gh auth login and retry     |
 
+  # Upstream #17725: "az devops login" signs in with a token that "az account show" does not know.
+  @backlog @mc @priority-low
+  Scenario: An Azure DevOps CLI signed in with a token lists its pull requests
+    Given the Azure DevOps CLI is signed in only with a personal access token
+    And the user has opened a pull request in "dev.azure.com/acme/shop/_git/web"
+    When the user lists pull requests
+    Then the pull requests of "web" are listed
+    And the user's own pull request is under Authored
+
+  # Upstream #22782: the remote spells a space as %20, and the Azure CLI looked that name up
+  # literally and answered 404.
+  @backlog @mc @priority-low
+  Scenario: An Azure DevOps repository with a space in its name lists its pull requests
+    Given the project's remote is "git@ssh.dev.azure.com:v3/acme/shop/My%20Repo"
+    When the user lists pull requests
+    Then the pull requests of "My Repo" are listed
+    And the list does not say "my%20repo could not be read."
+
+  @backlog @mc @priority-low
+  Scenario: A token sign-in that has opened no pull request cannot name its viewer
+    Given the Azure DevOps CLI is signed in only with a personal access token
+    And the user has opened no pull request in "dev.azure.com/acme/shop/_git/web"
+    When the user lists pull requests
+    Then "web" reports it is unavailable because the user should run az login
+
   @mc
   Scenario: One failing project does not hide the others
     Given "acme/api" cannot be read
     When the user lists pull requests
     Then the pull requests of "acme/shop" are listed
-    And "acme/api" reports its own error with the host's reason, phrased for the user
+    And "acme/api" reports its own error with the host's reason, phrased for the user, and when it is read again
 
   # GitHub answers 502 or 504 to a query it cannot finish in about ten seconds; a
   # busy repository's pull requests with their checks can take that long.
@@ -164,6 +360,32 @@ Feature: Browsing pull requests
     Then all 60 open pull requests of "acme/shop" are listed
     And no project reports an error
 
+  # Each failure still spends GitHub's budget, and every view and background reader
+  # polls; a repository GitHub gives up on is held back like a rate limit, apart from
+  # the others.
+  @mc
+  Scenario: A repository GitHub keeps giving up on is left alone for a while
+    Given "acme/api" cannot be read
+    When the user lists pull requests
+    And the pull requests are listed again without the user asking
+    Then "acme/api" is not asked of GitHub again
+    But the pull requests of "acme/shop" are still read
+    And "acme/api" reports when it is read again, 30 seconds on, keeping what GitHub said
+    And GitHub giving up is logged once, not on every listing
+    And the hold doubles each time GitHub gives up again and never passes 15 minutes
+    And a hand refresh reads "acme/api" at once
+    And the first read that succeeds ends the hold and the doubling
+
+  @mc
+  Scenario: A repository read in smaller pages is read at that size for a while
+    Given "acme/shop" has 60 open pull requests
+    And GitHub gives up on reading more than 20 of them at once
+    When the user lists pull requests
+    And the pull requests are listed again without the user asking
+    Then the second listing asks for no page larger than the one that worked
+    And all 60 open pull requests of "acme/shop" are listed
+    And 15 minutes after the page shrank, a listing tries the usual size again
+
   @desktop @backlog-desktop
   Scenario: A project the host could not read is named once with a retry
     Given "acme/api" cannot be read
@@ -172,7 +394,7 @@ Feature: Browsing pull requests
     And the user can retry from the page
 
   # Legacy: apps/server/src/sourceControl/SourceControlRateLimit.ts (check, recordRateLimit, recordSuccess)
-  @mc @backlog
+  @mc
   Scenario: A host that rate limits HAL-C2 is left alone for a while
     Given GitHub answers a read with a rate limit and no time to retry
     When the user lists pull requests again straight away
@@ -181,8 +403,21 @@ Feature: Browsing pull requests
     And the pause is 30 seconds the first time, doubles each time the limit is hit again and never passes 15 minutes
     And the first answer that succeeds ends the pause and the doubling
 
+  # A spent budget waits for GitHub's own reset (`gh api rate_limit`); GitHub budgets
+  # GraphQL, REST and search apart.
+  @mc
+  Scenario: A spent budget is paused until GitHub resets it, and only that budget
+    Given GitHub answers a read with a rate limit and its read budget resets in 10 minutes
+    When the user lists pull requests again straight away
+    Then no request goes to GitHub
+    And the projects on GitHub report they are paused until the time GitHub gave
+    But a read from another of GitHub's budgets is still sent
+
+  # GitHub's numbers come in its response headers, which `gh api --include` shows; the
+  # MC's own reads go through `gh api`. `gh pr`, `gh issue` and the other commands show
+  # no headers, so a limit they meet is paused as its text and `gh api rate_limit` say.
   # Legacy: apps/server/src/sourceControl/SourceControlRateLimit.ts (retryAtFromHeader)
-  @mc @backlog
+  @mc
   Scenario Outline: A host's own retry time sets the length of the pause
     Given the host rate limits a read and says to retry <retry>
     When the user lists pull requests before then
@@ -194,17 +429,20 @@ Feature: Browsing pull requests
       | in 120 seconds                       |
       | at a date and time given in full     |
 
+  # GitHub budgets each account apart. The MC tells accounts apart without asking gh:
+  # by the token its environment gives gh for the host, else by the account gh has
+  # active there (`gh auth switch` changes it).
   # Legacy: apps/server/src/sourceControl/SourceControlRateLimit.ts (normalizedKey, CredentialScope)
-  @mc @backlog
+  @mc
   Scenario: A pause belongs to one host and one signed-in account
     Given GitHub rate limits the account signed in for "acme/shop"
     When the user lists pull requests
-    Then projects on a self-hosted GitHub or on another host are read as usual
-    And projects read with another signed-in account on the same host are read as usual
+    Then reads from a self-hosted GitHub are sent as usual
+    And once another account is signed in on the same host, its reads are sent as usual
 
   # Legacy: apps/server/src/pullRequest/PullRequestService.ts (withRateLimitBackoff, interactive)
   # Legacy: apps/server/src/sourceControl/SourceControlRateLimit.ts (check allowPaused)
-  @mc @backlog
+  @mc
   Scenario: What the user asks for goes through a pause without ending it
     Given the host is paused after a rate limit
     When the user comments on a pull request or merges it
@@ -212,7 +450,7 @@ Feature: Browsing pull requests
     And the pause is neither ended nor shortened by that request's answer
 
   # Legacy: apps/server/src/sourceControl/githubGraphQlBudget.ts (query, observe)
-  @mc @backlog
+  @mc
   Scenario: Background reads leave a tenth of GitHub's quota for what the user asks for
     Given GitHub reported that fewer than a tenth of its read quota is left until it resets
     When a background refresh needs to read pull requests
@@ -221,16 +459,17 @@ Feature: Browsing pull requests
 
   # Legacy: apps/server/src/sourceControl/githubGraphQlBudget.ts (quota snapshots per credential)
   # Legacy: apps/server/src/sourceControl/GitHubCli.test.ts (keeps quota snapshots separate for verified credentials)
-  @mc @backlog
+  @mc
   Scenario: An account that has used up its quota does not hold back another on the same host
     Given GitHub reported that the quota of one signed-in account is used up
     And another account is signed in on the same host with quota left
-    When a background refresh reads pull requests with the second account
+    When pull requests are read again with the second account
     Then the read is sent
 
+  # The MC sends no conditional reads, so a 304 reaches it only as a failure.
   # Legacy: apps/server/src/sourceControl/GitHubCli.ts (executeRaw, acceptNotModified)
   # Legacy: apps/server/src/sourceControl/GitHubCli.test.ts (accepts conditional 304 responses and preserves HTTP errors and retry delays)
-  @mc @backlog
+  @mc
   Scenario Outline: A refused re-read of unchanged data is told apart from a rate limit
     Given GitHub refuses a re-read of data that may be unchanged with <answer>
     When the user lists pull requests
@@ -242,6 +481,7 @@ Feature: Browsing pull requests
       | "too many requests" and a time to retry in 120 seconds     | the host is paused for 120 seconds                            |
       | "forbidden", no quota left and a reset time 60 seconds on  | the host is paused until the reset time                       |
       | "forbidden" with text saying the rate limit was exceeded   | the host is paused with the usual back-off                    |
+      | "not modified"                                             | the read fails without pausing the host                       |
       | "unauthorized"                                             | the user is told to sign in to GitHub again                   |
       | a server error                                             | the read fails with GitHub's status and without pausing it    |
 
@@ -431,7 +671,7 @@ Feature: Browsing pull requests
     Then "acme/shop" is listed once, as that worktree
     And the narrowing still applies
 
-  @backlog @desktop
+  @backlog @desktop @mobile
   Scenario Outline: A qualifier typed into the search becomes a filter
     Given the user is on the pull requests page
     When the user types "<typed>" into the search
@@ -537,6 +777,50 @@ Feature: Browsing pull requests
     Given a host has not said which account is signed in
     When the user types "author:me" into the search
     Then pull requests from that host are matched against an author actually named "me"
+
+  # Upstream #19934: the Draft menu and the search box say the same thing.
+  @backlog @desktop @mobile @priority-low
+  Scenario Outline: The Draft menu shows a draft qualifier typed into the search
+    Given the user is on the pull requests page
+    When the user types "<typed>" into the search
+    Then the Draft filter says "<shown>"
+    And the filters menu counts it as narrowing the list
+
+    Examples:
+      | typed       | shown       |
+      | draft:true  | Drafts only |
+      | draft:false | Hide drafts |
+
+  @backlog @desktop @mobile @priority-low
+  Scenario Outline: Choosing a Draft value replaces a typed draft qualifier
+    Given the user typed "fix draft:false" into the pull request search
+    When the user chooses "<choice>" for Draft
+    Then the search reads "fix"
+    And <which> are listed
+
+    Examples:
+      | choice      | which                                  |
+      | Drafts only | only draft pull requests               |
+      | All         | drafts and ready pull requests alike   |
+
+  @backlog @desktop @mobile @priority-low
+  Scenario: Changing another filter leaves a typed qualifier alone
+    Given the user typed "draft:false" into the pull request search
+    When the user chooses the merged state
+    Then the search still reads "draft:false"
+
+  @backlog @desktop @mobile @priority-low
+  Scenario: A typed qualifier outranks the filter chosen in the menu
+    Given the user chose "Drafts only" for Draft
+    When the user types "draft:false" into the search
+    Then only pull requests that are not drafts are listed
+
+  @backlog @desktop @mobile @priority-low
+  Scenario: Clearing a search that held only a qualifier shows loading, not an empty list
+    Given the user typed "draft:false" into the pull request search
+    When the user clears the search
+    Then the list shows it is loading until the wider list arrives
+    And "Nothing under these filters" is not shown meanwhile
 
   @backlog @desktop
   Scenario: Pull requests are grouped by how they involve the user
@@ -735,8 +1019,9 @@ Feature: Browsing pull requests
     Then the page offers "Load more pull requests"
     And choosing it reads the next page
 
+  # Upstream #23923: the phone gained Load more too.
   # Legacy: apps/web/src/routes/_chat.pull-requests.tsx (loadMore, footer)
-  @backlog @desktop
+  @backlog @desktop @mobile
   Scenario: A list with more to read offers the next page below its rows
     Given the page lists 99 pull requests and the hosts have further pages
     Then the page offers "Load more pull requests" below them
@@ -993,6 +1278,19 @@ Feature: Browsing pull requests
     Then the page lists pull requests of every project
     And before they arrive the scope is left as it was
 
+  @backlog @desktop @mobile @priority-low
+  Scenario: The Scratch folder is not a project to filter pull requests by
+    When the user opens the project menu
+    Then Scratch is not offered
+    And a saved scope naming Scratch lists pull requests of every project
+
+  @backlog @desktop @mobile @priority-low
+  Scenario: The project menu lists projects in the sidebar's order
+    Given the sidebar orders the projects "web", "api" and "docs"
+    When the user opens the project menu
+    Then the projects are listed "web", "api", "docs"
+    And projects that could not be read still come last
+
   # Legacy: apps/web/src/routes/_chat.pull-requests.tsx (server menu: onServer, onProject, "All servers", "All projects")
   @backlog @desktop
   Scenario: Choosing a server drops a project that belongs to another one
@@ -1056,6 +1354,18 @@ Feature: Browsing pull requests
     When the user opens the pull requests page
     Then the error is reported for that server's project only
     And the other server's project lists its pull requests
+
+  # Upstream #21389: on the phone, read errors pushed the pull requests off the screen while a
+  # host reconnected.
+  @backlog @mobile @priority-low
+  Scenario: Repositories that could not be read are summed up in one notice on the phone
+    Given three repositories could not be read while their host reconnects
+    When the user opens the pull requests page on the phone
+    Then one notice says 3 repositories could not be read, above the pull requests
+    When the user taps the notice
+    Then each repository's error is shown with its project and server
+    When the user changes which projects are listed
+    Then the errors are folded behind the notice again
 
   # Legacy: apps/web/src/components/pullRequest/pullRequestProjectAssignment.logic.test.ts (where a pull request can be acted on)
   @backlog @desktop
@@ -1189,6 +1499,14 @@ Feature: Browsing pull requests
     Given the host listed #12 with 40 additions and 2 deletions
     When line counts arrive for the page
     Then #12 keeps the counts it was listed with
+
+  # Upstream #25713: a pull request that got new commits kept its old line counts for the session.
+  @backlog @desktop @mobile
+  Scenario: A pull request pushed to since its line counts were read gets new ones
+    Given the list shows #12 with 40 additions and 2 deletions
+    When new commits are pushed to #12 and the list refreshes
+    Then #12 shows the line counts of its new head
+    And a pull request that has not changed is not asked for its counts again
 
   @backlog @desktop
   Scenario: Line counts already shown stay until their replacements arrive
@@ -1446,6 +1764,7 @@ Feature: Browsing pull requests
     Then the readable rows are listed
     And more can still be loaded
 
+  # Upstream #18813: on Bitbucket a full page sharing one update time made Load more return the same page; the pull requests already delivered are left out of the next request.
   @backlog @mc
   Scenario: Pull requests with the same update time are not lost between pages
     Given several pull requests were updated at the same instant across a page boundary
@@ -1480,13 +1799,13 @@ Feature: Browsing pull requests
     When the user searches pull requests for "   "
     Then the list is not narrowed
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A GitLab project in a nested group is addressed by its full path
     Given the project "infra" has its remote on GitLab at "acme/platform/infra"
     When the user lists open merge requests
     Then the merge requests of "acme/platform/infra" are listed
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Host states are shown as open, closed or merged
     Given a change request on <host> that the host calls <host state>
     When the user lists change requests
@@ -1503,14 +1822,14 @@ Feature: Browsing pull requests
       | GitLab       | locked              | open     |
       | GitLab       | closed with a merge time | merged |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Azure DevOps rows are dated by when they closed
     Given a completed pull request on Azure DevOps that was closed on 5 July
     When the user lists pull requests
     Then the row is dated 5 July
 
   # Legacy: apps/server/src/sourceControl/azureDevOpsPullRequests.ts (azureDevOpsPullRequestWebUrl)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: An Azure DevOps pull request is opened at the host's own link or one built from what it said
     Given pull request 7 on Azure DevOps comes with <given>
     When the user lists pull requests
@@ -1525,7 +1844,7 @@ Feature: Browsing pull requests
       | nothing but a programming address of another kind                                              | that address as it came                                         |
 
   # Legacy: apps/server/src/sourceControl/gitLabMergeRequests.ts, forgejoPullRequests.ts, azureDevOpsPullRequests.ts, bitbucketPullRequests.ts
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Each host marks a draft in its own way
     Given a change request on <host> that <marking>
     When the user lists change requests
@@ -1542,7 +1861,7 @@ Feature: Browsing pull requests
       | Azure DevOps | is flagged as a draft                               | a draft      |
       | Bitbucket    | is flagged as a draft                               | a draft      |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A host that reports no line counts leaves them out
     Given an open merge request on GitLab
     When the user lists open pull requests
@@ -1567,11 +1886,45 @@ Feature: Browsing pull requests
     When the MC reads them
     Then GitHub is asked in batches of at most 25 pull requests
 
+  @backlog @mc
+  Scenario: A pull request GitHub cannot find fails only its own lookup
+    Given a client asks for the summaries of pull requests 41, 42 and 43
+    And GitHub cannot find pull request 42
+    When the MC reads them
+    Then pull requests 41 and 43 are answered from the same request
+    And pull request 42 is reported as not found
+    And pull requests 41 and 43 are not read again
+
+  @backlog @mc @priority-low
+  Scenario: A malformed row in a listing is skipped
+    Given GitHub answers a listing of open pull requests with one row that cannot be read
+    When the user lists open pull requests
+    Then the other pull requests are listed
+    And the listing does not fail
+
   @backlog @desktop
   Scenario: A pull request view left open refreshes every five minutes
     Given the user is looking at a pull request or the pull requests page
     When the user keeps it open and keeps working
     Then it is read again about every five minutes
+
+  # Upstream #19177: pulling to refresh a pull request on the phone showed the cached checks.
+  @backlog @mobile
+  Scenario: Pulling to refresh a pull request on the phone reads its checks again
+    Given the phone shows pull request 42 with a check still running
+    And the check has since passed on the host
+    When the user pulls down to refresh
+    Then the check reads as passed
+
+  # Upstream #25008: after a checks refresh the open pull request kept showing the older
+  # checks, and its merge control with them, until its details were read again.
+  @backlog @desktop @mobile @priority-high
+  Scenario: Every view of a pull request shows the checks read last
+    Given pull request 42 is open with a check still running
+    And it is listed in the sidebar and on the pull requests page
+    When its checks are read again and the check has passed
+    Then the pull request, its row in the sidebar and its row on the pull requests page all read as passed
+    And the merge control no longer waits on that check
 
   @backlog @desktop
   Scenario: A pull request view stops refreshing when nobody is there
@@ -1697,14 +2050,14 @@ Feature: Browsing pull requests
     Then reads of pull requests go to the host instead of being remembered
     And the user is not shown an error
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A self-hosted project of an unrecognised kind is identified before it is listed
     Given the project "docs" has its remote on "code.example.test", which no built-in rule recognises
     When the user lists pull requests
     Then the MC asks which kind of host "code.example.test" is before listing "docs"
     And its merge requests are listed as GitLab ones from "code.example.test"
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Another checkout on the same host identifies it when one is gone
     Given two projects have their remote on "code.example.test"
     And the folder of the first project no longer exists
@@ -1712,14 +2065,14 @@ Feature: Browsing pull requests
     Then the host is identified through the second project
     And both projects are listed under GitLab
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A host that stays unidentified is reported but not read
     Given a project has its remote on a host whose kind cannot be identified
     When the user lists pull requests
     Then that host is reported as one the MC cannot read yet
     And the other hosts are listed as usual
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A review request is flagged for the user, spelled any way, but not on their own pull request
     Given the user is "bilal" and a review of pull request 1 is requested of "Bilal"
     And pull request 2 was written by "bilal" and lists "bilal" among its requested reviewers
@@ -1727,57 +2080,95 @@ Feature: Browsing pull requests
     Then pull request 1 is flagged as awaiting the user's review
     And pull request 2 is not
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A summary is made from details the MC already holds
     Given the details of pull request 1 were read a moment ago
     When a client asks for the summary of pull request 1
     Then the summary carries the title, draft flag, line counts, mergeability, review decision and checks of those details
     And the host is not asked again
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An older answer never replaces a newer one
     Given the MC holds a summary of pull request 1 updated at 10:05
     When details of pull request 1 updated at 10:00 arrive late
     Then the summary still shows the 10:05 state
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A merged pull request just observed settles without another read
     Given the MC saw pull request 1 merge a moment ago
     When a client asks for its state to settle a thread
     Then it is answered as merged without asking the host
 
   # Legacy: apps/server/src/pullRequest/GitHubPullRequestCli.ts (matchesInvolvement), gitHubPullRequestJson.ts (hasTeamReviewRequest)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: On GitHub a review asked of a team is listed among those awaiting the user's review
     Given pull request 1 on GitHub has a review requested of the team "acme/core" and of no person
     When the user lists pull requests where their review is requested
     Then pull request 1 is listed
 
   # Legacy: apps/server/src/pullRequest/AzureDevOpsPullRequestCli.ts (AzureDevOpsViewerUnavailableError)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An Azure DevOps sign-in that names no account cannot be listed for
     Given the Azure CLI answers for the current sign-in with no account
     When the user lists their pull requests on Azure DevOps
     Then the user is told "Azure CLI returned no account for the current sign-in."
 
   # Legacy: apps/server/src/pullRequest/BitbucketPullRequestApi.ts (BitbucketViewerUnavailableError)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Bitbucket credentials that name no account cannot be listed for
     Given Bitbucket answers for the configured credentials with no account name
     When the user lists their pull requests on Bitbucket
     Then the user is told "Bitbucket returned no account name for the configured credentials."
 
   # Legacy: apps/server/src/pullRequest/BitbucketPullRequestApi.ts (BitbucketRepositoryUnsupportedError)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A Bitbucket repository that is not a workspace and a name is refused
     Given a project whose Bitbucket repository is not written as workspace/repository
     When the user lists its pull requests
     Then the user is told "A Bitbucket repository is addressed as workspace/repository."
 
   # Legacy: apps/server/src/pullRequest/AzureDevOpsPullRequestProvider.ts (toChangeRequest: additions 0, deletions 0, labels [])
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An Azure DevOps row has no labels and no line counts, since the host keeps neither on the pull request
     Given an open pull request on Azure DevOps
     When the user lists open pull requests
     Then its row shows no labels
     And the row claims no added or removed lines
+
+  @backlog @desktop @priority-low
+  Scenario: The pull request list offers one-click actions on request
+    When the user asks for quick actions on the list
+    Then open pull requests offer close and merge, drafts close and ready for review, closed ones reopen
+    And merged ones offer none, and ending the request restores the rows
+
+  @backlog @desktop @priority-low
+  Scenario: Fast close and merge clicks are queued
+    Given the user presses close and merge on several rows quickly
+    When the actions run
+    Then each runs once, in order, and one does not restart another's checks
+
+  @backlog @desktop @priority-low
+  Scenario: Shift-drag closes a batch
+    Given the user holds Shift and presses Close
+    When they drag across rows of one group and release
+    Then the rows are closed in order, failures do not stop the rest, and one summary reports the result
+    And Escape cancels, before or after the drag starts
+
+  @backlog @mc @shared @priority-low
+  Scenario Outline: Quick actions follow what each host can do
+    Given pull requests on <host>
+    When the user asks for quick actions on the list or on a thread's linked pull request
+    Then open ones offer <open>, drafts offer <draft> and closed ones offer <closed>
+
+    Examples:
+      | host                    | open         | draft        | closed |
+      | GitHub, GitLab, GitCafe | close, merge | close, ready | reopen |
+      | Azure DevOps            | close, merge | close, ready | reopen |
+      | Forgejo                 | close, merge | close        | reopen |
+      | Bitbucket               | close, merge | close        | none   |
+
+  @backlog @shared
+  Scenario: A pull request query refreshes only while a view reads it
+    Given a pull request refresh signal arrives
+    When no view shows a query that is only kept by its idle time
+    Then it is marked stale and refreshes the next time a view reads it

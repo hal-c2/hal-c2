@@ -37,6 +37,42 @@ defmodule HalC2.DiagnosticsTest do
              })
   end
 
+  test "process commands redact authorization and credential values" do
+    secrets = ["live-bearer", "token-value", "password-value", "api-key-value"]
+
+    port =
+      Port.open({:spawn_executable, "/bin/sh"}, [
+        :binary,
+        args: [
+          "-c",
+          ~s(while read line; do echo "$line"; done),
+          ~s("Authorization":"Bearer live-bearer"),
+          "--token=token-value",
+          "--password=password-value",
+          "--api-key=api-key-value"
+        ]
+      ])
+
+    {:os_pid, pid} = Port.info(port, :os_pid)
+    Port.command(port, "ready\n")
+    assert_receive {^port, {:data, "ready\n"}}, 10_000
+
+    {:ok, %{"processes" => processes}} = HalC2.Diagnostics.processes()
+    process = Enum.find(processes, &(&1["pid"] == pid))
+    assert process["command"] =~ "Bearer [REDACTED]"
+    assert process["command"] =~ "token=[REDACTED]"
+    assert process["command"] =~ "password=[REDACTED]"
+    assert process["command"] =~ "api-key=[REDACTED]"
+    refute Enum.any?(secrets, &String.contains?(process["command"], &1))
+
+    assert {:ok, %{"signaled" => true}} =
+             HalC2.Diagnostics.signal(%{
+               "pid" => pid,
+               "startTimeMs" => process["startTimeMs"],
+               "signal" => "SIGKILL"
+             })
+  end
+
   test "the sampler's own ps is not listed as one of the MC's processes" do
     {:ok, %{"processes" => processes}} = HalC2.Diagnostics.processes()
     refute Enum.any?(processes, &String.contains?(&1["command"], " -axo pid="))

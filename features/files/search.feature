@@ -33,7 +33,7 @@ Feature: Searching project files
       Then "src/cart.ts" is returned
 
     # Legacy: apps/server/src/workspace/WorkspaceEntries.test.ts (supports typo-resistant file search through fff)
-    @mc @backlog
+    @mc @backlog @priority-low
     Scenario: A name typed with two letters swapped still finds the file
       Given "shop" holds "src/components/Composer.tsx"
       When a client searches "shop" for files named "compoesr"
@@ -60,7 +60,7 @@ Feature: Searching project files
         | image files | logo  | "assets/logo.png"  |
 
     # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.test.ts (filters image searches before applying the result limit)
-    @mc @backlog
+    @mc @backlog @priority-low
     Scenario: A search for image files drops everything else before it applies the limit
       Given "shop" holds 300 files named like "logo" and only 3 of them are images
       When a client searches "shop" for image files named "logo" with a limit of 50
@@ -68,7 +68,7 @@ Feature: Searching project files
       And the result is not marked as truncated
 
     # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.test.ts (filters image searches ... kind directory)
-    @mc @backlog
+    @mc @backlog @priority-low
     Scenario: Asking for folders and image files at once returns image files
       Given "shop" holds "public/icon.svg" and the folder "public"
       When a client searches "shop" for image files and folders with an empty query
@@ -100,7 +100,7 @@ Feature: Searching project files
       When the user goes to a file and types "zzz"
       Then the user is told no files match
 
-    @backlog @desktop @mobile
+    @backlog @desktop @mobile @priority-low
     Scenario Outline: The file picker says when it is still working or has nothing to list
       Given <state>
       When the user goes to a file
@@ -112,7 +112,7 @@ Feature: Searching project files
         | a search is still running               | Searching workspace files… |
         | the project has no files                | No files found.            |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The picker lists only files, in the order the environment ranked them
       Given the environment ranks "src/cart.ts" above "src/cart/index.ts" for "cart"
       When the user goes to a file and types "cart"
@@ -120,7 +120,7 @@ Feature: Searching project files
       And "src/cart.ts" is listed before "src/cart/index.ts"
       And the characters that matched are highlighted in each path
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The picker lists at most 200 files
       Given 500 files match "a"
       When the user goes to a file and types "a"
@@ -156,10 +156,16 @@ Feature: Searching project files
       And the result explains why the regular expression was not used
 
     @mc
-    Scenario: Content search works without ripgrep installed
+    Scenario: Literal content search works without ripgrep installed
       Given ripgrep is not installed on the environment
       When a client searches the contents of "shop" for "total"
       Then "src/cart.ts" is returned
+
+    @mc
+    Scenario: Regular expression content search without ripgrep says what it needs
+      Given ripgrep is not installed on the environment
+      When a client searches the contents of "shop" for "T.tal" as a regular expression
+      Then the MC answers that regular expression search needs ripgrep
 
     @mc
     Scenario: Content search skips files larger than one megabyte
@@ -176,7 +182,7 @@ Feature: Searching project files
       And the result is marked as truncated
 
     # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.ts (CONTENT_SEARCH_MAX_MATCHES_PER_FILE)
-    @mc @backlog
+    @mc @backlog @priority-low
     Scenario: One file with a very large number of matches does not fill the whole result
       Given "logs/trace.log" in "shop" contains "total" on 1,000 lines
       And "src/cart.ts" contains "total" once
@@ -185,7 +191,7 @@ Feature: Searching project files
       And "src/cart.ts" is returned
 
     # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.ts (isWholeWordRange, mapContentMatchRanges)
-    @mc @backlog
+    @mc @backlog @priority-low
     Scenario Outline: Whole-word search treats punctuation and accented letters like a word processor
       Given "src/cart.ts" contains the line "<line>"
       When a client searches the contents of "shop" for "<query>" matching whole words
@@ -200,14 +206,14 @@ Feature: Searching project files
         | écrans only         | écran | is not returned |
 
     # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.ts (mapContentMatchRanges: byte offsets to characters)
-    @mc @backlog
+    @mc @backlog @priority-low
     Scenario: The match range counts characters even when the line has wide characters before it
       Given "src/cart.ts" contains the line "日本語 total"
       When a client searches the contents of "shop" for "total"
       Then the match range starts at character 4 of the line
 
     # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.ts (buildContentSearchQuery)
-    @mc @backlog
+    @mc @backlog @priority-low
     Scenario: A regular expression search is case-insensitive unless the user asked to match case
       Given "src/cart.ts" contains the line "const Total = 1"
       When a client searches the contents of "shop" for "T.tal" as a regular expression
@@ -227,7 +233,7 @@ Feature: Searching project files
       When the user searches the project contents for "cart"
       Then the user sees how many results were found in how many files
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A long list of content matches is shown a part at a time
       Given the search for "item" has 450 matches
       When the user looks at the results
@@ -236,13 +242,13 @@ Feature: Searching project files
       Then the next matches are added below
       And the result count still says 450 results
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The keyboard can move past the matches shown so far
       Given the search for "item" has 450 matches and 100 are shown
       When the user moves down to the 101st match with the keyboard
       Then the 101st match is shown and highlighted
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Enter does not open a match from the previous search
       Given the user searched the project contents for "total" and sees its matches
       When the user changes the query to "cart" and presses Enter before its matches arrive

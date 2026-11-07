@@ -1,10 +1,15 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14753
+#   https://github.com/pingdotgg/t3code/pull/18443
+#   https://github.com/pingdotgg/t3code/pull/17654
+#   https://github.com/pingdotgg/t3code/pull/24775
 #   apps/server-ex/lib/hal_c2/worktree_setup.ex
 #   apps/web/src/components/chat/WorktreeSetupCard.tsx
 #   packages/contracts/src/rpc.ts (subscribeWorktreeSetup, worktreeSetup.cancel)
 #   apps/mobile/src/features/threads/worktree-setup-card.tsx (Work locally, background setup script, output tail)
 #   apps/mobile/src/features/threads/worktree-setup-state.ts
 #   packages/client-runtime/src/worktreeSetup.ts (which setup the conversation shows)
+#   https://github.com/pingdotgg/t3code/pull/13673 (setup shell closes after a successful script)
 
 Feature: Preparing a new thread's worktree
   A thread started in a new worktree waits while the worktree is made and the project's
@@ -38,6 +43,15 @@ Feature: Preparing a new thread's worktree
     When the user cancels the setup
     Then the worktree is removed
     And the thread's first run is cancelled
+
+  # Upstream #18443: cancelling the setup stops the background branch rename before the
+  # worktree is removed, so the rename cannot land on a worktree that is gone.
+  @backlog @mc
+  Scenario: Cancelling the setup stops the branch rename first
+    Given the temporary branch is still being renamed from the first message
+    When the user cancels the setup
+    Then the rename is stopped before the worktree is removed
+    And the thread is left with no worktree and no renamed branch
 
   @mc
   Scenario: The setup cannot be cancelled once the agent has started
@@ -84,6 +98,23 @@ Feature: Preparing a new thread's worktree
     Then it runs in the worktree in a terminal named "setup" on "Cart totals"
     And the user can open that terminal to follow it
 
+  # Upstream #24775: a shell startup prompt (an rc file asking to install a tool) read the typed
+  # setup command as its answer, and setup hung on "Setup Worktree".
+  @backlog @mc @priority-high
+  Scenario: The setup script is typed only once the setup shell is ready for a command
+    Given the user's shell startup asks "Do you want to install it? answer [y/N]"
+    When the setup script starts
+    Then the setup command is not typed while that question is open
+    And the setup output shows the question, and the user can open the setup terminal to answer it
+    When the user answers it
+    Then the setup script runs and its completion is reported
+
+  @backlog @mc
+  Scenario: A setup shell that exits while starting runs nothing
+    Given the setup shell exits before it is ready for a command
+    When the setup script was about to start
+    Then nothing is typed and the setup reports no exit code
+
   @mc
   Scenario: The setup script knows where the project and the worktree are
     Given the setup script records "HAL_C2_PROJECT_ROOT" and "HAL_C2_WORKTREE_PATH"
@@ -96,6 +127,14 @@ Feature: Preparing a new thread's worktree
     When the setup script exits with 1
     Then the setup fails with "Setup script exited with 1."
     And the agent does not start
+
+  # Upstream #13673: an idle setup shell closes once its script succeeds, so a finished setup leaves no terminal behind.
+  # A failed script already keeps its shell open for the error (apps/server-ex/lib/hal_c2/worktree_setup.ex await_script),
+  # so that path is not ledgered as new behaviour here.
+  @mc @backlog
+  Scenario: A setup script that succeeds closes its idle setup terminal
+    Given the setup script ran in the terminal "setup" and exited with 0
+    Then the "setup" terminal is closed
 
   @mc
   Scenario: A setup script that runs alongside the agent does not stop it when it fails
@@ -143,6 +182,13 @@ Feature: Preparing a new thread's worktree
     When the user chooses to retry the setup
     Then the MC is asked to run the setup again
 
+  # Upstream #14753: after a failed worktree setup the composer lost its bottom toolbar.
+  @backlog @shared @priority-low
+  Scenario: The composer keeps its controls after a setup fails
+    Given the setup of "Cart totals" failed
+    When the user looks at "Cart totals"
+    Then the composer still offers its model picker and send button
+
   @desktop @mobile @backlog-mobile
   Scenario: A setup that failed once the agent was starting cannot be retried
     Given the setup of "Cart totals" failed as its agent started
@@ -150,7 +196,7 @@ Feature: Preparing a new thread's worktree
     Then the conversation offers no retry
 
   # Legacy: packages/client-runtime/src/worktreeSetup.ts (resolveVisibleWorktreeSetup)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: A setup that went cleanly leaves the conversation once the agent is replying
     Given the setup of "Cart totals" finished with every step done
     When the agent starts replying in "Cart totals"
@@ -158,7 +204,7 @@ Feature: Preparing a new thread's worktree
     But a setup that failed, or whose script failed, or that was cancelled, stays shown
 
   # Legacy: packages/client-runtime/src/worktreeSetup.ts (resolveVisibleWorktreeSetup)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: The setup is history once the user sends a follow-up
     Given the setup of "Cart totals" failed
     When the user sends another message in "Cart totals"
@@ -186,8 +232,29 @@ Feature: Preparing a new thread's worktree
     Then the conversation says how long the agent has been working
     And the user can open the setup progress by naming the script that is still running
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The setup details show the last lines of the setup script's output
     Given the setup script of "Cart totals" is running or failed
     When the user opens the setup details
     Then the user sees the last few lines of the script's output
+
+  @backlog @mc @shared @mobile @priority-high
+  Scenario: A new worktree thread keeps its worktree when the agent starts
+    Given a new worktree thread whose setup script runs alongside the agent
+    When the agent starts its first turn
+    Then the thread stays on its worktree and branch
+    And the first turn completes
+
+  @backlog @mc @shared @mobile @priority-high
+  Scenario: A message sent while the worktree is being set up is queued
+    Given a new worktree thread is still checking out its worktree or running a setup script it must wait for
+    When the user sends a follow-up
+    Then the follow-up is queued
+    And it starts by itself after the first turn finishes
+
+  @backlog @mc
+  Scenario: A follow-up queued during a setup that never made the worktree is held
+    Given a follow-up is queued behind a worktree thread's setup
+    When the setup is cancelled or fails before the worktree exists
+    Then the follow-up is held instead of running in the project's own checkout
+    And retrying the setup lets it follow the first turn again

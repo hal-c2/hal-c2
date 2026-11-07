@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18692
+#   https://github.com/pingdotgg/t3code/pull/20231
+#   https://github.com/pingdotgg/t3code/pull/18901
+#   https://github.com/pingdotgg/t3code/pull/17860
 #   docs/user/project-settings.md (Project category, mobile Overview, project icons)
 #   apps/web/src/components/settings/ProjectsSettings.tsx
 #   apps/web/src/components/settings/ProjectSettingsPanel.tsx
@@ -6,6 +10,10 @@
 #   apps/web/src/shell/HalC2ShellBridge.tsx (project.remove)
 #   apps/tui/src/features.backlog.test.ts (project-lifecycle)
 #   packages/contracts/src/rpc.ts (projects.mutate)
+#   https://github.com/pingdotgg/t3code/pull/14490
+#   https://github.com/pingdotgg/t3code/pull/14527
+#   https://github.com/pingdotgg/t3code/pull/14635
+#   https://github.com/pingdotgg/t3code/pull/21409
 
 Feature: Projects settings panel
   The Projects panel manages one project across its checkouts: its name, its icon, its
@@ -38,6 +46,21 @@ Feature: Projects settings panel
     When that checkout is removed on another device
     Then the user is told this checkout is no longer available in the selected project and environment
 
+  # Upstream #18692: picking an environment without the project replaced the page with a dead end.
+  @backlog @desktop
+  Scenario: The environments offered for a project are the ones that have it
+    Given the environment "spare" has no checkout of "shop"
+    When the user picks the environment for "shop" in the Projects settings
+    Then "laptop" and "server" are offered and "spare" is not
+
+  # Upstream #18692: a stale link to a project on an environment without it kept no way back.
+  @backlog @desktop
+  Scenario: A project unavailable on the picked environment keeps the way back
+    Given the user opens the Projects settings for "shop" on an environment without it
+    Then the user is told why "shop" is unavailable there
+    And the project and environment pickers are still shown
+    And showing all environments keeps "shop" picked
+
   @desktop
   Scenario: The panel keeps following the project when grouping changes
     Given the user is managing "shop" in settings
@@ -49,7 +72,7 @@ Feature: Projects settings panel
     When the user renames "shop" to "Shop web" in settings
     Then "Shop web" is shown for the checkouts on "laptop" and "server"
 
-  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
   Scenario: A project name cannot be empty
     When the user clears the name of "shop" in settings
     Then the user is told the project title cannot be empty
@@ -67,19 +90,20 @@ Feature: Projects settings panel
     When the user renames "shop" to "Shop web" in settings
     Then the user is told the rename failed on "server"
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: The icon of a project is chosen and reset from the panel
     When the user chooses the emoji "🛒" as the icon of "shop" in settings
     Then "shop" shows "🛒" on every checkout
     When the user sets the icon of "shop" back to automatic
     Then "shop" shows its automatic icon
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: The panel lists every checkout with where it lives
     When the user manages "shop" in settings
     Then the checkouts on "laptop" and "server" are listed with their folders
 
-  @desktop
+  # Upstream #21409: the phone lists projects and checkouts and can now remove them too.
+  @desktop @mobile @backlog-mobile
   Scenario: Removing one checkout keeps the others
     When the user removes the "server" checkout of "shop" and confirms
     Then "shop" is listed only on "laptop"
@@ -90,12 +114,29 @@ Feature: Projects settings panel
     Then "shop" is no longer listed on "laptop" or "server"
     And no files are deleted on either machine
 
-  @desktop
+  # Upstream #21409
+  @desktop @mobile @backlog-mobile
   Scenario: The removal confirmation names what will be cleared
     Given the "laptop" checkout of "shop" has 3 threads
     When the user asks to remove the "laptop" checkout of "shop"
     Then the confirmation names 3 threads, the folder and "laptop"
     And the confirmation says conversation history is cleared permanently
+
+  # Upstream #21409: after removal the phone left a dead screen and kept filtering by the project.
+  @backlog @mobile
+  Scenario: Removing a project on the phone goes back and clears its drafts
+    Given the user filtered the phone's project settings to "shop" and has an unsent draft in "shop"
+    When the user removes "shop" everywhere and confirms
+    Then the phone goes back to the project list, no longer filtered by "shop"
+    And the unsent draft in "shop" is gone
+
+  # Upstream #20231: removing a project returns to the project overview and keeps the chosen environment.
+  @backlog @desktop
+  Scenario: Removing a project returns to the project list
+    Given the user is looking at the "laptop" checkout of "shop" in the Projects settings
+    When the user removes it and confirms
+    Then the Projects settings list the remaining projects
+    And "laptop" is still the environment shown
 
   @desktop
   Scenario: Removing from the desktop folder explorer opens the removal in settings
@@ -112,3 +153,96 @@ Feature: Projects settings panel
   Scenario: The panel points to other project settings
     When the user manages "shop" in settings
     Then the user is told to keep the project picked while browsing other pages to find more of its settings
+
+  # Upstream #14490: Add project hides disconnected environments
+  @backlog @shared
+  Scenario: Add project offers only connected environments
+    Given one environment is connected and another is switched off in Connections
+    When the user starts Add project
+    Then the switched-off environment is not offered
+    And with a single connected environment the chooser is skipped
+
+  # Upstream #14490: Add project with no connected environment points at Connections
+  @backlog @shared
+  Scenario: Add project with no connected environment points at Connections
+    Given every environment is switched off
+    When the user starts Add project
+    Then the user is directed to Connections
+
+  # Upstream #14527: start a new project from just a name
+  @backlog @shared @mc
+  Scenario: A new project is started from just a name
+    Given a connected environment
+    When the user chooses New project and types "Pinball Stats"
+    Then the MC creates a folder "pinball-stats" under its projects directory with a README, an icon and a first commit
+    And the project is titled "Pinball Stats"
+    And a new thread opens in it
+
+  # Upstream #14527: start a new project from just a name
+  @backlog @mc
+  Scenario: A taken project folder gets a numeric suffix
+    Given a new project "Pinball Stats" already exists
+    When the user creates another new project named "Pinball Stats"
+    Then its folder is "pinball-stats-2"
+
+  # Upstream #14527: start a new project from just a name
+  @backlog @mc
+  Scenario: A new project survives a failed first commit
+    Given Git has no user name or email
+    When the user creates a new project
+    Then the project is still created
+    And a warning says why the first commit failed
+
+  # Upstream #14527: start a new project from just a name
+  @backlog @shared @priority-low
+  Scenario: The new project name step names the machine
+    Given more than one environment is connected
+    When the user opens the New project name step
+    Then it lists the machines and the path line names the one chosen
+    And switching machine keeps the typed name
+
+  # Upstream #14527: start a new project from just a name
+  @backlog @shared
+  Scenario: A new project can also be published as a private repository
+    Given GitHub is signed in
+    When the user creates a new project with "Create private repository on GitHub" on
+    Then the repository is published after the project is created
+
+  # Upstream #18901: Cmd+Enter creates the project while an option is highlighted
+  @backlog @shared @priority-low
+  Scenario: mod+Enter creates the new project while an option is highlighted
+    Given the user typed a name in the New project step
+    And "Create private repository on GitHub" is highlighted
+    Then the create button offers mod+Enter
+    When the user presses mod+Enter
+    Then the project is created and the option is left as it was
+    But pressing Enter alone toggles the highlighted option
+
+  # Upstream #17860: a new project can be published to any ready host
+  @backlog @shared @mobile
+  Scenario: A new project can be published to any ready host
+    Given GitHub and GitLab are both signed in
+    When the user creates a new project with publishing on
+    Then the user can pick GitHub or GitLab, with GitHub first
+    And the repository is published to the chosen host, and the messages name it
+
+  # Upstream #17860: only hosts that can say where the repository goes are offered
+  @backlog @shared @mobile @priority-low
+  Scenario Outline: A host is offered for a new project only when it can say where the repository goes
+    Given <host> is signed in <how>
+    When the user creates a new project with publishing on
+    Then <host> is <offered>
+
+    Examples:
+      | host         | how                                     | offered     |
+      | Forgejo      | with an account                         | offered     |
+      | Bitbucket    | with an API token that names no username | not offered |
+      | Azure DevOps | with an account                         | not offered |
+
+  # Upstream #14635: cloned projects show their favicon instead of a monogram
+  @backlog @mc @priority-low
+  Scenario: A cloned project shows its favicon at once
+    Given a repository with a favicon is being cloned as a project
+    When the clone finishes
+    Then the project shows the repository's favicon instead of a generated monogram
+    And no reload is needed

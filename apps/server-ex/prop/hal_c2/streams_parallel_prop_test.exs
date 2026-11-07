@@ -109,7 +109,9 @@ defmodule HalC2.StreamsParallelPropTest do
 
   defp fold(state, id), do: Map.get(state.folds, id, StreamState.new())
 
-  defp comparable(st), do: %{st | updated_at: nil}
+  # The stream as anyone reading it sees it: where it keeps its older runs
+  # (`HalC2.StreamState`, "Hot and cold") is its own business.
+  defp comparable(st), do: %{st | updated_at: nil, src: nil}
 
   # --- what everyone holds once it settles ---------------------------------------
 

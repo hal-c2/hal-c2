@@ -34,6 +34,7 @@ struct FakeGit {
     QStringList branches;  // most recently committed first
     QString current;
     QString defaultBranch;
+    QStringList remotes;  // "origin/main", after the local branches
   };
   QHash<QString, Repo> repos;
   QString refuseSwitch;  // git's explanation, when a switch fails
@@ -55,7 +56,8 @@ void sendStatus(FakeMc& mc, const QString& cwd) {
   }
 }
 
-QJsonArray orderedRefs(const FakeGit::Repo& repo, const QString& query) {
+// Without `matchingRemotes`, a remote branch with a local one of its name is left out, as the MC does.
+QJsonArray orderedRefs(const FakeGit::Repo& repo, const QString& query, bool matchingRemotes = false) {
   QStringList names;
   if (repo.branches.contains(repo.current)) names.append(repo.current);
   if (repo.defaultBranch != repo.current && repo.branches.contains(repo.defaultBranch)) names.append(repo.defaultBranch);
@@ -69,6 +71,13 @@ QJsonArray orderedRefs(const FakeGit::Repo& repo, const QString& query) {
                             {QStringLiteral("current"), name == repo.current},
                             {QStringLiteral("isDefault"), name == repo.defaultBranch},
                             {QStringLiteral("isRemote"), false}});
+  }
+  for (const QString& name : repo.remotes) {
+    const QString remote = name.section(QLatin1Char('/'), 0, 0);
+    if (!matchingRemotes && repo.branches.contains(name.section(QLatin1Char('/'), 1))) continue;
+    if (!query.isEmpty() && !name.contains(query, Qt::CaseInsensitive)) continue;
+    refs.append(QJsonObject{{QStringLiteral("name"), name}, {QStringLiteral("current"), false}, {QStringLiteral("isDefault"), false},
+                            {QStringLiteral("isRemote"), true}, {QStringLiteral("remoteName"), remote}});
   }
   return refs;
 }
@@ -108,7 +117,7 @@ const FakeMc::Extension extension([](FakeMc& mc) {
   });
   mc.onRpc(QStringLiteral("vcs.listRefs"), [&mc](const FakeMc::Rpc& rpc) {
     const FakeGit::Repo repo = mc.part<FakeGit>().repos.value(rpc.payload.value(QLatin1String("cwd")).toString());
-    const QJsonArray all = orderedRefs(repo, rpc.payload.value(QLatin1String("query")).toString());
+    const QJsonArray all = orderedRefs(repo, rpc.payload.value(QLatin1String("query")).toString(), rpc.payload.value(QLatin1String("includeMatchingRemoteRefs")).toBool());
     const int limit = rpc.payload.value(QLatin1String("limit")).toInt(100);
     const int cursor = rpc.payload.value(QLatin1String("cursor")).toInt(0);
     mc.part<FakeGit>().refPages.append(cursor);
@@ -399,6 +408,7 @@ const Steps steps([] {
   step(QStringLiteral("the user searches the branch list for %1").arg(q), search);
   step(QStringLiteral("the user searched the branch list for %1").arg(q), search);
   step(QStringLiteral("only %1 is listed").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (world.onSettingsPage.contains(QStringLiteral("onlyListed"))) return world.onSettingsPage.value(QStringLiteral("onlyListed"))(c);
     if (at(world.state(QStringLiteral("archivedThreads")), QStringLiteral("open")).toBool()) {
       world.waitFor([&] { return archiveListsOnly(world, c[0]); },
                     [&] { return QStringLiteral("only %1 archived; the archive is %2").arg(c[0], show(world.state(QStringLiteral("archivedThreads")))); });
@@ -724,4 +734,12 @@ void seedBranches(World& world, const QString& project, const QStringList& branc
 void fakeGitRepo(World& world, const QString& cwd, const QStringList& branches, const QString& current, const QString& defaultBranch) {
   world.mc.part<FakeGit>().repos.insert(cwd, {branches, current, defaultBranch});
   sendStatus(world.mc, cwd);
+}
+
+void fakeGitBranches(World& world, const QString& cwd, const QStringList& branches, const QStringList& remotes) {
+  FakeGit::Repo& repo = world.mc.part<FakeGit>().repos[cwd];
+  for (const QString& branch : branches) {
+    if (!repo.branches.contains(branch)) repo.branches.append(branch);
+  }
+  repo.remotes += remotes;
 }

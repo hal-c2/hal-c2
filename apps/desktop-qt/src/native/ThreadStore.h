@@ -47,6 +47,8 @@ class ThreadStore : public QObject, public NativeController {
   Q_OBJECT
   Q_PROPERTY(QString activeThread READ activeThread NOTIFY activeThreadChanged)
   Q_PROPERTY(TimelineModel* timeline READ activeTimeline NOTIFY activeThreadChanged)
+  // The device's Time format setting: "locale", "12-hour" or "24-hour".
+  Q_PROPERTY(QString timestampFormat READ timestampFormat NOTIFY timesChanged)
 
 public:
   // Threads kept following besides the active one.
@@ -79,8 +81,17 @@ public:
   void setClock(std::function<QDateTime()> now);
   // The locale the timelines read times in (the system's by default).
   void setLocale(const QLocale& locale);
+  // How the timelines read: the desktop's or the phone's (TimelineModel::setFolds).
+  void setFolds(TimelineModel::Folds folds);
   // A time that may be ahead (a usage limit's reset) as the timelines read it.
-  QString upcoming(const QDateTime& at) const;
+  Q_INVOKABLE QString upcoming(const QDateTime& at) const;
+  QString timestampFormat() const { return m_timestampFormat; }
+  // Times as the timelines read them, for Format.qml (plugin pages): the time
+  // of day, the short date, both, and how long ago. Empty for an invalid time.
+  Q_INVOKABLE QString formatTime(const QDateTime& at) const;
+  Q_INVOKABLE QString formatDate(const QDateTime& at) const;
+  Q_INVOKABLE QString formatDateTime(const QDateTime& at) const;
+  Q_INVOKABLE QString formatRelative(const QDateTime& at) const;
 
   // The one place a thread's stream is addressed.
   static QJsonObject streamShape(const QString& environmentId, const QString& threadId);
@@ -139,4 +150,5 @@ private:
   std::function<QDateTime()> m_now;
   QString m_timestampFormat = QStringLiteral("locale");
   QLocale m_locale;
+  TimelineModel::Folds m_folds = TimelineModel::Folds::Desktop;
 };

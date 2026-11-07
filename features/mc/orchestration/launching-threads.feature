@@ -8,6 +8,7 @@
 #   apps/server/src/orchestration-v2/ (launch and prepared run handling)
 #   apps/server/src/orchestration-v2/ThreadLaunchService.ts (reusing a thread, cancelled setup)
 #   apps/server/src/orchestration-v2/Orchestrator.ts (workspace preparation item, interrupt before start)
+#   https://github.com/pingdotgg/t3code/pull/15326
 Feature: Launching a thread with its first message
   Launching creates a thread in the project root, an existing worktree, or a new
   worktree, and sends its first message. A new worktree is prepared before the
@@ -199,7 +200,7 @@ Feature: Launching a thread with its first message
     Then the run records an error titled "Workspace preparation failed" with that message
     And the failure is marked as not worth retrying
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Progress for a run that is not waiting for its workspace is refused
     Given thread "t1" has a run that already started
     When a client reports workspace progress for that run
@@ -212,9 +213,15 @@ Feature: Launching a thread with its first message
     Then the run is interrupted without the provider being asked
     And the run records "Run interrupted before provider start"
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Cancelling the setup closes its terminal and forgets what the script printed
     Given a launched thread's setup script is running in its setup terminal
     When the user cancels the setup before the agent starts
     Then the setup terminal is closed and its history is deleted
     And the thread records no branch and no worktree
+
+  @backlog @mc @shared @priority-high
+  Scenario: A failed workspace preparation can be retried
+    Given a run failed with "Workspace preparation failed"
+    When the user chooses Retry
+    Then the preparation runs again for the same run, reusing a worktree the failed attempt created

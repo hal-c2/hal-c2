@@ -35,8 +35,14 @@ qt_add_executable(hal-c2-mobile
   src/MobileApp.h
   src/Maintenance.cpp
   src/Maintenance.h
+  src/MobileTerminal.cpp
+  src/MobileTerminal.h
   src/Pairing.cpp
   src/Pairing.h
+  src/Resume.cpp
+  src/Resume.h
+  src/TurnAgents.cpp
+  src/TurnAgents.h
   "${HAL_C2_DESKTOP_DIR}/src/LocalFolderModel.cpp"
   "${HAL_C2_DESKTOP_DIR}/src/LocalFolderModel.h"
   "${HAL_C2_DESKTOP_DIR}/src/ScriptedRun.cpp"

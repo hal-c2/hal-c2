@@ -4,9 +4,10 @@ import QtQuick
 import QtQuick.Layouts
 import HalC2.Shell
 
-// The thread's terminal drawer: a tab per split group and the shown group's
-// terminals side by side or stacked (TerminalSplits), fed by the `Terminals`
-// controller's sessions on the MC. Open flag, height, groups and the active
+// The thread's terminal drawer: the shown group's terminals side by side or
+// stacked (TerminalSplits), fed by the `Terminals` controller's sessions on the
+// MC. Its actions sit above the terminals; with more than one terminal, a
+// list beside the terminals names each group under them. Open flag, height, groups and the active
 // one are the controller's; dragging the top edge hands the height back with
 // terminal.resize. The right panel's terminal tabs are not the drawer's. Not
 // animated: every frame of it would relayout the thread above (see RightPanel).
@@ -35,7 +36,7 @@ Item {
     // Ink, not the `muted` surface: inactive tabs are muted text.
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
     // The toolbar's icons are the text colour at 90%.
-    readonly property color toolbarInk: Qt.alpha(foreground, 0.9)
+    readonly property color toolbarInk: Theme.palette.color("inkSecondary", "#b8bdc7")
     readonly property color border: Theme.palette.color("border", "#27272a")
     // Keeps the square Terminal inside a carded drawer's rounded corners.
     readonly property real inset: Math.ceil(radius * 0.3)
@@ -113,53 +114,114 @@ Item {
         color: drawer.border
     }
 
-    RowLayout {
-        id: strip
+    readonly property bool listShown: Terminals.drawerCount > 1
 
-        anchors.top: edgeLine.bottom
-        anchors.left: parent.left
+    // The terminals' list, under the actions.
+    Flickable {
+        id: terminalList
+
+        objectName: "terminalList"
+        visible: drawer.listShown
+        anchors.top: actions.bottom
         anchors.right: parent.right
-        anchors.topMargin: 4
-        anchors.leftMargin: Math.max(6, drawer.inset)
-        anchors.rightMargin: Math.max(6, drawer.inset)
-        height: 26
-        spacing: 2
+        anchors.bottom: parent.bottom
+        anchors.topMargin: 2
+        anchors.rightMargin: Math.max(Theme.space.sm, drawer.inset)
+        anchors.bottomMargin: drawer.inset
+        width: 180
+        clip: true
+        contentHeight: listColumn.height
+        boundsBehavior: Flickable.StopAtBounds
 
-        Repeater {
-            model: Terminals.tabs
+        Column {
+            id: listColumn
 
-            // One tab per group of the drawer's, on its first terminal.
-            delegate: ShellButton {
-                id: tab
+            width: terminalList.width
+            spacing: 2
 
-                required property string terminalId
-                required property string label
-                required property bool busy
-                required property string group
-                required property bool panel
-                required property int slot
-                required property int span
+            Repeater {
+                model: Terminals.tabs
 
-                objectName: "terminalTab"
-                visible: !tab.panel && tab.slot === 0
-                subtle: true
-                checked: tab.group === Terminals.activeGroup
-                implicitHeight: 24
-                iconName: "terminal"
-                iconSize: 13
-                text: tab.span > 1 ? qsTr("%1 +%2").arg(tab.label).arg(tab.span - 1) : tab.label
-                font.pixelSize: Math.round(12 * Theme.fontScale)
-                tint: tab.checked ? drawer.foreground : drawer.muted
-                focusPolicy: Qt.NoFocus
-                Layout.maximumWidth: 180
-                Accessible.name: tab.busy ? qsTr("%1, running").arg(tab.label) : tab.label
-                onClicked: Shell.dispatch("terminal.select", { terminalId: tab.terminalId })
+                // One entry per group of the drawer's, on its first terminal.
+                delegate: Column {
+                    id: entry
+
+                    required property string terminalId
+                    required property string label
+                    required property bool busy
+                    required property string group
+                    required property bool panel
+                    required property int slot
+                    required property int span
+                    required property bool vertical
+
+                    visible: !entry.panel && entry.slot === 0
+                    width: listColumn.width
+
+                    ShellButton {
+                        objectName: "terminalGroupLabel"
+                        subtle: true
+                        width: parent.width
+                        implicitHeight: 20
+                        text: qsTr("%1 (%2)").arg(entry.span <= 1 ? qsTr("Single") : entry.vertical ? qsTr("Stacked") : qsTr("Side by side")).arg(entry.span)
+                        font.pixelSize: Theme.type.caption.size
+                        tint: drawer.muted
+                        focusPolicy: Qt.NoFocus
+                        onClicked: Shell.dispatch("terminal.select", { terminalId: entry.terminalId })
+                    }
+
+                    ShellButton {
+                        id: tab
+
+                        objectName: "terminalTab"
+                        subtle: true
+                        width: parent.width
+                        checked: entry.group === Terminals.activeGroup
+                        implicitHeight: 24
+                        iconName: "terminal"
+                        iconSize: 13
+                        text: entry.span > 1 ? qsTr("%1 +%2").arg(entry.label).arg(entry.span - 1) : entry.label
+                        font.pixelSize: Theme.type.meta.size
+                        tint: tab.checked ? drawer.foreground : drawer.muted
+                        focusPolicy: Qt.NoFocus
+                        Accessible.name: entry.busy ? qsTr("%1, running").arg(entry.label) : entry.label
+                        onClicked: Shell.dispatch("terminal.select", { terminalId: entry.terminalId })
+                    }
+                }
             }
         }
+    }
 
-        Item {
-            Layout.fillWidth: true
-        }
+    TerminalSplits {
+        id: stack
+
+        objectName: "terminalDrawerSplits"
+        // Under the actions, so they never cover the first line; beside the
+        // list, the actions sit over the list instead.
+        anchors.top: drawer.listShown ? edgeLine.bottom : actions.bottom
+        anchors.topMargin: drawer.listShown ? 0 : 2
+        anchors.left: parent.left
+        anchors.right: drawer.listShown ? terminalList.left : parent.right
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: drawer.inset
+        anchors.rightMargin: drawer.listShown ? Theme.space.sm : drawer.inset
+        anchors.bottomMargin: drawer.inset
+        panel: false
+        group: Terminals.activeGroup
+        background: drawer.background
+        foreground: drawer.foreground
+    }
+
+    RowLayout {
+        id: actions
+
+        objectName: "terminalDrawerActions"
+        anchors.top: edgeLine.bottom
+        anchors.right: parent.right
+        anchors.topMargin: 4
+        anchors.rightMargin: Math.max(Theme.space.sm, drawer.inset)
+        height: 26
+        spacing: 2
 
         ShellButton {
             objectName: "terminalSplit"
@@ -213,23 +275,6 @@ Item {
             Accessible.name: qsTr("Close terminal")
             onClicked: Shell.dispatch("terminal.close", { terminalId: Terminals.activeTerminalId })
         }
-    }
-
-    TerminalSplits {
-        id: stack
-
-        anchors.top: strip.bottom
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        anchors.topMargin: 2
-        anchors.leftMargin: drawer.inset
-        anchors.rightMargin: drawer.inset
-        anchors.bottomMargin: drawer.inset
-        panel: false
-        group: Terminals.activeGroup
-        background: drawer.background
-        foreground: drawer.foreground
     }
 
     // While a terminal has the keyboard; the window's own shortcuts stand

@@ -17,3 +17,7 @@ serde_json = "1"
 codegen-units = 1
 lto = "thin"
 strip = true
+
+# mmdr with our layout fixes, until upstream releases them: see vendor/README.md.
+[patch.crates-io]
+mermaid-rs-renderer = { path = "vendor/mermaid-rs-renderer" }

@@ -64,8 +64,31 @@ Item {
             tryCompare(button.background, "color", "#fff7f4");
             verify(darkest >= 0.98);
             mouseMove(root, 380, 150);
-            tryCompare(button.background, "color", Qt.alpha("#fff7f4", 0));
+            tryVerify(() => button.background.color.a === 0);
             verify(darkest >= 0.98);
+        }
+
+        // A destructive button is a solid, deep error fill under white text:
+        // the theme's destructiveFill, never the light error red the dark
+        // theme uses for text (ThemeStore deepens that when a theme has no
+        // fill of its own; tst_ShellRuntime covers it).
+        function test_destructiveIsASolidErrorFillUnderWhite() {
+            Theme.colors = {
+                error: "#f87171",
+                destructiveFill: "#b91c1c"
+            };
+            const button = createTemporaryObject(themedButtonComponent, root, {
+                subtle: false,
+                destructive: true
+            });
+            compare(button.background.color, Qt.color("#b91c1c"));
+            compare(button.tint, Qt.color("#ffffff"));
+            Theme.colors = {
+                error: "#f87171"
+            };
+            verify(button.background.color !== Qt.color("#f87171"));
+            compare(button.tint, Qt.color("#ffffff"));
+            Theme.colors = {};
         }
 
         function test_narrowContentsStayInsidePadding() {
@@ -172,7 +195,47 @@ Item {
                 hoverEnabled: true
                 readonly property bool tipShown: ToolTip.visible
                 readonly property string tipText: ToolTip.text
+                readonly property var sharedTip: ToolTip.toolTip
             }
+        }
+
+        Component {
+            id: hoverTipButtonComponent
+            ShellButton {
+                x: 10
+                y: 10
+                width: 28
+                height: 28
+                toolTip: "Split terminal"
+                ToolTip.visible: hovered
+                readonly property var sharedTip: ToolTip.toolTip
+            }
+        }
+
+        function test_pressPutsTheTooltipAway_data() {
+            return [
+                { tag: "named", component: namedButtonComponent },
+                { tag: "own visibility", component: hoverTipButtonComponent }
+            ];
+        }
+
+        function test_pressPutsTheTooltipAway(data) {
+            let button = createTemporaryObject(data.component, root, {
+                iconName: "settings",
+                "Accessible.name": "Open panel"
+            });
+            verify(!!button);
+            mouseMove(button, 14, 14);
+            tryVerify(() => button.sharedTip.visible, 2000);
+            mousePress(button, 14, 14);
+            tryVerify(() => !button.sharedTip.visible, 2000);
+            mouseRelease(button, 14, 14);
+            wait(500);
+            verify(!button.sharedTip.visible);
+            mouseMove(root, 2, 2);
+            tryVerify(() => !button.hovered, 2000);
+            mouseMove(button, 14, 14);
+            tryVerify(() => button.sharedTip.visible, 2000);
         }
 
         function test_iconOnlyButtonNamesItselfOnHover() {

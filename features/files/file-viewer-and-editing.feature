@@ -1,4 +1,25 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20950
+#   https://github.com/pingdotgg/t3code/pull/24627
+#   https://github.com/pingdotgg/t3code/pull/23106
+#   https://github.com/pingdotgg/t3code/pull/18092
+#   https://github.com/pingdotgg/t3code/pull/22853
+#   https://github.com/pingdotgg/t3code/pull/22188
+#   https://github.com/pingdotgg/t3code/pull/19526
+#   https://github.com/pingdotgg/t3code/pull/19898
+#   https://github.com/pingdotgg/t3code/pull/18819
+#   https://github.com/pingdotgg/t3code/pull/14044
+#   https://github.com/pingdotgg/t3code/pull/18647
+#   https://github.com/pingdotgg/t3code/pull/16955
+#   https://github.com/pingdotgg/t3code/pull/20449
+#   https://github.com/pingdotgg/t3code/pull/19078
+#   https://github.com/pingdotgg/t3code/pull/17361
+#   https://github.com/pingdotgg/t3code/pull/17555
+#   https://github.com/pingdotgg/t3code/pull/16950
+#   https://github.com/pingdotgg/t3code/pull/17352
+#   https://github.com/pingdotgg/t3code/pull/17271
+#   https://github.com/pingdotgg/t3code/pull/15045
+#   https://github.com/pingdotgg/t3code/pull/15628
 #   https://github.com/pingdotgg/t3code/pull/11425
 #   apps/server-ex/lib/hal_c2/workspace.ex (read_file, write_file, path checks)
 #   apps/server-ex/lib/hal_c2/rpc.ex (required_scope/2: a write by full path needs terminal:operate)
@@ -9,6 +30,8 @@
 #   apps/desktop-qt/src/native/ThisMachine.cpp, WorkspaceController.cpp (localPathFor, openHere: editors and the file manager start only on this machine)
 #   apps/tui/src/thisMachine.ts, apps/tui/src/host/filesState.ts (the same for the terminal client)
 #   apps/web/src/components/files/FilePreviewPanel.tsx
+#   apps/desktop-qt/src/native/CodeReader.cpp, WorkspaceFiles.cpp (TextLinesModel: a file's lines coloured by its language, off the GUI thread)
+#   native/syntax (syntect with bat's syntaxes: the language a file's name picks; the Pierre light and dark themes)
 #   apps/web/src/components/chat/ThreadDetailsPanel.tsx, OpenInPicker.tsx, OpenInPicker.logic.ts (open the workspace)
 #   apps/web/src/remoteOpen.ts (SSH deep links for a remote environment; remoteOpenTargets not sent by the MC)
 #   apps/desktop/src/ipc/methods/window.ts (probeRemoteEditors: which local editors can work over SSH)
@@ -49,6 +72,13 @@
 #   apps/tui/src/host/features/editor.ts (a file larger than 1 MB opens read-only in $EDITOR too)
 #   apps/tui/features/support/steps/files.steps.ts, files-viewer.steps.ts
 #   apps/desktop-qt/tests/native/features/FilesViewerSteps.cpp
+#   https://github.com/pingdotgg/t3code/pull/10311
+#   https://github.com/pingdotgg/t3code/pull/21362
+#   https://github.com/pingdotgg/t3code/pull/21466
+#   https://github.com/pingdotgg/t3code/pull/21467
+#   https://github.com/pingdotgg/t3code/pull/21469
+#   https://github.com/pingdotgg/t3code/pull/25804
+#   https://github.com/pingdotgg/t3code/pull/25702
 
 Feature: Viewing and editing files
   The user can read any text file in a project, preview media, and make small edits that
@@ -124,11 +154,140 @@ Feature: Viewing and editing files
       Then the file's contents are returned
       And the file comes back under its full path
 
+    # Upstream #15045: folder crumbs list and open host folders outside the project
+    @mc @backlog @priority-low
+    Scenario: A folder on the host outside the project and its parent can be listed
+      Given the host has the folder "/home/sam/study" with "notes.md" in it
+      When a client lists "/home/sam/study" and then "/home/sam" from "shop"
+      Then each listing returns that folder's entries
+      And a listing that climbs out of the folder it was given with ".." is refused
+
+    # Upstream #15045: folder crumbs list and open host folders outside the project
+    @shared @backlog @priority-low
+    Scenario: A link to a folder outside the project opens that folder
+      Given the agent linked "/home/sam/study"
+      When the user opens the link
+      Then the files panel shows a tree rooted at "/home/sam/study"
+      And its files open read-only
+
+    # Upstream #22853: a "../" link that climbs out of the project was read as a project path,
+    # which the MC refused, so it failed to open.
+    @shared @backlog
+    Scenario Outline: A relative file link resolves inside or outside the project by where it lands
+      Given a thread in "shop" at "/home/sam/shop"
+      And the agent linked "<link>"
+      When the user opens the link
+      Then <outcome>
+
+      Examples:
+        | link                | outcome                                                  |
+        | ../other/notes.md   | "/home/sam/other/notes.md" opens read-only as a host file |
+        | docs/a/../b.md      | "docs/b.md" opens as a project file                      |
+
+    # Upstream #20950: "~/" links opened in an external editor instead of the file panel.
+    @shared @mc @backlog
+    Scenario: A home-relative file link opens read-only in the file panel
+      Given the thread's MC runs as the user "sam" with the home "/home/sam"
+      And the agent linked "~/notes/todo.txt"
+      When the user opens the link
+      Then "/home/sam/notes/todo.txt" opens read-only in the file panel
+      And the home is the thread's MC's, not the client machine's
+
+    # Upstream #22188: a relative link to a folder ending in "/" did nothing when clicked.
+    @shared @backlog @priority-low
+    Scenario Outline: A relative link to a folder is a folder link
+      Given the agent's reply holds <text>
+      Then <outcome>
+
+      Examples:
+        | text                                | outcome                                        |
+        | the link "[patches/](patches/)"     | the link opens the folder "patches"            |
+        | the link "[My Folder](docs/My Folder/)" | the link opens the folder "docs/My Folder" |
+        | the link "[src](./apps/web/src/)"   | the link opens the folder "apps/web/src"       |
+        | the inline code "patches/"          | "patches/" is plain code, not a link           |
+
+    # Upstream #15045: folder breadcrumbs navigate to parent folders
+    @shared @backlog
+    Scenario: Each folder in the path moves to that folder
+      Given the files panel shows "/home/sam/study/data/raw.csv"
+      When the user chooses "study" in its path
+      Then the files panel shows "/home/sam/study" with "data" expanded and chosen
+      And "data" and "raw.csv" stay in the path, dimmed, and lead back down
+      And "raw.csv" keeps its tab
+
+    # Upstream #15045: the project crumb goes to the Files explorer
+    @shared @backlog
+    Scenario: The project in the path leads to the file explorer
+      Given the files panel shows "src/lib/util.ts" in the project
+      When the user chooses the project in its path
+      Then the file explorer is shown
+
+    # Upstream #15045: walking up the crumbs stops at the top
+    @shared @backlog @priority-low
+    Scenario Outline: Walking up stops at the top of the path
+      Given the files panel shows a file under "<top>"
+      Then "<top>" is the highest folder the path can move to
+
+      Examples:
+        | top            |
+        | /tmp           |
+        | C:\            |
+        | \\server\share |
+
+    # Upstream #15045: a host folder gets a file tree of its own
+    @shared @backlog @priority-low
+    Scenario: Searching a host folder's tree filters only the folders already loaded
+      Given the files panel shows a tree rooted at "/home/sam"
+      When the user searches the tree for "notes"
+      Then only the folders already opened are searched
+      And the host folder is not indexed
+
     @tui
     Scenario: The terminal client shows an opened file with syntax colouring
       When the user browses files and opens "src/app.ts"
       Then the contents of "src/app.ts" are shown with syntax colouring
       And the user can scroll through the file and go back to the tree
+
+    @desktop @mobile @backlog-mobile
+    Scenario Outline: An opened file is coloured by its language
+      Given "<file>" in "shop" holds <language> code
+      When the user opens "<file>"
+      Then the lines of "<file>" are coloured as <language>
+
+      Examples:
+        | file                | language   |
+        | src/cart.ts         | TypeScript |
+        | lib/shop/cart.ex    | Elixir     |
+        | ui/Cart.qml         | QML        |
+
+    @desktop @mobile @backlog-mobile
+    Scenario Outline: A file of no known language, or too large to colour, is shown plain
+      Given "<file>" in "shop" <holds>
+      When the user opens "<file>"
+      Then the lines of "<file>" are shown plain
+
+      Examples:
+        | file            | holds                                      |
+        | notes/todo.txt  | holds plain text                           |
+        | data/blob.zzz   | holds plain text                           |
+        | src/bundle.ts   | holds more than 512K characters of code    |
+
+    @desktop @mobile @backlog-mobile @priority-low
+    Scenario: A coloured line too long to show is cut with its colours
+      Given "src/long.ts" in "shop" has a line of TypeScript 3000 characters long
+      When the user opens "src/long.ts"
+      Then the long line is shown up to its 2000th character and then "…"
+      And no colour reaches past the cut
+
+    @desktop @mobile @backlog-mobile @priority-low
+    Scenario: An open file follows the theme without being read again
+      Given the appearance is Light
+      And "src/cart.ts" in "shop" holds TypeScript code
+      And the user is reading "src/cart.ts" in the viewer
+      And the lines of "src/cart.ts" are coloured as TypeScript
+      When the app turns dark while the file is open
+      Then the lines of "src/cart.ts" are coloured for the dark theme
+      And the file was not read again
 
     @tui
     Scenario: The terminal client marks an empty file as empty
@@ -174,12 +333,99 @@ Feature: Viewing and editing files
         | docs/manual.pdf   | a document |
         | public/index.html | a web page |
 
+    # Upstream #25702: a phrase that wraps across lines in a PDF was not found.
+    @backlog @desktop @mobile
+    Scenario Outline: Searching a PDF finds a phrase across a line break
+      Given "docs/report.pdf" has <text> where the line breaks
+      When the user searches the document for "<search>"
+      Then the phrase is found and both of its parts are highlighted
+
+      Examples:
+        | text                                          | search            |
+        | "quarterly" ending one line and "outlook" starting the next | quarterly outlook |
+        | "quar-" ending one line and "terly" starting the next       | quarterly         |
+
     @desktop @mobile
     Scenario: Media files of a thread on another machine are previewed
       Given the thread is on another machine of the cluster
       When the user opens "assets/logo.png"
       Then the file is previewed as an image
       And the image comes from the machine the thread is on
+
+    # Upstream #23106: a paused video jumped back to its first frame whenever the agent ran a
+    # command, even one that never touched it.
+    @backlog @desktop
+    Scenario: A paused video keeps its place until its file changes
+      Given the user paused "media/intro.mp4" at 5 seconds in the preview
+      When the agent runs a command that does not touch the video
+      Then the video stays paused at 5 seconds
+      But once the agent changes "media/intro.mp4" the new video loads, once
+
+    # Upstream #17352: images, video, HTML and PDF preview before a thread's first message
+    @backlog @desktop @mobile
+    Scenario Outline: Media files are previewed in a new thread before its first message
+      Given a new thread in "shop" that has no message yet
+      When the user opens "<path>" from the file tree
+      Then the file is previewed as <kind>
+
+      Examples:
+        | path              | kind       |
+        | assets/logo.png   | an image   |
+        | media/intro.mp4   | a video    |
+        | docs/manual.pdf   | a document |
+        | public/index.html | a web page |
+
+    # Upstream #16950: file previews handle downloads
+    @backlog @desktop @mobile @priority-low
+    Scenario: A download link in a previewed web page downloads its file
+      Given "public/report.html" has a link that downloads "report.csv"
+      When the user previews "public/report.html" and follows that link
+      Then "report.csv" is downloaded
+      And the page still cannot open dialogs or reach the app
+
+    # Upstream #17555: copy images from HTML previews
+    @backlog @desktop @priority-low
+    Scenario Outline: An image in a previewed web page can be copied
+      Given "public/index.html" shows <image>
+      When the user previews "public/index.html" and copies that image
+      Then the image is on the clipboard
+
+      Examples:
+        | image                                   |
+        | a PNG image                             |
+        | an animated GIF                         |
+        | a WebP image given inline as data       |
+
+    # Upstream #16950: file previews handle in-page links
+    @backlog @desktop @mobile @priority-low
+    Scenario: A table of contents link in a Markdown preview moves within the file
+      Given "docs/plan.md" has a heading "1. Operating model" and a contents link to "#1-operating-model"
+      When the user previews "docs/plan.md" and follows that link
+      Then the heading "1. Operating model" scrolls into view
+      And the thread and the file stay open
+      And a contents link to a heading that does not exist does nothing
+
+    # Upstream #16950: file previews resolve repo paths
+    @backlog @desktop @mobile
+    Scenario Outline: A path in inline code in a Markdown preview is found from where it is written
+      Given the user previews "docs/ai/plans.md"
+      When the user opens the inline code "<code>" in it
+      Then "<opened>" opens
+
+      Examples:
+        | code              | opened            |
+        | docs/ai/design.md | docs/ai/design.md |
+        | design.md:12      | docs/ai/design.md |
+        | ../README.md      | docs/README.md    |
+
+    # Upstream #18647: Markdown file previews reload their embedded images when reopened or edited.
+    @backlog @desktop @mobile @priority-low
+    Scenario: A Markdown preview shows an embedded image created or changed after it first loaded
+      Given "docs/plan.md" embeds "docs/diagram.svg", which did not exist when the user first previewed it
+      When "docs/diagram.svg" is created and the user previews "docs/plan.md" again
+      Then the preview shows "docs/diagram.svg"
+      When "docs/diagram.svg" is replaced and the user previews "docs/plan.md" again
+      Then the preview shows the new "docs/diagram.svg"
 
     @desktop @mobile
     Scenario Outline: A media preview that fails to load can be retried
@@ -212,12 +458,12 @@ Feature: Viewing and editing files
     # The same renderer draws diagrams in pages and replies
     # (features/space/markdown.feature, features/timeline/markdown.feature).
     # https://github.com/hal-c2/hal-c2/issues/843
-    @shared @backlog-tui
+    @shared
     Scenario Outline: Mermaid diagrams are drawn in a rendered file
       Given "shop" holds the file "<path>" with a flowchart in it
       When the user opens "<path>"
       Then on the desktop and the phone the flowchart is drawn
-      And in the terminal the diagram's source is shown, named as a "flowchart" diagram
+      And in the terminal the diagram is drawn in characters, or its source is shown, named as a "flowchart" diagram
       When the user switches to the source
       Then the diagram's source is shown
 
@@ -227,7 +473,7 @@ Feature: Viewing and editing files
         | docs/flow.mmd    | the whole file             |
 
     # https://github.com/hal-c2/hal-c2/issues/843
-    @shared @backlog-tui
+    @shared
     Scenario: A Mermaid file that cannot be drawn shows its source and says why
       Given "shop" holds the file "docs/broken.mmd" with a flowchart with an unclosed bracket
       When the user opens "docs/broken.mmd"
@@ -251,6 +497,7 @@ Feature: Viewing and editing files
       And a leading byte order mark is not shown as text
 
     # Legacy: packages/shared/src/delimitedPreview.ts (a final quoted empty record with no line ending)
+    # Upstream #11425: preserve final quoted empty CSV records
     @desktop
     Scenario: A table keeps a final quoted empty row that has no line ending
       Given "data/orders.csv" ends with a row whose only cell is an empty quoted value and no line ending
@@ -270,6 +517,112 @@ Feature: Viewing and editing files
         | data/a.csv    | application/json          | the file is not shown as a table         |
         | data/a.csv    | text/plain                | the file is shown as a comma table       |
         | data/a.txt    | text/plain                | the file is not shown as a table         |
+
+    # Upstream #21362: Word, Excel and PowerPoint files are previewed in the Files tab.
+    @backlog @desktop @priority-low
+    Scenario Outline: An office file is shown rendered
+      When the user opens "<path>" rendered
+      Then <shown>
+
+      Examples:
+        | path             | shown                                                                       |
+        | docs/plan.docx   | its pages are shown with the page count, and their text can be selected     |
+        | data/budget.xlsx | its sheets are shown as tabs, and a selection of cells copies with its format |
+        | docs/pitch.pptx  | its slides are shown with their notes, and previous and next step through them |
+
+    @backlog @desktop @priority-low
+    Scenario: Next stops at a deck's last slide
+      Given "docs/pitch.pptx" is open rendered
+      When the user steps to the last slide
+      Then the last slide is the one shown as current
+      And next can no longer be chosen
+
+    @backlog @desktop @priority-low
+    Scenario: Refreshing reloads an office file that was overwritten
+      Given "docs/plan.docx" is open rendered
+      And the file is overwritten with new pages
+      When the user refreshes the Files tab
+      Then the new pages are shown
+
+    # Upstream #21466: large text, CSV and TSV previews load as they scroll and describe the whole file.
+    @backlog @desktop @priority-low
+    Scenario: A large text file says how long it is
+      When the user opens "logs/build.log" of 45,000 lines
+      Then the number of lines and the file's size are shown
+      And each line shows its number
+
+    @backlog @desktop @priority-low
+    Scenario: A line far down a large file is revealed when it is asked for
+      Given an agent's reply links to line 500,000 of "logs/build.log"
+      When the user opens the link
+      Then line 500,000 is shown and marked
+
+    @backlog @desktop @priority-low
+    Scenario: End reaches the last line of a large wrapped file
+      Given "logs/build.log" is open with word wrap on
+      When the user presses End
+      Then the last line of the file is shown in full
+
+    @backlog @desktop @priority-low
+    Scenario: A large file whose access was refused can be tried again
+      Given "logs/build.log" is open
+      And reading more of it was refused because its access ran out
+      When the user chooses Try again
+      Then the rest of the file is shown
+
+    # Upstream #21467: images, SQLite databases and archives get previews of their own.
+    @backlog @desktop @priority-low
+    Scenario: An image in the Files tab shows its size and can be zoomed
+      When the user opens "assets/scan.tiff"
+      Then its width and height in pixels are shown
+      And it can be fitted to the tab, zoomed, or shown at its actual size
+
+    # Upstream #24627: an image outside the project said "Unable to load workspace image."
+    @backlog @desktop @mobile
+    Scenario: An image outside the project previews in the file panel
+      Given the host has the image "/home/sam/screens/bug.png"
+      When the user opens "/home/sam/screens/bug.png" in the file panel
+      Then the image is shown
+
+    @backlog @desktop @priority-low
+    Scenario: A SQLite database shows its tables
+      When the user opens "data/shop.sqlite"
+      Then the rows of one of its tables are shown with their columns
+      And the number of rows and columns and the file's size are shown
+      And the user can switch to another table
+
+    @backlog @desktop @priority-low
+    Scenario: An archive lists what is in it
+      When the user opens "data/export.zip"
+      Then its folders and files are listed and can be opened like folders
+      And the number of entries and the archive's size are shown
+
+    @backlog @desktop @priority-low
+    Scenario: A file that is not the database or archive it claims to be says so
+      When the user opens "data/shop.sqlite" that is not a SQLite database
+      Then the user is told the file could not be read
+
+    # Upstream #21469: OpenDocument files, e-books, rich text and notebooks are previewed.
+    @backlog @desktop @priority-low
+    Scenario Outline: A document is shown rendered
+      When the user opens "<path>" rendered
+      Then <shown>
+
+      Examples:
+        | path                  | shown                                                         |
+        | docs/minutes.odt      | its text is shown with the spaces and tabs it holds           |
+        | data/figures.ods      | its sheets are shown, without empty styled rows and columns   |
+        | docs/review.odp       | its slides are shown                                          |
+        | docs/letter.rtf       | its text and tables are shown                                 |
+        | notebooks/study.ipynb | its cells and their saved output are shown as they come into view |
+
+    @backlog @desktop @priority-low
+    Scenario: An e-book keeps its reading size from chapter to chapter
+      Given "books/handbook.epub" is open rendered
+      And the user made its text larger
+      When the user moves to the next chapter
+      Then the chapter and the position in the book are shown
+      And the text stays at the size the user chose
 
     @desktop
     Scenario: An open file sits beside the file tree
@@ -298,7 +651,7 @@ Feature: Viewing and editing files
       And the file tree gives way before the buttons do
       And a tab too narrow to leave the tree room for ten characters of a name at the user's font size shows the file alone
 
-    @desktop @backlog-desktop
+    @desktop @backlog-desktop @priority-low
     Scenario: A font too large for the Files tab keeps the way out of the file
       Given the user's interface font is so large the buttons above the file do not fit the Files tab
       When the user opens "docs/guide.md"
@@ -466,6 +819,29 @@ Feature: Viewing and editing files
         | Linux                           | Reveal in Files           |
         | Linux where reveal runs through Windows (WSL) | Reveal in File Explorer |
 
+    # Upstream #19526: reveal on Windows opens the default file manager.
+    @backlog @mc @desktop @priority-low
+    Scenario: Revealing a file on Windows uses the default file manager
+      Given a Windows computer whose default file manager is not File Explorer
+      When the user reveals "src/app.ts"
+      Then the default file manager opens with "src/app.ts" selected
+
+    # Upstream #14044: revealing a file on Linux selects it in the file manager
+    @backlog @desktop @priority-low
+    Scenario: Revealing a file on Linux selects it in the file manager
+      Given the environment's host is Linux
+      When the user reveals "src/app.ts"
+      Then the file manager opens "src" with "app.ts" selected
+      And a file manager that cannot select files opens "src" instead
+
+    # Upstream #16955: the file preview's Open in menu reveals the previewed file in the file manager.
+    @backlog @desktop
+    Scenario: Opening a previewed file in the file manager reveals it there
+      Given the user is previewing "docs/notes.md"
+      When the user opens it in the host's file manager
+      Then the host's file manager shows "docs/notes.md" selected in its folder
+      And no app opens "docs/notes.md" itself
+
     @desktop @tui
     Scenario: A file opens in the user's editor when the thread runs on this computer
       Given the thread runs on this computer, which has the editor "VS Code"
@@ -489,11 +865,34 @@ Feature: Viewing and editing files
       Then "VS Code" opens the thread's workspace folder on the environment
       And "VS Code" stays the preferred editor for next time
 
+    # Upstream #19078: remember editor selections before opening folders
+    @backlog @shared
+    Scenario: Picking an editor in the toolbar sets the preference without opening the folder
+      Given the user has picked "VS Code" as their preferred editor
+      When the user picks "Zed" in the toolbar's editor picker
+      Then "Zed" is the preferred editor
+      And no editor opens the workspace
+
     @desktop
     Scenario: A remote environment's workspace opens in the local editor over SSH
       Given the thread's environment is on another machine reachable over SSH as "devbox"
       When the user opens the thread's workspace in "VS Code"
       Then the local "VS Code" opens the workspace on "devbox" over SSH
+
+    # Upstream #18092: remote editor links dropped the SSH login, so the editor tried the local account.
+    @backlog @desktop
+    Scenario: A remote workspace opens in the local editor as the environment's SSH user
+      Given the thread's environment is reachable over SSH as "deploy" at "devbox"
+      When the user opens the thread's workspace in "VS Code", "Zed" or a JetBrains IDE
+      Then the editor connects to "devbox" as "deploy"
+      And an SSH alias with no user still takes its user from the SSH config
+
+    # Upstream #19898: a previewed file of a remote environment opens as that file in VS Code.
+    @backlog @desktop
+    Scenario: A remote environment's file opens as that file in the local editor
+      Given the user is previewing "src/app.ts" of a remote environment reached over SSH
+      When the user opens it in VS Code
+      Then VS Code opens "src/app.ts" on the remote host, not only its folder
 
     # Legacy: apps/desktop/src/ipc/methods/window.ts (probeRemoteEditors); the names
     # are the ones the MC advertises (connections/environments.feature).
@@ -505,6 +904,15 @@ Feature: Viewing and editing files
       When the user looks at the editors offered for the thread's workspace
       Then "VS Code" and "Zed" are offered
       And "Sublime Text" is not among them
+
+    # Upstream #17271: open remote projects in JetBrains IDEs over SSH
+    @backlog @desktop @priority-low
+    Scenario: A remote environment's workspace opens in a JetBrains IDE over SSH
+      Given the thread's environment is on another machine reachable over SSH as "devbox"
+      And this computer has "IntelliJ IDEA" and the JetBrains Toolbox App installed
+      When the user opens the thread's workspace in "IntelliJ IDEA"
+      Then the Toolbox App opens "IntelliJ IDEA" on the workspace on "devbox" over SSH
+      And no other kind of JetBrains link is ever opened for the user
 
     @desktop
     Scenario: A remote environment with no SSH route cannot open an editor
@@ -536,6 +944,14 @@ Feature: Viewing and editing files
         | where                                              | does                            |
         | an MC on another machine the client is paired with | opens "src/app.ts" in an editor |
         | an MC reached through an SSH port forward          | opens "src/app.ts" in an editor |
+
+    # Upstream #10311: classify workspace previews by literal filenames
+    @backlog @shared
+    Scenario: An image or browser document is recognised by its file name's own extension
+      Given a project file named "photo.png" and another named "report.final.html"
+      When the user opens each in the file viewer
+      Then the first opens as an image and the second as a browser document
+      And a file whose name merely contains a URL-looking query or fragment is not treated as one
 
   Rule: Editing
 
@@ -580,6 +996,36 @@ Feature: Viewing and editing files
       And nothing at "/home/sam/notes/todo.txt" changed
       When that client writes "src/app.ts" in "shop"
       Then "src/app.ts" exists with the written contents
+
+    @mc
+    Scenario: A session without terminal access cannot pick an outside folder as the project
+      Given the host has the file "/home/sam/.bashrc"
+      And a client paired without terminal access
+      When that client writes ".bashrc" with the project folder "/home/sam"
+      Then the MC answers that client that terminal:operate is required
+      And nothing at "/home/sam/.bashrc" changed
+      When that client writes "src/app.ts" in "shop"
+      Then "src/app.ts" exists with the written contents
+      Given thread "Work" of project "workshop" works in a worktree outside the project folder
+      When that client writes "src/worktree.ts" in the worktree
+      Then "src/worktree.ts" exists in the worktree with the written contents
+
+    @mc
+    Scenario: A session with terminal access can pick an outside folder as the project
+      Given the host has the file "/home/sam/.bashrc"
+      And a client paired with terminal access
+      When a client writes ".bashrc" with the project folder "/home/sam"
+      Then the outside file "/home/sam/.bashrc" has the written contents
+
+    # Upstream #20449 refuses a save in any folder that is not a project, a managed worktree
+    # or a non-deleted thread's worktree, whatever the session may do. HAL-C2 lets a session
+    # with terminal access save anywhere a shell in its terminal could, and keeps a session
+    # without it to its projects and their threads' worktrees (above).
+    @dropped @mc
+    Scenario: A save in a folder no project or thread knows is refused whatever the session's access
+      Given a client paired with terminal access
+      When that client writes ".bashrc" with the project folder "/home/sam"
+      Then the MC answers that the folder is not a project or a thread's worktree
 
     @desktop @tui
     Scenario: Edits save themselves shortly after the user stops typing
@@ -660,6 +1106,16 @@ Feature: Viewing and editing files
         | from                     |
         | from the viewer          |
         | from the command palette |
+
+    # Upstream #25804: a Markdown preview showed YAML frontmatter as a rule and a heading.
+    @backlog @desktop @mobile
+    Scenario: A Markdown preview starts at the body, after its frontmatter
+      Given "SKILL.md" starts with YAML frontmatter and has the unticked task "Ship cart"
+      When the user opens "SKILL.md" in the rendered view
+      Then the preview starts at the document's body, without the frontmatter
+      When the user ticks "Ship cart"
+      Then "SKILL.md" records "Ship cart" as done and its frontmatter is unchanged
+      And the source view still shows the frontmatter
 
     @desktop
     Scenario: Ticking a Markdown task writes the file
@@ -785,6 +1241,55 @@ Feature: Viewing and editing files
       When a client lists the files of "shop"
       Then the MC answers that the project folder does not exist
 
+    # Upstream #20449: a save never lands in git's own folders, so the file editor cannot rewrite
+    # a repository's config or hooks. A bare repository kept inside the project counts too.
+    @backlog @mc @priority-high
+    Scenario Outline: A save into git's own folders is refused
+      When a client writes "<path>" in "shop"
+      Then the MC refuses the save
+      And nothing at "<path>" changed
+
+      Examples:
+        | path                  |
+        | .git/config           |
+        | .git/hooks/pre-commit |
+        | vendor/lib.git/config |
+
+    # Upstream #20449: only git's folders are refused; files that merely start with .git save.
+    @backlog @mc
+    Scenario Outline: A file named like git's own outside its folders still saves
+      When a client writes "<path>" in "shop"
+      Then "<path>" exists with the written contents
+
+      Examples:
+        | path                     |
+        | .gitignore               |
+        | .github/workflows/ci.yml |
+
+    # Upstream #18819: saves no longer follow a link out of the project, or a link to nothing.
+    # Upstream #20449: the deepest existing part of a save's path is resolved, and a link
+    # that leads out of the project, or to nothing, is refused.
+    # Likely already implemented: apps/server-ex/lib/hal_c2/workspace.ex (inside/3 resolves links with real/1 before a write).
+    @backlog @mc @priority-high
+    Scenario Outline: A save through a link that leaves the project is refused
+      Given "<link>" in "shop" is a link to <target>
+      When a client writes "<path>" in "shop"
+      Then the MC answers that the path is outside the project
+      And nothing outside "shop" changed
+
+      Examples:
+        | link         | target                     | path                   |
+        | link-to-home | the user's home folder     | link-to-home/notes.txt |
+        | dangling     | a folder that is not there | dangling/notes.txt     |
+        | dangling.txt | a file that is not there   | dangling.txt           |
+
+    # Upstream #18819: a link that stays inside the project still saves through it.
+    @backlog @mc
+    Scenario: A save through a link that stays inside the project is written
+      Given "docs" in "shop" is a link to its folder "notes"
+      When a client writes "docs/todo.txt" in "shop"
+      Then "notes/todo.txt" exists with the written contents
+
   Rule: Viewing attachments
 
     @desktop @mobile
@@ -799,6 +1304,17 @@ Feature: Viewing and editing files
         | notes.md    | rendered Markdown that can switch to source |
         | build.log   | text                                        |
         | invoice.pdf | a document the user can page through        |
+
+    @desktop @mobile @backlog-mobile @priority-low
+    Scenario Outline: A text attachment is coloured by the language its name says
+      Given the user has attached "<file>" to a draft
+      When the user opens the attachment from the draft
+      Then its text is shown <shown>
+
+      Examples:
+        | file      | shown                  |
+        | cart.ts   | coloured as TypeScript |
+        | notes.txt | plain                  |
 
     @desktop @mobile
     Scenario: An attachment in a sent message opens in the same viewer
@@ -1051,3 +1567,13 @@ Feature: Viewing and editing files
         | size                    | copied                                        |
         | within the preview limit | all of its text                              |
         | over the preview limit  | only the part shown, and the action says so   |
+
+  Rule: A preview that fails says what it tried
+
+  @backlog @shared
+  Scenario: A file that cannot be previewed names the path that was tried
+    Given a document links to "devices.md", which does not exist in the project
+    When the user opens the link
+    Then the preview says the file could not be read
+    And it shows the path that was tried and the workspace folder it was looked up in
+    And it does not show the platform's raw error

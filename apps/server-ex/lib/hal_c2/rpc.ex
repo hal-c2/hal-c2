@@ -10,6 +10,9 @@ defmodule HalC2.Rpc do
     hal-c2.unregisterPush
   )
 
+  # How many rows a page of `hal-c2.threadRows` holds at most (`:thread_rows_page`).
+  @thread_rows 1_000
+
   @doc "Methods the socket runs with its session, through `handle/3`."
   def session_methods, do: @session_methods
 
@@ -43,21 +46,46 @@ defmodule HalC2.Rpc do
     end
   end
 
-  # One thread's entities at once, for a client that needs its projection without
-  # subscribing (a socket holds one subscription per stream).
-  def handle("hal-c2.threadRows", %{"threadId" => thread_id}) do
-    state = HalC2.Streams.state(thread_id)
+  # One thread's entities, for a client that needs its projection without subscribing
+  # (a socket holds one subscription per stream): a page of at most `limit` at a time,
+  # each as of its `offset`. `next` is the `after` to ask for the next page, nil after
+  # the last. A client sends `after` (null for the first page) to page; one from before
+  # paging sends none and is answered the whole thread in one reply, as it was, rather
+  # than a first page it would take for all of it.
+  def handle("hal-c2.threadRows", %{"threadId" => thread_id} = input) do
+    page = Application.get_env(:hal_c2, :thread_rows_page, @thread_rows)
 
-    {:ok,
-     %{
-       "rows" =>
-         for(
-           {kind, id, entity} <- HalC2.StreamState.rows(state),
-           do: [kind, id, HalC2.Web.Wire.entity(kind, entity)]
-         ),
-       "offset" => state.seq,
-       "at" => state.updated_at
-     }}
+    limit =
+      case input["limit"] do
+        _ when not is_map_key(input, "after") -> nil
+        limit when is_integer(limit) and limit > 0 -> min(limit, page)
+        _ -> page
+      end
+
+    cursor =
+      case input["after"] do
+        [seq, kind, id] when is_integer(seq) and is_binary(kind) and is_binary(id) ->
+          {seq, kind, id}
+
+        _ ->
+          nil
+      end
+
+    HalC2.Streams.read(thread_id, fn state ->
+      {rows, next} =
+        if limit,
+          do: HalC2.StreamState.rows_page(state, cursor, limit),
+          else: {HalC2.StreamState.rows(state), nil}
+
+      {:ok,
+       %{
+         "rows" =>
+           for({kind, id, entity} <- rows, do: [kind, id, HalC2.Web.Wire.entity(kind, entity)]),
+         "next" => next && Tuple.to_list(next),
+         "offset" => state.seq,
+         "at" => state.updated_at
+       }}
+    end)
   end
 
   # Moving a thread to another machine of the cluster (`HalC2.ThreadMove`), and finding
@@ -77,21 +105,6 @@ defmodule HalC2.Rpc do
   # Which machine of the cluster a new thread starts on (`HalC2.LoadBalancing`).
   def handle("hal-c2.placeThread", %{"environmentId" => _, "projectId" => _} = input),
     do: HalC2.LoadBalancing.place(input)
-
-  # Settings → Connections over the socket: the twins of `/api/auth/pairing-token` and
-  # `/api/auth/pairing-links*`, with the HTTP routes' bodies and replies. A link made
-  # here also says where its MC is reached (`"address"` and `"localOnly"`, picked by
-  # `"baseUrl"` or `"tailscale"` as `HalC2.Web.address/1` does): the MC asked may be
-  # another member than the one the client is connected to, whose address the client
-  # has no way to know. No link is made when that address cannot be had.
-  def handle("hal-c2.createPairingLink", input) do
-    with {:ok, reached} <- HalC2.Web.address(input),
-         {:ok, link} <- HalC2.Auth.create_pairing_link(Map.take(input, ~w(label scopes))) do
-      {:ok, Map.merge(link, reached)}
-    else
-      {:error, {:tailscale, message}} -> {:error, message}
-    end
-  end
 
   def handle("hal-c2.pairingLinks", _input), do: {:ok, HalC2.Auth.pairing_links()}
 
@@ -274,6 +287,20 @@ defmodule HalC2.Rpc do
     end
   end
 
+  def handle("cluster.switch", %{"id" => id, "on" => on}) when is_binary(id) and is_boolean(on) do
+    case HalC2.Cluster.switch(id, on) do
+      :ok -> {:ok, HalC2.Cluster.status()}
+      error -> cluster(error)
+    end
+  end
+
+  def handle("cluster.reconnect", %{"id" => id}) when is_binary(id) do
+    case HalC2.Cluster.reconnect(id) do
+      :ok -> {:ok, HalC2.Cluster.status()}
+      error -> cluster(error)
+    end
+  end
+
   def handle("cluster.update", _input) do
     case HalC2.Upgrade.update_members() do
       {:ok, version, updates} -> {:ok, %{"version" => version, "members" => members_of(updates)}}
@@ -282,6 +309,24 @@ defmodule HalC2.Rpc do
   end
 
   def handle(method, _payload), do: {:error, "#{method} is not served by this MC yet"}
+
+  @doc "Handles `projects.writeFile` with the caller's scopes on the environment's MC."
+  @spec handle_with_scopes(String.t(), term(), [String.t()] | :all) ::
+          {:ok, term()} | {:error, String.t() | map()}
+  def handle_with_scopes("projects.writeFile" = method, payload, scopes) do
+    scope = required_scope(method, payload)
+
+    if scopes == :all or scope in scopes do
+      handle(method, payload)
+    else
+      {:error,
+       %{
+         "_tag" => "EnvironmentScopeRequiredError",
+         "requiredScope" => scope,
+         "message" => "#{scope} is required"
+       }}
+    end
+  end
 
   @doc """
   Handles one of `session_methods/0` for `session`, the caller's session id (`nil` for
@@ -312,6 +357,20 @@ defmodule HalC2.Rpc do
   # Push goes to the phone that registered, so it belongs to the client's session.
   def handle("hal-c2.registerPush", input, session), do: HalC2.Push.register(session, input)
   def handle("hal-c2.unregisterPush", _input, session), do: HalC2.Push.unregister(session)
+
+  # Settings → Connections: the twin of `/api/auth/pairing-token`, with the caller's
+  # verified scopes. The MC asked may be another member, whose address the client has
+  # no way to know. No link is made when that address cannot be had.
+  def handle("hal-c2.createPairingLink", input, creator_scopes) do
+    with {:ok, reached} <- HalC2.Web.address(input),
+         {:ok, link} <-
+           HalC2.Auth.create_pairing_link(Map.take(input, ~w(label scopes)), creator_scopes) do
+      {:ok, Map.merge(link, reached)}
+    else
+      {:error, :invalid_scope} -> {:error, "invalid pairing link scopes"}
+      {:error, {:tailscale, message}} -> {:error, message}
+    end
+  end
 
   defp cluster({:ok, _} = ok), do: ok
 
@@ -367,16 +426,26 @@ defmodule HalC2.Rpc do
     setReaction setFilesViewed requestReviewers setLabels
   )
 
+  @doc "Every session scope a client needs to call `method` with `payload`."
+  @spec required_scopes(String.t(), term()) :: [String.t()]
+  def required_scopes("cluster." <> method, _payload)
+      when method in ~w(invite join remove switch update),
+      do: ["access:write", "terminal:operate"]
+
+  def required_scopes(method, payload), do: [required_scope(method, payload)]
+
   @doc """
   The session scope a client needs to call `method` with `payload`. A
   `projects.writeFile` by an absolute path overwrites a file anywhere on the host the
   MC can write (`HalC2.Workspace.write_file/1`), as a shell in a terminal can, so it
-  needs `terminal:operate`; a session paired without it can save inside the project
-  only. Every other call needs what its method does (`required_scope/1`).
+  needs `terminal:operate`. A relative path gets the same scope when its canonical
+  `cwd` is not a registered project or worktree root. Every other call needs what its
+  method does (`required_scope/1`).
   """
   @spec required_scope(String.t(), term()) :: String.t()
-  def required_scope("projects.writeFile", %{"relativePath" => path}) when is_binary(path) do
-    if Path.type(path) == :absolute,
+  def required_scope("projects.writeFile", %{"relativePath" => path} = input)
+      when is_binary(path) do
+    if Path.type(path) == :absolute or not HalC2.Workspace.project_root?(input["cwd"]),
       do: "terminal:operate",
       else: required_scope("projects.writeFile")
   end

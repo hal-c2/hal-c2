@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16052
+#   https://github.com/pingdotgg/t3code/pull/14284
 #   apps/mobile/src/features/usage/UsageRouteScreen.tsx (usage and limits tabs, ranges, filter)
 #   apps/mobile/src/features/usage/UsageLimitsSection.tsx (reset credits)
 #   apps/mobile/src/features/usage/UsageLimitsPooled.tsx (accounts, pace, reveal email)
@@ -94,19 +96,19 @@ Feature: Usage, diagnostics and devices on a phone
     When the user hides it again
     Then the email is masked
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The user spends a reset credit after confirming
     Given the account has a reset credit banked
     When the user uses a reset credit and confirms
     Then the user is told the reset was applied and the windows have cleared
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The user backs out of spending a reset credit
     Given the account has a reset credit banked
     When the user starts to use a reset credit but cancels
     Then the credit is still banked
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: A reset credit that cannot be used says why
     Given <situation>
     When the user uses a reset credit and confirms
@@ -176,14 +178,14 @@ Feature: Usage, diagnostics and devices on a phone
     When the user reveals the email
     Then the full email is shown
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: An account's details say how much of the pool its reset gives back
     Given the limits pool two Codex accounts
     And the account's window resets soon
     When the user opens the account
     Then the account's details say how much of the pool it restores
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: An account that stops reporting limits says so on its details
     Given the user has an account's details open
     When that account stops reporting limits on the selected environments
@@ -196,7 +198,7 @@ Feature: Usage, diagnostics and devices on a phone
     Then the last known limits are shown
     And the user is told "Office Mac" could not refresh limits
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: Reset credits say what is banked
     Given the account has <credits> banked
     When the user opens usage limits
@@ -208,20 +210,20 @@ Feature: Usage, diagnostics and devices on a phone
       | one reset credit that expires in time  | 1 reset credit banked, with when the next expires |
       | three reset credits                    | 3 reset credits banked                           |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A reset credit that fails for another reason says it could not be used
     Given the account has a reset credit banked
     And the environment cannot reach the provider
     When the user uses a reset credit and confirms
     Then the user is told the reset credit could not be used
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: No startup crashes is reported plainly
     Given the app has not crashed during launch in the last 7 days
     When the user opens diagnostics
     Then the user is told there have been no startup crashes
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The user copies a startup crash report
     Given the app crashed during launch yesterday
     When the user opens diagnostics
@@ -229,39 +231,48 @@ Feature: Usage, diagnostics and devices on a phone
     When the user copies the crash report
     Then the crash report is on the clipboard
 
-  @backlog @mobile
+  # Upstream #16052: the build number is read from the installed app, so store builds name it;
+  # "dev" is shown only when the app reports none.
+  @backlog @mobile @priority-low
+  Scenario: A copied crash report names the installed build
+    Given the user runs version 2.0.0, build 418, from the store
+    And the app crashed during launch yesterday
+    When the user copies the crash report
+    Then the report starts with the app's name, "2.0.0" and build "418"
+
+  @backlog @mobile @priority-low
   Scenario: Builds that keep no crash log say so
     Given the user runs a build that does not keep startup crash records
     When the user opens diagnostics
     Then the user is told the crash log is unavailable in this build
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A build configured for tracing reports what the app was doing
     Given the app build is configured to send traces
     When the phone connects to "My MacBook"
     Then a trace of the connection is sent with the app's version and device
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The user watches and controls a device an agent is using
     Given an agent in "Fix checkout" has an iOS simulator open
     When the user opens the device viewer from "Fix checkout"
     Then the simulator's live screen is shown
     And the user's touches reach the simulator
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The user chooses among several open devices
     Given an agent in "Fix checkout" has an iOS simulator and an Android emulator open
     When the user opens the device viewer from "Fix checkout"
     Then the user is asked which device to view
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Closing the device viewer leaves the device to the agent
     Given the user is viewing the agent's simulator
     When the user closes the device viewer
     Then streaming stops
     And the simulator stays open for the agent
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: The device viewer adapts to an insecure remote connection
     Given the phone reaches "My MacBook" over plain HTTP from another network
     And the user is on <platform>
@@ -273,14 +284,23 @@ Feature: Usage, diagnostics and devices on a phone
       | an iPhone      | the device is shown as a stream of still images |
       | an Android phone | the user is told video is unavailable       |
 
-  @backlog @mobile
+  # Upstream #14284: an Android phone streams an iOS simulator over a plain-HTTP connection.
+  @backlog @mobile @priority-low
+  Scenario: An Android phone shows an iOS simulator over a plain HTTP connection
+    Given the phone reaches "My MacBook" over plain HTTP
+    And the user is on an Android phone
+    When the user opens the device viewer on the iOS Simulator "iPhone 17"
+    Then the simulator's screen is shown
+    And the user's touches reach the simulator
+
+  @backlog @mobile @priority-low
   Scenario: A dropped device stream can be reconnected
     Given the device stream stopped unexpectedly
     Then the user is told to reconnect to try again
     When the user reloads the stream
     Then the device's live screen is shown again
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: The user controls the device from its options
     Given the user is viewing the agent's simulator
     When the user chooses to <action>
@@ -293,19 +313,19 @@ Feature: Usage, diagnostics and devices on a phone
       | shut down the device      | the simulator shuts down                 |
       | check device tool versions | the installed device tool versions are listed |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A device that fails to shut down says so
     Given the simulator cannot be shut down
     When the user chooses to shut down the device
     Then the user is told the device could not be shut down
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The device viewer closes when the thread has no device left open
     Given the user is viewing the agent's simulator
     When the agent closes the simulator
     Then the device viewer closes by itself
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Device buttons wait until the device takes input
     Given the user opens the device viewer from "Fix checkout"
     And the device is not yet taking input
@@ -313,7 +333,7 @@ Feature: Usage, diagnostics and devices on a phone
     When the device starts taking input
     Then the home button can be used
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: The device options only offer buttons the platform has
     Given the user is viewing an agent's <device>
     When the user opens the device options
@@ -325,7 +345,7 @@ Feature: Usage, diagnostics and devices on a phone
       | iOS simulator    | Rotate device | Back          |
       | Android emulator | Back          | Rotate device |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The device viewer stops streaming while the app is in the background
     Given the user is viewing the agent's simulator
     When the user switches to another app
@@ -333,7 +353,7 @@ Feature: Usage, diagnostics and devices on a phone
     When the user returns to HAL-C2
     Then the device's live screen is shown again
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A device host that failed can be retried from the viewer
     Given the environment's device host "Build Mac" failed to start
     When the user opens the device options
@@ -341,14 +361,14 @@ Feature: Usage, diagnostics and devices on a phone
     When the user chooses "Retry Build Mac"
     Then the environment tries "Build Mac" again
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The device viewer explains who updates the device tools
     Given the user is viewing the agent's simulator
     When the user chooses device tool versions
     Then the user is told which tools are installed on that device's host
     And the user is told whether HAL-C2 or the user updates them
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A device viewer that cannot get access to the device says why and can retry
     Given the environment cannot hand the phone access to the device
     When the user opens the device viewer
@@ -356,13 +376,13 @@ Feature: Usage, diagnostics and devices on a phone
     When the user chooses to retry
     Then the phone asks the environment for access again
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A device viewer that never starts says so
     Given the device viewer has not started streaming after 15 seconds
     Then the user is told the viewer could not start
     And the user is offered to reconnect
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A device viewer that stops working restarts once by itself
     Given the user is viewing the agent's simulator
     When the viewer stops working
@@ -371,7 +391,7 @@ Feature: Usage, diagnostics and devices on a phone
     Then the user is told the viewer stopped
     And the user is offered to reconnect
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: A thread says how many devices are open
     Given the agent in "Fix checkout" has <count> devices open
     Then the thread offers <offer>
@@ -383,7 +403,7 @@ Feature: Usage, diagnostics and devices on a phone
 
   # Showcase scenes drive store screenshots. The need to produce consistent screenshots of
   # the phone app stays with the QML client, so it is kept as backlog.
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: A screenshot run opens a scene with sample data
     Given the app is launched for a screenshot run of the <scene> scene in <orientation>
     Then the <scene> scene is shown with sample environments in <orientation>
@@ -397,7 +417,7 @@ Feature: Usage, diagnostics and devices on a phone
       | review       | landscape   |
       | environments | portrait    |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A screenshot run with an unknown theme keeps the user's theme
     Given the app is launched for a screenshot run with a theme it does not know
     Then the user's stored theme is left unchanged

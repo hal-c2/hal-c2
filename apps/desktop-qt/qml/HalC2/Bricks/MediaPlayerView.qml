@@ -4,6 +4,7 @@ import QtQuick
 import QtQuick.Layouts
 import QtMultimedia
 import HalC2.Bricks
+import HalC2.Shell
 
 // A video or audio file from `source`, with its controls. Loaded by a Loader, so
 // a machine without Qt Multimedia only loses this view. The arrow keys seek
@@ -94,13 +95,13 @@ FocusScope {
 
                 Layout.fillWidth: true
                 implicitHeight: 4
-                radius: 2
+                radius: Theme.radiusPill
                 color: Theme.palette.color("border", "#3f3f46")
 
                 Rectangle {
                     width: player.duration > 0 ? parent.width * player.position / player.duration : 0
                     height: parent.height
-                    radius: 2
+                    radius: Theme.radiusPill
                     color: Theme.palette.color("text", "#e4e4e7")
                 }
                 TapHandler {
@@ -111,7 +112,7 @@ FocusScope {
             Text {
                 text: root.clock(player.position) + " / " + root.clock(player.duration)
                 color: root.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
         }
         Item {

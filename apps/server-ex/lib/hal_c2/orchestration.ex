@@ -22,6 +22,8 @@ defmodule HalC2.Orchestration do
 
   # How long a stopped thread's agent gets to go, after the caller has stopped waiting.
   @thread_stop_ms 120_000
+  # How long a restart waits for the run it interrupted to end (`await_restart/3`).
+  @restart_end_ms 30_000
   @active_statuses ~w(preparing starting running waiting)
 
   # The built-in runtimes' registries, in the order a release visits them. One
@@ -42,10 +44,10 @@ defmodule HalC2.Orchestration do
                      thread.active.reorder thread.visit thread.mark-unread thread.metadata.update
                      thread.runtime-mode.set thread.interaction-mode.set thread.model-selection.set
                      provider.switch thread.pull-request.link thread.pull-request.unlink
-                     thread.title.regeneration.complete)
+                     thread.title.regeneration.complete thread.auto-settle.set)
   # Commands that arrange a thread in the lists; an archived thread takes none of them.
   @organizing ~w(thread.settle thread.unsettle thread.snooze thread.unsnooze thread.pin
-                 thread.unpin thread.pin.reorder thread.active.reorder)
+                 thread.unpin thread.pin.reorder thread.active.reorder thread.auto-settle.set)
 
   @doc "Handles one client RPC by method name; see `packages/contracts/src/orchestrationV2.ts`."
   @spec handle(String.t(), map) :: {:ok, term} | {:error, String.t()}
@@ -226,21 +228,22 @@ defmodule HalC2.Orchestration do
          do: {:ok, %{"sequence" => sequence(thread_id)}}
   end
 
-  # An empty thread; launch_thread also sends a first message.
+  # An empty thread; launch_thread also sends a first message. A project whose
+  # clone has not landed takes no threads.
   def dispatch(%{"type" => "thread.create", "threadId" => thread_id} = command) do
     thread =
       command
       |> Entities.thread(Entities.now())
       |> Map.merge(Map.take(command, ~w(branch worktreePath)))
 
-    created =
-      HalC2.Streams.transact(thread_id, :thread, fn state ->
-        if StreamState.get(state, "thread")[thread_id],
-          do: {[], {:error, "Thread #{thread_id} already exists."}},
-          else: {[create("thread", thread_id, thread)], :ok}
-      end)
-
-    with :ok <- created, do: {:ok, %{"sequence" => sequence(thread_id)}}
+    with :ok <- HalC2.ProjectClones.thread_block(command["projectId"]),
+         :ok <-
+           HalC2.Streams.transact(thread_id, :thread, fn state ->
+             if StreamState.get(state, "thread")[thread_id],
+               do: {[], {:error, "Thread #{thread_id} already exists."}},
+               else: {[create("thread", thread_id, thread)], :ok}
+           end),
+         do: {:ok, %{"sequence" => sequence(thread_id)}}
   end
 
   # A thread an agent created during a run shows in that run's transcript as a link.
@@ -371,27 +374,45 @@ defmodule HalC2.Orchestration do
     end
   end
 
+  # Cancelling a delegated result's wake gives up waking the agent for its tasks: they
+  # are not woken for again, and their results stay readable from their status.
   def dispatch(%{"type" => "queued-run.cancel", "threadId" => thread_id, "runId" => run_id}) do
     queue_change(thread_id, fn state ->
       at = Entities.now()
+      run = StreamState.get(state, "run")[run_id]
 
-      [
-        upsert(
-          state,
-          "run",
-          run_id,
-          # A run that already started is not the queue's to cancel.
-          &if(&1["status"] == "queued",
-            do:
-              Map.merge(&1, %{
-                "status" => "cancelled",
-                "queuePosition" => nil,
-                "completedAt" => at
-              }),
-            else: &1
+      # A run that already started is not the queue's to cancel.
+      if run["status"] == "queued" do
+        message = StreamState.get(state, "message")[run["userMessageId"]] || %{}
+
+        disposed =
+          for task_id <- get_in(message, ["delegatedCompletion", "taskIds"]) || [],
+              do:
+                upsert(state, "subagent", task_id, fn
+                  # One the caller already acknowledged keeps the run that saw it.
+                  %{"completionDelivery" => %{"state" => waiting}} = task
+                  when waiting in ["pending", "delivered"] ->
+                    Map.merge(task, %{
+                      "completionDelivery" => %{"state" => "disposed", "observedByRunId" => nil},
+                      "updatedAt" => at
+                    })
+
+                  _ ->
+                    nil
+                end)
+
+        [
+          upsert(
+            state,
+            "run",
+            run_id,
+            &Map.merge(&1, %{"status" => "cancelled", "queuePosition" => nil, "completedAt" => at})
           )
-        )
-      ]
+          | disposed
+        ]
+      else
+        []
+      end
     end)
   end
 
@@ -400,7 +421,10 @@ defmodule HalC2.Orchestration do
       ) do
     # Attachments, when given, replace the message's (uploads join the thread first);
     # context, when given, replaces its context records.
-    with :ok <- users_run(HalC2.Streams.state(thread_id), run_id),
+    state = HalC2.Streams.state(thread_id)
+
+    with :ok <- users_run(state, run_id, "edited"),
+         :ok <- not_emptied(state, run_id, command),
          {:ok, command} <- edit_claims(thread_id, command) do
       edited =
         %{"text" => command["text"] || "", "updatedAt" => Entities.now()}
@@ -419,28 +443,20 @@ defmodule HalC2.Orchestration do
     end
   end
 
+  # The agent's queued results go ahead of the user's messages (`queued_runs/1`), and
+  # stay there.
   def dispatch(
         %{"type" => "queued-run.reorder", "threadId" => thread_id, "runId" => run_id} = command
       ) do
-    queue_change(thread_id, fn state ->
-      queued = queued_runs(state) |> Enum.map(& &1["id"])
+    state = HalC2.Streams.state(thread_id)
+    before = StreamState.get(state, "run")[command["beforeRunId"]]
 
-      # A run that already started, or never existed, has no place in the queue.
-      if run_id in queued do
-        queued = List.delete(queued, run_id)
-
-        order =
-          case Enum.find_index(queued, &(&1 == command["beforeRunId"])) do
-            nil -> queued ++ [run_id]
-            index -> List.insert_at(queued, index, run_id)
-          end
-
-        for {id, position} <- Enum.with_index(order, 1),
-            do: upsert(state, "run", id, &Map.put(&1, "queuePosition", position))
-      else
-        []
-      end
-    end)
+    with :ok <- users_run(state, run_id, "reordered") do
+      if before && before["status"] == "queued" && automatic?(state, before),
+        do:
+          {:error, "Queued messages cannot be reordered ahead of automatic completion delivery."},
+        else: reorder(thread_id, run_id, command)
+    end
   end
 
   # A link's host snapshot and native stack, from `HalC2.PullRequests.Sync`.
@@ -511,7 +527,8 @@ defmodule HalC2.Orchestration do
       HalC2.Streams.transact(thread_id, :thread, fn state ->
         thread = StreamState.get(state, "thread")[thread_id]
 
-        if thread == nil or JS.get(thread, "settledOverride") != nil or snapshot_at == nil or
+        if thread == nil or JS.get(thread, "settledOverride") != nil or
+             JS.get(thread, "autoSettleDisabledAt") != nil or snapshot_at == nil or
              (state.updated_at || 0) > snapshot_at do
           {[], {:error, "Thread #{thread_id} changed before automatic settlement."}}
         else
@@ -637,7 +654,11 @@ defmodule HalC2.Orchestration do
         {:error, "Queued run #{command["queuedRunId"]} is not queued."}
 
       agent_message?(message) ->
-        users_run(state, queued["id"])
+        users_run(state, queued["id"], "promoted to Steer")
+
+      reason =
+          target && target["status"] in @active_statuses && steer_refusal(state, target, message) ->
+        {:error, reason}
 
       message && target && target["status"] in @active_statuses &&
           steerable?(target, queued["providerInstanceId"]) ->
@@ -650,7 +671,8 @@ defmodule HalC2.Orchestration do
 
   # After a restart the queue waits until the user resumes it.
   def dispatch(%{"type" => "queue.resume", "threadId" => thread_id}) do
-    with {:ok, result} <-
+    with :ok <- unarchived(thread_id),
+         {:ok, result} <-
            queue_change(thread_id, fn state ->
              for run <- queued_runs(state),
                  do: upsert(state, "run", run["id"], &Map.put(&1, "queueHeld", false))
@@ -878,7 +900,17 @@ defmodule HalC2.Orchestration do
             )
 
           positions = with_changes(state, requeued) |> first_in_queue(run_id)
-          {requeued ++ Enum.reject(positions, &is_nil/1), queue_waits(thread)}
+
+          # Queued again, the message interrupts the target and runs next (the
+          # caller restarts it), so the target ends steered by it.
+          case queue_waits(thread) do
+            :queued ->
+              steered = steered_by(state, target_id, run_id)
+              {requeued ++ Enum.reject([steered | positions], &is_nil/1), :queued}
+
+            waits ->
+              {requeued ++ Enum.reject(positions, &is_nil/1), waits}
+          end
       end
     end
   end
@@ -918,7 +950,7 @@ defmodule HalC2.Orchestration do
 
     cond do
       request["status"] != "pending" ->
-        if StreamState.get(state, "message")[message_id],
+        if StreamState.fetch(state, "message", message_id),
           do: {:ok, %{"sequence" => sequence(thread_id)}},
           else: {:error, "This question has already been answered."}
 
@@ -1242,9 +1274,27 @@ defmodule HalC2.Orchestration do
         thread_id,
         turn.ids.run,
         "failed",
-        HalC2.Orchestration.TurnWriter.start_failure(nil, :closed)
+        start_failure(turn, kind, reason)
       )
   end
+
+  # A queued message whose provider could not start says why in its timeline
+  # (`TurnWriter`'s queued start failure): the user was not there when it was sent.
+  defp start_failure(%{queued: true} = turn, kind, reason) do
+    why =
+      case reason do
+        %MatchError{term: {:error, why}} when is_binary(why) -> why
+        _ -> String.replace_prefix(Exception.format_banner(kind, reason), "** ", "")
+      end
+
+    HalC2.Orchestration.TurnWriter.start_failure(
+      HalC2.ThreadMove.provider_name(turn.ids.instance),
+      String.slice(why, 0, 3_000)
+    )
+  end
+
+  defp start_failure(_turn, _kind, _reason),
+    do: HalC2.Orchestration.TurnWriter.start_failure(nil, :closed)
 
   # A runtime that released itself as idle just before this run began stops with the
   # call unanswered (or is gone by the call); a new one takes the turn.
@@ -1571,8 +1621,7 @@ defmodule HalC2.Orchestration do
   defp with_first_run(state, thread_id, change, created, {:ok, project, command}) do
     {kind, id, patch} = change || {"thread", thread_id, %{}}
 
-    launched =
-      StreamState.apply_event(state, %{seq: state.seq, kind: kind, entity: id, patch: patch})
+    launched = StreamState.with_changes(state, [{kind, id, patch}])
 
     {changes, decided} = decide_message(launched, thread_id, command)
     {Enum.reject([change], &is_nil/1) ++ changes, {:ok, created, {project, command, decided}}}
@@ -1580,7 +1629,8 @@ defmodule HalC2.Orchestration do
 
   defp reusable?(state, thread, project_id) do
     thread["projectId"] == project_id and thread["archivedAt"] == nil and
-      thread["deletedAt"] == nil and StreamState.get(state, "message") == %{} and
+      thread["deletedAt"] == nil and state.floor == nil and
+      StreamState.get(state, "message") == %{} and
       StreamState.get(state, "run") == %{}
   end
 
@@ -1721,13 +1771,14 @@ defmodule HalC2.Orchestration do
       })
 
   defp regenerate_title(thread_id) do
-    state = HalC2.Streams.state(thread_id)
-    previous = (StreamState.get(state, "thread")[thread_id] || %{})["title"] || ""
-
-    messages =
-      state
-      |> StreamState.list("message")
-      |> Enum.filter(&(&1["role"] in ["user", "assistant"] and &1["streaming"] != true))
+    # The first message counts, so older runs' are read too.
+    {previous, messages} =
+      HalC2.Streams.read(thread_id, fn state ->
+        {(StreamState.get(state, "thread")[thread_id] || %{})["title"] || "",
+         state
+         |> StreamState.all("message")
+         |> Enum.filter(&(&1["role"] in ["user", "assistant"] and &1["streaming"] != true))}
+      end)
 
     case HalC2.TextGeneration.Prompts.thread_context(messages) do
       {"", []} -> title_settled(thread_id)
@@ -2094,10 +2145,16 @@ defmodule HalC2.Orchestration do
       end
 
     results = Enum.map(asked, &interrupt_result(&1, thread_id, run_id))
+    refusal = Enum.find(results, &(match?({:error, _}, &1) and not no_turn?(&1)))
 
     cond do
       :ok in results ->
         :ok
+
+      # Between turns, a runtime whose background work would not stop (a Codex
+      # terminal still listed after it was ended) says why.
+      active == nil and refusal != nil ->
+        refusal
 
       # A runtime that refuses the stop with a reason of its own — not that it
       # has no turn, but that the stop could not be delivered to the one it has
@@ -2349,16 +2406,28 @@ defmodule HalC2.Orchestration do
         end
 
       "checkpoint.capture" ->
-        {:ok,
-         HalC2.Checkpoint.capture_run(
-           args["cwd"],
-           args["scopeId"],
-           args["runOrdinal"],
-           args["runId"],
-           args["rootNodeId"],
-           thread_id,
-           args["at"]
-         )}
+        checkpoint =
+          HalC2.Checkpoint.capture_run(
+            args["cwd"],
+            args["scopeId"],
+            args["runOrdinal"],
+            args["runId"],
+            args["rootNodeId"],
+            thread_id,
+            args["at"]
+          )
+
+        # Replayed after a restart, with no turn waiting on it: it completes the run.
+        if payload != :turn,
+          do:
+            HalC2.Orchestration.TurnWriter.checkpointed(
+              thread_id,
+              args["runId"],
+              args,
+              checkpoint
+            )
+
+        {:ok, checkpoint}
 
       "terminal.cleanup" ->
         if Process.whereis(HalC2.Terminal.Registry),
@@ -2404,8 +2473,9 @@ defmodule HalC2.Orchestration do
       {:steer, run, message_id} ->
         steer(thread_id, run, message_id, command)
 
-      {:restart, active_run_id} ->
-        # The queued message goes first; the interrupted run's end starts it.
+      {:restart, active_run_id, run_id} ->
+        # The queued message goes first, behind only the agent's delegated results
+        # (`queue_run/5`); the interrupted run's end starts it.
         _ =
           HalC2.Orchestration.Effects.run_now(
             thread_id,
@@ -2414,11 +2484,93 @@ defmodule HalC2.Orchestration do
             {thread_id, active_run_id}
           )
 
+        await_restart(thread_id, active_run_id, run_id)
         {:ok, %{"sequence" => sequence(thread_id)}}
 
       turn ->
         begin_turn(thread_id, turn)
         {:ok, %{"sequence" => sequence(thread_id)}}
+    end
+  end
+
+  # A restart's message starts when the run it interrupted ends (`start_next/1`). A
+  # provider that never ends that run fails the restart instead, so no second turn runs
+  # alongside the first. Bundled runtimes settle a turn that ignores its stop within
+  # their own deadline (Codex's `:codex_interrupt_deadline_ms`), well inside this one.
+  defp await_restart(thread_id, interrupted, run_id) do
+    deadline =
+      System.monotonic_time(:millisecond) +
+        Application.get_env(:hal_c2, :restart_end_ms, @restart_end_ms)
+
+    Task.start(fn ->
+      :ok = HalC2.Streams.watch(thread_id, self())
+      unless run_ended?(thread_id, interrupted, deadline), do: fail_restart(thread_id, run_id)
+    end)
+  end
+
+  defp run_ended?(thread_id, run_id, deadline) do
+    if StreamState.get(HalC2.Streams.state(thread_id), "run")[run_id]["status"] in @active_statuses do
+      receive do
+        {:hal_c2_stream, ^thread_id, _} -> run_ended?(thread_id, run_id, deadline)
+      after
+        max(deadline - System.monotonic_time(:millisecond), 0) -> false
+      end
+    else
+      true
+    end
+  end
+
+  defp fail_restart(thread_id, run_id) do
+    failure = %{
+      "class" => "provider_error",
+      "message" => "The provider turn did not end before the restart.",
+      "code" => "restart_timeout",
+      "retryable" => true
+    }
+
+    HalC2.Streams.transact(thread_id, :thread, fn state ->
+      {fail_queued(state, run_id, "Restart failed", failure), :ok}
+    end)
+  end
+
+  @doc """
+  Ends a run that left the queue without starting as failed, with an error item titled
+  `title` that carries `failure` (`OrchestrationV2ProviderFailure`). Nothing for a run
+  that is no longer queued.
+  """
+  def fail_queued(state, run_id, title, failure) do
+    case StreamState.get(state, "run")[run_id] do
+      %{"status" => "queued"} = run ->
+        at = Entities.now()
+
+        ids = %{
+          thread: run["threadId"],
+          run: run_id,
+          root_node: run["rootNodeId"],
+          provider_thread: run["providerThreadId"]
+        }
+
+        id = "turn-item:queued-failure:#{run_id}"
+
+        [
+          upsert(
+            state,
+            "run",
+            run_id,
+            &Map.merge(&1, %{"status" => "failed", "queuePosition" => nil, "completedAt" => at})
+          ),
+          create(
+            "turn-item",
+            id,
+            Entities.turn_item(ids, id, "error", next_ordinal(state), "failed", at, %{
+              "title" => title,
+              "failure" => failure
+            })
+          )
+        ]
+
+      _ ->
+        []
     end
   end
 
@@ -2508,10 +2660,34 @@ defmodule HalC2.Orchestration do
     queued_id = command["queuedRunId"]
     target_id = command["targetRunId"]
 
-    with {:ok, result} <- queue_change(thread_id, &first_in_queue(&1, queued_id)) do
+    with {:ok, result} <-
+           queue_change(
+             thread_id,
+             &[steered_by(&1, target_id, queued_id) | first_in_queue(&1, queued_id)]
+           ) do
       restart_target(thread_id, target_id)
       {:ok, result}
     end
+  end
+
+  # Marks the active run `run_id` as interrupted for the steer that runs as `steer_id`,
+  # so a client can tell a reply a steer cut off from one a stop, a crash or a
+  # restart of the MC left interrupted.
+  defp steered_by(state, nil, steer_id) do
+    case Enum.find(StreamState.list(state, "run"), &(&1["status"] in @active_statuses)) do
+      nil -> nil
+      active -> steered_by(state, active["id"], steer_id)
+    end
+  end
+
+  defp steered_by(state, run_id, steer_id) do
+    upsert(state, "run", run_id, fn
+      %{"status" => status} = run when status in @active_statuses ->
+        Map.put(run, "steeredByRunId", steer_id)
+
+      _ ->
+        nil
+    end)
   end
 
   # Interrupts the promoted message's target, whose end starts the queue's head. A
@@ -2527,11 +2703,17 @@ defmodule HalC2.Orchestration do
     :ok
   end
 
-  # Queue positions with `run_id` first and the other queued runs after it, in order.
-  # A run that is no longer queued keeps its place out of the queue.
+  # Queue positions with `run_id` first and the other queued runs after it, in order,
+  # behind the agent's queued results (`queued_runs/1`). A run that is no longer queued
+  # keeps its place out of the queue.
   defp first_in_queue(state, run_id) do
-    queued = queued_runs(state) |> Enum.map(& &1["id"])
-    order = if run_id in queued, do: [run_id | List.delete(queued, run_id)], else: queued
+    {automatic, users} = state |> queued_runs() |> Enum.split_with(&automatic?(state, &1))
+    {automatic, users} = {Enum.map(automatic, & &1["id"]), Enum.map(users, & &1["id"])}
+
+    order =
+      if run_id in users,
+        do: automatic ++ [run_id | List.delete(users, run_id)],
+        else: automatic ++ users
 
     for {id, position} <- Enum.with_index(order, 1),
         do: upsert(state, "run", id, &Map.put(&1, "queuePosition", position))
@@ -2660,6 +2842,7 @@ defmodule HalC2.Orchestration do
           command
           |> Map.put("messageId", message_id)
           |> Map.put("dispatchMode", %{"type" => "queue_after_active"})
+          |> Map.put("fromSteer", true)
           |> Map.delete("deliveryIntent")
 
         case HalC2.Streams.transact(thread_id, :thread, &unsteer(&1, thread_id, run, resend)) do
@@ -2756,11 +2939,7 @@ defmodule HalC2.Orchestration do
 
   # `state` as it is once `changes` are committed, for deciding more in the same
   # transaction.
-  defp with_changes(state, changes) do
-    Enum.reduce(changes, state, fn {kind, id, patch}, acc ->
-      StreamState.apply_event(acc, %{seq: acc.seq, kind: kind, entity: id, patch: patch})
-    end)
-  end
+  defp with_changes(state, changes), do: StreamState.with_changes(state, changes)
 
   # What a runtime's `steer/3` is handed: the text the provider reads (with its composer
   # context) and the message's files, as a turn carries them.
@@ -2860,6 +3039,19 @@ defmodule HalC2.Orchestration do
       "snoozedAt" => nil
     }
   end
+
+  # Turning auto-settle off keeps the thread out of automatic settlement until the user
+  # turns it back on; settling and un-settling by hand leave it as it is. Turning it off
+  # again keeps when it was first turned off.
+  defp thread_fields("thread.auto-settle.set", %{"enabled" => enabled}, thread, at)
+       when is_boolean(enabled),
+       do: %{
+         "autoSettleDisabledAt" =>
+           if(enabled, do: nil, else: thread["autoSettleDisabledAt"] || at)
+       }
+
+  defp thread_fields("thread.auto-settle.set", _, _, _),
+    do: {:error, "thread.auto-settle.set needs enabled, true or false."}
 
   defp thread_fields("thread.unsettle", _, thread, at) do
     unsettled_at = if thread["settledOverride"] == "active", do: thread["unsettledAt"], else: at
@@ -3294,15 +3486,27 @@ defmodule HalC2.Orchestration do
     runs ++ attempts ++ requests
   end
 
+  # Settling also dismisses the questions the agent asked in the background, unanswered
+  # (`thread.user-input.dismiss`): nobody is going to answer them on a settled thread.
   defp archived_queue("thread.settle", state, at) do
-    for run <- queued_runs(state), automatic?(state, run) do
-      upsert(
-        state,
-        "run",
-        run["id"],
-        &Map.merge(&1, %{"status" => "cancelled", "queuePosition" => nil, "completedAt" => at})
-      )
-    end
+    runs =
+      for run <- queued_runs(state), automatic?(state, run) do
+        upsert(
+          state,
+          "run",
+          run["id"],
+          &Map.merge(&1, %{"status" => "cancelled", "queuePosition" => nil, "completedAt" => at})
+        )
+      end
+
+    questions =
+      for request <- StreamState.list(state, "runtime-request"),
+          request["status"] == "pending",
+          HalC2.Orchestration.TurnWriter.message_request?(request),
+          change <- resolve_message_request(state, request, "cancelled", nil),
+          do: change
+
+    runs ++ questions
   end
 
   defp archived_queue(_type, _state, _at), do: []
@@ -3315,17 +3519,52 @@ defmodule HalC2.Orchestration do
   defp agent_message?(message),
     do: message["notification"] != nil or message["delegatedCompletion"] != nil
 
-  # A queued message the MC sent for the agent is not the user's to rewrite or steer
-  # with: it is what the agent is told, and when.
-  defp users_run(state, run_id) do
+  # A queued message the MC sent for the agent is not the user's to rewrite, move or
+  # steer with: it is what the agent is told, and when. `done` is what was refused
+  # ("edited", "reordered", "promoted to Steer").
+  defp users_run(state, run_id, done) do
     with %{"status" => "queued", "userMessageId" => message_id} <-
            StreamState.get(state, "run")[run_id],
          %{} = message <- StreamState.get(state, "message")[message_id],
          true <- agent_message?(message) do
-      {:error, "Queued run #{run_id} is the agent's own message, not one to edit or steer with."}
+      {:error, "Automatic completion deliveries cannot be #{done}."}
     else
       _ -> :ok
     end
+  end
+
+  # A queued message keeps something to send: text, or attachments.
+  defp not_emptied(state, run_id, command) do
+    run = StreamState.get(state, "run")[run_id] || %{}
+    message = StreamState.get(state, "message")[run["userMessageId"]] || %{}
+    attachments = Map.get(command, "attachments", message["attachments"]) || []
+
+    if run["status"] == "queued" and String.trim(command["text"] || "") == "" and
+         attachments == [],
+       do: {:error, "Queued run #{run_id} cannot be edited to an empty message."},
+       else: :ok
+  end
+
+  defp reorder(thread_id, run_id, command) do
+    queue_change(thread_id, fn state ->
+      queued = queued_runs(state) |> Enum.map(& &1["id"])
+
+      # A run that already started, or never existed, has no place in the queue.
+      if run_id in queued do
+        queued = List.delete(queued, run_id)
+
+        order =
+          case Enum.find_index(queued, &(&1 == command["beforeRunId"])) do
+            nil -> queued ++ [run_id]
+            index -> List.insert_at(queued, index, run_id)
+          end
+
+        for {id, position} <- Enum.with_index(order, 1),
+            do: upsert(state, "run", id, &Map.put(&1, "queuePosition", position))
+      else
+        []
+      end
+    end)
   end
 
   # A deleted thread's provider sessions stop in the commit that deletes it; the
@@ -3394,10 +3633,16 @@ defmodule HalC2.Orchestration do
     %{"linkedPullRequest" => linked, "pullRequests" => kept ++ added}
   end
 
-  # Visits and mark-unread change read state only, and arranging the active list is not
-  # activity either: the thread's last activity time stays put.
+  # Visits and mark-unread change read state only, and arranging the active list or
+  # turning auto-settle off and on is not activity either: the thread's last activity
+  # time, and so its auto-settle idle clock, stays put.
   defp quiet_read_state({kind, id, patch}, type)
-       when type in ["thread.visit", "thread.mark-unread", "thread.active.reorder"],
+       when type in [
+              "thread.visit",
+              "thread.mark-unread",
+              "thread.active.reorder",
+              "thread.auto-settle.set"
+            ],
        do: {kind, id, Map.put(patch, "q", true)}
 
   defp quiet_read_state(change, _type), do: change
@@ -3458,11 +3703,24 @@ defmodule HalC2.Orchestration do
     end
   end
 
+  # The queue in the order it starts: the agent's delegated results first, then the
+  # user's messages by position.
   defp queued_runs(state) do
     state
     |> StreamState.list("run")
     |> Enum.filter(&(&1["status"] == "queued"))
-    |> Enum.sort_by(&{&1["queuePosition"] || 0, &1["ordinal"] || 0})
+    |> Enum.sort_by(
+      &{if(automatic?(state, &1), do: 0, else: 1), &1["queuePosition"] || 0, &1["ordinal"] || 0}
+    )
+  end
+
+  defp unarchived(thread_id) do
+    thread = StreamState.get(HalC2.Streams.state(thread_id), "thread")[thread_id] || %{}
+
+    # A deleted one says so, in `queue_change/2`.
+    if thread["archivedAt"] != nil and thread["deletedAt"] == nil,
+      do: {:error, "Thread #{thread_id} is not active."},
+      else: :ok
   end
 
   defp renumber(state) do
@@ -3520,6 +3778,7 @@ defmodule HalC2.Orchestration do
   defp decide_message(state, thread_id, command) do
     thread = StreamState.get(state, "thread")[thread_id]
     runs = StreamState.list(state, "run")
+    command = late_steer(runs, command)
 
     cond do
       thread == nil ->
@@ -3532,7 +3791,7 @@ defmodule HalC2.Orchestration do
       # now, so it is a map, which `dispatch_once/1` keeps no receipt of.
       sent =
           is_binary(command["messageId"]) &&
-            StreamState.get(state, "message")[command["messageId"]] ->
+            StreamState.fetch(state, "message", command["messageId"]) ->
         if sent["steer"] == "pending",
           do: {[], {:error, %{"message" => "This message is still being sent. Try again."}}},
           else: {[], {:ok, :sent}}
@@ -3573,13 +3832,19 @@ defmodule HalC2.Orchestration do
         instance = message_instance(thread, command)
         active_instance = active["providerInstanceId"] || instance
 
+        refusal = steer_refusal(state, active, command)
+
         # Steer a running turn that can take it,
         # else queue; a restart (or a steer that cannot be) interrupts and goes first.
+        # `/compact` and `/logout` run as turns of their own, and cannot be steered.
         auto_steer =
           intent in [nil, "auto"] and mode != "queue_after_active" and
-            active["status"] in ["running", "waiting"]
+            active["status"] in ["running", "waiting"] and refusal == nil
 
         cond do
+          steer and refusal != nil ->
+            {[], {:error, refusal}}
+
           intent == "restart" or mode == "restart_active" ->
             case HalC2.Orchestration.CommandPolicy.decide_steering(active_instance, true) do
               {:ok, _} -> queue_run(state, thread, runs, command, active["id"])
@@ -3609,9 +3874,70 @@ defmodule HalC2.Orchestration do
             end
         end
 
+      # A message the user queues while the queue is held waits there, held too
+      # (`queue_run/5`), until the user resumes it.
+      queued_by_user?(command) and
+          Enum.any?(runs, &(&1["status"] == "queued" and &1["queueHeld"] == true)) ->
+        queue_run(state, thread, runs, command, nil)
+
       true ->
         new_run(state, thread, runs, command)
     end
+  end
+
+  # A steer for a turn that completed before it arrived (the client still showed the
+  # turn running) is sent as a message of its own, never lost.
+  defp late_steer(runs, command) do
+    target = get_in(command, ["dispatchMode", "targetRunId"])
+
+    if get_in(command, ["dispatchMode", "type"]) == "steer_active" and
+         Enum.any?(runs, &(&1["id"] == target and &1["status"] == "completed")) do
+      command
+      |> Map.put("dispatchMode", %{"type" => "queue_after_active"})
+      |> Map.put("fromSteer", true)
+      |> Map.delete("deliveryIntent")
+    else
+      command
+    end
+  end
+
+  # The user queued the message themselves. What an agent or the MC sends (a delegated
+  # result, a provider's background wake, another agent's send, a reply or scheduled
+  # prompt) and a steer that came too late or was refused are sent as queued too, but
+  # are not the user waiting on a held queue.
+  defp queued_by_user?(command) do
+    get_in(command, ["dispatchMode", "type"]) == "queue_after_active" and
+      command["createdBy"] in [nil, "user"] and command["creationSource"] != "server" and
+      command["scheduledTaskId"] == nil and command["fromSteer"] != true
+  end
+
+  # Why `message` cannot be steered into the active run `run`, or nil: `/compact` and
+  # `/logout` sent by themselves run as turns of their own, neither steered with nor
+  # steered into.
+  defp steer_refusal(state, run, message) do
+    target = StreamState.get(state, "message")[run["userMessageId"]]
+
+    case {maintenance(message), target && maintenance(target)} do
+      {"/compact", _} ->
+        "Context compaction must run as a separate turn. Queue it or wait for the active turn to finish."
+
+      {"/logout", _} ->
+        "Signing out must run as a separate turn. Queue it or wait for the active turn to finish."
+
+      {_, "/compact"} ->
+        "Wait for context compaction to finish before steering the thread."
+
+      {_, "/logout"} ->
+        "Wait for sign-out to finish before steering the thread."
+
+      _ ->
+        nil
+    end
+  end
+
+  defp maintenance(message) do
+    text = String.downcase(String.trim(message["text"] || ""))
+    if (message["attachments"] || []) == [] and text in ~w(/compact /logout), do: text
   end
 
   # A steer or restart naming a run other than the active one (or naming one
@@ -3776,14 +4102,19 @@ defmodule HalC2.Orchestration do
     }
 
     queued = queued_runs(state)
-    position = if restart_of, do: 0, else: length(queued) + 1
 
     # Above every other run until it starts (`start_ordinal/3`).
     ordinal = Enum.max(Enum.map(runs, &(&1["ordinal"] || 0)), fn -> 0 end) + 1
 
+    # A message the user queues while the queue is held waits with it; a restart is sent now.
+    held =
+      restart_of == nil and queued_by_user?(command) and
+        Enum.any?(queued, &(&1["queueHeld"] == true))
+
     run =
       Entities.run(ids, ordinal, selection, at)
-      |> Map.merge(%{"status" => "queued", "queuePosition" => position})
+      |> Map.put("status", "queued")
+      |> then(&if(held, do: Map.put(&1, "queueHeld", true), else: &1))
 
     message =
       Entities.message(ids, message_id, "user", command["text"] || "", false, at)
@@ -3794,21 +4125,29 @@ defmodule HalC2.Orchestration do
       })
       |> with_message_fields(command)
 
-    # A restart's message goes first; the others move down one.
+    # A restart's message, or the agent's delegated result, goes ahead of the user's
+    # queued messages (behind the agent's results); anything else goes last.
+    {automatic, users} = Enum.split_with(queued, &automatic?(state, &1))
+
+    order =
+      if restart_of || command["delegatedCompletion"],
+        do: automatic ++ [run] ++ users,
+        else: queued ++ [run]
+
+    run = Map.put(run, "queuePosition", Enum.find_index(order, &(&1 == run)) + 1)
+
     shifted =
-      if restart_of,
-        do:
-          for(
-            {queued_run, index} <- Enum.with_index(queued, 2),
-            change = upsert(state, "run", queued_run["id"], &Map.put(&1, "queuePosition", index)),
-            do: change
-          ),
-        else: []
+      for {queued_run, position} <- Enum.with_index(order, 1),
+          queued_run["id"] != ids.run,
+          change =
+            upsert(state, "run", queued_run["id"], &Map.put(&1, "queuePosition", position)),
+          do: change
 
-    run = if restart_of, do: Map.put(run, "queuePosition", 1), else: run
+    steered = if restart_of, do: [steered_by(state, restart_of, ids.run)], else: []
 
-    {[create("run", ids.run, run), create("message", message_id, message)] ++ shifted,
-     {:ok, if(restart_of, do: {:restart, restart_of}, else: :queued)}}
+    {[create("run", ids.run, run), create("message", message_id, message)] ++
+       shifted ++ Enum.reject(steered, &is_nil/1),
+     {:ok, if(restart_of, do: {:restart, restart_of, ids.run}, else: :queued)}}
   end
 
   # The changes that bring a thread from before each instance had its own provider
@@ -3939,11 +4278,7 @@ defmodule HalC2.Orchestration do
   # Every change replays at `state.seq`: safe only while
   # `StreamState.apply_event/2` neither dedupes nor orders by seq and the
   # result's `created`/`changed` stamps go unread before commit.
-  defp applied(state, changes) do
-    Enum.reduce(changes, state, fn {kind, id, patch}, state ->
-      StreamState.apply_event(state, %{seq: state.seq, kind: kind, entity: id, patch: patch})
-    end)
-  end
+  defp applied(state, changes), do: StreamState.with_changes(state, changes)
 
   # Starts a run for a message: a new one, or a queued run (with its stored message
   # as `command`), which keeps its ids and takes the next ordinal (`start_ordinal/3`).
@@ -3952,9 +4287,18 @@ defmodule HalC2.Orchestration do
     thread_id = thread["id"]
     {ordinal, renumbered} = start_ordinal(state, runs, queued)
 
-    selection =
+    named =
       (queued && queued["modelSelection"]) || command["modelSelection"] ||
         thread["modelSelection"]
+
+    # The MC's own message to the agent (a delegated result, a pull request wake) names
+    # no model: queued, it runs on the thread's selection when it starts, not the one
+    # the thread had when it queued, since the agent may have switched since (#1048).
+    # A provider's wake (`HalC2.Orchestration.Wake`) stays on the provider that woke.
+    selection =
+      if queued && agent_message?(command) && command["createdBy"] == "system",
+        do: thread["modelSelection"] || named,
+        else: named
 
     instance = selection["instanceId"] || thread["providerInstanceId"] || "codex"
     driver = driver_for(instance)
@@ -4094,8 +4438,11 @@ defmodule HalC2.Orchestration do
 
     # A run on another provider takes the thread over, as `provider.switch` would: a
     # client's switch can be missing or stale when it sent behind sends still in flight.
+    # A message the MC sends for the agent is no choice of provider: a provider's wake
+    # finishes that provider's background work and leaves a switch away from it
+    # standing (#1048).
     switch_change =
-      if instance != message_instance(thread, %{}),
+      if instance != message_instance(thread, %{}) and not agent_message?(command),
         do:
           upsert(
             state,
@@ -4187,6 +4534,8 @@ defmodule HalC2.Orchestration do
 
     turn = %{
       ids: ids,
+      # A run that left the queue (`start_failure/3`).
+      queued: queued != nil,
       run_ordinal: ordinal,
       started_ms: System.system_time(:millisecond),
       text:
@@ -4286,12 +4635,16 @@ defmodule HalC2.Orchestration do
 
   @doc "The next free turn-item ordinal in a thread."
   def next_ordinal(state) do
-    state
-    |> StreamState.get("turn-item")
-    |> Map.values()
-    |> Enum.map(& &1["ordinal"])
-    |> Enum.max(fn -> -1 end)
-    |> Kernel.+(1)
+    hot = StreamState.get(state, "turn-item")
+
+    # Older runs' items have lower ordinals than those in memory, unless memory has none
+    # (the newest runs rolled back, say).
+    items =
+      if hot == %{} and state.floor != nil,
+        do: StreamState.all(state, "turn-item"),
+        else: Map.values(hot)
+
+    items |> Enum.map(& &1["ordinal"]) |> Enum.max(fn -> -1 end) |> Kernel.+(1)
   end
 
   # The changes recording a provider's own diff for a turn, or the refusal
@@ -4364,7 +4717,7 @@ defmodule HalC2.Orchestration do
 
   @doc "A change updating an existing entity with `fun`, or `nil` when nothing changes."
   def upsert(state, kind, id, fun) do
-    current = StreamState.get(state, kind)[id]
+    current = StreamState.fetch(state, kind, id)
 
     # `fun` returning nil leaves the entity as it is, a missing one included.
     with %{} = next <- fun.(current),

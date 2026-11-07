@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18412
+#   https://github.com/pingdotgg/t3code/pull/13903
+#   https://github.com/pingdotgg/t3code/pull/18891
+#   https://github.com/pingdotgg/t3code/pull/20891
 #   docs/user/project-settings.md (Actions)
 #   apps/server-ex/lib/hal_c2/worktree_setup.ex (setup script)
 #   apps/web/src/components/ProjectScriptsControl.tsx
@@ -15,6 +19,9 @@
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (the header's action menu, the action run last)
 #   apps/desktop-qt/src/native/TerminalController.cpp (runs an action in the thread's drawer)
 #   apps/web/src/components/ChatView.tsx (deleting an action: the confirmation by name, the failure)
+#   https://github.com/pingdotgg/t3code/pull/15394
+#   https://github.com/pingdotgg/t3code/pull/15490
+#   https://github.com/pingdotgg/t3code/pull/16290
 
 Feature: Project actions
   An action is a named command for a project, such as starting the dev server or running
@@ -78,6 +85,22 @@ Feature: Project actions
       When the user looks at the actions of "shop"
       Then "Install" is offered
 
+    @backlog @shared
+    Scenario: Running an action opens its preview when asked to
+      Given an action with a preview address and "open preview automatically" on
+      When the command is written to the terminal
+      Then the preview opens at that address
+      And a failed write opens nothing
+
+    # Upstream #13903: project actions are typed with a leading space so they stay out of shell history.
+    @backlog @shared @priority-low
+    Scenario: An action's command stays out of the shell's history
+      Given the user's shell leaves out of its history the lines that start with a space
+      When the user runs an action
+      Then the action's command runs in the terminal
+      And it is not saved in the shell's history
+      And a command the user types afterwards is saved as usual
+
   Rule: The setup script
 
     Background:
@@ -111,6 +134,53 @@ Feature: Project actions
       When a thread in "shop" starts on a new worktree
       Then the setup script step is skipped
       And the agent starts
+
+    # Upstream #18891: a setup action set to run on worktree creation no longer runs when a
+    # thread starts in the main checkout, where it could overwrite the project's own files.
+    @backlog @mc @priority-high
+    Scenario: A thread in the main checkout runs no setup script
+      Given "Install" runs automatically when a worktree is created
+      When a thread in "shop" starts in the main checkout
+      Then "bun install" does not run
+      And the agent starts
+
+    # Upstream #13903: setup and settle scripts are typed with a leading space so they stay out of shell history.
+    @backlog @mc @priority-low
+    Scenario: A setup script stays out of the shell's history
+      Given the user's shell leaves out of its history the lines that start with a space
+      When a thread in "shop" starts on a new worktree
+      Then "bun install" runs in the new worktree's setup terminal
+      And it is not saved in the shell's history
+
+  Rule: An action can run when a worktree thread settles
+
+    # Upstream #16290: an opt-in action (a teardown such as "docker compose down") runs in
+    # the thread's worktree when the thread settles, by hand or automatically.
+    @backlog @mc
+    Scenario Outline: The settle action runs in the worktree of a thread that settles
+      Given "Teardown" of "shop" runs in the thread's worktree when the thread settles
+      And a thread in "shop" works on <checkout>
+      When the thread settles <how>
+      Then <outcome>
+
+      Examples:
+        | checkout      | how                | outcome                                         |
+        | a worktree    | by the user's hand | "Teardown" runs in the thread's worktree        |
+        | a worktree    | automatically      | "Teardown" runs in the thread's worktree        |
+        | the main checkout | by the user's hand | nothing runs                                |
+
+    @backlog @mc
+    Scenario: Nothing runs when a thread settles unless an action opts in
+      Given no action of "shop" runs when a thread settles
+      When a thread in "shop" on a worktree settles
+      Then no action runs
+
+    @backlog @desktop @mobile @tui
+    Scenario: Only one action of a project runs when a thread settles
+      Given "Teardown" of "shop" runs in the thread's worktree when the thread settles
+      When the user makes "Stop db" run when a thread settles
+      Then "Stop db" runs when a thread settles
+      And "Teardown" no longer does
 
   Rule: Adding, editing and removing actions
 
@@ -169,7 +239,7 @@ Feature: Project actions
       Then "mod+shift+d" no longer runs "Dev"
 
     # Legacy: apps/web/src/lib/projectScriptKeybindings.ts (decodeProjectScriptKeybindingRule), projectScriptEditor.tsx
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A shortcut that is not a key combination is refused before the action is saved
       When the user saves a new action named "Test" with the shortcut "mod+shift+"
       Then the form says "Invalid keybinding."
@@ -188,13 +258,13 @@ Feature: Project actions
       When the user sets the preview address "http://localhost:3000"
       Then opening the preview automatically can be turned on
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Actions with the same name are both kept
       When the user adds another action named "Dev" running "bun run dev:api"
       Then "shop" has two actions named "Dev"
       And each of them runs its own command
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Waiting for setup to finish can only be chosen for the setup script
       When the user edits "Dev" so it does not run on worktree creation
       Then waiting for it to finish before the agent starts cannot be turned on
@@ -210,13 +280,14 @@ Feature: Project actions
       When the environment accepts saves again and the user saves
       Then "shop" has the action "Test"
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An action cannot be saved twice while it is being saved
       When the user saves a new action named "Test" and presses save again before it finishes
       Then "shop" has one action named "Test"
       And the form cannot be edited until the save finishes
 
-    @backlog @desktop
+    # Upstream #20891: a late failure from an earlier save no longer shows on the form opened after it.
+    @backlog @desktop @priority-low
     Scenario: Closing the form while saving ignores the result
       Given the user saved a new action and the save is still running
       When the user cancels the form and opens it again for another action
@@ -229,13 +300,13 @@ Feature: Project actions
       Then the form opens filled in with "Lint"
       And the form shows why it could not be imported
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An action that was set to wait for setup keeps that when imported
       Given the checkout's hal-c2.json declares the setup action "Install" that does not run alongside the agent
       When the user imports "Install"
       Then "Install" waits for it to finish before the agent starts
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: An action's identity may be too old to carry a shortcut
       Given "shop" has an action with the identity "<id>" from an earlier version
       When the user opens the actions of "shop"
@@ -246,3 +317,21 @@ Feature: Project actions
         | id                               |
         | install-javascript-dependencies  |
         | A.b                              |
+
+    @backlog @shared @priority-low
+    Scenario: Changing or clearing an action's shortcut leaves no stale rule
+      Given an action with a shortcut
+      When the user changes the shortcut, clears it, or deletes the action
+      Then only the new shortcut is bound, or none, and no earlier rule stays active
+
+    # Upstream #18412: an edit that left the shortcut alone was saved as clearing it.
+    @backlog @shared @priority-low
+    Scenario Outline: Editing an action's <field> keeps its shortcut
+      Given the action "Test" runs "echo original" on "Ctrl+Shift+T"
+      When the user changes only its <field> and saves
+      Then "Ctrl+Shift+T" still runs the action
+
+      Examples:
+        | field   |
+        | name    |
+        | command |

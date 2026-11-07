@@ -333,12 +333,12 @@ const Steps steps([] {
     world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nHomePage {}\n", QSize(900, 700));
   });
   step(QStringLiteral("the user is asked what they should work on"), [](World& world, const Captures&, const Table&) {
-    const QQuickItem* title = world.brick->item(QStringLiteral("homeTitle"));
+    const QQuickItem* title = world.brick->item(QStringLiteral("homeState"))->findChild<QQuickItem*>(QStringLiteral("emptyStateTitle"));
     const QString text = title->property("text").toString();
     expect(title->isVisible() && text == QLatin1String("What should we work on?"), QStringLiteral("home says \"%1\"").arg(text));
   });
   step(QStringLiteral("the user is offered to add a project"), [](World& world, const Captures&, const Table&) {
-    const QQuickItem* action = world.brick->item(QStringLiteral("homeAction"));
+    const QQuickItem* action = world.brick->item(QStringLiteral("homeState"))->findChild<QQuickItem*>(QStringLiteral("emptyStateAction"));
     const QString text = action->property("text").toString();
     expect(action->isVisible() && text == QLatin1String("Add project"), QStringLiteral("home offers \"%1\"").arg(text));
   });

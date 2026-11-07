@@ -8,10 +8,15 @@
 #include <QJsonObject>
 #include <QMap>
 #include <QPersistentModelIndex>
+#include <QQuickItem>
 #include <QSignalSpy>
 #include <QTimeZone>
 
+#include <memory>
+
+#include "Brick.h"
 #include "Harness.h"
+#include "PlanCard.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "Stream.h"
@@ -117,6 +122,12 @@ const FakeMc::Extension streams([](FakeMc& mc) {
       fake.waiting.append([&mc, id, shape, sub = mc.subscriptions.last()] { answer(mc, id, shape, sub); });
       return;
     }
+    if (fake.loadMs > 0) {
+      mc.busy(fake.loadMs, [&mc, id, shape, sub = mc.subscriptions.last()] {
+        if (mc.subscribers(QStringLiteral("stream")).contains(id)) answer(mc, id, shape, sub);
+      });
+      return;
+    }
     answer(mc, id, shape, mc.subscriptions.last());
   });
   mc.onFrame(QStringLiteral("more"), [&mc](const QJsonObject& frame) {
@@ -219,6 +230,22 @@ void keepRows(World& world) {
   FakeStreams& fake = world.mc.part<FakeStreams>();
   fake.kept.clear();
   for (int row = 0; row < model.rowCount(); ++row) fake.kept.append(QPersistentModelIndex(model.index(row)));
+}
+
+// The open thread's timeline as the Timeline brick draws it.
+Brick& planTimelineBrick(World& world) {
+  if (!world.brick) {
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nTimeline {}\n", QSize(820, 1400));
+    world.brick->root()->setProperty("model", QVariant::fromValue(static_cast<QObject*>(&timeline(world))));
+  }
+  return *world.brick;
+}
+
+// What the plan card's expand button reads, or empty when it offers none.
+QString planExpandText(World& world) {
+  world.sync();
+  QQuickItem* button = planTimelineBrick(world).find(QStringLiteral("planExpand"));
+  return button && button->isVisible() ? button->property("text").toString() : QString();
 }
 
 const Steps steps([] {
@@ -712,13 +739,47 @@ const Steps steps([] {
     const QString body = role(timeline(world), lastRowOf(world, QStringLiteral("plan")), TimelineModel::TextRole).toString();
     expect(body.startsWith(c[0]), QStringLiteral("the plan's text reads \"%1\"").arg(body));
   });
+  step(QStringLiteral("the agent proposes a plan whose first heading is %1 followed by a %1 heading").arg(q), [](World& world, const Captures& c, const Table&) {
+    startRun(world);
+    addItem(world, QStringLiteral("proposed_plan"), {{QStringLiteral("markdown"), QStringLiteral("# %1\n\n## %2\n\n- Add the line\n- Test it").arg(c[0], c[1])}});
+  });
+  step(QStringLiteral("the plan's text starts after the %1 heading").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString body = role(timeline(world), lastRowOf(world, QStringLiteral("plan")), TimelineModel::TextRole).toString();
+    expect(body.startsWith(QLatin1String("- Add the line")) && !body.contains(c[0]), QStringLiteral("the plan's text reads \"%1\"").arg(body));
+  });
+  // A long plan's preview on the Timeline brick (ProposedPlanCard).
+  step(QStringLiteral("the plan card shows (its first 10 lines followed by an ellipsis|the whole plan and no way to collapse it)"),
+       [](World& world, const Captures& c, const Table&) {
+         const int row = lastRowOf(world, QStringLiteral("plan"));
+         const QString preview = role(timeline(world), row, TimelineModel::PreviewRole).toString();
+         const QString body = role(timeline(world), row, TimelineModel::TextRole).toString();
+         const QString button = planExpandText(world);
+         if (c[0].startsWith(QLatin1String("the whole plan"))) {
+           expect(preview.isEmpty() && button.isEmpty(), QStringLiteral("the plan card shows \"%1\" and offers \"%2\"").arg(preview, button));
+           return;
+         }
+         QStringList expected = body.split(QLatin1Char('\n')).mid(0, 10);
+         expected << QString() << QStringLiteral("...");
+         expect(preview == expected.join(QLatin1Char('\n')) && button == QLatin1String("Expand plan"),
+                QStringLiteral("the plan card shows \"%1\" and offers \"%2\"").arg(preview, button));
+       });
+  step(QStringLiteral("the whole plan is shown"), [](World& world, const Captures&, const Table&) {
+    const int row = lastRowOf(world, QStringLiteral("plan"));
+    world.waitFor([&] { return role(timeline(world), row, TimelineModel::ExpandedRole).toBool() && planExpandText(world) == QLatin1String("Collapse plan"); },
+                  [&] { return QStringLiteral("the plan card offers \"%1\"").arg(planExpandText(world)); });
+  });
+  step(QStringLiteral("the plan returns to its preview"), [](World& world, const Captures&, const Table&) {
+    const int row = lastRowOf(world, QStringLiteral("plan"));
+    world.waitFor([&] { return !role(timeline(world), row, TimelineModel::ExpandedRole).toBool() && planExpandText(world) == QLatin1String("Expand plan"); },
+                  [&] { return QStringLiteral("the plan card offers \"%1\"").arg(planExpandText(world)); });
+  });
   step(QStringLiteral("a plan without a heading is titled %1").arg(q), [](World& world, const Captures& c, const Table&) {
     addItem(world, QStringLiteral("proposed_plan"), {{QStringLiteral("markdown"), QStringLiteral("Add the line, then test it.")}});
     const QString title = role(timeline(world), lastRowOf(world, QStringLiteral("plan")), TimelineModel::TitleRole).toString();
     expect(title == c[0], QStringLiteral("the plan card is titled \"%1\"").arg(title));
   });
 
-  step(QStringLiteral("the agent has a subagent that is (.+)"), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the agent has a subagent that is (running|waiting on a request|idle and resumable|completed|failed|cancelled)"), [](World& world, const Captures& c, const Table&) {
     const QHash<QString, QString> statuses{
         {QStringLiteral("running"), QStringLiteral("running")},
         {QStringLiteral("waiting on a request"), QStringLiteral("waiting")},
@@ -756,3 +817,11 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+bool planCardChooses(World& world, const QString& label) {
+  if (label != QLatin1String("Expand plan") && label != QLatin1String("Collapse plan")) return false;
+  expect(planExpandText(world) == label, QStringLiteral("the plan card offers \"%1\"").arg(planExpandText(world)));
+  planTimelineBrick(world).click(QStringLiteral("planExpand"));
+  world.sync();
+  return true;
+}

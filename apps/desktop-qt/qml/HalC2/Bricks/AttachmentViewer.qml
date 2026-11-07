@@ -6,8 +6,9 @@ import HalC2.Shell
 
 // An attachment opened to look at (`attachmentViewer`,
 // AttachmentViewerController): an image, Markdown, a table or a page rendered
-// or as its source, other text, or a note that it cannot be shown here. A
-// draft's can be taken off the draft from here; a sent one's can be saved.
+// or as its source, other text (coloured by the language its name says), or a
+// note that it cannot be shown here. A draft's can be taken off the draft from
+// here; a sent one's can be saved.
 Dialog {
     id: dialog
 
@@ -18,6 +19,7 @@ Dialog {
     property bool source: false
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
+    readonly property color surface: Theme.palette.color("surfaceOverlay", "#18181b")
 
     objectName: "attachmentViewer"
     parent: Overlay.overlay
@@ -44,13 +46,10 @@ Dialog {
         Shell.dispatch("attachment.viewer.close");
     }
 
-    background: Rectangle {
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.color: Theme.palette.color("border", "#27272a")
-        radius: Math.min(Theme.radius, 16)
-    }
+    Overlay.modal: ShellScrim {}
+    background: ShellPopoverSurface {}
     contentItem: ColumnLayout {
-        spacing: 10
+        spacing: Theme.space.sm
 
         RowLayout {
             Layout.fillWidth: true
@@ -61,14 +60,14 @@ Dialog {
                 Layout.fillWidth: true
                 text: dialog.attachment?.name ?? ""
                 color: dialog.foreground
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.title.size
                 font.weight: Font.DemiBold
                 elide: Text.ElideMiddle
             }
             Label {
                 text: dialog.attachment?.origin ?? ""
                 color: dialog.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
             ShellButton {
                 objectName: "attachmentViewerSource"
@@ -195,14 +194,31 @@ Dialog {
             Component {
                 id: plain
 
-                Text {
+                // Coloured by the attachment's name (its extension picks the language).
+                TextEdit {
+                    id: plainText
+
+                    readonly property string problem: dialog.kind === "page" ? (dialog.attachment?.sourceProblem ?? "") : ""
+
                     objectName: "attachmentViewerText"
-                    text: dialog.kind === "page" ? (dialog.attachment?.sourceProblem ?? dialog.attachment?.source ?? "") : (dialog.attachment?.text ?? "")
-                    textFormat: Text.PlainText
+                    text: problem.length > 0 ? problem : dialog.kind === "page" ? (dialog.attachment?.source ?? "") : (dialog.attachment?.text ?? "")
+                    textFormat: TextEdit.PlainText
+                    // Drawn as a Text would be: a drag still scrolls, a click takes no focus.
+                    readOnly: true
+                    selectByMouse: false
+                    activeFocusOnPress: false
                     color: dialog.foreground
                     font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
                     font.pixelSize: Theme.fontSizeCode
-                    wrapMode: Text.Wrap
+                    wrapMode: TextEdit.Wrap
+
+                    CodeHighlighter {
+                        objectName: "attachmentViewerHighlighter"
+                        document: plainText.textDocument
+                        // A note that the source could not be read is not code.
+                        path: plainText.problem.length > 0 ? "" : (dialog.attachment?.name ?? "")
+                        background: dialog.surface
+                    }
                 }
             }
         }
@@ -220,7 +236,7 @@ Dialog {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: dialog.kind === "failed"
-            spacing: 10
+            spacing: Theme.space.sm
 
             Item { Layout.fillHeight: true }
             Label {
@@ -248,7 +264,7 @@ Dialog {
             verticalAlignment: Text.AlignVCenter
             text: qsTr("This attachment cannot be shown here.")
             color: dialog.muted
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             wrapMode: Text.Wrap
         }
     }

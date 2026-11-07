@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20446
+#   https://github.com/pingdotgg/t3code/pull/17676
+#   https://github.com/pingdotgg/t3code/pull/19145
+#   https://github.com/pingdotgg/t3code/pull/16958
 #   apps/web/src/components/settings/ProviderSettingsPanel.tsx
 #   apps/web/src/components/settings/ProviderSettingsPanel.logic.ts
 #   apps/web/src/components/settings/ProviderInstanceCard.tsx
@@ -30,6 +34,10 @@
 #   apps/web/src/components/settings/ProviderAuthenticationSection.tsx
 #   apps/desktop-qt/src/native/ProviderSettingsController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ProvidersSettings.qml
 #   apps/desktop-qt/tests/tst_ProvidersSettings.qml (the account email stays hidden until asked)
+#   https://github.com/pingdotgg/t3code/pull/14678
+#   https://github.com/pingdotgg/t3code/pull/25753
+#   https://github.com/pingdotgg/t3code/pull/25475
+#   https://github.com/pingdotgg/t3code/pull/21402
 
 Feature: Providers settings panel
   The Providers page lists the agent providers configured on one environment. The user adds
@@ -48,11 +56,20 @@ Feature: Providers settings panel
       Then this machine is listed first and the others follow by name
 
     # The desktop does not know what its own session may do yet.
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: A session that may only view providers cannot change them
       Given the user's session may view but not operate "Build box"
       When the user shows the providers of "Build box"
       Then the providers are shown read-only
+      And the user is told this session can view the providers but not change their settings
+
+    # Upstream #21402: a phone session that may not manage providers opened sign-in panels
+    # that failed.
+    @backlog @mobile
+    Scenario: A phone session that may not manage providers is told so instead of signing in
+      Given the phone's session on "Build box" may not manage providers
+      When the user shows the providers of "Build box" on the phone
+      Then no provider sign-in is started
       And the user is told this session can view the providers but not change their settings
 
     @desktop
@@ -177,37 +194,37 @@ Feature: Providers settings panel
       When the user goes back to choosing a driver
       Then the choices already made are kept
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An instance id may not be longer than 64 characters
       When the user enters an instance id of 65 letters and continues
       Then the user stays on the identity step and is told "Instance ID must be 64 characters or fewer."
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A long label still gets a usable instance id
       Given an instance with the id suggested for a 100 character label exists
       When the user adds a "Claude" provider with that label
       Then the suggested instance id is a number-suffixed id of at most 64 characters
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A provider can be added without typing anything
       When the user chooses "Claude" and adds it with the suggested label and id
       Then an instance with the id "claudeAgent" is listed
       And it is shown with the provider's own name
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Jumping ahead past an invalid id stops at the identity step
       Given the instance id is invalid
       When the user jumps straight to the configuration step
       Then the user lands on the identity step
       And the problem with the id is shown
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Each provider keeps its own label and accent while choosing
       Given the user typed the label "Work" for "Claude" and picked a green accent
       When the user chooses "Codex" and then "Claude" again
       Then "Claude" still has the label "Work" and the green accent
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The wizard cannot be moved while an instance is being saved
       Given the user is adding a provider instance and saving has started
       When the user tries to move to another step or add it again
@@ -221,32 +238,79 @@ Feature: Providers settings panel
       Then the user is told the provider instance could not be added
 
     # Legacy: apps/web/src/components/settings/providerDriverMeta.ts (badgeLabel, hasDefaultInstance)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A provider still in early access is marked in the choices and on its instances
       When the user opens the choice of providers to add
       Then "<provider>" is marked "<mark>"
       And every "<provider>" instance in the list carries the same mark
 
+      # Upstream #25753: Muse Code is no longer marked Beta.
       Examples:
         | provider     | mark         |
         | Pi           | Early Access |
         | ACP Registry | Early Access |
-        | Muse Code    | Beta         |
+
+    # Upstream #25753: the providers HAL-C2 carries lead; the ACP Registry waits under Show more.
+    @backlog @desktop @priority-low
+    Scenario: Adding a provider leads with HAL-C2's own providers
+      When the user opens the choice of providers to add
+      Then Codex, Claude and HAL-C2's other own providers are offered first
+      And the ACP Registry search is folded under "Show more"
+      And opening "Show more" shows registry results without waiting for a new search
+
+    # Upstream #25753: the registry list leaves out agents HAL-C2 carries as its own providers.
+    @backlog @mc @desktop @plugin-acp-registry @priority-low
+    Scenario Outline: The ACP Registry does not offer a twin of HAL-C2's own provider
+      When the user searches the ACP Registry for "<search>"
+      Then "<twin>" is not listed
+      And "<twin>" can still be entered by hand, and an instance already added from it keeps working
+
+      Examples:
+        | search   | twin            |
+        | codex    | codex-acp       |
+        | claude   | claude-acp      |
+        | cursor   | cursor          |
+        | grok     | grok-build      |
+        | opencode | opencode        |
+        | opencode | opencode-v2     |
+        | pi       | pi-acp          |
+        | gemini   | antigravity-acp |
+
+    # Upstream #25475: a non-blocking note before a second account of the same Claude or Codex.
+    @backlog @desktop @priority-low
+    Scenario Outline: Adding a second account of a provider warns first
+      Given "Laptop" already has a signed-in <provider> account
+      When the user adds another "<provider>" provider on "Laptop"
+      Then the user is told "Laptop" already has a <provider> account signed in
+      And the user can still add it
+
+      Examples:
+        | provider |
+        | Claude   |
+        | Codex    |
 
     # Legacy: apps/web/src/components/settings/providerDriverMeta.ts (hasDefaultInstance: false)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: ACP Registry agents exist only as instances the user adds
       Given no ACP Registry agent has been added
       When the user opens the provider settings
       Then no ACP Registry instance is listed
       And ACP Registry is offered only when adding an instance
 
+  @priority-low
   Rule: Adding an agent from the ACP Registry
 
     @mc
     Scenario: Searching the ACP Registry lists compatible agents best first
       When the user searches the ACP Registry for "gemini"
       Then the compatible agents matching "gemini" are listed best first
+
+    # Upstream #19145: an empty search showed only 20 agents; typed searches still show 20.
+    @backlog @mc @plugin-acp-registry
+    Scenario: The ACP Registry lists every compatible agent before the user searches
+      Given the registry has 40 agents compatible with this machine
+      When the user opens the ACP Registry without searching
+      Then all 40 are listed
 
     @desktop
     Scenario: A search with no compatible agent suggests a broader search
@@ -373,6 +437,7 @@ Feature: Providers settings panel
       When the registry results are shown on two days
       Then the icon is fetched once and reused
 
+  @priority-low
   Rule: Native ACP sessions and model providers
 
     @backlog @desktop
@@ -563,6 +628,22 @@ Feature: Providers settings panel
       Then "OPENAI_KEY" asks for a new value instead of showing a stored secret
       And the secret stored for "API_KEY" is forgotten
 
+    # Upstream #20446: any provider setting entered like a password is treated as a secret.
+    @backlog @mc @desktop @priority-high
+    Scenario: A provider setting entered like a password is stored as a secret
+      Given a provider offers a setting that is entered like a password
+      When the user saves a value for it
+      Then its value is stored as a secret
+      And the page shows it as a stored secret that a new value replaces
+
+    # Upstream #20446: a saved secret field can be cleared from the form.
+    @backlog @desktop
+    Scenario: A saved secret setting can be cleared
+      Given the OpenCode instance keeps a stored server password
+      When the user clears the server password
+      Then the secret stored for the server password is forgotten
+      And the field asks for a new value
+
     @desktop
     Scenario: A provider's own API key can be cleared for browser sign-in
       Given a Cursor instance keeps its own "CURSOR_API_KEY"
@@ -670,6 +751,7 @@ Feature: Providers settings panel
 
   # Antigravity is the one provider whose runtime the MC installs itself; the
   # MC's side is in providers/provider-setup.feature.
+  @priority-low
   Rule: The managed Antigravity runtime
 
     @desktop @plugin-antigravity
@@ -784,7 +866,7 @@ Feature: Providers settings panel
       When the environment confirms the sign-in
       Then the card says the user is signed in
 
-    @backlog @desktop @plugin-antigravity
+    @backlog @desktop @plugin-antigravity @priority-low
     Scenario: The same status message is shown once
       Given the runtime and the sign-in report the same problem
       When the user opens the Antigravity instance
@@ -948,13 +1030,13 @@ Feature: Providers settings panel
       When the user signs in
       Then the sign-in starts with the provider's default method
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A long pasted answer reaches the sign-in terminal in pieces in order
       Given the agent's login terminal waits for input
       When the user pastes 10,000 characters into the sign-in terminal
       Then the environment receives them in order, 4,096 characters at a time
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A failed send to the sign-in terminal drops what was still queued
       Given the user pasted a long answer into the sign-in terminal
       When the environment rejects one piece
@@ -1012,6 +1094,29 @@ Feature: Providers settings panel
       When the user updates "Codex"
       Then the user is told "Codex" could not be updated
 
+    # Upstream #16958: a bare spinner could not tell downloading from stuck.
+    @backlog @mc @desktop @mobile @priority-low
+    Scenario: A provider update shows each step as it runs
+      Given "Claude" is behind its latest release
+      When the user updates "Claude"
+      Then "Claude" shows "Updating · Checking for the latest version"
+      And then "Updating · Running claude update"
+      And then the updater's latest line, such as "Updating · Downloading 2.1.293... 66%"
+      And then "Updating · Verifying the installed version"
+
+    @backlog @mc @priority-low
+    Scenario: An updater's output is sent to clients at most once a second, plain and short
+      Given a provider updater redraws a coloured progress bar many times a second
+      When the user updates that provider
+      Then clients are sent its newest line at most once a second
+      And the line has no colour codes and is cut to 200 characters
+
+    @backlog @desktop @mobile
+    Scenario: A failed provider update says why where the user started it
+      Given updating "Claude" fails with "npm exited with status 1"
+      When the user updates "Claude" from its version details
+      Then the version details say "npm exited with status 1"
+
     @desktop
     Scenario Outline: A provider version outside the supported range is flagged in the panel
       Given the installed "OpenCode" is <status> for this HAL-C2 release
@@ -1066,6 +1171,15 @@ Feature: Providers settings panel
         | "1.14.19" is the recommended version            | Use v1.14.19 for full support. |
         | the supported range is "1.14 to 1.16"           | Use 1.14 to 1.16 for full support. |
         | no version or range is recommended              | Update for full support.       |
+
+    # Upstream #17676: no update is offered that cannot clear a limited-support warning.
+    @backlog @desktop
+    Scenario: A limited-support warning on the latest release offers no update
+      Given "Codex" is on its latest release
+      And the installed "Codex" is of limited support for this HAL-C2 release
+      When the user opens the version details of "Codex"
+      Then the user is warned "Limited support"
+      And no update is offered
 
     # Legacy: apps/web/src/components/settings/providerStatus.ts (getProviderVersionAdvisoryPresentation)
     @backlog @desktop
@@ -1137,7 +1251,7 @@ Feature: Providers settings panel
       Then "a" and "b" are offered again
       And the hidden entry for the model that is gone is kept
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A custom model cannot be hidden from the picker
       When the user looks at the picker switch of a custom model
       Then the switch is on and cannot be turned off
@@ -1182,14 +1296,14 @@ Feature: Providers settings panel
         | my-model         | That custom model is already saved. |
 
     # Legacy: apps/web/src/components/settings/ProviderModelsSection.tsx (handleAdd, MAX_CUSTOM_MODEL_LENGTH)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A custom model id longer than 256 characters is refused
       When the user adds a custom model to Claude whose id has 257 characters
       Then the user is told "Model slugs must be 256 characters or less."
       And nothing is saved
 
     # Legacy: apps/web/src/components/settings/ProviderModelsSection.tsx (FILTER_THRESHOLD, handleAdd)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A short models list has no filter
       Given Codex reports eight models
       When the user opens Codex's models
@@ -1198,7 +1312,7 @@ Feature: Providers settings panel
       Then the models can be filtered
 
     # Legacy: apps/web/src/components/settings/ProviderModelsSection.tsx (handleAdd clears the filter)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A custom model added while filtering is shown at once
       Given Codex reports twelve models and the user filtered them by "mini"
       When the user adds the custom model "my-model" to Codex
@@ -1206,7 +1320,7 @@ Feature: Providers settings panel
       And "my-model" is listed and brought into view
 
     # Legacy: apps/web/src/components/settings/ProviderModelsSection.tsx (driverKind antigravity)
-    @backlog @desktop @plugin-antigravity
+    @backlog @desktop @plugin-antigravity @priority-low
     Scenario: Antigravity's models cannot be extended with custom ones
       When the user opens Antigravity's models
       Then no custom model can be added
@@ -1216,7 +1330,7 @@ Feature: Providers settings panel
       When the user adds a custom model with no options
       Then the composer uses the provider's default options for it
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A custom option that repeats an id is named in the message
       Given the custom model "my-model" has the options <options>
       When the user saves the custom model
@@ -1229,30 +1343,37 @@ Feature: Providers settings panel
         | "effort" with the choices "low" and "low"          | Option 1: choice "low" is used twice.  |
         | "effort" with a choice that has no value           | Option 1 has a choice without a value. |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A custom model's name falls back to its id
       When the user adds the custom model "my-model" and leaves its name empty
       Then the model is listed as "my-model"
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A custom choice without a label is shown by its value
       When the user adds a choice with the value "high" and no label to a custom option
       Then the composer lists that choice as "high"
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A custom option offers the options the provider actually reads
       When the user adds an option to a custom Claude model
       Then the suggested options are reasoning, fast mode and thinking
       And an option with any other id is saved as typed
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Copying options from Claude leaves out what a custom model cannot carry
       Given a built-in Claude model offers an "ultrathink" reasoning choice and a context window
       When the user copies the options of that model into a custom model
       Then the copy offers the reasoning choices except "ultrathink"
       And the copy does not offer the context window
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A custom option can be a switch
       When the user adds a custom option that is on or off
       Then the composer offers it as a switch
+
+  @backlog @shared
+  Scenario: Update all brings every machine's providers current
+    Given several machines have outdated providers
+    When the user presses Update all next to Refresh
+    Then each outdated provider is updated on each connected environment
+    And a machine that refuses shows as a failure line without stopping the rest

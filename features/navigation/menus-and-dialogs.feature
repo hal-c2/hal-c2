@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20841
+#   https://github.com/pingdotgg/t3code/pull/18565
+#   https://github.com/pingdotgg/t3code/pull/17962
 #   apps/web/src/components/ConfirmDialogHost.tsx (the question and detail, Cancel and Confirm, closing)
 #   apps/web/src/confirmDialog.ts (one at a time, declined when the host goes away)
 #   apps/web/src/components/ui/alert-dialog.tsx (a confirmation is not dismissed by a click outside it)
@@ -29,6 +32,12 @@ Feature: Menus, pickers and confirmations
       When the app asks "Overwrite the saved layout"
       Then the confirmation is titled "Confirm action"
       And it explains "Overwrite the saved layout"
+
+    @backlog @desktop
+    Scenario: A confirmation with a very long detail keeps its buttons on screen
+      When the app asks the user to confirm a tool call whose arguments run to thousands of lines
+      Then the confirmation fits on screen with its title and buttons visible
+      And the whole detail can be scrolled and selected within it
 
     @backlog @desktop
     Scenario Outline: A confirmation is declined with Cancel or Escape
@@ -70,6 +79,7 @@ Feature: Menus, pickers and confirmations
       When the window closes before the user answers
       Then the action is declined and never done
 
+  @priority-low
   Rule: Menus and pickers
 
     @backlog @desktop
@@ -84,6 +94,15 @@ Feature: Menus, pickers and confirmations
         | closes it                 |
         | presses Escape            |
         | clicks outside the menu   |
+
+    # Upstream #20841: tapping away from the model picker on a phone no longer presses what is under it
+    # Upstream #18565: on iOS the tap that closed a menu also opened the pull request under it.
+    @backlog @mobile
+    Scenario: A tap that closes a menu does not press what is under it
+      Given the pull request filter menu is open over the row of pull request 42
+      When the user taps the row of pull request 42 outside the menu
+      Then the menu closes
+      And pull request 42 is not opened
 
     @backlog @desktop
     Scenario: The arrow keys move through a menu and wrap at its ends

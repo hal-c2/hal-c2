@@ -276,4 +276,210 @@ defmodule HalC2.Steps.SourceControl.ReviewDiffs do
   step "a client asks to review {string}", %{args: [cwd]} = context do
     review(Map.put(context, :cwd, cwd)) |> Map.put(:cwd, context.cwd)
   end
+
+  # --- an edit Git could take for unchanged ------------------------------------------
+
+  # A whole second in the past, so the copy the review makes is newer than it.
+  @racy 1_700_000_000
+
+  step "{string} was committed within the second the index was last written",
+       %{args: [path]} = context do
+    # The clock's resolution must not decide it: ctime is not consulted, as with
+    # `core.trustctime` off, and every timestamp is set by hand.
+    git(context, ~w(config core.trustctime false))
+    write(context, path, "before\n")
+    File.touch!(Path.join(context.cwd, path), @racy)
+    git(context, ["add", path])
+    git(context, ["commit", "-q", "-m", "Add #{path}"])
+    index = Path.join(context.cwd, ".git/index")
+    File.touch!(index, @racy)
+    Map.put(context, :index, {File.read!(index), File.stat!(index, time: :posix).mtime})
+  end
+
+  step "the user created the untracked {string}", %{args: [path]} = context do
+    write(context, path, "new\n")
+    context
+  end
+
+  step "the user rewrites {string} within that same second, to the same size with different content",
+       %{args: [path]} = context do
+    write(context, path, "after!\n")
+    File.touch!(Path.join(context.cwd, path), @racy)
+    context
+  end
+
+  step "the review shows the newest content of {string}", %{args: [path]} = context do
+    source = source(context, "working-tree")
+    assert %{"additions" => 1, "deletions" => 1} = stats(context, "working-tree")[path]
+    assert source["diff"] =~ "-before"
+    assert source["diff"] =~ "+after!"
+    context
+  end
+
+  step "the user's index is as it was", context do
+    index = Path.join(context.cwd, ".git/index")
+    assert {File.read!(index), File.stat!(index, time: :posix).mtime} == context.index
+    context
+  end
+
+  # --- repositories set up unusually -------------------------------------------------
+
+  step "the user set git to show diffs without path prefixes in {string}",
+       %{args: [_title]} = context do
+    git(context, ~w(config diff.noprefix true))
+    git(context, ~w(config diff.mnemonicPrefix true))
+    context
+  end
+
+  step "{string} has an uncommitted change", %{args: [path]} = context do
+    World.commit!(context.cwd, %{path => "one\n"}, "Add #{path}")
+    write(context, path, "one\ntwo\n")
+    context
+  end
+
+  step "{string} is shown as one file with its change", %{args: [path]} = context do
+    assert %{^path => %{"additions" => 1, "deletions" => 0}} = stats(context, "working-tree")
+    diff = source(context, "working-tree")["diff"]
+    assert diff =~ "diff --git a/#{path} b/#{path}\n"
+    assert diff =~ "+++ b/#{path}\n"
+    context
+  end
+
+  step "{string} holds a staged {string} and an untracked {string}",
+       %{args: [title, staged, untracked]} = context do
+    root = World.project(context, title).root
+    File.write!(Path.join(root, staged), "staged\n")
+    World.git!(root, ["add", staged])
+    File.write!(Path.join(root, untracked), "untracked\n")
+    context
+  end
+
+  step "the user reviews the working tree of {string}", %{args: [title]} = context do
+    root = World.project(context, title).root
+    review(%{context | cwd: root}) |> Map.put(:cwd, context.cwd)
+  end
+
+  step "{string} and {string} are both shown as new files", %{args: paths} = context do
+    source = source(context, "working-tree")
+    assert Enum.sort(Map.keys(stats(context, "working-tree"))) == Enum.sort(paths)
+
+    for path <- paths do
+      assert %{"additions" => 1, "deletions" => 0} = stats(context, "working-tree")[path]
+      assert source["diff"] =~ ~r{diff --git a/#{path} b/#{path}\nnew file mode}
+    end
+
+    context
+  end
+
+  step "the branch comparison has no files", context do
+    assert source(context, "branch-range")["files"] == []
+    context
+  end
+
+  # --- folders the MC cannot review --------------------------------------------------
+
+  step "the thread's folder is not under version control", context do
+    File.rm_rf!(Path.join(context.cwd, ".git"))
+    context
+  end
+
+  step "the review lists no sources to compare", context do
+    assert {:ok, %{"sources" => []}} = context.reply
+    context
+  end
+
+  step "no error is shown", context do
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  # Jujutsu without a Git checkout beside it.
+  step "the thread's folder is managed by a version control other than git that cannot preview changes",
+       context do
+    File.rm_rf!(Path.join(context.cwd, ".git"))
+    File.mkdir_p!(Path.join(context.cwd, ".jj/repo"))
+    context
+  end
+
+  step "the user is told {string} with the version control's own name",
+       %{args: [message]} = context do
+    assert {:error, _, %{"detail" => detail, "kind" => "jj"}} = context.reply
+    assert detail == String.replace(message, "<kind>", "jj")
+    context
+  end
+
+  step "the user expands the unchanged lines of {string}", %{args: [path]} = context do
+    {reply, context} =
+      World.call(context, "review.getDiffFileContents", %{
+        "cwd" => context.cwd,
+        "sourceKind" => "working-tree",
+        "changeType" => "change",
+        "oldPath" => path,
+        "newPath" => path
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  # --- which folders may be reviewed -------------------------------------------------
+
+  step ~r/^a client asks for (?<request>a review|the contents of a file) for a folder (?<place>.+)$/,
+       %{args: [request, place]} = context do
+    cwd = folder(context, place)
+
+    {reply, context} =
+      case request do
+        "a review" ->
+          World.call(context, "review.getDiffPreview", %{"cwd" => cwd})
+
+        "the contents of a file" ->
+          World.call(context, "review.getDiffFileContents", %{
+            "cwd" => cwd,
+            "sourceKind" => "working-tree",
+            "changeType" => "change",
+            "oldPath" => "README.md",
+            "newPath" => "README.md"
+          })
+      end
+
+    # The shared "it is refused with" step also reads the CLI's log; nothing ran.
+    log = Path.join(context.mc.home, "empty-cli.log")
+    File.write!(log, "")
+    context |> Map.put(:reply, reply) |> Map.put(:cli, %{log: log})
+  end
+
+  step "the review is returned", context do
+    assert {:ok, %{"sources" => [_ | _]}} = context.reply
+    context
+  end
+
+  step "the contents are returned", context do
+    assert {:ok, %{"oldContents" => old, "newContents" => new}} = context.reply
+    assert old =~ "# " and new =~ "# "
+    context
+  end
+
+  # A repository with one commit, in `place`.
+  defp folder(context, "inside the MC's worktrees folder") do
+    root =
+      Path.join([
+        HalC2.Paths.data_dir(),
+        "worktrees",
+        "shop",
+        "review-#{System.unique_integer([:positive])}"
+      ])
+
+    File.mkdir_p!(Path.dirname(root))
+    git(context, ["worktree", "add", "-q", "-b", Path.basename(root), root])
+    root
+  end
+
+  defp folder(context, "outside the MC's projects and worktrees"),
+    do: World.git_repo(context, "elsewhere")
+
+  defp folder(context, "reached through a link out of the MC's projects") do
+    link = Path.join(context.cwd, "elsewhere")
+    File.ln_s!(World.git_repo(context, "elsewhere"), link)
+    link
+  end
 end

@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20764
+#   https://github.com/pingdotgg/t3code/pull/17396
+#   https://github.com/pingdotgg/t3code/pull/17859
+#   https://github.com/pingdotgg/t3code/pull/13516 (Escape in settings returns to the last main page)
+#   https://github.com/pingdotgg/t3code/pull/25651
+#   https://github.com/pingdotgg/t3code/pull/25686
 #   apps/web/src/components/settings/settingsSearch.ts
 #   apps/web/src/components/settings/useAvailableSettingsSearchItems.ts
 #   apps/web/src/components/settings/SettingsSidebarNav.tsx
@@ -47,13 +53,25 @@ Feature: Settings search and navigation
       When the user moves down and confirms
       Then the next section opens
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Tab from the settings search reaches the current section
       Given the user has focus in the settings search
       When the user presses Tab
       Then the list of sections has focus, on the current section
 
-    @desktop @backlog-desktop
+    @backlog @desktop @priority-low
+    Scenario Outline: The find key focuses the settings search in every section
+      Given the user is in the "<section>" settings
+      When the user presses mod+f
+      Then the settings search has focus
+
+      Examples:
+        | section     |
+        | General     |
+        | Providers   |
+        | Keybindings |
+
+    @desktop
     Scenario: Escape leaves settings when nothing else takes it
       Given the user opened settings from a thread
       And the search is empty
@@ -95,7 +113,7 @@ Feature: Settings search and navigation
         | diagnostics                       | Diagnostics           |
         | the open source licenses page     | Open source licenses  |
 
-    @backlog @desktop
+    @desktop
     Scenario: The project section appears only while editing a project
       Given the user is editing settings for all projects
       Then there is no project section
@@ -126,13 +144,60 @@ Feature: Settings search and navigation
       When the user presses escape
       Then the conversation is shown again
 
+  # Upstream #25651: the desktop's settings regrouped by concern, under headed groups.
+  # Upstream #25686: the phone's settings follow the same groups.
+  # HAL-C2's own sections (Cluster and the like) join the group of their concern.
+  Rule: Settings are grouped by concern
+
+    @backlog @desktop @mobile
+    Scenario Outline: Each settings group holds the sections of one concern
+      When the user opens settings
+      Then the "<group>" group lists <sections>
+
+      Examples:
+        | group       | sections                                                   |
+        | Agents      | Providers, Threads, Browser, Devices and Scheduled tasks    |
+        | Code        | Projects, Source control and Worktrees                     |
+        | Connections | Environments and Sharing & access                          |
+
+    @backlog @desktop @mobile
+    Scenario Outline: A setting is found in the section of its concern
+      When the user looks for <setting>
+      Then it is in the <section> section
+
+      Examples:
+        | setting                                         | section                |
+        | where new worktrees go and worktree cleanup     | Worktrees              |
+        | the composer's and the conversation's settings  | Chat                   |
+        | diff and pull request settings                  | Diffs & pull requests  |
+        | artifact and log cleanup                        | Maintenance            |
+        | who may reach this machine                      | Sharing & access       |
+        | the machines this client connects to            | Environments           |
+        | features still in testing                       | Labs                   |
+
+    @backlog @desktop @priority-low
+    Scenario: Projects settings open to a project picker
+      When the user opens the Projects section without a project chosen
+      Then the user is asked to choose a project
+
+    @backlog @desktop @mobile
+    Scenario: A link to a section that moved opens where its setting went
+      Given a link to the old Integrations, Storage or Beta section, or to a setting that moved
+      When the user follows it
+      Then the section that now holds it opens, at that setting
+
+    @backlog @desktop @priority-low
+    Scenario: Advanced settings sit in one fold at the end of a section
+      When the user opens a section with advanced settings
+      Then they are in one "Advanced" fold at the end of the section
+      And a settings search for one of them opens the fold
+
   Rule: Searching settings
 
-    # The desktop finds the settings of its native pages; Network access is not one yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Search results show each setting with its section
-      When the user searches settings for "network"
-      Then "Network access" is listed under "Connections"
+      When the user searches settings for "word wrap"
+      Then "Word wrap" is listed under "Appearance"
 
     @desktop
     Scenario: Opening a search result goes to that setting
@@ -153,6 +218,15 @@ Feature: Settings search and navigation
       Then the search is empty
       And the list of sections is shown again
 
+    # Upstream #20764: the highlight stays clamped when the results shrink and come back.
+    @backlog @desktop @priority-low
+    Scenario: The highlighted result stays within the results when they shrink
+      Given the user has searched settings and highlighted the eighth of eight results
+      When the results shrink to two
+      Then the second result is highlighted
+      When the results grow back to eight without the user moving the highlight
+      Then the second result is still highlighted
+
     # The native runner drives the settings navigation beside its page (SettingsSearchSteps.cpp).
     @desktop
     Scenario: The slash key starts a settings search
@@ -170,13 +244,12 @@ Feature: Settings search and navigation
         | model  | Default model  |
         | mod+b  | Sidebar: Toggle |
 
-    # Tailscale HTTPS is not a native Connections setting yet.
-    @backlog @desktop
+    @desktop
     Scenario: Every word of the search must match
-      When the user searches settings for "tailscale https"
-      Then only "Tailscale HTTPS" is listed
+      When the user searches settings for "composer vim"
+      Then only "Vim keys in the composer" is listed
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Settings that do not apply here are not found
       Given <condition>
       When the user searches settings for "<query>"
@@ -184,24 +257,40 @@ Feature: Settings search and navigation
 
       Examples:
         | condition                                  | query       | setting           |
-        | the user is in a web browser               | local env   | Local environment |
-        | the machine is not running Windows         | wsl         | WSL backend       |
         | the user is editing all projects           | project     | Project overview  |
 
+      # There is no web client.
+      @dropped
+      Examples:
+        | condition                                  | query       | setting           |
+        | the user is in a web browser               | local env   | Local environment |
+
+      # Waits on the WSL backend setting of settings/connections.feature.
+      @backlog @blocked @priority-low
+      Examples:
+        | condition                                  | query       | setting           |
+        | the machine is not running Windows         | wsl         | WSL backend       |
+
     # Legacy: apps/web/src/components/settings/settingsSearch.ts (filterAvailableSettingsSearchItems)
-    @backlog @desktop
+    @desktop
     Scenario Outline: Settings that depend on what this machine can do are only found when it can
       Given <condition>
       When the user searches settings for "<query>"
       Then "<setting>" is not listed
 
       Examples:
+        | condition                                        | query              | setting                         |
+        | no connected environment has provider settings   | usage providers    | Usage providers                 |
+        | no connected environment has provider settings   | health check       | Provider health check interval  |
+
+      # Waits on the desktop managing this machine's server: Network access, the environment
+      # icon and Tailscale HTTPS in settings/connections.feature.
+      @backlog @blocked @priority-low
+      Examples:
         | condition                                        | query              | setting                |
         | the app cannot manage this machine's server      | network access     | Network access         |
         | the app cannot manage this machine's server      | environment icon   | Environment icon       |
         | the app cannot manage this machine's server      | tailscale          | Tailscale HTTPS        |
-        | no connected environment has provider settings   | usage providers    | Usage providers        |
-        | no connected environment has provider settings   | health check       | Health check interval  |
 
     @desktop
     Scenario: A search result inside a folded section opens the fold
@@ -216,7 +305,7 @@ Feature: Settings search and navigation
       When the user opens the search result "Default model" again
       Then the page brings the setting into view again
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A setting is found by the words people use for it
       When the user searches settings for "<query>"
       Then the first result is "<first>"
@@ -230,19 +319,27 @@ Feature: Settings search and navigation
         | binary path        | Providers              |
         | pull request template | Follow change request templates |
 
-    @backlog @desktop
+      # Upstream #17396: About's version and update track rows were not in settings search.
+      # The update track is only found where the app has a release channel to change.
+      @backlog
+      Examples:
+        | query              | first                  |
+        | check for updates  | Version                |
+        | nightly            | Update track           |
+
+    @desktop
     Scenario: Search ignores case, extra spaces and accents
       When the user searches settings for "  WORD   WRAP  "
       Then "Word wrap" is the only result
       When the user searches settings for "thèmes" with an accent on the e
       Then "Theme" is the first result
 
-    @backlog @desktop
+    @desktop
     Scenario: Thread confirmations are listed in the order of the page
       When the user searches settings for "confirmation"
       Then the results are the unpin, archive and delete confirmations in that order
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Keyboard commands are found by name, id or default key
       When the user searches settings for "<query>"
       Then the first result is the "Sidebar: Toggle" keybinding
@@ -252,31 +349,31 @@ Feature: Settings search and navigation
         | toggle sidebar |
         | sidebar.toggle |
 
-    @backlog @desktop
+    @desktop
     Scenario: Keyboard commands rank after other settings
       When the user searches settings for "model"
       Then "Default model" is the first result
       And the model picker keybinding is listed after "Text generation model"
 
-    @backlog @desktop
+    @desktop
     Scenario: A command with no default key opens the keybindings section
       When the user opens the search result for the "thread.stop" command
       Then the Keybindings section opens at that command's row
 
-    @backlog @desktop
+    @desktop
     Scenario: A setting that only appears when another is on opens at that toggle
       Given window capture is off
       When the user opens the search result "Capture sound"
       Then the window capture toggle is brought into view
 
-    @backlog @desktop
+    @desktop
     Scenario: A setting only some environments support is offered for those
       Given "laptop" can settle threads and "server" cannot
       When the user searches settings for "auto-settle"
       Then the results are found
       And choosing one offers "laptop" and not "server"
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A setting no chosen environment supports says what it needs
       Given the settings are scoped to "server", which cannot settle threads
       And <others>
@@ -288,14 +385,23 @@ Feature: Settings search and navigation
         | "laptop" can settle threads       | Auto-settle merged threads requires a supporting environment. Choose one to continue.                       |
         | no environment can settle threads | Auto-settle merged threads requires a supporting environment. Connect or update an environment to continue. |
 
-    @backlog @desktop
+    @desktop
+    Scenario: A setting on an environment that went offline is offered where it can be set
+      Given "laptop" and "server" can settle threads
+      And the user scopes the settings to "server"
+      And "server" goes offline
+      When the user opens the search result "Auto-settle merged threads"
+      Then the page says "Auto-settle merged threads requires a supporting environment. Choose one to continue." in place of the settings
+      And choosing one offers "laptop" and not "server"
+
+    @desktop
     Scenario: A setting that belongs to another scope asks the user to choose that scope
       Given the settings are scoped to the project "shop"
       When the user opens the search result of a setting that is set per environment
       Then the page says that setting is not available for the selected target and to choose its owning scope
       And the user can choose the scope there to carry on to the setting
 
-    @backlog @desktop
+    @desktop
     Scenario: Environment settings are found without a primary environment
       Given no environment is the primary one
       When the user searches settings for "writing style"
@@ -330,14 +436,14 @@ Feature: Settings search and navigation
       And the user is told the theme settings could not be restored
 
     # Legacy: apps/web/src/components/settings/SettingsPanels.tsx (useSettingsRestore), apps/web/src/routes/settings.tsx
-    @backlog @desktop
+    @desktop
     Scenario: Restoring defaults is unavailable while every setting is at its default
       Given every setting the restore covers is at its default
       When the user looks at the settings page
       Then restoring default settings cannot be chosen
 
     # Legacy: apps/web/src/components/settings/SettingsPanels.tsx (useSettingsRestore, enableAgentBrowserAccess)
-    @backlog @desktop
+    @desktop
     Scenario: Restoring defaults gives agents browser access back and says so
       Given the user turned agent browser access off
       When the user restores default settings

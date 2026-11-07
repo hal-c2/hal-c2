@@ -2,6 +2,7 @@
 
 #include <QHash>
 #include <QRegularExpression>
+#include <QSet>
 #include <QUrl>
 
 #include <algorithm>
@@ -467,6 +468,66 @@ QVariantList pickerInstances(const QList<Instance>& list, const ModelPrefs& pref
   return result;
 }
 
+bool offersImageModel(const QVariantMap& offer, const QString& instanceId, const QString& model) {
+  const QVariantList providers = offer.value(QStringLiteral("providers")).toList();
+  return std::any_of(providers.cbegin(), providers.cend(), [&](const QVariant& value) {
+    const QVariantMap provider = value.toMap();
+    if (provider.value(QStringLiteral("instanceId")).toString() != instanceId ||
+        provider.value(QStringLiteral("status")).toString() != QLatin1String("ready")) {
+      return false;
+    }
+    const QVariantList models = provider.value(QStringLiteral("models")).toList();
+    return std::any_of(models.cbegin(), models.cend(),
+                       [&](const QVariant& m) { return m.toMap().value(QStringLiteral("slug")).toString() == model; });
+  });
+}
+
+QVariantList imagePickerInstances(const QVariantMap& offer, const QList<Instance>& catalogue) {
+  const auto orNull = [](const QString& value) { return value.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(value); };
+  QVariantList result;
+  for (const QVariant& value : offer.value(QStringLiteral("providers")).toList()) {
+    const QVariantMap provider = value.toMap();
+    const QString id = provider.value(QStringLiteral("instanceId")).toString();
+    const QString driver = provider.value(QStringLiteral("driver")).toString();
+    const bool ready = provider.value(QStringLiteral("status")).toString() == QLatin1String("ready");
+    const QString message = provider.value(QStringLiteral("message")).toString();
+    const Instance* known = find(catalogue, id);
+    const QString name = known && !known->displayName.isEmpty() ? known->displayName : id;
+    QVariantList models;
+    for (const QVariant& entry : provider.value(QStringLiteral("models")).toList()) {
+      const QVariantMap model = entry.toMap();
+      const QString slug = model.value(QStringLiteral("slug")).toString();
+      const QString shown = model.value(QStringLiteral("name")).toString();
+      models.append(QVariantMap{
+          {QStringLiteral("slug"), slug},
+          {QStringLiteral("name"), shown.isEmpty() ? slug : shown},
+          {QStringLiteral("shortName"), QVariant::fromValue(nullptr)},
+          {QStringLiteral("subProvider"), QVariant::fromValue(nullptr)},
+          {QStringLiteral("isFavorite"), false},
+          {QStringLiteral("isCustom"), false},
+          {QStringLiteral("isNew"), false},
+          {QStringLiteral("isLegacy"), false},
+          {QStringLiteral("isUnavailable"), !ready},
+          {QStringLiteral("disabledReason"), ready ? QVariant::fromValue(nullptr) : orNull(message)},
+      });
+    }
+    result.append(QVariantMap{
+        {QStringLiteral("instanceId"), id},
+        {QStringLiteral("driverKind"), known ? known->driver : driver},
+        {QStringLiteral("displayName"), name},
+        {QStringLiteral("accentColor"), orNull(known ? known->accentColor : QString())},
+        {QStringLiteral("iconUrl"), orNull(known ? known->iconUrl : QString())},
+        {QStringLiteral("initials"), initialsOf(name)},
+        {QStringLiteral("showBadge"), false},
+        {QStringLiteral("status"), ready ? QStringLiteral("ready") : QStringLiteral("error")},
+        {QStringLiteral("isAvailable"), ready},
+        {QStringLiteral("unavailableReason"), ready ? QVariant::fromValue(nullptr) : orNull(message)},
+        {QStringLiteral("models"), models},
+    });
+  }
+  return result;
+}
+
 QJsonArray descriptors(const QJsonObject& model, const QJsonArray& selections, bool planModeEnabled) {
   QJsonArray result;
   for (const QJsonValue& value : model.value(QLatin1String("capabilities")).toObject().value(QLatin1String("optionDescriptors")).toArray()) {
@@ -861,9 +922,118 @@ Queued queued(const QList<QJsonObject>& runs, const QHash<QString, QJsonObject>&
                                         {QStringLiteral("workerThreadId"), notice ? notice->workerThreadId : QString()}});
       continue;
     }
-    queued.queue.append(QVariantMap{{QStringLiteral("runId"), runId}, {QStringLiteral("text"), message.value(QLatin1String("text")).toString()}});
+    QVariantList attachments;
+    for (const QJsonValue& value : message.value(QLatin1String("attachments")).toArray()) {
+      const QJsonObject attachment = value.toObject();
+      attachments.append(QVariantMap{{QStringLiteral("id"), attachment.value(QLatin1String("id")).toString()},
+                                     {QStringLiteral("name"), attachment.value(QLatin1String("name")).toString()},
+                                     {QStringLiteral("mimeType"), attachment.value(QLatin1String("mimeType")).toString()},
+                                     {QStringLiteral("kind"), attachment.value(QLatin1String("type")).toString() == QLatin1String("image")
+                                                                  ? QStringLiteral("image")
+                                                                  : QStringLiteral("file")}});
+    }
+    queued.queue.append(QVariantMap{{QStringLiteral("runId"), runId},
+                                    {QStringLiteral("messageId"), message.value(QLatin1String("id")).toString()},
+                                    {QStringLiteral("text"), message.value(QLatin1String("text")).toString()},
+                                    {QStringLiteral("attachments"), attachments}});
   }
   return queued;
+}
+
+namespace {
+
+// The one-line status where there are no windows to show, as Limits says it.
+QString limitsNotice(const QJsonObject& limits) {
+  const QJsonObject unavailable = limits.value(QLatin1String("unavailable")).toObject();
+  const QString reason = str(unavailable, QLatin1String("reason"));
+  const QString message = str(unavailable, QLatin1String("message"));
+  if (reason == QLatin1String("unsupported")) return message.isEmpty() ? QStringLiteral("This account has no subscription limits.") : message;
+  if (reason == QLatin1String("probeFailed")) return message.isEmpty() ? QStringLiteral("Could not read limits.") : message;
+  return limits.value(QLatin1String("windows")).toArray().isEmpty() ? QStringLiteral("No limits reported.") : QString();
+}
+
+QString accountKey(const QString& driver, const QString& email) {
+  const QString normalized = email.trimmed().toLower();
+  return normalized.isEmpty() ? QString() : driver + QLatin1Char(':') + normalized;
+}
+
+// `source` is the hub an account came through, kept apart from its label so
+// only the label, which may be an email, is scrambled.
+QVariantMap reportAccount(const QString& source, const QString& label, const QString& plan, const QJsonObject& limits) {
+  QVariantList windows;
+  for (const QJsonValue& value : limits.value(QLatin1String("windows")).toArray()) {
+    const QJsonObject window = value.toObject();
+    const double used = window.value(QLatin1String("usedPercent")).toDouble();
+    windows.append(QVariantMap{{QStringLiteral("label"), str(window, QLatin1String("label"))},
+                               {QStringLiteral("usedPercent"), used},
+                               {QStringLiteral("remainingPercent"), std::clamp(100.0 - used, 0.0, 100.0)},
+                               {QStringLiteral("resetsAt"), str(window, QLatin1String("resetsAt"))}});
+  }
+  const QString notice = limitsNotice(limits);
+  return {{QStringLiteral("source"), source},
+          {QStringLiteral("label"), label},
+          {QStringLiteral("sensitive"), label.contains(QLatin1Char('@'))},
+          {QStringLiteral("plan"), plan},
+          {QStringLiteral("notice"), notice},
+          {QStringLiteral("windows"), notice.isEmpty() ? windows : QVariantList()}};
+}
+
+}  // namespace
+
+QVariantMap usageLimitsReport(const QString& instanceId, const QJsonArray& providers, const QJsonArray& sources) {
+  QString driver;
+  for (const QJsonValue& value : providers) {
+    if (str(value.toObject(), QLatin1String("instanceId")) == instanceId) driver = str(value.toObject(), QLatin1String("driver"));
+  }
+  if (driver.isEmpty()) return {};
+  const QString brand = brandLabel(driver).isEmpty() ? humanizeSlug(driver) : brandLabel(driver);
+  QVariantList accounts;
+  QSet<QString> native;
+  for (const QJsonValue& value : providers) {
+    const QJsonObject provider = value.toObject();
+    if (str(provider, QLatin1String("driver")) != driver || !provider.value(QLatin1String("enabled")).toBool(true) ||
+        !provider.value(QLatin1String("installed")).toBool(true) ||
+        str(provider, QLatin1String("availability")) == QLatin1String("unavailable") || !provider.contains(QLatin1String("usageLimits"))) {
+      continue;
+    }
+    const QJsonObject limits = provider.value(QLatin1String("usageLimits")).toObject();
+    const QJsonObject auth = provider.value(QLatin1String("auth")).toObject();
+    const QString key = accountKey(driver, str(auth, QLatin1String("email")));
+    if (!key.isEmpty() && limitsNotice(limits).isEmpty()) native.insert(key);
+    // The driver, then the instance's own name when it has one; the default
+    // instance is often named after its driver, and saying it twice adds nothing.
+    const QString id = str(provider, QLatin1String("instanceId"));
+    QString instance = str(provider, QLatin1String("displayName")).trimmed();
+    if (instance.isEmpty() && id != driver) instance = id;
+    const QString label = instance.isEmpty() || instance.compare(brand, Qt::CaseInsensitive) == 0 ? brand : brand + QStringLiteral(" · ") + instance;
+    accounts.append(reportAccount(QString(), label, str(auth, QLatin1String("label")), limits));
+  }
+  QStringList notices;
+  for (const QJsonValue& value : sources) {
+    const QJsonObject source = value.toObject();
+    const QJsonArray all = source.value(QLatin1String("accounts")).toArray();
+    int matching = 0;
+    for (const QJsonValue& entry : all) {
+      const QJsonObject account = entry.toObject();
+      if (str(account, QLatin1String("driver")) != driver) continue;
+      ++matching;
+      if (native.contains(accountKey(driver, str(account, QLatin1String("email"))))) continue;
+      accounts.append(reportAccount(str(source, QLatin1String("label")), str(account, QLatin1String("id")), str(account, QLatin1String("plan")), account.value(QLatin1String("usageLimits")).toObject()));
+    }
+    // A hub that failed to read has no accounts left to match, so its error
+    // reaches every provider rather than going unsaid.
+    const QString error = str(source, QLatin1String("error"));
+    if (!error.isEmpty() && (matching > 0 || all.isEmpty())) notices.append(str(source, QLatin1String("label")) + QStringLiteral(": ") + error);
+  }
+  // One account is named, with its plan; more are counted; none leaves the
+  // notices to say why.
+  const QVariantMap summary = accounts.size() == 1
+                                  ? accounts.first().toMap()
+                                  : QVariantMap{{QStringLiteral("source"), QString()},
+                                                {QStringLiteral("label"), accounts.isEmpty() ? QString() : QStringLiteral("%1 accounts").arg(accounts.size())},
+                                                {QStringLiteral("sensitive"), false},
+                                                {QStringLiteral("plan"), QString()}};
+  return {{QStringLiteral("summary"), summary}, {QStringLiteral("accounts"), accounts}, {QStringLiteral("notices"), notices}};
 }
 
 }  // namespace composer

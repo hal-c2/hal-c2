@@ -13,8 +13,10 @@
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
 #include "ThemeStore.h"
+#include "native/Browser.h"
 #include "native/CommandPaletteController.h"
 #include "native/CommandRegistry.h"
+#include "native/CodeHighlighter.h"
 #include "native/ComposerHighlighter.h"
 #include "native/DeviceScreen.h"
 #include "native/DeviceTools.h"
@@ -64,11 +66,14 @@ HAL_C2_SHELL_SINGLETON(CommandPaletteController, PaletteModel)
 HAL_C2_SHELL_SINGLETON(OnboardingController, Onboarding)
 HAL_C2_SHELL_SINGLETON(KeybindingController, Keybindings)
 HAL_C2_SHELL_SINGLETON(SpaceController, Spaces)
+HAL_C2_SHELL_SINGLETON(Browser, Browser)
 
 HAL_C2_SHELL_TYPE(LocalTranscriber)
 HAL_C2_SHELL_TYPE(LocalFolderModel)
+HAL_C2_SHELL_TYPE(CodeHighlighter)
 HAL_C2_SHELL_TYPE(ComposerHighlighter)
 HAL_C2_SHELL_TYPE(DeviceScreen)
+HAL_C2_SHELL_TYPE(BrowserPage)
 
 struct DeviceStreamDeclaration {
   Q_GADGET
@@ -91,3 +96,7 @@ HAL_C2_SHELL_VALUE(TimelineModel)
 HAL_C2_SHELL_VALUE(SpacePages)
 HAL_C2_SHELL_VALUE(SpaceRows)
 HAL_C2_SHELL_VALUE(SpaceHistory)
+HAL_C2_SHELL_VALUE(ThemeTypeStep)
+HAL_C2_SHELL_VALUE(ThemeTypeRamp)
+HAL_C2_SHELL_VALUE(ThemeSpace)
+HAL_C2_SHELL_VALUE(ThemeSizes)

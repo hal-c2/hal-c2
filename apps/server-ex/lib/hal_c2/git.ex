@@ -515,11 +515,7 @@ defmodule HalC2.Git do
   # Read from gh's hosts file rather than asked of gh, which would open the keyring
   # holding the token at boot.
   defp gh_signed_in? do
-    dir =
-      System.get_env("GH_CONFIG_DIR") ||
-        Path.join(System.get_env("XDG_CONFIG_HOME") || Path.expand("~/.config"), "gh")
-
-    case File.read(Path.join(dir, "hosts.yml")) do
+    case File.read(Path.join(HalC2.GitHub.config_dir(), "hosts.yml")) do
       {:ok, hosts} -> Regex.match?(~r/^github\.com:/m, hosts)
       {:error, _} -> false
     end

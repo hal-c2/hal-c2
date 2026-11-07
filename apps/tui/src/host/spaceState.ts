@@ -8,8 +8,14 @@
 // RPCs. A page's history (h) is the exception: it is not on a stream, so it is asked
 // for while it is open, again when the Space's stream moves. The SpaceView brick
 // paints `space` and dispatches `space.*`. A chart block draws as text (`spaceChart.ts`)
-// and is asked for in words; Markdown a page keeps as written (a `raw` block) shows as
-// its source, line for line; a heading carries its level's `#` marks. An entry taller
+// and is asked for in words. A Mermaid diagram (a `code` block in "mermaid", or, as the
+// fallback, a `raw` block that is one Mermaid fence the page keeps as written) shows as
+// the MC drew it in characters (`mermaidDiagrams.ts`). A table and any other code
+// block are drawn as the chat draws them (`styledText.ts`); math and any other `raw`
+// block show as their source, line for line, and are edited as it. An image, the Space's or one by its
+// address, is named in words and never fetched. A heading carries its level's `#`
+// marks and a callout a bar. A list item, an alert, a divider, a footnote, a collapsed
+// section and math show as the MC writes them (`spaceMarkdown.ts`). An entry taller
 // than the pane, as a chart can be, scrolls through itself before the selection moves on.
 import * as NodePath from "node:path";
 
@@ -27,9 +33,9 @@ import {
   type SpaceId,
   type SpaceImage,
   type SpaceImageProvidersResult,
-  type SpaceListResult,
   type SpacePage,
   type SpacePageAgent,
+  type SpacePageAgentTarget,
   type SpacePageHistoryResult,
   type SpacePageId,
   type SpacePageOpenFileResult,
@@ -50,16 +56,33 @@ import {
 } from "@hal-c2/client-runtime/state/stream-entities";
 
 import type { TuiClient } from "../connection.ts";
+import { buildFileTree, collectDirPaths, flattenFileTree } from "../fileTree.ts";
 import { clip } from "../format.ts";
+import { linkifyTimelineUrls } from "../timelineLinks.ts";
 import type { StatusKind } from "../store.ts";
 import { type Palette, THEME } from "../theme.ts";
 import type { AskSpec } from "./askState.ts";
-import type { PickRequest } from "./composerState.ts";
+import type { ComposerPage, PagePrompt, PickRequest } from "./composerState.ts";
+import { memoryMutedThreads, type MutedThreadsStore } from "./mutedThreads.ts";
 import { scheduleLabel } from "./sections/scheduledTasks.ts";
 import { loopbackHost } from "../thisMachine.ts";
 import { wrapWords } from "./settingsSections.ts";
 import { chartData, chartLines } from "./spaceChart.ts";
-import { chunk, styled, type StyledText } from "./styledText.ts";
+import { createCodeColours, type CodeColours } from "./codeColours.ts";
+import { createMermaidDiagrams, type MermaidDiagrams } from "./mermaidDiagrams.ts";
+import { listItems, markdownFrame, type SpaceListItem } from "./spaceMarkdown.ts";
+import {
+  chunk,
+  type ChunkStyle,
+  inlineMarkdown,
+  markdownLines,
+  mermaidFenceSource,
+  mermaidLines,
+  plainText,
+  styled,
+  type StyledText,
+  wrapChunks,
+} from "./styledText.ts";
 
 /** Rows the pane's border and header take. */
 export const SPACE_CHROME_ROWS = 3;
@@ -78,6 +101,7 @@ export interface TuiSpaceRow {
   /**
    * `space:<id>`, `page:<id>`, `trash:<id>`, `deck:<id>`, `decktrash:<id>`, `block:<id>`,
    * `comment:<id>`, `slide:<id>`, `image:<id>`, `imageTrash:<id>`, `version:<n>`,
+   * `project:<projectId>`, `file:<projectId>|<path>`, `folder:<projectId>|<path>`,
    * `more:more`; a wrapped block or a slide's body repeats its key.
    */
   readonly key: string;
@@ -92,6 +116,9 @@ export interface TuiSpaceRow {
     | "image"
     | "trashedImage"
     | "version"
+    | "project"
+    | "folder"
+    | "file"
     | "more"
     | "label";
   /** The row as drawn, plain (steps read it). */
@@ -105,6 +132,8 @@ export interface TuiSpaceRow {
   readonly resolved?: boolean;
   /** The first line of an entry (a wrapped block's later lines are false). */
   readonly first: boolean;
+  /** A line the MC writes above a block's text, as an alert's kind; the text follows it. */
+  readonly above?: boolean;
 }
 
 /** Published under `space`. */
@@ -135,6 +164,10 @@ export interface SpaceControllerOptions {
   readonly height: () => number;
   readonly width: () => number;
   readonly palette?: Palette;
+  /** The Mermaid drawings the MC sent, shared with the timeline and file viewer. */
+  readonly diagrams?: MermaidDiagrams;
+  /** Code coloured by its language, shared with the timeline and file viewer. */
+  readonly codeColours?: CodeColours;
   readonly setOpen: (open: boolean) => void;
   readonly publish: (state: TuiSpaceState) => void;
   readonly status: (text: string, kind?: StatusKind) => void;
@@ -158,10 +191,16 @@ export interface SpaceControllerOptions {
   readonly openThread: (threadId: string) => void;
   /** This MC's projects, whose files can be opened as pages. */
   readonly projects?: () => ReadonlyArray<{ readonly id: string; readonly title: string }>;
+  /** Where this device keeps the projects whose sections the user expanded (default: this run only). */
+  readonly projectSections?: MutedThreadsStore;
   /** Leave the pane for a project's file in the file viewer: a page's file. */
   readonly showFile?: (projectId: string, path: string) => void;
   /** The entries `commands` offers changed without the pane moving. */
   readonly commandsChanged?: () => void;
+  /** What `prompt` aims at changed, or whether the prompt has the page's keys. */
+  readonly promptChanged?: () => void;
+  /** Starts an ask in the page's prompt, keeping what is written there. */
+  readonly askInPrompt?: () => void;
 }
 
 /** A palette entry; one offered several times is told apart by its payload. */
@@ -176,7 +215,10 @@ export interface SpaceController {
   readonly dispatch: (action: string, payload: unknown) => boolean;
   readonly close: () => void;
   readonly isOpen: () => boolean;
-  readonly mode: () => "space";
+  /** "pagePrompt" while the open page's prompt has the keys (^P). */
+  readonly mode: () => "space" | "pagePrompt";
+  /** The open page, for the timeline's prompt to write on; null off a page. */
+  readonly prompt: () => ComposerPage | null;
   /** Republish after a resize or a theme change. */
   readonly sync: () => void;
   /** The connection is down: who is on the page is unknown until the MC's next frame. */
@@ -208,8 +250,8 @@ const CLOSED: TuiSpaceState = {
 const HINTS: Record<TuiSpaceView, string> = {
   spaces: "  ⏎ open · n new · e rename · d delete · esc close",
   pages:
-    "  ⏎ open · n new · s new deck · S deck from page · a subpage · e rename · m move · d trash · r restore · D delete · p present a deck, publish a page · i import · f from a project's files · t from thread · h history · v images · esc back",
-  page: "  ⏎ edit · n add · g chart · c comment · x tick/resolve · m move · d delete · l link · u update · y copy · S deck · p publish · h history · v images · A ask an agent · f its file · F unlink · esc back",
+    "  ⏎ open, expand a project · n new · s new deck · S deck from page · a subpage · e rename · m move · d trash · r restore · D delete · p present a deck, publish a page · i import · t from thread · h history · v images · esc back",
+  page: "  ^P write · ⏎ edit · n add · g chart · c comment · x tick/resolve · m move · d delete · l link · u update · y copy · S deck · p publish · h history · v images · A ask an agent · f its file · esc back",
   deck: "  ⏎ edit · n add · m move · d delete · p present · r restore · v images · esc back",
   present: "  → next · ← back · pgup/pgdn scroll · esc leave",
   images: "  n generate · i add a file · d trash · r restore · D delete · esc back",
@@ -259,6 +301,21 @@ export const SITE_BEHIND_HINT = "Edited since it was published · p publishes ag
 export const SITE_LOCAL_ONLY_HINT =
   "Only this machine can open this link · P publishes over Tailscale";
 
+/** Code in a fence longer than any fence inside it, as the desktop draws a code block. */
+const fenced = (code: string, language: string) => {
+  let ticks = 3;
+  for (const line of code.split("\n")) {
+    const inner = /^ {0,3}(`{3,})/.exec(line);
+    if (inner) ticks = Math.max(ticks, inner[1]!.length + 1);
+  }
+  const fence = "`".repeat(ticks);
+  return `${fence}${language}\n${code}\n${fence}`;
+};
+
+/** Markdown the page keeps as written, a table and code are edited as their source. */
+const asSource = (block: SpaceBlock) =>
+  block.kind === "raw" || block.kind === "table" || block.kind === "code";
+
 /** What sets a raw block's source apart from the page's own blocks. */
 const RAW_GUTTER = "│ ";
 
@@ -279,6 +336,25 @@ const BLOCK_KINDS: ReadonlyArray<{ readonly kind: SpaceBlockKind; readonly label
   { kind: "chart", label: "Chart" },
   { kind: "image", label: "Image" },
 ];
+
+/** What "/" in a page's prompt offers: a chart is asked for in words, so it is "Visualize". */
+const PROMPT_KINDS = BLOCK_KINDS.map((entry) =>
+  entry.kind === "chart"
+    ? { label: "Visualize", value: entry.kind }
+    : { label: entry.label, value: entry.kind },
+);
+
+/** What a page's prompt writes from plain words, after "/" chose it. */
+const PROMPT_WRITES: Partial<Record<SpaceBlockKind, string>> = {
+  paragraph: "writes a paragraph",
+  heading: "writes a heading",
+  checklist: "writes a checklist item",
+  callout: "writes a callout",
+};
+
+/** An ask in a page's prompt starts with the word @agent; the MC is sent what follows. */
+const ASK_PREFIX = /^@agent(?:\s+|$)/i;
+const VISUALIZE_PREFIX = /^\/visualize(?:\s+|$)/i;
 
 const HOUR_MS = 3_600_000;
 
@@ -356,14 +432,14 @@ const byOrder = (a: { readonly order: string }, b: { readonly order: string }) =
 export function createSpaceController(options: SpaceControllerOptions): SpaceController {
   const { client } = options;
   const palette = options.palette ?? THEME;
+  const diagrams = options.diagrams ?? createMermaidDiagrams(client);
+  const codeColours = options.codeColours ?? createCodeColours();
   let open = false;
   let view: TuiSpaceView = "spaces";
   let spaces: StreamEntities = EMPTY_STREAM_ENTITIES;
   let spacesError: string | null = null;
   let unsubscribeSpaces: (() => void) | null = null;
   let spaceId: string | null = null;
-  // The Space last open, where a project file opened from outside the pane goes.
-  let lastSpaceId: string | null = null;
   let space: StreamEntities = EMPTY_STREAM_ENTITIES;
   let spaceError: string | null = null;
   let unsubscribeSpace: (() => void) | null = null;
@@ -414,6 +490,24 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   // One history request at a time; a refresh asked for meanwhile goes after it.
   let askAgain = false;
   let historyTimer: ReturnType<typeof setTimeout> | null = null;
+  // The open page's prompt: whether it has the keys, what its plain words write (as "/"
+  // chose), where an ask naming no project runs (as the MC last said), and what it
+  // last published, so the prompt is told only when that changes.
+  let prompting = false;
+  let nextKind: SpaceBlockKind = "paragraph";
+  let agentTarget: string | null = null;
+  let promptSignature = "";
+  let pagePrompt: ComposerPage | null = null;
+  // Which files of each project the MC counts as Space content, as it last said; null while
+  // first asked. A Space's pages end with a section for each project that has any.
+  const spaceFiles = new Map<string, ReadonlySet<string> | null>();
+  const sectionStore = options.projectSections ?? memoryMutedThreads();
+  // The projects whose sections the user expanded, and their folders as `<projectId>|<path>`;
+  // the rest are collapsed.
+  const expandedSections = new Set(sectionStore.load());
+  // The user's Space the pages go back to from a project file's page, which is served
+  // from the project's own Space: that one is in no list.
+  let homeSpaceId: string | null = null;
 
   const track = <T>(promise: Promise<T>): Promise<T> => {
     pending.add(promise);
@@ -428,7 +522,12 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   // --- what the streams hold ---
 
   const spaceList = (): Space[] => entitiesOf(spaces, "space") as unknown as Space[];
-  const currentSpace = (): Space | undefined => spaceList().find((s) => s.id === spaceId);
+  // The open Space: one of the user's, or a project's own (its files' pages), which the
+  // index holds as a `projectSpace` and the list of Spaces leaves out.
+  const currentSpace = (): Space | undefined =>
+    [...spaceList(), ...(entitiesOf(spaces, "projectSpace") as unknown as Space[])].find(
+      (s) => s.id === spaceId,
+    );
   const pages = (): SpacePage[] => entitiesOf(space, "page") as unknown as SpacePage[];
   const pageById = (id: string | null) => pages().find((page) => page.id === id);
   const blocksOf = (id: string): SpaceBlock[] =>
@@ -598,8 +697,82 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     ];
   };
 
-  /** A placed image in words. Its caption names it once the image is gone from the stream. */
+  /**
+   * A diagram's source: a code block in "mermaid", or a Mermaid fence the page keeps as
+   * written (indented, or with a space before its language).
+   */
+  const mermaidSource = (block: SpaceBlock) =>
+    block.kind === "code" && block.language?.toLowerCase() === "mermaid"
+      ? block.text
+      : block.kind === "raw"
+        ? mermaidFenceSource(block.text)
+        : null;
+
+  /** A Mermaid diagram: drawn in characters by the MC, or its source. */
+  const diagramRows = (block: SpaceBlock, source: string): TuiSpaceRow[] =>
+    linesRows(block, mermaidLines(source, diagrams.get(source), palette, width() - 2).lines);
+
+  /**
+   * A table or a code block drawn as the chat draws them (#854): a table boxed with its
+   * cells' Markdown, code in the code colour under its language. Math is code the MC
+   * fences in `$$`, shown as its source.
+   */
+  const drawnBlock = (block: SpaceBlock) =>
+    block.kind === "table" || (block.kind === "code" && block.language !== "math");
+
+  const drawnBlockRows = (block: SpaceBlock): TuiSpaceRow[] => {
+    const room = width() - 2;
+    if (block.kind === "table") return linesRows(block, markdownLines(block.text, palette, room));
+    const language = block.language ?? "";
+    const label = language === "" ? [] : [styled(chunk(language, { fg: palette.dim }))];
+    return linesRows(block, [
+      ...label,
+      ...markdownLines(fenced(block.text, language), palette, room, undefined, codeColours.lines),
+    ]);
+  };
+
+  /** A block drawn as lines that fit the pane; a line of plain text is cut to it. */
+  const linesRows = (block: SpaceBlock, drawn: ReadonlyArray<StyledText>): TuiSpaceRow[] => {
+    const key = `block:${block.id}`;
+    const active = selected[view] === key;
+    const bg = active ? { bg: palette.selectedBg } : {};
+    const room = width() - 2;
+    const agent = agentOf(block);
+    // An empty block still has its row, to select it by.
+    const lines = drawn.length > 0 ? drawn : [styled(chunk(" "))];
+    return lines.map((line, index) => {
+      const first = index === 0;
+      const lead = first ? marker(active) : "  ";
+      const by = index === lines.length - 1 && agent ? `  · ${agent}` : "";
+      // A drawing or a table fits the pane; a line of code or a reason is cut to it, as
+      // raw text is.
+      const parts =
+        line.chunks.length === 1
+          ? [{ ...line.chunks[0]!, text: clip(expandTabs(line.chunks[0]!.text), room) }]
+          : line.chunks;
+      const text = parts.map((part) => part.text).join("");
+      return {
+        key,
+        kind: "block",
+        text: `${lead}${text}${by}`,
+        line: styled(
+          chunk(lead, { fg: palette.dim, ...bg }),
+          ...parts.map((part) => ({ ...part, ...bg })),
+          by !== "" && chunk(by, { fg: palette.faint, ...bg }),
+        ),
+        selected: active,
+        blockKind: block.kind,
+        first,
+      } satisfies TuiSpaceRow;
+    });
+  };
+
+  /**
+   * A placed image in words. Its caption names it once the image is gone from the stream.
+   * An image by its address is never fetched: its caption and where it is.
+   */
   const imagePlaceholder = (block: SpaceBlock): string => {
+    if (block.url) return `[image${block.text ? `: ${block.text}` : ""}] ${block.url}`;
     const image = imageById(block.imageId);
     if (!image) return `[image: ${block.text} was deleted]`;
     if (image.trashedAt !== null) return `[image: ${image.name} is in the trash]`;
@@ -614,20 +787,22 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   /**
    * Markdown the page keeps as written: a row per source line behind a gutter, with
    * its leading spaces and never wrapped, so a table or code lines up as in the file.
-   * A line wider than the pane is cut short; the block's text stays whole.
+   * A line wider than the pane is cut short; the block's text stays whole. Math shows
+   * this way too.
    */
-  // Markdown the page keeps as written is its source, and so are a table and a code block
-  // until they are drawn as such (#854).
-  const asSource = (block: SpaceBlock) =>
-    block.kind === "raw" || block.kind === "table" || block.kind === "code";
-
   const rawRows = (block: SpaceBlock): TuiSpaceRow[] => {
     const key = `block:${block.id}`;
     const active = selected[view] === key;
     const bg = active ? { bg: palette.selectedBg } : {};
     const agent = agentOf(block);
     const room = width() - 2 - Bun.stringWidth(RAW_GUTTER);
-    const lines = block.text.split("\n").map(expandTabs);
+    // Math is shown with the fences the MC writes around it.
+    const { above, below } = markdownFrame(block, null);
+    const lines = [
+      ...(above ? [above] : []),
+      ...block.text.split("\n").map(expandTabs),
+      ...(below ? [below] : []),
+    ];
     return lines.map((source, index) => {
       const first = index === 0;
       const lead = `${first ? marker(active) : "  "}${RAW_GUTTER}`;
@@ -645,40 +820,75 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         selected: active,
         blockKind: block.kind,
         first,
+        ...(first && above ? { above: true } : {}),
       } satisfies TuiSpaceRow;
     });
   };
 
-  const blockRows = (block: SpaceBlock): TuiSpaceRow[] => {
+  // Text drawn as inline Markdown: what the desktop draws through the chat's Markdown
+  // brick. A section's summary and an image's caption sit inside Markdown the MC writes.
+  const drawnKind = (block: SpaceBlock) =>
+    !["subpage_link", "image", "details", "details_end", "divider", "generated"].includes(
+      block.kind,
+    );
+
+  // A block's text drawn, kept by its look and text: rows are built again on every move
+  // of the selection, and a page can hold hundreds of blocks.
+  const drawnCache = new Map<string, ReturnType<typeof inlineMarkdown>>();
+  const drawnText = (text: string, style: ChunkStyle, look: string) => {
+    const key = `${look}\u0000${text}`;
+    const cached = drawnCache.get(key);
+    if (cached) {
+      drawnCache.delete(key);
+      drawnCache.set(key, cached);
+      return cached;
+    }
+    const drawn = inlineMarkdown(linkifyTimelineUrls(text), palette, style);
+    if (drawnCache.size >= 1000) drawnCache.delete(drawnCache.keys().next().value!);
+    drawnCache.set(key, drawn);
+    return drawn;
+  };
+
+  /**
+   * A block's rows. A list item, an alert, a divider, a footnote and a collapsed section
+   * are shown as the MC writes them (#869, #877): `item` is where the block sits in its
+   * list, from `listItems` over the page's blocks.
+   */
+  const blockRows = (block: SpaceBlock, item: SpaceListItem | null = null): TuiSpaceRow[] => {
     // A chart this client cannot read shows what it says of itself, as any block does.
     const chart = block.kind === "chart" ? chartData(block.chart) : null;
     if (chart) return chartRows(block, chart);
-    if (asSource(block)) return rawRows(block);
+    const diagram = mermaidSource(block);
+    if (diagram !== null) return diagramRows(block, diagram);
+    if (drawnBlock(block)) return drawnBlockRows(block);
+    if (block.kind === "raw" || block.kind === "code") return rawRows(block);
     const key = `block:${block.id}`;
     const active = selected[view] === key;
     const linked = block.kind === "subpage_link" ? pageById(block.linkedPageId) : undefined;
     const level = block.kind === "heading" ? (block.level ?? 2) : 0;
+    const frame = markdownFrame(block, item);
+    // A divider and a section's end have no text: what the MC writes is all there is.
+    const bare = block.kind === "divider" || block.kind === "details_end";
     const prefix =
       block.kind === "heading"
         ? `${"#".repeat(level)} `
-        : block.kind === "checklist"
-          ? block.checked
-            ? "[x] "
-            : "[ ] "
-          : block.kind === "callout"
-            ? "▌ "
-            : block.kind === "subpage_link"
-              ? "↳ "
-              : "";
+        : block.kind === "callout"
+          ? "▌ "
+          : block.kind === "subpage_link"
+            ? "↳ "
+            : bare
+              ? ""
+              : frame.lead;
     const body =
       block.kind === "subpage_link"
         ? (linked?.title ?? (block.text || "(a deleted page)"))
         : block.kind === "image"
           ? imagePlaceholder(block)
-          : block.text;
+          : bare
+            ? frame.lead
+            : `${block.text}${frame.tail}`;
     const agent = block.kind === "generated" ? "written by its update" : agentOf(block);
     const room = width() - 2 - Bun.stringWidth(prefix);
-    const lines = wrapWords(body === "" ? " " : body, room);
     // A terminal has one size of type, so a heading's weight steps down with its level.
     const fg =
       block.kind === "heading"
@@ -694,21 +904,57 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
             : (block.kind === "checklist" && block.checked) || block.kind === "image"
               ? palette.dim
               : palette.text;
+    const style: ChunkStyle = {
+      fg,
+      bold: block.kind === "heading",
+      underline: level === 1,
+      strikethrough: block.kind === "checklist" && block.checked,
+    };
+    const lines = drawnKind(block)
+      ? wrapChunks(drawnText(block.text, style, `${block.kind}.${level}.${block.checked}`), room)
+      : wrapWords(body === "" ? " " : body, room).map((text) => [chunk(text, style)]);
     const bg = active ? { bg: palette.selectedBg } : {};
-    return lines.map((text, index) => {
-      const first = index === 0;
+    // An alert's kind stands above its text, behind the same bar.
+    const aboveLead = `${marker(active)}${block.kind === "callout" ? "▌ " : ""}`;
+    const aboveRows: TuiSpaceRow[] = frame.above
+      ? [
+          {
+            key,
+            kind: "block",
+            text: `${aboveLead}${frame.above}`,
+            line: styled(
+              chunk(aboveLead, { fg: palette.dim, ...bg }),
+              chunk(frame.above, { fg, ...bg }),
+            ),
+            selected: active,
+            blockKind: block.kind,
+            checked: block.checked,
+            first: true,
+            above: true,
+          },
+        ]
+      : [];
+    // A list item's marker is drawn as the chat draws one, after the indent that nests it.
+    const listLead = item != null;
+    const indent = listLead ? prefix.length - prefix.trimStart().length : prefix.length;
+    const textRows = lines.map((parts, index) => {
+      const first = index === 0 && aboveRows.length === 0;
       const last = index === lines.length - 1;
-      const lead = first
-        ? `${marker(active)}${prefix}`
-        : `  ${" ".repeat(Bun.stringWidth(prefix))}`;
+      const lead =
+        index === 0
+          ? `${first ? marker(active) : "  "}${prefix}`
+          : `  ${" ".repeat(Bun.stringWidth(prefix))}`;
       const by = last && agent ? `  · ${agent}` : "";
+      const words = parts.length === 0 ? [chunk(" ", style)] : parts;
+      const cut = index === 0 && listLead ? lead.length - prefix.length + indent : lead.length;
       return {
         key,
         kind: "block",
-        text: `${lead}${text}${by}`,
+        text: `${lead}${plainText({ chunks: parts })}${by}`,
         line: styled(
-          chunk(lead, { fg: palette.dim, ...bg }),
-          chunk(text, { fg, bold: block.kind === "heading", underline: level === 1, ...bg }),
+          chunk(lead.slice(0, cut), { fg: palette.dim, ...bg }),
+          cut < lead.length && chunk(lead.slice(cut), { fg: palette.accent, bold: true, ...bg }),
+          ...words.map((part) => ({ ...part, ...bg })),
           by !== "" && chunk(by, { fg: palette.faint, ...bg }),
         ),
         selected: active,
@@ -717,6 +963,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         first,
       } satisfies TuiSpaceRow;
     });
+    return [...aboveRows, ...textRows];
   };
 
   /** A note above a page's blocks, wrapped. Not selectable. */
@@ -743,7 +990,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     return [
       ...noteRows(
         "file:path",
-        `File: ${file.path} of ${projectTitle(file.projectId)} · f opens it · F unlinks`,
+        `File: ${file.path} of ${projectTitle(file.projectId)} · f opens it`,
         palette.dim,
       ),
       ...(file.missing
@@ -910,6 +1157,40 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     ];
   };
 
+  /**
+   * A section for each of this MC's projects with Space files, after the Space's own
+   * entries; an expanded one lists its files by folder, an expanded folder its own.
+   */
+  const projectSectionRows = (): TuiSpaceRow[] =>
+    (options.projects?.() ?? []).flatMap((project) => {
+      const paths = spaceFiles.get(project.id);
+      if (!paths || paths.size === 0) return [];
+      const expanded = expandedSections.has(project.id);
+      const head = `${expanded ? "▾" : "▸"} ${project.title}`;
+      const rows = [entryRow(`project:${project.id}`, "project", head, {}, palette.accent)];
+      if (!expanded) return rows;
+      const tree = buildFileTree([...paths].map((path) => ({ path, additions: 0, deletions: 0 })));
+      const collapsed = new Set(
+        collectDirPaths(tree).filter((path) => !expandedSections.has(`${project.id}|${path}`)),
+      );
+      for (const node of flattenFileTree(tree, collapsed)) {
+        if (node.kind === "file") {
+          rows.push(
+            entryRow(
+              `file:${project.id}|${node.path}`,
+              "file",
+              `${"  ".repeat(node.depth + 1)}${node.name}`,
+            ),
+          );
+        } else {
+          // The arrow in the indent, so a folder's name lines up with its siblings' files.
+          const head = `${"  ".repeat(node.depth)}${node.collapsed ? "▸" : "▾"} ${node.name}/`;
+          rows.push(entryRow(`folder:${project.id}|${node.path}`, "folder", head, {}, palette.dim));
+        }
+      }
+      return rows;
+    });
+
   /** Every row of the open level, before the selection is applied. */
   const allRows = (): TuiSpaceRow[] => {
     if (view === "spaces") {
@@ -924,6 +1205,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         rows.push(label("Decks"));
         for (const deck of liveDecks) rows.push(entryRow(`deck:${deck.id}`, "deck", deck.title));
       }
+      rows.push(...projectSectionRows());
       const bin = trashed();
       const deckBin = decks().filter((deck) => deck.trashedAt !== null);
       if (bin.length > 0 || deckBin.length > 0) {
@@ -943,7 +1225,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       return rows;
     }
     if (view === "version") {
-      return (reading?.blocks ?? []).flatMap((block) => blockRows(block));
+      const read = reading?.blocks ?? [];
+      const items = listItems(read);
+      return read.flatMap((block, index) => blockRows(block, items[index]));
     }
     if (view === "deck") return slidesOf(deckId).flatMap(slideRows);
     if (view === "present") return presenterRows();
@@ -972,8 +1256,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       ...(open ? updateRows(open) : []),
       ...siteRows(id),
     ];
-    for (const block of blocks) {
-      rows.push(...blockRows(block));
+    const items = listItems(blocks);
+    for (const [index, block] of blocks.entries()) {
+      rows.push(...blockRows(block, items[index]));
       for (const comment of comments.filter((entry) => entry.blockId === block.id)) {
         rows.push(commentRow(comment));
       }
@@ -1077,6 +1362,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
 
   const publish = () => {
     followViewers();
+    syncPrompt();
     if (!open) {
       options.publish(CLOSED);
       return;
@@ -1142,6 +1428,12 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       rows: rows.slice(top, top + room),
     });
   };
+  const stopDiagrams = diagrams.listen(() => {
+    if (open) publish();
+  });
+  const stopCodeColours = codeColours.listen(() => {
+    if (open) publish();
+  });
 
   // --- streams ---
 
@@ -1243,6 +1535,11 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     if (onPage && space.ready && !pageById(pageId)) {
       closeHistory();
       pageId = null;
+      // A project's own Space has no pages to show but its files'.
+      if (!spaceList().some((entry) => entry.id === spaceId)) {
+        goHome(null);
+        return;
+      }
       generation += 1;
       view = "pages";
       top = 0;
@@ -1279,9 +1576,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
 
   // --- navigation ---
 
-  const openSpace = (id: string, then: TuiSpaceView = "pages") => {
+  /** Opens a Space at `then`, its pages' selection on `select` when given. */
+  const openSpace = (id: string, then: TuiSpaceView = "pages", select: string | null = null) => {
     generation += 1;
-    lastSpaceId = id;
+    if (spaceList().some((entry) => entry.id === id)) homeSpaceId = id;
     if (spaceId !== id) {
       spaceId = id;
       selected.pages = null;
@@ -1290,6 +1588,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       selectedIndex.images = 0;
       followSpace(id);
     }
+    if (select !== null) selected.pages = select;
     view = then;
     top = 0;
     publish();
@@ -1301,12 +1600,15 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     if (pageId !== id) {
       selected.page = null;
       selectedIndex.page = 0;
+      nextKind = "paragraph";
     }
     pageId = id;
+    prompting = false;
     selected.pages = key;
     view = "page";
     top = 0;
     publish();
+    askTarget();
     // A file may have changed with nothing watching it (an editor, a pull): read it again.
     // What it brings shows on the stream; a refusal leaves the page as it was.
     if (pageById(id)?.file && spaceId !== null) {
@@ -1385,6 +1687,16 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     publish();
   };
 
+  /** To the user's Space the pages were last on (else their first), on `select` there. */
+  const goHome = (select: string | null) => {
+    const home = spaceList().find((entry) => entry.id === homeSpaceId) ?? spaceList()[0];
+    if (home) openSpace(home.id, "pages", select);
+    else {
+      leaveSpace();
+      publish();
+    }
+  };
+
   const leaveSpace = () => {
     generation += 1;
     closeHistory();
@@ -1392,6 +1704,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     spaceId = null;
     pageId = null;
     deckId = null;
+    prompting = false;
     view = "spaces";
     top = 0;
   };
@@ -1400,6 +1713,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     if (!open) {
       open = true;
       options.setOpen(true);
+      // The projects' sections: what each has may have changed while the pane was shut.
+      for (const project of options.projects?.() ?? []) refreshSpaceFiles(project.id);
     }
     followSpaces();
     // Listing makes the Personal Space on the first look; the stream shows it.
@@ -1443,6 +1758,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       view = "page";
       top = 0;
       publish();
+    } else if (view === "page" && pageById(pageId)?.file) {
+      // A project file's page: back to the user's Space, on the file in its section.
+      const file = pageById(pageId)!.file!;
+      goHome(`file:${file.projectId}|${file.path}`);
     } else if (view === "page" || view === "deck") {
       generation += 1;
       view = "pages";
@@ -1655,7 +1974,11 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     if (!entry) return;
     if (entry.kind === "space") openSpace(entry.id);
     else if (entry.kind === "page") openPage(entry.id);
-    else if (entry.kind === "deck") openDeck(entry.id);
+    else if (entry.kind === "project" || entry.kind === "folder") toggleSection(entry.id);
+    else if (entry.kind === "file") {
+      const at = entry.id.indexOf("|");
+      openProjectFile(entry.id.slice(0, at), entry.id.slice(at + 1));
+    } else if (entry.kind === "deck") openDeck(entry.id);
     else if (entry.kind === "decktrash") {
       openDeck(entry.id, `decktrash:${entry.id}`);
       options.status("This deck is in the trash: r restores it.", "info");
@@ -1832,30 +2155,41 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     return null;
   };
 
-  const insertBlock = (input: Record<string, unknown>) => {
+  /** Adds a block where a new one goes and selects it; rejects with the MC's refusal. */
+  const placeBlock = async (input: Record<string, unknown>) => {
     const id = spaceId;
     const page = pageId;
     if (id === null || page === null) return;
     const after = anchorBlock();
     const asked = generation;
-    void send<{ block: SpaceBlock }>(WS_METHODS.spaceBlockInsert, {
+    const result = await call<{ block: SpaceBlock }>(WS_METHODS.spaceBlockInsert, {
       spaceId: id,
       pageId: page,
       ...input,
       ...(after === null ? {} : { afterBlockId: after }),
-    }).then((result) => {
-      if (result && asked === generation && pageId === page) {
-        selected.page = `block:${result.block.id}`;
-        publish();
-      }
     });
+    if (asked === generation && pageId === page) {
+      selected.page = `block:${result.block.id}`;
+      publish();
+    }
+  };
+
+  const insertBlock = (input: Record<string, unknown>) => {
+    placeBlock(input).catch((error: unknown) => options.status(refusalText(error), "error"));
   };
 
   const addBlock = () => {
     options.menu({
       title: "Add a block",
-      options: BLOCK_KINDS.map((entry) => ({ label: entry.label, value: entry.kind })),
+      options: [
+        ...BLOCK_KINDS.map((entry) => ({ label: entry.label, value: entry.kind })),
+        { label: "Ask an agent", description: "about this page, in the prompt", value: "ask" },
+      ],
       onChoose: (value) => {
+        if (value === "ask") {
+          askAgent();
+          return;
+        }
         const kind = value as SpaceBlockKind;
         if (kind === "subpage_link") {
           link();
@@ -1902,25 +2236,40 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       label: replacing ? "ask again" : "chart",
       placeholder: "what should it show?",
       ...(replacing ? { value: chartData(replacing.chart)?.request ?? "" } : {}),
-      onSubmit: (request) => {
-        const after = replacing ? null : anchorBlock();
-        options.status("Drawing a chart…", "info");
-        void send<{ block: SpaceBlock }>(WS_METHODS.spaceBlockVisualize, {
-          spaceId: id,
-          pageId: page,
-          request,
-          ...(replacing ? { blockId: replacing.id } : {}),
-          ...(after === null ? {} : { afterBlockId: after }),
-        }).then((result) => {
-          if (!result) return;
-          options.status(`Drew “${chartData(result.block.chart)?.title ?? "a chart"}”.`, "info");
-          if (asked === generation && pageId === page) {
-            selected.page = `block:${result.block.id}`;
-            publish();
-          }
-        });
-      },
+      onSubmit: (request) => startChart(id, page, request, replacing?.id ?? null, asked),
     });
+  };
+
+  /**
+   * Draws a chart without waiting on it: a model draws it, so nothing holds the keys
+   * meanwhile. The status line says when it is drawn, or why it was not.
+   */
+  const startChart = (...args: Parameters<typeof drawChart>) => {
+    drawChart(...args).catch((error: unknown) => options.status(refusalText(error), "error"));
+  };
+
+  /** Asks the MC for a chart in `request`, replacing `blockId`'s; rejects with its refusal. */
+  const drawChart = async (
+    id: string,
+    page: string,
+    request: string,
+    blockId: string | null,
+    asked: number,
+  ) => {
+    const after = blockId === null ? anchorBlock() : null;
+    options.status("Drawing a chart…", "info");
+    const result = await call<{ block: SpaceBlock }>(WS_METHODS.spaceBlockVisualize, {
+      spaceId: id,
+      pageId: page,
+      request,
+      ...(blockId === null ? {} : { blockId }),
+      ...(after === null ? {} : { afterBlockId: after }),
+    });
+    options.status(`Drew “${chartData(result.block.chart)?.title ?? "a chart"}”.`, "info");
+    if (asked === generation && pageId === page) {
+      selected.page = `block:${result.block.id}`;
+      publish();
+    }
   };
 
   const link = () => {
@@ -2181,26 +2530,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   const isActive = (agent: SpacePageAgent) =>
     agent.status === "running" || agent.status === "stopping";
 
-  /**
-   * The MC takes the word @agent off what is asked, so the field takes it with or without.
-   * An ask it refuses comes back with its words.
-   */
-  const askFor = (page: string, words = "") => {
-    options.ask({
-      label: "ask an agent",
-      placeholder: "what to do to this page",
-      value: words,
-      onSubmit: async (request) => {
-        const asked = await send(WS_METHODS.spacePageAskAgent, {
-          spaceId,
-          pageId: page,
-          request,
-        });
-        if (asked === null && open && request !== "") askFor(page, request);
-      },
-    });
-  };
-
+  /** A, the palette and the add menu: the page's prompt takes the keys, as an ask. */
   const askAgent = () => {
     const page = pageId;
     if (view !== "page" || page === null) return;
@@ -2209,7 +2539,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       options.status("An agent is already working on this page: s stops it.", "info");
       return;
     }
-    askFor(page);
+    focusPrompt(true);
+    options.askInPrompt?.();
   };
 
   /** Runs `fn` on the open page's agent; a page without one says so. */
@@ -2495,36 +2826,47 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   };
 
   /**
-   * With a choice, asks which provider draws it, naming the ones that cannot; the
-   * model is that provider's default. Without one the MC picks, or says why it cannot.
+   * With a choice, asks which image model draws it: each model of each provider that can
+   * make an image, the ones not ready now saying why. Without one the MC picks, or says
+   * why it cannot.
    */
   const chooseImageProvider = async (id: string, prompt: string) => {
     const offer = await send<SpaceImageProvidersResult>(WS_METHODS.spaceImageProviders, {});
     if (!offer) return;
-    if (offer.providers.filter((provider) => provider.status === "ready").length < 2) {
+    const choices = offer.providers.flatMap((provider) =>
+      provider.models.map((model) => ({ provider, model })),
+    );
+    if (choices.filter(({ provider }) => provider.status === "ready").length < 2) {
       generateImage(id, prompt);
       return;
     }
     const chosen = offer.selection;
     options.menu({
-      title: "Who should draw it?",
+      title: "Which image model?",
       index: Math.max(
         0,
-        offer.providers.findIndex((provider) => provider.instanceId === chosen?.instanceId),
+        choices.findIndex(
+          ({ provider, model }) =>
+            provider.instanceId === chosen?.instanceId && model.slug === (chosen?.model ?? "auto"),
+        ),
       ),
-      options: offer.providers.map((provider) => ({
-        label: provider.instanceId,
-        value: provider.instanceId,
+      options: choices.map(({ provider, model }, index) => ({
+        label: `${provider.instanceId} · ${model.name}`,
+        value: String(index),
         disabled: provider.status !== "ready",
         description:
           provider.status === "ready"
-            ? ""
-            : provider.status === "unsupported"
-              ? "not supported here"
-              : (provider.message ?? "unavailable"),
+            ? (model.description ?? "")
+            : (provider.message ?? "unavailable"),
       })),
-      onChoose: (instanceId) =>
-        generateImage(id, prompt, instanceId === chosen?.instanceId ? chosen : { instanceId }),
+      onChoose: (index) => {
+        const choice = choices[Number(index)];
+        if (!choice) return;
+        generateImage(id, prompt, {
+          instanceId: choice.provider.instanceId,
+          model: choice.model.slug,
+        });
+      },
     });
   };
 
@@ -2701,16 +3043,37 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
 
   // --- project files ---
 
-  // Which files of each project the MC counts as Space content, as it last said; null while asked.
-  const spaceFiles = new Map<string, ReadonlySet<string> | null>();
-
   const knowSpaceFiles = (projectId: string, result: SpaceFilesListResult) => {
-    spaceFiles.set(projectId, new Set(result.files.map((file) => file.relativePath)));
+    const paths = result.files.map((file) => file.relativePath);
+    spaceFiles.set(projectId, new Set(paths));
     options.commandsChanged?.();
+    if (forgetGoneFolders(projectId, paths)) sectionStore.save([...expandedSections]);
+    if (open) publish();
   };
 
+  /**
+   * Forgets the project's expanded folders none of its listed files are in. An empty
+   * list (no section, or a scan still to come) forgets nothing.
+   */
+  const forgetGoneFolders = (projectId: string, paths: readonly string[]) => {
+    if (paths.length === 0) return false;
+    const folders = new Set(
+      paths.flatMap((path) => {
+        const parts = path.split("/").filter(Boolean);
+        return parts.slice(0, -1).map((_, at) => parts.slice(0, at + 1).join("/"));
+      }),
+    );
+    const prefix = `${projectId}|`;
+    const gone = [...expandedSections].filter(
+      (id) => id.startsWith(prefix) && !folders.has(id.slice(prefix.length)),
+    );
+    for (const id of gone) expandedSections.delete(id);
+    return gone.length > 0;
+  };
+
+  /** Asks the MC for the project's Space files; what it last said stands meanwhile. */
   const refreshSpaceFiles = (projectId: string) => {
-    spaceFiles.set(projectId, null);
+    if (!spaceFiles.has(projectId)) spaceFiles.set(projectId, null);
     call<SpaceFilesListResult>(WS_METHODS.spaceFilesList, { projectId }).then(
       (result) => knowSpaceFiles(projectId, result),
       // Not known, so the next look asks again.
@@ -2730,40 +3093,13 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     return refusalText(error);
   };
 
-  /**
-   * Where a file opens from outside a Space: the Space last open, else the first; null
-   * when there is none, and the refusal when the Spaces could not be listed.
-   */
-  const targetSpace = async (): Promise<string | null | { readonly error: unknown }> => {
-    if (open && spaceId !== null) return spaceId;
-    let result: SpaceListResult;
-    try {
-      result = await call<SpaceListResult>(WS_METHODS.spaceList, {});
-    } catch (error) {
-      return { error };
-    }
-    const ids = result.spaces.map((entry) => entry.id as string);
-    return ids.find((id) => id === lastSpaceId) ?? ids[0] ?? null;
-  };
-
-  /** Opens a project's file as a page in `into` (else `targetSpace`) and shows it. */
-  const openProjectFile = (projectId: string, path: string, into: string | null = null) => {
+  /** Opens a project's file as a page of the project's own Space and shows it. */
+  const openProjectFile = (projectId: string, path: string) => {
     void track(
       (async () => {
-        const target = into ?? (await targetSpace());
-        if (target !== null && typeof target === "object") {
-          options.status(refusalText(target.error), "error");
-          return;
-        }
-        // The MC makes a Space when it lists none, so this is a last resort.
-        if (target === null) {
-          options.status("There is no Space to open it in: make one first (^X p, then n).", "info");
-          return;
-        }
         let result: SpacePageOpenFileResult;
         try {
           result = await call<SpacePageOpenFileResult>(WS_METHODS.spacePageOpenFile, {
-            spaceId: target,
             projectId,
             relativePath: path,
           });
@@ -2771,23 +3107,49 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           options.status(fileRefusalText(error, path), "error");
           return;
         }
-        // The file may be a page of another Space already: that is where it shows.
         closeHistory();
         show();
+        // Back from the page lands on the file, in its folders in its project's section.
+        revealFile(projectId, path);
         openSpace(result.spaceId);
         openPage(result.page.id);
-        const elsewhere =
-          result.spaceId === target
-            ? ""
-            : ` in ${spaceList().find((entry) => entry.id === result.spaceId)?.name ?? "another Space"}`;
         options.status(
           result.created
             ? `Opened ${path} as the page “${result.page.title}”.`
-            : `${path} is the page “${result.page.title}”${elsewhere}.`,
+            : `${path} is the page “${result.page.title}”.`,
           "info",
         );
       })(),
     );
+  };
+
+  /** Remembers the expanded sections and folders, of projects still here. */
+  const rememberSections = () => {
+    const known = new Set((options.projects?.() ?? []).map((project) => project.id));
+    for (const id of expandedSections) {
+      const at = id.indexOf("|");
+      if (!known.has(at < 0 ? id : id.slice(0, at))) expandedSections.delete(id);
+    }
+    sectionStore.save([...expandedSections]);
+    publish();
+  };
+
+  /** Expands or collapses a project's section, or a folder in it (`<projectId>|<path>`). */
+  const toggleSection = (id: string) => {
+    if (!expandedSections.delete(id)) expandedSections.add(id);
+    rememberSections();
+  };
+
+  /** Expands a file's section and the folders it is in, so its row shows. */
+  const revealFile = (projectId: string, path: string) => {
+    const parts = path.replace(/^\.\//, "").split("/").filter(Boolean);
+    const ids = [
+      projectId,
+      ...parts.slice(0, -1).map((_, at) => `${projectId}|${parts.slice(0, at + 1).join("/")}`),
+    ];
+    if (ids.every((id) => expandedSections.has(id))) return;
+    for (const id of ids) expandedSections.add(id);
+    rememberSections();
   };
 
   /** Picks one of this MC's projects; one alone is picked without asking. */
@@ -2811,7 +3173,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
    * Picks a project's Space file and opens it, among `only` when given (the paths a
    * message names, one of which opens without asking).
    */
-  const pickFile = (projectId: string, into: string | null, only?: ReadonlyArray<string>) => {
+  const pickFile = (projectId: string, only?: ReadonlyArray<string>) => {
     void send<SpaceFilesListResult>(WS_METHODS.spaceFilesList, { projectId }).then((result) => {
       if (!result) return;
       knowSpaceFiles(projectId, result);
@@ -2829,17 +3191,17 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           "info",
         );
       } else if (only && files.length === 1) {
-        openProjectFile(projectId, files[0]!.relativePath, into);
+        openProjectFile(projectId, files[0]!.relativePath);
       } else {
         options.menu({
-          title: `Open a file of ${name} as a page`,
+          title: `Edit a file of ${name} as a page`,
           searchable: true,
           options: files.map((file) => ({
             label: file.relativePath,
             value: file.relativePath,
             ...(file.page ? { description: `the page “${file.page.title}”` } : {}),
           })),
-          onChoose: (path) => openProjectFile(projectId, path, into),
+          onChoose: (path) => openProjectFile(projectId, path),
         });
       }
     });
@@ -2857,30 +3219,18 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       : undefined;
     const then = (id: string) => {
       if (typeof path === "string") openProjectFile(id, path);
-      else pickFile(id, null, only);
+      else pickFile(id, only);
     };
-    if (typeof projectId !== "string") pickProject("Open a file of which project?", then);
+    if (typeof projectId !== "string") pickProject("Edit a file of which project as a page?", then);
     else if ((options.projects?.() ?? []).some((project) => project.id === projectId)) {
       then(projectId);
     } else {
-      // Its files open in its own machine's Spaces, which this pane does not follow (#860).
+      // Its files are pages on its own machine, which this pane does not follow (#860).
       options.status(
-        "That project is on another machine: its files open in that machine's Spaces.",
+        "That project is on another machine: its files are edited as pages there.",
         "info",
       );
     }
-  };
-
-  /** Inside a Space: a page from one of a project's files. */
-  const fromFiles = () => {
-    const into = spaceId;
-    if (view !== "pages" || into === null) {
-      options.status("Open a Space to add a page from a project's files.", "info");
-      return;
-    }
-    pickProject("Add a page from the files of which project?", (projectId) =>
-      pickFile(projectId, into),
-    );
   };
 
   /** From a page to its file, in the file viewer. */
@@ -2891,35 +3241,6 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     } else if (file.missing) {
       options.status(`${file.path} is gone from the project.`, "info");
     } else options.showFile?.(file.projectId, file.path);
-  };
-
-  /** The way out: the page stops following its file, which stays as it is. */
-  const unlinkFile = () => {
-    const page = view === "page" ? pageById(pageId) : undefined;
-    const file = page?.file;
-    if (!page || !file) {
-      options.status("This page is not a project file.", "info");
-      return;
-    }
-    const target = { spaceId, pageId: page.id };
-    options.menu({
-      title: `Stop “${page.title}” following ${file.path}? Opening the file again makes a new page.`,
-      options: [
-        { label: "Keep following it", value: "keep" },
-        { label: "Unlink it", value: "unlink" },
-      ],
-      onChoose: (choice) => {
-        if (choice !== "unlink") return;
-        void send(WS_METHODS.spacePageUnlinkFile, target).then((result) => {
-          if (result) {
-            options.status(
-              `“${page.title}” is an ordinary page; ${file.path} stays as it is.`,
-              "info",
-            );
-          }
-        });
-      },
-    });
   };
 
   /** Proposes the project's spaces section and writes it, or offers replacing one someone wrote. */
@@ -2992,6 +3313,121 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     "space.leave": leavePresenter,
   };
 
+  // --- the page's prompt ---
+
+  const focusPrompt = (on: boolean) => {
+    if (prompting === on) return;
+    prompting = on;
+    publish();
+  };
+
+  /** Where the MC would run an ask that names no project; the prompt shows it. */
+  const askTarget = () => {
+    void call<SpacePageAgentTarget>(WS_METHODS.spacePageAgentTarget, {}).then(
+      (result) => {
+        if (result.projectId === agentTarget) return;
+        agentTarget = result.projectId;
+        publish();
+      },
+      () => {},
+    );
+  };
+
+  /** What "/" chose: the words that start the prompt, or null when a menu takes over. */
+  const chooseKind = (value: string): string | null => {
+    const kind = value as SpaceBlockKind;
+    if (kind === "chart") return "/visualize ";
+    if (kind === "subpage_link") {
+      link();
+      return null;
+    }
+    if (kind === "image") {
+      placeImage();
+      return null;
+    }
+    if (nextKind !== kind) {
+      nextKind = kind;
+      publish();
+    }
+    return "";
+  };
+
+  /**
+   * What the prompt sent: `@agent …` asks an agent with the prompt's choices, `/visualize …`
+   * asks for a chart, anything else is a block of the kind "/" chose. Resolves to why the
+   * page refused it, or null once it is written; the prompt keeps a refused draft.
+   */
+  const submitPrompt = async (page: string, input: PagePrompt): Promise<string | null> => {
+    const id = spaceId;
+    if (id === null || pageId !== page) return "The page is no longer open.";
+    try {
+      const ask = ASK_PREFIX.exec(input.text);
+      if (ask) {
+        const current = agentOfPage(page);
+        if (current && isActive(current)) {
+          return "An agent is already working on this page: s stops it.";
+        }
+        await call(WS_METHODS.spacePageAskAgent, {
+          spaceId: id,
+          pageId: page,
+          request: input.text.slice(ask[0].length),
+          ...(input.projectId === null ? {} : { projectId: input.projectId }),
+          ...(input.modelSelection === null ? {} : { modelSelection: input.modelSelection }),
+          runtimeMode: input.runtimeMode,
+          interactionMode: input.interactionMode,
+          ...(input.attachments.length > 0 ? { attachments: input.attachments } : {}),
+        });
+        return null;
+      }
+      if (input.attachments.length > 0) {
+        return "Images go with an ask: start the prompt with @agent.";
+      }
+      const chart = VISUALIZE_PREFIX.exec(input.text);
+      if (chart) {
+        startChart(id, page, input.text.slice(chart[0].length), null, generation);
+        return null;
+      }
+      const kind = nextKind;
+      await placeBlock({ kind, text: input.text });
+      // A heading or a callout is one block; a paragraph or a checklist goes on.
+      if (kind === "heading" || kind === "callout") {
+        nextKind = "paragraph";
+        publish();
+      }
+      return null;
+    } catch (error) {
+      return refusalText(error);
+    }
+  };
+
+  /** Rebuilds `pagePrompt`, telling the prompt when what it aims at changed. */
+  const syncPrompt = () => {
+    const page = open && view === "page" && spaceId !== null ? pageById(pageId) : undefined;
+    const agent = page ? agentOfPage(page.id) : undefined;
+    const agentActive = agent ? isActive(agent) : false;
+    const signature = page
+      ? [spaceId, page.id, page.title, nextKind, agentTarget, agentActive, prompting].join("\u0000")
+      : "";
+    if (signature === promptSignature) return;
+    promptSignature = signature;
+    pagePrompt = page
+      ? {
+          key: `page:${spaceId}:${page.id}`,
+          title: page.title || UNTITLED,
+          writes: PROMPT_WRITES[nextKind] ?? "writes a paragraph",
+          agentActive,
+          defaultProjectId: agentTarget,
+          projects: () => options.projects?.() ?? [],
+          kinds: PROMPT_KINDS,
+          chooseKind,
+          submit: (input) => submitPrompt(page.id, input),
+          stop: stopAgent,
+          leave: () => focusPrompt(false),
+        }
+      : null;
+    options.promptChanged?.();
+  };
+
   /** The actions that need the pane open on a level. */
   const inView = (fn: () => void) => () => {
     if (open) fn();
@@ -3018,6 +3454,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       close();
       return true;
     },
+    // ^P: on a page its prompt takes the keys, and gives them back; elsewhere it closes.
+    "space.prompt": inView(() => (pagePrompt ? focusPrompt(true) : close())),
+    "space.focus": inView(() => focusPrompt(false)),
     "space.previous": inView(() => move(-1)),
     "space.next": inView(() => move(1)),
     "space.pageUp": inView(() => page(-1)),
@@ -3055,8 +3494,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     "space.present": onPages(present),
     "space.presentOrPublish": onPages(presentOrPublish),
     "space.images": onPages(showImages),
-    "space.files": onPages(() => (view === "page" ? showPageFile() : fromFiles())),
-    "space.unlinkFile": onPages(unlinkFile),
+    "space.files": onPages(() => {
+      if (view === "page") showPageFile();
+    }),
     // From anywhere: the palette, the file browser and viewer, a message's links.
     "space.openProjectFile": (payload) => {
       openFileFrom(payload);
@@ -3090,7 +3530,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     },
     close,
     isOpen: () => open,
-    mode: () => "space",
+    mode: () => (prompting && pagePrompt ? "pagePrompt" : "space"),
+    prompt: () => pagePrompt,
     sync: () => {
       if (open) publish();
     },
@@ -3105,7 +3546,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       ];
       if ((options.projects?.() ?? []).length > 0) {
         entries.push(
-          { title: "Open a project file in a Space…", action: "space.openProjectFile" },
+          { title: "Edit a project file as a page…", action: "space.openProjectFile" },
           { title: "Scan a project for Space files…", action: "space.scanFiles" },
         );
       }
@@ -3127,7 +3568,6 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           { title: "Restore page from the trash", action: "space.restore" },
           { title: "Import a Markdown file as a page", action: "space.import" },
           { title: "Write a page from a thread", action: "space.fromThread" },
-          { title: "Add a page from a project's files", action: "space.files" },
           { title: "Copy page as Markdown", action: "space.export" },
           { title: "Page history", action: "space.history" },
           { title: "New deck", action: "space.newDeck" },
@@ -3189,10 +3629,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           { title: "Images in this Space", action: "space.images" },
         );
         if (pageById(pageId)?.file) {
-          entries.push(
-            { title: "Show the page's file", action: "space.files" },
-            { title: "Unlink the page from its file", action: "space.unlinkFile" },
-          );
+          entries.push({ title: "Show the page's file", action: "space.files" });
         }
         const agent = agentOfPage(pageId);
         if (!agent || !isActive(agent)) {
@@ -3216,8 +3653,12 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     refreshSpaceFiles,
     settled: async () => {
       while (pending.size > 0) await Promise.allSettled(pending);
+      await diagrams.settled();
+      await codeColours.settled();
     },
     dispose: () => {
+      stopDiagrams();
+      stopCodeColours();
       unsubscribeViewers?.();
       unsubscribeViewers = null;
       unsubscribeSpaces?.();

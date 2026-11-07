@@ -1,4 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16688
+#   https://github.com/pingdotgg/t3code/pull/23226
+#   https://github.com/pingdotgg/t3code/pull/12474
+#   https://github.com/pingdotgg/t3code/pull/14584
+#   https://github.com/pingdotgg/t3code/pull/16887
+#   https://github.com/pingdotgg/t3code/pull/19354
+#   https://github.com/pingdotgg/t3code/pull/13935
+#   https://github.com/pingdotgg/t3code/pull/25805
 #   docs/user/welcome-wizard.md
 #   apps/web/src/components/onboarding/WelcomeWizard.tsx
 #   apps/web/src/components/onboarding/FirstRunGate.tsx
@@ -52,6 +60,30 @@ Feature: Welcome wizard
       Given the settings cannot be saved
       When the user finishes the wizard
       Then the user is told "Could not finish setup"
+
+    # Upstream #13935: one history that cannot be imported does not keep the wizard open.
+    @backlog @desktop
+    Scenario: A history import that partly fails still finishes setup and says so
+      Given the user imports projects and one of their histories cannot be read
+      When the user finishes the wizard
+      Then the workspace opens
+      And the user is told that one history could not be imported
+      And that message can be dismissed
+
+    @backlog @desktop
+    Scenario: A successful history import says how many threads it brought in
+      Given the user imports projects that bring in 28 threads
+      When the user finishes the wizard
+      Then the user is told "Imported 28 threads" once the workspace is open
+
+    # Upstream #25805: the wizard stayed on "Importing…" when the landing project never arrived.
+    @backlog @desktop
+    Scenario: Importing finishes even when the landing project never arrives
+      Given the user imports projects and the MC accepts them
+      And the project to land in has not reached the client after 10 seconds
+      When the user finishes the wizard
+      Then setup finishes and the workspace opens without landing in that project
+      And a wizard the user closed does not finish setup behind their back
 
     @backlog @desktop
     Scenario: Finishing setup again after a failure replaces the earlier message
@@ -157,6 +189,18 @@ Feature: Welcome wizard
       When that computer connects
       Then the user can continue
 
+    # Upstream #16887: a computer that will not connect no longer locks Continue.
+    @backlog @desktop
+    Scenario: A selected computer that keeps failing to connect does not hold up continuing
+      Given the selected computer "studio" is connected
+      And the selected computer "laptop" failed its first attempt and keeps retrying
+      Then the user can continue
+
+    @backlog @desktop @priority-low
+    Scenario: A switched-off computer is not selected by default
+      Given a saved computer "laptop" that is switched off
+      Then "laptop" is not selected
+
     @backlog @desktop
     Scenario: Continuing needs at least one computer
       Given no computer is selected
@@ -180,6 +224,14 @@ Feature: Welcome wizard
       Given a connected computer "studio" and a computer "laptop" that is still connecting
       Then "studio" reads "Connected"
       And "laptop" reads "Connecting…"
+
+    @backlog @desktop @priority-low
+    Scenario: A switched-off computer reads "Off" rather than "Not connected"
+      Given a computer "laptop" the user switched off
+      Then "laptop" reads "Off"
+      When the user pairs with "laptop" again
+      Then "laptop" is switched on
+      And "laptop" reads "Connected"
 
     # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
     @dropped @desktop
@@ -380,6 +432,7 @@ Feature: Welcome wizard
       When the wizard checks agents
       Then only Claude Code and Codex are listed
 
+  @priority-low
   Rule: Import your projects
 
     @mc
@@ -394,6 +447,15 @@ Feature: Welcome wizard
       Given two folders are clones of github.com/acme/api
       When the wizard lists projects
       Then both folders are grouped under "acme/api"
+
+    # Upstream #12474: long shared parent paths hid the folder names.
+    @backlog @shared
+    Scenario: Listed folders keep their names readable and are told apart by path
+      Given two clones of github.com/acme/api share a long parent path
+      And two repositories without a remote are both named "project"
+      When the wizard lists projects in a narrow window
+      Then each folder's name stays visible and its parent path is shortened instead
+      And the two "project" repositories each show the path they live in
 
     @mc
     Scenario: Busy recent repositories are selected by default
@@ -412,6 +474,13 @@ Feature: Welcome wizard
         | Select all  | every listed project is selected|
         | Select none | no project is selected          |
 
+    # Upstream #14584: "Choose your projects" read as projects HAL-C2 already had.
+    @backlog @desktop
+    Scenario: The projects step names where it imports from
+      When the user reaches the wizard's projects step
+      Then it is titled "Import your projects"
+      And it says it imports projects and conversations from Claude Code and Codex on the selected computers
+
     @mc
     Scenario Outline: Some folders are never offered
       Given an agent used a folder that is <kind>
@@ -423,6 +492,14 @@ Feature: Welcome wizard
         | a linked git worktree         |
         | under Documents/Codex         |
         | under Downloads               |
+
+    # Upstream #16688: worktrees of a bare repository have no main checkout to offer instead.
+    @backlog @mc
+    Scenario: A worktree of a bare repository is offered as its own project
+      Given an agent used a linked worktree of a bare repository with no main checkout
+      When the wizard lists projects
+      Then that worktree is offered as a project of its own
+      And a worktree HAL-C2 made for a thread is still not offered
 
     @mc
     Scenario: A scan that hits its limit keeps what it found and warns
@@ -445,6 +522,7 @@ Feature: Welcome wizard
       Then that conversation is skipped
       And the other conversations are imported
 
+      # Upstream #23226: the user guide still said 16 MiB; the limit is 4 GiB.
       # Both servers skip transcripts over 4 GiB (MAX_IMPORTED_TRANSCRIPT_BYTES); 16 MiB was an older limit.
       Examples:
         | problem                    |

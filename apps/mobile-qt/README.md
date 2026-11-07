@@ -57,6 +57,7 @@ package. Then:
 uvx --from aqtinstall aqt install-qt all_os android 6.11.1 android_arm64_v8a -m qtwebsockets qtmultimedia qtpdf -O ~/Qt
 sdkmanager --install "ndk;27.2.12479018" "platforms;android-36" "system-images;android-34;default;arm64-v8a"
 avdmanager create avd -n hal-c2-phone -k "system-images;android-34;default;arm64-v8a" -d pixel_7
+rustup target add aarch64-linux-android
 ```
 
 `sdkmanager` and `avdmanager` come with Android Studio's command-line tools, and its bundled JDK
@@ -108,8 +109,8 @@ desktop already has:
   desktop's layout shows: the root says which with `layout.desktop`, which `MobileApp` hands to
   `DraftController::setLandsOnDraft`.
 - `MobileApp` turns `HAL_C2_HAS_TERMINAL` into `Terminals.supported`, the one thing the bricks
-  and controllers ask before they offer or draw a terminal; a build without it offers none. Only
-  the desktop's layout draws one, and opens one: the terminal wants a keyboard.
+  and controllers ask before they offer or draw a terminal; a build without it offers none. The
+  phone layout shows one at a time on a screen of its own, and the desktop's layout in its drawer.
 - The first APK build downloads Gradle and the Android Gradle plugin into `~/.gradle`, about
   600 MB.
 - TLS on Android is the OpenSSL in the APK, 6.6 MB of it, built from the release pinned by version

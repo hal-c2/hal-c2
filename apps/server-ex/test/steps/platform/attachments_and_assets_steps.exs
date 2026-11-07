@@ -240,6 +240,72 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
   defp read(context, url, headers \\ []),
     do: Map.put(context, :response, Mc.request(context.mc, :get, url, headers: headers))
 
+  defp read_chunks(context, url) do
+    {:ok, conn} = Mint.HTTP.connect(:http, "127.0.0.1", context.mc.port, mode: :passive)
+    {:ok, conn, request} = Mint.HTTP.request(conn, "GET", url, [], nil)
+    result = mint_response(conn, request, %{status: nil, headers: [], chunks: []})
+    {:ok, _conn} = Mint.HTTP.close(conn)
+    chunks = Enum.reverse(result.chunks)
+
+    Map.put(context, :response, {result.status, result.headers, IO.iodata_to_binary(chunks)})
+  end
+
+  defp stream_pieces(pid, ref, pieces) do
+    receive do
+      {^ref, :chunk, bytes} ->
+        send(pid, {ref, :ack})
+        stream_pieces(pid, ref, [bytes | pieces])
+
+      {^ref, :done} ->
+        Enum.reverse(pieces)
+    after
+      5_000 -> flunk("the asset stream stalled")
+    end
+  end
+
+  defp mint_response(conn, request, result) do
+    {:ok, conn, responses} = Mint.HTTP.recv(conn, 0, 10_000)
+
+    {result, done} =
+      Enum.reduce(responses, {result, false}, fn
+        {:status, ^request, status}, {result, _} ->
+          {%{result | status: status}, false}
+
+        {:headers, ^request, headers}, {result, _} ->
+          {%{result | headers: headers}, false}
+
+        {:data, ^request, bytes}, {result, _} ->
+          {%{result | chunks: [bytes | result.chunks]}, false}
+
+        {:done, ^request}, {result, _} ->
+          {result, true}
+      end)
+
+    if done, do: result, else: mint_response(conn, request, result)
+  end
+
+  step "the client reads the video without a range", context do
+    read_chunks(context, asset_url!(context))
+  end
+
+  # Over the wire the body is length-delimited, so how it splits into reads is TCP's
+  # business; the bound is on what the MC reads and holds per piece.
+  step "the MC serves the whole video in bounded pieces", context do
+    assert {200, headers, body} = context.response
+    assert body == context.bytes
+    assert {"content-length", Integer.to_string(byte_size(body))} in headers
+
+    assert {:ok, 200, _headers, {:stream, pid, ref}} =
+             HalC2.Attachments.serve(token(asset_url!(context)))
+
+    send(pid, {ref, :start, self()})
+    pieces = stream_pieces(pid, ref, [])
+    assert IO.iodata_to_binary(pieces) == context.bytes
+    assert length(pieces) > 1
+    assert Enum.all?(pieces, &(byte_size(&1) <= HalC2.Attachments.chunk_bytes()))
+    context
+  end
+
   # --- background ------------------------------------------------------------------
 
   step "a running MC with a project and a thread", context do
@@ -588,7 +654,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
 
   step "an asset URL issued by another member", context do
     {mc, peer} = Mc.cluster(context.mc)
-    bytes = png(1500)
+    bytes = png(3 * HalC2.Attachments.chunk_bytes() + 117)
     path = Path.join(peer.home, "peer-chart.png")
     File.mkdir_p!(peer.home)
     File.write!(path, bytes)

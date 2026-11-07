@@ -11,7 +11,7 @@ SettingsPage {
     id: tasks
 
     readonly property var settings: Shell.state.scheduledTasks ?? null
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color danger: Theme.palette.color("errorForeground", "#ef4444")
 
     objectName: "scheduledTasksSettings"
@@ -26,21 +26,21 @@ SettingsPage {
 
         objectName: "scheduledTask:" + modelData.id
         Layout.fillWidth: true
-        spacing: 12
+        spacing: Theme.space.md
 
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 2
+            spacing: Theme.space.xxs
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.space.sm
 
                 Label {
                     Layout.fillWidth: true
                     text: task.modelData.title
-                    color: Theme.palette.color("text", "#e4e4e7")
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    color: Theme.palette.color("ink", "#e4e4e7")
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                     elide: Text.ElideRight
                 }
@@ -49,14 +49,14 @@ SettingsPage {
                     objectName: "lastRun"
                     visible: text.length > 0
                     text: task.modelData.lastRun ?? ""
-                    color: task.modelData.lastRunStatus === "failed" ? Theme.palette.color("errorForeground", "#ef4444") : Theme.palette.color("textMuted", "#a1a1aa")
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
-                    leftPadding: 6
-                    rightPadding: 6
-                    topPadding: 1
-                    bottomPadding: 1
+                    color: task.modelData.lastRunStatus === "failed" ? Theme.palette.color("errorForeground", "#ef4444") : Theme.palette.color("inkTertiary", "#a1a1aa")
+                    font.pixelSize: Theme.type.caption.size
+                    leftPadding: Theme.space.sm
+                    rightPadding: Theme.space.sm
+                    topPadding: Theme.space.xxs
+                    bottomPadding: Theme.space.xxs
                     background: Rectangle {
-                        radius: Math.min(Theme.radius, 6)
+                        radius: Theme.radiusSm
                         color: "transparent"
                         border.color: Theme.palette.color("border", "#27272a")
                     }
@@ -67,8 +67,8 @@ SettingsPage {
                 objectName: "promptPreview"
                 Layout.fillWidth: true
                 text: task.modelData.prompt
-                color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                color: Theme.palette.color("inkTertiary", "#a1a1aa")
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
                 maximumLineCount: 2
                 elide: Text.ElideRight
@@ -79,8 +79,8 @@ SettingsPage {
                 Layout.fillWidth: true
                 text: task.modelData.schedule + " · " + task.modelData.when
                 wrapMode: Text.Wrap
-                color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                color: Theme.palette.color("inkTertiary", "#a1a1aa")
+                font.pixelSize: Theme.type.meta.size
             }
 
             Label {
@@ -89,7 +89,7 @@ SettingsPage {
                 visible: task.modelData.lastRunStatus === "failed"
                 text: qsTr("Last run failed: %1").arg(task.modelData.lastRunError || qsTr("unknown error"))
                 color: Theme.palette.color("errorForeground", "#ef4444")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
         }
@@ -136,7 +136,7 @@ SettingsPage {
             Layout.fillWidth: true
             text: qsTr("Prompts sent to a project on a timer. The environment runs them while no client is open.")
             color: tasks.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
 
@@ -159,13 +159,13 @@ SettingsPage {
 
             objectName: "scheduledTasksEnvironment:" + modelData.id
             Layout.fillWidth: true
-            spacing: 10
+            spacing: Theme.space.sm
 
             Label {
                 visible: environment.modelData.heading
                 text: environment.modelData.label
                 color: tasks.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 font.weight: Font.DemiBold
             }
 
@@ -174,11 +174,11 @@ SettingsPage {
                 Layout.fillWidth: true
                 visible: environment.modelData.status !== "ready" || environment.modelData.linkMissing
                          || environment.modelData.tasks.length === 0
-                spacing: 12
+                spacing: Theme.space.md
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 2
+                    spacing: Theme.space.xxs
 
                     Label {
                         text: {
@@ -190,7 +190,7 @@ SettingsPage {
                             return environment.modelData.linkMissing ? qsTr("Task unavailable") : qsTr("No scheduled tasks");
                         }
                         color: tasks.foreground
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         font.weight: Font.Medium
                     }
 
@@ -204,7 +204,7 @@ SettingsPage {
                                 : qsTr("No tasks match this environment and project selection.");
                         }
                         color: tasks.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         wrapMode: Text.Wrap
                     }
                 }

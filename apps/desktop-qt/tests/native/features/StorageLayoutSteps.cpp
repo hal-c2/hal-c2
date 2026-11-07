@@ -103,7 +103,15 @@ const Steps steps([] {
     const QString address = SingleInstance::address(state.started.first().state, state.env, false);
     expect(QFileInfo(address).path() == expand(c[0]), QStringLiteral("the socket is %1").arg(address));
     // And an app that listens there is found by a later launch. The same rule, in a directory this test may write.
-    QTemporaryDir runtime(QDir::tempPath() + QStringLiteral("/hc-XXXXXX"));
+    // A socket path holds about a hundred bytes, so the directory must not
+    // follow TMPDIR, which can be long enough to push the socket past it.
+#ifdef Q_OS_WIN
+    const QString scratch = QDir::tempPath();
+#else
+    const QString scratch = QStringLiteral("/tmp");
+#endif
+    QTemporaryDir runtime(scratch + QStringLiteral("/hc-XXXXXX"));
+    expect(runtime.isValid(), QStringLiteral("no scratch directory in %1: %2").arg(scratch, runtime.errorString()));
     QProcessEnvironment real = state.env;
     const bool viaRuntime = real.contains(QStringLiteral("XDG_RUNTIME_DIR"));
     const QString stateDir = runtime.filePath(QStringLiteral("state"));

@@ -89,6 +89,8 @@ QString label(const Shortcut& shortcut, bool mac);
 QString keyText(const Shortcut& shortcut);
 // The condition as keybindings.json spells it; empty for none.
 QString whenText(const WhenPtr& when);
+// The condition in words, "Outside the terminal and preview open"; "Always" for none.
+QString whenWords(const WhenPtr& when);
 // "Composer: Start in Background", "Run Script: Test", "Terminal: Toggle".
 QString commandLabel(const QString& command);
 // The key a recorder makes of a Qt key press (Qt::Key, Qt::KeyboardModifiers),

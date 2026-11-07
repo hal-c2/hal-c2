@@ -1,8 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17896
 #   apps/mobile/src/features/voice-input/ (on-device dictation states, errors, draft safety)
 #   packages/client-runtime/src/voice-input/controller.ts, transcription.ts (where the transcript goes, spacing)
 # Composer drafting is specified in features/composer/. Dictation is phone-only.
+#   https://github.com/pingdotgg/t3code/pull/15502
 
+@priority-low
 Feature: Dictating a message
   The user can speak a message into the composer. Dictation only ever edits the draft; the
   user always reviews and sends it themselves.
@@ -59,11 +62,11 @@ Feature: Dictating a message
     Then the draft reads <result>
 
     Examples:
-      | language   | draft            | result                |
-      | English    | "Please|"        | "Please run the tests" |
-      | English    | "|now"           | "run the tests now"   |
-      | English    | "Please |now"    | "Please run the tests now" |
-      | another one | "Please|"       | "Pleaserun the tests" |
+      | language    | draft          | result                     |
+      | English     | "Please\|"     | "Please run the tests"     |
+      | English     | "\|now"        | "run the tests now"        |
+      | English     | "Please \|now" | "Please run the tests now" |
+      | another one | "Please\|"     | "Pleaserun the tests"      |
 
   @backlog @mobile
   Scenario: The user cancels dictation
@@ -218,3 +221,27 @@ Feature: Dictating a message
     Given music was playing before the user started dictating
     When dictation ends
     Then the music plays again
+
+  # Upstream #15502: keep dictation running across navigation
+  @backlog @mobile
+  Scenario: Dictation keeps running when the user navigates away
+    Given the user is dictating into a prompt
+    When they leave that screen
+    Then recording continues behind a small pill showing the time and its target
+    And finishing returns the transcript to the prompt where it began
+
+  # Upstream #17896: choose the microphone order for voice input
+  @backlog @mobile
+  Scenario: Dictation records from the first connected microphone in the user's order
+    Given the user ordered the microphones as the built-in microphone, then Bluetooth
+    And Bluetooth earbuds are connected
+    When the user starts dictating
+    Then the phone's own microphone records
+
+  # Upstream #17896: choose the microphone order for voice input
+  @backlog @mobile
+  Scenario: A new microphone joins the order just above its kind
+    Given the user's microphone order has a row for other Bluetooth microphones
+    When dictation first sees the earbuds "Studio Buds"
+    Then "Studio Buds" is listed by name just above the Bluetooth row
+    And the user can move it anywhere in the order

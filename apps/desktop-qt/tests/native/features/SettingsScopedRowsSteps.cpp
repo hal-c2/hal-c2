@@ -11,6 +11,7 @@
 #include "SettingsController.h"
 #include "SettingsRows.h"
 #include "SettingsScopeController.h"
+#include "SettingsShell.h"
 #include "World.h"
 
 namespace {
@@ -21,28 +22,8 @@ const QString kContinues = QStringLiteral("threadRestartContinuation");
 const QString kStreaming = QStringLiteral("responseStreamingMode");
 const QString kContinue = QStringLiteral("continueThreadsAfterServerUpdate");
 
-QJsonObject withCapabilities(QJsonObject config, const QJsonObject& capabilities) {
-  QJsonObject environment = config.value(QLatin1String("environment")).toObject();
-  environment.insert(QStringLiteral("capabilities"), capabilities);
-  config.insert(QStringLiteral("environment"), environment);
-  return config;
-}
-
 SettingsScopeController* scope(World& world) {
   return world.native().controller<SettingsScopeController>();
-}
-
-// This machine's MC says what it can do, as its `config` snapshot does.
-void announceHere(World& world, const QJsonObject& capabilities) {
-  FakeConfig& fake = fakeConfig(world.mc);
-  fake.config = withCapabilities(fake.config, capabilities);
-  QJsonObject config = fake.config;
-  config.insert(QStringLiteral("settings"), fake.settings);
-  for (const int id : world.mc.subscribers(QStringLiteral("config"))) {
-    if (world.mc.shapeOf(id).value(QLatin1String("environment")) != world.mc.environmentId) continue;
-    world.mc.send({{QStringLiteral("t"), QStringLiteral("config")}, {QStringLiteral("id"), id}, {QStringLiteral("mc"), world.mc.name}, {QStringLiteral("config"), config}});
-  }
-  world.sync();
 }
 
 // Another machine the MC is linked to, with its own settings: in the scope
@@ -117,3 +98,22 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+QJsonObject withCapabilities(QJsonObject config, const QJsonObject& capabilities) {
+  QJsonObject environment = config.value(QLatin1String("environment")).toObject();
+  environment.insert(QStringLiteral("capabilities"), capabilities);
+  config.insert(QStringLiteral("environment"), environment);
+  return config;
+}
+
+void announceHere(World& world, const QJsonObject& capabilities) {
+  FakeConfig& fake = fakeConfig(world.mc);
+  fake.config = withCapabilities(fake.config, capabilities);
+  QJsonObject config = fake.config;
+  config.insert(QStringLiteral("settings"), fake.settings);
+  for (const int id : world.mc.subscribers(QStringLiteral("config"))) {
+    if (world.mc.shapeOf(id).value(QLatin1String("environment")) != world.mc.environmentId) continue;
+    world.mc.send({{QStringLiteral("t"), QStringLiteral("config")}, {QStringLiteral("id"), id}, {QStringLiteral("mc"), world.mc.name}, {QStringLiteral("config"), config}});
+  }
+  world.sync();
+}

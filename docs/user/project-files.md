@@ -1,28 +1,24 @@
-# Project files in a Space
+# Project files in the Space view
 
-A project's Markdown files can be opened as pages of a Space. The page is the file: an edit on the
-page is written to the file, and a change to the file, by an agent, git or the file viewer, shows on
-the page. Agents and git keep working on one copy, the file.
+The [Space](spaces.md) view shows your projects' Markdown files beside the Space's own pages, one
+section per project, as a tree by folder. Clicking a file edits it in the page editor. The page is
+the file: an edit is written to the file, and a change to the file, by an agent, git or the file
+viewer, shows on the page. Agents and git keep working on one copy, the file.
 
-## Open a file
+## Edit a file
 
-On the desktop, choose **Open in a Space** from a file's menu in the Files tab, from the file
-viewer, or from a file link in a chat, or add a page from a project's files in the Space view. The
-desktop offers this only for projects on the machine its Space view shows.
+A project's section lists the files that count (see below), and shows only when it has some.
+Sections start collapsed, and each device remembers which ones you opened. Collapse a section to put
+the project out of the way; the files stay as they are.
 
-In the terminal client, browse to the file (or open it in the viewer) and choose "Open this file in
-a Space" from the command palette; inside a Space, press `f` on the list of pages to pick one of a
-project's files.
+From elsewhere, choose **Edit as a page** on a file in the Files tab, in the file viewer, on a file
+link in a chat, or from the command palette: it goes to the file in the Space view. Or ask an agent
+to open the file as a page; it uses the `hal_c2_page_open_file` tool. A file's page belongs to its
+project, not to any of your Spaces, and opening it again goes to the page it already is.
 
-On the phone, press and hold a file in a thread's Files screen, or a file link in a chat, and choose
-**Open in a Space**; the file viewer has the same button, and a Space's list of pages has one to add
-a page from a project's files. The phone offers this only for projects on the machine it is paired with.
-
-Outside a Space, the file opens in the Space you last had open. Or ask an agent to open the file in
-a Space; it uses the `hal_c2_page_open_file` tool. Opening the same file again, from any Space, goes
-to the page it already is, and brings it back from the trash. A file opened from a thread's worktree
-goes to the page of the project's own folder: a page follows the file in the project's folder,
-whatever branch is checked out there.
+In a thread working in a worktree, the entry reads **Edit the project's copy as a page**: a page
+follows the file in the project's own folder, whatever branch is checked out there, not the
+worktree's copy. A file only the worktree has can't be edited as a page.
 
 A link in the project (`CLAUDE.md` linking to `AGENTS.md`, say) opens as the file it links to, and
 edits go to that file while the link stays a link. If the link and its file are both open as pages, an
@@ -63,7 +59,8 @@ have, leaves the page saying the file is gone; the page keeps what it said, incl
 since, and follows the file again when it comes back. A file that comes back wins over those edits:
 the page says so, and they are versions in its history.
 
-## Stop following the file
+## Pages from before
 
-Unlink the page to make it an ordinary page. The file stays as it is, and opening it again makes a
-new page.
+A file opened as a page of one of your Spaces before this version stays there as an ordinary page
+that no longer follows the file. The file itself is unchanged, and editing it from its project
+starts a new page.

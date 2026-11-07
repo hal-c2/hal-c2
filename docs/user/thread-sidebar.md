@@ -114,9 +114,12 @@ sending an answer or restarting the agent.
 By default, environments settle inactive threads after three days and settle
 threads whose pull request merged. A closed pull request can also settle an idle
 thread. Work in progress, pending questions or approvals, and live background work
-prevent automatic settlement. An open pull request does not prevent inactivity
-settlement, but an old closed or merged pull request does not settle work you
-resumed after it closed.
+prevent automatic settlement. An open linked pull request keeps its thread active;
+one found only on the thread's branch does not hold off settling for inactivity. With
+several linked pull requests, any one still open keeps the thread active; otherwise the one
+that finished last decides. An old closed or merged pull request does not settle work you
+resumed after it closed, and a merged pull request no longer counts once its branch has
+a new open one.
 
 Change these rules in **Settings → General** on desktop, or **Settings → Thread behavior** on mobile.
 They continue to run when your apps are closed. On desktop, choose an environment at the
@@ -125,6 +128,11 @@ Mixed values show where the selected environments disagree. Mobile applies these
 rules to connected environments that support shared settings. Offline environments
 and older servers keep their previous values. Changing a rule does not reopen
 already settled threads.
+
+To keep one thread out of automatic settlement, set **Auto-settle behavior** to **Disabled**
+in its menu (in the terminal client, also **Turn auto-settle off** in the command palette).
+The thread stays active until you settle it yourself, and settling and un-settling it keep
+the choice. Set it back to **Enabled** to let the environment's rules apply again.
 
 ## Link a pull request
 

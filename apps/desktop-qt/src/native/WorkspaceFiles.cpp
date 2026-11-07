@@ -43,9 +43,22 @@ bool hostPath(const QString& path) {
 
 // --- TextLinesModel ------------------------------------------------------------------
 
-void TextLinesModel::setText(const QString& text) {
+void TextLinesModel::setText(const QString& text, const QString& path) {
+  // The same file again (written back as it was) keeps its colours.
+  const bool same = path == m_path && text == m_text;
+  const bool was = coloured();
+  // The same file changed keeps its colours on the lines before the first
+  // change, which a read of the new text colours the same, until that read
+  // lands.
+  qsizetype kept = 0;
+  if (!same && path == m_path && m_runs) {
+    const qsizetype common = std::mismatch(text.cbegin(), text.cbegin() + std::min(text.size(), m_text.size()), m_text.cbegin()).first - text.cbegin();
+    // Kept already from a read of an older text, only as far as before.
+    kept = std::min(QStringView(text).left(common).count(QLatin1Char('\n')), qsizetype(m_freshRows));
+  }
   beginResetModel();
   m_text = text;
+  m_path = path;
   m_lines.clear();
   m_maxColumns = 0;
   qsizetype at = 0;
@@ -58,13 +71,105 @@ void TextLinesModel::setText(const QString& text) {
     m_maxColumns = std::max(m_maxColumns, int(length));
     at = end + 1;
   }
+  // The rows are built in the new file's colours, as kept from an earlier
+  // read, or plain until it is read: never in the last file's.
+  if (!same) {
+    auto hit = readable() ? codereader::cached(key()) : nullptr;
+    if (!readable()) kept = 0;
+    m_freshRows = hit ? int(m_lines.size()) : int(kept);
+    m_whole = bool(hit);
+    if (hit || !kept) m_runs = std::move(hit);
+  }
   endResetModel();
   emit textChanged();
+  if (coloured() != was) emit colouredChanged();
+  if (!same) read();
+}
+
+bool TextLinesModel::readable() const {
+  // Past the cap a file stays plain, as do files with no name to know them by.
+  return !m_path.isEmpty() && !m_text.isEmpty() && m_text.size() <= codereader::kMaxChars;
+}
+
+QString TextLinesModel::key() const {
+  return codereader::cacheKey(QString(), m_path, m_text);
+}
+
+void TextLinesModel::read() {
+  // A read under way is for what was before: it finishes and is let go.
+  m_alive = std::make_shared<int>(0);
+  setReading(false);
+  if (!readable() || (m_runs && m_whole)) return;
+  const QString key = this->key();
+  auto job = std::make_shared<codereader::Job>();
+  job->byPath = true;
+  job->language = m_path.toUtf8();
+  job->delta = m_text;
+  job->key = key;
+  setReading(true);
+  codereader::start(job, m_alive, [this, key](const std::shared_ptr<codereader::Job>& job) {
+    setReading(false);
+    if (!job->known) return;
+    codereader::keep(key, job->runs);
+    setRuns(job->runs);
+  });
+}
+
+void TextLinesModel::setRuns(std::shared_ptr<const codereader::Runs> runs) {
+  if (!runs && !m_runs) return;
+  const bool was = coloured();
+  m_runs = std::move(runs);
+  m_freshRows = int(m_lines.size());
+  m_whole = true;
+  restyle();
+  if (coloured() != was) emit colouredChanged();
+}
+
+void TextLinesModel::setReading(bool reading) {
+  if (reading == m_reading) return;
+  m_reading = reading;
+  emit readingChanged();
+}
+
+void TextLinesModel::restyle() {
+  if (!m_lines.empty()) emit dataChanged(index(0), index(int(m_lines.size()) - 1), {StyledRole});
+}
+
+void TextLinesModel::setBackground(const QColor& background) {
+  if (background == m_background) return;
+  const int before = codereader::themeFor(m_background);
+  const bool was = coloured();
+  m_background = background;
+  emit backgroundChanged();
+  // The other colouring of what was read: nothing is read again.
+  if (m_runs && codereader::themeFor(m_background) != before) restyle();
+  if (coloured() != was) emit colouredChanged();
+}
+
+void TextLinesModel::setColumnLimit(int limit) {
+  if (limit == m_columnLimit) return;
+  m_columnLimit = limit;
+  emit columnLimitChanged();
+  if (m_runs) restyle();
+}
+
+bool TextLinesModel::coloured() const {
+  return m_runs && !m_runs->themes[codereader::themeFor(m_background)].isEmpty();
 }
 
 QString TextLinesModel::line(int row) const {
   if (row < 0 || row >= int(m_lines.size())) return {};
   return m_text.mid(m_lines[size_t(row)].first, m_lines[size_t(row)].second);
+}
+
+QString TextLinesModel::styled(int row) const {
+  if (row < 0 || row >= std::min(int(m_lines.size()), m_freshRows) || !coloured()) return {};
+  const auto [offset, length] = m_lines[size_t(row)];
+  // Cut as the viewer cuts a plain line, so no colour reaches past the cut.
+  const bool cut = length > m_columnLimit;
+  QString out = codereader::styled(m_text, offset, cut ? m_columnLimit : length, m_runs->themes[codereader::themeFor(m_background)]);
+  if (cut) out += QStringLiteral("…");
+  return out;
 }
 
 int TextLinesModel::rowCount(const QModelIndex& parent) const {
@@ -75,11 +180,12 @@ QVariant TextLinesModel::data(const QModelIndex& index, int role) const {
   if (!index.isValid()) return {};
   if (role == TextRole) return line(index.row());
   if (role == NumberRole) return index.row() + 1;
+  if (role == StyledRole) return styled(index.row());
   return {};
 }
 
 QHash<int, QByteArray> TextLinesModel::roleNames() const {
-  return {{TextRole, "text"}, {NumberRole, "number"}};
+  return {{TextRole, "text"}, {NumberRole, "number"}, {StyledRole, "styled"}};
 }
 
 // --- WorkspaceFiles ------------------------------------------------------------------
@@ -145,34 +251,12 @@ void WorkspaceFiles::setTimeline(TimelineModel* timeline) {
   if (m_timeline) disconnect(m_timeline, nullptr, this, nullptr);
   m_timeline = timeline;
   m_stale = false;
-  m_mutation = mutation();
+  m_mutation = m_timeline ? m_timeline->workspaceMutation() : QString();
   if (m_timeline) connect(m_timeline, &TimelineModel::workspaceChanged, this, &WorkspaceFiles::followMutation);
 }
 
-QString WorkspaceFiles::mutation() const {
-  if (!m_timeline) return {};
-  QString item;
-  int ordinal = -1;
-  const QHash<QString, QJsonObject> items = m_timeline->entities(QStringLiteral("turn-item"));
-  for (auto it = items.cbegin(); it != items.cend(); ++it) {
-    const QString type = it->value(QLatin1String("type")).toString();
-    if (type != QLatin1String("command_execution") && type != QLatin1String("file_change")) continue;
-    const QString status = it->value(QLatin1String("status")).toString();
-    if (status == QLatin1String("pending") || status == QLatin1String("running") || status == QLatin1String("waiting")) continue;
-    if (const int at = it->value(QLatin1String("ordinal")).toInt(); at > ordinal) {
-      ordinal = at;
-      item = it.key();
-    }
-  }
-  QStringList checkpoints;
-  const QHash<QString, QJsonObject> kept = m_timeline->entities(QStringLiteral("checkpoint"));
-  for (auto it = kept.cbegin(); it != kept.cend(); ++it) checkpoints.append(it.key() + QLatin1Char('=') + it->value(QLatin1String("status")).toString());
-  checkpoints.sort();
-  return item + QLatin1Char('\n') + checkpoints.join(QLatin1Char(','));
-}
-
 void WorkspaceFiles::followMutation() {
-  const QString now = mutation();
+  const QString now = m_timeline ? m_timeline->workspaceMutation() : QString();
   if (now == m_mutation) return;
   m_mutation = now;
   // Only a change that names a media file reads it again: its preview is not
@@ -701,7 +785,7 @@ void WorkspaceFiles::setText(const QString& text) {
   m_pending = false;
   ++m_revision;
   m_text = text;
-  m_lines.setText(text);
+  m_lines.setText(text, m_openPath);
   emit textChanged();
 }
 
@@ -859,7 +943,7 @@ void WorkspaceFiles::applyTask(int index) {
   QString next = m_text;
   next[offset + 1] = checked ? u' ' : u'x';
   m_text = next;
-  m_lines.setText(m_text);
+  m_lines.setText(m_text, m_openPath);
   ++m_revision;
   m_pending = true;
   emit textChanged();
@@ -931,7 +1015,7 @@ void WorkspaceFiles::writeNext() {
                      // The file is read-only now; the view shows the edit that was not saved, to copy.
                      m_saveProblem = problem;
                      m_editing = false;
-                     m_lines.setText(m_text);
+                     m_lines.setText(m_text, m_openPath);
                      emit renderedChanged();
                      emit fileChanged();
                      emit saveChanged();
@@ -946,7 +1030,7 @@ void WorkspaceFiles::writeNext() {
                    m_saveProblem.clear();
                    if (revision == m_revision) {
                      m_pending = false;
-                     if (!m_editing) m_lines.setText(m_text);
+                     if (!m_editing) m_lines.setText(m_text, m_openPath);
                    } else {
                      m_saveDelay.start();
                    }

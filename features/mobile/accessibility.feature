@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24273
+#   https://github.com/pingdotgg/t3code/pull/19239
+#   https://github.com/pingdotgg/t3code/pull/13491
+#   https://github.com/pingdotgg/t3code/pull/13356
 #   apps/mobile/src/features/threads/thread-list-v2-items.tsx (swipe accessibility hint)
 #   apps/mobile/src/features/threads/ThreadArrangementSheet.tsx (Move up and Move down actions)
 #   apps/mobile/src/features/home/thread-swipe-actions.tsx
@@ -64,7 +68,7 @@ Feature: Accessibility on phones and tablets
       | 7d    | Past 7 days    |
       | 90d   | Past 90 days   |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Upload state is announced on attachments
     Given an attachment is uploading
     When a screen reader focuses the attachment
@@ -83,38 +87,60 @@ Feature: Accessibility on phones and tablets
     Then each reference is focused on its own as a button named by its label
     And activating a reference opens its details
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Dictation state is announced
     Given a screen reader is on
     When the user starts dictating
     Then the screen reader announces that recording started
     And the user can cancel dictation from the screen reader
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Messages grow with the system text size
     Given the user set the system text size to the largest accessibility size
     When the user reads a thread
     Then message text is shown at the larger size
     And no message text is cut off
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Compact controls stay usable at large text sizes
     Given the user set the system text size to the largest accessibility size
     When the user looks at a segmented choice such as the usage range
     Then every option stays readable and tappable
 
+  # Upstream #13356: Android header and icon controls follow the Settings text size, and keep a
+  # 48dp touch target.
+  @backlog @mobile @priority-low
+  Scenario: Android header buttons grow with the app's text size and keep a 48dp touch target
+    Given the user set the app's text size to the largest option on Android
+    When the user looks at the thread list header
+    Then the header buttons grow with the text
+    And each button stays at least 48dp to tap
+
   # New behaviour: the React Native app does not guarantee this today.
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Reduced motion replaces sliding transitions
     Given the user turned on reduced motion
     When the user opens a thread
     Then the thread appears without a sliding animation
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Working indicators do not animate continuously with reduced motion
     Given the user turned on reduced motion
     And an agent is working
     Then the working status is shown without continuous animation
+
+  # Upstream #24273: reconnecting status dots pulsed without end, even in rows out of sight.
+  @backlog @mobile @priority-low
+  Scenario: A reconnecting environment's status does not animate
+    Given "Office Mac" is reconnecting
+    Then its status shows it is reconnecting without continuous animation
+
+  # Upstream #19239: with Remove animations on, the toolbar stayed at its animation's zero opacity.
+  @backlog @mobile @priority-low
+  Scenario: The composer's buttons show with reduced motion
+    Given the user turned on reduced motion
+    When the user opens a thread
+    Then the composer's buttons are visible
 
   @backlog @mobile
   Scenario: Collapsible sections announce whether they are expanded
@@ -133,7 +159,7 @@ Feature: Accessibility on phones and tablets
     When the user looks at any action in the thread list or composer
     Then its touch area is at least 44 points square
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A video is announced as something to play
     Given a message carries the video "demo.mp4"
     When a screen reader focuses the video
@@ -151,3 +177,19 @@ Feature: Accessibility on phones and tablets
     Given the user opened a video full screen
     When a screen reader focuses the top of the screen
     Then a button labelled "Media actions" is offered
+
+  # Upstream #13491: a connection field is announced once, by the label it shows.
+  @backlog @mobile
+  Scenario: A connection field is announced once with its visible label
+    Given the user is adding an environment
+    When a screen reader focuses a connection field
+    Then the field is announced with its label once
+
+  # Upstream #13491: a switch is read as on or off, and follows each change.
+  @backlog @mobile
+  Scenario: A switch tells a screen reader whether it is on or off
+    Given a setting switch is off
+    When the user turns it on
+    Then a screen reader reads it as on
+    When the user turns it off
+    Then a screen reader reads it as off

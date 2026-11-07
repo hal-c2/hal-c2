@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls.Basic
 import QtQuick.Window
 import QtTest
 import HalC2.Shell
@@ -60,12 +61,143 @@ Item {
         }
     }
 
+    // A layout with a button that has a tooltip.
+    Component {
+        id: tipWindowComponent
+        ShellWindow {
+            ShellButton {
+                objectName: "tipButton"
+                x: 40
+                y: 50
+                text: qsTr("Rename")
+                toolTip: qsTr("Rename the thread")
+            }
+        }
+    }
+
+    // A control that is not a ShellButton, with its own tooltip.
+    Component {
+        id: plainTipWindowComponent
+        ShellWindow {
+            Button {
+                objectName: "plainTip"
+                x: 40
+                y: 50
+                text: "Collapse"
+                hoverEnabled: true
+                ToolTip.visible: hovered
+                ToolTip.text: "Collapse all folders"
+            }
+        }
+    }
+
+    // Pressing "Open panel" puts "Add panel" where the pointer rests.
+    Component {
+        id: movingTipWindowComponent
+        ShellWindow {
+            ShellButton {
+                objectName: "opener"
+                x: 40
+                y: 50
+                width: 120
+                text: "Open panel"
+                onClicked: {
+                    visible = false;
+                    adder.x = 40;
+                }
+            }
+            Button {
+                id: adder
+                objectName: "adder"
+                x: 400
+                y: 50
+                width: 120
+                text: "Add panel"
+                hoverEnabled: true
+                ToolTip.visible: hovered
+                ToolTip.text: "Add panel"
+                ToolTip.delay: 0
+            }
+        }
+    }
+
     TestCase {
         name: "ShellWindowTests"
         when: windowShown
 
         function cleanup() {
             Shell.reset();
+            Theme.colors = {};
+        }
+
+        // Scenario: Tooltips follow the theme (features/desktop/themed-controls.feature)
+        // Every attached tooltip shares one look: the popover's overlay fill,
+        // solid, a strong hairline, the meta type step and a small radius. It
+        // hides at once, and a press still puts it away.
+        function test_toolTipsShareThePopoverLook() {
+            // QML colours carry their alpha first: a translucent overlay.
+            Theme.colors = { surfaceOverlay: "#cc18181b", borderStrong: "#3f3f46", text: "#eeeeee" };
+            const window = createTemporaryObject(tipWindowComponent, null);
+            verify(waitForRendering(window.contentItem));
+            const button = findChild(window, "tipButton");
+            const tip = window.contentItem.ToolTip.toolTip;
+            mouseMove(button, button.width / 2, button.height / 2);
+            tryVerify(() => tip.visible);
+            compare(tip.text, "Rename the thread");
+            compare(tip.background.objectName, "toolTipSurface");
+            verify(Qt.colorEqual(tip.background.color, "#18181b"));
+            verify(Qt.colorEqual(tip.background.border.color, "#3f3f46"));
+            compare(tip.background.radius, Theme.radiusSm);
+            // Drawn in the tip, not left where the look declared it.
+            compare(tip.contentItem.parent, tip.background.parent);
+            verify(tip.contentItem.visible);
+            compare(tip.contentItem.font.pixelSize, Theme.type.meta.size);
+            verify(Qt.colorEqual(tip.contentItem.color, "#eeeeee"));
+            compare(tip.exit, null);
+
+            Theme.colors = { surfaceOverlay: "#ffffff", borderStrong: "#d4d4d8", text: "#111111" };
+            verify(Qt.colorEqual(tip.background.color, "#ffffff"));
+            verify(Qt.colorEqual(tip.background.border.color, "#d4d4d8"));
+            verify(Qt.colorEqual(tip.contentItem.color, "#111111"));
+
+            mousePress(button, button.width / 2, button.height / 2);
+            tryVerify(() => !tip.visible);
+            mouseRelease(button, button.width / 2, button.height / 2);
+        }
+
+        // Scenario: A press hides any control's tooltip (features/desktop/themed-controls.feature)
+        function test_aPressHidesAnyControlsToolTip() {
+            const window = createTemporaryObject(plainTipWindowComponent, null);
+            verify(waitForRendering(window.contentItem));
+            const button = findChild(window, "plainTip");
+            const tip = window.contentItem.ToolTip.toolTip;
+            mouseMove(button, button.width / 2, button.height / 2);
+            tryVerify(() => tip.visible);
+            compare(tip.text, "Collapse all folders");
+            mousePress(button, button.width / 2, button.height / 2);
+            verify(!tip.visible);
+            mouseRelease(button, button.width / 2, button.height / 2);
+            verify(waitForRendering(window.contentItem));
+            verify(!tip.visible);
+        }
+
+        // Scenario: A control that moves under a resting pointer shows no tooltip
+        // (features/desktop/themed-controls.feature)
+        function test_aControlMovingUnderARestingPointerShowsNoTip() {
+            const window = createTemporaryObject(movingTipWindowComponent, null);
+            verify(waitForRendering(window.contentItem));
+            const opener = findChild(window, "opener");
+            const adder = findChild(window, "adder");
+            const tip = window.contentItem.ToolTip.toolTip;
+            mouseMove(opener, 20, 10);
+            mouseClick(opener, 20, 10);
+            compare(adder.x, 40);
+            tryVerify(() => adder.hovered);
+            verify(!tip.visible);
+            // Once the pointer moves over it, it is the control's to show.
+            mouseMove(adder, 30, 12);
+            tryVerify(() => tip.visible);
+            compare(tip.text, "Add panel");
         }
 
         // Scenario: A window has a sensible title and size (features/navigation/windows.feature)
@@ -109,9 +241,29 @@ Item {
             };
             compare(reported(), window.width);
             Shell.state = Object.assign({}, Shell.state, { layout: { sidebarCollapsed: false, zoom: 1.5 } });
-            compare(reported(), Math.round(window.width / 1.5));
+            tryCompare({ get value() { return reported(); } }, "value", Math.round(window.width / 1.5));
             Shell.state = Object.assign({}, Shell.state, { layout: { sidebarCollapsed: false, zoom: 1 } });
-            compare(reported(), window.width);
+            tryCompare({ get value() { return reported(); } }, "value", window.width);
+        }
+
+        // The layout answers a report at once, as LayoutController does, and
+        // that answer republishes the zoom: no binding loop.
+        function test_zoomAnswerIsNoBindingLoop() {
+            failOnWarning(/Binding loop/);
+            const window = createTemporaryObject(windowComponent, null);
+            verify(waitForRendering(window.contentItem));
+            const answer = action => {
+                if (action === "layout.window") {
+                    Shell.state = Object.assign({}, Shell.state, { layout: Object.assign({}, Shell.state.layout) });
+                }
+            };
+            Shell.actionRequested.connect(answer);
+            Shell.state = Object.assign({}, Shell.state, { layout: { sidebarCollapsed: false, zoom: 1.5 } });
+            wait(0);
+            Shell.state = Object.assign({}, Shell.state, { layout: { sidebarCollapsed: false, zoom: 1 } });
+            wait(0);
+            Shell.actionRequested.disconnect(answer);
+            compare(window.zoom, 1);
         }
 
         // Scenario: Context menus follow the zoomed app (features/navigation/windows.feature)

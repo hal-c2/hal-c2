@@ -1,12 +1,21 @@
 // features/timeline/markdown.feature on the terminal client: how a reply's
 // Markdown is drawn, copied and kept safe. Replies arrive as the MC's
 // projection (turnWorld.ts).
-import { expect } from "bun:test";
-import { TextAttributes } from "@opentui/core";
+import { expect, spyOn } from "bun:test";
+import { getTreeSitterClient, TextAttributes, type RGBA } from "@opentui/core";
 
-import { THEME } from "../../../src/theme.ts";
+import { setColourTheme, THEME } from "../../../src/theme.ts";
 import { step } from "../../steps.ts";
-import { findObject, snapshot } from "../world.ts";
+import {
+  BROKEN_FLOWCHART,
+  MERMAID_SOURCES,
+  mermaidAsks,
+  mermaidDrawing,
+  mermaidFence,
+  serveMermaid,
+} from "../fakeMermaid.ts";
+import { expectSource, type MermaidWorld } from "./mermaid.steps.ts";
+import { findObject, settle as settleUi, snapshot, type World } from "../world.ts";
 import { clickText, hostState, plain, recorded, settle } from "../threadWorld.ts";
 import {
   addItem,
@@ -21,13 +30,21 @@ import {
   type TurnWorld,
 } from "../turnWorld.ts";
 
-interface MarkdownWorld extends TurnWorld {
+interface MarkdownWorld extends TurnWorld, MermaidWorld {
   /** The text of the reply being written. */
   written?: string;
   /** The drawn row of the first paragraph, before the reply grew. */
   firstParagraph?: unknown;
   /** The code block's lines before it was closed. */
   codeBefore?: string[];
+  /** The code the agent has written so far, in the block it is still writing. */
+  codeSoFar?: string[];
+  /** Code tree-sitter was asked to read, from when the scenario first watched. */
+  codeReads?: string[];
+  /** How many readings may go through, and who waits for the next change. */
+  reads?: { allowed: number; wake: Array<() => void> };
+  /** The reads seen when the code block was first shown coloured. */
+  readsWhenColoured?: number;
 }
 
 const SOURCE =
@@ -94,6 +111,7 @@ step("the heading and the list are shown as text", async (ctx: MarkdownWorld) =>
 step(
   "the quote, the code block and the table are each shown in their own form",
   async (ctx: MarkdownWorld) => {
+    await settleUi(ctx);
     const lines = linesOf(reply(ctx));
     // The quote sits behind a bar.
     expect(lines).toContain("│ Old carts keep their totals.");
@@ -101,7 +119,8 @@ step(
     const code = codeLines(ctx);
     expect(code.map((line) => plain(line.text)).join("\n")).toBe(SOURCE);
     expect(copyOf(code[0]!)!.text).toBe(SOURCE);
-    for (const line of code) expect(line.text.chunks[0]!.fg).toEqual(THEME.warning);
+    // Its lines open with keywords, in the keyword colour, once tree-sitter has read them.
+    for (const line of code) expect(line.text.chunks[0]!.fg).toEqual(THEME.keyword);
     expect(lines.join("\n")).not.toContain("```");
     // The table is a box of its six cells.
     const boxed = lines.filter(
@@ -142,6 +161,164 @@ step("the code block shows it was copied", async (ctx: MarkdownWorld) => {
   for (const line of code) expect(line.text.chunks[0]!.fg).toEqual(THEME.success);
   expect(hostState(ctx, "status")).toEqual({ kind: "success", text: "Code block copied." });
   expect(await snapshot(ctx)).toContain("Code block copied.");
+});
+
+// --- code colours (OpenTUI's tree-sitter, host/codeColours.ts) ------------------------
+
+// Code in each language, opening with a keyword the language colours.
+const SAMPLES: Record<string, string> = {
+  ts: SOURCE,
+  py: "def refund(order):\n    return order.total",
+  exs: "defmodule Cart do\n  def total(cart), do: 0\nend",
+  qml: "import QtQuick\n\nItem {\n  id: root\n}",
+};
+
+/**
+ * Counts tree-sitter's readings. With `hold`, each waits until `release` lets one more
+ * through, so a scenario can look at the screen while a reading is under way.
+ */
+function watchReads(ctx: MarkdownWorld, hold = false) {
+  if (ctx.codeReads) return;
+  const reads: string[] = (ctx.codeReads = []);
+  const gate: NonNullable<MarkdownWorld["reads"]> = { allowed: hold ? 0 : Infinity, wake: [] };
+  ctx.reads = gate;
+  const client = getTreeSitterClient();
+  const read = client.highlightOnce.bind(client);
+  const spy = spyOn(client, "highlightOnce").mockImplementation(async (text, filetype) => {
+    const turn = reads.push(text) - 1;
+    for (const wake of gate.wake.splice(0)) wake();
+    while (turn >= gate.allowed) await new Promise<void>((go) => gate.wake.push(go));
+    return read(text, filetype);
+  });
+  ctx.cleanups.push(() => {
+    release(ctx, Infinity);
+    spy.mockRestore();
+  });
+}
+
+/** Lets `count` more held readings through. */
+function release(ctx: MarkdownWorld, count = 1) {
+  ctx.reads!.allowed += count;
+  for (const wake of ctx.reads!.wake.splice(0)) wake();
+}
+
+/** Resolves once tree-sitter has been asked for `count` readings in all. */
+async function asked(ctx: MarkdownWorld, count: number) {
+  while (ctx.codeReads!.length < count) {
+    await new Promise<void>((go) => ctx.reads!.wake.push(go));
+  }
+}
+
+const isColour = (fg: unknown, colour: RGBA) => colour.equals(fg as RGBA | undefined);
+/** Is the line in the plain code colour, as code nothing has read? */
+const plainCode = (line: ShownLine) =>
+  line.text.chunks.every((part) => isColour(part.fg, THEME.warning));
+/** Does the line open with its keyword in the keyword colour? */
+const keywordFirst = (line: ShownLine) => {
+  const [first] = line.text.chunks;
+  return /^\w+$/.test(first?.text ?? "") && isColour(first!.fg, THEME.keyword);
+};
+
+step(
+  "the agent's reply has a code block whose fence reads {string}",
+  async (ctx: MarkdownWorld, fence: string) => {
+    watchReads(ctx);
+    await answer(ctx, `Here it is:\n\n\`\`\`${fence}\n${SAMPLES[fence] ?? SOURCE}\n\`\`\``);
+  },
+);
+
+step("the user reads the reply", async (ctx: World) => {
+  await settleUi(ctx);
+});
+
+step(
+  /^the code block is shown coloured as (TypeScript|Python|Elixir|QML)$/,
+  async (ctx: MarkdownWorld) => {
+    await settleUi(ctx);
+    const code = codeLines(ctx);
+    expect(code.length).toBeGreaterThan(0);
+    expect(keywordFirst(code[0]!)).toBe(true);
+    ctx.readsWhenColoured = ctx.codeReads!.length;
+    expect(await snapshot(ctx)).toContain(plain(code.at(-1)!.text));
+  },
+);
+
+step("the code block is shown as plain text", async (ctx: MarkdownWorld) => {
+  const code = codeLines(ctx);
+  expect(code.map((line) => plain(line.text)).join("\n")).toBe(SOURCE);
+  expect(code.every(plainCode)).toBe(true);
+});
+
+const STREAMED = ["const a = 1;", "const b = 2;", "const c = 3;"];
+
+step(
+  "the agent is writing a code block whose fence reads {string}",
+  async (ctx: MarkdownWorld, fence: string) => {
+    watchReads(ctx, true);
+    await startWriting(ctx, `Totals:\n\n\`\`\`${fence}\n${STREAMED.join("\n")}\n`);
+  },
+);
+
+step("its first three lines are coloured", async (ctx: MarkdownWorld) => {
+  await asked(ctx, 1);
+  release(ctx);
+  await settleUi(ctx);
+  const code = codeLines(ctx);
+  expect(code.map((line) => plain(line.text))).toEqual(STREAMED);
+  expect(code.every(keywordFirst)).toBe(true);
+});
+
+step("the agent adds a fourth line", async (ctx: MarkdownWorld) => {
+  await write(ctx, "const d = 4;");
+  await snapshot(ctx);
+});
+
+step(
+  "the first three lines stay coloured while the new line waits to be coloured",
+  async (ctx: MarkdownWorld) => {
+    // The line being written is not read until it is finished.
+    expect(ctx.codeReads).toHaveLength(1);
+    const code = codeLines(ctx);
+    expect(code.map((line) => plain(line.text))).toEqual([...STREAMED, "const d = 4;"]);
+    expect(code.slice(0, 3).every(keywordFirst)).toBe(true);
+    expect(plainCode(code[3]!)).toBe(true);
+    expect(await snapshot(ctx)).toContain("const d = 4;");
+  },
+);
+
+step("the block does not flash back to plain text", async (ctx: MarkdownWorld) => {
+  // The line is finished: while it is read (held back), the lines read before keep theirs.
+  await write(ctx, "\n");
+  await asked(ctx, 2);
+  expect(ctx.codeReads!.at(-1)).toContain("const d = 4;");
+  await snapshot(ctx);
+  expect(codeLines(ctx).slice(0, 3).every(keywordFirst)).toBe(true);
+  release(ctx);
+  await settleUi(ctx);
+  expect(codeLines(ctx).every(keywordFirst)).toBe(true);
+  expect(ctx.codeReads).toHaveLength(2);
+});
+
+// The terminal client has no light or dark appearance of its own; its colour themes stand
+// for them: the terminal's own palette (the default) as light, gruvbox as dark.
+step("the appearance is Light", (ctx: MarkdownWorld) => {
+  ctx.cleanups.push(() => setColourTheme("terminal"));
+  setColourTheme("terminal");
+});
+
+step("the user switches the app from light to dark", async (ctx: MarkdownWorld) => {
+  ctx.host!.dispatch("theme.set", { id: "gruvbox" });
+  await settleUi(ctx);
+});
+
+step("the code block is coloured for the dark theme", async (ctx: MarkdownWorld) => {
+  const code = codeLines(ctx);
+  expect(THEME.keyword.intent).toBe("rgb");
+  expect(keywordFirst(code[0]!)).toBe(true);
+});
+
+step("its code was not read again", (ctx: MarkdownWorld) => {
+  expect(ctx.codeReads!.length).toBe(ctx.readsWhenColoured!);
 });
 
 // --- tables ----------------------------------------------------------------------------
@@ -236,7 +413,8 @@ step("the agent answers with a link to {string}", async (ctx: MarkdownWorld, url
 
 step("the link's text is shown and nothing can be opened", async (ctx: MarkdownWorld) => {
   const lines = reply(ctx).lines;
-  expect(linesOf(reply(ctx))).toEqual(["Open the pricing docs now."]);
+  // The reply's text, above its time-and-copy row.
+  expect(linesOf(reply(ctx))[0]).toBe("Open the pricing docs now.");
   expect(lines.flatMap((line) => line.text.chunks).some((part) => part.link)).toBe(false);
   expect(await snapshot(ctx)).not.toContain("javascript:");
   const before = ctx.dispatched!.length;
@@ -276,20 +454,20 @@ step("the paragraphs already shown are not drawn again", async (ctx: MarkdownWor
 });
 
 step("the agent is writing a code block", async (ctx: MarkdownWorld) => {
-  await startWriting(
-    ctx,
-    "Checking the refund path:\n\n```py\ndef refund(order):\n    return order.total",
-  );
+  ctx.codeSoFar = ["def refund(order):", "    return order.total"];
+  await startWriting(ctx, `Checking the refund path:\n\n\`\`\`py\n${ctx.codeSoFar.join("\n")}`);
 });
 
 step("the code written so far is shown as a code block", async (ctx: MarkdownWorld) => {
   const code = codeLines(ctx);
   ctx.codeBefore = code.map((line) => plain(line.text));
-  expect(ctx.codeBefore).toEqual(["def refund(order):", "    return order.total"]);
+  expect(ctx.codeBefore).toEqual(ctx.codeSoFar!);
   for (const line of code) expect(line.text.chunks[0]!.fg).toEqual(THEME.warning);
   const screen = await snapshot(ctx);
-  expect(screen).toContain("def refund(order):");
+  expect(screen).toContain(ctx.codeSoFar![0]!);
   expect(screen).not.toContain("```");
+  // Nothing is drawn from a block the agent is still writing.
+  expect(ctx.fake!.settings.callsTo("mermaid.render")).toEqual([]);
 });
 
 step("the agent closes the code block", async (ctx: MarkdownWorld) => {
@@ -330,11 +508,72 @@ step("the user's message has two lines", async (ctx: MarkdownWorld) => {
 });
 
 step("the message is shown on two lines", async (ctx: MarkdownWorld) => {
-  const bubble = hostState(ctx, "timeline").items.at(-1);
+  // The last message, above the time it was sent.
+  const bubble = hostState(ctx, "timeline").items.findLast(
+    (item: { kind: string }) => item.kind === "message",
+  );
   expect(bubble).toMatchObject({ kind: "message", boxed: true });
   expect(linesOf(bubble)).toEqual(["Thanks!", "What about refunds?"]);
   const rows = (await snapshot(ctx)).split("\n");
   const first = rows.findIndex((row) => row.includes("Thanks!"));
   expect(first).toBeGreaterThan(-1);
   expect(rows[first + 1]).toContain("What about refunds?");
+});
+
+// --- Mermaid diagrams (the MC draws them in characters: fakeMermaid.ts) ----------------
+
+/** The reply's diagram is the one on screen; its lines are the reply's. */
+const showsDiagram = (ctx: MarkdownWorld, source: string) => {
+  ctx.diagram = { source, lines: async () => linesOf(reply(ctx)) };
+};
+
+step(
+  /^the agent answers with a "mermaid" code block holding a flowchart( with an unclosed bracket)?$/,
+  async (ctx: MarkdownWorld, broken?: string) => {
+    serveMermaid(ctx);
+    const source = broken ? BROKEN_FLOWCHART : MERMAID_SOURCES.flowchart!;
+    await answer(ctx, `Here is the checkout:\n\n${mermaidFence(source)}`);
+    await settleUi(ctx);
+    showsDiagram(ctx, source);
+  },
+);
+
+step("the user can switch to the diagram's source and copy it", async (ctx: MarkdownWorld) => {
+  const source = ctx.diagram!.source;
+  await clickText(ctx, "⇄ Source");
+  await expectSource(ctx);
+  expect(linesOf(reply(ctx))).toContain("◇ flowchart diagram · source");
+  await clickText(ctx, source.split("\n")[1]!.trim());
+  expect(ctx.clipboard).toEqual([source]);
+  await clickText(ctx, "⇄ Drawing");
+  expect(linesOf(reply(ctx))).toContain(mermaidDrawing(source)[1]!);
+});
+
+step("the diagram's source is shown as a code block", async (ctx: MarkdownWorld) => {
+  await expectSource(ctx);
+  const code = codeLines(ctx).filter((line) => copyOf(line)!.text === ctx.diagram!.source);
+  const sourceLines = ctx.diagram!.source.split("\n");
+  const shownSource = code.filter((line) => sourceLines.includes(plain(line.text)));
+  expect(shownSource).toHaveLength(sourceLines.length);
+  for (const line of shownSource) expect(line.text.chunks[0]!.fg).toEqual(THEME.warning);
+});
+
+step(
+  "the agent is still writing a {string} code block",
+  async (ctx: MarkdownWorld, info: string) => {
+    serveMermaid(ctx);
+    const source = MERMAID_SOURCES.flowchart!;
+    ctx.codeSoFar = source.split("\n");
+    await startWriting(ctx, `Here is the checkout:\n\n\`\`\`${info}\n${source}`);
+    showsDiagram(ctx, source);
+  },
+);
+
+step("the diagram is drawn", async (ctx: MarkdownWorld) => {
+  await settleUi(ctx);
+  const { source } = ctx.diagram!;
+  const lines = linesOf(reply(ctx));
+  expect(lines).toContain("◇ flowchart diagram");
+  for (const text of mermaidDrawing(source)) expect(lines).toContain(text);
+  expect(mermaidAsks(ctx, source)).toBe(1);
 });

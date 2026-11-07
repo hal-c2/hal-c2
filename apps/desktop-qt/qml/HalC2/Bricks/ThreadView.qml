@@ -17,6 +17,12 @@ Item {
 
     // The corner radius of layouts that round the centre.
     property real radius: 0
+    // What a thread with no conversation yet says, and the hint under it
+    // (none by default; the phone suggests what to ask).
+    property string emptyText: qsTr("Send a message to start the conversation.")
+    property string emptyHint: ""
+    // Whether messages show their time and actions without hover (touch layouts).
+    property alias alwaysShowMeta: timeline.alwaysShowMeta
     readonly property var route: Shell.state.route ?? null
     readonly property bool draft: route !== null && route.kind === "draft"
     // The user scrolled a thread's conversation away from its latest output (the composer rests then).
@@ -41,16 +47,18 @@ Item {
     readonly property color mutedColor: Theme.palette.color("textMuted", "#8b8b93")
     readonly property string uiFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
 
-    // Where web addresses go: the system browser, a dev server on another MC's
-    // machine through the connected MC's forward (tests keep them in).
-    property var openExternally: url => Shell.dispatch("thread.openAddress", {
-            url: url
+    // Where web addresses go: a pull request beside the thread, the system
+    // browser, a dev server on another MC's machine through the connected
+    // MC's forward (tests keep them in). external: to the browser regardless.
+    property var openExternally: (url, external) => Shell.dispatch("thread.openLink", {
+            url: url,
+            external: external === true
         })
 
     // Web addresses leave the app; anything else is a path in the project.
-    function openLink(link) {
+    function openLink(link, external) {
         if (/^(https?|mailto):/i.test(link)) {
-            view.openExternally(link);
+            view.openExternally(link, external);
             return;
         }
         let path = link.replace(/^file:\/\//i, "");
@@ -112,20 +120,28 @@ Item {
         anchors.top: pluginHeader.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: limitBanner.visible ? limitBanner.top : parent.bottom
+        anchors.bottom: agentsBanner.visible ? agentsBanner.top : settledNotice.visible ? settledNotice.top : limitBanner.visible ? limitBanner.top : parent.bottom
         visible: !view.draft
         model: view.model
         sending: view.sending
         showStatus: false
-        onLinkActivated: link => view.openLink(link)
+        linkPreviews: Panel.linkPreviews
+        onLinkActivated: (link, external) => view.openLink(link, external)
         onFileActivated: (path, tab, rowId) => view.openFile(path, tab, rowId)
-        // Saving a queued message's edit sends its text alone, so no quote
-        // is taken while one is edited.
+        // Saving a queued message's edit sends its text and attachments,
+        // never a quote, so none is taken while one is edited.
         citable: (Shell.state.composer?.target ?? null) !== null && !Shell.state.composer.editingQueuedRunId
         onCited: (messageId, selector) => Shell.dispatch("composer.citation.add", Object.assign({
             messageId: messageId
         }, selector))
         onRevertRequested: rowId => view.askRevert(rowId)
+        // In the thread's terminal, the way a project action runs; offered
+        // only where the thread has one (not in the phone's layout or a build
+        // without the terminal).
+        runnable: Terminals.available
+        onRunCommand: command => Shell.dispatch("workspace.runCommand", {
+                command: command
+            })
         onEditRequested: rowId => Shell.dispatch("rewind.request", {
                 rowId: rowId
             })
@@ -136,12 +152,17 @@ Item {
         onThreadActivated: threadId => Shell.dispatch("rightPanel.openThread", {
                 threadKey: Threads.activeThread.slice(0, Threads.activeThread.indexOf(":") + 1) + threadId
             })
+        onScheduledTaskActivated: taskId => Shell.dispatch("scheduledTasks.open", {
+                environmentId: Threads.activeThread.slice(0, Threads.activeThread.indexOf(":")),
+                taskId: taskId
+            })
     }
 
     // Why the thread stopped following its MC, with a way to try again. While
     // the window's own connection is down the ConnectionNotice says so, once and
     // with its one retry, so the thread stays quiet; this speaks for a thread
-    // that cannot be reached while the connection is up.
+    // that cannot be reached while the connection is up. A thread whose
+    // computer is down has the computer's notice instead.
     Rectangle {
         id: problemBar
         objectName: "threadProblem"
@@ -150,7 +171,7 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         height: visible ? problemRow.implicitHeight + 16 : 0
-        visible: view.unreachable && !view.connectionReported
+        visible: view.unreachable && !view.connectionReported && computerBar.notice === null
         color: Qt.alpha(Theme.palette.color("warning", "#f59e0b"), 0.1)
 
         // The warning hue is the stripe; the sentence is the theme's text,
@@ -175,13 +196,90 @@ Item {
                 text: qsTr("This thread's MC cannot be reached: %1").arg(view.model ? view.model.problem : "")
                 color: Theme.palette.color("text", "#e4e4e7")
                 font.family: view.uiFamily
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 wrapMode: Text.Wrap
             }
             ShellButton {
                 objectName: "threadRetry"
                 text: qsTr("Retry")
                 onClicked: Threads.reload(Threads.activeThread)
+            }
+        }
+    }
+
+    // The thread's computer is another of the cluster's and is down
+    // (ComputerNoticeController's `threadComputer`): reconnecting, offline,
+    // an update restarting it, or a restart into another version; nothing in
+    // the first two seconds. An offline one can be asked to reconnect, and one
+    // down for 20 seconds disconnected. The window's own connection speaks for
+    // itself, so this stays quiet while it does.
+    Rectangle {
+        id: computerBar
+        objectName: "threadComputerNotice"
+
+        readonly property var notice: Shell.state.threadComputer ?? null
+
+        anchors.top: problemBar.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: visible ? computerRow.implicitHeight + 16 : 0
+        visible: notice !== null && notice.kind.length > 0 && !view.draft && !view.connectionReported
+        color: Qt.alpha(Theme.palette.color(["reconnecting", "offline"].includes(notice?.kind) ? "warning" : "accent", "#f59e0b"), 0.1)
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            width: 3
+            color: Theme.palette.color(["reconnecting", "offline"].includes(computerBar.notice?.kind) ? "warning" : "accent", "#f59e0b")
+        }
+
+        RowLayout {
+            id: computerRow
+            anchors.fill: parent
+            anchors.leftMargin: 16
+            anchors.rightMargin: 16
+            anchors.topMargin: 8
+            anchors.bottomMargin: 8
+            spacing: 8
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 2
+                Label {
+                    objectName: "threadComputerTitle"
+                    Layout.fillWidth: true
+                    text: computerBar.notice?.title ?? ""
+                    color: view.textColor
+                    font.family: view.uiFamily
+                    font.pixelSize: Theme.type.body.size
+                    wrapMode: Text.Wrap
+                }
+                Label {
+                    objectName: "threadComputerDetail"
+                    Layout.fillWidth: true
+                    visible: text.length > 0
+                    text: computerBar.notice?.detail ?? ""
+                    color: view.mutedColor
+                    font.family: view.uiFamily
+                    font.pixelSize: Theme.type.meta.size
+                    wrapMode: Text.Wrap
+                }
+            }
+            ShellButton {
+                objectName: "threadComputerReconnect"
+                visible: computerBar.notice?.canReconnect ?? false
+                text: qsTr("Reconnect")
+                onClicked: Shell.dispatch("threadComputer.reconnect", {
+                    environmentId: computerBar.notice.environmentId
+                })
+            }
+            ShellButton {
+                objectName: "threadComputerDisconnect"
+                visible: computerBar.notice?.canDisconnect ?? false
+                text: qsTr("Disconnect")
+                onClicked: Shell.dispatch("threadComputer.disconnect", {
+                    environmentId: computerBar.notice.environmentId
+                })
             }
         }
     }
@@ -218,6 +316,54 @@ Item {
         } : null
     }
 
+    // Subagents still working, with a way to the Agents tab while it does not
+    // show (upstream #13572). Static: it changes only as their count does.
+    Rectangle {
+        id: agentsBanner
+
+        readonly property int live: Panel.agents.liveAgentCount
+        readonly property bool agentsShown: (Shell.state.panel?.shownTabs ?? []).some(id => (Shell.state.panel?.tabs ?? []).concat(Shell.state.panel?.stage?.tabs ?? []).some(tab => tab.id === id && tab.kind === "agents"))
+
+        objectName: "agentsBanner"
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: settledNotice.visible ? settledNotice.top : limitBanner.visible ? limitBanner.top : parent.bottom
+        visible: live > 0 && !view.draft
+        height: visible ? 32 : 0
+        color: Theme.palette.color("surface", "#141417")
+
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 16
+            anchors.rightMargin: 8
+            spacing: 8
+
+            Rectangle {
+                width: 6
+                height: 6
+                radius: 3
+                color: Theme.palette.color("ink", "#e5e5e5")
+            }
+            Label {
+                objectName: "agentsBannerTitle"
+                Layout.fillWidth: true
+                text: agentsBanner.live === 1 ? qsTr("1 agent working") : qsTr("%1 agents working").arg(agentsBanner.live)
+                color: Theme.palette.color("ink", "#e5e5e5")
+                font.pixelSize: Theme.type.meta.size
+            }
+            Button {
+                objectName: "agentsBannerView"
+                visible: !agentsBanner.agentsShown
+                text: qsTr("View")
+                flat: true
+                Accessible.name: qsTr("View agents")
+                onClicked: Shell.dispatch("rightPanel.add", {
+                        kind: "agents"
+                    })
+            }
+        }
+    }
+
     // The agent stopped on a usage limit: when it resets and what to do until then.
     LimitRecoveryBanner {
         id: limitBanner
@@ -229,11 +375,22 @@ Item {
         visible: recovery !== null && !view.draft
     }
 
+    // The open thread is settled: it says so, and un-settles from here.
+    ThreadNotice {
+        id: settledNotice
+
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: limitBanner.visible ? limitBanner.top : parent.bottom
+        height: implicitHeight
+        visible: current !== null && !view.draft
+    }
+
     // How the thread's new worktree is being prepared.
     WorktreeSetupCard {
         id: setupCard
 
-        anchors.top: problemBar.bottom
+        anchors.top: computerBar.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         height: visible ? implicitHeight : 0
@@ -255,13 +412,13 @@ Item {
             wrapMode: Text.Wrap
             color: view.draft ? view.textColor : view.mutedColor
             font.family: view.uiFamily
-            font.pixelSize: view.draft ? 24 : 13
+            font.pixelSize: view.draft ? Theme.type.display.size : Theme.type.body.size
             text: {
                 if (view.draft) {
                     const project = view.workspace ? view.workspace.projectTitle : "";
                     return project ? qsTr("What should we build in %1?").arg(project) : qsTr("Add a project to start");
                 }
-                return view.loading ? qsTr("Loading…") : qsTr("Send a message to start the conversation.");
+                return view.loading ? qsTr("Loading…") : view.emptyText;
             }
 
             // A draft's opening line picks its project: a click, or Enter or
@@ -300,7 +457,7 @@ Item {
             visible: view.draft && text.length > 0
             color: view.mutedColor
             font.family: view.uiFamily
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             elide: Text.ElideMiddle
             text: {
                 if (!view.workspace)
@@ -314,13 +471,24 @@ Item {
             }
         }
         Label {
+            objectName: "threadPlaceholderHint"
+            Layout.fillWidth: true
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
+            visible: view.empty && text.length > 0
+            color: view.mutedColor
+            font.family: view.uiFamily
+            font.pixelSize: Theme.type.body.size
+            text: view.emptyHint
+        }
+        Label {
             objectName: "draftSending"
             Layout.fillWidth: true
             horizontalAlignment: Text.AlignHCenter
             visible: view.draft && view.sending
             color: view.mutedColor
             font.family: view.uiFamily
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             text: qsTr("Sending…")
         }
     }

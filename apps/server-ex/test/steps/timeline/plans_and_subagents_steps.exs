@@ -188,7 +188,7 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
 
   step "the MC refuses, as the result is the agent's own message", context do
     assert {:error, reason} = context.refusal
-    assert reason =~ "is the agent's own message"
+    assert reason =~ "Automatic completion deliveries cannot be"
     state = World.stream(context, World.current(context))
     run = StreamState.get(state, "run")[context.waiting_run["id"]]
     assert run["status"] == "queued"
@@ -198,8 +198,13 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
 
   step "the parent's notification names the worker's thread and carries {string}",
        %{args: [result]} = context do
-    state = World.stream(context, World.current(context))
     child_id = context.delegated["childThreadId"]
+
+    # The child's run completes before the MC writes the result to the parent.
+    state =
+      World.await_thread(context, World.current(context), fn state ->
+        Enum.any?(StreamState.list(state, "message"), &(&1["delegatedCompletion"] != nil))
+      end)
 
     assert [message] =
              Enum.filter(StreamState.list(state, "message"), &(&1["delegatedCompletion"] != nil))

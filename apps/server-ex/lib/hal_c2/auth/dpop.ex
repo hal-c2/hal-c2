@@ -8,16 +8,30 @@ defmodule HalC2.Auth.Dpop do
   """
 
   @max_age 300
+  # UUIDs and encoded hashes fit comfortably; retained replay identifiers do not need more.
+  @max_jti_bytes 256
   @proofs __MODULE__.Proofs
 
   @doc "The replay table, which `HalC2.Auth` creates and keeps across its restarts."
   def table, do: @proofs
 
   @doc """
-  Verifies `proof` for a request; returns `{:ok, thumbprint}` or `{:error, reason}`.
-  Options: `thumbprint` (the key the proof must use), `access_token` (for `ath`).
+  Verifies and claims `proof` for a request; returns `{:ok, thumbprint}` or
+  `{:error, reason}`. Options: `thumbprint` (the key the proof must use), `access_token`
+  (for `ath`).
   """
   def verify(proof, method, url, opts \\ []) do
+    with {:ok, verified} <- verify_unclaimed(proof, method, url, opts),
+         :ok <- claim(verified) do
+      {:ok, verified.thumbprint}
+    end
+  end
+
+  @doc """
+  Verifies `proof` without claiming its replay identity. The caller must pass the returned
+  identity to `claim/1` once the operation it authorizes is known to be valid.
+  """
+  def verify_unclaimed(proof, method, url, opts \\ []) do
     now = div(HalC2.Auth.now(), 1000)
 
     with [h, p, sig] when h != "" and p != "" and sig != "" <- String.split(proof || "", "."),
@@ -25,16 +39,16 @@ defmodule HalC2.Auth.Dpop do
          %{"kty" => "EC", "crv" => "P-256", "x" => x, "y" => y} when not is_map_key(jwk, "d") <-
            jwk,
          {:ok, %{"htm" => htm, "htu" => htu, "jti" => jti, "iat" => iat} = claims}
-         when is_binary(htm) and is_binary(jti) and jti != "" and is_integer(iat) <- decode(p),
+         when is_binary(htm) and is_binary(jti) and byte_size(jti) > 0 and
+                byte_size(jti) <= @max_jti_bytes and is_integer(iat) <- decode(p),
          thumbprint = thumbprint(jwk),
          :ok <- check(opts[:thumbprint] in [nil, thumbprint], :key_mismatch),
          :ok <- check(String.upcase(htm) == String.upcase(method), :request_mismatch),
          :ok <- check(htu == htu(url), :request_mismatch),
          :ok <- check(ath_ok?(claims, opts[:access_token]), :token_mismatch),
          :ok <- check(signed?("#{h}.#{p}", sig, x, y), :invalid_proof),
-         :ok <- check(iat <= now + 5 and now - iat <= @max_age, :time_window),
-         :ok <- check(fresh?(thumbprint, jti, iat, now), :replay) do
-      {:ok, thumbprint}
+         :ok <- check(iat <= now + 5 and now - iat <= @max_age, :time_window) do
+      {:ok, %{thumbprint: thumbprint, jti: jti, iat: iat}}
     else
       {:error, reason} when is_atom(reason) -> {:error, reason}
       _ -> {:error, :invalid_proof}
@@ -76,12 +90,16 @@ defmodule HalC2.Auth.Dpop do
     end
   end
 
+  @doc "Atomically claims a verified proof's replay identity, or refuses a replay."
+  def claim(nil), do: :ok
+
+  def claim(%{thumbprint: thumbprint, jti: jti, iat: iat}) do
+    if :ets.insert_new(@proofs, {{thumbprint, jti}, iat}),
+      do: :ok,
+      else: {:error, :replay}
+  end
+
   @doc "Forgets proofs too old to be accepted again; returns how many."
   def prune(now \\ div(HalC2.Auth.now(), 1000)),
     do: :ets.select_delete(@proofs, [{{:_, :"$1"}, [{:<, :"$1", now - @max_age - 5}], [true]}])
-
-  defp fresh?(thumbprint, jti, iat, now) do
-    prune(now)
-    :ets.insert_new(@proofs, {{thumbprint, jti}, iat})
-  end
 end

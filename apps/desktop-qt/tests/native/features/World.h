@@ -16,6 +16,7 @@
 
 #include "FakeMc.h"
 #include "NativeShell.h"
+#include "SecretStore.h"
 #include "ShellBridge.h"
 #include "ShellWindows.h"
 #include "ThemeStore.h"
@@ -57,6 +58,11 @@ public:
   // instead of touching the desktop's.
   QString clipboard;
   bool clipboardFails = false;
+  // Why the scenario's environment refused, for "the user is told … with the reason".
+  QString reason;
+  // Nothing on this machine can open an address: the system browser refuses
+  // what openExternal hands it.
+  bool browserFails = false;
   QList<QUrl> openedUrls;
   // A brick the scenario keeps on screen (DeviceSteps' DevicePanel): it goes
   // before the shell it draws, on restart too.
@@ -66,8 +72,13 @@ public:
   // What else a page tells the user in place (an inline error), for "the user is told".
   std::function<QStringList()> toldInPlace;
   // Steps two pages share the words of: what they check on the settings page, by a name the two files agree on
-  // ("hasAction", "invalidProjectFile", "isShown", "openResult", "inView"), set while a scenario is on that page.
+  // ("hasAction", "invalidProjectFile", "isShown", "openResult", "inView", "notListed", "listedUnder", "onlyListed"),
+  // set while a scenario is on that page.
   QHash<QString, std::function<void(const QStringList& captures)>> onSettingsPage;
+
+  // The system's secure storage, as the shell sees it: never the desktop's
+  // own keyring. Kept across restarts, as a keyring is.
+  std::shared_ptr<MemorySecretStore::Keys> secrets = std::make_shared<MemorySecretStore::Keys>();
 
   ShellBridge& bridge() { return *m_bridge; }
   NativeShell& native() { return *m_native; }

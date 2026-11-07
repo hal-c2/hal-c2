@@ -19,6 +19,18 @@ fetch() {
 fetch "https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage" "${tools_dir}/linuxdeploy-1-alpha-20251107-1" "c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d"
 fetch "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/1-alpha-20250213-1/linuxdeploy-plugin-qt-x86_64.AppImage" "${tools_dir}/linuxdeploy-plugin-qt" "15106be885c1c48a021198e7e1e9a48ce9d02a86dd0a1848f00bdbf3c1c92724"
 
+# linuxdeploy's own patchelf (0.15) sets RUNPATH on a library with no room for another
+# program header by writing it over .gnu.hash, and the image segfaults in the dynamic
+# loader at start (Arch's libleancrypto, for one). It takes the system's through PATCHELF.
+patchelf="${PATCHELF:-$(command -v patchelf || true)}"
+patchelf_version="$("${patchelf:-false}" --version 2>/dev/null | awk '{print $2}' || true)"
+if [ -z "${patchelf_version}" ] ||
+  [ "$(printf '0.18\n%s\n' "${patchelf_version}" | sort -V | head -1)" != "0.18" ]; then
+  echo "error: packaging needs patchelf 0.18 or later on the PATH (or in PATCHELF); found '${patchelf_version:-none}'" >&2
+  exit 1
+fi
+export PATCHELF="${patchelf}"
+
 rm -rf "${app_dir}"
 cmake --install "${build_dir}" --prefix "${app_dir}/usr"
 
@@ -117,6 +129,17 @@ if [ -n "${wayland}" ]; then
     --deploy-deps-only "${app_dir}/usr/plugins/wayland-decoration-client"
 fi
 "$(dirname "$0")/check-sqlite-driver.sh" "${app_dir}/usr/plugins/sqldrivers" libqsqlite.so
+# AppRun runs AppRun.wrapped, linuxdeploy's symlink to the binary. Since 6.12 Qt takes
+# the application's directory from the path it was started by without resolving the
+# symlink, so it looked for qt.conf, plugins and our helpers in the AppDir root and
+# aborted with no platform plugin. The wrapper starts the binary by its own path;
+# linuxdeploy keeps an AppRun.wrapped it finds.
+rm -f "${app_dir}/AppRun.wrapped"
+cat > "${app_dir}/AppRun.wrapped" <<'WRAPPED'
+#!/bin/sh
+exec "$(dirname "$(readlink -f "$0")")/usr/bin/hal-c2-qt" "$@"
+WRAPPED
+chmod +x "${app_dir}/AppRun.wrapped"
 export LDAI_OUTPUT="${build_dir}/hal-c2-qt-x86_64.AppImage"
 "${tools_dir}/linuxdeploy-1-alpha-20251107-1" --appdir "${app_dir}" --output appimage
 echo "AppImage at ${LDAI_OUTPUT}"

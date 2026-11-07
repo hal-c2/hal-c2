@@ -1,4 +1,13 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23873 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/19706
+#   https://github.com/pingdotgg/t3code/pull/19554
+#   https://github.com/pingdotgg/t3code/pull/20277
+#   https://github.com/pingdotgg/t3code/pull/15044
+#   https://github.com/pingdotgg/t3code/pull/16670
+#   https://github.com/pingdotgg/t3code/pull/19118
+#   https://github.com/pingdotgg/t3code/pull/17587
+#   https://github.com/pingdotgg/t3code/pull/14784
 #   https://github.com/pingdotgg/t3code/pull/13469 (a malformed OTEL_RESOURCE_ATTRIBUTES no longer stops startup)
 #   https://github.com/pingdotgg/t3code/pull/13355
 #   apps/desktop-qt/host/main.ts (desktop host: MC lifecycle, the ready line)
@@ -18,11 +27,24 @@
 #   docs/internals/desktop-qt.md (process model)
 #   apps/web/src/legacyStorage.ts, apps/web/src/clientPersistenceStorage.ts (what a browser kept; dropped)
 #   Shared domain: connections/ owns pairing; mc/platform/ owns the MC's side of the bootstrap.
+#   https://github.com/pingdotgg/t3code/pull/15440
+#   https://github.com/pingdotgg/t3code/pull/25317
+#   https://github.com/pingdotgg/t3code/pull/25345
+#   https://github.com/pingdotgg/t3code/pull/22471
 
 Feature: The desktop app runs its own MC
   Started on its own, the Qt desktop app starts an MC on this machine and connects to
   it with the MC's own access token. Given an MC's pairing link, it attaches to that MC
   instead. Either way the shell's own client is paired with the MC before the window fills.
+
+  # Upstream #23873: a quit stuck waiting on the bundled server's shutdown swallowed every later Quit
+  # and SIGTERM. Dropped: the HAL-C2 desktop does not own the MC's shutdown, so its quit never
+  # waits on one.
+  @dropped @desktop
+  Scenario: Quitting again after a stuck quit closes the app
+    Given the app started quitting 10 seconds ago and is still waiting on its server to stop
+    When the user quits again
+    Then the app closes
 
   Rule: Starting the desktop app starts its MC and connects to it
 
@@ -32,6 +54,13 @@ Feature: The desktop app runs its own MC
       When the user starts the desktop app
       Then an MC starts with the HAL-C2 home "/tmp/sandbox"
       And its bootstrap reaches it on standard input, not on the command line
+
+    # Upstream #19706: no window showed until the local backend reported ready.
+    @backlog @desktop @priority-low
+    Scenario: The desktop app shows it is starting while its MC starts
+      When the user starts the desktop app
+      Then a window saying "Starting HAL-C2…" shows before the MC is ready
+      And it gives way to the main window once the MC is ready
 
     # The shell connects with the MC's own access token; there is no web app to pair.
     @dropped
@@ -122,12 +151,29 @@ Feature: The desktop app runs its own MC
       When the user starts the desktop app
       Then the MC listens on the next free port
 
+    # Upstream #15044: a host without IPv6 support no longer reports every free port as taken.
+    @backlog @desktop @priority-low
+    Scenario: A host without IPv6 still finds a free port for the MC
+      Given the host was started with IPv6 turned off
+      And nothing listens on the MC's default port
+      When the user starts the desktop app
+      Then the MC listens on its default port
+
     @desktop
     Scenario: An MC already running on the desktop's files is used instead of starting another
       Given the background service runs an MC on the files the desktop app's MC would use
       When the user starts the desktop app
       Then the shell is told that MC's address and the MC's own access token
       And the desktop app starts no MC of its own
+
+    # Upstream #19554: a second launch of the app starts no second backend
+    @backlog @desktop
+    Scenario: Starting the desktop app again shows the window already open
+      Given the desktop app is running
+      When the user starts it again
+      Then the open window is brought forward
+      And no second app or MC is started
+      And a link the second start was given is handled by the running app
 
     # At login the app can start before the background service's MC has said where it
     # listens; the MC that gets the files first keeps them (mc-startup.feature).
@@ -236,6 +282,22 @@ Feature: The desktop app runs its own MC
       When the user quits the desktop app
       Then the MC keeps running
 
+    # Upstream #20277: the backend a desktop started exits when that desktop dies.
+    @backlog @desktop
+    Scenario: A desktop app that dies without quitting does not leave its MC running
+      Given the desktop app started its own MC
+      When the desktop app is killed
+      Then the MC it started stops
+
+    # Upstream #22471: the MC's own "launcher is gone" notice hit the closed pipe and crashed it,
+    # leaving its runtime record and the home held.
+    @backlog @mc @desktop
+    Scenario: An MC whose desktop died shuts down as if interrupted
+      Given the desktop app started its own MC
+      When the desktop app is killed
+      Then the MC shuts down cleanly even though nothing reads its output
+      And the next MC started for that home starts without finding it still held
+
   Rule: Start-up failures say what went wrong
 
     # The desktop app no longer serves a web app.
@@ -260,6 +322,25 @@ Feature: The desktop app runs its own MC
       Then the desktop app says "HAL-C2 failed to start" with the step it failed in and the reason
       And the app quits afterwards
 
+    # Upstream #25317: a client that could not load offered only Reload, with no way to find
+    # out what was wrong.
+    @backlog @desktop @priority-low
+    Scenario: A window that could not load says how to look into it
+      Given the desktop app's window fails to load
+      Then it offers to reload
+      And it names the "hal-c2 triage" command as it runs on this machine, ready to copy
+
+    # Upstream #25345: the real fix for a broken build was a newer one, and users could neither
+    # find it nor share the error.
+    @backlog @desktop @priority-low
+    Scenario: A window that keeps failing to load offers a newer build and a report
+      Given the desktop app's window failed to load
+      And a newer build of HAL-C2 is available
+      Then beside reload it offers to download the update, and then to restart into it
+      And more options offer a reinstall link, the triage command, the error details to copy and a bug report filled in with them
+      When the window fails to load again within five minutes
+      Then those options are already open
+
     @backlog @desktop
     Scenario: A failure while the app is already quitting is not shown
       Given the user quit the desktop app while it was starting
@@ -267,7 +348,7 @@ Feature: The desktop app runs its own MC
       Then no failure message is shown
 
     # Legacy: apps/desktop/src/app/DesktopAppIdentity.ts (About panel)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: The About panel names the app and the build it came from
       Given the desktop app is <build>
       When the user opens the About panel
@@ -280,21 +361,21 @@ Feature: The desktop app runs its own MC
         | run from a development checkout                 | unknown      |
 
     # Legacy: apps/desktop/src/app/DesktopObservability.ts (desktop log files, backend output log, OTLP endpoints)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The desktop app keeps what its MC prints in a log file
       Given the desktop app started its MC
       When the MC prints output or an error
       Then the output is kept in a log file in the app's log folder
       And a failure of the MC shows up there with the time it happened
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The desktop app's log files stop growing at a fixed size
       Given the desktop app's log file is full at 10 MiB
       When the app writes more
       Then it starts a new file and keeps at most ten older ones
       And the oldest is removed
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A telemetry endpoint set in the environment wins over the saved one
       Given the saved settings name a <signal> endpoint
       And the environment names another <signal> endpoint
@@ -309,7 +390,7 @@ Feature: The desktop app runs its own MC
         | logs    |
 
     # The standard telemetry switch wins over every endpoint, saved or set in the environment.
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The standard telemetry switch stops every export, even to a saved endpoint
       Given the saved settings name a traces endpoint
       And the environment sets the standard telemetry switch to "true"
@@ -319,7 +400,7 @@ Feature: The desktop app runs its own MC
 
     # The resource attributes are an optional tag. A value the exporter cannot read is ignored
     # as a whole, the way a bad kill switch is, so a machine-wide variable never blocks launch.
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A resource attribute setting that cannot be read is ignored at startup
       Given the environment sets the resource attributes to "team=%zz"
       When the user starts the desktop app
@@ -328,7 +409,7 @@ Feature: The desktop app runs its own MC
       And the startup log names the setting as ignored
 
     # Legacy: apps/desktop/src/backend/DesktopBackendManager.ts (restart delay, readiness timeout)
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: An MC that exits while the app runs is started again with growing delays
       Given the desktop app started its MC and the window is open
       When the MC exits unexpectedly several times in a row
@@ -378,38 +459,73 @@ Feature: The desktop app runs its own MC
       And the file is not repaired until the user changes a setting
 
     # Legacy: apps/desktop/src/settings/DesktopAppSettings.ts (normalizeTailscaleServePort)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A saved Tailscale HTTPS port that is not a valid port falls back to 443
       Given the desktop settings file holds a Tailscale HTTPS port outside 1 to 65535
       When the user starts the desktop app
       Then Tailscale HTTPS uses port 443
 
+    @backlog @desktop @priority-low
+    Scenario: The version prints without a display
+      When the desktop is started with --version and no display is available
+      Then it prints its version and exits successfully
+
   Rule: The app fits the desktop it runs on
 
+    # Upstream #16670: older xdg-open could not find a quoted Exec path; the path is quoted only when it must be.
     # Legacy: apps/desktop/src/app/DesktopLinuxUrlHandler.ts
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: On Linux a link for HAL-C2 opens the installed app
       Given the user runs the packaged app on Linux
       When the app starts
       Then the system is told that HAL-C2 opens links such as "hal-c2://pair"
       And opening such a link from a browser or another app brings up HAL-C2
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Failing to register the link handler does not stop the app
       Given the user runs the packaged app on Linux
       And the system's link handler registration fails
       When the app starts
       Then the app starts normally
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An unpackaged app does not take over the system's links
       Given the user runs the app from a development checkout on Linux
       When the app starts
       Then the system's link handlers are left as they were
 
+    # Upstream #17587: macOS grants the browser passkeys entitlement only to web browsers.
+    @backlog @desktop @priority-low
+    Scenario: On macOS HAL-C2 can be picked as the default web browser
+      Given the user runs the packaged app on macOS
+      Then HAL-C2 is offered among the system's choices of default web browser
+      And on Linux and Windows the app does not offer itself for web links
+
+    # Upstream #19118: macOS 26 offers Messages and Mail codes in any field unless the app opts out.
+    @backlog @desktop @priority-low
+    Scenario: On macOS verification codes are offered only in fields that ask for one
+      Given the user runs the app on macOS 26 or later
+      And a verification code has just arrived in Messages
+      When the user focuses the composer or another text field
+      Then the system does not offer to fill in the code
+
+    @backlog @desktop @priority-low
+    Scenario: A web link opened with HAL-C2 starts a thread showing the page
+      Given HAL-C2 is the default web browser on macOS
+      When the user opens "https://example.com" from another app
+      Then a new thread with no project opens
+      And its browser fills the panel showing "https://example.com"
+
+    @backlog @desktop @priority-low
+    Scenario: Web links that arrive before the app is ready are all opened in order
+      Given HAL-C2 is the default web browser on macOS and is not running
+      When the user opens two web links from another app
+      Then HAL-C2 starts and opens a thread for each link, in the order they were opened
+      And a link that arrives while the window is reloading is opened once it is back
+
     # Legacy: apps/desktop/src/linuxSecretStorage.ts, apps/desktop/src/settings/DesktopAppSettings.ts (linuxPasswordStore)
     # Uncertain: depends on how the Qt desktop stores secrets; may be dropped with Electron's safeStorage.
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: On Linux the app picks where it keeps secrets from the desktop environment
       Given the user runs the app on Linux with the password store set to "<setting>"
       And the desktop environment is "<desktop>"
@@ -424,7 +540,7 @@ Feature: The desktop app runs its own MC
         | kwallet6        | GNOME   | the KDE Wallet 6  |
         | gnome-libsecret | KDE     | the GNOME keyring |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A password store given on the command line wins over the setting
       Given the password store setting is "kwallet"
       When the user starts the app on Linux with the password store "gnome-libsecret" on the command line
@@ -486,3 +602,10 @@ Feature: The desktop app runs its own MC
       When the user opens the app in that browser
       Then the other settings are as saved
       And follow-ups use the current default
+
+  Rule: Browser screenshots keep their own files
+
+  @backlog @desktop @priority-low
+  Scenario: Two browser screenshots of the same page never overwrite each other
+    Given the user takes two screenshots of the same page in the same instant
+    Then each is saved under its own file name

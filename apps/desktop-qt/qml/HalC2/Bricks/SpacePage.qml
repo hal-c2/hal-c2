@@ -5,9 +5,10 @@ import QtQuick.Layouts
 import HalC2.Shell
 
 // The open page of the Space view (Spaces.page): its title, where it sits,
-// the thread it was made from, its update, its blocks, and a composer that adds
-// a block of the kind a `/` picks or asks for a chart with `/visualize <request>`.
-// A trashed page is read only, with the way back.
+// the thread it was made from, its update, its blocks, and the timeline's
+// prompt (Composer, aimed at the page by ComposerController): it adds a block
+// of the kind a `/` picks, asks for a chart with `/visualize <request>`, and
+// asks an agent with `@agent`. A trashed page is read only, with the way back.
 Rectangle {
     id: page
 
@@ -24,6 +25,9 @@ Rectangle {
     readonly property bool fileBacked: (file.path ?? "") !== ""
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    // What the prompt holds as typed.
+    readonly property string promptText: composer.editor.text
+    readonly property bool asking: /^@agent(\s|$)/i.test(promptText.trim())
     // The kind the composer adds, and the block it goes after ("" for the end).
     property string newKind: "paragraph"
     property string insertAfter: ""
@@ -98,24 +102,27 @@ Rectangle {
         page.replacing = "";
     }
 
+    // The words the prompt does not send to an agent come back to be written.
     Connections {
-        target: Spaces
-        function onAgentAskRequested() {
-            page.startAsk();
-        }
-        function onAgentAskAnswered(pageId, request, taken) {
-            if (taken && pageId === Spaces.pageId && composer.text.trim() === request)
-                composer.clear();
+        target: Shell
+        function onActionRequested(action, payload) {
+            if (action === "space.prompt.write" && payload.pageId === Spaces.pageId)
+                page.write(payload.text);
         }
     }
 
-    // Starts the words of an ask in the composer, ahead of a draft already there.
+    // Puts `text` in the prompt, the caret at its end and the keyboard on it.
+    function setPrompt(text) {
+        composer.editor.text = text;
+        composer.editor.cursorPosition = text.length;
+        composer.flushText();
+        composer.focusInput();
+    }
+
+    // Starts the words of an ask in the prompt, ahead of a draft already there.
     function startAsk() {
-        if (!composer.text.trim().startsWith("@agent")) {
-            composer.text = "@agent " + composer.text;
-            composer.cursorPosition = "@agent ".length;
-        }
-        composer.forceActiveFocus();
+        composer.flushText();
+        Shell.dispatch("composer.ask");
     }
 
     // Asks the MC to draw a chart for `/visualize <request>`, in place of the
@@ -135,43 +142,34 @@ Rectangle {
     function askAgain(blockId, request) {
         page.insertAfter = "";
         page.replacing = blockId;
-        composer.text = "/visualize " + request;
-        composer.forceActiveFocus();
+        page.setPrompt("/visualize " + request);
     }
 
-    // Writes the composer's text as a block of the chosen kind, asks for the
-    // chart it names, opens the kinds when it starts with `/`, or asks an agent
-    // when it starts with `@agent`. An ask keeps its words until the MC takes it.
-    function submit() {
+    // Writes the prompt's words (all but an ask, which the controller sends)
+    // as a block of the chosen kind, or asks for the chart they name.
+    function write(text) {
         if (slash.visible) {
             slash.choose();
             return;
         }
-        const text = composer.text.trim();
         if (text.length === 0 || text === "/visualize")
             return;
-        if (/^@agent(\s|$)/i.test(text)) {
-            Shell.dispatch("space.agent.ask", { pageId: Spaces.pageId, request: text });
-            return;
-        }
         if (text.startsWith("/visualize ")) {
             page.visualize(text);
-            composer.clear();
-            return;
+        } else {
+            page.insert(page.newKind, text, "");
+            if (page.newKind === "heading" || page.newKind === "callout")
+                page.newKind = "paragraph";
         }
-        page.insert(page.newKind, text, "");
-        composer.clear();
-        if (page.newKind === "heading" || page.newKind === "callout")
-            page.newKind = "paragraph";
+        page.setPrompt("");
     }
 
     function chooseKind(kind) {
-        composer.clear();
         if (kind === "chart") {
-            composer.text = "/visualize ";
-            composer.forceActiveFocus();
+            page.setPrompt("/visualize ");
             return;
         }
+        page.setPrompt("");
         if (kind === "subpage_link") {
             linkMenu.popup(kindButton, 0, -linkMenu.implicitHeight - 4);
             return;
@@ -181,16 +179,27 @@ Rectangle {
             return;
         }
         page.newKind = kind;
-        composer.forceActiveFocus();
+        composer.focusInput();
     }
 
+    // A `/` at the start opens the kinds of block, filtered by what follows.
+    onPromptTextChanged: {
+        if (promptText.startsWith("/") && !promptText.startsWith("/visualize ")) {
+            slash.query = promptText.slice(1);
+            if (!slash.visible)
+                slash.open();
+        } else if (slash.visible) {
+            slash.close();
+        }
+    }
+
+    // Each page keeps its own draft in the prompt (ComposerController).
     onCurrentChanged: {
         if ((current.id ?? "") !== titleField.pageId) {
             titleField.pageId = current.id ?? "";
             page.insertAfter = "";
             page.replacing = "";
             page.newKind = "paragraph";
-            composer.clear();
         }
         if (!titleField.activeFocus)
             titleField.text = current.title ?? "";
@@ -205,20 +214,22 @@ Rectangle {
         anchors.topMargin: 24
         spacing: 8
 
-        // Where the page sits: its Space, and the pages above it.
+        // Where the page sits: its Space, and the pages above it. A file's page sits in its
+        // project, whichever Space the sidebar shows.
         Flow {
             objectName: "spaceTrail"
             Layout.fillWidth: true
             spacing: 4
 
             Text {
-                text: Spaces.spaceName
+                objectName: "spaceTrailSpace"
+                text: page.fileBacked ? page.file.projectTitle ?? "" : Spaces.spaceName
                 color: page.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             Repeater {
-                model: page.current.id ? page.trail() : []
+                model: page.current.id && !page.fileBacked ? page.trail() : []
 
                 delegate: Text {
                     id: crumb
@@ -227,7 +238,7 @@ Rectangle {
 
                     text: "/  " + modelData.title
                     color: page.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
 
                     MouseArea {
                         anchors.fill: parent
@@ -264,7 +275,7 @@ Rectangle {
                 selectByMouse: true
                 selectionColor: Theme.palette.color("accent", "#2563eb")
                 selectedTextColor: Theme.palette.color("accentForeground", "#ffffff")
-                font.pixelSize: Math.round(28 * Theme.fontScale)
+                font.pixelSize: Theme.type.display.size
                 font.weight: Font.Bold
                 clip: true
 
@@ -389,15 +400,6 @@ Rectangle {
             }
 
             ShellMenuItem {
-                objectName: "spaceUnlinkFile"
-                text: qsTr("Stop following the file")
-                iconName: "circle-x"
-                visible: page.fileBacked
-                height: visible ? implicitHeight : 0
-                onTriggered: Shell.dispatch("space.page.unlinkFile", { pageId: Spaces.pageId })
-            }
-
-            ShellMenuItem {
                 text: qsTr("Move to the top of the Space")
                 iconName: "arrow-up"
                 visible: (page.current.parentPageId ?? "") !== "" && !page.trashed
@@ -424,7 +426,7 @@ Rectangle {
             visible: (page.current.sourceThreadId ?? "") !== ""
             text: qsTr("Made from the thread “%1”").arg(page.current.sourceThreadTitle ?? "")
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         // The project file the page is: where it is, and that it is gone or won over an edit.
@@ -434,7 +436,7 @@ Rectangle {
             visible: page.fileBacked
             readonly property bool warn: (page.file.missing ?? false) || (page.file.conflictAt ?? "") !== ""
             implicitHeight: fileColumn.implicitHeight + 12
-            radius: Math.min(Theme.radius, 8)
+            radius: Theme.radiusMd
             color: warn ? Qt.alpha(Theme.palette.color("warning", "#f59e0b"), 0.12) : Qt.alpha(page.foreground, 0.05)
             border.color: warn ? Qt.alpha(Theme.palette.color("warning", "#f59e0b"), 0.4) : Qt.alpha(page.foreground, 0.15)
 
@@ -442,7 +444,7 @@ Rectangle {
                 id: fileColumn
 
                 anchors.fill: parent
-                anchors.margins: 6
+                anchors.margins: Theme.space.sm
                 spacing: 4
 
                 RowLayout {
@@ -461,7 +463,7 @@ Rectangle {
                         text: qsTr("The file %1 of %2").arg(page.file.path ?? "").arg(page.file.projectTitle ?? "")
                         color: page.foreground
                         elide: Text.ElideMiddle
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     ShellButton {
@@ -478,10 +480,10 @@ Rectangle {
                     visible: page.file.missing ?? false
                     text: (page.file.unwritten ?? false)
                         ? qsTr("The file is gone, and edits made since are on the page only. If the file comes back, it wins, and those edits stay in the page's history.")
-                        : qsTr("The file is gone. The page keeps what it last said; stop following the file to keep it as an ordinary page.")
+                        : qsTr("The file is gone. The page keeps what it last said, and if the file comes back, it wins.")
                     color: page.foreground
                     wrapMode: Text.Wrap
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 RowLayout {
@@ -495,7 +497,7 @@ Rectangle {
                         text: qsTr("The file changed while you were editing, and the page now shows the file. Your edit is in the page's history.")
                         color: page.foreground
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     ShellButton {
@@ -520,7 +522,7 @@ Rectangle {
             Layout.fillWidth: true
             visible: page.siteUrl !== ""
             implicitHeight: siteColumn.implicitHeight + 16
-            radius: Math.min(Theme.radius, 8)
+            radius: Theme.radiusMd
             color: Qt.alpha(page.foreground, 0.05)
             border.color: Qt.alpha(page.foreground, 0.15)
 
@@ -529,7 +531,7 @@ Rectangle {
 
                 anchors.fill: parent
                 anchors.margins: 8
-                spacing: 6
+                spacing: Theme.space.sm
 
                 RowLayout {
                     Layout.fillWidth: true
@@ -549,7 +551,7 @@ Rectangle {
                             : qsTr("Published. The site shows this page as it is now.")
                         color: page.foreground
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                     }
 
                     ShellButton {
@@ -578,7 +580,7 @@ Rectangle {
                     text: page.siteUrl
                     color: page.muted
                     elide: Text.ElideMiddle
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 RowLayout {
@@ -592,7 +594,7 @@ Rectangle {
                         text: qsTr("Only this machine can open this link: the MC listens on loopback.")
                         color: page.foreground
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     ShellButton {
@@ -609,7 +611,7 @@ Rectangle {
             Layout.fillWidth: true
             visible: page.trashed
             implicitHeight: trashedRow.implicitHeight + 16
-            radius: Math.min(Theme.radius, 8)
+            radius: Theme.radiusMd
             color: Qt.alpha(Theme.palette.color("warning", "#f59e0b"), 0.12)
             border.color: Qt.alpha(Theme.palette.color("warning", "#f59e0b"), 0.4)
 
@@ -631,7 +633,7 @@ Rectangle {
                     text: qsTr("This page is in the trash, so it cannot be changed.")
                     color: page.foreground
                     wrapMode: Text.Wrap
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                 }
 
                 ShellButton {
@@ -676,6 +678,12 @@ Rectangle {
                 level: model.level ?? 0
                 language: model.language ?? ""
                 chart: model.chart ?? ({})
+                markdownAbove: model.markdownAbove ?? ""
+                markdownLead: model.markdownLead ?? ""
+                listBullets: model.listBullets ?? 0
+                listNumbers: model.listNumbers ?? 0
+                markdownTail: model.markdownTail ?? ""
+                markdownBelow: model.markdownBelow ?? ""
                 readOnly: page.trashed
                 previousId: index > 0 ? Spaces.blocks.get(index - 1).id : ""
                 beforePreviousId: index > 1 ? Spaces.blocks.get(index - 2).id : ""
@@ -685,7 +693,7 @@ Rectangle {
                 onAddBelowRequested: blockId => {
                     page.insertAfter = blockId;
                     page.replacing = "";
-                    composer.forceActiveFocus();
+                    composer.focusInput();
                 }
             }
 
@@ -696,7 +704,7 @@ Rectangle {
                 visible: Spaces.blocks.count === 0
                 text: page.trashed ? qsTr("This page has no blocks.") : qsTr("This page is empty. Write below, or type / to pick a kind of block.")
                 color: page.muted
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
         }
 
@@ -705,7 +713,7 @@ Rectangle {
             visible: Shell.state.space?.drawing === true
             text: qsTr("Drawing a chart…")
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         Text {
@@ -713,14 +721,14 @@ Rectangle {
             visible: page.replacing !== "" && !page.trashed
             text: qsTr("Replacing this chart. Click here to keep it.")
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
 
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
                     page.replacing = "";
-                    composer.clear();
+                    page.setPrompt("");
                 }
             }
         }
@@ -730,7 +738,7 @@ Rectangle {
             visible: page.insertAfter !== "" && !page.trashed
             text: qsTr("Adding after “%1”").arg(page.insertAfterText)
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
 
             MouseArea {
                 anchors.fill: parent
@@ -739,70 +747,99 @@ Rectangle {
             }
         }
 
-        RowLayout {
+        // The timeline's prompt, aimed at the page. It has no checkout, queue
+        // or second model: those belong to a thread.
+        Composer {
+            id: composer
+
+            objectName: "spaceComposer"
             Layout.fillWidth: true
-            Layout.bottomMargin: 24
-            visible: !page.trashed
-            spacing: 6
+            Layout.leftMargin: -composer.gutter
+            Layout.rightMargin: -composer.gutter
+            Layout.bottomMargin: 4
+            pageHost: true
+            visible: !page.trashed && ready
+            color: "transparent"
+            editorActions: [
+                ShellButton {
+                    id: kindButton
 
-            ShellButton {
-                id: kindButton
+                    objectName: "spaceNewKind"
+                    subtle: true
+                    visible: !page.asking
+                    iconName: page.kindIcon(page.newKind)
+                    text: page.kindLabel(page.newKind)
+                    toolTip: qsTr("Kind of block")
+                    onClicked: {
+                        slash.query = "";
+                        slash.open();
+                    }
+                },
+                // Where the ask runs: the project the MC would pick, or the one picked.
+                ShellButton {
+                    id: projectButton
 
-                objectName: "spaceNewKind"
-                subtle: true
-                iconName: page.kindIcon(page.newKind)
-                text: page.kindLabel(page.newKind)
-                toolTip: qsTr("Kind of block")
-                onClicked: {
-                    slash.query = "";
-                    slash.open();
+                    objectName: "spaceAskProject"
+                    subtle: true
+                    visible: page.asking
+                    iconName: "folder"
+                    chevron: true
+                    text: composer.model?.project?.title ?? qsTr("No project")
+                    toolTip: qsTr("The project the agent runs in")
+                    onClicked: projectMenu.popup(projectButton, 0, -projectMenu.implicitHeight - 4)
+                }
+            ]
+            onEditorKeyPressed: event => {
+                if (event.accepted || event.modifiers & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier))
+                    return;
+                if (slash.visible) {
+                    event.accepted = true;
+                    if (event.key === Qt.Key_Up)
+                        slash.move(-1);
+                    else if (event.key === Qt.Key_Down)
+                        slash.move(1);
+                    else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                        slash.choose();
+                    else if (event.key === Qt.Key_Escape) {
+                        slash.close();
+                        page.setPrompt("");
+                    } else
+                        event.accepted = false;
+                } else if (event.key === Qt.Key_Escape && page.insertAfter !== "") {
+                    event.accepted = true;
+                    page.insertAfter = "";
                 }
             }
 
-            ShellTextField {
-                id: composer
+            SpaceSlashMenu {
+                id: slash
 
-                objectName: "spaceComposer"
-                Layout.fillWidth: true
-                placeholderText: qsTr("Write, type / for a kind of block, or @agent to ask an agent")
-                onTextChanged: {
-                    if (text.startsWith("/") && !text.startsWith("/visualize ")) {
-                        slash.query = text.slice(1);
-                        if (!slash.visible)
-                            slash.open();
-                    } else if (slash.visible) {
-                        slash.close();
-                    }
-                }
-                onAccepted: page.submit()
-                Keys.onUpPressed: event => {
-                    event.accepted = slash.visible;
-                    if (slash.visible)
-                        slash.move(-1);
-                }
-                Keys.onDownPressed: event => {
-                    event.accepted = slash.visible;
-                    if (slash.visible)
-                        slash.move(1);
-                }
-                Keys.onEscapePressed: event => {
-                    if (slash.visible) {
-                        slash.close();
-                        composer.clear();
-                    } else if (page.insertAfter !== "") {
-                        page.insertAfter = "";
-                    } else {
-                        event.accepted = false;
-                    }
+                objectName: "spaceSlashMenu"
+                x: Math.max(composer.gutter, (composer.width - composer.maximumCardWidth) / 2)
+                y: -implicitHeight - 4
+                onChosen: kind => page.chooseKind(kind)
+            }
+        }
+
+        ShellMenu {
+            id: projectMenu
+
+            objectName: "spaceAskProjectMenu"
+
+            Instantiator {
+                model: projectMenu.visible ? (composer.model?.projects ?? []) : []
+
+                delegate: ShellMenuItem {
+                    required property var modelData
+
+                    text: modelData.title
+                    iconName: "folder"
+                    current: modelData.id === composer.model?.project?.id
+                    onTriggered: Shell.dispatch("composer.project.set", { projectId: modelData.id })
                 }
 
-                SpaceSlashMenu {
-                    id: slash
-
-                    objectName: "spaceSlashMenu"
-                    y: -implicitHeight - 4
-                    onChosen: kind => page.chooseKind(kind)
-                }
+                onObjectAdded: (index, object) => projectMenu.insertItem(index, object)
+                onObjectRemoved: (index, object) => projectMenu.removeItem(object)
             }
         }
 

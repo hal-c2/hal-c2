@@ -1,13 +1,14 @@
 # Charts on a page
 
-Ask for a chart on a page in a Space and it lands as a block on that page. A model decides what to
-draw, but it never supplies the numbers on its own, so asking needs a text generation provider and
-reading a chart later doesn't.
+Ask for a chart on a page in a [Space](spaces.md) and it lands as a block on that page. A model
+decides what to draw, but it never supplies the numbers on its own, so asking needs a text
+generation provider and reading a chart later doesn't.
 
 ## Ask for a chart
 
-In the page's composer, type `/visualize` and what you want, such as `/visualize turns per week`.
-The **Chart** kind in the `/` menu starts this for you. In the terminal client, press `g` on a page.
+In the [page's prompt](spaces.md#the-pages-prompt), type `/visualize` and what you want, such as
+`/visualize turns per week`. The **Chart** kind in the `/` menu starts this for you; in the
+terminal client it is **Visualize**, and `g` on a page does the same.
 
 To change a chart, choose **Ask again** on it, or `g` with it selected in the terminal client. The new
 chart takes its place, and if no chart can be drawn the old one stays.

@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17569
+#   https://github.com/pingdotgg/t3code/pull/17688
+#   https://github.com/pingdotgg/t3code/pull/22048
 #   apps/web/src/components/settings/IntegrationsSettings.tsx
 #   apps/web/src/components/settings/IntegrationsSettings.logic.test.ts
 #   apps/web/src/components/device/DeviceToolVersions.tsx (version label and details)
@@ -24,9 +27,10 @@ Feature: Integrations settings
   Background:
     Given the user has opened the Integrations settings
 
+  @priority-low
   Rule: Browser defaults belong to this device
-    # The Qt desktop embeds no browser (previews open in the user's own), so
-    # these wait for one there.
+    # The Qt desktop draws pages in its own browser (preview/surfaces.feature), but its
+    # Integrations page does not hold these defaults yet, so they wait for it there.
 
     @backlog @desktop
     Scenario Outline: A browser default applies to new browser tabs
@@ -58,6 +62,59 @@ Feature: Integrations settings
       Then links in the chat and terminal open in HAL-C2's browser
       When the user chooses the default browser
       Then links open in the default browser
+
+    # Upstream #22048: external pull request links went to the browser panel; at startup they now
+    # wait for the projects to be known.
+    @backlog @desktop
+    Scenario: A pull request link opened from another app opens the pull request view
+      Given "shop" is a project for "github.com/acme/shop" and pull requests open in HAL-C2
+      When the user opens "https://github.com/acme/shop/pull/42" from another app as the app starts
+      Then pull request 42 opens in the pull request view
+      And it does not open in a browser tab
+
+    # Upstream #17688: the address bar always searched DuckDuckGo; Integrations now picks the engine.
+    @backlog @desktop
+    Scenario Outline: The address bar searches with the chosen search engine
+      Given the user chose <engine> as the search engine
+      When the user types "how to center a div" in a browser tab's address bar
+      Then the tab loads <engine>'s results for "how to center a div"
+
+      Examples:
+        | engine       |
+        | DuckDuckGo   |
+        | Google       |
+        | Bing         |
+        | Brave Search |
+        | Kagi         |
+        | Ecosia       |
+
+    # Upstream #17688: DuckDuckGo is the search engine until the user picks another.
+    @backlog @desktop
+    Scenario: The address bar searches DuckDuckGo by default
+      Given the user has not chosen a search engine
+      When the user types "react" in a browser tab's address bar
+      Then the tab loads DuckDuckGo's results for "react"
+
+    # Upstream #17688: a custom engine is a web address with %s where the query goes.
+    @backlog @desktop
+    Scenario: A custom search engine puts the query where its address says
+      Given the user chose a custom search engine "https://search.example/?q=%s&lang=en"
+      When the user types "react hooks" in a browser tab's address bar
+      Then the tab loads "https://search.example/?q=react%20hooks&lang=en"
+
+    # Upstream #17688: an unusable custom template is flagged and searches fall back.
+    @backlog @desktop
+    Scenario Outline: An unusable custom search engine says so and searches DuckDuckGo
+      Given the user chose a custom search engine <template>
+      Then the setting says the address cannot be used for searches
+      And text typed in the address bar is searched on DuckDuckGo
+
+      Examples:
+        | template                     |
+        | ""                           |
+        | "https://search.example/?q=" |
+        | "https://%s.example/"        |
+        | "ftp://search.example/?q=%s" |
 
     @backlog @desktop
     Scenario: The floating preview can stay hidden when an agent opens a browser
@@ -330,7 +387,7 @@ Feature: Integrations settings
 
     # Legacy: apps/server/src/device/DeviceService.test.ts (manual updates, failed installs, retry, inspect)
     # Likely already implemented: apps/server-ex/lib/hal_c2/devices.ex (updateTool, inspectOnly, retryHostId)
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: Updating one device tool starts nothing and changes no permission
       Given device support and agent device access are off
       When the user updates the agent device tool
@@ -359,7 +416,7 @@ Feature: Integrations settings
         | device support is on, agent access is off | the hub starts and agent tools do not |
         | device support and agent access are on    | the hub and the agent tools start     |
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: A failed version check keeps what was known
       Given the device hub is off and its tools are installed
       And the MC cannot read the installed tool versions
@@ -379,14 +436,14 @@ Feature: Integrations settings
       And the other older versions are removed
 
     # Legacy: apps/server/src/device/deviceToolMaintenance.test.ts (pruneTools)
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Old device tool versions stay until the required version has finished installing
       Given only an older version of the device hub tool is completely installed
       When the MC prunes old device tool versions
       Then the older version is not removed
 
     # Legacy: apps/server/src/device/deviceToolMaintenance.test.ts (process scan failure)
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Nothing is pruned when the MC cannot tell which versions are running
       Given older versions of the device hub tool are installed
       And the MC cannot list the machine's processes
@@ -395,7 +452,7 @@ Feature: Integrations settings
 
     # Legacy: apps/server/src/device/DeviceToolchain.test.ts, deviceToolMaintenance.test.ts
     # Likely already implemented: apps/server-ex/lib/hal_c2/devices.ex (installed?, tool_version)
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: A tool version that did not finish installing is not reported or removed
       Given a device tool folder for a version that never wrote its completion mark
       And a staging folder from an interrupted install
@@ -404,7 +461,7 @@ Feature: Integrations settings
       And pruning leaves both alone
 
     # Legacy: apps/server/src/device/deviceToolMaintenance.test.ts (maintenance lock)
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Two MCs pruning one tool folder take turns
       Given two MC processes share a tool folder
       And a previous prune died holding the maintenance lock
@@ -415,7 +472,7 @@ Feature: Integrations settings
 
     # Legacy: apps/server/src/device/DeviceToolchain.test.ts (ensureDeviceHub)
     # Likely already implemented: apps/server-ex/lib/hal_c2/devices.ex (ensure_tool staging)
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: A failed tool install names its step and leaves no half-installed tree
       Given the registry rejects the install with a message that contains an address with a password
       When the MC installs the device hub tool
@@ -468,6 +525,15 @@ Feature: Integrations settings
       When the user updates the device hub tool
       Then the user is told to check this host's network connection and try again
 
+    # Upstream #17569: a failed device tool update says what failed, not to check the network.
+    # Replaces the scenario above once the MC and the desktop carry it.
+    @backlog @mc @desktop @priority-low
+    Scenario: A failed device tool update says the command failed and how
+      Given updating a device tool runs a command that exits with code 1
+      When the user updates the device tool
+      Then the user is told the update command failed with exit code 1
+      And they are not told to check their network
+
     @desktop
     Scenario: Several environments show one environment's device status at a time
       Given the user is editing settings across "Laptop" and "Build box"
@@ -508,21 +574,21 @@ Feature: Integrations settings
       When the user looks at agent device access
       Then it cannot be turned on
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A device tool update names the version it installs
       Given the device hub tool is older than the required version
       Then the update offers "Update to v" followed by the required version
       And while it installs it says "Updating…"
       And nothing is offered when the installed versions already include the required one
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A device tool check says it is checking
       Given the device hub supports inspecting its tools
       When the user checks versions
       Then the control says "Checking…" until the answer arrives
       And it is not offered for a host that cannot inspect its tools
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A device tool's version is shown beside its switch
       Given the device hub tool is <state>
       Then the version beside the switch reads "<label>"
@@ -534,20 +600,20 @@ Feature: Integrations settings
         | not installed                                  | Not installed   |
         | not yet reported by the host                   | Version unknown |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A device tool's version details list what runs, what is required and what is installed
       Given the device hub tool requires 1.4.0 and has 1.3.0 and 1.4.0 installed but not running
       When the user opens the tool's version details
       Then it lists "Not running" as the running version, "1.4.0" as required and "1.3.0, 1.4.0" as installed
       And it says tools update automatically on this host when needed
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Version details before the first check say so
       Given the host has not reported its tool versions
       When the user opens the device tools' version details
       Then it says "Versions have not been checked."
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A version check that fails shows its reason in the version details
       Given the last version check failed with "Host unreachable"
       Then the control reads "Versions unavailable"
@@ -627,14 +693,14 @@ Feature: Integrations settings
         | im       |
         | mpim     |
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: The page shows how to make the Slack app
       When the user opens the Slack section
       Then it offers to copy a Slack app manifest with the scopes, events and Socket Mode HAL-C2 needs
 
     # The MC turns the page down when HalC2.Slack is not running or the MC serving the
     # environment is out of reach, and follows nothing for it until the user asks again.
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: The Slack section that could not load says why and tries again
       Given Slack is connected
       And the MC cannot reach the environment's Slack connection

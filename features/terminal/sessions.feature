@@ -1,5 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13359
+#   https://github.com/pingdotgg/t3code/pull/19685
+#   https://github.com/pingdotgg/t3code/pull/16039
+#   https://github.com/pingdotgg/t3code/pull/18669
+#   https://github.com/pingdotgg/t3code/pull/13927
 #   docs/user/terminal.md
+#   https://github.com/pingdotgg/t3code/pull/13673 (settling closes idle shells)
 #   docs/internals/terminal-runtime.md
 #   packages/contracts/src/terminal.ts (TerminalOpenInput, TerminalSessionSnapshot, DEFAULT_TERMINAL_ID)
 #   apps/server-ex/lib/hal_c2/terminal.ex (open, launch context, shell and env selection, labels)
@@ -28,6 +34,13 @@ Feature: Terminal sessions
   a terminal keeps running while no client is looking at it, and every client sees the same one.
 
   Rule: The MC starts a shell where the thread works
+
+    # Upstream #13927: on Windows a terminal opens its shell before the process reports an id.
+    @backlog @shared @priority-low
+    Scenario: A terminal opened on Windows shows its shell while the shell is still starting
+      Given the user is on Windows
+      When the user opens a terminal
+      Then a shell is running in the terminal
 
     @mc
     Scenario: Opening a terminal starts a shell in the requested folder
@@ -61,7 +74,7 @@ Feature: Terminal sessions
         | not set, no zsh   | "bash"      |
         | not set, no bash  | "sh"        |
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario Outline: On Windows the MC picks a PowerShell and falls back to the command prompt
       Given the MC runs on Windows with <installed>
       When a terminal opens
@@ -79,12 +92,27 @@ Feature: Terminal sessions
       Then the shell sees TERM "xterm-256color" and COLORTERM "truecolor"
 
     # Legacy: apps/server/src/terminal/Manager.test.ts (starts zsh with prompt spacer disabled)
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (zsh started with -o nopromptsp)
-    @backlog @mc
+    @mc
     Scenario: A zsh shell does not print a "%" marker after output that lacks a newline
       Given the user's shell is zsh
       When a terminal opens
       Then the shell is started with zsh's partial-line marker turned off
+
+    # Upstream #19685: fish 4.1+ stalled about ten seconds on startup waiting for terminal replies;
+    # terminals now add no-query-term to fish_features.
+    @backlog @mc
+    Scenario: A fish shell shows its first prompt without waiting on terminal queries
+      Given the user's shell is fish 4.1 or newer
+      When a terminal opens
+      Then the prompt appears without a ten-second wait or a terminal-query warning
+      And fish_features holds "no-query-term" beside any flags the user already set
+
+    # Upstream #19685: an explicit query-term choice in fish_features is kept.
+    @backlog @mc
+    Scenario: A fish shell keeps the user's own choice about terminal queries
+      Given the user's environment sets fish_features to "query-term"
+      When a terminal opens
+      Then the shell sees fish_features as "query-term"
 
     @mc
     Scenario Outline: The MC keeps its own settings out of the user's shell
@@ -102,8 +130,31 @@ Feature: Terminal sessions
         | any variable starting with RELEASE_ |
         | any variable starting with ERL_     |
 
-    # Not yet in apps/server-ex/lib/hal_c2/terminal.ex: its env scrub has no AppImage rule.
+    # Upstream #13359: shells no longer inherit the terminal multiplexer session the server was started from.
     @backlog @mc
+    Scenario Outline: A shell does not join the multiplexer session the MC was started from
+      Given the MC was started inside a terminal multiplexer that set <variable>
+      When a terminal opens
+      Then the shell does not see <variable>
+
+      Examples:
+        | variable            |
+        | TMUX                |
+        | TMUX_PANE           |
+        | STY                 |
+        | WINDOW              |
+        | ZELLIJ              |
+        | ZELLIJ_SESSION_NAME |
+        | ZELLIJ_PANE_ID      |
+
+    # Upstream #13359: only per-session variables are dropped; the user's multiplexer settings pass.
+    @backlog @mc @priority-low
+    Scenario: A multiplexer's own settings still reach the shell
+      Given the MC runs with ZELLIJ_CONFIG_DIR set
+      When a terminal opens
+      Then the shell sees ZELLIJ_CONFIG_DIR
+
+    @mc
     Scenario: A shell started from an AppImage build does not see the AppImage's mount
       Given the MC was started from an AppImage with APPIMAGE, APPDIR, ARGV0 and OWD set
       And PATH holds "/tmp/.mount_hal-c2/usr/bin" and "/usr/bin"
@@ -111,8 +162,7 @@ Feature: Terminal sessions
       Then the shell sees none of APPIMAGE, APPDIR, ARGV0 or OWD
       And the shell sees PATH as "/usr/bin"
 
-    # Not yet in apps/server-ex/lib/hal_c2/terminal.ex.
-    @backlog @mc
+    @mc
     Scenario Outline: A search path that held only the AppImage's mount is removed from the shell
       Given the MC was started from an AppImage mounted at "/tmp/.mount_hal-c2"
       And <variable> holds only entries under "/tmp/.mount_hal-c2"
@@ -126,7 +176,7 @@ Feature: Terminal sessions
         | XDG_DATA_DIRS        |
         | GSETTINGS_SCHEMA_DIR |
 
-    @backlog @mc
+    @mc
     Scenario: A shell not started from an AppImage keeps its environment as it is
       Given the MC was not started from an AppImage
       And a variable named "OWD" is set
@@ -138,16 +188,14 @@ Feature: Terminal sessions
       When a client opens a terminal with the variable "APP_ENV" set to "preview"
       Then the shell sees "APP_ENV" as "preview"
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (provider_env)
-    @backlog @mc
+    @mc
     Scenario: A terminal opened for a provider instance runs with that instance's variables
       Given the Codex instance "work" sets the variable "OPENAI_BASE_URL" to "https://gw.example"
       When a client opens a terminal for the provider instance "work"
       Then the shell sees "OPENAI_BASE_URL" as "https://gw.example"
       And the terminal's snapshot does not carry the instance's variables
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (provider_env)
-    @backlog @mc
+    @mc
     Scenario Outline: An instance's home folder wins over a home variable in its environment
       Given the <driver> instance "work" has the home folder "~/work-home"
       And the instance also sets <variable> to "~/other"
@@ -159,8 +207,7 @@ Feature: Terminal sessions
         | Codex  | CODEX_HOME        |
         | Claude | CLAUDE_CONFIG_DIR |
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (provider_env)
-    @backlog @mc
+    @mc
     Scenario: The default instance of a provider opens a terminal without being configured
       Given no provider instance named "codex" is configured
       When a client opens a terminal for the provider instance "codex"
@@ -168,8 +215,7 @@ Feature: Terminal sessions
 
     # Legacy: apps/server/src/terminal/Manager.test.ts (restarts a running terminal when the resolved
     #   provider environment changes)
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (provider_env feeds the launch context)
-    @backlog @mc
+    @mc
     Scenario: A running provider terminal restarts when its instance's variables have changed
       Given a terminal running for the provider instance "work" with "PROVIDER_SECRET" set to "first-secret"
       And the instance now sets "PROVIDER_SECRET" to "second-secret"
@@ -197,8 +243,7 @@ Feature: Terminal sessions
         | a different worktree          |
         | different extra variables     |
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (open replaces an exited shell)
-    @backlog @mc
+    @mc
     Scenario: Opening a terminal whose shell has ended starts a fresh shell
       Given the thread's default terminal printed "done" and its shell has exited
       When a client opens it again in the same folder
@@ -208,15 +253,13 @@ Feature: Terminal sessions
 
     # Legacy: apps/server/src/terminal/Manager.test.ts (preserves worktree metadata when reopening an
     #   exited session)
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (launch_context keeps worktree_path)
-    @backlog @mc
+    @mc
     Scenario: Opening a terminal whose shell ended on a worktree keeps it on that worktree
       Given the thread's default terminal runs on the worktree "/work/app-feature" and its shell has exited
       When a client opens it again on that worktree
       Then the new shell's snapshot and its started event name the worktree "/work/app-feature"
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (one process per terminal)
-    @backlog @mc
+    @mc
     Scenario: Two clients opening the same terminal at once get one shell
       Given the thread has no terminal "term-2" yet
       When two clients open "term-2" at the same moment
@@ -235,8 +278,7 @@ Feature: Terminal sessions
         | terminal-7  | Terminal 7  |
         | build-watch | build-watch |
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (label is cut to 128 characters)
-    @backlog @mc
+    @mc
     Scenario: A terminal's label is never longer than 128 characters
       When a client opens a terminal whose id is 200 characters long
       Then the terminal is labelled with the first 128 characters of its id
@@ -246,6 +288,13 @@ Feature: Terminal sessions
       Given a finished thread's worktree has a running terminal
       When storage cleanup looks for worktrees to remove
       Then that worktree is kept
+
+    # Upstream #18669: terminals open for threads whose ids are very long, such as subagents'.
+    @backlog @mc
+    Scenario: A thread with a very long id gets a terminal
+      Given a subagent thread whose id is 200 characters long
+      When the user opens a terminal in it
+      Then a shell starts in the thread's workspace
 
   Rule: Clients open and hide the terminal without stopping it
 
@@ -275,14 +324,14 @@ Feature: Terminal sessions
         | 400       | 400    |
         | 900       | 750    |
 
-    @backlog @desktop
+    @desktop
     Scenario: Shrinking the window pulls a tall terminal back within its limit
       Given the terminal is showing 700 pixels tall in a window 1000 pixels tall
       When the user shrinks the window to 600 pixels tall
       Then the terminal is 450 pixels tall
       And the terminal's shell is resized to match
 
-    @backlog @desktop
+    @desktop
     Scenario: A hidden terminal stops drawing but keeps reading its shell
       Given the terminal is running a build that prints continuously
       When the user hides the terminal
@@ -291,7 +340,7 @@ Feature: Terminal sessions
       When the user shows the terminal again
       Then the terminal is drawn in full and shows the latest output
 
-    @backlog @desktop
+    @desktop
     Scenario: Hiding the terminal does not shrink the shell
       Given the shell is running at 120 columns and 30 rows
       When the user hides the terminal so that it has no size
@@ -331,8 +380,44 @@ Feature: Terminal sessions
       When the user opens another terminal next to it
       Then the new terminal starts in the same folder and worktree as the script
 
-    @backlog @mobile
+    @mobile
     Scenario: The user opens a thread's terminal on the phone
       Given a thread with a running terminal on a paired environment
       When the user opens the thread's terminal on the phone
       Then the phone shows the same terminal and its recent output
+
+    # Upstream #16039: a checkout terminal reopened in the thread's later worktree.
+    @backlog @shared
+    Scenario: A terminal in the checkout stays there after the thread gets a worktree
+      Given a thread's terminal runs in the project's checkout
+      And the thread has since moved to a worktree
+      When the user opens that terminal again
+      Then it opens in the project's checkout
+
+  Rule: Settling a thread closes its idle shells and leaves running commands alone
+
+    # Upstream #13673: closing every terminal on settle killed dev servers, so only shells at an idle prompt close.
+    @mc @backlog
+    Scenario: Settling a thread closes its terminals that wait at an idle prompt
+      Given a thread's only terminal is a shell waiting at an idle prompt
+      When the user settles the thread
+      Then that terminal is closed
+
+    @mc @backlog
+    Scenario: Settling a thread keeps a terminal that is running a command
+      Given a thread has a terminal running "sleep 60"
+      When the user settles the thread
+      Then that terminal keeps running
+
+    @mc @backlog
+    Scenario: A closed terminal keeps its output and a reopened one starts a new shell
+      Given a settled thread's idle terminal has been closed
+      When the user opens that terminal again
+      Then the terminal still shows the output from before it closed
+      And a new shell starts in the same folder
+
+    @mc @backlog
+    Scenario: A prompt helper forked from an idle shell is not a running command
+      Given a terminal's shell is waiting at an idle prompt and its prompt theme has forked a copy of the shell
+      When the terminal's running state is read
+      Then the terminal is not running

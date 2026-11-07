@@ -580,6 +580,8 @@ const Steps steps([] {
   step(QStringLiteral("%1 is offline").arg(q), [](World& world, const Captures& c, const Table&) {
     join(world, c[0], QStringLiteral("claude"));
     world.mc.setOnline(c[0], false);
+    // Long enough that the MC has stopped trying it.
+    world.mc.setTrying(c[0], false);
   });
   step(QStringLiteral("%1 runs an older server version").arg(q), [](World& world, const Captures& c, const Table&) {
     join(world, c[0], QStringLiteral("claude"));
@@ -812,6 +814,27 @@ const Steps steps([] {
     read.insert(QStringLiteral("checkedAt"), now.addSecs(-5 * 60).toUTC().toString(Qt::ISODateWithMs));
     account.insert(QStringLiteral("usageLimits"), read);
     setHub(world, QStringLiteral("Team hub"), {account});
+  });
+  // xAI leaves out the usage percentage until the account has metered use: the
+  // MC reports no windows, and nothing unavailable.
+  step(QStringLiteral("Grok is signed in with a subscription and has not used any metered credit yet"), [](World& world, const Captures&, const Table&) {
+    QJsonObject grok = codex(QStringLiteral("grok"), QStringLiteral("Grok"), QStringLiteral("dev@example.com"),
+                             {{QStringLiteral("checkedAt"), world.now().toUTC().toString(Qt::ISODateWithMs)}, {QStringLiteral("windows"), QJsonArray()}});
+    grok.insert(QStringLiteral("driver"), QStringLiteral("grok"));
+    QJsonArray providers = fakeConfig(world.mc).config.value(QLatin1String("providers")).toArray();
+    providers.append(grok);
+    setProviders(world, providers);
+  });
+  step(QStringLiteral("Grok's account is listed with the notice %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString notice = QStringLiteral("Grok: %1").arg(c[0]);
+    world.waitFor([&] { return at(usage(world), QStringLiteral("limits.notices")).toList().contains(notice); },
+                  [&] { return QStringLiteral("%1 in limits; the page is %2").arg(notice, show(usage(world))); });
+  });
+  step(QStringLiteral("it is not reported as not supported"), [](World& world, const Captures&, const Table&) {
+    for (const QVariant& notice : at(usage(world), QStringLiteral("limits.notices")).toList()) {
+      expect(!notice.toString().startsWith(QLatin1String("Grok")) || notice.toString() == QLatin1String("Grok: No limits reported."),
+             QStringLiteral("limits say %1").arg(notice.toString()));
+    }
   });
   step(QStringLiteral("the user opens Limits(?: again)?"), [](World& world, const Captures&, const Table&) {
     showUsage(world, QStringLiteral("limits"));

@@ -143,12 +143,14 @@ Item {
             tryCompare(list, "count", 2);
             let row = null;
             tryVerify(() => !!(row = findChild(sidebar, "threadRow:second")));
-            mousePress(row, 100, 40);
+            // Up into the top half of the row above.
+            const above = -row.height + 10;
+            mousePress(row, 100, row.height - 10);
             mouseMove(row, 100, 10);
-            mouseMove(row, 100, -30);
-            mouseMove(row, 100, -50);
+            mouseMove(row, 100, above + 20);
+            mouseMove(row, 100, above);
             verify(findChild(sidebar, "dropLine").visible);
-            mouseRelease(row, 100, -50);
+            mouseRelease(row, 100, above);
             tryCompare(Shell, "dispatchCount", 1);
             compare(Shell.dispatchedActions[0].action, "thread.drop");
             compare(Shell.dispatchedActions[0].payload.key, "second");
@@ -365,7 +367,8 @@ Item {
             tryVerify(() => !!findChild(sidebar, "threadRow:old"));
             let header = findChild(sidebar, "header:settled");
             verify(!!header, "Object exists");
-            compare(findChild(header, "headerCount").visible, false);
+            // The count reads "Settled 1 ›" folded or not.
+            compare(findChild(header, "headerCount").visible, true);
             mouseClick(header);
             tryCompare(list, "count", 4);
             compare(sidebar.rows.some(r => r.rowKey === "old"), false);
@@ -454,6 +457,32 @@ Item {
             const found = menu.itemAt(1);
             compare(found.text, "qml-ghostty");
             compare(found.detail, "a thread hit a usage limit");
+        }
+
+        // Scenario: The scope menu shows each project's icon or initial (features/threads/sidebar-list.feature)
+        function test_scopeMenuShowsEveryProjectsMark() {
+            const next = JSON.parse(JSON.stringify(Shell.state.sidebar));
+            next.projects = [
+                { key: "a", displayName: "t3code-tracker-plugin", status: "failed", workspaceRoot: "/a/t3code-tracker-plugin", environmentId: "env", projectId: "a" },
+                { key: "b", displayName: "shop", status: "", workspaceRoot: "/b/shop", environmentId: "env", projectId: "b" }
+            ];
+            Shell.state = { sidebar: next, projectIcons: { "env:b": { kind: "emoji", emoji: "🛒" } } };
+            let sidebar = createTemporaryObject(scopedSidebarComponent, root);
+            let menu = findChild(sidebar, "scopeMenu");
+            verify(!!menu, "Object exists");
+            tryCompare(menu, "count", 3);
+            menu.open();
+            tryCompare(menu, "opened", true);
+            const plain = findChild(menu.itemAt(1), "menuItemBadge");
+            verify(plain.visible, "a project without an icon shows a mark");
+            compare(findChild(plain, "projectIconMonogramText").text, "T");
+            verify(findChild(menu.itemAt(2), "menuItemBadge").visible);
+            // The menu takes the width its hints need, within 220–360.
+            verify(menu.width >= 220 && menu.width <= 360, "the menu is " + menu.width + " wide");
+            const hint = findChild(menu.itemAt(1), "menuItemDetail");
+            compare(hint.text, "a thread failed");
+            verify(!hint.truncated, "the hint reads whole in a " + menu.width + " menu");
+            menu.close();
         }
 
         // Scenario: Opening a thread from search shows its row in the list (features/threads/sidebar-list.feature)
@@ -567,6 +596,27 @@ Item {
             compare(list.cursorKey, "s3");
             keyClick(Qt.Key_Up);
             compare(list.cursorKey, "s2");
+        }
+
+        // A monospace list is 296 wide for a shell that sizes it by its
+        // implicit width, and 272 in a window under 1100, where a 296 list,
+        // the thread's 360 and a right panel's 360 overflow a 1000 window.
+        function test_aMonospaceListGivesWayInANarrowWindow() {
+            const window = root.Window.window;
+            const width = window.width;
+            Theme.monospace = true;
+            try {
+                const sidebar = createTemporaryObject(sidebarComponent, root);
+                window.width = 1280;
+                tryCompare(sidebar, "implicitWidth", 296);
+                window.width = 1000;
+                tryCompare(sidebar, "implicitWidth", 272);
+                Theme.monospace = false;
+                compare(sidebar.implicitWidth, 256);
+            } finally {
+                Theme.monospace = false;
+                window.width = width;
+            }
         }
     }
 }

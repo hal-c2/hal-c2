@@ -200,7 +200,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   end
 
   step "its pairing links use that address", context do
-    [link] = World.mix_output(Mix.Tasks.HalC2.Pair, :run, [[]])
+    [link, _expires] = World.mix_output(Mix.Tasks.HalC2.Pair, :run, [[]])
     base = "http://#{context.lan_host}:#{context.mc.port}/?token="
     assert String.starts_with?(link, base), link
 
@@ -794,6 +794,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     # The MC's services come up under what the bootstrap configured, as they do
     # after `HalC2.Desktop.configure/0` in `HalC2.Application`.
     for child <- [
+          HalC2.Orchestration.Wake,
           HalC2.RuntimeRecord,
           HalC2.Web,
           HalC2.Shell,
@@ -866,6 +867,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   step "an operator imports it into the MC's home", context do
     # The import runs offline, against a stopped MC's store.
     for child <- [
+          HalC2.Orchestration.Wake,
           HalC2.RuntimeRecord,
           HalC2.Web,
           HalC2.Subprocess.Orphans,

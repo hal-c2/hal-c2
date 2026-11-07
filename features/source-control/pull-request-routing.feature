@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19030
+#   https://github.com/pingdotgg/t3code/pull/19692
+#   https://github.com/pingdotgg/t3code/pull/17729
+#   https://github.com/pingdotgg/t3code/pull/12537
 #   docs/user/source-control.md (GitHub sharing across environments)
 #   packages/contracts/src/pullRequest.ts (PullRequestRouting, PullRequestRoutingIdentity, expectedAccountId, allowStale)
 #   packages/contracts/src/rpc.ts (pullRequests.routing, pullRequests.routingIdentity)
@@ -41,7 +45,7 @@ Feature: Sharing GitHub access between environments
     When a client asks "build-box" who it is on "github.com"
     Then the answer comes without asking GitHub again
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-high
   Scenario: Sharing is off until the user allows it
     Given the user never changed GitHub sharing for "build-box"
     When the local environment cannot read "acme/shop"
@@ -124,6 +128,30 @@ Feature: Sharing GitHub access between environments
     When the user comments on it from the local environment
     Then the next read of that pull request through "build-box" asks GitHub again
 
+  # Upstream #17729: only the thread's own environment updates its link, and a settled
+  # thread no longer polls, so a state seen through another environment never reached it.
+  @backlog @mc @desktop @mobile
+  Scenario: A pull request state seen through another environment reaches the thread that links it
+    Given the settled thread "t1" on the local environment links pull request 42, last seen open
+    And pull request 42 has since been closed
+    When the user opens it and it is read through "build-box"
+    Then the local environment is told "build-box" saw it closed
+    And it reads pull request 42 from GitHub itself before changing "t1"'s link
+    And "t1"'s tab, sidebar badge and tooltip show it closed
+
+  @backlog @mc
+  Scenario: A state told by another environment is checked at most once in five minutes
+    Given "build-box" told the local environment that pull request 42 is closed two minutes ago
+    When "build-box" tells it the same again
+    Then the local environment does not read pull request 42 from GitHub again
+
+  @backlog @mc
+  Scenario: A wrong state told by another environment changes nothing on its own
+    Given pull request 42 is open on GitHub
+    When "build-box" tells the local environment that pull request 42 is merged
+    Then the local environment reads pull request 42 from GitHub once
+    And the thread's link still shows it open
+
   # Legacy: packages/client-runtime/src/state/pullRequestRouting.ts (Effect.map projectId)
   @backlog @desktop @mobile
   Scenario: A pull request read through another environment belongs to the project it was opened from
@@ -139,24 +167,40 @@ Feature: Sharing GitHub access between environments
     When the user opens it
     Then the last copy is shown
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: Changing an environment's address clears its sharing
     Given the user allowed "build-box" to read and act on pull requests
     When the user changes the address of "build-box"
     Then GitHub sharing for "build-box" is off again
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A pull request of another repository is refused when only the project's own is meant
     Given "build-box" has the project "shop" for "acme/shop" on "github.com"
     When a client asks for pull request 7 of "acme/other" for "shop" without naming a host
     Then it is refused with "The change request does not belong to the selected project."
     And the host is not asked anything
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A pull request on a host no project of the environment reads is unsupported
     Given "build-box" has no project on "git.example.test"
     When a client asks for pull request 7 of "team/app" on "git.example.test"
     Then the answer is that the provider is unsupported there
+
+  @backlog @mc @priority-low
+  Scenario: Which tool owns an unrecognised host is asked once in five minutes
+    Given the projects "web" and "api" have remotes on "git.acme.dev", a host the MC does not recognise
+    When pull requests are read for both projects twice within five minutes
+    Then each hosting tool is asked about "git.acme.dev" only once
+    And a tool that timed out or failed is asked again next time
+    And saving a credential or turning a host on or off in Settings asks again
+
+  # Upstream #19030: a repository on a host nothing recognises failed every pull request lookup.
+  @backlog @mc
+  Scenario: A repository on a host nothing recognises has no pull requests
+    Given the project "shop" has its remote on "git.example.internal", a host no hosting tool recognises
+    When the status of "shop" is refreshed
+    Then "shop" has no pull requests
+    And no failed pull request lookup is logged
 
   @backlog @mc
   Scenario: An account that cannot be told is refused
@@ -173,7 +217,7 @@ Feature: Sharing GitHub access between environments
 
   # Legacy: apps/server/src/sourceControl/GitHubCli.ts (targetsVerifiedHost, executeRaw)
   # Legacy: apps/server/src/sourceControl/GitHubCli.test.ts (refuses other or implicit hosts before exposing a scoped credential to gh)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A verified credential is only handed to a command that names its own host
     Given "build-box" verified its account on "github.com"
     When a GitHub command is run for that account that <command>
@@ -196,8 +240,17 @@ Feature: Sharing GitHub access between environments
     Then each read runs with only its own account's credential
     And neither account's credential is overridden by one set in the environment
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A list that cannot read the environment's projects says so
     Given "build-box" cannot read its list of projects
     When a client lists pull requests through "build-box"
     Then it is refused with "The project list could not be read."
+
+  # Upstream #12537: the port of an ssh:// remote addresses the SSH server, not the provider's web API.
+  # MC drops the port already (HalC2.PullRequests.parse_remote uses URI.host); no step definitions yet,
+  # so it stays @backlog until features:mc can run it.
+  @backlog @mc @priority-low
+  Scenario: A remote reached over SSH on a custom port still finds its pull requests on the provider
+    Given the project's remote is "ssh://git@git.example.com:2222/team/app.git" on a self-hosted provider
+    When the user looks for the branch's pull request
+    Then the provider is asked at "git.example.com" with no port

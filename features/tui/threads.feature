@@ -342,7 +342,7 @@ Feature: Thread list and thread actions in the terminal
 
   # Stays @backlog: this card indents the title and branch two cells past the
   # status dot, but the OpenTUI client (Sidebar.tsx) draws them under the dot.
-  @tui @backlog
+  @tui @backlog @priority-high
   Scenario: An active thread is a card with its project, age, title and branch
     Given the thread "Alpha" was last active 5 minutes ago
     And the thread "Beta" is selected

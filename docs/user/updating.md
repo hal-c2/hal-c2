@@ -48,9 +48,9 @@ Update the side the notice names, then reconnect.
 
 Choose **Update server** in the notice and keep the app open while it installs and
 reconnects. The MC downloads the release (from a clustered MC that already has it,
-when one does), checks its checksum, and installs it. A change that only touches
-HAL-C2's own code loads in place without a restart: connections, terminals and
-agent sessions stay up. Anything else restarts the MC, which
+when one does), checks its checksum, and installs it. Most updates install in
+place without a restart: connections, terminals and agent sessions stay up. An
+update that brings a new Erlang runtime or native code restarts the MC, which
 [the background service](./background-service.md) starts again on the new version.
 Update the MC on every machine of a cluster; a clustered MC passes the release
 to the others.

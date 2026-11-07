@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20183
+#   https://github.com/pingdotgg/t3code/pull/18672
 #   apps/web/src/routes/_chat.index.tsx (IndexDraftLanding: the draft, the hero, the retry)
 #   apps/web/src/routes/_chat.index.tsx (HostedStaticOnboardingState), apps/web/src/routes/__root.tsx (the local environment off counts as no server)
 #   apps/web/src/components/Sidebar.logic.ts (sortScopedProjectsForSidebar, "updated_at")
@@ -56,6 +58,13 @@ Feature: A window with no thread lands on a new thread
       When the MC deletes the thread "t3"
       Then the window shows a new draft in "proj-1"
 
+    @backlog @shared
+    Scenario: Going elsewhere before the threads have loaded is not undone by the landing
+      Given the threads have not loaded yet
+      When the user opens Settings
+      And the threads finish loading
+      Then the window still shows Settings
+
     @desktop
     Scenario: A new window lands on the same draft
       Given the desktop shell is connected to its MC
@@ -72,6 +81,14 @@ Feature: A window with no thread lands on a new thread
       When the desktop can keep its drafts again
       And the user tries again
       Then the window shows a new draft in "proj-2"
+
+    # Upstream #20183: the startup draft opens in the most recent loaded project without waiting for every environment.
+    @backlog @shared
+    Scenario: A slow environment does not hold up the landing draft
+      Given "proj-1" has loaded and another environment is still connecting
+      When the app opens
+      Then the window shows a new draft in "proj-1"
+      And the user is not asked to add a project while the other environment is connecting
 
   Rule: With no projects, the user is asked to add one
 

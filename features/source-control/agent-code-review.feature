@@ -6,6 +6,7 @@
 #   apps/server-ex/lib/hal_c2/plugins/host.ex (providers with model options, organizing review threads, peers)
 #   plugins/code-review/mc/checkout.ex (the plugin's own clone, a pull request's worktree of it)
 #   docs/user/code-review.md
+#   https://github.com/pingdotgg/t3code/pull/15427
 
 @plugin-code-review
 Feature: Agent code review
@@ -197,6 +198,12 @@ Feature: Agent code review
       And "code-review" runs at most 4 reviews at once
       Then all four reviews run
 
+    @backlog @mc
+    Scenario: Pull request watching reads every reply in a review thread
+      Given an inline review thread has more than ten replies
+      When the watch looks for new remarks
+      Then replies on later pages count too, and a failed page holds the watermark
+
   Rule: The agent and its prompt are the user's to set
 
     @mc
@@ -306,6 +313,12 @@ Feature: Agent code review
       Given a review of #12 is running
       When the agent's turn ends without a report
       Then the review of #12 is failed saying the agent gave no findings
+
+    @mc
+    Scenario: A review whose agent's turn fails says why
+      Given a review of #12 is running
+      When the agent's turn fails with "The provider stopped while starting the turn."
+      Then the review of #12 is failed saying "The provider stopped while starting the turn."
 
     @mc
     Scenario: A review stopped by the agent's usage limit waits instead of failing

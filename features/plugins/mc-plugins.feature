@@ -1,6 +1,6 @@
 # Sources:
-#   apps/server-ex/lib/hal_c2/hot.ex (live module reload, code_change, lingering modules)
 #   apps/server-ex/lib/hal_c2/upgrade.ex (server.updateServer, in-place vs restart, outcome.json)
+#   apps/server-ex/lib/hal_c2/upgrade/release.ex, apps/server-ex/lib/hal_c2/upgrade/dev.ex (release upgrades)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (driver_for, runtime: provider routing)
 #   apps/server-ex/lib/hal_c2/acp.ex (built-in agents, providerInstances, instances off until enabled)
 #   apps/server-ex/lib/hal_c2/mcp.ex (HAL-C2 MCP server)
@@ -62,7 +62,7 @@ Feature: MC plugins
 
     Examples:
       | update                                                 |
-      | a developer hot-updates the MC                         |
+      | a developer reloads the MC from its checkout            |
       | the MC installs a version whose changes need no restart |
 
   @mc
@@ -158,15 +158,15 @@ Feature: MC plugins
     Then "ntfy" is restarted with the new topic
 
   @mc
-  Scenario: A hot upgrade that only changes code keeps provider sessions running
+  Scenario: A release upgrade in place keeps provider sessions running
     Given a thread has a running provider session
     When the MC installs a version whose changes need no restart
     Then the new code is loaded in place
     And the provider session and client connections stay up
 
   @mc
-  Scenario: An upgrade that changes the supervision tree restarts the MC
-    When the MC installs a version that changes a supervisor
+  Scenario: An upgrade that brings native code restarts the MC
+    When the MC installs a version that loads a NIF
     Then the MC restarts on the new version
     And the outcome of the update is reported when it is ready again
 

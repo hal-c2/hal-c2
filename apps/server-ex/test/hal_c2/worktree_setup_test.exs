@@ -219,19 +219,14 @@ defmodule HalC2.WorktreeSetupTest do
                   ]
                 })
 
-  test "a new worktree runs the setup script its hal-c2.json marks", %{repo: repo} do
+  test "a cloned repository's setup script waits until imported", %{repo: repo} do
     commit(repo, "hal-c2.json", @project_file)
     project(repo, [])
 
     snapshot = launch("list the files") |> await_phase("done")
 
-    assert %{"status" => "done", "detail" => "exited with 0"} =
-             Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))
-
-    assert %{"name" => "Setup Worktree", "command" => "echo file > setup.txt"} =
-             snapshot["setupScript"]
-
-    assert File.read!(Path.join(snapshot["worktreePath"], "setup.txt")) == "file\n"
+    assert_untrusted(snapshot)
+    assert snapshot["setupScript"] == nil
   end
 
   test "a saved setup script wins over hal-c2.json", %{repo: repo} do
@@ -302,7 +297,7 @@ defmodule HalC2.WorktreeSetupTest do
     assert %{
              "status" => "skipped",
              "detail" =>
-               "this branch's hal-c2.json setup script differs from the main checkout's, so it was not run"
+               "the checkout's setup script was not run; import or save the setup action under Settings → Project → Actions first"
            } = Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))
 
     refute File.exists?(Path.join(snapshot["worktreePath"], "setup.txt"))
@@ -327,35 +322,17 @@ defmodule HalC2.WorktreeSetupTest do
     {"scripts": [{"name": "Old", "command": "echo old", "runOnWorktreeCreate": true},]}
     """)
 
-    assert {:run, %{"name" => "Old"}} = setup.([])
+    assert {:skip, _} = setup.([])
 
     both.("hal-c2.json", @project_file)
-    assert {:run, %{"name" => "Setup Worktree"}} = setup.([])
+    assert {:skip, _} = setup.([])
 
-    # Saved actions without a setup script leave it to the file.
-    assert {:run, %{"name" => "Setup Worktree"}} =
-             setup.([%{"name" => "Dev", "command" => "echo dev"}])
-
+    # Saved actions without a setup script leave the file's script waiting for import.
+    assert {:skip, _} = setup.([%{"name" => "Dev", "command" => "echo dev"}])
     assert {:run, %{"name" => "Saved"}} = setup.([marked.("Saved")])
 
-    # The main checkout's file vouches for the branch's script: the same command,
-    # blocking the same way, under any name or place in the list.
-    vouch = fn scripts ->
-      File.write!(Path.join(root, "hal-c2.json"), JSON.encode!(%{"scripts" => scripts}))
-      setup.([])
-    end
-
-    script = %{"command" => "echo file > setup.txt", "runOnWorktreeCreate" => true}
-    async = Map.put(script, "async", true)
-
-    assert {:run, %{"name" => "Setup Worktree"}} =
-             vouch.([marked.("A"), Map.merge(script, %{"name" => "Other", "async" => false})])
-
-    for untrusted <- [[], [Map.put(script, "name", "x")], [Map.put(async, "name", "x")]],
-        do: assert({:skip, "this branch's" <> _} = vouch.(untrusted))
-
-    assert {:skip, _} =
-             vouch.([%{"name" => "x", "command" => "echo file > setup.txt", "async" => false}])
+    # The same file in the main checkout is not the user's approval.
+    assert {:skip, "the checkout's" <> _} = setup.([])
 
     File.rm!(Path.join(root, "hal-c2.json"))
     File.rm!(Path.join(root, "t3.json"))

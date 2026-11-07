@@ -63,10 +63,15 @@ defmodule HalC2.MermaidTest do
 
   test "no more than the limit are drawn at once, and the rest follow in order" do
     server = server(draw: gated(), limit: 2)
-    callers = for source <- ~w(a b c), do: render_async(server, source)
 
+    # Start each caller only once the one before it is drawing, so the tasks cannot
+    # reach the server out of order.
+    first = render_async(server, "a")
     assert_receive {:drawing, "a", a}
+    second = render_async(server, "b")
     assert_receive {:drawing, "b", _b}
+    third = render_async(server, "c")
+    callers = [first, second, third]
     refute_received {:drawing, "c", _}
 
     send(a, {:outcome, {:ok, @drawn}})
@@ -97,19 +102,19 @@ defmodule HalC2.MermaidTest do
   end
 
   test "a drawing that takes too long is stopped and the next one starts" do
-    server = server(draw: gated(), limit: 1, timeout: 20)
+    # Only "slow" waits; "next" draws at once, since the 20 ms limit applies to it too.
+    gate = gated()
+    draw = fn request -> if request.source == "slow", do: gate.(request), else: {:ok, @drawn} end
+    server = server(draw: draw, limit: 1, timeout: 20)
     slow = render_async(server, "slow")
-    next = render_async(server, "next")
-
     assert_receive {:drawing, "slow", drawer}
     ref = Process.monitor(drawer)
+    next = render_async(server, "next")
 
     assert %{"status" => "failed", "reason" => "This diagram took too long to draw."} =
              Task.await(slow)
 
     assert_receive {:DOWN, ^ref, :process, _, :killed}
-    assert_receive {:drawing, "next", next_drawer}
-    send(next_drawer, {:outcome, {:ok, @drawn}})
     assert Task.await(next) == @drawn
   end
 

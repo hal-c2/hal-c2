@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23900
+#   https://github.com/pingdotgg/t3code/pull/20073
 #   apps/web/src/components/threadActionMenu.logic.ts (Archive thread, Delete)
 #   apps/web/src/hooks/useThreadActions.ts (archiveThread and deleteThread: where the open thread's window goes)
 #   apps/web/src/components/Sidebar.logic.ts (getFallbackThreadIdAfterDelete)
@@ -33,7 +35,7 @@ Feature: Archiving and deleting threads
     Then "Old spike" is back in the thread list
     And the status line reads "Unarchived."
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: Archiving and unarchiving from the desktop and phone
     When the user archives "Old spike"
     And the user restores "Old spike" from the archived threads
@@ -45,7 +47,7 @@ Feature: Archiving and deleting threads
     When the user opens the thread's menu
     Then archiving is unavailable
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: Archiving waits for the agent on the desktop and phone
     Given the agent is working in "Old spike"
     When the user opens the thread menu
@@ -56,6 +58,15 @@ Feature: Archiving and deleting threads
     Given "Old spike" has a queued turn
     When a client archives "Old spike"
     Then the queued turn is cancelled
+
+  # Upstream #20073: archive cancels a run still preparing its workspace together with its
+  # preparation, and reopening the thread does not let that work resume.
+  @backlog @mc
+  Scenario: Archiving cancels a run still preparing its workspace
+    Given "Old spike" has a turn whose worktree is still being prepared
+    When a client archives "Old spike"
+    Then the turn and its preparation are cancelled
+    And unarchiving "Old spike" does not start them again
 
   @mc
   Scenario: Archived threads are listed separately
@@ -90,7 +101,7 @@ Feature: Archiving and deleting threads
     When the user archives "Old spike"
     Then a draft thread opens in "shop"
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: Archiving the open thread when the next thread cannot be opened
     Given the user is viewing "Old spike"
     And opening another thread fails
@@ -147,6 +158,14 @@ Feature: Archiving and deleting threads
     When the user deletes "Old spike"
     Then the thread and its worktree are deleted without a question
 
+  # Upstream #23900: the worktree was counted as the subagent's and left behind.
+  @backlog @mc
+  Scenario: Deleting a thread whose subagents shared its worktree removes the worktree
+    Given "Old spike" and the subagents it started are the only threads using its worktree
+    And the user chose to always remove orphaned worktrees
+    When the user deletes "Old spike"
+    Then the worktree is removed once its subagents are no longer working
+
   @desktop @mobile @backlog-mobile
   Scenario: A worktree that cannot be removed is reported
     Given the worktree of "Old spike" cannot be removed
@@ -154,14 +173,14 @@ Feature: Archiving and deleting threads
     Then "Old spike" is deleted
     And the user is told "Failed to delete worktree"
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: A worktree removed whose Git status cannot be refreshed is reported
     Given the worktree of "Old spike" is removed but the project's Git status cannot be read afterwards
     When the user deletes "Old spike" and its worktree
     Then "Old spike" is deleted
     And the user is told "Worktree deleted, but Git status refresh failed"
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: Deleting the open thread when the next thread cannot be opened
     Given the user is viewing "Old spike"
     And the next thread cannot be opened
@@ -234,7 +253,7 @@ Feature: Archiving and deleting threads
     When the user deletes "Old spike" from the archived threads
     Then "Old spike" is no longer in the archived threads
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: An unarchived thread leaves the archived threads at once
     Given "Old spike" is archived
     When the user restores "Old spike" before the environment lists the archived threads again

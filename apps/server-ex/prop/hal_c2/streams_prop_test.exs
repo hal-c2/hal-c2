@@ -17,6 +17,18 @@ defmodule HalC2.StreamsPropTest do
   patch, so a client that folds the appends must hold the cut text a snapshot shows,
   for each of the wire's cut keys and for an item growing both in one commit.
 
+  Memory holds a single run's turn items, so settled runs go cold and are read back
+  from disk (`HalC2.StreamState`, "Hot and cold"): nothing a subscriber is sent, and
+  nothing a read of the stream returns, may tell. A read (`HalC2.Streams.read/2`) may
+  walk the cold rows long after it took the state, while commits bring cold entities
+  back to memory and write snapshots: it still sees the stream as it took it. A stream can also be stopped and left
+  as an older MC left it, one whole snapshot as of some recent event, which the next
+  start migrates in the background while it serves: nobody may tell that either.
+
+  A writer may append to the store behind a stream, as an import does, and then stop
+  it (`HalC2.Streams.stop/1`): whatever the stream held, and whatever it wrote on the
+  way out, the next start holds what was written too.
+
   A client's subscription may carry a tag, a new one each time it follows, as a
   socket mints them. Its messages come under that tag, and the subscription it
   replaced is told so once under the old one, and is sent nothing else. Its own tag
@@ -29,12 +41,13 @@ defmodule HalC2.StreamsPropTest do
 
   alias HalC2.Prop.StreamsCollector, as: Collector
   alias HalC2.{Store, Streams, StreamState}
-  alias HalC2.Streams.{Server, View}
+  alias HalC2.Streams.View
 
   @moduletag timeout: :infinity
 
   @streams ["s-a", "s-b"]
   @names ["p1", "p2", "p3"]
+  @readers ["q1", "q2"]
   @runs ["r1", "r2", "r3"]
   @items ["i1", "i2", "i3", "i4"]
   @messages ["m1", "m2", "m3"]
@@ -52,11 +65,13 @@ defmodule HalC2.StreamsPropTest do
   @max_replay 2_000
 
   property "subscribers see exactly the acknowledged changes and converge",
-    numtests: HalC2.Prop.numtests(100),
+    # A read taken over cold rows that a later commit brings back takes a few hundred
+    # cases to come up.
+    numtests: HalC2.Prop.numtests(300),
     max_size: 40 do
     forall cmds <- commands(__MODULE__) do
       trap_exit do
-        {history, state, result} = run_case(cmds, &run_commands(__MODULE__, &1))
+        {history, state, result} = run_case(cmds, &run_and_finish_reads/1)
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -65,11 +80,38 @@ defmodule HalC2.StreamsPropTest do
     end
   end
 
+  # The commands, then every read they left open walked once the streams stopped,
+  # idle, writing the snapshots of whatever they brought back to memory since: one
+  # taken early has seen the most change under it.
+  defp run_and_finish_reads(cmds) do
+    {history, state, result} = run_commands(__MODULE__, cmds)
+    if state.reads != %{}, do: for(id <- @streams, do: :ok = idle_stop(id))
+
+    unfinished =
+      for {reader, _} = read <- state.reads,
+          result == :ok,
+          walked = finish_read(reader),
+          not postcondition(state, {:call, __MODULE__, :finish_read, [reader]}, walked),
+          do: {read, walked}
+
+    result = if unfinished == [], do: result, else: {:unfinished_read, unfinished}
+    {history, state, result}
+  end
+
   defp run_case(cmds, run) do
     HalC2.Prop.scratch_home("streams")
+    # So few turn items stay in memory that settled runs go cold (`HalC2.StreamState`,
+    # "Hot and cold"), which no subscriber may notice.
+    hot = Application.get_env(:hal_c2, :stream_hot_items)
+    Application.put_env(:hal_c2, :stream_hot_items, 1)
+
+    # Every older MC's snapshot is too long to read whole: it migrates in the background.
+    max_legacy = Application.get_env(:hal_c2, :stream_max_legacy_bytes)
+    Application.put_env(:hal_c2, :stream_max_legacy_bytes, 1)
 
     HalC2.Prop.start_services([
       {Store, path: Store.home_path()},
+      Streams.Migrations,
       Streams
     ])
 
@@ -79,7 +121,20 @@ defmodule HalC2.StreamsPropTest do
       run.(cmds)
     after
       for name <- @names, do: Process.exit(collector(name), :kill)
+
+      for reader <- @readers,
+          pid = Process.delete({:reader, reader}),
+          do: Process.exit(pid, :kill)
+
       HalC2.Prop.stop_services()
+
+      if hot,
+        do: Application.put_env(:hal_c2, :stream_hot_items, hot),
+        else: Application.delete_env(:hal_c2, :stream_hot_items)
+
+      if max_legacy,
+        do: Application.put_env(:hal_c2, :stream_max_legacy_bytes, max_legacy),
+        else: Application.delete_env(:hal_c2, :stream_max_legacy_bytes)
     end
   end
 
@@ -91,12 +146,14 @@ defmodule HalC2.StreamsPropTest do
   #   tag: nil | n, retired: the tags it had before, told: the retired tags it replaced while
   #   they were followed, oldest first}
   # tags: the last tag minted. A tag only goes up, so none is ever used twice.
-  def initial_state, do: %{seq: 0, streams: %{}, subs: %{}, tags: 0}
+  # reads: reader => %{id: stream, fold: the stream as the reader took it}
+  def initial_state, do: %{seq: 0, streams: %{}, subs: %{}, tags: 0, reads: %{}}
 
   def command(state) do
     base = [
       {8, changes_call(state, :commit)},
       {3, changes_call(state, :transact)},
+      {2, changes_call(state, :write_behind)},
       {3, {:call, __MODULE__, :subscribe_plain, [name(), stream(), oneof([:fresh, :bogus])]}},
       {2, {:call, __MODULE__, :watch, [name(), stream()]}},
       {4,
@@ -116,10 +173,19 @@ defmodule HalC2.StreamsPropTest do
       {2, {:call, __MODULE__, :subscribers, [stream()]}},
       {1, {:call, __MODULE__, :idle_stop, [stream()]}},
       {1, {:call, __MODULE__, :crash_stream, [stream(), oneof([:kill, :boom])]}},
+      {3, {:call, __MODULE__, :to_legacy, [stream(), integer(0, 3)]}},
       {1, {:call, __MODULE__, :restart_streams, []}},
       {1, {:call, __MODULE__, :restart_store, []}},
-      {2, {:call, __MODULE__, :bulk, [stream(), oneof([600, @max_replay + 1])]}}
+      {2, {:call, __MODULE__, :bulk, [stream(), oneof([600, @max_replay + 1])]}},
+      {6, {:call, __MODULE__, :open_read, [oneof(@readers), stream()]}}
     ]
+
+    reads = Map.keys(state.reads)
+
+    with_reads =
+      if reads == [],
+        do: [],
+        else: [{2, {:call, __MODULE__, :finish_read, [oneof(reads)]}}]
 
     subs = Map.keys(state.subs)
 
@@ -156,7 +222,7 @@ defmodule HalC2.StreamsPropTest do
            end}
         ]
 
-    frequency(base ++ with_subs)
+    frequency(base ++ with_subs ++ with_reads)
   end
 
   defp stream, do: oneof(@streams)
@@ -183,18 +249,22 @@ defmodule HalC2.StreamsPropTest do
   defp intent do
     text = oneof(["", "a", "bc", "héllo"])
 
-    oneof([
-      {:run, oneof(@runs), oneof(["queued", "running", "done", "rolled_back"])},
-      {:item, oneof(@items), text},
-      {:append, oneof(@items), oneof(["a", "bc", "é"])},
-      {:subagent, oneof(@items), cut_key(), progress()},
-      {:grow, oneof(@items), cut_key(), progress()},
-      {:reset, oneof(@items), cut_key(), progress(), oneof([:unset, :delete])},
-      {:message, oneof(@messages)},
-      {:delete, oneof(Enum.map(@items, &{"turn-item", &1}) ++ Enum.map(@notes, &{"note", &1}))},
-      {:delete, oneof(Enum.map(@messages, &{"message", &1}))},
-      {:note, oneof(@notes), oneof([nil, true, 1, "x"]), boolean()},
-      {:void, oneof(@items)}
+    # Runs often, and often settled with their items, so they go cold.
+    frequency([
+      {3, {:run, oneof(@runs), oneof(["queued", "running", "completed"])}},
+      {3, {:finished, oneof(@runs)}},
+      {1, {:run, oneof(@runs), "rolled_back"}},
+      {2, {:item, oneof(@items), text}},
+      {1, {:append, oneof(@items), oneof(["a", "bc", "é"])}},
+      {1, {:subagent, oneof(@items), cut_key(), progress()}},
+      {1, {:grow, oneof(@items), cut_key(), progress()}},
+      {1, {:reset, oneof(@items), cut_key(), progress(), oneof([:unset, :delete])}},
+      {1, {:message, oneof(@messages)}},
+      {1,
+       {:delete, oneof(Enum.map(@items, &{"turn-item", &1}) ++ Enum.map(@notes, &{"note", &1}))}},
+      {1, {:delete, oneof(Enum.map(@messages, &{"message", &1}))}},
+      {1, {:note, oneof(@notes), oneof([nil, true, 1, "x"]), boolean()}},
+      {1, {:void, oneof(@items)}}
     ])
   end
 
@@ -219,18 +289,30 @@ defmodule HalC2.StreamsPropTest do
   @doc false
   def resolve(intents, st) do
     {changes, _} =
-      Enum.flat_map_reduce(intents, st, fn intent, st ->
-        case change(intent, st) do
-          nil ->
-            {[], st}
+      Enum.flat_map_reduce(intents, st, fn
+        {:finished, run}, st ->
+          # The run, each of its items, then the run completed: one change at a time.
+          [{:run, run, "running"}]
+          |> Kernel.++(for {item, ^run} <- @run_of, item in @items, do: {:item, item, "t"})
+          |> Kernel.++([{:run, run, "completed"}])
+          |> Enum.flat_map_reduce(st, &step/2)
 
-          {kind, id, patch} = change ->
-            event = %{seq: st.seq, kind: kind, entity: id, patch: patch, at: 0}
-            {[change], StreamState.apply_event(st, event)}
-        end
+        intent, st ->
+          step(intent, st)
       end)
 
     changes
+  end
+
+  defp step(intent, st) do
+    case change(intent, st) do
+      nil ->
+        {[], st}
+
+      {kind, id, patch} = change ->
+        event = %{seq: st.seq, kind: kind, entity: id, patch: patch, at: 0}
+        {[change], StreamState.apply_event(st, event)}
+    end
   end
 
   defp change({:run, id, status}, st) do
@@ -361,6 +443,12 @@ defmodule HalC2.StreamsPropTest do
 
   def precondition(state, {:call, _, :check, [key]}), do: Map.has_key?(state.subs, key)
 
+  def precondition(state, {:call, _, :open_read, [reader, _]}),
+    do: not Map.has_key?(state.reads, reader)
+
+  def precondition(state, {:call, _, :finish_read, [reader]}),
+    do: Map.has_key?(state.reads, reader)
+
   def precondition(_state, _call), do: true
 
   defp new_tag?(state, tag), do: tag == nil or tag > state.tags
@@ -369,6 +457,10 @@ defmodule HalC2.StreamsPropTest do
   def next_state(state, _result, {:call, _, call, [id, changes]})
       when call in [:commit, :transact],
       do: append(state, id, changes)
+
+  # Its subscribers were sent none of what was written behind it, and are ended.
+  def next_state(state, _result, {:call, _, :write_behind, [id, changes]}),
+    do: state |> stop_subs(fn {_, s} -> s == id end) |> append(id, changes)
 
   def next_state(state, _result, {:call, _, :bulk, [id, n]}),
     do: append(state, id, bulk_changes(n))
@@ -424,6 +516,9 @@ defmodule HalC2.StreamsPropTest do
   def next_state(state, _result, {:call, _, :crash_stream, [id, _]}),
     do: stop_subs(state, fn {_, s} -> s == id end)
 
+  def next_state(state, _result, {:call, _, :to_legacy, [id, _]}),
+    do: stop_subs(state, fn {_, s} -> s == id end)
+
   def next_state(state, _result, {:call, _, :restart_streams, []}),
     do: stop_subs(state, fn _ -> true end)
 
@@ -437,6 +532,12 @@ defmodule HalC2.StreamsPropTest do
         sub
     end)
   end
+
+  def next_state(state, _result, {:call, _, :open_read, [reader, id]}),
+    do: put_in(state.reads[reader], %{id: id, fold: fold(state, id)})
+
+  def next_state(state, _result, {:call, _, :finish_read, [reader]}),
+    do: %{state | reads: Map.delete(state.reads, reader)}
 
   def next_state(state, _result, _call), do: state
 
@@ -525,6 +626,13 @@ defmodule HalC2.StreamsPropTest do
   def postcondition(state, {:call, _, :state, [id]}, result),
     do: result == comparable(fold(state, id))
 
+  def postcondition(state, {:call, _, :open_read, [_, id]}, result),
+    do: result == {:ok, fold(state, id).seq}
+
+  # However the stream moved on, the read walks it as it took it.
+  def postcondition(state, {:call, _, :finish_read, [reader]}, result),
+    do: result == comparable(state.reads[reader].fold)
+
   def postcondition(state, {:call, _, :subscribers, [id]}, result) do
     expected =
       for {{name, ^id}, %{active: true}} <- state.subs, into: MapSet.new(), do: collector(name)
@@ -584,7 +692,12 @@ defmodule HalC2.StreamsPropTest do
         do:
           match?([{:events, _}], initial) and
             strip(elem(hd(initial), 1)) == strip(Enum.reject(missed, &StreamState.void?/1)),
-        else: snapshot_ok?(initial, sub.live, StreamState.rows(fold_until(state, id, sub.live)))
+        else:
+          snapshot_ok?(
+            initial,
+            sub.live,
+            Enum.to_list(StreamState.rows(fold_until(state, id, sub.live)))
+          )
 
     tail = Enum.filter(events, &(&1.seq > sub.live and &1.seq <= upto))
 
@@ -667,7 +780,23 @@ defmodule HalC2.StreamsPropTest do
   defp entities(st),
     do: for({kind, id, e} <- StreamState.rows(st), into: %{}, do: {{kind, id}, e})
 
-  defp comparable(st), do: %{st | updated_at: nil}
+  # What anyone reading the stream sees, whichever of its runs memory holds: hot
+  # and cold are the stream's business, so they must not show.
+  defp comparable(st) do
+    changed =
+      case StreamState.changed_since(st, 0) do
+        :unknown -> :unknown
+        {upserts, deletes} -> {Enum.to_list(upserts), deletes}
+      end
+
+    %{
+      seq: st.seq,
+      since: st.since,
+      rows: Enum.to_list(StreamState.rows(st)),
+      changed: changed,
+      counts: StreamState.item_counts(st)
+    }
+  end
 
   # --- system under test --------------------------------------------------------
 
@@ -688,6 +817,13 @@ defmodule HalC2.StreamsPropTest do
     rescue
       ArgumentError -> if Streams.ensure(id) == pid, do: :ok, else: :restarted
     end
+  end
+
+  # Appends to the store, not through the stream, as an import does, then stops the
+  # stream as the import then does.
+  def write_behind(id, changes) do
+    if changes != [], do: {:ok, _} = Store.append([{:thread, id, changes}])
+    Streams.stop(id)
   end
 
   def bulk(id, n), do: Streams.commit(id, :thread, bulk_changes(n))
@@ -796,7 +932,47 @@ defmodule HalC2.StreamsPropTest do
 
   def check({name, id}), do: Collector.get(collector(name), id)
 
-  def state(id), do: comparable(Server.state(Streams.ensure(id)))
+  def state(id), do: Streams.read(id, &comparable/1)
+
+  # A reader takes the stream's state, and walks it only when `finish_read/1` says.
+  def open_read(reader, id) do
+    parent = self()
+
+    pid =
+      spawn(fn ->
+        Streams.read(id, fn st ->
+          send(parent, {:opened, self(), st.seq})
+          receive do: (:walk -> send(parent, {:walked, self(), comparable(st)}))
+        end)
+      end)
+
+    Process.put({:reader, reader}, pid)
+    ref = Process.monitor(pid)
+
+    receive do
+      {:opened, ^pid, seq} ->
+        Process.demonitor(ref, [:flush])
+        {:ok, seq}
+
+      {:DOWN, ^ref, :process, ^pid, reason} ->
+        {:down, reason}
+    end
+  end
+
+  def finish_read(reader) do
+    pid = Process.delete({:reader, reader})
+    ref = Process.monitor(pid)
+    send(pid, :walk)
+
+    receive do
+      {:walked, ^pid, walked} ->
+        Process.demonitor(ref, [:flush])
+        walked
+
+      {:DOWN, ^ref, :process, ^pid, reason} ->
+        {:down, reason}
+    end
+  end
 
   def subscribers(id) do
     case Registry.lookup(HalC2.Streams.Registry, id) do
@@ -843,6 +1019,51 @@ defmodule HalC2.StreamsPropTest do
       [] ->
         :ok
     end
+  end
+
+  # The stream stops, and its storage is left as an older MC left it: no hot snapshot
+  # nor cold rows, one whole snapshot as of `back` events before its last instead.
+  def to_legacy(id, back) do
+    crash_stream(id, :kill)
+    path = Store.path()
+    last = Store.reduce_stream(path, id, 0, 0, fn event, _ -> event.seq end)
+    at = max(last - back, 0)
+
+    legacy =
+      Store.reduce_stream(path, id, 0, StreamState.new(), fn event, state ->
+        if event.seq <= at, do: StreamState.apply_event(state, event), else: state
+      end)
+
+    if last > 0 do
+      legacy = %{Map.from_struct(legacy) | v: 3} |> Map.drop([:floor, :dirty, :src])
+      blob = :erlang.term_to_binary(Map.put(legacy, :__struct__, StreamState), [:compressed])
+      {:ok, db} = Exqlite.Sqlite3.open(path)
+
+      try do
+        for sql <- [
+              "DELETE FROM hot_snapshots WHERE stream = (SELECT key FROM streams WHERE id = ?1)",
+              "DELETE FROM cold WHERE stream = (SELECT key FROM streams WHERE id = ?1)"
+            ],
+            do: sql!(db, sql, [id])
+
+        sql!(
+          db,
+          "INSERT INTO snapshots (stream, seq, state) SELECT key, ?2, ?3 FROM streams WHERE id = ?1 ON CONFLICT(stream) DO UPDATE SET seq = excluded.seq, state = excluded.state",
+          [id, at, {:blob, blob}]
+        )
+      after
+        Exqlite.Sqlite3.close(db)
+      end
+    end
+
+    :ok
+  end
+
+  defp sql!(db, sql, args) do
+    {:ok, stmt} = Exqlite.Sqlite3.prepare(db, sql)
+    :ok = Exqlite.Sqlite3.bind(stmt, args)
+    :done = Exqlite.Sqlite3.step(db, stmt)
+    :ok = Exqlite.Sqlite3.release(db, stmt)
   end
 
   def restart_streams, do: HalC2.Prop.restart_service(Streams)

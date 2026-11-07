@@ -1,5 +1,34 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24738
+#   https://github.com/pingdotgg/t3code/pull/18823
+#   https://github.com/pingdotgg/t3code/pull/19801
+#   https://github.com/pingdotgg/t3code/pull/24808
+#   https://github.com/pingdotgg/t3code/pull/20533
+#   https://github.com/pingdotgg/t3code/pull/15007
+#   https://github.com/pingdotgg/t3code/pull/18432
+#   https://github.com/pingdotgg/t3code/pull/18413
+#   https://github.com/pingdotgg/t3code/pull/18407
+#   https://github.com/pingdotgg/t3code/pull/21250
+#   https://github.com/pingdotgg/t3code/pull/18408
+#   https://github.com/pingdotgg/t3code/pull/17725
+#   https://github.com/pingdotgg/t3code/pull/20160
+#   https://github.com/pingdotgg/t3code/pull/15946
+#   https://github.com/pingdotgg/t3code/pull/17167
+#   https://github.com/pingdotgg/t3code/pull/17635
+#   https://github.com/pingdotgg/t3code/pull/16627
+#   https://github.com/pingdotgg/t3code/pull/16612
+#   https://github.com/pingdotgg/t3code/pull/14918
+#   https://github.com/pingdotgg/t3code/pull/15415
+#   https://github.com/pingdotgg/t3code/pull/15804
+#   https://github.com/pingdotgg/t3code/pull/16002
+#   https://github.com/pingdotgg/t3code/pull/16095
+#   https://github.com/pingdotgg/t3code/pull/16203
+#   https://github.com/pingdotgg/t3code/pull/16204
+#   https://github.com/pingdotgg/t3code/pull/16208
+#   https://github.com/pingdotgg/t3code/pull/16235
+#   https://github.com/pingdotgg/t3code/pull/16270
 #   https://github.com/pingdotgg/t3code/pull/13061
+#   https://github.com/pingdotgg/t3code/pull/13211
 #   docs/user/source-control.md (Linked pull requests)
 #   packages/contracts/src/git.ts (GitResolvePullRequestInput, GitPreparePullRequestThreadInput, GitPreparePullRequestThreadResult)
 #   packages/contracts/src/rpc.ts (git.resolvePullRequest, git.preparePullRequestThread, pullRequests.linkedThreads, pullRequests.preview)
@@ -31,6 +60,9 @@
 #   apps/server/src/vcs/GitVcsDriverCore.ts (refreshCheckedOutBranch, ensureRemote)
 #   apps/server/src/sourceControl/gitHubPullRequests.ts, gitLabMergeRequests.ts, bitbucketPullRequests.ts, forgejoPullRequests.ts (cross-repository detection)
 #   apps/server/src/sourceControl/ForgejoSourceControlProvider.ts (checkoutChangeRequest, listChangeRequests, createChangeRequest)
+#   https://github.com/pingdotgg/t3code/pull/15057
+#   https://github.com/pingdotgg/t3code/pull/15061
+#   https://github.com/pingdotgg/t3code/pull/14242
 
 Feature: Threads that work on or link pull requests
   A thread can start from a pull request, checked out locally or in its own worktree,
@@ -74,7 +106,7 @@ Feature: Threads that work on or link pull requests
     Then the worktree is on the branch "hal-c2/pr-42/tax" with no upstream
 
   # Legacy: apps/server/src/sourceControl/gitHubPullRequests.ts, gitLabMergeRequests.ts, bitbucketPullRequests.ts, forgejoPullRequests.ts (isCrossRepository)
-  @backlog @mc
+  @mc
   Scenario Outline: Each host tells a pull request from another repository in its own way
     Given a pull request on <host> where <given>
     When the user starts a thread on it
@@ -92,7 +124,7 @@ Feature: Threads that work on or link pull requests
       | Bitbucket | the source repository was deleted                                           | from the same repository     |
 
   # Legacy: apps/server/src/sourceControl/GitHubCli.ts (older gh without headRepositoryOwner)
-  @backlog @mc
+  @mc
   Scenario: An older GitHub CLI that names only the source repository's owner and name still gives its full name
     Given the GitHub CLI answers with the source repository's name and its owner's login but no full name
     When the user starts a thread on a pull request from that repository
@@ -104,6 +136,15 @@ Feature: Threads that work on or link pull requests
     When the user starts a thread on pull request 42 in a new worktree
     Then the existing worktree is reused
     And the user is told the checkout is not on the pull request's head
+
+  # Upstream #18407: the pull request's branch is looked up by name through every page of
+  # local branches, not only the first hundred.
+  @backlog @mc @priority-low
+  Scenario: An existing pull request worktree is found among many branches
+    Given the repository has 500 local branches
+    And a worktree for pull request 42 exists on a branch that sorts after the first hundred
+    When the user starts a thread on pull request 42 in a new worktree
+    Then the existing worktree is reused
 
   @mc
   Scenario: A pull request branch already in the main checkout cannot get a worktree
@@ -118,8 +159,7 @@ Feature: Threads that work on or link pull requests
     Then the setup script does not run
 
   # Legacy: apps/server/src/git/GitManager.ts (reuseExistingWorktree), GitVcsDriverCore.ts (refreshCheckedOutBranch)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/pull_requests/checkout.ex (advance)
-  @mc @backlog
+  @mc
   Scenario: A reused pull request worktree that holds nothing of its own follows the pull request
     Given a worktree for pull request 42 exists with no changes or commits of its own
     And the pull request has since received new commits
@@ -128,7 +168,7 @@ Feature: Threads that work on or link pull requests
     And the user is not told the checkout is behind
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (refreshCheckedOutBranch: rewritten head)
-  @mc @backlog
+  @mc
   Scenario: A pull request that was rewritten is taken by a worktree that holds nothing of its own
     Given a worktree for pull request 42 exists with no changes or commits of its own
     And the pull request's author has since rebased it and pushed over the old commits
@@ -137,7 +177,7 @@ Feature: Threads that work on or link pull requests
     And the commit it was on can still be found afterwards
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (refreshCheckedOutBranch), GitManager.ts (reuseExistingWorktree)
-  @mc @backlog
+  @mc
   Scenario Outline: A reused pull request worktree is left as it is when moving it could lose work
     Given a worktree for pull request 42 exists and <state>
     When the user starts a thread on pull request 42 in a new worktree
@@ -150,8 +190,9 @@ Feature: Threads that work on or link pull requests
       | it has commits of its own and the pull request was rewritten                       |
       | the host cannot say what the pull request's head is and the branch was cut from another branch |
 
+  # Upstream #18413: the reused branch's upstream and tracking refs are no longer rewritten to the fork.
   # Legacy: apps/server/src/git/GitManager.ts (reuseExistingWorktree: findLocalHeadBranch)
-  @mc @backlog
+  @mc
   Scenario: A branch that only shares a fork pull request's branch name is left alone
     Given pull request 42 comes from the fork branch "main"
     And the user's own "main" is checked out in another worktree
@@ -160,8 +201,7 @@ Feature: Threads that work on or link pull requests
     And the thread is told the checkout is not on the pull request's head
 
   # Legacy: apps/server/src/git/GitManager.ts (configurePullRequestHeadUpstream, ensureRemote)
-  # Uncertain: the scenario "A pull request from a fork gets a branch of its own" says the branch has no upstream
-  @mc @backlog
+  @mc
   Scenario: A pull request branch follows the pull request's own branch so a push lands on it
     Given pull request 42 comes from the fork "sam/shop" branch "tax"
     When the user starts a thread on pull request 42 in a new worktree
@@ -169,7 +209,7 @@ Feature: Threads that work on or link pull requests
     And the branch follows "tax" on that remote
 
   # Legacy: apps/server/src/git/GitManager.ts (shouldPreferSshRemote)
-  @mc @backlog
+  @mc
   Scenario Outline: A fork is added the way the project's own remote is reached
     Given the project's "origin" is reached over <protocol>
     And pull request 42 comes from the fork "sam/shop"
@@ -182,7 +222,7 @@ Feature: Threads that work on or link pull requests
       | https    |
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (ensureRemote)
-  @mc @backlog
+  @mc
   Scenario: A fork the checkout already has a remote for is not added a second time
     Given the checkout already has a remote "sam-fork" for the address of "sam/shop"
     When the user starts a thread on pull request 42 from "sam/shop" in a new worktree
@@ -190,7 +230,7 @@ Feature: Threads that work on or link pull requests
     And no further remote is added
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (ensureRemote: preferredName collisions)
-  @mc @backlog
+  @mc
   Scenario: A remote already named after the fork's owner but pointing elsewhere gets a numbered name
     Given the checkout has a remote "sam" that points at another repository
     When the user starts a thread on pull request 42 from "sam/shop" in a new worktree
@@ -198,7 +238,7 @@ Feature: Threads that work on or link pull requests
     And the existing "sam" remote is not changed
 
   # Legacy: apps/server/src/git/GitManager.ts (materializePullRequestHeadBranch)
-  @mc @backlog
+  @mc
   Scenario: A fork that cannot be fetched falls back to the pull request's own ref
     Given pull request 42 comes from the fork "sam/shop" and the fork cannot be fetched from
     When the user starts a thread on pull request 42 in a new worktree
@@ -206,7 +246,7 @@ Feature: Threads that work on or link pull requests
     And the thread starts in a worktree on it
 
   # Legacy: apps/server/src/git/GitManager.ts (GitPullRequestMaterializationError)
-  @mc @backlog
+  @mc
   Scenario: A pull request that cannot be fetched either way names both failures
     Given pull request 42 comes from the fork "sam/shop"
     And neither the fork nor the host's pull request ref can be fetched
@@ -214,8 +254,36 @@ Feature: Threads that work on or link pull requests
     Then the thread is not prepared
     And the user is told that both fetches failed for pull request 42
 
+  # Upstream #15007: a failed checkout showed no reason, or the reason of the attempt before.
+  @backlog @desktop
+  Scenario: A failed pull request checkout says why this attempt failed
+    Given starting a thread on pull request 42 in a new worktree failed because its branch is checked out elsewhere
+    When the user tries again and it fails because the fetch was refused
+    Then the user is told the fetch was refused, with what to do about it
+    And not the reason the first attempt failed
+
+  # Upstream #17725: Azure DevOps publishes only refs/pull/<n>/merge, never a head ref.
+  @backlog @mc @priority-low
+  Scenario: An Azure DevOps pull request from the same repository is checked out by its branch
+    Given open Azure DevOps pull request 42 comes from the branch "feature/azure-checkout" of the checkout's own repository
+    When the user starts a thread on pull request 42 in a new worktree
+    Then "feature/azure-checkout" is fetched from the checkout's remote
+    And the thread starts in a worktree on the pull request's head that follows "origin/feature/azure-checkout"
+
+  @backlog @mc @priority-low
+  Scenario Outline: An Azure DevOps pull request is not checked out from a branch that only shares its name
+    Given Azure DevOps pull request 42 <origin>
+    And the checkout's remote has a branch of the same name
+    When the user starts a thread on pull request 42 in a new worktree
+    Then that branch is not fetched in place of the pull request
+
+    Examples:
+      | origin                                                 |
+      | comes from a fork                                      |
+      | belongs to another repository of the same organization |
+
   # Legacy: apps/server/src/git/GitManager.ts (configurePullRequestHeadUpstream: Effect.catch logs)
-  @mc @backlog
+  @mc
   Scenario: A pull request thread is still prepared when its branch cannot be set to follow the remote
     Given the remote cannot be reached when the branch is about to be set to follow it
     When the user starts a thread on pull request 42 in the local checkout
@@ -223,7 +291,7 @@ Feature: Threads that work on or link pull requests
     And the thread is prepared without an upstream
 
   # Legacy: apps/server/src/sourceControl/ForgejoSourceControlProvider.ts (checkoutChangeRequest, fj)
-  @mc @backlog
+  @mc
   Scenario Outline: A Forgejo pull request is checked out from the server's own pull request ref
     Given the Forgejo CLI is signed in and the checkout's remote is reached over <protocol>
     And <branch state>
@@ -238,21 +306,30 @@ Feature: Threads that work on or link pull requests
       | HTTPS    | the checkout has a "pulls/42"     | the existing branch "pulls/42"                 |
 
   # Legacy: apps/server/src/sourceControl/ForgejoSourceControlProvider.ts (checkoutChangeRequest, force: reset --keep)
-  @mc @backlog
+  @mc
   Scenario: A forced Forgejo checkout brings the branch to the pull request's head and keeps uncommitted files
     Given the checkout has a branch "pulls/42" behind pull request 42's head and an uncommitted file
     When the user starts a thread on Forgejo pull request 42 in the local checkout forcing the update
     Then the branch is at pull request 42's head
     And the uncommitted file is still there
 
+  @mc
+  Scenario: A Forgejo response cannot turn the preserving reset into a hard reset
+    Given Forgejo reports pull request 42's head SHA as "--hard"
+    And the checkout has a branch "pulls/42" behind pull request 42's head and an uncommitted file
+    When the user starts a thread on Forgejo pull request 42 in the local checkout forcing the update
+    Then the user is told the Forgejo pull request head SHA is invalid
+    And the uncommitted file is still there
+    And the thread is not prepared
+
   # Legacy: apps/server/src/sourceControl/ForgejoSourceControlProvider.ts (getPull: number from a reference)
-  @mc @backlog
+  @mc
   Scenario: A Forgejo reference with no pull request number is refused
     When the user starts a thread on the Forgejo reference "acme/shop"
     Then the user is told to specify a pull request number or Forgejo pull request URL
 
   # Legacy: apps/server/src/sourceControl/ForgejoSourceControlProvider.ts (listChangeRequests)
-  @mc @backlog
+  @mc
   Scenario: Forgejo pull requests of a branch are read newest first until enough are found
     Given the branch "feature/tax" has pull requests on Forgejo among 120 others
     When the MC lists the pull requests of "feature/tax" asking for none in particular
@@ -261,7 +338,7 @@ Feature: Threads that work on or link pull requests
     And reading stops when a page comes back empty
 
   # Legacy: apps/server/src/sourceControl/ForgejoSourceControlProvider.ts (listChangeRequests: state merged asks closed)
-  @mc @backlog
+  @mc
   Scenario Outline: Forgejo has no merged list so merged pull requests are picked out of the closed ones
     Given the branch "feature/tax" has one merged and one closed pull request on Forgejo
     When the MC lists the <state> pull requests of "feature/tax"
@@ -273,18 +350,26 @@ Feature: Threads that work on or link pull requests
       | closed | the closed pull request   |
 
   # Legacy: apps/server/src/sourceControl/ForgejoSourceControlProvider.ts (createChangeRequest)
-  @mc @backlog
+  @mc
   Scenario: A Forgejo pull request from a fork is opened against the repository it targets
     Given the branch "tax" lives in the fork "sam/shop" of "acme/shop"
     When the user opens a pull request from it on Forgejo
     Then the pull request is created in "acme/shop" with the head "sam:tax"
 
-  @desktop @mobile @tui @backlog-mobile
+  # Legacy: apps/server/src/sourceControl/ForgejoSourceControlProvider.ts (createChangeRequest: the existing pull request)
+  @mc
+  Scenario: Another fork's pull request from a branch of the same name is not taken for this one
+    Given "kim/shop" has an open pull request from its own branch "tax"
+    And the branch "tax" lives in the fork "sam/shop" of "acme/shop"
+    When the user opens a pull request from it on Forgejo
+    Then the pull request is created in "acme/shop" with the head "sam:tax"
+
+  @desktop @mobile @tui
   Scenario: Starting a pull request thread from a pasted link
     When the user pastes "https://github.com/acme/shop/pull/42" to start a pull request thread
     Then the user sees the pull request's title and branches before choosing local or worktree
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A pull request can be pasted as its host's link or checkout command
     When the user pastes "<reference>" to start a pull request thread
     Then the pull request number is read as <number>
@@ -300,39 +385,39 @@ Feature: Threads that work on or link pull requests
       | tea pr checkout 7                                             | 7      |
       | az repos pr checkout --id 7                                   | 7      |
 
-  @backlog @desktop
+  @desktop
   Scenario: A pull request reference nobody can read is refused
     When the user types "see the tax change" to start a pull request thread
     Then the user is told "Use a pull request URL, checkout command, 123, or #123."
     And neither local nor worktree can be chosen
 
-  @backlog @desktop
+  @desktop
   Scenario: Clearing the reference asks for one
     Given the user typed "42" to start a pull request thread
     When the user clears the reference
     Then the user is told "Paste a pull request URL, checkout command, or enter 123 / #123."
 
-  @backlog @desktop
+  @desktop
   Scenario: Choosing waits until the pull request is resolved
     When the user types "42" to start a pull request thread
     Then the user is told "Resolving pull request..." until its title and branches arrive
     And neither local nor worktree can be chosen until then
 
-  @backlog @desktop
+  @desktop
   Scenario: A pull request that cannot be resolved says why
     Given the host answers that pull request 9999 does not exist
     When the user types "9999" to start a pull request thread
     Then the user is told the host's reason in the dialog
     And neither local nor worktree can be chosen
 
-  @backlog @desktop
+  @desktop
   Scenario: A pull request thread is not abandoned while it is prepared
     Given the user chose to start a thread on pull request 42 in a new worktree
     When the checkout is still being prepared
     Then the dialog says "Preparing worktree..." and cannot be cancelled
     And local and worktree cannot be chosen again
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A pull request thread that could not be prepared stays open with the reason
     Given the MC fails to prepare pull request 42 <how>
     When the user starts a thread on pull request 42 in a new worktree
@@ -361,7 +446,14 @@ Feature: Threads that work on or link pull requests
     When the user links "acme/shop" pull request 42 and "acme/api" pull request 7 to "Tax work"
     Then "Tax work" lists both pull requests
 
-  @backlog @desktop @mobile
+  # Mobile's badge is not tappable, so only the desktop carries the badge's open action.
+  @backlog @desktop
+  Scenario: A badge standing for several linked pull requests opens the thread's pull request list
+    Given "Tax work" links pull request 42 of "acme/shop" and pull request 7 of "acme/api"
+    When the user clicks the pull request badge of "Tax work"
+    Then the thread's Pull requests tab lists both pull requests
+
+  @desktop @mobile
   Scenario: Each linked pull request names its repository, even when two share a number
     Given "Tax work" links pull request 42 of "acme/shop" and pull request 42 of "acme/api"
     When the user looks at the thread's linked pull requests
@@ -447,40 +539,57 @@ Feature: Threads that work on or link pull requests
     When the user asks which threads are linked to pull request 42
     Then both "Tax work" and "Old tax" are listed
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Linking from a pull request link in the conversation
     Given a message in "Tax work" mentions "https://github.com/acme/shop/pull/42"
     When the user links that pull request from the mention
     Then "Tax work" lists pull request 42
 
-  @backlog @desktop
+  @desktop
   Scenario: Hovering a pull request link shows what it points to
     Given a message in "Tax work" mentions "https://github.com/acme/shop/pull/42"
     When the user rests the pointer on that link
     Then a card shows "acme/shop" #42, its state, its title, its author and when it was opened
 
-  @backlog @desktop
+  @desktop
   Scenario: A pull request link that cannot be read shows the address
     Given a message in "Tax work" mentions "https://github.com/acme/shop/pull/42"
     And the MC cannot read pull request 42
     When the user rests the pointer on that link
     Then the card shows "https://github.com/acme/shop/pull/42"
 
-  @backlog @desktop
+  @desktop
   Scenario: Clicking a pull request link opens it in HAL-C2
     Given a message in "Tax work" mentions "https://github.com/acme/shop/pull/42"
     When the user clicks that link
     Then pull request 42 opens in HAL-C2
 
-  @backlog @desktop
+  @desktop
   Scenario: Clicking a pull request link the MC cannot resolve opens it in the browser
     Given a message in "Tax work" mentions "https://github.com/acme/shop/pull/42"
     And the MC cannot read pull request 42
     When the user clicks that link
     Then the browser opens "https://github.com/acme/shop/pull/42"
 
+  # Upstream #24738: the phone opened a pull request link in the app only for a project cloned
+  # from that exact repository, so a mirror's link went to the GitHub app.
+  @backlog @desktop @mobile
+  Scenario Outline: A pull request link opens in HAL-C2 when a project can read it
+    Given the only project is cloned from <project>
+    And a message in "Tax work" mentions "https://github.com/acme/shop/pull/42"
+    When the user opens that link
+    Then <outcome>
+
+    Examples:
+      | project                                                  | outcome                                              |
+      | "github.com/acme/shop"                                   | pull request 42 opens in HAL-C2                      |
+      | "github.com/acme/tools", and the MC reads by host        | pull request 42 opens in HAL-C2                      |
+      | "git.cafe/acme/shop", which mirrors the GitHub one       | pull request 42 opens in HAL-C2                      |
+      | "gitlab.com/acme/shop"                                   | the link opens outside HAL-C2                        |
+      | "github.com/acme/shop", on an MC that reads no pull requests | the link opens outside HAL-C2                    |
+
   # Legacy: apps/web/src/lib/openPullRequestLink.test.ts (shouldOpenPullRequestExternally)
-  @backlog @desktop
+  @desktop
   Scenario: A click with the modifier key opens a pull request link in the browser
     Given a message in "Tax work" mentions "https://github.com/acme/shop/pull/42"
     When the user clicks that link holding the modifier key
@@ -488,7 +597,7 @@ Feature: Threads that work on or link pull requests
     And pull request 42 does not open in HAL-C2
 
   # Legacy: apps/web/src/lib/openPullRequestLink.test.ts (findProjectForChangeRequest keeps two hosts apart, claims nothing for a lookalike host)
-  @backlog @desktop
+  @desktop
   Scenario Outline: A link on a host no project is checked out from goes to the browser
     Given a message in "Tax work" mentions "<link>"
     And no project is checked out from that host
@@ -502,7 +611,7 @@ Feature: Threads that work on or link pull requests
       | https://github.com.evil.test/acme/shop/pull/42 |
 
   # Legacy: apps/web/src/lib/openPullRequestLink.test.ts (parseChangeRequestUrl claims nothing it cannot be sure of)
-  @backlog @desktop
+  @desktop
   Scenario Outline: A link that is not a pull request is left to the browser
     Given a message in "Tax work" mentions "<link>"
     When the user clicks that link
@@ -517,7 +626,7 @@ Feature: Threads that work on or link pull requests
       | https://blog.example.test/2026/updates/pull/3   |
 
   # Legacy: apps/web/src/lib/openPullRequestLink.ts (pullRequestCandidateUrlFromReferenceAutolink), apps/web/src/components/pullRequest/PullRequestLinkPreview.tsx (confirmBeforeOpen)
-  @backlog @desktop
+  @desktop
   Scenario: A written number that is a pull request opens as one
     Given a message in "Tax work" mentions "#42" of "acme/shop", which the message links to GitHub's page for issue 42
     And the host knows 42 as a pull request
@@ -525,14 +634,14 @@ Feature: Threads that work on or link pull requests
     Then pull request 42 opens in HAL-C2
 
   # Legacy: apps/web/src/lib/openPullRequestLink.ts (pullRequestCandidateUrlFromReferenceAutolink), apps/web/src/components/pullRequest/PullRequestLinkPreview.tsx (onOpenFallback)
-  @backlog @desktop
+  @desktop
   Scenario: A written number that is an issue opens in the browser
     Given a message in "Tax work" mentions "#42" of "acme/shop", which the message links to GitHub's page for issue 42
     And the host knows 42 as an issue
     When the user clicks that link
     Then the browser opens "https://github.com/acme/shop/issues/42"
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A pull request number can be copied or opened where it lives
     When the user opens the menu of the number of a pull request of <host>
     Then the menu offers "Copy link" and "<open>"
@@ -545,7 +654,7 @@ Feature: Threads that work on or link pull requests
       | Bitbucket    | Open on Bitbucket    |
       | Azure DevOps | Open on Azure DevOps |
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The pull request number's menu says when it could not act
     Given the clipboard cannot be written and the browser cannot be opened
     When the user chooses "<choice>" from the menu of a pull request number
@@ -559,19 +668,19 @@ Feature: Threads that work on or link pull requests
   # Links are decided by host, as the web's usePullRequestLinking and
   # findProjectOnChangeRequestHost do: any project on a host lends the MC its
   # credentials there, so a repository nobody has checked out still links.
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A pull request from another repository on a host a project reads
     When the user links "https://github.com/other/repo/pull/1"
     Then "Tax work" lists pull request 1 of "other/repo"
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A pull request on a host no project can read
     When the user links "https://gitlab.com/other/repo/-/merge_requests/1"
     Then the user is told no project in this environment can read "gitlab.com/other/repo"
 
   # Azure DevOps reads use the checkout's organization and project, not the
   # host's credentials, so there it takes a project of that repository.
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: An Azure DevOps pull request needs a project of its own repository
     Given the environment also has the Azure DevOps project "dev.azure.com/acme/shop/_git/web"
     When the user links "https://dev.azure.com/acme/shop/_git/api/pullrequest/1"
@@ -579,7 +688,7 @@ Feature: Threads that work on or link pull requests
     When the user links "https://dev.azure.com/acme/shop/_git/web/pullrequest/1"
     Then "Tax work" lists pull request 1 of "acme/shop/_git/web"
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A pull request the MC does not link says why
     Given the thread "Tax work" has no linked pull request
     And the MC refuses to link pull requests to "Tax work"
@@ -587,7 +696,7 @@ Feature: Threads that work on or link pull requests
     Then the user is told pull request 42 could not be linked
     And "Tax work" lists no pull requests
 
-  @backlog @desktop
+  @desktop
   Scenario: The link dialog asks for a reference before it links
     Given the user is linking a pull request to "Tax work"
     When the user types "tax" as the pull request to link
@@ -596,21 +705,39 @@ Feature: Threads that work on or link pull requests
     When the user clears the pull request to link
     Then the user is told "Paste a pull request URL or enter 123 / #123."
 
-  @backlog @desktop
+  # Upstream #20533: the PR link dialog names the missing repository and asks for a full URL.
+  @desktop
   Scenario: A bare number needs the thread's own project to be understood
     Given "Tax work" is not in a project
     When the user links "42" to "Tax work"
     Then the user is told "Paste a full URL to link a pull request from another repository."
     And the pull request cannot be linked
 
-  @backlog @desktop
+  # Upstream #17167. GitLab, Azure DevOps and self-hosted forges still need a checkout:
+  # their reads pick the endpoint from the checkout or the CLI's configuration.
+  @backlog @mc
+  Scenario Outline: A linked pull request is read without any checkout of its host
+    Given "Tax work" is not in a project
+    And no project in this environment is checked out from <host>
+    And the host's command line tool can read pull request 1 of "pixp/theatre"
+    When the user links "<url>" to "Tax work"
+    Then "Tax work" shows pull request 1 with its title and state
+    And watching the pull request keeps it current
+
+    Examples:
+      | host          | url                                                 |
+      | github.com    | https://github.com/pixp/theatre/pull/1              |
+      | bitbucket.org | https://bitbucket.org/pixp/theatre/pull-requests/1  |
+      | codeberg.org  | https://codeberg.org/pixp/theatre/pulls/1           |
+
+  @desktop
   Scenario: A bare number on a host with no pull request address
     Given the project of "Tax work" is on a host whose pull request addresses are not known
     When the user links "42" to "Tax work"
     Then the user is told "Paste a full URL; this project's host has no known pull request URL."
     And the pull request cannot be linked
 
-  @backlog @desktop
+  @desktop
   Scenario: Linking shows it is working and says why it failed
     Given the MC takes a while to link pull requests to "Tax work"
     When the user links pull request 42 to "Tax work"
@@ -619,7 +746,7 @@ Feature: Threads that work on or link pull requests
     When the user links pull request 42 to "Tax work" again
     Then the link dialog says the pull request could not be linked and stays open
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A linked pull request says how it came to be linked
     Given pull request 42 was <how> to "Tax work"
     When the user opens the pull requests of "Tax work"
@@ -633,66 +760,90 @@ Feature: Threads that work on or link pull requests
       | found in the stack of another layer  | Found in the stack        |
       | dismissed from the stack             | Dismissed                 |
 
-  @backlog @desktop
+  @desktop
   Scenario: A stack layer is dismissed from the thread rather than unlinked
     Given pull request 43 is a layer found in the stack of "Tax work"
     When the user opens the actions of pull request 43 in "Tax work"
     Then the action is "Dismiss from thread"
     And a pull request the user linked is offered "Unlink from thread" instead
 
-  @backlog @desktop
+  @desktop
   Scenario: A stack the thread's pull request belongs to says what merging does
     Given pull request 42 is a layer of a GitHub stack of 3
     When the user opens the pull requests of "Tax work"
     Then the user is told "GitHub stack of 3: merging a layer lands the ones below it."
 
-  @backlog @desktop
+  @desktop
   Scenario: Pull requests chained only by their base branches say so
     Given pull requests 42, 43 and 44 are chained by their base branches on a host with no stacks of its own
     When the user opens the pull requests of "Tax work"
     Then the user is told "3 pull requests chained by base branch."
 
-  @backlog @desktop
+  @shared @backlog @priority-low
+  Scenario: Pull requests built on the same pull request stay in one stack under it
+    Given pull requests 102 and 103 are both based on the branch of pull request 101
+    And all three are linked to "Tax work"
+    When the user opens the pull requests of "Tax work"
+    Then 101, 102 and 103 are listed as one stack with 101 first
+    And 102 and 103 sit one step under 101, side by side
+    And the thread is counted as having one stack
+
+  @mc @backlog @priority-low
+  Scenario: Pull requests built on the same pull request share a layer for agents
+    Given pull requests 102 and 103 are both based on the branch of pull request 101 and linked to "caller"
+    When the agent of "caller" lists its pull requests
+    Then 102 and 103 are reported at the same stack position
+    And the chain lists 101 before 102 and 103
+
+  @desktop
   Scenario: A link the host has not been asked about yet shows what is known
     Given pull request 42 was just linked to "Tax work" and the host has not answered
     When the user opens the pull requests of "Tax work"
     Then pull request 42 is listed with its repository and "Waiting for host state"
 
-  @backlog @desktop
+  @desktop
   Scenario: A linked pull request says how and when it was linked
     Given pull request 42 was linked to "Tax work" by the user an hour ago
     When the user rests the pointer on the number of pull request 42
     Then the user is told "Linked by you" and how long ago
 
-  @backlog @desktop
+  @desktop
   Scenario: A linked pull request's link can be copied or opened from its row
     Given pull request 42 is linked to "Tax work"
     When the user opens the actions of pull request 42 in "Tax work"
     Then the user can copy its link
     And the user can open it
 
-  @backlog @desktop
+  # Upstream #21250: the phone's pull request menu can copy or share the link.
+  @backlog @mobile
+  Scenario: A linked pull request's link can be copied or shared on the phone
+    Given pull request 42 is linked to "Tax work"
+    When the user opens the actions of pull request 42 in "Tax work" on the phone
+    Then the user can copy its link
+    And the user can share it with another app
+
+  @desktop
   Scenario: An environment without several links per thread says so
     Given the environment does not support several linked pull requests per thread
     When the user opens the pull requests of "Tax work"
     Then the user is told "Linked pull requests unavailable"
     And the user is told "This environment does not support multiple linked pull requests."
 
-  @backlog @desktop
+  @desktop
   Scenario: A thread without pull requests says so
     Given "Tax work" has no linked pull request
     When the user opens the pull requests of "Tax work"
     Then the user is told "No linked pull requests"
     And the user can link one
 
-  @backlog @desktop
+  @desktop
   Scenario: A pull request says how many threads work on it
     Given pull request 42 is linked to "Tax work" and to "Tax review"
     When the user reads pull request 42
     Then it says "Linked from 2 threads"
     And choosing it searches the threads for pull request 42
 
-  @backlog @desktop
+  @desktop
   Scenario: Linking a pull request to a thread chosen from a list
     Given pull request 42 is linked to no thread
     When the user chooses to link pull request 42 to a thread
@@ -701,14 +852,20 @@ Feature: Threads that work on or link pull requests
     When the user chooses "Tax work"
     Then "Tax work" lists pull request 42
 
-  @backlog @desktop
+  @desktop
   Scenario: A thread that already has the pull request cannot be chosen again
     Given pull request 42 is linked to "Tax work"
     When the user chooses to link pull request 42 to a thread
     Then "Tax work" is shown as "Linked" and cannot be chosen
     And the menu offers to unlink pull request 42 from this thread
 
-  @backlog @desktop
+  @backlog @shared @priority-low
+  Scenario: A pull request can be linked when no project is a repository on its host
+    Given the only project is a folder of several repositories that is not a repository itself
+    When the user links "https://github.com/acme/app/pull/42" to a thread in it
+    Then the thread lists pull request 42
+
+  @desktop
   Scenario Outline: A link that could not be changed is reported
     Given the MC refuses to <change> pull request 42 <direction> "Tax work"
     When the user tries to <change> pull request 42 <direction> "Tax work"
@@ -719,13 +876,13 @@ Feature: Threads that work on or link pull requests
       | link   | to        |
       | unlink | from      |
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Opening a linked pull request in the browser
     Given pull request 42 is linked to "Tax work"
     When the user opens pull request 42 from "Tax work"
     Then the browser opens "https://github.com/acme/shop/pull/42"
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Refreshing the linked pull requests reads them from the host again
     Given pull request 42 is linked to "Tax work"
     And a review is submitted on pull request 42 on GitHub
@@ -733,7 +890,7 @@ Feature: Threads that work on or link pull requests
     Then pull request 42 is read from GitHub again
     And "Tax work" shows the new review state
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Linked pull requests of an unreachable environment stay as last synced
     Given pull request 42 is linked to "Tax work"
     When the environment of "Tax work" becomes unreachable
@@ -748,32 +905,32 @@ Feature: Threads that work on or link pull requests
     When the user opens the pull request from the thread
     Then pull request 42 opens
 
-  @backlog @mobile
+  @mobile
   Scenario: The phone's git overview lists linked reviews and stacks
     Given pull request 42 is linked to "Tax work"
     When the user opens the git overview of "Tax work" on the phone
     Then pull request 42 is listed with its stack
 
-  @backlog @mc
+  @mc
   Scenario: A link preview asks the host for no more than its card needs
     When a client asks for the preview of pull request 42
     Then the answer carries the repository, number, title, link, author, state, draft flag and creation time
     And it carries none of the conversation, checks or files
 
-  @backlog @mc
+  @mc
   Scenario: A preview is not read again within a short while
     Given the preview of pull request 42 was read a few seconds ago
     When a client asks for it again
     Then the answer comes without asking the host
     But a change made to pull request 42 from HAL-C2 or a refresh makes the next preview ask the host
 
-  @backlog @mc
+  @mc
   Scenario: A preview never waits for a full read of the same pull request
     Given the details of pull request 42 are still being read
     When a client asks for its preview
     Then the preview is answered without waiting for the details
 
-  @backlog @mc
+  @mc
   Scenario: A preview is made from details held a moment ago but never from stale ones
     Given the details of pull request 42 were read 10 seconds ago
     When a client asks for its preview
@@ -781,22 +938,189 @@ Feature: Threads that work on or link pull requests
     When the details were read 20 seconds ago instead
     Then the host is asked for the preview
 
-  @backlog @mc
+  @backlog @desktop
+  Scenario: A pull request's header follows the newest state its thread knows
+    Given the thread linked to pull request 42 already knows it merged
+    And an older read of pull request 42 said it was open
+    When the user looks at pull request 42
+    Then its header shows it merged and offers no merge
+
+  @mc
   Scenario: Previews already held are still shown while a rate limit pauses new ones
-    Given the host is rate limited
-    And the preview of pull request 1 is held
+    Given the preview of pull request 1 is held
+    And the host is rate limited
     When a client asks for the previews of pull requests 1 and 2
     Then the preview of pull request 1 is returned
     And pull request 2 is refused as paused until the limit resets
 
-  @backlog @mc
+  @mc
   Scenario: A host without a narrow preview answers from the full pull request
     Given the host has no narrow read for a pull request
     When a client asks for the preview of pull request 42
     Then the preview is made from the host's full answer
 
-  @backlog @mc
+  @mc
   Scenario: Another project finishing a turn does not discard previews
     Given the previews of "acme/web" and "acme/docs" are held
     When a turn finishes in "acme/docs"
     Then the preview of "acme/web" is still answered without asking the host
+
+  @backlog @shared @mc
+  Scenario: An agent can watch a pull request and be woken
+    Given a thread linked to a pull request
+    When the agent calls watch_pull_request, or the user picks Watch for changes
+    Then the MC checks it every minute
+    And it wakes the thread when a check fails, required checks pass, someone else comments or reviews, or it starts to conflict
+    And each change is reported once
+
+  # Upstream #24808: a delegated child's watch was refused, yet children kept calling it, so the
+  # tools are now hidden from them; their parent owns the pull request.
+  @backlog @mc
+  Scenario: A delegated child cannot see the pull request watch tools
+    Given a thread delegated a task to a subagent
+    When the subagent lists its MCP tools
+    Then watch_pull_request and unwatch_pull_request are not among them
+    And calling watch_pull_request from the subagent fails as an unknown tool
+    But the delegating thread still lists both tools
+
+  @backlog @mc
+  Scenario: Watching ends when it can no longer help
+    Given a watched pull request
+    When it merges or closes, is unwatched, brings ten comment-only wakes in a row, or cannot be read eight times in a row
+    Then watching stops and the agent is told why
+
+  @backlog @mc
+  Scenario: A rate limit never ends a watch
+    Given a watched pull request whose host refuses reads until a reset time
+    When the watch comes due before the reset
+    Then no read is made and the watch carries on
+    And reads that fail for another reason are the only ones that count toward giving up
+
+  # Upstream #18432: commit reads for a pull request leave out each commit's file list and
+  # signature check, which nothing uses and which pushed large pull requests past the limit.
+  @backlog @mc @priority-low
+  Scenario: A Forgejo pull request with large commits can still be watched
+    Given a watched Forgejo pull request with a merge commit that touches thousands of files
+    When the watch comes due
+    Then the pull request is read
+    And the watch does not fail because the host's answer was too large
+
+  @backlog @mc @priority-low
+  Scenario: Threads watching the same pull request share one read
+    Given two threads in one project watch the same pull request
+    When the watches are checked
+    Then the pull request is read once for both
+
+  @backlog @mc @priority-low
+  Scenario: A pull request with nothing in flight is read only when it changed
+    Given a watched pull request whose state, checks, mergeability and review decision have not changed
+    When the watch is checked
+    Then one cheap question about every watched pull request on the host decides whether to read it in full
+    And a pull request with checks still running is read each time
+    And one nothing seems to have changed on is still read in full every 30 minutes, to catch edited review comments
+
+  @backlog @mc
+  Scenario: A bot editing its review comment wakes the agent
+    Given a watched pull request with a bot's summary comment the agent has already seen
+    When the bot edits that comment, which keeps its id and creation time
+    Then the agent is woken once for the edit
+    And a reaction on the comment wakes nothing
+
+  @backlog @mc @priority-low
+  Scenario: A required check that was never seen pending still counts
+    Given a watched pull request whose required checks all passed
+    When a required check appears and finishes between two reads
+    Then the agent is told the required checks passed again, with the new count
+    And changing the head commit or a failing gate clears what the watch remembers
+
+  @backlog @mc
+  Scenario Outline: Putting a thread away stops its watches
+    Given a thread watching a pull request
+    When the thread is <action>
+    Then every watch stops and the pull request links stay
+    And no new watch can start until the thread is brought back
+
+    Examples:
+      | action                |
+      | settled by the user   |
+      | settled automatically |
+      | archived              |
+
+  @backlog @mc
+  Scenario: Stop also stops what the thread delegated and watches
+    Given a thread with delegated tasks still running and a pull request watch
+    When the user stops the thread
+    Then the delegated tasks stop and their watches end
+    And no watch wake starts another turn on the stopped thread
+    And cancelling a finished task also ends the watches its thread left
+
+  # Upstream #19801: a delegated child returns its pull request to its parent instead of watching it.
+  @backlog @mc @priority-low
+  Scenario: A subagent cannot watch a pull request
+    Given a subagent of a thread that owns a pull request
+    When the subagent asks to watch it
+    Then the tool says the parent thread owns the pull request
+    And a watch left on a subagent ends on the next pass
+
+  @backlog @mc @priority-low
+  Scenario: A new subagent does not inherit its parent's pull request links
+    Given a parent thread linked to pull request 123
+    When it delegates a task
+    Then the child thread starts with no pull request links
+
+  @backlog @shared
+  Scenario: A thread watching a pull request stays in Working between wakes
+    Given a thread whose agent ended its turn while watching a pull request
+    When nothing has woken it yet
+    Then the thread stays in Working with a "Waiting" status and does not settle by itself
+    And it returns to the inbox when the watch ends, the pull request merges or closes, the agent asks a question, or the run fails
+
+  @backlog @shared
+  Scenario: The composer names the pull request a waiting thread watches
+    Given a thread whose only wait is a watch on pull request 17627
+    When the user opens the thread
+    Then the composer's status reads "Watching pull request #17627", with nothing put before it
+    And the user can still stop the wait from there
+
+  @backlog @desktop @mobile @priority-low
+  Scenario: The thread details card shows and stops pull request watches
+    Given a thread watching an open pull request
+    When the user opens the thread's details
+    Then that pull request's row shows it is watched
+    And one click stops the watch the same way the pull request panel does
+
+  @backlog @shared @priority-low
+  Scenario: The pull request panel opens for any linked pull request
+    Given a thread has a pull request linked through the MCP tool or the dialog
+    When the user opens the pull request panel
+    Then it is enabled and shows that pull request
+
+  # Upstream #18823: switching threads carried another thread's pull request tab into the panel.
+  @backlog @shared @priority-low
+  Scenario: Each thread's pull request panel keeps the tab chosen in it
+    Given the pull request panel of "Cart totals" shows its files
+    And the pull request panel of "Checkout" shows its summary
+    When the user switches from "Checkout" to "Cart totals"
+    Then the panel of "Cart totals" shows its files
+    And a tab its pull request no longer has falls back to the summary without forgetting the choice
+
+  @backlog @shared @priority-low
+  Scenario: A pull request link that is really an issue says so
+    Given a chat link of the form "/pull/N" where N is an issue
+    When the user opens it
+    Then the viewer says the host has no such pull request, with no retry that cannot succeed
+
+  @backlog @shared @priority-low
+  Scenario: A linked pull request's actions open from a secondary click
+    Given a thread has a linked pull request
+    When the user secondary-clicks the pull request's row
+    Then the same actions open as from the row's menu, at the pointer
+
+  @backlog @shared @priority-low
+  Scenario: Holding a modifier on a linked pull request offers its quick actions
+    Given a thread has a linked pull request
+    When the user holds the quick-action modifier over its row
+    Then the quick actions of the pull request list appear on the row
+    And a closed pull request offers reopen
+    And a draft offers ready for review
+    And a pull request from another repository acts through that repository's project

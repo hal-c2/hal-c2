@@ -1,10 +1,15 @@
 // features/timeline/plans-and-subagents.feature on the terminal client: the
 // plan card, subagent rows and context markers, over the MC's projection
 // (turnWorld.ts). The fake MC answers "implement" and a reply as the real one does.
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import { expect } from "bun:test";
 
 import { step } from "../../steps.ts";
 import { findObject, pressKey, settle as settleHost, snapshot, typeText } from "../world.ts";
+import { project } from "../fakeClient.ts";
+import { chooseCommand } from "../threadUi.ts";
 import { hostState, plain, recorded, settle } from "../threadWorld.ts";
 import {
   addItem,
@@ -114,7 +119,7 @@ step("the agent starts implementing it in this thread", async (ctx: PlanWorld) =
     state: "running",
     sourceProposedPlan: { threadId: "t1", planId: ctx.planId },
   });
-  expect(await snapshot(ctx)).toContain("● Working…");
+  expect(await snapshot(ctx)).toContain("● Working");
 });
 
 step("the plan card is no longer offered", async (ctx: PlanWorld) => {
@@ -159,6 +164,96 @@ step("the thread stays in plan mode", async (ctx: PlanWorld) => {
   expect(ctx.thread!.interactionMode).toBe("plan");
   expect(plain(hostState(ctx, "timeline").header.right.text)).toContain("· plan");
   expect(await snapshot(ctx)).toContain("· plan");
+});
+
+// --- implementing in a new thread, and keeping a copy -----------------------------------
+
+step("the user implements the plan in a new thread", async (ctx: PlanWorld) => {
+  await chooseCommand(ctx, "Implement plan in a new thread");
+  await settleHost(ctx);
+});
+
+step("a new thread starts implementing the plan", async (ctx: PlanWorld) => {
+  const calls = recorded(ctx, "createThread") as Array<[Record<string, unknown>]>;
+  expect(calls).toHaveLength(1);
+  const thread = ctx.thread!;
+  // The web client's new thread: default mode, the planning thread's branch and model.
+  expect(calls[0]![0]).toMatchObject({
+    projectId: thread.projectId,
+    title: "Implement Add a tax line",
+    firstMessage: `PLEASE IMPLEMENT THIS PLAN:\n${PLAN}`,
+    interactionMode: "default",
+    modelSelection: thread.modelSelection,
+    branch: thread.branch,
+    worktreePath: thread.worktreePath,
+    createWorktree: false,
+    sourceProposedPlan: { threadId: thread.id, planId: ctx.planId },
+  });
+  // The user follows the new thread.
+  expect(hostState(ctx, "page").threadId).toBe("t-new");
+});
+
+step("the planning thread keeps the plan", async (ctx: PlanWorld) => {
+  expect(recorded(ctx, "implementPlan")).toEqual([]);
+  const fixture = await turns(ctx);
+  expect(fixture.plans.find((plan) => plan.id === ctx.planId)?.status).not.toBe("completed");
+  expect(ctx.thread!.interactionMode).toBe("plan");
+  expect(ctx.thread!.proposedPlans.map((plan) => plan.id as string)).toContain(ctx.planId!);
+});
+
+step("the environment cannot start a new thread", (ctx: PlanWorld) => {
+  ctx.fake!.override("createThread", async () => {
+    throw new Error("the MC refused");
+  });
+});
+
+const exported = `${PLAN}\n`;
+
+step("the user copies the plan", async (ctx: PlanWorld) => {
+  await chooseCommand(ctx, "Copy plan as Markdown");
+});
+
+step("the plan's markdown is on the clipboard", (ctx: PlanWorld) => {
+  expect(ctx.clipboard).toEqual([exported]);
+});
+
+step("the user downloads the plan", async (ctx: PlanWorld) => {
+  await chooseCommand(ctx, "Download plan as Markdown");
+});
+
+step("a markdown file of the plan is saved", (ctx: PlanWorld) => {
+  const file = NodePath.join(ctx.downloadsDir!, "add-a-tax-line.md");
+  expect(NodeFS.readFileSync(file, "utf8")).toBe(exported);
+  expect((ctx.host!.state.get("status") as { text: string }).text).toBe(
+    `Plan downloaded to ${file}.`,
+  );
+});
+
+async function saveTo(ctx: PlanWorld, path: string | null) {
+  await chooseCommand(ctx, "Save plan as Markdown");
+  const ask = ctx.host!.state.get("ask") as { value: string } | null;
+  if (ask === null) return;
+  expect(ask.value).toBe("add-a-tax-line.md");
+  if (path !== null) {
+    for (let i = 0; i < ask.value.length; i += 1) await pressKey(ctx, "Backspace");
+    await typeText(ctx, path);
+  }
+  await pressKey(ctx, "Enter");
+  await settleHost(ctx);
+}
+
+step("the user saves the plan to {string}", (ctx: PlanWorld, path: string) => saveTo(ctx, path));
+step("the user saves the plan to the workspace", (ctx: PlanWorld) => saveTo(ctx, null));
+
+step("{string} holds the plan in the workspace", (ctx: PlanWorld, path: string) => {
+  expect(recorded(ctx, "writeFile")).toEqual([[project.workspaceRoot, path, exported]]);
+});
+
+// The MC knows neither a worktree nor a folder for the thread's project.
+step("the thread's workspace is unavailable", async (ctx: PlanWorld) => {
+  const current = ctx.fake!.latestShell();
+  ctx.fake!.emitShell({ ...current, projects: [] });
+  await settleHost(ctx);
 });
 
 // --- subagents -------------------------------------------------------------------------

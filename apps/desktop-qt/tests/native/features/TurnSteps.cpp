@@ -7,9 +7,12 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QQuickItem>
+#include <QRegularExpression>
 #include <QVariantMap>
 
+#include <functional>
 #include <memory>
+#include <optional>
 
 #include "CommandPaletteController.h"
 #include "ComposerBrick.h"
@@ -195,13 +198,20 @@ QJsonObject lastMessage(World& world) {
   return lastCommand(world, QStringLiteral("message.dispatch"));
 }
 
+// The markdown of the plan the agent proposed last.
+struct ProposedPlan {
+  QString markdown;
+};
+
+const QString kPlanMarkdown = QStringLiteral("# Tax line\n\n- Add the line\n- Test it");
+
 // A proposed plan in the latest run of a thread in plan mode; `settled` ends
 // that run.
-void proposePlan(World& world, bool settled) {
+void proposePlan(World& world, bool settled, const QString& markdown = kPlanMarkdown) {
   startWorking(world);
   // Plans come from plan mode.
   updateRow(world, {{QStringLiteral("interactionMode"), QStringLiteral("plan")}});
-  const QString markdown = QStringLiteral("# Tax line\n\n- Add the line\n- Test it");
+  world.mc.part<ProposedPlan>().markdown = markdown;
   addItem(world, QStringLiteral("proposed_plan"), {{QStringLiteral("markdown"), markdown}, {QStringLiteral("planId"), QStringLiteral("plan-1")}});
   set(world, QStringLiteral("plan"), QStringLiteral("plan-1"),
       {{QStringLiteral("id"), QStringLiteral("plan-1")},
@@ -360,6 +370,8 @@ const Steps steps([] {
       if (auto* panel = world.native().controller<RightPanelController>(); panel && panel->files()) {
         if (panel->files()->fileProblem() == c[0] || panel->files()->trailProblem() == c[0]) return true;
       }
+      // Why the pull request thread dialog cannot go on.
+      if (world.state(QStringLiteral("pullRequestThread")).toMap().value(QStringLiteral("error")) == c[0]) return true;
       // What the attachment viewer says when it could not fetch.
       if (world.state(QStringLiteral("attachmentViewer")).toMap().value(QStringLiteral("problem")) == c[0]) return true;
       // A toast is told by its title, its description, or as "title — description".
@@ -545,6 +557,228 @@ const Steps steps([] {
     expect(!turn(world).value(QStringLiteral("plan")).isValid(), QStringLiteral("the turn is %1").arg(show(turn(world))));
   });
 
+  // A plan of a given shape (ProposedPlanCard's preview, its title and file
+  // name, and its export).
+  const auto offered = [](World& world, const QString& markdown) {
+    proposePlan(world, true, markdown);
+    world.waitFor([&] { return turn(world).value(QStringLiteral("plan")).isValid(); },
+                  [&] { return QStringLiteral("the plan to be offered; the turn is %1").arg(show(turn(world))); });
+  };
+  step(QStringLiteral("the agent has proposed a plan (?:titled|headed) %1").arg(q), [offered](World& world, const Captures& c, const Table&) {
+    const QString steps = QStringLiteral("- Add the line\n- Test it");
+    offered(world, c[0] == QLatin1String("(no heading)") ? steps : QStringLiteral("# %1\n\n%2").arg(c[0], steps));
+  });
+  step(QStringLiteral("the agent has proposed a plan (of 30 short lines|of 1,000 characters on 5 lines|of 15 short lines|with no heading|with trailing blank lines)"),
+       [offered](World& world, const Captures& c, const Table&) {
+         QStringList lines;
+         if (c[0] == QLatin1String("with no heading")) return offered(world, QStringLiteral("- Add the line\n- Test it"));
+         if (c[0] == QLatin1String("with trailing blank lines")) return offered(world, kPlanMarkdown + QStringLiteral("\n\n\n  \n"));
+         if (c[0] == QLatin1String("of 1,000 characters on 5 lines")) {
+           for (int n = 1; n <= 5; ++n) lines.append(QStringLiteral("- Step %1 ").arg(n) + QString(200, QLatin1Char('x')));
+         } else {
+           const int count = c[0] == QLatin1String("of 30 short lines") ? 30 : 15;
+           for (int n = 1; n <= count; ++n) lines.append(QStringLiteral("- Step %1").arg(n));
+         }
+         offered(world, QStringLiteral("# Tax line\n\n") + lines.join(QLatin1Char('\n')));
+       });
+  step(QStringLiteral("the user's message reads %1 followed by the plan").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QJsonObject message = lastMessage(world);
+    const QString expected = c[0] + QLatin1Char('\n') + proposedTurnPlan(world).trimmed();
+    expect(message.value(QLatin1String("threadId")) == kThread && message.value(QLatin1String("text")).toString() == expected,
+           QStringLiteral("the MC was sent %1").arg(show(message.toVariantMap())));
+  });
+  step(QStringLiteral("the thread leaves plan mode"), [](World& world, const Captures&, const Table&) {
+    const QJsonObject mode = lastCommand(world, QStringLiteral("thread.interaction-mode.set"));
+    expect(mode.value(QLatin1String("interactionMode")) == QLatin1String("default"), QStringLiteral("the thread was set to %1").arg(show(mode.toVariantMap())));
+  });
+
+  // The plan above the composer (ComposerPlanFollowUpBanner) and what
+  // sending does to it (ComposerPrimaryActions).
+  const auto said = [](World& world, const QString& name) {
+    QQuickItem* item = turnRequestsBrick(world).find(name);
+    return item && item->isVisible() ? item->property("text").toString() : QString();
+  };
+  step(QStringLiteral("the composer says %1 with %1").arg(q), [said](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return said(world, QStringLiteral("planReady")) == c[0] && said(world, QStringLiteral("planHeading")) == c[1]; },
+                  [&] { return QStringLiteral("the composer says \"%1\" with \"%2\"").arg(said(world, QStringLiteral("planReady")), said(world, QStringLiteral("planHeading"))); });
+  });
+  step(QStringLiteral("a plan with no heading is announced as %1 alone").arg(q), [said](World& world, const Captures& c, const Table&) {
+    set(world, QStringLiteral("plan"), QStringLiteral("plan-1"), {{QStringLiteral("markdown"), QStringLiteral("- Add the line\n- Test it")}});
+    world.waitFor([&] { return said(world, QStringLiteral("planReady")) == c[0] && said(world, QStringLiteral("planHeading")).isEmpty(); },
+                  [&] { return QStringLiteral("the composer says \"%1\" with \"%2\"").arg(said(world, QStringLiteral("planReady")), said(world, QStringLiteral("planHeading"))); });
+  });
+  const auto offers = [said](World& world, const QString& action, const QString& label) {
+    world.waitFor([&] {
+      return world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("planAction")) == action && said(world, QStringLiteral("planImplement")) == label;
+    }, [&] {
+      return QStringLiteral("the composer offers \"%1\" (%2)").arg(said(world, QStringLiteral("planImplement")),
+                                                                 world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("planAction")).toString());
+    });
+  };
+  step(QStringLiteral("the composer offers to implement the plan(?: again)?"), [offers](World& world, const Captures&, const Table&) {
+    offers(world, QStringLiteral("implement"), QStringLiteral("Implement"));
+  });
+  step(QStringLiteral("the composer offers to refine the plan instead"), [offers](World& world, const Captures&, const Table&) {
+    offers(world, QStringLiteral("refine"), QStringLiteral("Refine"));
+  });
+  step(QStringLiteral("the user clears the composer"), [](World& world, const Captures&, const Table&) {
+    typeInto(world, QString());
+    world.sync();
+  });
+
+  // Feedback the MC does not take.
+  step(QStringLiteral("the environment refuses new messages"), [](World& world, const Captures&, const Table&) {
+    world.mc.refusals.insert(QStringLiteral("message.dispatch"), QStringLiteral("Provider unavailable"));
+  });
+  step(QStringLiteral("the feedback is no longer shown as a sent message"), [](World& world, const Captures&, const Table&) {
+    const QString feedback = QStringLiteral("split the migration into its own step");
+    world.waitFor([&] { return !world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("isSendBusy")).toBool(); },
+                  QStringLiteral("the send to settle"));
+    TimelineModel& model = timeline(world);
+    for (int row = 0; row < model.rowCount(); ++row) {
+      expect(role(model, row, TimelineModel::TextRole).toString() != feedback, QStringLiteral("the timeline shows %1").arg(describe(model)));
+    }
+    for (const QVariant& queued : listed(world, QStringLiteral("queue"))) {
+      expect(queued.toMap().value(QStringLiteral("text")) != feedback, QStringLiteral("the queue shows %1").arg(show(queued)));
+    }
+  });
+  step(QStringLiteral("the thread shows the reason, or %1 when none is given").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto told = [&](const QString& description) {
+      world.waitFor([&] {
+        for (const QVariant& item : toasts(world)) {
+          const QVariantMap toast = item.toMap();
+          if (toast.value(QStringLiteral("title")) == QLatin1String("Plan follow-up not sent") && toast.value(QStringLiteral("description")) == description) return true;
+        }
+        return false;
+      }, [&] { return QStringLiteral("\"%1\"; the toasts are %2").arg(description, show(world.state(QStringLiteral("toasts")))); });
+    };
+    told(QStringLiteral("Provider unavailable"));
+    // Again, with no reason given.
+    world.mc.refusals.insert(QStringLiteral("message.dispatch"), QString());
+    world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("text"), QStringLiteral("and keep the docs")}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
+    world.sync();
+    told(c[0]);
+  });
+
+  // The agent's task list above the composer (ComposerTasksBadge).
+  struct Tasks {
+    QJsonArray steps;
+  };
+  const auto report = [](World& world) {
+    const QString run = world.mc.part<FakeStreams>().run;
+    set(world, QStringLiteral("plan"), QStringLiteral("todo-1"),
+        {{QStringLiteral("id"), QStringLiteral("todo-1")},
+         {QStringLiteral("kind"), QStringLiteral("todo_list")},
+         {QStringLiteral("status"), QStringLiteral("active")},
+         {QStringLiteral("runId"), run},
+         {QStringLiteral("steps"), world.mc.part<Tasks>().steps}});
+  };
+  const auto task = [](const QString& text, const QString& status, std::optional<int> seconds = {}) {
+    QJsonObject step{{QStringLiteral("id"), text}, {QStringLiteral("text"), text}, {QStringLiteral("status"), status}};
+    if (seconds) step.insert(QStringLiteral("durationMs"), *seconds * 1000);
+    return step;
+  };
+  const auto list = [report, task](World& world, const QStringList& texts) {
+    startWorking(world);
+    QJsonArray& steps = world.mc.part<Tasks>().steps;
+    for (const QString& text : texts) steps.append(task(text, QStringLiteral("pending")));
+    report(world);
+  };
+  const auto openTasks = [](World& world) {
+    Brick& brick = turnRequestsBrick(world);
+    world.waitFor([&] { return brick.find(QStringLiteral("tasksToggle")) && brick.find(QStringLiteral("tasksToggle"))->isVisible(); },
+                  [&] { return QStringLiteral("the task summary; the turn is %1").arg(show(turn(world))); });
+    brick.click(QStringLiteral("tasksToggle"));
+    world.waitFor([&] { return brick.root()->property("tasksOpen").toBool(); }, QStringLiteral("the task list to open"));
+  };
+  const auto stepsShown = [](World& world) {
+    QList<QQuickItem*> found;
+    std::function<void(QQuickItem*)> walk = [&](QQuickItem* item) {
+      if (item->objectName() == QLatin1String("taskStep") && item->isVisible()) found.append(item);
+      for (QQuickItem* child : item->childItems()) walk(child);
+    };
+    walk(turnRequestsBrick(world).root());
+    return found;
+  };
+  step(QStringLiteral("the agent's task list has the steps (.+)"), [list](World& world, const Captures& c, const Table&) {
+    static const QRegularExpression quoted(QStringLiteral("\"([^\"]*)\""));
+    QStringList texts;
+    for (auto it = quoted.globalMatch(c[0]); it.hasNext();) texts.append(it.next().captured(1));
+    list(world, texts);
+  });
+  step(QStringLiteral("%1 is finished and %1 is in progress").arg(q), [report](World& world, const Captures& c, const Table&) {
+    QJsonArray& steps = world.mc.part<Tasks>().steps;
+    for (qsizetype n = 0; n < steps.size(); ++n) {
+      QJsonObject step = steps.at(n).toObject();
+      if (step.value(QLatin1String("text")) == c[0]) step.insert(QStringLiteral("status"), QStringLiteral("completed"));
+      if (step.value(QLatin1String("text")) == c[1]) step.insert(QStringLiteral("status"), QStringLiteral("running"));
+      steps.replace(n, step);
+    }
+    report(world);
+  });
+  step(QStringLiteral("the composer shows %1 with the current step %1 and (\\d+) of (\\d+) done").arg(q), [said](World& world, const Captures& c, const Table&) {
+    QQuickItem* card = nullptr;
+    world.waitFor([&] {
+      card = turnRequestsBrick(world).find(QStringLiteral("tasks"));
+      return card && card->isVisible() && turnRequestsBrick(world).shows(c[0]) && said(world, QStringLiteral("tasksCurrent")) == c[1] &&
+             said(world, QStringLiteral("tasksProgress")) == QStringLiteral("%1/%2").arg(c[2], c[3]);
+    }, [&] {
+      return QStringLiteral("the task summary reads \"%1\" %2; the turn is %3")
+          .arg(said(world, QStringLiteral("tasksCurrent")), said(world, QStringLiteral("tasksProgress")), show(turn(world)));
+    });
+  });
+  step(QStringLiteral("the agent finished %1 in (\\d+) seconds and is working on %1").arg(q), [report, task](World& world, const Captures& c, const Table&) {
+    startWorking(world);
+    QJsonArray& steps = world.mc.part<Tasks>().steps;
+    steps.append(task(c[0], QStringLiteral("completed"), c[1].toInt()));
+    steps.append(task(c[2], QStringLiteral("running")));
+    report(world);
+  });
+  step(QStringLiteral("%1 has not started").arg(q), [report, task](World& world, const Captures& c, const Table&) {
+    world.mc.part<Tasks>().steps.append(task(c[0], QStringLiteral("pending")));
+    report(world);
+  });
+  step(QStringLiteral("the user opens the task summary"), [openTasks](World& world, const Captures&, const Table&) { openTasks(world); });
+  step(QStringLiteral("%1 is listed as (completed|running|pending) with (?:%1|no time)").arg(q), [stepsShown](World& world, const Captures& c, const Table&) {
+    QStringList listed;
+    for (QQuickItem* item : stepsShown(world)) {
+      const QString step = item->property("step").toString();
+      const QString status = item->property("status").toString();
+      const QString duration = item->property("duration").toString();
+      if (step == c[0] && status == c[1] && duration == c[2]) return;
+      listed.append(QStringLiteral("%1 %2 \"%3\"").arg(step, status, duration));
+    }
+    fail(QStringLiteral("the task list shows [%1]").arg(listed.join(QStringLiteral(", "))));
+  });
+  step(QStringLiteral("the agent has reported no task list"), [](World& world, const Captures&, const Table&) { startWorking(world); });
+  step(QStringLiteral("the agent's task list is open and (an approval comes in|the agent asks a question)"),
+       [list, openTasks](World& world, const Captures& c, const Table&) {
+         list(world, {QStringLiteral("Add the tax line"), QStringLiteral("Write tests")});
+         openTasks(world);
+         if (c[0] == QLatin1String("an approval comes in")) {
+           approval(world, QStringLiteral("command"), QStringLiteral("npm test"));
+         } else {
+           question(world, QStringLiteral("Which database?"), {QStringLiteral("Postgres"), QStringLiteral("SQLite")});
+         }
+       });
+  step(QStringLiteral("the composer shows no task summary"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    QQuickItem* card = turnRequestsBrick(world).find(QStringLiteral("tasks"));
+    expect(!turn(world).value(QStringLiteral("tasks")).isValid() && (!card || !card->isVisible()),
+           QStringLiteral("the composer shows tasks; the turn is %1").arg(show(turn(world))));
+  });
+  step(QStringLiteral("the user opened the task summary in thread A"), [list, openTasks](World& world, const Captures&, const Table&) {
+    list(world, {QStringLiteral("Add the tax line"), QStringLiteral("Write tests")});
+    openTasks(world);
+  });
+  step(QStringLiteral("the task list is closed and only its summary is shown"), [stepsShown](World& world, const Captures&, const Table&) {
+    Brick& brick = turnRequestsBrick(world);
+    world.waitFor([&] { return brick.find(QStringLiteral("tasks")) && brick.find(QStringLiteral("tasks"))->isVisible(); },
+                  [&] { return QStringLiteral("the task summary; the turn is %1").arg(show(turn(world))); });
+    expect(!brick.root()->property("tasksOpen").toBool() && stepsShown(world).isEmpty(),
+           QStringLiteral("the task list shows %1 steps").arg(stepsShown(world).size()));
+  });
+
   // Follow-ups and the queue.
   step(QStringLiteral("the follow-up behaviour setting is %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.native().controller<SettingsController>()->writeDevice(QStringLiteral("followUpBehavior"), c[0]);
@@ -705,7 +939,38 @@ const Steps steps([] {
     expect(command.value(QLatin1String("runId")) == QStringLiteral("run-queued-") + c[0] && command.value(QLatin1String("text")) == c[1],
            QStringLiteral("the MC was told %1").arg(show(command.toVariantMap())));
   });
-  step(QStringLiteral("the queued message still reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC is asked to change the queued run of %1 to %1 without attachments").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QJsonObject command = lastCommand(world, QStringLiteral("queued-run.edit"));
+    expect(command.value(QLatin1String("runId")) == QStringLiteral("run-queued-") + c[0] && command.value(QLatin1String("text")) == c[1] &&
+               command.contains(QLatin1String("attachments")) && command.value(QLatin1String("attachments")).toArray().isEmpty(),
+           QStringLiteral("the MC was told %1").arg(show(command.toVariantMap())));
+  });
+
+  // A queued message's attachments, on its row in the queue card.
+  step(QStringLiteral("%1 is queued with the file %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    queueMessage(world, c[0]);
+    set(world, QStringLiteral("message"), QStringLiteral("message-") + c[0],
+        {{QStringLiteral("attachments"), QJsonArray{QJsonObject{{QStringLiteral("type"), QStringLiteral("file")},
+                                                                {QStringLiteral("id"), QStringLiteral("file-") + c[1]},
+                                                                {QStringLiteral("name"), c[1]},
+                                                                {QStringLiteral("mimeType"), QStringLiteral("text/markdown")},
+                                                                {QStringLiteral("sizeBytes"), 12}}}}});
+  });
+  step(QStringLiteral("the queue shows %1 on %1").arg(q), [requestsBrick](World& world, const Captures& c, const Table&) {
+    Brick& brick = requestsBrick(world);
+    world.waitFor([&] { return brick.shows(c[0]) && brick.shows(c[1]); },
+                  [&] { return QStringLiteral("\"%1\" on \"%2\"; the turn is %3").arg(c[0], c[1], show(turn(world))); });
+    expect(brick.item(QStringLiteral("queueAttachment-file-") + c[0])->isVisible(), QStringLiteral("the attachment is hidden"));
+  });
+  step(QStringLiteral("the user opens %1 from the queue").arg(q), [requestsBrick](World& world, const Captures& c, const Table&) {
+    requestsBrick(world).click(QStringLiteral("queueAttachment-file-") + c[0]);
+    world.sync();
+  });
+  step(QStringLiteral("the attachment viewer shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return world.state(QStringLiteral("attachmentViewer")).toMap().value(QStringLiteral("name")) == c[0]; },
+                  [&] { return QStringLiteral("the viewer shows %1").arg(show(world.state(QStringLiteral("attachmentViewer")))); });
+  });
+  step(QStringLiteral("the queued message still reads %1").arg(q),[](World& world, const Captures& c, const Table&) {
     QStringList texts;
     for (const QVariant& queued : listed(world, QStringLiteral("queue"))) texts.append(queued.toMap().value(QStringLiteral("text")).toString());
     expect(texts.contains(c[0]) && commandsOf(world, QStringLiteral("queued-run.edit")).isEmpty(),
@@ -839,4 +1104,26 @@ void startWorkingTurn(World& world) {
 
 void queueTurnMessage(World& world, const QString& text) {
   queueMessage(world, text);
+}
+
+void proposeTurnPlan(World& world, const QString& markdown) {
+  proposePlan(world, true, markdown);
+}
+
+QString proposedTurnPlan(World& world) {
+  const QString markdown = world.mc.part<ProposedPlan>().markdown;
+  return markdown.isEmpty() ? kPlanMarkdown : markdown;
+}
+
+Brick& turnRequestsBrick(World& world) {
+  if (!world.brick) world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nTurnRequests {}\n", QSize(820, 500));
+  return *world.brick;
+}
+
+bool planFeedbackTypes(World& world, const QString& text) {
+  if (auto* palette = world.native().controller<CommandPaletteController>(); palette && palette->isOpen()) return false;
+  if (!turn(world).value(QStringLiteral("plan")).isValid()) return false;
+  typeInto(world, text);
+  world.sync();
+  return true;
 }

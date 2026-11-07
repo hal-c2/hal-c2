@@ -105,6 +105,8 @@ export interface FakeSpaceMc {
   readonly agentThreadGone: (pageId: string) => void;
   /** The next ask is refused, as when another client asked first. */
   readonly refuseNextAsk: () => void;
+  /** What each ask the MC took was sent with, oldest first. */
+  readonly asks: Entity[];
   /** Stops from now on leave an agent stopping, as a provider that ignores them does. */
   readonly ignoreStops: () => void;
   /** How many stops the MC was asked for. */
@@ -192,6 +194,10 @@ function exportMarkdown(page: Entity, blocks: Entity[], titleOf: (id: string) =>
           .join("\n");
       case "subpage_link":
         return `[${titleOf(block.linkedPageId) ?? block.text}](#${block.linkedPageId})`;
+      case "code": {
+        const fence = block.fence ?? "```";
+        return `${fence}${block.language ?? ""}${block.info ?? ""}\n${block.text}\n${fence}`;
+      }
       default:
         return block.text;
     }
@@ -225,6 +231,26 @@ function parseMarkdown(markdown: string): { title: string | null; blocks: Entity
     } else if ((match = /^\s*[-*]\s+\[([ xX])\]\s?(.*)$/.exec(line))) {
       out.push(block("checklist", match[2]!, match[1] !== " "));
       index += 1;
+    } else if ((match = /^ {0,3}(`{3,}|~{3,})/.exec(line))) {
+      const close = new RegExp(`^ {0,3}\\${match[1]![0]}{${match[1]!.length},}\\s*$`);
+      const fenced = [line];
+      index += 1;
+      while (index < lines.length) {
+        fenced.push(lines[index]!);
+        index += 1;
+        if (close.test(fenced.at(-1)!)) break;
+      }
+      // A closed fence from the start of the line is a code block, its language the first
+      // word after the fence; any other is kept as written, a raw block.
+      const open = /^(`{3,}|~{3,})(?:(\S+)(.*))?$/.exec(line);
+      if (open && fenced.length > 1 && close.test(fenced.at(-1)!)) {
+        out.push({
+          ...block("code", fenced.slice(1, -1).join("\n")),
+          ...(open[1] !== "```" ? { fence: open[1] } : {}),
+          ...(open[2] ? { language: open[2] } : {}),
+          ...(open[3] ? { info: open[3] } : {}),
+        });
+      } else out.push(block("raw", fenced.join("\n")));
     } else if (line.startsWith(">")) {
       const quote: string[] = [];
       while (index < lines.length && lines[index]!.startsWith(">")) {
@@ -264,8 +290,14 @@ export function fakeSpaceMc(options: {
   readonly titleOf: (threadId: string) => string | null;
   /** The thread an ask on a page runs in; the real MC starts a new one. */
   readonly agentThreadId: () => string;
+  /** Where an ask naming no project runs (`space.page.agentTarget`). */
+  readonly agentProjectId?: () => string | null;
+  /** Whether the MC has the project: one with no files written has an empty folder. */
+  readonly hasProject?: (projectId: string) => boolean;
 }) {
   const spaces = new Map<string, Entity>();
+  // Each project's own Space, where its files' pages are: in the index, never listed.
+  const projectSpaces = new Map<string, Entity>();
   // Per Space: its pages, blocks and comments, each in creation order.
   const content = new Map<string, Map<string, Map<string, Entity>>>();
   const seqs = new Map<string, number>();
@@ -334,9 +366,14 @@ export function fakeSpaceMc(options: {
   const table = (spaceId: string, kind: string) => kindsOf(spaceId).get(kind)!;
 
   const streamRows = (stream: string): Array<readonly [string, string, Entity]> => {
-    if (stream === "spaces") return [...spaces.values()].map((s) => ["space", s.id, { ...s }]);
+    if (stream === "spaces") {
+      return [
+        ...[...spaces.values()].map((s) => ["space", s.id, { ...s }] as const),
+        ...[...projectSpaces.values()].map((s) => ["projectSpace", s.id, { ...s }] as const),
+      ];
+    }
     const spaceId = stream.slice("space:".length);
-    if (!spaces.has(spaceId)) return [];
+    if (!spaces.has(spaceId) && !projectSpaces.has(spaceId)) return [];
     return [...kindsOf(spaceId)].flatMap(([kind, entities]) =>
       [...entities.values()].map((entity) => [kind, entity.id as string, { ...entity }] as const),
     );
@@ -371,7 +408,8 @@ export function fakeSpaceMc(options: {
     const spaceId = stream === "spaces" ? null : stream.slice("space:".length);
     const at = Date.now();
     const apply = ([kind, id, patch]: Change) => {
-      const entities = spaceId === null ? spaces : table(spaceId, kind);
+      const entities =
+        spaceId !== null ? table(spaceId, kind) : kind === "projectSpace" ? projectSpaces : spaces;
       if (patch.d) entities.delete(id);
       else entities.set(id, { ...entities.get(id), ...patch.s });
       const seq = (seqs.get(stream) ?? 0) + 1;
@@ -390,7 +428,9 @@ export function fakeSpaceMc(options: {
   // --- reads ---
 
   const space = (id: unknown): Entity =>
-    spaces.get(String(id)) ?? refuse("not_found", `There is no Space ${String(id)}.`);
+    spaces.get(String(id)) ??
+    projectSpaces.get(String(id)) ??
+    refuse("not_found", `There is no Space ${String(id)}.`);
   const pages = (spaceId: string) => [...table(spaceId, "page").values()];
   const page = (spaceId: string, id: unknown): Entity =>
     table(spaceId, "page").get(String(id)) ??
@@ -628,6 +668,27 @@ export function fakeSpaceMc(options: {
     return { entry, change: ["page", entry.id, { s: entry }] as Change };
   };
 
+  const extras = (spec: Entity): Entity => {
+    const code = spec.kind === "code";
+    const item = ["bullet", "numbered", "checklist"].includes(spec.kind);
+    const kept: Array<[string, boolean]> = [
+      ["language", code],
+      ["fence", code],
+      ["info", code],
+      ["depth", item && spec.depth !== 0],
+      ["indent", item],
+      ["marker", ["bullet", "numbered", "divider", "callout", "details"].includes(spec.kind)],
+      ["start", spec.kind === "numbered" && spec.start !== 1],
+      ["alert", spec.kind === "callout"],
+      ["label", spec.kind === "footnote"],
+    ];
+    return Object.fromEntries(
+      kept
+        .filter(([field, keep]) => keep && spec[field] != null)
+        .map(([field]) => [field, spec[field]]),
+    );
+  };
+
   const newBlock = (
     spaceId: string,
     pageId: string,
@@ -639,12 +700,18 @@ export function fakeSpaceMc(options: {
       "paragraph",
       "heading",
       "checklist",
+      "bullet",
+      "numbered",
       "callout",
+      "divider",
       "subpage_link",
       "image",
       "raw",
       "table",
       "code",
+      "footnote",
+      "details",
+      "details_end",
     ];
     if (!kinds.includes(spec.kind)) refuse("invalid", `A block is one of ${kinds.join(", ")}.`);
     const level = spec.kind === "heading" ? spec.level : undefined;
@@ -654,7 +721,8 @@ export function fakeSpaceMc(options: {
     if (spec.kind === "subpage_link" && !table(spaceId, "page").get(spec.linkedPageId)) {
       refuse("invalid", "A subpage link needs a page of this Space.");
     }
-    const placed = spec.kind === "image" ? image(spaceId, spec.imageId) : null;
+    const url = spec.kind === "image" && typeof spec.url === "string" ? spec.url : undefined;
+    const placed = spec.kind === "image" && url === undefined ? image(spaceId, spec.imageId) : null;
     if (placed && placed.trashedAt !== null) {
       refuse("trashed", `The image "${placed.name}" is in the trash.`);
     }
@@ -667,7 +735,10 @@ export function fakeSpaceMc(options: {
       checked: spec.kind === "checklist" && spec.checked === true,
       linkedPageId: spec.kind === "subpage_link" ? spec.linkedPageId : null,
       ...(placed ? { imageId: placed.id } : {}),
+      ...(url !== undefined ? { url } : {}),
       ...(level !== undefined ? { level } : {}),
+      // The fields only some kinds keep, as the MC's `with_extras` keeps them.
+      ...extras(spec),
       order,
       createdBy: by,
       updatedBy: by,
@@ -724,6 +795,15 @@ export function fakeSpaceMc(options: {
     return { id: nextId("space"), name: spaceName, createdAt: at, updatedAt: at };
   };
 
+  /** The project's Space, made the first time one of its files is opened, as the MC does. */
+  const projectSpaceOf = (projectId: string): string => {
+    const found = [...projectSpaces.values()].find((entry) => entry.projectId === projectId);
+    if (found) return found.id as string;
+    const entry = { ...newSpace(projectId), projectId };
+    commit("spaces", [["projectSpace", entry.id, { s: entry }]]);
+    return entry.id;
+  };
+
   // Whoever looks first, by listing or by making a Space, finds Personal there.
   const seeded = (): Change[] => {
     if (spaces.size > 0) return [];
@@ -751,6 +831,7 @@ export function fakeSpaceMc(options: {
   };
   const filesOf = (projectId: unknown): Map<string, string> =>
     projectFiles.get(String(projectId)) ??
+    (options.hasProject?.(String(projectId)) ? new Map() : undefined) ??
     refuse("notFound", `There is no project ${String(projectId)} on this MC.`);
   const globRegExp = (glob: string) =>
     new RegExp(
@@ -803,6 +884,7 @@ export function fakeSpaceMc(options: {
   };
 
   let refusingAsk = false;
+  const asks: Entity[] = [];
   let ignoringStops = false;
   let stops = 0;
   const isRunning = (agent: Entity | undefined) => agent !== undefined && agent.endedAt === null;
@@ -840,8 +922,10 @@ export function fakeSpaceMc(options: {
           },
         ],
       ]);
+      asks.push(structuredClone(input));
       return { agent: table(input.spaceId, "pageAgent").get(found.id) };
     },
+    "space.page.agentTarget": () => ({ projectId: options.agentProjectId?.() ?? null }),
     "space.page.stopAgent": (input) => {
       if (!isRunning(table(input.spaceId, "pageAgent").get(input.pageId))) {
         refuse("invalid", "No agent is working on this page.");
@@ -877,6 +961,9 @@ export function fakeSpaceMc(options: {
               page: entry ? { spaceId: entry.spaceId, pageId: entry.id, title: entry.title } : null,
             };
           }),
+        spaceId:
+          [...projectSpaces.values()].find((entry) => entry.projectId === input.projectId)?.id ??
+          null,
       };
     },
     "space.files.scan": (input) => {
@@ -896,7 +983,6 @@ export function fakeSpaceMc(options: {
       return { status: "written", entries };
     },
     "space.page.openFile": (input) => {
-      space(input.spaceId);
       const files = filesOf(input.projectId);
       const path = String(input.relativePath);
       if (path.startsWith("/") || path.split("/").includes("..")) {
@@ -908,15 +994,16 @@ export function fakeSpaceMc(options: {
       const text = files.get(path) ?? refuse("notFound", `There is no file ${path}.`);
       const existing = pageOfFile(input.projectId, path);
       if (existing) return { spaceId: existing.spaceId, page: existing, created: false };
+      const spaceId = projectSpaceOf(input.projectId);
       const { page: entry } = importPage(
-        input.spaceId,
+        spaceId,
         text,
         undefined,
         null,
         { file: fileIndicator(input.projectId, path, text) },
         fromFile,
       );
-      return { spaceId: input.spaceId, page: entry, created: true };
+      return { spaceId, page: entry, created: true };
     },
     "space.page.syncFile": (input) => {
       const found = livePage(input.spaceId, input.pageId);
@@ -934,12 +1021,6 @@ export function fakeSpaceMc(options: {
           conflictAt: file.conflictAt,
         });
       }
-      return { page: table(input.spaceId, "page").get(found.id) };
-    },
-    "space.page.unlinkFile": (input) => {
-      const found = livePage(input.spaceId, input.pageId);
-      if (!found.file) refuse("invalid", "This page is not a project file.");
-      commit(`space:${input.spaceId}`, [["page", found.id, { s: { file: null } }]]);
       return { page: table(input.spaceId, "page").get(found.id) };
     },
     "space.list": () => {
@@ -1466,43 +1547,39 @@ export function fakeSpaceMc(options: {
           mimeType: "image/png",
           sizeBytes: 8,
           prompt,
-          generatedBy: input.modelSelection ?? { instanceId: "codex", model: "default" },
+          generatedBy: input.modelSelection ?? { instanceId: "codex", model: "auto" },
         },
         by,
       );
     },
-    "space.image.providers": () =>
-      mc.imageGeneration.kind === "available"
-        ? {
-            providers: [
-              { instanceId: "codex", driver: "codex", status: "ready", message: null },
-              { instanceId: "grok", driver: "grok", status: "ready", message: null },
-              {
-                instanceId: "claudeAgent",
-                driver: "claudeAgent",
-                status: "unsupported",
-                message: "Claude has no image tool.",
-              },
-            ],
-            selection: { instanceId: "codex", model: "default" },
-          }
-        : {
-            providers: [
-              {
-                instanceId: "codex",
-                driver: "codex",
-                status: "unavailable",
-                message: "Codex is not set up.",
-              },
-              {
-                instanceId: "claudeAgent",
-                driver: "claudeAgent",
-                status: "unsupported",
-                message: "Claude has no image tool.",
-              },
-            ],
-            selection: null,
-          },
+    // The MC's own offer: only the providers that can make an image, with their models.
+    "space.image.providers": () => {
+      const ready = mc.imageGeneration.kind === "available";
+      const provider = (instanceId: string, models: object[]) => ({
+        instanceId,
+        driver: instanceId,
+        status: ready ? "ready" : "unavailable",
+        message: ready ? null : `${instanceId} is not enabled or not installed.`,
+        models,
+      });
+      return {
+        providers: [
+          provider("codex", [
+            {
+              slug: "auto",
+              name: "GPT Image",
+              description: "OpenAI picks the model. Codex cannot choose it.",
+            },
+          ]),
+          provider("grok", [
+            { slug: "auto", name: "Grok Imagine", description: "Grok picks the model." },
+            { slug: "grok-imagine-image-2.0", name: "Grok Imagine Image 2.0", description: null },
+            { slug: "grok-imagine-image", name: "Grok Imagine Image", description: null },
+          ]),
+        ],
+        selection: ready ? { instanceId: "codex", model: "auto" } : null,
+      };
+    },
     "space.image.trash": (input) => {
       const found = image(input.spaceId, input.imageId);
       if (found.trashedAt !== null) refuse("invalid", `"${found.name}" is already in the trash.`);
@@ -1595,7 +1672,8 @@ export function fakeSpaceMc(options: {
           : method === "space.page.openFile" || method === "space.page.syncFile"
             ? fromFile
             : author;
-      if (spaces.has(payload.spaceId)) noteVersions(payload.spaceId, by);
+      const spaceId = payload.spaceId ?? (result as { spaceId?: unknown } | undefined)?.spaceId;
+      if (spaces.has(spaceId) || projectSpaces.has(spaceId)) noteVersions(spaceId, by);
       return result;
     },
     spaceNamed: (value) => {
@@ -1640,6 +1718,7 @@ export function fakeSpaceMc(options: {
     refuseNextAsk: () => {
       refusingAsk = true;
     },
+    asks,
     ignoreStops: () => {
       ignoringStops = true;
     },

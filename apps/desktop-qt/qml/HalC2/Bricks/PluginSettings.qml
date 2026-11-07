@@ -20,7 +20,7 @@ SettingsPage {
     }
     readonly property var fields: entry?.settingsSchema ?? []
     readonly property string ownPage: entry?.settingsPageUrl ?? ""
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color errorColor: Theme.palette.color("errorForeground", "#ef4444")
     // The values the fields show, saved together.
     property var values: ({})
@@ -89,7 +89,7 @@ SettingsPage {
         Layout.fillWidth: true
         color: page.muted
         wrapMode: Text.Wrap
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
     }
 
     component LongText: TextArea {
@@ -97,9 +97,9 @@ SettingsPage {
         Layout.preferredHeight: 96
         wrapMode: TextEdit.Wrap
         color: page.foreground
-        font.pixelSize: Math.round(13 * Theme.fontScale)
+        font.pixelSize: Theme.type.body.size
         background: Rectangle {
-            radius: Math.min(Theme.radius, 8)
+            radius: Theme.radiusMd
             color: Theme.palette.color("input", "#18181b")
             border.color: Theme.palette.color("border", "#27272a")
         }
@@ -110,13 +110,13 @@ SettingsPage {
         visible: page.entry === null
         text: qsTr("This plugin is not on that MC any more.")
         color: page.muted
-        font.pixelSize: Math.round(13 * Theme.fontScale)
+        font.pixelSize: Theme.type.body.size
     }
 
     RowLayout {
         Layout.fillWidth: true
         visible: page.entry !== null && (page.entry.status === "failed" || page.entry.status === "error")
-        spacing: 12
+        spacing: Theme.space.md
 
         Label {
             objectName: "pluginSettingsFailure"
@@ -124,7 +124,7 @@ SettingsPage {
             text: qsTr("Failed: %1").arg(page.entry?.error || page.entry?.lastError || "")
             color: page.errorColor
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         ShellButton {
@@ -151,7 +151,7 @@ SettingsPage {
         visible: page.entry !== null && page.ownPage.length === 0 && page.fields.length === 0
         text: qsTr("This plugin has no settings.")
         color: page.muted
-        font.pixelSize: Math.round(13 * Theme.fontScale)
+        font.pixelSize: Theme.type.body.size
     }
 
     Repeater {
@@ -165,12 +165,12 @@ SettingsPage {
 
             objectName: "pluginSetting:" + modelData.key
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Theme.space.sm
 
             Label {
                 text: field.modelData.label
                 color: page.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
 
@@ -257,7 +257,7 @@ SettingsPage {
         text: qsTr("Not saved: %1").arg(page.refusal)
         color: page.errorColor
         wrapMode: Text.Wrap
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
     }
 
     Label {
@@ -267,13 +267,13 @@ SettingsPage {
         text: qsTr("Not valid JSON: %1").arg(page.fields.filter(field => page.unparsed.includes(field.key)).map(field => field.label || field.key).join(", "))
         color: page.errorColor
         wrapMode: Text.Wrap
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
     }
 
     RowLayout {
         Layout.fillWidth: true
         visible: page.ownPage.length === 0 && page.fields.length > 0
-        spacing: 8
+        spacing: Theme.space.sm
 
         Item {
             Layout.fillWidth: true

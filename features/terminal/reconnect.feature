@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18444
+#   https://github.com/pingdotgg/t3code/pull/9221
+#   https://github.com/pingdotgg/t3code/pull/17181
 #   docs/user/terminal.md (server-owned sessions, scrollback limits)
 #   docs/internals/terminal-runtime.md (bounded restore, query stripping, 512 KiB client buffer)
 #   packages/contracts/src/terminal.ts (TerminalAttachInput, TerminalAttachStreamEvent, TerminalMetadataStreamEvent, history limits)
@@ -83,9 +86,10 @@ Feature: Reattaching to terminals
       Then the client is asked to attach again
       And attaching again follows the terminal's output
 
+    # Upstream #18444: opening a closed terminal again on purpose still starts a new shell.
     # Legacy: apps/server/src/terminal/Manager.test.ts (keeps attach streams live when a terminal id is
     #   closed and reopened)
-    @backlog @mc
+    @mc
     Scenario: A client attached to a terminal stays attached when it is closed and opened again
       Given a client attached to a running terminal
       When the terminal is closed and then opened again
@@ -93,9 +97,19 @@ Feature: Reattaching to terminals
       And receives a snapshot of the new shell
       And does not have to attach again
 
+    # Upstream #18444: a resumed attach reports a closed terminal as closed instead of reopening it;
+    # a terminal the MC lost in a restart is still opened again.
+    @backlog @mc
+    Scenario: Reconnecting does not reopen a terminal the user closed
+      Given a client attached to "term-1"
+      And the user closed "term-1"
+      When the client reconnects and resumes its attach to "term-1"
+      Then the client is told "term-1" is closed
+      And no shell starts for "term-1"
+
     # Legacy: apps/server/src/terminal/Manager.test.ts (buffers attach output delivered during the
     #   initial snapshot callback; streams attach snapshots followed by live events without duplicates)
-    @backlog @mc
+    @mc
     Scenario: Output that arrives while a client is receiving its snapshot is not lost
       Given a running terminal whose shell prints as a client attaches
       When the shell prints "during snapshot" before the client has taken its snapshot
@@ -105,7 +119,7 @@ Feature: Reattaching to terminals
 
     # Legacy: apps/server/src/terminal/Manager.test.ts (preserves queued PTY output ordering through exit
     #   callbacks)
-    @backlog @mc
+    @mc
     Scenario: Output queued before a shell ends arrives before its exit
       Given a running terminal
       When the shell prints "first" and "second" and exits at once
@@ -120,6 +134,22 @@ Feature: Reattaching to terminals
       When a client closes the terminal without deleting its history
       And later opens the same terminal again
       Then the new shell's history begins with "migrations applied"
+
+    # Upstream #9221: replayed history could leave a new shell in a dead app's alternate
+    # screen, with a hidden cursor and its keyboard and mouse modes; reopening now resets them.
+    @backlog @mc
+    Scenario: A shell that died inside a full-screen program does not leave its modes behind
+      Given a terminal whose shell exited while a full-screen program had hidden the cursor and captured the mouse
+      When a client opens the terminal again
+      Then the history is shown with the cursor visible
+      And keys and the mouse reach the new shell as ordinary input
+
+    # Upstream #9221: a reopened terminal keeps at most the 512 KiB a client replays.
+    @backlog @mc @priority-low
+    Scenario: A reopened terminal keeps only as much history as a client replays
+      Given a terminal that printed 2 MiB before its shell exited
+      When a client opens the terminal again
+      Then the new shell's history holds the newest 512 KiB of that output
 
     @mc
     Scenario: A terminal whose id is too long for a file name keeps its history
@@ -146,6 +176,14 @@ Feature: Reattaching to terminals
       When the output stops for half a second
       Then the history is written to the MC's terminal store
 
+    # Upstream #17181: a terminal that never went quiet kept the history writer to itself.
+    @backlog @mc @priority-low
+    Scenario: A busy terminal does not hold up saving another terminal's history
+      Given four terminals that never stop printing
+      And a fifth terminal whose output has just gone quiet
+      When the MC next saves terminal history
+      Then the fifth terminal's history is saved after at most one batch of the busy terminals
+
     @mc
     Scenario Outline: History keeps the newest output within its limits
       Given a terminal that has printed <amount>
@@ -157,7 +195,7 @@ Feature: Reattaching to terminals
         | 6,000 lines     | 5,000 lines      |
         | 10 MiB of text  | 8 MiB of text    |
 
-    @backlog @mc
+    @mc
     Scenario: The MC keeps at most 128 ended terminals in memory
       Given the MC holds 128 terminals whose shells have ended
       When another terminal's shell ends
@@ -165,7 +203,7 @@ Feature: Reattaching to terminals
       And its saved output stays on disk
       And a terminal whose shell is running is never dropped
 
-    @backlog @mc
+    @mc
     Scenario: Output saved by an older layout is picked up by the default terminal
       Given the terminal log folder holds an old per-thread file for "thread-1" with the text "old build"
       When a client opens the default terminal of "thread-1"
@@ -248,7 +286,7 @@ Feature: Reattaching to terminals
       Given a terminal that has printed more than 512 KiB since the client attached
       Then the client keeps the newest 512 KiB
 
-    @backlog @mobile
+    @mobile
     Scenario: The phone reattaches to a terminal after losing its connection
       Given the phone shows a running terminal
       When the phone loses its connection and reconnects

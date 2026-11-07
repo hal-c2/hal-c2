@@ -32,7 +32,8 @@ const fixed = {
 };
 
 const themes = {
-  roles: palettes.THEME_COLOR_ROLES,
+  // Every role a theme may set; the optional ones fall back in the shell.
+  roles: [...palettes.THEME_COLOR_ROLES, ...palettes.THEME_OPTIONAL_COLOR_ROLES],
   // The stock look (no theme chosen), and the palette roles a theme file
   // leaves out are filled from.
   standard: { light: palettes.HAL_C2_LIGHT_THEME_COLORS, dark: palettes.HAL_C2_DARK_THEME_COLORS },
@@ -41,8 +42,9 @@ const themes = {
     dark: palettes.T3_CHAT_THEME.variants.dark,
   },
   fixed,
-  // The corner radius (0.625rem) and the UI and monospace font stacks.
-  radius: 10,
+  // The base corner radius (the shell's radiusMd; its scale derives from it)
+  // and the UI and monospace font stacks.
+  radius: 8,
   fonts: {
     ui: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
     mono: 'ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace',

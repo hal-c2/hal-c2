@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17316
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (preview, previewAutomation and localServers shapes; unknown MC)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (cross-MC subscriptions, remote/4 errors, unsubscribe on close)
 #   apps/server-ex/lib/hal_c2/preview.ex (serverEpoch per MC run, watcher monitoring)
@@ -112,6 +113,16 @@ Feature: Preview across MCs and devices
     When the user opens the tab
     Then the system browser opens "http://localhost:3000"
     And nothing is forwarded
+
+  # Upstream #17316 runs a remote environment's tabs on the user's computer and offers to move a
+  # tab into the environment's own browser and back. Only the desktop draws pages here, and
+  # the MC has no browser of its own, so there is nowhere to move a tab to; a dev server on the
+  # other machine is reached through the MC's forward instead.
+  @dropped @desktop
+  Scenario: An unreachable page offers to open the tab in the environment's browser
+    Given a browser tab for a thread on another machine cannot reach "http://localhost:3000"
+    When the user chooses "Open in the environment's browser"
+    Then the tab reopens in that environment's browser with the same address, size and profile
 
   # A dev server on the thread's machine is usually reachable only from that machine, and
   # its pages, cookies and sign-in callbacks expect the address "localhost". The MC on the

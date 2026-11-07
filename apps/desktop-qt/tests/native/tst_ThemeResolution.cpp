@@ -15,6 +15,7 @@
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ThemeController.h"
+#include "ThemeStore.h"
 
 namespace {
 
@@ -71,9 +72,9 @@ private slots:
 
   void nothingChosenIsTheStandardLook() {
     QCOMPARE(published().value(QStringLiteral("id")), QVariant(QStringLiteral("hal-c2")));
-    QCOMPARE(canvas(), QStringLiteral("#fcfcfc"));
+    QCOMPARE(canvas(), QStringLiteral("#f7f7f5"));
     themes()->setSystemDark(true);
-    QCOMPARE(canvas(), QStringLiteral("#0a0a0a"));
+    QCOMPARE(canvas(), QStringLiteral("#0d0e11"));
     // The roles the bricks paint outside theme files come with every theme.
     QVERIFY(published().value(QStringLiteral("colors")).toMap().contains(QStringLiteral("success")));
     QVERIFY(published().value(QStringLiteral("colors")).toMap().contains(QStringLiteral("info")));
@@ -84,7 +85,7 @@ private slots:
     const auto overlay = [this] { return published().value(QStringLiteral("colors")).toMap().value(QStringLiteral("surfaceOverlay")).toString(); };
     QCOMPARE(overlay(), QStringLiteral("#fffffff5"));
     themes()->setSystemDark(true);
-    QCOMPARE(overlay(), QStringLiteral("#111111f5"));
+    QCOMPARE(overlay(), QStringLiteral("#22262ef5"));
   }
 
   // What a picker previews a theme with: its canvas, accent and text in the
@@ -96,7 +97,7 @@ private slots:
       }
       return QStringList();
     };
-    QCOMPARE(themes()->standardSwatch().value(0), QStringLiteral("#fcfcfc"));
+    QCOMPARE(themes()->standardSwatch().value(0), QStringLiteral("#f7f7f5"));
     const QStringList light = swatchOf(QStringLiteral("grove"));
     for (const QVariant& theme : themes()->available()) {
       const QStringList swatch = theme.toMap().value(QStringLiteral("swatch")).toStringList();
@@ -104,7 +105,7 @@ private slots:
       for (const QString& color : swatch) QVERIFY2(QColor(color).isValid(), qPrintable(theme.toMap().value(QStringLiteral("id")).toString()));
     }
     themes()->setSystemDark(true);
-    QCOMPARE(themes()->standardSwatch().value(0), QStringLiteral("#0a0a0a"));
+    QCOMPARE(themes()->standardSwatch().value(0), QStringLiteral("#0d0e11"));
     QVERIFY(swatchOf(QStringLiteral("grove")) != light);
     // A theme without the appearance drawn shows the one it has.
     save({{QStringLiteral("customThemes"), QJsonArray{theme(QStringLiteral("mine"), QStringLiteral("light"), QStringLiteral("#010101"))}}});
@@ -113,17 +114,19 @@ private slots:
 
   // A role no theme carries is drawn in its fallback, in light themes too (a
   // "popover" dialog stayed near-black): every role the bricks ask the palette
-  // for by name comes with every theme, or is one a theme may add.
+  // for by name comes with every theme, under its own name or one the shell
+  // reads it from (ThemeStore::color), or is one a theme may add.
   void bricksPaintWithRolesEveryThemeHas() {
     // Drawn in the brick's own fallback unless a theme names them.
     const QStringList optional{QStringLiteral("projectForeground"), QStringLiteral("branchForeground"),
-                               QStringLiteral("sidebarActiveIndicator"), QStringLiteral("scrim")};
+                               QStringLiteral("sidebarActiveIndicator")};
+    ThemeStore store(m_dir.filePath(QStringLiteral("no-shell-theme")));
     static const QRegularExpression read(QStringLiteral("palette\\.color\\(\"([A-Za-z0-9]+)\""));
     QStringList unknown;
     int found = 0;
     for (const bool dark : {false, true}) {
       themes()->setSystemDark(dark);
-      const QVariantMap colors = published().value(QStringLiteral("colors")).toMap();
+      store.applyBaseTheme(published());
       for (const char* dir : {"/qml", "/../mobile-qt/qml"}) {
         QDirIterator files(QString::fromUtf8(HAL_C2_TEST_SOURCE_DIR) + QLatin1String(dir), {QStringLiteral("*.qml")}, QDir::Files, QDirIterator::Subdirectories);
         while (files.hasNext()) {
@@ -134,13 +137,37 @@ private slots:
             const QString role = matches.next().captured(1);
             ++found;
             const QString where = QFileInfo(file).fileName() + QLatin1Char(':') + role;
-            if (!colors.contains(role) && !optional.contains(role) && !unknown.contains(where)) unknown.append(where);
+            if (!store.color(role, QColor()).isValid() && !optional.contains(role) && !unknown.contains(where)) unknown.append(where);
           }
         }
       }
     }
     QVERIFY(found > 100);
     QVERIFY2(unknown.isEmpty(), qPrintable(unknown.join(QStringLiteral(", "))));
+    // A theme can name them.
+    for (const QString& role : optional) QVERIFY2(themes()->roles().contains(role), qPrintable(role));
+  }
+
+  // The roles the built-in palettes leave out are a theme's to set; diffs
+  // keep the theme's colours unless the user chose blue and orange.
+  void aThemeSetsTheRolesThePalettesLeaveOut() {
+    const QList<std::pair<QString, QString>> set{
+        {QStringLiteral("projectForeground"), QStringLiteral("#123456")}, {QStringLiteral("branchForeground"), QStringLiteral("#234567")},
+        {QStringLiteral("sidebarActiveIndicator"), QStringLiteral("#345678")}, {QStringLiteral("diffAdded"), QStringLiteral("#456789")},
+        {QStringLiteral("diffRemoved"), QStringLiteral("#56789a")}, {QStringLiteral("scrim"), QStringLiteral("#00000080")},
+        {QStringLiteral("popover"), QStringLiteral("#6789ab")}, {QStringLiteral("destructive"), QStringLiteral("#789abc")}};
+    QJsonObject mine = theme(QStringLiteral("mine"), QStringLiteral("light"), QStringLiteral("#fafafa"));
+    QJsonObject colors = mine.value(QLatin1String("colors")).toObject();
+    for (const auto& [role, color] : set) colors.insert(role, color);
+    mine.insert(QStringLiteral("colors"), colors);
+    const auto drawn = [this](const QString& role) { return published().value(QStringLiteral("colors")).toMap().value(role).toString(); };
+    save({{QStringLiteral("customThemes"), QJsonArray{mine}}, {QStringLiteral("theme"), QStringLiteral("mine")}});
+    for (const auto& [role, color] : set) QCOMPARE(drawn(role), color);
+    save({{QStringLiteral("customThemes"), QJsonArray{mine}}, {QStringLiteral("theme"), QStringLiteral("mine")},
+          {QStringLiteral("diffColorScheme"), QStringLiteral("blue-orange")}});
+    QCOMPARE(drawn(QStringLiteral("diffAdded")), QStringLiteral("#3b82f6"));
+    QCOMPARE(drawn(QStringLiteral("diffRemoved")), QStringLiteral("#f97316"));
+    QCOMPARE(drawn(QStringLiteral("projectForeground")), QStringLiteral("#123456"));
   }
 
   void builtInsWinTheirIds() {

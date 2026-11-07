@@ -224,10 +224,8 @@ defmodule HalC2.SourceControl do
   def lookup(%{"provider" => provider, "repository" => repository} = input) do
     case provider do
       "github" ->
-        with {:ok, out, _} <-
-               cmd("gh", ["repo", "view", repository, "--json", "nameWithOwner,url,sshUrl"],
-                 cd: input["cwd"]
-               ),
+        with {:ok, out} <-
+               gh(input["cwd"], ["repo", "view", repository, "--json", "nameWithOwner,url,sshUrl"]),
              {:ok, %{"nameWithOwner" => name, "url" => url, "sshUrl" => ssh}} <- JSON.decode(out) do
           {:ok, repo("github", name, url, ssh)}
         else
@@ -357,7 +355,7 @@ defmodule HalC2.SourceControl do
     dest = Path.expand(dest)
 
     with {:ok, url, repository} <- remote(input),
-         {:ok, _} <- HalC2.Git.ok(Path.dirname(dest), ["clone", url, dest]) do
+         {:ok, _} <- HalC2.Git.ok(Path.dirname(dest), ["clone", "--", url, dest]) do
       {:ok, %{"cwd" => dest, "remoteUrl" => url, "repository" => repository}}
     else
       {:error, {_status, detail}} ->
@@ -378,21 +376,28 @@ defmodule HalC2.SourceControl do
 
     created =
       case provider do
-        "github" -> cmd("gh", ["repo", "create", name, visibility], cd: cwd)
-        "gitlab" -> cmd("glab", ["repo", "create", name, visibility], cd: cwd)
-        other -> {:error, "#{other} repositories are not supported here yet."}
+        "github" ->
+          HalC2.GitHub.asked(fn ->
+            with {:ok, out} <- gh(cwd, ["repo", "create", name, visibility]), do: {:ok, out, ""}
+          end)
+
+        "gitlab" ->
+          cmd("glab", ["repo", "create", name, visibility], cd: cwd)
+
+        other ->
+          {:error, "#{other} repositories are not supported here yet."}
       end
 
     with {:ok, _, _} <- created,
          {:ok, repository} <-
            lookup(%{"provider" => provider, "repository" => name, "cwd" => cwd}),
          url = if(protocol(input) == "ssh", do: repository["sshUrl"], else: repository["url"]),
-         {:ok, _} <- HalC2.Git.ok(cwd, ["remote", "add", remote_name, url]) do
+         {:ok, _} <- HalC2.Git.ok(cwd, ["remote", "add", "--", remote_name, url]) do
       branch = HalC2.Git.current_branch(cwd)
 
       pushed =
         branch &&
-          match?({:ok, _}, HalC2.Git.ok(cwd, ["push", "-u", remote_name, branch]))
+          match?({:ok, _}, HalC2.Git.ok(cwd, ["push", "-u", "--", remote_name, branch]))
 
       {:ok,
        %{
@@ -438,7 +443,12 @@ defmodule HalC2.SourceControl do
      }}
   end
 
-  # `gh` is the one `HalC2.PullRequests` and `HalC2.GitActions` run too.
+  # GitHub's API is asked through `HalC2.GitHub`, past its rate limit gate, in the
+  # shape `repository_error/3` takes.
+  defp gh(cwd, args) do
+    with {:error, {_, detail}} <- HalC2.GitHub.gh(cwd, args), do: {:error, detail}
+  end
+
   # Runs a CLI, giving up after `@timeout`: `{:ok, stdout, stderr}` when it exits 0,
   # else `{:error, first line of what it said}`.
   # `Application.get_env(:hal_c2, :gh_command)` (and so on per CLI) stands in for the CLI.

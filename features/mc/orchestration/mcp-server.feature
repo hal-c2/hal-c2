@@ -1,5 +1,25 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18552
+#   https://github.com/pingdotgg/t3code/pull/24560
+#   https://github.com/pingdotgg/t3code/pull/19491
+#   https://github.com/pingdotgg/t3code/pull/18109
+#   https://github.com/pingdotgg/t3code/pull/20411
+#   https://github.com/pingdotgg/t3code/pull/19393
+#   https://github.com/pingdotgg/t3code/pull/16909
+#   https://github.com/pingdotgg/t3code/pull/19751
+#   https://github.com/pingdotgg/t3code/pull/16741
+#   https://github.com/pingdotgg/t3code/pull/16718
+#   https://github.com/pingdotgg/t3code/pull/16337
+#   https://github.com/pingdotgg/t3code/pull/16336
+#   https://github.com/pingdotgg/t3code/pull/16335
+#   https://github.com/pingdotgg/t3code/pull/15219
+#   https://github.com/pingdotgg/t3code/pull/15947
+#   https://github.com/pingdotgg/t3code/pull/15907
+#   https://github.com/pingdotgg/t3code/pull/16219
+#   https://github.com/pingdotgg/t3code/pull/24809
+#   https://github.com/pingdotgg/t3code/pull/24850
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/22889
 #   apps/server-ex/lib/hal_c2/mcp.ex (POST /mcp, per-thread bearer credentials, JSON-RPC methods)
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (advertised tools, caller access rules, escalation checks)
 #   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (a turn whose MCP server changed resumes in a new process)
@@ -53,6 +73,12 @@ Feature: The HAL-C2 MCP server agents receive
     When the thread's credential is renewed
     Then the agent keeps its tools with the new credential
     And the old credential is refused from then on
+
+  @mc @plugin-claude
+  Scenario: Claude's MCP credential never appears in process diagnostics
+    Given the agent of a running Claude thread uses the "hal-c2" server
+    When a client asks for the MC's process diagnostics
+    Then Claude's launch and process diagnostics contain no MCP credential
 
   @mc
   Scenario: Credentials differ per provider instance of a thread
@@ -137,6 +163,52 @@ Feature: The HAL-C2 MCP server agents receive
       | providerInstanceId "nowhere"                 | it fails with code "invalid_request"                             |
       | model 7                                      | each provider lists at most 25 models, each with an id and a label |
 
+  # Upstream #22889: the capabilities list the models worth choosing and say how many were left
+  # out. Replaces the two scenarios above once the MC carries it.
+  @backlog @mc
+  Scenario: The capabilities list current models and count the rest
+    Given provider "opencode" offers 40 current models, legacy models and hidden models
+    And the user marked one legacy OpenCode model as a favourite
+    When the agent of "caller" asks for the orchestrator capabilities
+    Then "opencode" lists its first 8 current models in the user's order, the favourite and any custom models
+    And the models left out are counted
+    And no legacy or hidden model is listed unless it is a favourite, custom or the caller's own
+
+  # Upstream #22889: these providers have few enough models to list every current one.
+  @backlog @mc
+  Scenario Outline: The capabilities list every current model of a provider with a short catalog
+    When the agent of "caller" asks for the orchestrator capabilities
+    Then "<provider>" lists every current model it offers
+
+    Examples:
+      | provider |
+      | codex    |
+      | claude   |
+      | muse     |
+      | grok     |
+
+  # Upstream #22889: a search matches every word, legacy models included.
+  @backlog @mc
+  Scenario: Searching the capabilities matches every word
+    When the agent of "caller" asks for the orchestrator capabilities searching "sonnet 4"
+    Then the listed models are those whose id or label has both words, legacy models included
+
+  # Upstream #22889: delegating is not limited to the models the short list shows.
+  @backlog @mc
+  Scenario: A task can be delegated to a model the capabilities left out
+    Given the capabilities left the OpenCode model "glm-4.5" out of the list
+    When the agent of "caller" delegates a task to OpenCode with "glm-4.5"
+    Then the subagent runs on "glm-4.5"
+
+  # Upstream #18109: a disabled provider is reported only as disabled, not as missing its
+  # executable or failing its health and sign-in checks, which it never ran.
+  @mc @backlog
+  Scenario: A switched-off provider is reported as switched off and nothing else
+    Given provider "claude" is switched off
+    When the agent of "caller" asks for the orchestrator capabilities
+    Then "claude" is unavailable because it is switched off
+    And it is not reported as missing, unhealthy or signed out
+
   @mc
   Scenario: A tool the MC does not implement is refused by name
     When the agent of "caller" calls a tool "hal_c2_teleport"
@@ -196,6 +268,41 @@ Feature: The HAL-C2 MCP server agents receive
       | is archived                                  |
       | is running on a different provider instance   |
 
+  # Upstream #19751: a background subagent outlives its parent's turn and calls tools with
+  # the parent thread's credential. The thread lists it as background work while it runs.
+  @backlog @mc
+  Scenario: A caller whose background subagent still runs can still change things
+    Given "caller" has no active run
+    And "caller" lists a subagent of its own provider instance running in the background
+    When that subagent sends a message to another thread of "demo"
+    Then the message is sent
+
+  @backlog @mc
+  Scenario Outline: Background work that is not the caller's does not keep it running
+    Given "caller" has no active run
+    And "caller" lists a subagent running in the background that <owner>
+    When the agent of "caller" sends a message to another thread of "demo"
+    Then it fails with code "parent_not_active"
+
+    Examples:
+      | owner                                                       |
+      | an earlier provider of the thread started                    |
+      | runs on a different provider instance than the caller        |
+      | has no known owner                                           |
+
+  @backlog @mc
+  Scenario: Stopping the background work ends the caller's standing
+    Given "caller" has no active run and a subagent running in the background
+    When the user stops the background work of "caller"
+    And the agent of "caller" sends a message to another thread of "demo"
+    Then it fails with code "parent_not_active"
+
+  @backlog @mc
+  Scenario: Delegating still needs a running caller
+    Given "caller" has no active run and a subagent running in the background
+    When that subagent delegates a task
+    Then it fails with code "parent_not_active"
+
   @mc
   Scenario: Reading does not need a running caller
     Given "caller" has no active run
@@ -240,6 +347,22 @@ Feature: The HAL-C2 MCP server agents receive
     Given the agent of "caller" has made no call for longer than the idle limit and has no turn in progress
     When it calls a tool
     Then the call is refused with "invalid_mcp_credential"
+
+  # Upstream #19491: expiry deleted the credential, so the next turn had nothing to renew.
+  @backlog @mc
+  Scenario: An idle credential works again once its thread starts a turn
+    Given the credential of "caller" expired while the thread was idle
+    When "caller" starts a new turn and its agent calls a tool
+    Then the call is allowed
+    But a credential that was revoked stays refused
+
+  # Upstream #18552: a turn waiting over a day on a question or approval lost its credential.
+  @backlog @mc @priority-high
+  Scenario: A credential stays valid while its turn waits longer than the idle limit
+    Given "caller" has a turn in progress waiting on the user's answer
+    When the user answers after longer than the idle limit
+    And the agent of "caller" calls a tool
+    Then the call is allowed
 
   @mc
   Scenario: Stopping a provider session revokes its credentials
@@ -378,6 +501,7 @@ Feature: The HAL-C2 MCP server agents receive
     When the agent receives its first prompt, then another in the same mode, then one after the mode changed
     Then the instructions are in the first prompt and in the one after the change, but not in the second
 
+  # Upstream #19393: native slash commands keep their prompt shape
   @mc
   Scenario: A slash command stays at the start of an ACP prompt
     When the user sends "/compact" to an ACP agent of "caller"
@@ -411,6 +535,31 @@ Feature: The HAL-C2 MCP server agents receive
     And they tell it to list the thread's pull requests before finishing
     And they forbid linking unrelated pull requests
     And they tell it to report a link that failed
+
+  # Upstream #24560: the guidance forbade follow-ups to the same child although the thread send
+  # tool supports them.
+  @backlog @mc @priority-low
+  Scenario: The agent is told when to reuse a delegated child and when to delegate afresh
+    Given the "hal-c2" server is attached to "caller"
+    When a run of "caller" starts
+    Then the agent's instructions say an independent review round is a new delegated task
+    And they say a follow-up that needs the same child's context is sent to that child's thread
+
+  # Upstream #24850: the instructions and tool text were cut by 60%, each rule stated once where
+  # the agent decides, and these rules changed.
+  @backlog @mc
+  Scenario Outline: The agent's instructions say when to use each HAL-C2 tool
+    Given the "hal-c2" server is attached to "caller"
+    When a run of "caller" starts
+    Then the agent's instructions say <rule>
+
+    Examples:
+      | rule                                                                                                          |
+      | the provider's own subagent is for same-provider work with no extra settings that ends within the turn       |
+      | delegate_task is for another provider's model, settings the user asked for, a worktree, or work past the turn |
+      | to link a pull request it creates, takes over or pushes to, and not one it only reads or reviews             |
+      | to watch a pull request only when asked to, or when the asked work waits on its checks or reviews             |
+      | to open the browser preview only when the current request asks for browser work                              |
 
   @mc
   Scenario: Agents without a system prompt receive the orchestration instructions on a thread's first run only
@@ -455,3 +604,99 @@ Feature: The HAL-C2 MCP server agents receive
     When an MCP request arrives with an unknown bearer credential
     Then the answer asks for a bearer credential
     And it forbids storing the answer
+
+  @backlog @mc
+  Scenario: Thread tools take any thread in the environment
+    Given threads in two projects
+    When an agent reads, updates or messages a thread of the other project
+    Then the tool targets it
+    And listing covers one project, the one named or else the caller's
+    And writing to another thread needs the caller's live run and modes no broader than the target's
+
+  @backlog @mc @shared
+  Scenario: An agent asks for a secret through a private card
+    Given an agent needs a credential
+    When it asks for a secret with a label and a reason
+    Then a card in its thread asks the user for the value
+    And saving it gives the agent a one-use reference, never the value
+    And the transcript never holds the value
+
+  # Upstream #24809: a one-use reference cannot feed a shell CLI, so agents asked for tokens in
+  # chat instead; a secret can now be delivered as a private file the agent's commands read.
+  @backlog @mc @shared
+  Scenario: An agent asks for a secret its shell commands can read from a private file
+    Given an agent needs a token for a command-line tool
+    When it asks for a secret to be delivered as a file
+    Then the card tells the user the value stays out of chat, in a private file this agent's commands can read for 24 hours
+    And saving it gives the agent only the path of a file only the user's account can read
+    And the value leaves the secret store, and the file is removed 24 hours after it was made
+    And the transcript never holds the value
+
+  @backlog @mc
+  Scenario: A retried file secret request returns the same file
+    Given an agent asked for a secret delivered as a file and the user saved it
+    When the agent repeats the same request
+    Then it is given the same file path
+
+  @backlog @mc
+  Scenario: A secret asked for as a reference cannot be turned into a file
+    Given the user saved a secret on a card that asked for a one-use reference
+    When the agent asks to save that secret to a file
+    Then the request is refused
+
+  @backlog @mc @priority-low
+  Scenario: A delegation to a provider whose probe failed tries it again once
+    Given the cached state of a provider says it was not found
+    And the user has since fixed it
+    When an agent delegates a task or creates threads on that provider
+    Then the MC probes the provider once more and goes on if it is healthy
+    And healthy providers are not probed again
+
+  @backlog @mc
+  Scenario: A tool is limited to the callers it declares
+    Given a thread runs in a supervised or plan mode
+    When its agent starts a thread in another project
+    Then the call is allowed
+    And the new thread never gets a higher access or interaction mode than the caller has
+
+  @backlog @mc
+  Scenario: An agent outside HAL-C2 signs in to an MC's server
+    Given the user pointed Claude Code or another agent at the MC's MCP address
+    When the agent asks to connect
+    Then it is sent through a sign-in where the user approves access with a pairing code or as an administrator
+    And the user chooses how much access it gets, from read only to full access
+    And the agent can then use the tools that access allows
+
+  @backlog @mc @priority-low
+  Scenario: A hosted agent can sign in with an https callback
+    Given a hosted agent such as ChatGPT registers an https callback address
+    Then it is accepted and the callback must match exactly
+    And a loopback callback matches on any port
+    And an http callback off loopback is refused
+    And a client that asks for a secret is registered as a public client proved by PKCE
+
+  @backlog @shared @priority-low
+  Scenario: Copying an environment's MCP address
+    Given the user has an environment saved
+    When the user chooses to copy its MCP address
+    Then the address is copied with an example command for adding it to an agent
+
+  # Upstream #16909: plain http routes (LAN, Tailscale) get the action too.
+  @backlog @shared
+  Scenario Outline: The MCP address copied is the route the client reaches the environment by
+    Given the user's environment "studio" is reached over <routes>
+    When the user chooses to copy its MCP address
+    Then the copied address is <address>
+
+    Examples:
+      | routes                                                      | address                       |
+      | plain http at "http://studio.lan:3773", connected            | on "http://studio.lan:3773"   |
+      | "https://studio.ts.net" not connected and "http://10.0.0.5:3773" connected | on "http://10.0.0.5:3773" |
+      | "https://studio.ts.net" and "http://10.0.0.5:3773", neither connected | on the first ranked of them, "https://studio.ts.net" |
+
+  # Upstream #20411: optional tool arguments accept null as left out.
+  @backlog @mc
+  Scenario: A HAL-C2 tool called with null for an optional argument treats it as left out
+    When an agent reads a thread with "afterPosition" set to null
+    Then the thread is read as if "afterPosition" had not been given
+    And an argument where null means clearing, such as a project's icon, still clears it

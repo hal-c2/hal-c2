@@ -1,5 +1,26 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18322
+#   https://github.com/pingdotgg/t3code/pull/19465
+#   https://github.com/pingdotgg/t3code/pull/24022
+#   https://github.com/pingdotgg/t3code/pull/14834
+#   https://github.com/pingdotgg/t3code/pull/18310
+#   https://github.com/pingdotgg/t3code/pull/18845
+#   https://github.com/pingdotgg/t3code/pull/17821
+#   https://github.com/pingdotgg/t3code/pull/8415
+#   https://github.com/pingdotgg/t3code/pull/20024
+#   https://github.com/pingdotgg/t3code/pull/21519
+#   https://github.com/pingdotgg/t3code/pull/19671
+#   https://github.com/pingdotgg/t3code/pull/14360
+#   https://github.com/pingdotgg/t3code/pull/16619
+#   https://github.com/pingdotgg/t3code/pull/19107
+#   https://github.com/pingdotgg/t3code/pull/16828
+#   https://github.com/pingdotgg/t3code/pull/19350
+#   https://github.com/pingdotgg/t3code/pull/19357
+#   https://github.com/pingdotgg/t3code/pull/15210
+#   https://github.com/pingdotgg/t3code/pull/20102
 #   docs/user/composer.md (slash commands, skills, context references, pull requests, threads, citing)
+#   https://github.com/pingdotgg/t3code/pull/13450 (focus returns to the draft after a quote's comment)
+#   https://github.com/pingdotgg/t3code/pull/22922
 #   docs/internals/composer-context-references.md
 #   apps/server-ex/lib/hal_c2/composer_context.ex (provider envelope, attachment remapping, quoted replies)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (@file, $skill and /command suggestions)
@@ -40,7 +61,7 @@ Feature: Referencing files, skills, commands and context
   Background:
     Given a project with an open thread
 
-  @desktop @backlog-desktop
+  @desktop @backlog-desktop @priority-high
   Scenario Outline: A trigger character offers matching suggestions
     When the user types "<typed>"
     Then the user is offered <suggestions>
@@ -51,25 +72,25 @@ Feature: Referencing files, skills, commands and context
       | $rev      | skills matching "rev"                 |
       | /mo       | commands matching "mo"                |
 
-  @desktop @backlog-desktop
+  @desktop @backlog-desktop @priority-high
   Scenario: Choosing a file suggestion puts the file into the draft
     Given the user has typed "@read"
     When the user chooses "README.md" from the suggestions
     Then the draft references "README.md"
 
-  @desktop @backlog-desktop
+  @desktop @backlog-desktop @priority-high
   Scenario: Dismissing suggestions does not send the message
     Given the user is offered suggestions
     When the user dismisses them with Escape
     Then no suggestion is inserted
     And nothing has been sent
 
-  @backlog @tui
+  @backlog @tui @priority-high
   Scenario: The terminal client offers file, skill and command suggestions
     When the user types "@src" in the prompt
     Then the user is offered files and folders matching "src"
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario Outline: Provider commands only apply at the start of a message
     When the user types "<typed>"
     Then <outcome>
@@ -80,7 +101,21 @@ Feature: Referencing files, skills, commands and context
       | please /compact       | no provider command is offered             |
       | please /model         | the built-in model command is offered      |
 
-  @backlog @desktop
+  @backlog @shared
+  Scenario: A slash typed after other text searches skills
+    Given the provider offers the skill "review"
+    When the user types "Please use /rev"
+    Then the skill "review" is offered
+    When the user chooses it
+    Then the draft reads "Please use " followed by the skill "review"
+
+  # Upstream #19671: a path typed in the composer offers no slash suggestions.
+  @backlog @shared
+  Scenario: A path typed in the composer does not open the slash menu
+    When the user types "run /tmp/build.sh"
+    Then no slash command or skill suggestions are offered
+
+  @backlog @desktop @priority-high
   Scenario Outline: Choosing a built-in command acts at once and leaves no text behind
     Given the Build and Plan toggle setting is on
     When the user chooses the built-in command "<command>"
@@ -117,13 +152,42 @@ Feature: Referencing files, skills, commands and context
     When the user types "#42" in a thread of this project
     Then only this project's repository pull requests are offered
 
+  @backlog @desktop @mobile
+  Scenario: A pull request linked to the thread is suggested whatever its repository
+    Given the thread links pull request 4 of "owner/repo-b"
+    And the project's repository "owner/repo-a" has its own pull request 4
+    When the user types "#4"
+    Then both are suggested, the linked one naming "owner/repo-b"
+    And a linked pull request whose details have not loaded yet is not suggested
+
   # Legacy: packages/shared/src/composerInlineTokens.ts (SCOPED_PACKAGE_REFERENCE_REGEX)
   @backlog @desktop
   Scenario: An npm package name after an at sign stays text
     When the draft reads "install @acme/widgets first"
     Then "@acme/widgets" is not shown as a project file
 
+  # Upstream #16619: a path pasted after "@" was read as markdown, so "__" pairs turned bold
+  # and the agent got "@src/**test**.tsx".
   @backlog @desktop
+  Scenario: A path pasted after an at sign is kept as typed
+    Given the user has typed "@" in the draft
+    When the user pastes "src/__test__.tsx and **this**"
+    Then the draft sends "@src/__test__.tsx" unchanged
+    And "this" is still bold
+
+  # Upstream #8415: a pasted "@foo(bar)" became a file reference.
+  @backlog @desktop @mobile @priority-low
+  Scenario Outline: A pasted decorator call stays as text
+    When the user pastes "<text>" into the draft
+    Then the draft holds "<text>" as typed, with no file reference
+
+    Examples:
+      | text                   |
+      | @foo(bar)              |
+      | @app.route("/users")   |
+      | @écrire(option)        |
+
+  @backlog @desktop @priority-high
   Scenario: Another thread on the same MC can be referenced
     Given the environment has a thread "Auth refactor"
     When the user references the thread "Auth refactor"
@@ -137,12 +201,96 @@ Feature: Referencing files, skills, commands and context
     Then the user is told the agent can only read threads on its own server
     And the draft is unchanged
 
+  # Upstream #18310: moving a draft to another environment kept references the agent there cannot
+  # read; they are marked and the message waits until they are removed or the draft moves back.
+  @backlog @desktop
+  Scenario: A draft moved to another environment cannot send the threads it references
+    Given the draft references "Auth refactor" on "laptop"
+    When the user moves the draft to run on "desktop"
+    Then the reference to "Auth refactor" is marked as unreadable on "desktop"
+    And the message cannot be sent, and the draft is kept
+    When the user moves the draft back to "laptop"
+    Then the message can be sent
+    And Auto balance only picks a machine that holds every referenced thread
+
+  # Upstream #18322: a phone draft aimed at another machine still sent the thread it referenced.
+  @backlog @mobile
+  Scenario: A phone draft aimed at another machine does not send threads that machine cannot read
+    Given the new task references "Auth refactor" on "laptop"
+    When the user aims the task at "desktop"
+    Then the task is not sent with the reference to "Auth refactor"
+    And the user is told "Auth refactor" cannot be read on "desktop"
+
+  # Upstream #18322: pasted references to another machine's threads used up the context limit.
+  @backlog @mobile @priority-low
+  Scenario: Threads pasted from another machine stay as text the user is told about
+    Given the user copied a message referencing "Remote work" from another machine
+    When the user pastes it into a draft on "laptop"
+    Then "Remote work" stays in the text as an unavailable reference
+    And it does not count toward the draft's context limit
+    And the user is told "Remote work" could not be attached
+
+  @backlog @desktop
+  Scenario: A thread dropped from another environment is attached as its transcript
+    Given a thread "Remote work" lives in a different environment
+    When the user drops "Remote work" onto the composer
+    Then the draft attaches a saved transcript of "Remote work" with its history and tool output
+    And the message cannot be sent until the transcript has loaded
+    And a transcript over the file limit is refused saying it is too large
+    But a thread dropped from the same environment is referenced live
+
+  # Upstream #20024: a thread dropped on the composer lands in the draft of the thread on
+  # screen, not the one the composer first opened for.
+  @backlog @desktop
+  Scenario: A thread dropped after switching threads lands in the visible draft
+    Given the user opened thread "Alpha" and then switched to thread "Beta"
+    When the user drops the thread "Auth refactor" onto the composer
+    Then the draft of "Beta" references "Auth refactor"
+    And the draft of "Alpha" is unchanged
+
   @desktop
   Scenario: Part of an assistant response can be quoted with a comment
     Given the assistant replied with a paragraph about caching
     When the user cites that paragraph in the composer
     Then the draft carries the quoted paragraph
     And the user can add a comment to it
+
+  # Upstream #13450: the keyboard returns to the draft after a quote's comment is saved.
+  @desktop @backlog
+  Scenario: Saving a quote's comment returns the keyboard to the draft
+    Given the user is writing the comment on a quote in the draft
+    When the user saves the comment
+    Then the caret is in the draft right after the quote
+
+  # Upstream #16828: cancelling left the space inserted with the quote, hiding the hint.
+  @backlog @desktop
+  Scenario Outline: Cancelling the comment on a new quote puts the draft back as it was
+    Given the draft reads "<before>" with the caret at "|"
+    When the user cites the assistant's words "brown fox"
+    And the user cancels the quote's comment
+    Then the draft reads "<after>"
+
+    Examples:
+      | before        | after       |
+      | \|            |             |
+      | Hello\|       | Hello       |
+      | Hello\| world | Hello world |
+
+  @backlog @desktop @priority-high
+  Scenario: A quote's unsaved comment survives a question from the agent
+    Given the user is writing the comment "check this" on a quote and has not saved it
+    When the agent asks a question and the user answers it
+    Then the quote in the draft keeps the comment "check this"
+    And sending the draft includes the comment
+
+  # Shift+Tab only does this directly after a quote; elsewhere it keeps switching build and plan.
+  @desktop @backlog
+  Scenario: Shift+Tab from just after a quote reaches the quote's comment control
+    Given the caret is directly after a quote in the draft
+    When the user presses Shift+Tab
+    Then the quote's comment control has focus
+    When the user presses Tab
+    Then the caret is directly after the quote again
 
   @desktop
   Scenario: A quoted response is sent with its comment
@@ -202,14 +350,14 @@ Feature: Referencing files, skills, commands and context
     When the user copies that text and pastes it into another thread's draft
     Then the other draft references "npm test output" as well
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Copying a sent message brings its references along
     Given the user sent "look at this" with a reference to "src/cart.ts"
     When the user copies that message from the thread
     And pastes it into another draft
     Then the other draft holds "look at this" and the reference to "src/cart.ts"
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Copying a sent message without references puts only its text on the clipboard
     Given the user sent "look at this" with no references
     When the user copies that message from the thread
@@ -284,58 +432,75 @@ Feature: Referencing files, skills, commands and context
     Then the draft carries the annotation without a screenshot
     And the user is told the element could not be captured
 
+  # Upstream #14360: annotations made after a preview reload no longer replace earlier ones
+  @backlog @desktop
+  Scenario: Annotations made after the preview reloads are added beside the earlier ones
+    Given the draft holds an annotation of the preview
+    When the preview reloads and the user annotates it again
+    Then the draft holds both annotations
+
+  # Upstream #24022: Annotate did nothing on a PDF open in the preview.
+  @backlog @desktop
+  Scenario: A PDF open in the preview can be annotated
+    Given the preview shows the PDF "spec.pdf"
+    When the user starts annotating
+    Then the Region tool is picked
+    And a region the user drags over the PDF is marked
+    And Escape and the tool keys reach the annotation, not the PDF viewer
+    And once annotating ends the PDF scrolls and takes clicks again
+
   @backlog @desktop
   Scenario: The user opens an annotation from the draft to read it in full
     Given the draft carries an annotation of the page "Checkout"
     When the user opens the annotation
     Then the user sees the page, the comment, the picked elements and the requested style changes
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: /usage-limits closes once the agent spends quota again
     Given the user opened "/usage-limits" in a Codex thread
     When the agent resumes after the user answers its approval request
     Then the limits shown above the composer close
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: /usage-limits closes when the user switches model
     Given the user opened "/usage-limits" in a Codex thread
     When the user switches the thread to Claude
     Then the limits shown above the composer close
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: /usage-limits is left to providers without limits in HAL-C2
     Given a thread on a provider whose limits HAL-C2 does not know
     When the user sends "/usage-limits"
     Then "/usage-limits" is sent to the provider as a message
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: /usage-limits with nothing to show says so and keeps the draft
     Given a Codex thread whose limits HAL-C2 has not been able to read
     When the user sends "/usage-limits"
     Then the user sees an "info" toast "Usage limits are unavailable for this provider"
     And nothing is sent to the provider and the draft still reads "/usage-limits"
 
-  @backlog @desktop @tui
+  @backlog @desktop @tui @priority-low
   Scenario: /feedback in a Codex thread sends feedback to OpenAI
     Given a Codex thread that has run a turn
     When the user sends "/feedback The agent stopped early"
     Then the draft is cleared and the user sees that feedback is being sent to OpenAI
     And once it is sent the user sees the feedback thread id and can copy it
 
-  @backlog @desktop @tui
+  @backlog @desktop @tui @priority-low
   Scenario: /feedback before the first Codex turn is refused
     Given a Codex thread with no messages yet
     When the user sends "/feedback"
     Then the user is told to send a message before submitting feedback
 
-  @backlog @desktop @tui
+  @backlog @desktop @tui @priority-low
   Scenario: Feedback that fails to upload says why
     Given a Codex thread that has run a turn
     When the user sends "/feedback" and the upload fails
     Then the user is told the feedback could not be sent to OpenAI and why
     And the user can dismiss the notice
 
-  @backlog @desktop @tui
+  @backlog @desktop @tui @priority-low
   Scenario Outline: /feedback is an ordinary message outside a plain Codex draft
     Given <situation>
     When the user sends "/feedback slow"
@@ -395,7 +560,7 @@ Feature: Referencing files, skills, commands and context
     When the user presses Down
     Then the first suggestion is highlighted
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario Outline: Enter or Tab takes the highlighted suggestion
     Given the user typed "@read" and "README.md" is highlighted
     When the user presses <key>
@@ -414,6 +579,22 @@ Feature: Referencing files, skills, commands and context
     Then the same file is still highlighted
     When the user types one more letter
     Then the first suggestion is highlighted
+
+  # Upstream #18845: a suggestion from an older search replaced the newer text; it is now refused
+  # until results for the current text arrive.
+  @backlog @shared
+  Scenario Outline: A suggestion left from an earlier search does not replace what the user typed since
+    Given the user typed "@bin" and "bin.ts" is suggested
+    And the user typed on to "@Migrations" before new results arrived
+    When the user takes "bin.ts" with <input>
+    Then the draft still reads "@Migrations"
+    And the suggestions for "@Migrations" can be taken once they arrive
+
+    Examples:
+      | input |
+      | Click |
+      | Enter |
+      | Tab   |
 
   @backlog @desktop
   Scenario: Suggestions are ordered by how closely their name matches
@@ -457,6 +638,14 @@ Feature: Referencing files, skills, commands and context
     Given the provider reports different skills for "/work/shop" and for "/work/blog"
     When the user types "$" in a thread working in "/work/blog"
     Then only the skills reported for "/work/blog" are offered
+
+  # Upstream #19465: an older scan could publish over a newer forced scan.
+  @backlog @mc @priority-low
+  Scenario: A rescan of skills is not undone by an older scan finishing late
+    Given a scan of the folder's skills is still running
+    And the user adds the skill "deploy" and asks for a rescan
+    When the older scan finishes after the rescan
+    Then the skill "deploy" is still offered
 
   # Legacy: packages/client-runtime/src/providerSkills.ts (formatProviderSkillDisplayName)
   @backlog @desktop
@@ -503,6 +692,56 @@ Feature: Referencing files, skills, commands and context
       | $rev  |
       | €rev  |
       | £rev  |
+
+  # Upstream #21519: a price after a currency sign opened the skill menu, and Enter could
+  # replace it with a skill whose description matched the digits.
+  @backlog @desktop @mobile @tui
+  Scenario Outline: Typing a price does not open the skill menu
+    Given the provider offers a skill described as "Release 5 notes"
+    When the user types "<typed>"
+    Then no skill menu opens
+    And pressing Enter sends the draft with "<typed>" as typed
+
+    Examples:
+      | typed            |
+      | It costs $5      |
+      | budget $9.99     |
+      | about €20        |
+      | raise $10k       |
+      | £1,000 a month   |
+
+  # Upstream #21519: a skill whose name starts with a digit is still found once a letter follows.
+  @backlog @desktop @mobile @tui
+  Scenario Outline: A bare currency sign or a skill name starting with a digit opens the skill menu
+    Given the provider offers the skills "1password" and "2fa"
+    When the user types "<typed>"
+    Then the skill menu opens
+
+    Examples:
+      | typed       |
+      | $           |
+      | $1password  |
+      | $2fa        |
+
+  # Upstream #14834: $HOME and $PATH were drawn as skill chips.
+  @backlog @desktop
+  Scenario: A dollar word that is not an offered skill stays plain text
+    Given the provider offers the skill "review" and no skill "HOME"
+    When the user writes "echo $HOME and $review"
+    Then "$review" becomes a skill reference
+    And "$HOME" stays plain text the user can edit
+
+  # Upstream #22922: route files such as TanStack's and Next.js's lost their chip.
+  @backlog @shared
+  Scenario Outline: A file mention whose name has a dollar sign or brackets stays a file reference
+    Given the project has the file "<file>"
+    When the user mentions "<file>" in the composer
+    Then "<file>" is a file reference
+
+    Examples:
+      | file                       |
+      | routes/posts.$postId.tsx   |
+      | app/[id]/page.tsx          |
 
   @backlog @desktop
   Scenario: Threads on this environment are offered ahead of files
@@ -591,6 +830,27 @@ Feature: Referencing files, skills, commands and context
     When the user copies the annotation and pastes it into another thread's draft
     Then that draft carries the annotation with its screenshot
 
+  # Upstream #17821: an image copied from an unsent draft pasted as nothing once the source
+  # changed; the copy now keeps the image itself.
+  @backlog @desktop
+  Scenario Outline: An image copied from an unsent draft still pastes after its source changes
+    Given the user copied a draft that holds an image
+    And <change>
+    When the user pastes into another thread's composer
+    Then the image is attached there
+
+    Examples:
+      | change                                      |
+      | the image was still uploading when copied   |
+      | the image was removed from the source draft |
+
+  # Upstream #17821: pasting the copy back into the draft it came from does not duplicate it.
+  @backlog @desktop @priority-low
+  Scenario: Pasting a copied image back into its own draft does not add it twice
+    Given the user copied a draft that holds an image
+    When the user pastes into the same draft
+    Then the draft holds the image once
+
   @backlog @desktop
   Scenario: A thread reference pasted from another environment is left out
     Given the user copied text that references a thread in a different environment
@@ -636,6 +896,18 @@ Feature: Referencing files, skills, commands and context
     Then pull request 41 opens
 
   @backlog @desktop
+  Scenario: Dragging a linked pull request onto the composer references it
+    Given the thread's linked pull requests list pull request 41 "Add login"
+    When the user drags pull request 41 from that list onto the composer
+    Then the draft references pull request 41 as the "#" picker would
+
+  @backlog @desktop
+  Scenario: A linked pull request whose details have not loaded is dropped as its address
+    Given the thread's linked pull requests list pull request 41 before its details have loaded
+    When the user drags it onto the composer
+    Then the draft gets the pull request's address as text
+
+  @backlog @desktop
   Scenario: A thread reference follows the thread's title and opens it
     Given the draft references the thread "Auth refactor"
     When that thread is renamed "Auth rewrite"
@@ -656,7 +928,7 @@ Feature: Referencing files, skills, commands and context
     When the user rests on the reference
     Then the user reads "This context is no longer available. Remove it or attach it again."
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Copying the thread id from the feedback notice can fail
     Given the feedback notice shows the thread id
     When the user copies the id and the clipboard refuses

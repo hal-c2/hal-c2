@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24847
+#   https://github.com/pingdotgg/t3code/pull/19065
+#   https://github.com/pingdotgg/t3code/pull/15686
+#   https://github.com/pingdotgg/t3code/pull/15207
 #   apps/desktop-qt/qml/HalC2/Bricks/js/centreViews.js (the routes the shell draws itself)
 #   apps/desktop-qt/qml/HalC2/Bricks/ThreadView.qml (loading, empty, draft and unreachable states, links, revert)
 #   apps/desktop-qt/qml/HalC2/Bricks/Timeline.qml (Revert to here, changed files, a tool call's file)
@@ -26,6 +30,30 @@ Feature: The desktop shell draws the thread in the window's centre
       Then the thread's conversation is shown above the composer
       When the user opens settings
       Then settings take the centre's place
+
+    # Upstream #24847: Settings and Usage open as a large dialog over the thread instead of
+    # replacing it.
+    # Replaces the scenario above once desktop carries it.
+    @backlog @desktop
+    Scenario Outline: <page> opens over the thread it was opened from
+      Given the user is in a thread
+      When the user opens <page>
+      Then <page> is shown over the thread, which stays open behind it
+      When the user closes <page> by pressing Escape, its close button or outside it
+      Then the same thread is shown as the user left it
+
+      Examples:
+        | page     |
+        | settings |
+        | usage    |
+
+    # Upstream #24847
+    @backlog @desktop
+    Scenario: The thread behind settings takes no shortcuts or typing
+      Given settings are open over a thread
+      When the user presses the thread's shortcuts or types
+      Then the thread behind does not react
+      And Escape closes only the topmost thing open inside settings first
 
     @desktop
     Scenario: A thread says it is loading without moving
@@ -77,3 +105,35 @@ Feature: The desktop shell draws the thread in the window's centre
     @desktop
     Scenario: Jump to latest is a command
       Then "Jump to latest" is a command the shell runs
+
+  # Upstream #15207: reopen closed tabs across the app
+  Rule: Closed tabs can be reopened
+
+  @backlog @desktop @priority-high
+  Scenario: Reopening the last closed tab
+    Given the user closed a file, diff, pull request, browser or device tab
+    When the user switches thread or opens settings and reopens the closed tab
+    Then the tab comes back in the thread or page it belonged to
+    And tabs that are already open are skipped
+    And only the last 20 closed tabs can be reopened
+    And a failed reopen can be tried again
+
+  @backlog @desktop
+  Scenario: A reopened browser tab returns to its page without its history
+    Given the user closed a browser tab
+    When the user reopens it
+    Then it opens the saved page, profile and viewport in a new session
+    And incognito tabs are not kept across a restart
+
+  # Upstream #15686: open the right panel tab menu with Mod+T
+  # Upstream #19065: Mod+T opens the tab menu while a pull request tab is open.
+  @backlog @desktop @priority-low
+  Scenario Outline: A shortcut opens the menu for a new side-panel tab
+    Given the side panel is showing <tab> and the terminal does not have focus
+    When the user presses the new-tab shortcut
+    Then the menu of tabs to open appears
+
+    Examples:
+      | tab            |
+      | a browser tab  |
+      | a pull request |

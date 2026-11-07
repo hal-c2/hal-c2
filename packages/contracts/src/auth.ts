@@ -210,6 +210,11 @@ export const AuthWebSocketTicketResult = Schema.Struct({
 });
 export type AuthWebSocketTicketResult = typeof AuthWebSocketTicketResult.Type;
 
+export const AuthSessionRenewResult = Schema.Struct({
+  expiresAt: Schema.DateTimeUtc,
+});
+export type AuthSessionRenewResult = typeof AuthSessionRenewResult.Type;
+
 export const AuthPairingCredentialResult = Schema.Struct({
   id: TrimmedNonEmptyString,
   credential: TrimmedNonEmptyString,

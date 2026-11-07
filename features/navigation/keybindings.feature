@@ -1,5 +1,13 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23519
+#   https://github.com/pingdotgg/t3code/pull/19055
+#   https://github.com/pingdotgg/t3code/pull/19928
+#   https://github.com/pingdotgg/t3code/pull/16694
+#   https://github.com/pingdotgg/t3code/pull/14475
+#   https://github.com/pingdotgg/t3code/pull/22607
+#   https://github.com/pingdotgg/t3code/pull/22905
 #   docs/user/keybindings.md
+#   https://github.com/pingdotgg/t3code/pull/9434 (usage.open, mod+u outside a terminal)
 #   packages/contracts/src/keybindings.ts (every static command id and script.<id>.run)
 #   packages/shared/src/keybindings.ts (DEFAULT_KEYBINDINGS)
 #   apps/web/src/keybindings.ts (layout letters, AltGr, esc, last matching rule, shadowed labels, shortcut labels)
@@ -18,11 +26,13 @@
 #   preview.zoomOut, preview.resetZoom, commandPalette.toggle, filePicker.toggle,
 #   projectSearch.toggle, theme.select, appearance.cycle, themeEditor.toggle, composer.stash,
 #   composer.sendAlternate, composer.sendBackground, composer.host, composer.effort,
+#   composer.increaseEffort, composer.decreaseEffort,
 #   composer.mode, composer.workspace, composer.previousWorktree, composer.branch, chat.new,
 #   chat.newLocal, editor.openFavorite, modelPicker.toggle, modelPicker.previousProvider,
 #   modelPicker.nextProvider, modelPicker.jump.1-9, thread.stop, thread.steerQueuedMessage,
 #   thread.editQueuedMessage, thread.previous, thread.next, thread.copyReference,
-#   thread.settle, thread.pin, thread.undo, thread.jump.1-9, script.<id>.run
+#   thread.settle, thread.pin, thread.undo, thread.jump.1-9, script.<id>.run,
+#   stage.moveTab, stage.toggleFocus, stage.nextPane, stage.dismiss, stage.layout.* (desktop only)
 #   apps/web/src/routes/_chat.tsx (thread shortcuts wait for the command palette; one project needs no chooser)
 
 Feature: Keybindings
@@ -105,18 +115,28 @@ Feature: Keybindings
         | composer.sendBackground   | mod+alt+enter   | in the composer of a new thread   | aligned |
         | thread.undo               | mod+z           | outside text fields and terminals | aligned |
 
-      # preview.refresh, focusUrl and the zoom keys act on the in-app browser, which the
-      # desktop does not have yet.
-      @backlog
-      Examples: Not yet honoured by the native client
+      # preview.refresh, focusUrl and the zoom keys act on the page in the in-app browser
+      # (BrowserPanel), so only while it has the keyboard; elsewhere mod+= zooms the app.
+      Examples: Run on the page in a browser tab
         | command                   | key             | context                           | status  |
-        | preview.refresh           | mod+r           | in the preview                    | backlog |
-        | preview.focusUrl          | mod+l           | in the preview                    | backlog |
-        | preview.zoomIn            | mod+=           | in the preview                    | backlog |
-        | preview.zoomIn            | mod++           | in the preview                    | backlog |
-        | preview.zoomOut           | mod+-           | in the preview                    | backlog |
-        | preview.resetZoom         | mod+0           | in the preview                    | backlog |
+        | preview.refresh           | mod+r           | in the preview                    | aligned |
+        | preview.focusUrl          | mod+l           | in the preview                    | aligned |
+        | preview.zoomIn            | mod+=           | in the preview                    | aligned |
+        | preview.zoomIn            | mod++           | in the preview                    | aligned |
+        | preview.zoomOut           | mod+-           | in the preview                    | aligned |
+        | preview.resetZoom         | mod+0           | in the preview                    | aligned |
 
+    # Upstream #14475: thread jumps no longer overlap model picker jumps
+    @backlog @desktop @priority-low
+    Scenario: With the model picker open a number jump picks a model, not a thread
+      Given the model picker is open
+      When the user presses mod+2
+      Then the second model is picked
+      And the selected thread does not change
+
+    # rightPanel.toggleMaximized is Open in centre on the desktop: the right panel's tab
+    # goes to the thread's centre and back (desktop/stage.feature, which also has the
+    # desktop-only stage.* commands and their mod+alt+s and mod+alt+f defaults).
     @desktop
     Scenario Outline: A command with no default binding can still be bound
       Given no custom keybindings
@@ -132,6 +152,29 @@ Feature: Keybindings
         | rightPanel.toggleMaximized | mod+alt+m   |
         | script.test.run            | mod+alt+r   |
 
+    # Upstream #16694: assign a thread details panel shortcut
+    @backlog @desktop @priority-low
+    Scenario: The thread details panel has a default shortcut that a saved one overrides
+      Given no custom keybindings
+      When the user presses mod+shift+b outside a terminal
+      Then the command "threadPanel.toggle" runs
+      And pressing mod+shift+b in a terminal does not toggle the thread details panel
+      And a command the user bound to mod+shift+b earlier keeps that key
+
+    # Upstream #19928: composer.increaseEffort and composer.decreaseEffort have no default key.
+    @backlog @desktop
+    Scenario Outline: The effort step commands can be bound
+      Given no custom keybindings
+      Then "<command>" has no shortcut
+      When the user binds "<command>" to <key>
+      And the user presses <key> in the composer
+      Then the composer's effort steps <direction>
+
+      Examples:
+        | command                 | key   | direction |
+        | composer.increaseEffort | alt+= | up        |
+        | composer.decreaseEffort | alt+- | down      |
+
     @desktop
     Scenario: A binding outside its context does nothing
       Given the user is in a terminal
@@ -145,6 +188,34 @@ Feature: Keybindings
       When the user presses mod+d
       Then the terminal splits
       But the diff panel does not toggle
+
+    # Upstream #9434: add usage page keybinding
+    @desktop @backlog
+    Scenario: The usage shortcut opens usage from the composer
+      Given no custom keybindings
+      And the user is typing in the composer
+      When the user presses mod+u
+      Then the usage page opens
+
+    # Upstream #9434: add usage page keybinding
+    @desktop @backlog
+    Scenario: The usage shortcut does nothing in a terminal
+      Given the user is in a terminal
+      When the user presses mod+u
+      Then the usage page does not open
+      And the terminal receives the key
+
+    # Upstream #22905: the shortcut handlers and the palette never knew whether Usage was open,
+    # so a binding conditioned on "usagePageOpen" never matched and the second press stayed.
+    @desktop @backlog @priority-low
+    Scenario: A custom usage shortcut can toggle Usage by going back
+      Given mod+u is bound to "usage.open" when "!usagePageOpen"
+      And mod+u is bound to "navigation.back" when "usagePageOpen"
+      And the user is on thread "A"
+      When the user presses mod+u
+      Then the usage page opens
+      When the user presses mod+u again
+      Then the user is back on thread "A"
 
   Rule: The desktop shell honours the web keymap
 
@@ -263,13 +334,13 @@ Feature: Keybindings
       Then the command does not run
       And the character is typed
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A binding written with esc is the Escape key
       Given "diff.toggle" is bound to "mod+esc"
       When the user presses mod and Escape
       Then the command "diff.toggle" runs
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A shadowed command shows no shortcut
       Given "diff.toggle" is bound to mod+shift+y
       And later "chat.new" is bound to mod+shift+y in the same context
@@ -277,7 +348,7 @@ Feature: Keybindings
       Then no shortcut is shown for it
       And "chat.new" shows mod+shift+y
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: Shortcuts are written the way the platform writes them
       Given the user is on <platform>
       When a shortcut for <chord> is displayed
@@ -319,6 +390,26 @@ Feature: Keybindings
       Then the composer's own undo runs
       And the thread stays settled
 
+    # Upstream #22607: right after a settle, snooze, archive or unpin, mod+z undoes it even from the
+    # composer, until the user types or presses another key. Replaces the scenario above once the
+    # desktop carries it.
+    @backlog @desktop @priority-high
+    Scenario: Undo right after a sidebar action works from the composer
+      Given the user settled a thread from the sidebar
+      And the composer has keyboard focus and holds a saved draft
+      When the user presses mod+z
+      Then the thread is no longer settled
+      And the draft is unchanged
+
+    # Upstream #22607: holding the undo shortcut undoes one action.
+    @backlog @desktop
+    Scenario: Holding mod+z undoes only the last sidebar action
+      Given the user settled a thread from the sidebar
+      And the composer has keyboard focus and holds a draft the user typed earlier
+      When the user holds mod+z
+      Then the thread is no longer settled
+      And the draft is unchanged
+
     @desktop
     Scenario: Back and forward move through visited threads like browser history
       Given the user opened thread "A" and then thread "B"
@@ -326,6 +417,17 @@ Feature: Keybindings
       Then thread "A" is shown
       When the user goes forward
       Then thread "B" is shown
+
+    # Upstream #23519: going back could show a thread the sidebar had filtered out, hidden past
+    # its preview limit or scrolled away.
+    @backlog @desktop
+    Scenario: Going back or forward shows the thread in the sidebar
+      Given the user opened thread "A" in "shop" and then thread "B" in "docs"
+      And the sidebar is filtered to "docs", with "A" past the threads it shows of "shop"
+      When the user goes back
+      Then the sidebar's filter widens to show "shop"
+      And "A" is listed and scrolled into view
+      But while the sidebar holds a search, "A" is shown once the search is cleared
 
     @desktop
     Scenario: A new thread may ask which project to use
@@ -339,12 +441,15 @@ Feature: Keybindings
       When the user starts a new local thread
       Then a new thread starts in the current project without asking
 
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: A new thread starts at once when there is only one project to choose
       Given the user has one project
       When the user starts a new thread
       Then a new thread starts in that project without asking
 
+    # Upstream #19055: the new-thread shortcuts the palette lists now run from it (command-palette.feature,
+    # "A new-thread shortcut the palette lists runs while the palette is open"), so chat.new and
+    # chat.newLocal no longer wait.
     @backlog @desktop
     Scenario Outline: Thread shortcuts wait while the command palette is open
       Given the command palette is open
@@ -353,8 +458,6 @@ Feature: Keybindings
 
       Examples:
         | command        |
-        | chat.new       |
-        | chat.newLocal  |
         | thread.undo    |
         | preview.toggle |
 
@@ -419,7 +522,7 @@ Feature: Keybindings
       When the user presses mod+shift+j again
       Then the preview is hidden
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The preview shortcut in a browser says the preview needs the desktop app
       Given the user is looking at a thread in a browser
       When the user presses mod+shift+j
@@ -427,7 +530,7 @@ Feature: Keybindings
       And the user is told to open HAL-C2 in the desktop app to use it
 
     # These need the in-app browser, which the desktop does not have yet.
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: Preview shortcuts act on the focused preview
       Given the preview has keyboard focus at 100% zoom
       When the user presses <key>
@@ -442,7 +545,7 @@ Feature: Keybindings
         | mod+0 | the page returns to 100% zoom |
 
     # These need the in-app browser, which the desktop does not have yet.
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Preview shortcuts do nothing outside the preview
       Given the composer has keyboard focus
       When the user presses mod+l

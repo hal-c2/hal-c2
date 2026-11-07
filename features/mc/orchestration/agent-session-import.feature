@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/12292
+#   https://github.com/pingdotgg/t3code/pull/21464
+#   https://github.com/pingdotgg/t3code/pull/16662
+#   https://github.com/pingdotgg/t3code/pull/15634
+#   https://github.com/pingdotgg/t3code/pull/20278
 #   apps/server-ex/lib/hal_c2/agent_sessions.ex (agentSessions.scan, agentSessions.import)
 #   apps/server/src/project/AgentSessionScanner.ts and its import service
 #   apps/server/src/project/AgentSessionImporter.ts (modified or moved threads), AgentSessionJson.ts (streaming selection and limits)
@@ -83,6 +88,21 @@ Feature: Importing history from agents already used on this machine
     When a client imports them again
     Then no new threads are created
 
+  # Upstream #15634: bulk import skips a native session another thread already owns, archived
+  # and deleted owners included, and counts it as neither imported nor failed.
+  @mc @backlog @priority-high
+  Scenario Outline: A session a thread already runs is not imported again
+    Given thread "t1" in "demo" already runs the agent session "s1" and is <state>
+    When a client imports agent sessions for "demo"
+    Then no new thread is created for "s1"
+    And "s1" is counted as neither imported nor failed
+
+    Examples:
+      | state    |
+      | active   |
+      | archived |
+      | deleted  |
+
   @mc
   Scenario: At most 100 sessions are imported and the rest reported skipped
     Given project "demo" has 120 recent sessions
@@ -108,6 +128,13 @@ Feature: Importing history from agents already used on this machine
       | has no title and a multi-line first prompt | the first line of the prompt, up to 100 characters |
       | has no title and a blank first prompt      | the first line of the next prompt          |
 
+  # Upstream #12292: imports ignored a user's rename; an empty rename restores the fallback.
+  @backlog @mc @plugin-claude
+  Scenario: An imported Claude session keeps the title the user gave it
+    Given a Claude session the user renamed "Cart totals" and Claude later titled "Fix rounding"
+    When it is imported
+    Then its thread title is "Cart totals"
+
   @mc
   Scenario: Imported threads use the session's model
     Given a Codex session ran on "gpt-5.4"
@@ -125,6 +152,20 @@ Feature: Importing history from agents already used on this machine
     Given a Codex session records each prompt both as typed and with setup text
     When it is imported
     Then each user message is the typed prompt only
+
+  # Upstream #20278: imported Codex threads are titled after the user's request
+  @backlog @mc @plugin-codex
+  Scenario: An imported Codex thread is titled after what the user asked
+    Given a Codex session whose first message starts with injected setup instructions before the user's request
+    When the session is imported
+    Then the thread's title comes from the user's request, not the setup instructions
+
+  # Upstream #20278: a first message that is only setup does not title the thread
+  @backlog @mc @plugin-codex
+  Scenario: An imported Codex thread whose first message is only setup is titled from the next one
+    Given a Codex session whose first message holds only injected setup instructions
+    When the session is imported
+    Then the thread's title comes from the next message the user wrote
 
   @mc
   Scenario Outline: Sessions that cannot be resumed are skipped
@@ -156,7 +197,7 @@ Feature: Importing history from agents already used on this machine
     Then the line is skipped and the rest of the session is imported
 
   # Legacy: apps/server/src/project/AgentSessionImporter.ts (AgentSessionThreadModifiedError, AgentSessionThreadProjectConflictError)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario Outline: An imported thread the user has since used or moved is left alone
     Given a session was imported as a thread and <change>
     When a client imports the agent sessions of "demo" again
@@ -183,7 +224,7 @@ Feature: Importing history from agents already used on this machine
       | has no message in it that the MC understands  |
 
   # Legacy: apps/server/src/project/AgentSessionJson.ts (TranscriptJsonLimitError, depth 128)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A transcript with a record nested absurdly deep is skipped whole
     Given a session's transcript has a record nested more than 128 levels deep
     When a client imports the agent sessions of "demo"
@@ -191,7 +232,7 @@ Feature: Importing history from agents already used on this machine
     And no part of it is imported
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (readTranscript, sameTranscriptIdentity)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A transcript that changes while it is being read is not imported
     Given an agent is still writing a session's transcript
     When a client imports the agent sessions of "demo" and the transcript changes during the read
@@ -199,7 +240,7 @@ Feature: Importing history from agents already used on this machine
     And no half-read thread is created
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (MAX_IMPORTED_TRANSCRIPT_BYTES, MAX_IMPORT_HISTORY_BYTES, MAX_IMPORT_RECORDS)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario Outline: A transcript past its import budget is skipped whole
     Given a session's transcript <excess>
     When a client imports the agent sessions of "demo"
@@ -213,14 +254,14 @@ Feature: Importing history from agents already used on this machine
       | has more than 100,000 records                          |
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (importReadLock)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: Imports from several clients read one transcript at a time
     Given two clients import agent sessions at the same moment
     Then the transcripts are read one after another, not together
     And both imports finish with their own results
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (MAX_TRANSCRIPT_SCAN_BYTES, MAX_METADATA_BYTES_PER_SOURCE, MAX_DISCOVERY_OPERATIONS_PER_SOURCE)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: Scanning a huge history stops at its read budget instead of reading everything
     Given an agent home holds tens of thousands of transcripts and a transcript whose folder is not in its first megabyte
     When a client scans for agent sessions
@@ -236,7 +277,7 @@ Feature: Importing history from agents already used on this machine
     Then the command fails with "Message id 'import:session-1:0' uses the reserved imported-session namespace."
 
   # Legacy: apps/server/src/orchestration/projector.ts (retainThreadMessagesAfterRevert)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: Rewinding a thread keeps the history imported before its first turn
     Given an imported thread "t1" that the user continued for two turns
     When a client rewinds "t1" to before its first new turn
@@ -244,7 +285,7 @@ Feature: Importing history from agents already used on this machine
     And the messages of the two new turns are gone
 
   # Legacy: apps/server/src/orchestration/decider.ts (thread.history.import)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario Outline: History is imported only into a thread that is active and empty
     Given thread "t1" <state>
     When a client imports history into "t1"
@@ -265,7 +306,7 @@ Feature: Importing history from agents already used on this machine
     Then the command fails with "Thread history imports require at least one message."
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (excludedProjectAncestors, extractCwd, isHalC2ManagedWorktree)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario Outline: Scratch and leftover folders are not offered
     Given sessions ran in <folder>
     When a client scans for agent sessions
@@ -280,28 +321,28 @@ Feature: Importing history from agents already used on this machine
       | a folder a transcript names with a relative path                         |
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (readGitIdentity: submodules)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A submodule checkout is offered like any other repository
     Given sessions ran in "~/code/app/vendor/lib", which is a submodule checkout
     When a client scans for agent sessions
     Then "lib" is a candidate
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (collectCandidates: resolveProviderInstanceEnabled)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A disabled agent account is not scanned
     Given the Claude account "work" is disabled and its home holds sessions
     When a client scans for agent sessions
     Then those sessions are not offered
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (selectMetadataTranscripts)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A busy account does not hide another account's sessions from a capped scan
     Given the Claude account "work" has 5,000 newer transcripts than the account "personal"
     When a client scans for agent sessions
     Then sessions of "personal" are offered as well as those of "work"
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (collectCandidates: seenHomes, instance order)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: Accounts that share one home are scanned once under the default account
     Given the Claude account "work" uses the same home as the default Claude account
     When a client scans for agent sessions
@@ -330,7 +371,7 @@ Feature: Importing history from agents already used on this machine
     Then there is one candidate "app" counting the sessions of both
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (directoryIdentity)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: Folders that differ only in case stay apart on a disk that tells them apart
     Given "~/code/App" and "~/code/app" are different folders on a case-sensitive disk
     And sessions ran in each
@@ -338,7 +379,7 @@ Feature: Importing history from agents already used on this machine
     Then "App" and "app" are separate candidates
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (scan: importedProjectsByRoot)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A project is recognised through a link to its folder and keeps its own path
     Given project "demo" has the folder "~/code/app"
     And sessions were recorded under "~/links/app", a link to that folder
@@ -347,21 +388,21 @@ Feature: Importing history from agents already used on this machine
     And the candidate's path is "~/code/app"
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (readCwd)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A transcript is placed by a folder named after its first records
     Given a transcript whose first records hold only history and name the folder "~/code/app" in a later record
     When a client scans for agent sessions
     Then the transcript counts toward "app"
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (prepareRecentThreads: transcript.mtimeMs > nowMs)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A transcript dated in the future is not imported
     Given project "demo" has a session whose transcript was last changed tomorrow
     When a client imports agent sessions for "demo"
     Then no thread is created for it
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (importedSessions, Duplicate), AgentSessionImporter.ts
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A session copied into two transcript files is imported once without being counted skipped
     Given project "demo" has the same Claude session in two transcript files
     When a client imports agent sessions for "demo"
@@ -369,7 +410,7 @@ Feature: Importing history from agents already used on this machine
     And the import reports 1 imported and 0 skipped
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (prepareRecentThreads: snapshotCwd)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A transcript replaced by one from another folder is not imported into this project
     Given a client scanned "demo" at "~/code/app"
     And a transcript counted for "demo" was replaced before the import by one that ran in "~/code/lib"
@@ -377,7 +418,7 @@ Feature: Importing history from agents already used on this machine
     Then that session is counted as skipped
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (normalizeTimestamp, parseAgentSessionRecords)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A message with no readable time takes the transcript's last change time
     Given a session has a message whose time is missing or not a date
     When it is imported
@@ -390,6 +431,15 @@ Feature: Importing history from agents already used on this machine
     When it is imported
     Then the thread resumes the id the transcript names first
 
+  # Upstream #16662: Codex subagent, review and other child sessions were imported as threads of
+  # their own and used up the budget before their parents.
+  @mc @backlog @plugin-codex
+  Scenario: Codex subagent sessions are not imported as threads of their own
+    Given a folder holds 100 recent Codex subagent sessions and 4 older top-level sessions
+    When a client imports agent sessions for "demo"
+    Then the 4 top-level sessions are imported
+    And the subagent sessions are neither imported nor counted
+
   # Legacy: apps/server/src/project/AgentSessionImporter.ts (providerInstanceId from the session's home)
   @mc @backlog
   Scenario: An imported session stays with the account whose home holds it
@@ -399,9 +449,17 @@ Feature: Importing history from agents already used on this machine
     And a follow-up resumes the session through that account
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (MAX_IMPORT_BYTES, MAX_IMPORT_TRANSCRIPTS, MAX_IMPORT_RECORDS)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: An import stops taking sessions once it has read its overall budget
     Given project "demo" has recent sessions whose transcripts together hold more than 4 GiB or 100,000 records
     When a client imports agent sessions for "demo"
     Then the sessions that fit are imported
     And every later session is counted as skipped without being read
+
+  # Upstream #21464: large Windows file ids collided, so a replaced transcript looked imported.
+  @backlog @mc @priority-low
+  Scenario: A transcript replaced at the same path is imported again on Windows
+    Given an imported session's transcript is replaced by another of the same size and time
+    And Windows gives the two files ids that differ only past 2^53
+    When the MC scans for sessions
+    Then the replacement is imported

@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19721
+#   https://github.com/pingdotgg/t3code/pull/21167
+#   https://github.com/pingdotgg/t3code/pull/16666
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (the header and context strip from the MC)
 #   apps/desktop-qt/src/native/ShellStore.cpp (the thread and project rows it reads)
 #   apps/desktop-qt/src/native/DraftController.cpp (the draft a window with no thread lands on)
@@ -25,6 +28,20 @@ Feature: The thread's header on the desktop
     Given the checkout's pull request is "https://github.com/acme/shop/pull/7"
     When the user opens the pull request from the header
     Then the browser opens "https://github.com/acme/shop/pull/7"
+
+  @backlog @desktop
+  Scenario: A child thread's header leads back to its parent
+    Given the thread was started by the thread "Plan checkout"
+    When the user chooses "Plan checkout" in the thread's header
+    Then "Plan checkout" opens
+    And when the header is short of room the parent is shortened to an ellipsis that still opens it and shows its full title on hover
+
+  # Upstream #19721: a thread started with No project says so in its header.
+  @backlog @desktop @priority-low
+  Scenario: A thread started without a project says "No project" in its header
+    Given the user started a thread with "No project"
+    When the folder behind it is given a name
+    Then the thread's header still says "No project"
 
   @desktop
   Scenario: Leaving the thread lands on a new draft in the most recent project
@@ -82,7 +99,7 @@ Feature: The thread's header on the desktop
     When "env-c" is reachable again
     Then the header no longer says the thread is offline
 
-  @desktop @backlog-desktop
+  @desktop @backlog-desktop @priority-low
   Scenario Outline: Icon-only buttons name themselves on hover
     When the user hovers the <button> button
     Then a tooltip reads <name>
@@ -99,3 +116,9 @@ Feature: The thread's header on the desktop
       | row snooze           | "Snooze"                |
       | row settle           | "Settle"                |
       | Open menu            | "More Open options"     |
+
+  # Upstream #21167: composer host and workspace tooltips show their shortcuts
+  @backlog @desktop @priority-low
+  Scenario: The machine and workspace pickers name their shortcuts on hover
+    When the user points at the composer's machine picker or its workspace picker
+    Then its tooltip names the keyboard shortcut that opens it, as the model picker's does

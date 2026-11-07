@@ -13,6 +13,8 @@
 #   apps/tui/src/components/Sidebar.tsx (context menu)
 #   packages/contracts/src/shell.ts (thread.menu)
 # Moving a thread to another machine from the menu is specified in threads/moving-between-machines.feature.
+#   https://github.com/pingdotgg/t3code/pull/10637
+#   https://github.com/pingdotgg/t3code/pull/15436
 
 Feature: Thread menu and selecting several threads
   Every thread has a menu of the things the user can do to it. Selecting several threads
@@ -41,7 +43,7 @@ Feature: Thread menu and selecting several threads
     When the user opens the menu for "Tidy logs"
     Then the actions read, in order: new thread on "chore/logs", pin, settle, snooze, rename, regenerate title, mark unread, filter by "shop", copy, project settings, create page from thread, archive, delete
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: Actions the environment does not support are left out
     Given the environment does not support snoozing or pinning
     When the user opens the menu for "Tidy logs"
@@ -175,7 +177,7 @@ Feature: Thread menu and selecting several threads
     When the user opens "D" by clicking it
     Then no thread is selected
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Extending a range again starts from the same thread
     Given the threads "A", "B", "C" and "D" are listed in that order
     And the user selected "A" and extended the range to "C"
@@ -189,3 +191,17 @@ Feature: Thread menu and selecting several threads
     When the user deletes the selection
     Then "A" is deleted
     And no thread is selected
+
+  # Upstream #10637: a context menu on draft threads in the sidebar
+  @backlog @desktop @priority-low
+  Scenario: A draft row has its own menu
+    When the user opens the menu of a draft thread in the sidebar
+    Then it offers Copy path or branch (only what the draft has), Project settings, and Discard draft
+    And discarding shows the same undo notice as the hover discard
+
+  # Upstream #15436: the thread picker opens for unsent drafts
+  @backlog @shared
+  Scenario: Linking an unsent draft opens the thread picker
+    Given a draft that has not been sent
+    When the user chooses "Link to this thread"
+    Then the picker of existing threads opens and the draft's text is untouched

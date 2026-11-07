@@ -1,5 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17118
+#   https://github.com/pingdotgg/t3code/pull/21019
+#   https://github.com/pingdotgg/t3code/pull/21026
+#   https://github.com/pingdotgg/t3code/pull/14887
+#   https://github.com/pingdotgg/t3code/pull/16517
+#   https://github.com/pingdotgg/t3code/pull/19099
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/22202
 #   docs/user/thread-sidebar.md (Snoozing, Custom snooze, Limited threads, Wake now)
 #   packages/client-runtime/src/state/threadSettled.ts (snooze presets, wake labels, canSnooze, raised hand)
 #   packages/client-runtime/src/state/threadSnoozed.test.ts (early wake rules, a queued turn start expiring after two minutes)
@@ -45,12 +52,22 @@ Feature: Snoozing threads
     When the user wakes "Refactor cart"
     Then "Refactor cart" returns to the active threads
 
+  # Upstream #21019: the phone's thread list kept a snoozed thread shelved past its wake time
+  # until something else changed it.
+  @backlog @desktop @mobile
+  Scenario: A snoozed thread returns to the active threads at its wake time
+    Given "Refactor cart" is snoozed until Wednesday 10:30
+    And the user is looking at the thread list
+    When it is Wednesday 10:30
+    Then "Refactor cart" returns to the active threads
+    And it is marked as woke
+
   @desktop
   Scenario: A snoozable thread offers snoozing from the list
     When the user points at "Refactor cart" in the thread list
     Then the user can snooze it from there
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario Outline: Snoozing with a preset
     When the user snoozes "Refactor cart" <preset>
     Then "Refactor cart" wakes <when>
@@ -63,7 +80,7 @@ Feature: Snoozing threads
       | tomorrow     | Thursday at 09:00  |
       | next week    | Monday at 09:00    |
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: "This evening" is not offered when the evening is less than an hour away
     Given the local time is Wednesday 17:30
     When the user opens the snooze choices
@@ -97,7 +114,7 @@ Feature: Snoozing threads
       | an unreadable date                         |
       | a time skipped by a daylight saving change |
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario Outline: The wake time is described in the user's clock format
     Given the user prefers a <clock> clock
     And "Refactor cart" is snoozed until Wednesday 18:00
@@ -109,7 +126,7 @@ Feature: Snoozing threads
       | 24-hour | 18:00   |
       | 12-hour | 6:00 PM |
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: The time left before waking rounds up and is never zero
     Given "Refactor cart" is snoozed until 20 seconds from now
     When the user looks at the snoozed thread
@@ -133,14 +150,59 @@ Feature: Snoozing threads
     When the user snoozes "Refactor cart" until tomorrow
     Then "Refactor cart" is snoozed
 
-  @mc @desktop @mobile @backlog
+  # A queued message the user wrote still blocks the snooze (above); automatic wakes do not.
+  # Upstream #19099: snoozed threads allow queued automatic wakes
+  @mc @backlog
+  Scenario Outline: A thread with an automatic wake queued can be snoozed
+    Given "Refactor cart" has <wake> queued
+    When the user snoozes "Refactor cart" until tomorrow
+    Then "Refactor cart" is snoozed
+    And the wake stays queued
+
+    Examples:
+      | wake                                     |
+      | a notification wake                      |
+      | the completion of a task it delegated    |
+
+  # Upstream #19099: snoozed threads allow queued automatic wakes
+  @mc @backlog @priority-low
+  Scenario Outline: Wakes held for output that was thrown away are cancelled
+    Given "Refactor cart" has a wake queued for a provider notification
+    When <discard>
+    Then that wake is cancelled
+    And a queued message the user wrote stays queued
+
+    Examples:
+      | discard                                    |
+      | the user stops "Refactor cart"             |
+      | the MC recovers "Refactor cart" at startup |
+      | the MC shuts down                          |
+
+  # Upstream #2829: the new orchestrator
+  @mc @desktop @mobile @backlog @priority-high
   Scenario: A late failure from an earlier run does not wake a snoozed thread
     Given "Refactor cart" is snoozed until tomorrow
     When a run that started before the snooze reports a failure
     Then "Refactor cart" stays snoozed
     And it is not marked as woke
 
-  @desktop @mobile @backlog-mobile
+  # Upstream #16517: pull request sync, links, renames and reordering woke snoozed threads; only
+  # new activity does now.
+  @mc @desktop @mobile @backlog @priority-high
+  Scenario Outline: A background update does not wake a snoozed thread
+    Given "Refactor cart" is snoozed until tomorrow
+    When <update>
+    Then "Refactor cart" stays snoozed
+
+    Examples:
+      | update                                     |
+      | the MC syncs the state of its pull request |
+      | a pull request is linked to it             |
+      | the user renames it                        |
+      | the user reorders the threads              |
+
+  # Upstream #17118: a run requested before the snooze no longer ends it when it completes.
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario Outline: A snoozed thread wakes early when it needs the user
     Given "Refactor cart" is snoozed until tomorrow
     When <event>
@@ -154,25 +216,81 @@ Feature: Snoozing threads
       | the agent run fails                          |
       | a run that started after the snooze finishes |
 
+  # Upstream #22202: a completed run no longer ends a snooze, so a thread that wakes itself
+  # for background work stays shelved until its wake time.
+  # Replaces the scenario above once desktop and mobile carry it.
+  @backlog @mc @desktop @mobile @priority-high
+  Scenario Outline: A snoozed thread wakes early only when it needs the user
+    Given "Refactor cart" is snoozed until tomorrow
+    When <event>
+    Then "Refactor cart" returns to the active threads
+    And it is marked as woke
+
+    Examples:
+      | event                                        |
+      | the agent asks for an approval               |
+      | the agent asks the user a question           |
+      | a run that started after the snooze fails    |
+
+  # Upstream #22202
+  @backlog @mc @desktop @mobile @priority-high
+  Scenario: A run that finishes does not wake a snoozed thread
+    Given "Refactor cart" is snoozed until tomorrow
+    When a run that started after the snooze finishes
+    Then "Refactor cart" stays snoozed
+    And it is not marked as woke
+
+  # Upstream #22202: every automatic message cleared the snooze, so a self-waking thread came
+  # back within minutes. A message the user sends still wakes it.
+  @backlog @mc @priority-high
+  Scenario Outline: An automatic wake keeps a thread snoozed
+    Given "Refactor cart" is snoozed until tomorrow
+    When <wake> sends "Refactor cart" a message and its run finishes
+    Then "Refactor cart" stays snoozed until tomorrow
+
+    Examples:
+      | wake                                    |
+      | a background task finishing             |
+      | a monitor the agent set                 |
+      | a pull request watch                    |
+      | the completion of a task it delegated   |
+
+  # Upstream #14887: every snooze is stamped afresh, so snoozing a woken thread again until
+  # the same time shelves it again; a retried command is still applied once.
+  @backlog @mc
+  Scenario: A woken thread snoozed again until the same time is shelved again
+    Given "Refactor cart" was snoozed until tomorrow 09:00 and woke early because its run failed
+    When a client snoozes "Refactor cart" until tomorrow 09:00 again
+    Then "Refactor cart" is snoozed until tomorrow 09:00
+    And it is no longer among the active threads
+
   @desktop
   Scenario: Dismissing the woke marker
     Given "Refactor cart" woke from a snooze
     When the user dismisses its woke marker
     Then "Refactor cart" is no longer marked as woke
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: Opening a woken thread clears its woke marker
     Given "Refactor cart" woke from a snooze
     When the user opens "Refactor cart"
     Then "Refactor cart" is no longer marked as woke
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: An open snoozed thread says so and can be woken there
     Given "Refactor cart" is snoozed until tomorrow
     When the user opens "Refactor cart"
     Then the thread says "This thread is snoozed" and that sending a message wakes it
     When the user chooses "Wake now"
     Then "Refactor cart" is active again
+
+  # Upstream #21019: the open thread's snoozed notice turns into the woke notice at the wake
+  # time, without anything else in the thread changing.
+  @backlog @desktop
+  Scenario: An open snoozed thread says it woke when its wake time comes
+    Given the user has opened "Refactor cart", which is snoozed until Wednesday 10:30
+    When it is Wednesday 10:30
+    Then the thread says "Thread woke from snooze" instead of "This thread is snoozed"
 
   @backlog @desktop
   Scenario: A wake that fails is reported
@@ -190,7 +308,7 @@ Feature: Snoozing threads
     When the user dismisses that notice
     Then "Refactor cart" is no longer marked as woke in the thread list either
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Sending a message clears the woke notice
     Given "Refactor cart" says it woke from a snooze
     When the user sends a message in "Refactor cart"
@@ -209,7 +327,7 @@ Feature: Snoozing threads
     Then two threads are snoozed
     And the user is told "Failed to snooze 1 thread"
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: A failed snooze is reported
     Given the environment rejects the snooze
     When the user snoozes "Refactor cart" for 1 hour
@@ -223,7 +341,7 @@ Feature: Snoozing threads
     Then the next thread in the list opens
     And the user can undo the snooze
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-high
   Scenario: A run that finished before the snooze does not wake the thread
     Given a run in "Refactor cart" finished a minute ago
     And the user snoozes "Refactor cart" until tomorrow
@@ -231,6 +349,7 @@ Feature: Snoozing threads
     Then "Refactor cart" is still snoozed
     And it is not marked as woke
 
+  # Upstream #21026: the sidebar row offered snoozing again only once the thread changed, not when the two minutes passed.
   @backlog @desktop @mobile
   Scenario: A turn that never began stops blocking the snooze after two minutes
     Given a message to "Refactor cart" is waiting for its turn to start

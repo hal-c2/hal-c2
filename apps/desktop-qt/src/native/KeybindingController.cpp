@@ -331,15 +331,17 @@ keybindings::Context KeybindingController::context(const QVariantMap& focus) con
     // Controllers are built in name order; navigation comes after this one.
     if (auto* navigation = shell->controller<NavigationController>()) routeKind = navigation->route().kind;
   }
-  // The desktop's preview is the right panel's Previews tab.
+  // The desktop's preview is the right panel's Previews tab or a browser tab.
   bool previewOpen = false;
   if (auto* shell = NativeShell::of(this)) {
     if (auto* panel = shell->controller<RightPanelController>()) {
-      previewOpen = panel->isOpen() && panel->activeTab() == QLatin1String("previews");
+      previewOpen = panel->isOpen() && (panel->activeTab() == QLatin1String("previews") ||
+                                        RightPanelController::kindOf(panel->activeTab()) == QLatin1String("browser"));
     }
   }
   return {
       {QStringLiteral("previewOpen"), previewOpen},
+      {QStringLiteral("previewFocus"), flag(focus, "preview")},
       {QStringLiteral("modelPickerOpen"), m_modelPickerOpen},
       // The composer holds text the user has not sent.
       {QStringLiteral("composerDraft"),
@@ -390,12 +392,13 @@ bool KeybindingController::press(const QString& sequence, const QVariantMap& foc
 
 // One entry per sequence; each flag says whether the key is the shell's with
 // that focus: the chrome, a terminal, the composer's field, or any other text
-// field (`editable`).
+// field (`editable`), or a browser tab's page (`preview`).
 void KeybindingController::refreshShortcuts() {
   const QVariantMap chrome;
   const QVariantMap composer{{QStringLiteral("composer"), true}, {QStringLiteral("editable"), true}};
   const QVariantMap editable{{QStringLiteral("editable"), true}};
   const QVariantMap terminal{{QStringLiteral("terminal"), true}};
+  const QVariantMap preview{{QStringLiteral("preview"), true}};
   const auto native = [this](const QString& command) { return m_commands.contains(command) || isScriptRun(command); };
   QVariantList shortcuts;
   QSet<QString> seen;
@@ -410,6 +413,7 @@ void KeybindingController::refreshShortcuts() {
         {QStringLiteral("composer"), native(resolve(sequence, composer))},
         {QStringLiteral("editable"), native(resolve(sequence, editable))},
         {QStringLiteral("terminal"), native(resolve(sequence, terminal))},
+        {QStringLiteral("preview"), native(resolve(sequence, preview))},
     });
   }
   if (shortcuts == m_shortcuts) return;
@@ -471,6 +475,7 @@ bool KeybindingController::refreshRows() {
         {QStringLiteral("key"), key},
         {QStringLiteral("keyLabel"), keybindings::label(binding.shortcut, m_mac)},
         {QStringLiteral("when"), when},
+        {QStringLiteral("whenLabel"), keybindings::whenWords(binding.when)},
         {QStringLiteral("rule"), binding.rule.toJson().toVariantMap()},
         {QStringLiteral("source"), source},
         {QStringLiteral("defaultKey"), defaultKey},
@@ -478,7 +483,7 @@ bool KeybindingController::refreshRows() {
         {QStringLiteral("canReset"), source == QLatin1String("Custom") && !defaultKey.isEmpty()},
         {QStringLiteral("canRemove"), source != QLatin1String("Default")},
         {QStringLiteral("search"),
-         QStringList{binding.command, label, key, when, source}.join(QLatin1Char('\n')).toLower()},
+         QStringList{binding.command, label, key, when, keybindings::whenWords(binding.when), source}.join(QLatin1Char('\n')).toLower()},
     });
   }
   std::stable_sort(rows.begin(), rows.end(), [](const QVariant& left, const QVariant& right) {
@@ -521,6 +526,13 @@ QStringList KeybindingController::conflicts(const QString& rowId, const QString&
 QString KeybindingController::keyLabel(const QString& key) const {
   const std::optional<keybindings::Shortcut> shortcut = keybindings::parseShortcut(key);
   return shortcut ? keybindings::label(*shortcut, m_mac) : key;
+}
+
+QString KeybindingController::whenLabel(const QString& expression) const {
+  const QString trimmed = expression.trimmed();
+  if (trimmed.isEmpty()) return keybindings::whenWords(nullptr);
+  const keybindings::WhenPtr when = keybindings::parseWhen(trimmed);
+  return when ? keybindings::whenWords(when) : trimmed;
 }
 
 QString KeybindingController::whenError(const QString& expression) const {

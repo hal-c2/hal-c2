@@ -1,4 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14626
+#   https://github.com/pingdotgg/t3code/pull/18854
+#   https://github.com/pingdotgg/t3code/pull/20223
+#   https://github.com/pingdotgg/t3code/pull/16762
+#   https://github.com/pingdotgg/t3code/pull/16761
+#   https://github.com/pingdotgg/t3code/pull/17148
+#   https://github.com/pingdotgg/t3code/pull/13463
+#   https://github.com/pingdotgg/t3code/pull/13689
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (thread.pull-request.link, thread.pull-request.unlink,
 #     thread.pull-request-link.sync, thread.pull-request.sync, thread.pull-request-synced,
@@ -21,6 +29,13 @@ Feature: Pull requests linked to a thread
   Background:
     Given an MC with a project "demo"
     And thread "t1" exists in "demo" on branch "feature/x"
+
+  # Legacy: packages/shared/src/threadPullRequests.ts (legacyLinkedPullRequestOf with no host)
+  @backlog @mc
+  Scenario: A project whose remote is a plain local path loads its threads
+    Given the project's "origin" is a local folder path with no hosting provider
+    When the MC starts
+    Then the MC starts and the project's threads load with their pull request rows
 
   @mc
   Scenario: Linking a pull request adds it to the thread
@@ -210,6 +225,16 @@ Feature: Pull requests linked to a thread
       | closed | still records "acme/app#7" as its branch pull request |
       | open   | records no branch pull request                       |
 
+  # Upstream #20223: a finished pull request found automatically is kept only while the thread is
+  # on its source branch; links the user made stay.
+  @backlog @mc
+  Scenario: A finished pull request of another branch is dropped when the thread's branch changes
+    Given thread "t1" has no worktree of its own and records the merged "acme/app#7" of "feature/x" as its branch pull request
+    And the user linked "acme/app#9" to "t1"
+    When the folder of "t1" moves to "main" and the MC finds no branch pull request for "main"
+    Then thread "t1" records no branch pull request
+    And "acme/app#9" is still linked to "t1"
+
   @mc
   Scenario: A thread in its own worktree drops the branch pull request once the branch shows none
     Given thread "t1" is in its own worktree and records the merged "acme/app#7" as its branch pull request
@@ -278,6 +303,54 @@ Feature: Pull requests linked to a thread
       | closed | active    | a minute   | is not asked   |
       | closed | active    | 15 minutes | is asked       |
 
+  # Upstream #16762: a settled thread's links leave the sweep altogether. Replaces the
+  # "open | settled | 15 minutes" row above once the MC carries it. A link never synced, or a
+  # read a client asks for, still goes.
+  @backlog @mc
+  Scenario Outline: A settled thread's pull requests are not read on the sweep
+    Given pull request "acme/app#12" is linked to "t1" and <synced>
+    And "t1" is settled
+    When the sync sweep runs 15 minutes after the last read
+    Then the host <asked> about "acme/app#12"
+
+    Examples:
+      | synced                         | asked        |
+      | its last read said open        | is not asked |
+      | it has never been read         | is asked     |
+
+  @backlog @mc
+  Scenario: A settled thread's pull request is still read when a client asks
+    Given pull request "acme/app#12" is linked to the settled thread "t1"
+    When a client asks to refresh "acme/app#12"
+    Then the MC reads "acme/app#12" from the host
+
+  @backlog @mc
+  Scenario: Unsettling a thread brings its pull requests back to the sweep
+    Given pull request "acme/app#12" is linked to the settled thread "t1"
+    When the user unsettles "t1"
+    And the sync sweep runs
+    Then the host is asked about "acme/app#12"
+
+  # Upstream #16761 and #17148: a read anywhere that sees the state change syncs the link at
+  # once; the minute sweep is only the fallback.
+  @backlog @mc
+  Scenario Outline: A pull request state seen by any read syncs the thread's link at once
+    Given pull request "acme/app#12" is linked to "t1" and its last read said open
+    When <read> sees "acme/app#12" merged
+    Then "t1" shows "acme/app#12" as merged without waiting for the sweep
+    And "t1" settles if merge settling is on
+
+    Examples:
+      | read                                         |
+      | a client opening the pull request's details |
+      | a branch status look-up                      |
+
+  @backlog @mc
+  Scenario: A late read cannot unmerge a pull request
+    Given "t1" shows "acme/app#12" as merged
+    When a read that started before the merge answers that "acme/app#12" is open
+    Then "t1" still shows "acme/app#12" as merged
+
   @mc
   Scenario: A closed pull request that was reopened is noticed
     Given pull request "acme/app#12" is linked to "t1" and its last read said closed
@@ -299,6 +372,17 @@ Feature: Pull requests linked to a thread
     Then thread "t1" still shows "acme/app#12" as open
     And no event is recorded
     And the sweep goes on to the other linked pull requests
+
+  # Upstream #18854: sync read a pull request linked in several projects through the first
+  # project's checkout; reads are now per project and each failed project retries on its own.
+  @backlog @mc
+  Scenario: A pull request linked in two projects is read through each of them
+    Given pull request "acme/app#12" is linked to "t1" in project "app" and to "t2" in project "app-fork"
+    And "acme/app#12" changed state on the host
+    And the host cannot be reached through the checkout of "app"
+    When the sync sweep runs
+    Then thread "t2" shows the new state of "acme/app#12"
+    And "acme/app#12" is read again through "app" on the next sweep
 
   @mc
   Scenario: A stack the host failed to report is asked for again on the next sweep
@@ -399,3 +483,20 @@ Feature: Pull requests linked to a thread
       | git@ssh.dev.azure.com:v3/org/project/web                       |
       | org@vs-ssh.visualstudio.com:v3/org/project/web                 |
       | https://org.visualstudio.com/defaultcollection/project/_git/web |
+
+  # Upstream #14626: Azure DevOps Server pull request links on a self-hosted host were refused; they
+  # are linked by their /_git/<repo>/pullrequest/<n> path, keeping the host's port.
+  @backlog @mc @priority-low
+  Scenario: A pull request on a self-hosted Azure DevOps Server can be linked
+    Given the project's checkout was cloned from "https://devops.acme.test:8443/tfs/acme/shop/_git/web"
+    When a client links "https://devops.acme.test:8443/tfs/acme/shop/_git/web/pullrequest/7"
+    Then pull request 7 of "web" on "devops.acme.test:8443" is linked to the thread
+    And naming pull request 7 of "web" links that same pull request
+
+  # Upstream #13689: a turn that adds a remote must not leave its pull request unlinked until a
+  # cached repository identity expires.
+  @backlog @mc
+  Scenario: A pull request opened in a turn that added the remote is linked when the turn ends
+    Given the thread's project had no remote when the turn started
+    When the turn adds the remote "origin" and opens a pull request for its branch
+    Then the pull request is linked to the thread when the turn ends

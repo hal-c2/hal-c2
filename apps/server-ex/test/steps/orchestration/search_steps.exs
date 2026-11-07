@@ -19,6 +19,10 @@ defmodule HalC2.Steps.Orchestration.Search do
     context |> ensure_thread(thread) |> World.add_message(thread, "user", text)
   end
 
+  step "thread {string} has a user message:", %{args: [thread]} = context do
+    context |> ensure_thread(thread) |> World.add_message(thread, "user", context.docstring)
+  end
+
   step "thread {string} has a message {string}", %{args: [thread, text]} = context do
     context |> ensure_thread(thread) |> World.add_message(thread, "user", text)
   end
@@ -193,6 +197,17 @@ defmodule HalC2.Steps.Orchestration.Search do
     {at, _} = :binary.match(snippet, word)
     offset = snippet |> binary_part(0, at) |> String.length()
     assert offset in 1..100, "#{word} starts #{offset} characters into #{inspect(snippet)}"
+    context
+  end
+
+  step "the snippet reads {string}", %{args: [text]} = context do
+    assert [%{"snippet" => ^text}] = matches(context)
+    context
+  end
+
+  step "the snippet reads:", context do
+    text = context.docstring
+    assert [%{"snippet" => ^text}] = matches(context)
     context
   end
 

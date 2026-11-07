@@ -161,13 +161,21 @@ defmodule HalC2.Import.PreviousInstall do
       Enum.each(reading, &(:ok = Store.put_meta(mark_key(&1), @events <> target["id"])))
 
       if reading != [] do
-        {:ok, _} =
-          HalC2.Import.V2.run(database(path), Store,
-            only: reading,
-            resume: Map.new(resumed, &{&1, Store.stream_tail(Store.path(), &1)}),
-            rewrite: rewrite,
-            progress: events
-          )
+        try do
+          {:ok, _} =
+            HalC2.Import.V2.run(database(path), Store,
+              only: reading,
+              resume: Map.new(resumed, &{&1, Store.stream_tail(Store.path(), &1)}),
+              rewrite: rewrite,
+              progress: events
+            )
+        after
+          # The import wrote these streams' events to the store, not through a stream,
+          # whether it got through or not: one started meanwhile (search's backfill
+          # reads every thread at boot, a partly imported one too) holds only what was
+          # there when it loaded.
+          Enum.each(reading, &HalC2.Streams.stop/1)
+        end
 
         Enum.each(reading, &(:ok = Store.put_meta(mark_key(&1), @files <> target["id"])))
       end
@@ -224,17 +232,18 @@ defmodule HalC2.Import.PreviousInstall do
 
   # The files of an imported thread, and its row in the sidebar.
   defp finish(path, files, id) do
-    state = StreamState.load(Store.path(), id)
-    :ok = HalC2.Search.index_thread(id, state)
+    StreamState.load_read(Store.path(), id, fn state ->
+      :ok = HalC2.Search.index_thread(id, state)
 
-    for kind <- ["message", "turn-item"],
-        entity <- StreamState.list(state, kind),
-        %{"id" => attachment} when is_binary(attachment) <- entity["attachments"] || [],
-        name <- files.attachments,
-        String.starts_with?(name, attachment <> ".") do
-      File.mkdir_p!(Attachments.dir())
-      File.cp!(Path.join([path, "attachments", name]), Path.join(Attachments.dir(), name))
-    end
+      for kind <- ["message", "turn-item"],
+          entity <- StreamState.all(state, kind),
+          %{"id" => attachment} when is_binary(attachment) <- entity["attachments"] || [],
+          name <- files.attachments,
+          String.starts_with?(name, attachment <> ".") do
+        File.mkdir_p!(Attachments.dir())
+        File.cp!(Path.join([path, "attachments", name]), Path.join(Attachments.dir(), name))
+      end
+    end)
 
     for name <- files.terminals, terminal = ThreadArchive.v1_terminal(name, id) do
       log = File.read!(Path.join([path, "logs", "terminals", name]))

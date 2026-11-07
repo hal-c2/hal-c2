@@ -58,23 +58,20 @@ Dialog {
     }
     onRejected: Shell.dispatch("scheduledTasks.close")
 
-    background: Rectangle {
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.color: Theme.palette.color("border", "#27272a")
-        radius: Math.min(Theme.radius, 16)
-    }
+    Overlay.modal: ShellScrim {}
+    background: ShellPopoverSurface {}
     header: Label {
         text: dialog.title
         padding: 20
         bottomPadding: 4
-        font.pixelSize: Math.round(17 * Theme.fontScale)
+        font.pixelSize: Theme.type.title.size
         font.weight: Font.DemiBold
         color: dialog.foreground
     }
 
     component Caption: Label {
         color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
     }
 
     contentItem: Flickable {
@@ -98,7 +95,7 @@ Dialog {
                 visible: dialog.editor !== null && !dialog.editor.connected
                 text: qsTr("Reconnect this environment before saving.")
                 color: Theme.palette.color("warningForeground", "#fbbf24")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -109,7 +106,7 @@ Dialog {
                 text: dialog.editor?.error ? dialog.editor.error
                     : dialog.editor?.missing ? qsTr("This scheduled task no longer exists.") : ""
                 color: Theme.palette.color("errorForeground", "#ef4444")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -144,11 +141,11 @@ Dialog {
                 text: dialog.draft.prompt ?? ""
                 wrapMode: TextEdit.Wrap
                 color: dialog.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 placeholderText: qsTr("What should the agent do each run?")
                 placeholderTextColor: Theme.palette.color("placeholder", "#71717a")
                 background: Rectangle {
-                    radius: Math.min(Theme.radius, 8)
+                    radius: Theme.radiusMd
                     color: Theme.palette.color("input", "#18181b")
                     border.color: Theme.palette.color("border", "#27272a")
                 }
@@ -290,11 +287,7 @@ Dialog {
                         height: Math.min(implicitHeight, 240)
                         padding: 4
                         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
-                        background: Rectangle {
-                            radius: Math.min(Theme.radius, 8)
-                            color: Theme.palette.color("surfaceOverlay", "#18181b")
-                            border.color: Theme.palette.color("border", "#27272a")
-                        }
+                        background: ShellPopoverSurface {}
                         contentItem: ListView {
                             implicitHeight: Math.max(contentHeight, 28)
                             clip: true

@@ -334,7 +334,7 @@ Item {
             const view = openThread();
             let external = "";
             view.openExternally = url => external = url;
-            findChild(view, "threadTimeline").linkActivated(data.link);
+            findChild(view, "threadTimeline").linkActivated(data.link, false);
             const opened = dispatched("panel.open");
             if (data.path.length > 0) {
                 compare(opened.length, 1);

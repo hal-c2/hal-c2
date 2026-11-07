@@ -15,11 +15,21 @@ defmodule HalC2.MixProject do
       test_paths: test_paths(Mix.env()),
       # Step definitions are Cucumber glue, loaded by test_helper.exs, not test files.
       test_ignore_filters: [~r{^test/steps/}],
-      aliases: [features: &features/1, prop: &prop/1, proof: &proof/1],
+      aliases: [
+        features: &features/1,
+        prop: &prop/1,
+        proof: &proof/1,
+        # Mix prunes the code paths of a `runtime: false` dep's own deps from its tasks
+        # (mix_audit's YAML parser, Sobelow's JSON encoder) unless `loadpaths` ran first.
+        "deps.audit": ["loadpaths", "deps.audit"],
+        "sobelow.check": ["loadpaths", "run --no-start --no-compile scripts/sobelow_check.exs"]
+      ],
       deps: deps(),
       releases: [
         hal_c2: [
           include_executables_for: [:unix],
+          # The release handler (`HalC2.Upgrade.Release`), started at the first update.
+          applications: [sasl: :load],
           strip_beams: true,
           steps: [
             :assemble,
@@ -61,10 +71,14 @@ defmodule HalC2.MixProject do
       {:exile, "~> 0.15"},
       {:exqlite, "~> 0.41"},
       {:mint_web_socket, "~> 1.0"},
+      # The security ratchet in CI (`mix deps.audit`, `mix sobelow.check`), never
+      # compiled into a release.
+      {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false},
       # GPL-3.0, for the property tests in prop/ only: never compiled into the MC.
       {:propcheck, "~> 1.5", only: :prop},
       # The Slack connection plugins borrow (HalC2.Slack): the Web API.
       {:slack_elixir, "~> 1.2"},
+      {:sobelow, "~> 0.18.1", only: [:dev, :test], runtime: false},
       {:tz, "~> 0.28"},
       {:websock_adapter, "~> 0.6"},
       # Slack's Socket Mode (HalC2.Slack.Socket).
@@ -117,7 +131,10 @@ defmodule HalC2.MixProject do
 
     for crate <- crates do
       manifest = Path.join(root, "native/#{crate}/Cargo.toml")
-      run!("cargo", ["build", "--locked", "--release", "--manifest-path", manifest], root)
+
+      run!("cargo", ["build", "--locked", "--release", "--manifest-path", manifest], root,
+        env: cargo_env()
+      )
 
       built = Path.join(root, "native/#{crate}/target/release/hal-c2-#{crate}")
       File.cp!(built, Path.join(target, "hal-c2-#{crate}"))
@@ -125,6 +142,21 @@ defmodule HalC2.MixProject do
     end
 
     release
+  end
+
+  # Cargo runs rustc in each dependency's source directory. Where rustc is a mise shim, a
+  # crate that ships its own mise.toml (mmdflux does) fails the build as untrusted config,
+  # so mise skips the config files under cargo's sources.
+  defp cargo_env do
+    cargo_home = System.get_env("CARGO_HOME") || Path.expand("~/.cargo")
+
+    ignored = [
+      System.get_env("MISE_IGNORED_CONFIG_PATHS"),
+      Path.join(cargo_home, "registry"),
+      Path.join(cargo_home, "git")
+    ]
+
+    [{"MISE_IGNORED_CONFIG_PATHS", ignored |> Enum.reject(&(&1 in [nil, ""])) |> Enum.join(":")}]
   end
 
   # `mix features [--backlog] [glob ...] [-- mix test args]` runs the repo's `@mc`
@@ -185,9 +217,10 @@ defmodule HalC2.MixProject do
     Path.expand("VERSION", __DIR__) |> File.read!() |> String.trim()
   end
 
-  # What a running MC compares with a new release to decide whether it can load
-  # the new code in place (`HalC2.Upgrade`): which applications are HAL-C2's own code,
-  # and what that code runs on, each part of which only a restart can change.
+  # What a running MC compares with a new release to decide whether a release
+  # upgrade can take it there in place (`HalC2.Upgrade`): which applications are
+  # HAL-C2's own code, and what that code runs on, each part of which only a restart
+  # can change.
   defp write_upgrade_manifest(release) do
     rel = Path.join([release.path, "releases", release.version])
     own = Path.join([release.path, "lib", "hal_c2-#{release.version}"])
@@ -247,7 +280,11 @@ defmodule HalC2.MixProject do
           for f <- ~w(sys.config runtime.exs vm.args),
               File.exists?(Path.join(rel, f)),
               do: Path.join(rel, f)
-        )
+        ),
+      # The emulator's flags, which only a restart changes.
+      "vmArgs" => digest.(Enum.filter([Path.join(rel, "vm.args")], &File.exists?/1)),
+      # The release carries SASL, so `release_handler` can install the next one in place.
+      "releaseUpgrades" => true
     }
 
     File.write!(Path.join(rel, "upgrade.json"), JSON.encode!(manifest))
@@ -268,7 +305,8 @@ defmodule HalC2.MixProject do
     "#{os}-#{arch}"
   end
 
-  defp run!(command, args, cd) do
-    {_, 0} = System.cmd(command, args, cd: cd, into: IO.stream(), stderr_to_stdout: true)
+  defp run!(command, args, cd, opts \\ []) do
+    {_, 0} =
+      System.cmd(command, args, [cd: cd, into: IO.stream(), stderr_to_stdout: true] ++ opts)
   end
 end

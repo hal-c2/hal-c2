@@ -875,6 +875,47 @@ defmodule HalC2.PlannerTest do
     end
   end
 
+  describe "a milestone's move taken after its task left the issue" do
+    @projects [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]
+
+    # M2's push took #2 out for its task's relink, then sent it to M1, whose task "t" had
+    # taken it over meanwhile. "t" was removed, and M1's push took #2 out before M2's
+    # correction landed it in M1 again (#1006). No task names #2 now, so it goes out.
+    test "takes an issue no task names out of the milestone it landed in" do
+      items = %{
+        "m1" => %{
+          "id" => "m1",
+          "after" => [],
+          "milestone" => %{"repository" => "acme/api", "number" => 1}
+        }
+      }
+
+      moved = [%{"repository" => "acme/api", "number" => 2, "milestone" => 1}]
+
+      assert [{nil, {"update", input, took}}] = Sync.reasserts(moved, [], items, @projects)
+
+      assert input == %{
+               "repository" => "acme/api",
+               "number" => 2,
+               "projectId" => "p",
+               "milestone" => nil
+             }
+
+      # The correction's mark goes with its landing, and stays when GitHub refuses it.
+      synced = Sync.misplaced(%{"after" => []}, Sync.reasserts(moved, [], items, @projects))
+      assert %{"misplaced" => %{"acme/api#2" => %{"task" => nil}}} = synced
+      assert took.(synced)["misplaced"] == %{}
+
+      assert [{"update", %{"number" => 2, "milestone" => nil}, _}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, items["m1"], items, @projects)
+
+      # Out of any already, or moved by the milestone's own push: nothing to set right.
+      out = [%{"repository" => "acme/api", "number" => 2, "milestone" => nil}]
+      assert Sync.reasserts(out, [], items, @projects) == []
+      assert Sync.reasserts(moved, [{"update", input, took}], items, @projects) == []
+    end
+  end
+
   describe "a milestone's correction GitHub refused" do
     @repo "acme/api"
     @projects [%{"id" => "p", "kind" => "github", "repository" => @repo}]

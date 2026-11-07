@@ -141,6 +141,8 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("%1 and %2 are offered").arg(kQuoted, kQuoted), [](World& world, const Captures& c, const Table&) {
+    // The models a new task offers (ConnectionKeptSteps.cpp) share the words.
+    if (world.onSettingsPage.contains(QStringLiteral("areOffered"))) return world.onSettingsPage.value(QStringLiteral("areOffered"))(c);
     const QStringList expected{editorId(c[0]), editorId(c[1])};
     world.waitFor([&] { return offered(world) == expected; }, [&] { return show(offered(world)); });
   });

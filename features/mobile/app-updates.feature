@@ -1,10 +1,14 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20422
+#   https://github.com/pingdotgg/t3code/pull/20092
+#   https://github.com/pingdotgg/t3code/pull/15070
 #   apps/mobile/src/features/updates/app-updates.ts (background install, prompts, flush first)
 #   apps/mobile/src/lib/foreground-handoff.ts (pickers, share sheet and sign-in pages hold back a restart)
 #   apps/mobile/src/features/settings/SettingsAboutRouteScreen.tsx (hidden update check)
 #   apps/mobile/app.config.ts (expo-updates on load, fingerprint runtime version, variants)
 # MC hot upgrades are specified in features/connections/ and the MC domains.
 
+@priority-low
 Feature: Keeping the phone app up to date
   The app updates itself without losing work. Store builds replace the whole app; smaller
   updates install when the user is not looking.
@@ -175,3 +179,20 @@ Feature: Keeping the phone app up to date
     Given the user runs a development build
     When the user checks for an update by hand
     Then the user is told updates are unavailable in development builds
+
+  # Dropped: upstream's Nightly told its users to join the beta mobile apps because the store
+  # apps could not talk to its server. HAL-C2 ships its own mobile client against the MC.
+  # Upstream #15070: Nightly tells its users to get the beta mobile app
+  @dropped @shared
+  Scenario: Nightly builds point to a beta mobile app
+    Given a Nightly build
+    When the user first opens it
+    Then a one-time toast and an About entry link to the beta store apps
+
+  # Dropped: upstream's About links to T3 Code's App Store and Google Play apps. HAL-C2's
+  # phone client is built from this repository and pairs by a link, not from a store.
+  # Upstream #20422: About links to the mobile apps in the stores
+  @dropped @desktop
+  Scenario: About links to the mobile apps in the stores
+    When the user opens About in the settings
+    Then a Mobile app entry shows store codes and links for iPhone, iPad and Android

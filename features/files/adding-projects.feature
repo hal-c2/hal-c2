@@ -1,4 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23170
+#   https://github.com/pingdotgg/t3code/pull/22492
+#   https://github.com/pingdotgg/t3code/pull/18265
+#   https://github.com/pingdotgg/t3code/pull/17379
+#   https://github.com/pingdotgg/t3code/pull/22780
+#   https://github.com/pingdotgg/t3code/pull/22180
+#   https://github.com/pingdotgg/t3code/pull/22254
 #   docs/user/project-settings.md
 #   apps/server-ex/lib/hal_c2/projects.ex (project.create, browse)
 #   apps/server/src/workspace/WorkspaceEntries.ts (browse: home, relative paths, prefix, errors)
@@ -48,7 +55,7 @@ Feature: Adding projects
       Then the user is asked what they should work on
       And the user is offered to add a project
 
-    @backlog @mobile
+    @backlog @mobile @priority-high
     Scenario: A phone user with no projects is invited to add one
       Given "laptop" has no projects
       When the user opens the app on a phone
@@ -61,14 +68,14 @@ Feature: Adding projects
       Then the project "shop" is listed for "laptop"
       And a draft thread opens in "shop"
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile @backlog-mobile @priority-high
     Scenario: Adding a folder from the desktop and mobile apps registers it and starts a thread
       Given the folder "/home/sam/shop" exists on "laptop"
       When the user adds the local folder "/home/sam/shop"
       Then the project "shop" is listed for "laptop"
       And a draft thread opens in "shop"
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile @backlog-mobile @priority-high
     Scenario: A folder the environment refuses to add says why
       Given the folder "/home/sam/shop" exists on "laptop"
       And the environment refuses to change projects with "Disk is read-only"
@@ -156,7 +163,7 @@ Feature: Adding projects
       Then no second project is created
       And the user is told the project was already added
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile @backlog-mobile @priority-high
     Scenario: Adding an existing project from the desktop and mobile apps opens its latest thread
       Given "shop" is already a project on "laptop" with an unsettled thread "Fix checkout"
       When the user adds the local folder of "shop" again
@@ -257,7 +264,7 @@ Feature: Adding projects
       Then the user is told why the repository could not be found
       And the user can correct the name
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: Nothing is looked up until something is typed
       When the user opens the GitHub repository source with nothing typed
       Then the user cannot continue
@@ -283,13 +290,13 @@ Feature: Adding projects
       When the user chooses to go up a level
       Then the path becomes "/home/sam/code"
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: The path the user types narrows the folders listed
       Given "/home/sam/code" holds the folders "shop" and "docs"
       When the user types "/home/sam/code/sh"
       Then only "shop" is listed
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: A clone destination keeps the repository's folder name while browsing
       Given the user is choosing where to clone "acme/shop"
       When the user browses into "/home/sam/code"
@@ -302,21 +309,21 @@ Feature: Adding projects
       When the user browses to "/home/sam/code"
       Then the user is told "Permission denied"
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: Adding waits while a folder is being opened
       Given the user chose a folder and the phone is still reading it
       Then adding the project is not offered yet
       When the phone has read the folder
       Then adding the project is offered with the folder as its path
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: Changing the environment starts the path again from that environment
       Given the phone is paired with "laptop" and "desktop"
       And the user typed a path under "laptop"
       When the user chooses "desktop"
       Then the path starts in the folder "desktop" keeps new projects in
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: A clone that has not reached the phone yet says it will appear
       Given the MC accepted the clone of "acme/shop" and the project has not reached the phone
       When fifteen seconds pass
@@ -364,7 +371,7 @@ Feature: Adding projects
       Then the user is told the folder could not be opened
       And no project is created
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A drop whose path is not absolute is refused
       Given the desktop app is connected to its own local environment
       And a project is selected
@@ -372,14 +379,14 @@ Feature: Adding projects
       Then the user is told "Drop an existing folder using its absolute local path."
       And no project is created
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A second drop while the first is still opening is ignored
       Given the desktop app is connected to its own local environment
       And a dropped folder is still being opened
       When the user drops another folder
       Then the second folder is not opened
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A drop that failed can be tried again
       Given the desktop app is connected to its own local environment
       And dropping "/home/sam/shop" failed
@@ -407,11 +414,28 @@ Feature: Adding projects
         | Resolving deltas: 100% (3/3), done.   | resolving | 100     |
         | Updating files:  80% (8/10)           | checkout  | 80      |
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile @backlog-mobile @priority-high
     Scenario: Clone progress is shown while the user keeps working
       Given a clone of "acme/shop" is receiving objects at 45 percent
       When the user looks at the app
       Then the user sees "Cloning acme/shop" with "Receiving objects · 45%"
+      And the user can cancel the clone
+
+    # Upstream #22780: a clone git has gone silent on is marked stalled after 20 seconds.
+    @backlog @mc
+    Scenario: A clone with no progress for 20 seconds is reported as stalled
+      Given a clone of "acme/shop" is receiving objects at 24 percent
+      When git reports no progress for 20 seconds
+      Then the clone is reported as stalled
+      When git reports "Receiving objects:  25% (25/100)"
+      Then the clone is no longer reported as stalled
+
+    # Upstream #22780: a stalled clone shows "Stalled" instead of its last transfer speed.
+    @backlog @desktop @mobile
+    Scenario: A stalled clone says so instead of showing a frozen speed
+      Given a clone of "acme/shop" stalled while receiving objects at 24 percent at 20.69 MiB/s
+      When the user looks at the app
+      Then the user sees "Cloning acme/shop" with "Receiving objects · 24% · Stalled"
       And the user can cancel the clone
 
     @desktop @mobile @backlog-mobile
@@ -428,7 +452,7 @@ Feature: Adding projects
       Then the clone is no longer reported
       And the project "shop" stays with its files
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile @backlog-mobile @priority-high
     Scenario: A finished clone offers to open its project
       Given a clone of "acme/shop" finished
       When the user looks at the app
@@ -447,6 +471,33 @@ Feature: Adding projects
       When the user retries the clone
       Then the clone is reported as running at the "connecting" stage
       And it clones into the same folder
+
+    # Upstream #23170: GitCafe, GitLab, Bitbucket and Azure DevOps clone over SSH, and a machine
+    # with no SSH key for the host failed every time, Retry included.
+    @backlog @mc
+    Scenario: A clone whose SSH key is refused tries once more over HTTPS
+      Given the host refuses this machine's SSH key but its HTTPS credentials work
+      When the user clones "acme/shop" from GitLab without choosing SSH
+      Then the clone succeeds over HTTPS
+      And the project's remote is the HTTPS address
+
+    @backlog @mc @priority-low
+    Scenario Outline: A clone does not fall back to HTTPS when it should not
+      Given <case>
+      When the clone fails
+      Then it is not tried over HTTPS
+
+      Examples:
+        | case                                                |
+        | the user asked to clone over SSH                    |
+        | the clone failed for a reason other than its SSH key |
+        | the pasted SSH address names a custom port          |
+
+    @backlog @mc @priority-low
+    Scenario: A clone that fails over SSH and then HTTPS gives both reasons
+      Given the host refuses this machine's SSH key and its HTTPS credentials
+      When the user clones "acme/shop" from GitLab
+      Then the failure gives the SSH refusal followed by why HTTPS failed
 
     @mc
     Scenario: Retrying a clone that is still running changes nothing
@@ -467,14 +518,14 @@ Feature: Adding projects
       When the user retries the clone
       Then the clone is reported as running
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile @backlog-mobile @priority-high
     Scenario: A failed or cancelled clone offers to remove the project it created
       Given a clone of "acme/shop" failed
       When the user removes the project from the clone's failure notice
       Then the project "shop" is no longer listed
 
     # Likely already implemented: apps/desktop-qt/src/native/ProjectCloneController.cpp
-    @backlog @desktop @mobile
+    @backlog @desktop @mobile @priority-high
     Scenario: A cancelled clone is announced as cancelled and can be retried from there
       Given a clone of "acme/shop" was cancelled
       When the user looks at the app
@@ -482,7 +533,7 @@ Feature: Adding projects
       And the user can retry the clone or remove the project
 
     # Likely already implemented: apps/desktop-qt/src/native/ProjectCloneController.cpp
-    @backlog @desktop @mobile
+    @backlog @desktop @mobile @priority-high
     Scenario Outline: A clone request the MC did not accept is reported
       Given a clone of "acme/shop" is <state>
       And the MC refuses the request
@@ -495,7 +546,7 @@ Feature: Adding projects
         | failed  | retries the clone | Failed to retry clone  |
 
     # Likely already implemented: apps/desktop-qt/src/native/ProjectCloneController.cpp
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: The clone notice steps aside while the user is in that project's new thread
       Given a clone of "acme/shop" is running
       When the user opens a new thread in "shop"
@@ -503,7 +554,7 @@ Feature: Adding projects
       When the user leaves that new thread
       Then the clone's notice is shown again
 
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario Outline: A message cannot be sent into a project whose clone has not finished
       Given a clone of "acme/shop" <state>
       And the user wrote a message in a new thread in "shop"
@@ -516,19 +567,19 @@ Feature: Adding projects
         | failed        | Repository not cloned |
         | was cancelled | Repository not cloned |
 
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: A message can be sent once the clone finishes
       Given the user wrote a message in a new thread in "shop" while "acme/shop" was cloning
       When the clone finishes
       Then the message can be sent
 
-    @backlog @desktop @mobile
+    @backlog @desktop @mobile @priority-low
     Scenario: A finished clone's notice goes away by itself
       Given a clone of "acme/shop" finished
       When eight seconds pass
       Then the notice "Cloned acme/shop" is gone
 
-    @backlog @desktop @mobile
+    @backlog @desktop @mobile @priority-low
     Scenario: A clone's notice goes when the MC stops tracking the clone
       Given a clone of "acme/shop" failed and its notice is shown
       When the project "shop" is removed on another device
@@ -542,7 +593,7 @@ Feature: Adding projects
       And the project "shop" is still listed with its folder
 
     # Legacy: apps/server/src/project/ProjectCloneTracker.ts (rejectCommandsDuringClone)
-    @mc @backlog
+    @mc @priority-high
     Scenario Outline: A thread cannot start in a project whose clone has not landed
       Given a clone of "acme/shop" is <state>
       When a client starts a thread in the project "shop"
@@ -555,7 +606,7 @@ Feature: Adding projects
         | failed or cancelled | The repository was not cloned. Retry the clone first. |
 
     # Legacy: apps/server/src/project/ProjectCloneTracker.ts (start)
-    @mc @backlog
+    @mc
     Scenario: A second clone into a folder another clone is filling is refused
       Given a clone of "acme/shop" into "/home/sam/shop" is running
       When a client starts cloning "acme/other" into "/home/sam/shop"
@@ -563,7 +614,7 @@ Feature: Adding projects
       And no second project is created
 
     # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (prepareDestination)
-    @mc @backlog
+    @mc @priority-high
     Scenario: A clone is refused before anything is created when its folder has files
       Given the folder "/home/sam/shop" already holds files
       When a client starts cloning "https://example.com/acme/shop.git" into "/home/sam/shop"
@@ -571,20 +622,28 @@ Feature: Adding projects
       And no project is created
 
     # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (normalizeDestinationPath)
-    @mc @backlog
+    @mc
     Scenario: A clone needs a destination folder
       When a client starts cloning "https://example.com/acme/shop.git" into a blank destination
       Then it fails with "Choose a destination path before cloning."
 
     # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (prepareDestination, normalizeDestinationPath)
-    @mc @backlog
+    @mc
     Scenario: A clone's folder is made with its missing parents and "~" is expanded
       Given "/home/sam/work" does not exist
       When a client starts cloning "https://example.com/acme/shop.git" into "~/work/shop"
       Then the clone goes into "/home/sam/work/shop"
 
+    # Upstream #18265: making the clone's parent tried to create the drive root itself and failed;
+    # the parent is made only when it is missing.
+    @mc @backlog @priority-low
+    Scenario: A clone into a new folder at the top of a Windows drive goes ahead
+      Given the MC runs on Windows
+      When a client starts cloning "https://example.com/acme/shop.git" into "D:\shop"
+      Then the clone goes into "D:\shop"
+
     # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (redactRemoteUrl, redactUrlCredentials)
-    @mc @backlog
+    @mc @priority-high
     Scenario: Credentials in a pasted clone address never reach clients
       When a client starts cloning "https://sam:s3cret@example.com/acme/shop.git" into "/home/sam/shop"
       Then git is given the address as pasted
@@ -592,7 +651,7 @@ Feature: Adding projects
       And a failure's message has the credentials removed
 
     # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (cloneRepository, CLONE_ENV)
-    @mc @backlog
+    @mc
     Scenario: A clone fails with git's own words when it would have asked for a password
       Given the repository "acme/private" needs credentials the MC does not have
       When a client starts cloning it
@@ -600,14 +659,14 @@ Feature: Adding projects
       And the clone is reported as failed with the last lines git printed
 
     # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (CLONE_TIMEOUT_MS)
-    @mc @backlog
+    @mc @backlog @priority-low
     Scenario: A tracked clone has no deadline but a one-shot clone gives up after two minutes
       Given a clone is still transferring after two minutes
       Then a clone started in the background keeps running
       But a clone that waits for its answer fails as timed out
 
     # Legacy: apps/server/src/project/ProjectCloneTracker.ts (cancel), SourceControlRepositoryService.ts (discardClone)
-    @mc @backlog
+    @mc
     Scenario: Cancelling a clone removes what git left but keeps the project's folder
       Given a clone of "acme/shop" is running and has written part of the files
       When the user cancels the clone
@@ -615,14 +674,14 @@ Feature: Adding projects
       And retrying the clone starts from that empty folder
 
     # Legacy: apps/server/src/project/ProjectCloneTracker.ts (cancel, discard)
-    @mc @backlog
+    @mc
     Scenario: A cancel that arrives as git finishes keeps the finished checkout
       Given a clone of "acme/shop" finishes while the user's cancel is being applied
       Then the clone is reported done
       And the checkout is kept
 
     # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (discardClone)
-    @mc @backlog
+    @mc @priority-high
     Scenario: Cleaning up a clone never deletes files that did not come from it
       Given a clone of "acme/shop" failed
       And the user has since put files of their own in "/home/sam/shop"
@@ -631,7 +690,7 @@ Feature: Adding projects
       And the user's files are untouched
 
     # Legacy: apps/server/src/project/ProjectCloneTracker.ts (discard)
-    @mc @backlog
+    @mc @priority-high
     Scenario: Deleting a project stops its clone and removes the partial checkout
       Given a clone of "acme/shop" is running for the project "shop"
       When a client deletes the project "shop"
@@ -640,7 +699,7 @@ Feature: Adding projects
       But a clone that had already finished keeps its files
 
     # Legacy: apps/server/src/project/gitCloneProgress.ts, ProjectCloneTracker.ts (progress)
-    @mc @backlog
+    @mc @priority-low
     Scenario: Clone progress detail and errors are kept short
       Given git reports a transfer detail or an error far longer than a notice can show
       Then the reported detail and error are cut with an ellipsis within the contract's limit
@@ -684,6 +743,26 @@ Feature: Adding projects
       Then the lookup fails with the host's message
       And no project is created
 
+    # Upstream #17379: a bare name stopped resolving when lookups moved off the gh CLI.
+    @backlog @mc
+    Scenario: A bare repository name is the signed-in account's repository
+      Given the user is signed in to GitHub as "octocat"
+      When the user looks up the GitHub repository " notes.git "
+      Then the repository "octocat/notes" is found on the host the user is signed in to
+
+    @backlog @mc @priority-low
+    Scenario Outline: A malformed repository name is refused before GitHub is asked
+      When the user looks up the GitHub repository "<name>"
+      Then the lookup is refused without asking GitHub
+
+      Examples:
+        | name       |
+        | me/        |
+        | /notes     |
+        | a/b/c/d    |
+        | two words  |
+        |            |
+
     # Legacy: packages/client-runtime/src/operations/projects.ts (normalizePastedCloneUrl)
     @backlog @desktop @mobile @tui
     Scenario: A pasted owner and repository name is cloned from GitHub over HTTPS
@@ -723,7 +802,7 @@ Feature: Adding projects
         | https://host/acme/123                    | 123    |
 
     # Legacy: packages/client-runtime/src/operations/projects.ts (getCloneDirectoryName)
-    @backlog @desktop @mobile @tui
+    @backlog @desktop @mobile @tui @priority-low
     Scenario Outline: A pasted address that names no repository proposes no folder
       When the user pastes <address> as the Git URL to clone
       Then no folder name is proposed
@@ -753,3 +832,96 @@ Feature: Adding projects
       And GitHub says it is not authenticated and points to source control settings
       And Bitbucket gives its install hint
       And a provider the environment has not reported says to open source control settings and rescan
+
+  # Upstream #22180: "Run on" can add the project to a connected machine that lacks it, cloning
+  # it there and copying the gitignored files the user picks, ".env" files checked by default.
+  Rule: Adding a project to another machine
+
+    @backlog @desktop
+    Scenario: A machine without the project can be offered from "Run on"
+      Given "shop" is on "laptop" and the connected machine "server" does not have it
+      When the user opens "Run on" for a new thread in "shop"
+      Then "Add to another machine" offers "server"
+
+    @backlog @mc
+    Scenario: A checkout lists its gitignored files, leaving out folders ignored whole
+      Given the checkout of "shop" has the ignored files ".env" and ".env.local" and the ignored folder "node_modules"
+      When a client asks for the checkout's ignored files
+      Then ".env" and ".env.local" are listed
+      And "node_modules" is not
+
+    @backlog @desktop
+    Scenario: Adding a project to another machine offers its env files to copy
+      Given the checkout of "shop" on "laptop" has the ignored files ".env", ".dev.vars" and "notes.txt"
+      When the user adds "shop" to "server"
+      Then the user can choose SSH or HTTPS and the folder on "server"
+      And ".env" is checked to copy while ".dev.vars" and "notes.txt" are offered unchecked
+
+    @backlog @desktop
+    Scenario: The chosen files are copied once the clone on the other machine finishes
+      Given the user added "shop" to "server" with ".env" chosen to copy
+      When the clone on "server" finishes
+      Then ".env" is on "server" in the new checkout
+      And "server" is offered under "Run on" for "shop" without a reload
+
+    @backlog @desktop @priority-low
+    Scenario: Only small text files are copied to the other machine
+      Given the user chose a symlink and a text file over 1 MB among the files to copy
+      When the clone on "server" finishes
+      Then neither is copied and the user is told which were skipped
+
+    @backlog @mc
+    Scenario: A fresh clone groups with the project's other checkouts at once
+      Given "shop" has a checkout on "laptop"
+      When a clone of the same repository finishes on "server"
+      Then the new checkout is grouped with "shop" straight away
+
+    # Upstream #22492: the copy clones the checkout's origin, not its upstream remote, so a fork
+    # copies the fork and stays one project in the sidebar.
+    @backlog @desktop @mc
+    Scenario: Adding a fork to another machine clones the fork
+      Given the checkout of "shop" on "laptop" has the origin "acme-fork/shop" and the upstream "acme/shop"
+      When the user adds "shop" to "server"
+      Then "server" clones "acme-fork/shop"
+      And the sidebar shows "shop" once
+
+    # Upstream #22254: the draft moves to the target machine at once and the clone is shown in
+    # the composer, with no toasts on the way.
+    @backlog @desktop
+    Scenario: Adding a project to another machine moves the draft there
+      Given the user typed "fix the tax" for a new thread in "shop" on "laptop"
+      When the user adds "shop" to "server"
+      Then the draft is for "shop" on "server" and still reads "fix the tax"
+      And the composer shows the clone's progress and a way to cancel it
+
+    # Upstream #22254: send stays blocked until both the clone and the copied files have landed.
+    @backlog @desktop
+    Scenario: A draft on the new machine cannot be sent until its files are copied
+      Given the user added "shop" to "server" with ".env" chosen to copy
+      And the clone on "server" has finished but ".env" is still being copied
+      When the user tries to send the draft
+      Then the message is not sent until ".env" has been copied
+
+    # Upstream #22254: a failed file copy is a dismissible notice in the composer, not a toast.
+    @backlog @desktop
+    Scenario: A file that could not be copied to the new machine is called out in the composer
+      Given the user added "shop" to "server" with ".env" chosen to copy
+      When copying ".env" to "server" fails
+      Then the composer says ".env" was not copied
+      And the user can dismiss that notice
+
+    # Upstream #22254: a clone started elsewhere does not announce itself again once the user
+    # has looked at the project.
+    @backlog @desktop @priority-low
+    Scenario: A finished clone's notice does not come back after the user has seen the project
+      Given a clone of "shop" started from the command palette finished
+      And the user opened "shop"
+      When the user sends a message in "shop"
+      Then the clone's notice does not appear again
+
+    # Upstream #22254: the favicon looked up while the folder was empty was kept after the clone.
+    @backlog @mc
+    Scenario: A freshly cloned project shows its own icon
+      Given the repository "shop" has a favicon
+      When a clone of "shop" finishes into an empty folder
+      Then the project's icon is the repository's favicon, not a letter

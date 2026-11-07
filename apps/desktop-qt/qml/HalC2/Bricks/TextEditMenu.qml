@@ -47,9 +47,10 @@ ShellMenu {
         return true;
     }
 
-    // Rich text separates its paragraphs with U+2029.
+    // Rich text separates its paragraphs with U+2029, and a reply's inline
+    // code is held together with word joiners and no-break spaces.
     function copy() {
-        Shell.setClipboardText(selected.replace(/[\u2028\u2029]/g, "\n"));
+        Shell.setClipboardText(selected.replace(/[\u2028\u2029]/g, "\n").replace(/\u2060/g, "").replace(/\u00a0/g, " "));
     }
 
     // Select All waits for the menu to close: an editor that loses the

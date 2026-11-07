@@ -89,6 +89,7 @@ import {
   ProviderUploadFeedbackError,
   type PreviewAutomationHost,
   type McSettingsDocument,
+  type OrchestrationV2ShellStreamItem,
 } from "@hal-c2/contracts";
 import {
   compileResolvedKeybindingsConfig,
@@ -121,9 +122,11 @@ import {
   ClusterSocket,
   type Shape,
   type ShapeFrame,
+  type TerminalShape,
+  type StreamResumePoint,
   type WindowedSubscription,
 } from "./clusterSocket.ts";
-import { ShellShapeFold, type ShellRow } from "./shellShape.ts";
+import { ShellRows, ShellShapeFold, type ShellRow } from "./shellShape.ts";
 import { ThreadShapeFold, type ShapeEvent, type ShapeRow } from "./threadShape.ts";
 
 const decodeServerConfig = Schema.decodeUnknownSync(Schema.toCodecJson(ServerConfig));
@@ -285,6 +288,44 @@ const decodeAgentSessionError = Schema.decodeUnknownOption(
 // page adds as many (the Qt desktop's window).
 const THREAD_WINDOW_ITEMS = 200;
 
+/**
+ * Where the thread streams of replaced sessions stopped, so the session that replaces
+ * one (a reconnect) asks the MC only for what the thread state lacks. Outlives the
+ * sessions of one client; holds the threads closed last.
+ */
+export class ThreadResumes {
+  private readonly held = new Map<
+    string,
+    { readonly fold: ThreadShapeFold; readonly point: StreamResumePoint }
+  >();
+
+  private readonly capacity: number;
+
+  constructor(capacity = 32) {
+    this.capacity = capacity;
+  }
+
+  /** Keeps where a thread stream stopped. */
+  put(key: string, fold: ThreadShapeFold, point: StreamResumePoint): void {
+    this.held.delete(key);
+    this.held.set(key, { fold, point });
+    for (const oldest of this.held.keys()) {
+      if (this.held.size <= this.capacity) break;
+      this.held.delete(oldest);
+    }
+  }
+
+  /** Takes where a thread stream stopped, when a thread state at `sequence` holds all of it. */
+  take(
+    key: string,
+    sequence: number | undefined,
+  ): { readonly fold: ThreadShapeFold; readonly point: StreamResumePoint } | undefined {
+    const entry = this.held.get(key);
+    this.held.delete(key);
+    return entry?.fold.resumes(sequence) === true ? entry : undefined;
+  }
+}
+
 /** A thread stream's frame as the stream items the thread state consumes. */
 function foldThreadFrame(
   fold: ThreadShapeFold,
@@ -343,7 +384,7 @@ function entityStreamFrame(frame: ShapeFrame): ReadonlyArray<EntityStreamFrame> 
  * `error` frame fails the stream when `toError` is given.
  */
 function shapeStream<A, E = never>(
-  socket: ClusterSocket,
+  socket: Pick<ClusterSocket, "subscribe">,
   shape: Shape,
   fold: (frame: ShapeFrame) => ReadonlyArray<A>,
   toError?: (frame: ShapeFrame) => E,
@@ -398,9 +439,13 @@ function unsupported(tag: string): RpcClientError.RpcClientError {
 export function makeV3Session(input: {
   readonly socket: ClusterSocket;
   readonly environmentId: string;
+  readonly resumes?: ThreadResumes;
+  /** The shell rows the client holds across sockets; a session of its own holds them otherwise. */
+  readonly shellRows?: ShellRows;
 }): Effect.Effect<RpcSession, ConnectionTransientError> {
   return Effect.gen(function* () {
     const { socket } = input;
+    const shellRows = input.shellRows ?? new ShellRows();
     // The environment may live on another MC of the cluster; its config reply
     // names the MC that this session's shapes are addressed to.
     const reply = yield* Deferred.make<
@@ -446,22 +491,43 @@ export function makeV3Session(input: {
       ),
     );
 
+    // The shell says which rows the client holds (`shellRows`), so a new socket's
+    // answer carries only what changed; each answer still reaches the fold whole.
     const shell = () => {
       const fold = new ShellShapeFold(mc);
-      return shapeStream(socket, { type: "shell" }, (frame) => {
+      const onFrame = (frame: ShapeFrame): ReadonlyArray<OrchestrationV2ShellStreamItem> => {
         if (frame.t === "shell.mc" || frame.t === "shell.environment") {
+          if (frame.t === "shell.mc" && frame.removed === true) shellRows.forget(String(frame.mc));
           for (const listener of memberListeners) listener();
           return [];
         }
-        if (frame.t === "shell") return fold.shell(frame.rows as ReadonlyArray<ShellRow>);
-        if (frame.t === "shell.rows")
-          return fold.rows(
-            String(frame.mc),
-            frame.rows as ReadonlyArray<readonly [string, string, Record<string, unknown>]>,
-            frame.reset === true,
+        if (frame.t === "shell")
+          return fold.shell(
+            shellRows.answer(
+              (frame.mcs ?? []) as ReadonlyArray<Record<string, unknown>>,
+              frame.rows as ReadonlyArray<ShellRow>,
+            ),
           );
+        if (frame.t === "shell.rows") {
+          const rows = frame.rows as ReadonlyArray<
+            readonly [string, string, Record<string, unknown>]
+          >;
+          shellRows.changed(String(frame.mc), rows, frame.reset === true, frame.epoch, frame.rev);
+          return fold.rows(String(frame.mc), rows, frame.reset === true);
+        }
         return [];
-      });
+      };
+      return Stream.callback<OrchestrationV2ShellStreamItem>((queue) =>
+        Effect.acquireRelease(
+          Effect.sync(() =>
+            socket.subscribeShell(
+              (frame) => Queue.offerAllUnsafe(queue, onFrame(frame)),
+              () => shellRows.have(),
+            ),
+          ),
+          (unsubscribe) => Effect.sync(unsubscribe),
+        ),
+      );
     };
 
     // A thread opens as its newest turns, as the Qt clients' does; `loadEarlier` adds
@@ -470,6 +536,7 @@ export function makeV3Session(input: {
     const thread = (request: {
       readonly threadId: string;
       readonly historyCursor?: string | null | undefined;
+      readonly afterSequence?: number | undefined;
     }) => {
       // The window the client held before this session replaced the last one.
       const floor =
@@ -478,7 +545,11 @@ export function makeV3Session(input: {
           : request.historyCursor === null
             ? null
             : Number(request.historyCursor);
-      const fold = new ThreadShapeFold(ThreadId.make(request.threadId));
+      const key = `${input.environmentId}\u0000${request.threadId}`;
+      // A thread state that holds what a replaced session's stream gave it carries on
+      // from that stream's offset instead of loading the thread again.
+      const resumed = input.resumes?.take(key, request.afterSequence);
+      const fold = resumed?.fold ?? new ThreadShapeFold(ThreadId.make(request.threadId));
       return Stream.callback<OrchestrationV2ThreadStreamItem>((queue) =>
         Effect.acquireRelease(
           Effect.sync(() => {
@@ -489,6 +560,7 @@ export function makeV3Session(input: {
                 Queue.offerAllUnsafe(queue, foldThreadFrame(fold, frame));
               },
               Number.isInteger(floor) || floor === null ? floor : undefined,
+              resumed?.point,
             );
             earlier.set(request.threadId, subscription.more);
             return subscription;
@@ -498,6 +570,8 @@ export function makeV3Session(input: {
               if (earlier.get(request.threadId) === subscription.more) {
                 earlier.delete(request.threadId);
               }
+              const point = subscription.resumePoint();
+              if (point !== null) input.resumes?.put(key, fold, point);
               subscription.unsubscribe();
             }),
         ),
@@ -772,9 +846,27 @@ export function makeV3Session(input: {
         terminalError(request, cause instanceof ClusterRpcError ? cause.detail : undefined),
       );
 
-    const terminalAttach = (request: TerminalRequest) =>
+    // What acknowledges each terminal attached with `acks`. A second attach of a terminal
+    // takes over; the first's acks then stop, and its window is what the MC holds back.
+    const terminalAcks = new Map<string, (sequence: number) => void>();
+    const acknowledgedTerminal = (request: TerminalRequest): Pick<ClusterSocket, "subscribe"> => ({
+      subscribe: (shape, onFrame) => {
+        const key = `${request.threadId}:${request.terminalId}`;
+        const { unsubscribe, ack } = socket.subscribeAcknowledged(shape as TerminalShape, onFrame);
+        terminalAcks.set(key, ack);
+        return () => {
+          if (terminalAcks.get(key) === ack) terminalAcks.delete(key);
+          unsubscribe();
+        };
+      },
+    });
+
+    const terminalAttach = ({
+      acks,
+      ...request
+    }: TerminalRequest & { readonly acks?: boolean | undefined }) =>
       shapeStream(
-        socket,
+        acks ? acknowledgedTerminal(request) : socket,
         { type: "terminal", mc, input: request },
         (frame) => (frame.t === "terminal" ? [frame.event] : []),
         (frame) => terminalError(request, frame.detail),
@@ -1228,19 +1320,37 @@ export function makeV3Session(input: {
         ),
       );
 
-    // A thread's projection, from its entities fetched at once: a socket holds one
-    // subscription per stream, and the open thread view usually has it.
+    // A thread's projection, from its entities fetched a page at a time: a socket holds
+    // one subscription per stream, and the open thread view usually has it. Each page is
+    // read as of its own offset, so a thread that changes during the walk folds rows of
+    // different moments: the projection is as of the first page's offset or later, for
+    // a one-shot read, never to resume a subscription from.
     const threadProjection = (request: { readonly threadId: ThreadId }) => {
       const failure = (message: string, cause?: unknown) =>
         new OrchestrationV2GetThreadProjectionError({ threadId: request.threadId, message, cause });
-      return mcCall("hal-c2.threadRows", { threadId: request.threadId }).pipe(
+      type Page = {
+        readonly rows: ReadonlyArray<ShapeRow>;
+        readonly next: unknown;
+        readonly offset: number;
+        readonly at: number | null;
+      };
+      const pages = (
+        rows: ShapeRow[],
+        after: unknown,
+        first?: Page,
+      ): Effect.Effect<Page, ClusterRpcError> =>
+        mcCall("hal-c2.threadRows", { threadId: request.threadId, after }).pipe(
+          Effect.flatMap((result) => {
+            const page = result as Page;
+            rows.push(...page.rows);
+            return page.next == null
+              ? Effect.succeed({ ...(first ?? page), rows, next: null })
+              : pages(rows, page.next, first ?? page);
+          }),
+        );
+      return Effect.suspend(() => pages([], null)).pipe(
         Effect.mapError((cause) => failure(cause.message, cause)),
-        Effect.flatMap((result) => {
-          const { rows, offset, at } = result as {
-            readonly rows: ReadonlyArray<ShapeRow>;
-            readonly offset: number;
-            readonly at: number | null;
-          };
+        Effect.flatMap(({ rows, offset, at }) => {
           const [item] = new ThreadShapeFold(request.threadId).snapshot({
             rows,
             part: 0,
@@ -1568,6 +1678,8 @@ export function makeV3Session(input: {
       closed: Effect.never,
       mcCall,
       loadEarlierThread,
+      ackTerminal: (threadId, terminalId, sequence) =>
+        terminalAcks.get(`${threadId}:${terminalId}`)?.(sequence),
       callEnvironment: (environmentId, method, payload) =>
         Effect.tryPromise({
           try: () => socket.call(environmentId, method, payload),
@@ -1583,12 +1695,21 @@ export function makeV3Session(input: {
 }
 
 /**
+ * How long a new socket waits for the MC's `hello`, its only deadline: the shell
+ * and threads load over it with none, however long the MC takes to build them.
+ */
+export const HELLO_TIMEOUT_MS = 15_000;
+
+/**
  * Opens a protocol-3 session for a prepared connection. The socket URL carries a
  * single-use ticket, so the socket does not reconnect by itself: a drop fails
  * `closed`, and the environment supervisor reconnects with a fresh ticket.
  */
 export const connectV3Session = (
   connection: PreparedConnection,
+  resumes?: ThreadResumes,
+  shellRows?: ShellRows,
+  pingIntervalMs?: number,
 ): Effect.Effect<RpcSession, ConnectionAttemptError, Scope.Scope> =>
   Effect.gen(function* () {
     const hello = yield* Deferred.make<string, ConnectionTransientError>();
@@ -1599,6 +1720,7 @@ export const connectV3Session = (
           new ClusterSocket({
             url: connection.socketUrl,
             reconnect: false,
+            ...(pingIntervalMs === undefined ? {} : { pingIntervalMs }),
             onStatus: (status) => {
               if (status.connected && status.mc !== null) {
                 Deferred.doneUnsafe(hello, Effect.succeed(status.mc));
@@ -1617,7 +1739,7 @@ export const connectV3Session = (
     );
     yield* Deferred.await(hello).pipe(
       Effect.timeoutOrElse({
-        duration: "15 seconds",
+        duration: HELLO_TIMEOUT_MS,
         orElse: () =>
           Effect.fail(
             new ConnectionTransientError({
@@ -1627,6 +1749,21 @@ export const connectV3Session = (
           ),
       }),
     );
-    const session = yield* makeV3Session({ socket, environmentId: connection.environmentId });
-    return { ...session, closed: Deferred.await(closed) } satisfies RpcSession;
+    // Every environment of the cluster is reached over this one socket.
+    const forEnvironment = (
+      environmentId: string,
+    ): Effect.Effect<RpcSession, ConnectionTransientError> =>
+      makeV3Session({
+        socket,
+        environmentId,
+        ...(resumes === undefined ? {} : { resumes }),
+        ...(shellRows === undefined ? {} : { shellRows }),
+      }).pipe(
+        Effect.map((session): RpcSession => ({
+          ...session,
+          closed: Deferred.await(closed),
+          forEnvironment,
+        })),
+      );
+    return yield* forEnvironment(connection.environmentId);
   });

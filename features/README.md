@@ -60,7 +60,7 @@ MC, native QML, and the TUI.
 - `@backlog-mc`, `@backlog-desktop`, `@backlog-mobile` and `@backlog-tui` mean it does not
   pass on that one surface yet. When a `@backlog @desktop @mobile` scenario starts passing on
   the desktop it becomes `@desktop @mobile @backlog-mobile`; `@shared @backlog-mobile
-@backlog-tui` passes only on the desktop. Each runner treats its own surface's tag like
+  @backlog-tui` passes only on the desktop. Each runner treats its own surface's tag like
   `@backlog`.
 - `@dropped` means we decided not to carry the behaviour. The scenario stays so the decision
   is visible and reviewable.
@@ -80,6 +80,23 @@ It takes a count, `@tag`s to require, `-@tag`s to exclude, and files or globs un
 only work still missing on it, so `@desktop` draws `@backlog` and `@backlog-desktop` scenarios.
 `@blocked` work is left out; `mise run features:pick 20 @blocked` lists it with what each
 scenario waits for.
+
+Priority is user value per unit of work. Our users drive agents all day, so the core loop comes
+first.
+
+- `@priority-high`: the everyday loop on the main surfaces (start or continue a thread, compose
+  and send, read the timeline, approvals, model and mode) and the MC's protocol, orchestration
+  and auth; data loss, safety and security; a shipped feature still missing on a surface where
+  users hit the gap; a missing way back out (a one-way door is a bug); and scenarios the MC
+  probably already does (`# Likely already implemented:`), because they are cheap to close.
+- `@priority-low`: niche settings, polish, rarely used providers (`@plugin-grok`, `@plugin-pi`,
+  `@plugin-antigravity`, `@plugin-muse`, `@plugin-acp-registry`), phone-only nice-to-haves, and
+  behaviour of the removed surfaces with little value on ours.
+- Everything else is normal and carries no tag.
+
+Tag at the widest scope that is true, a `Feature` or `Rule` when all its backlog work shares a
+priority, at the end of its tag line. High wins over low, so a low group can hold high
+scenarios; a group with normal exceptions is tagged narrower instead.
 
 ## Writing rules
 
@@ -121,6 +138,22 @@ T3 Code keeps shipping, and its behaviour is ledgered here even though its code 
 `features/UPSTREAM` is the upstream commit the ledger has been reviewed through, and
 `mise run upstream` digests the pull requests merged after it. The
 [upstream-ledger skill](../.agents/skills/upstream-ledger/SKILL.md) turns them into scenarios.
+
+An upstream pull request named in `# Sources:` is cited for the whole file. When it covers only some
+of the file, also put an `# Upstream #<number>` line (`# Upstream <sha>` with the full 40-character
+hash, for a commit without one) directly above the `Feature`, `Rule`, scenario or `Examples` it
+covers, where a tag line would go. It is cited for what follows it, as a tag would be, and the rest
+of the line says what upstream did:
+
+```gherkin
+# Upstream #13590: a thread whose worktree is still being checked out is in worktree mode.
+@desktop @backlog
+Scenario: A thread still preparing its worktree says "New worktree"
+```
+
+The [T3 Code Tracker](https://github.com/hal-c2/t3code-tracker-plugin) counts a pull request's
+scenarios from these lines, and marks one cited only in `# Sources:` as covering the whole file.
+It is a comment, so every runner ignores it.
 
 ## Running
 

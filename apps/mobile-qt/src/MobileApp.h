@@ -10,8 +10,10 @@
 #include "StoragePaths.h"
 
 class Maintenance;
+class MobileTerminal;
 class NativeShell;
 class Notifications;
+class Resume;
 class Scanner;
 class ShellBridge;
 class ShellRuntime;
@@ -54,6 +56,8 @@ public:
   ThemeStore& theme() { return *m_theme; }
   ShellRuntime& runtime() { return *m_runtime; }
   Maintenance& maintenance() { return *m_maintenance; }
+  MobileTerminal& terminal() { return *m_terminal; }
+  Resume& resume() { return *m_resume; }
 
   // Opens the environment the phone remembers, if it has one, and shows the
   // window.
@@ -71,4 +75,6 @@ private:
   std::unique_ptr<Notifications> m_notifications;
   std::unique_ptr<Scanner> m_scanner;
   std::unique_ptr<Maintenance> m_maintenance;
+  std::unique_ptr<MobileTerminal> m_terminal;
+  std::unique_ptr<Resume> m_resume;
 };

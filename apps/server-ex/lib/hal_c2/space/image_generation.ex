@@ -18,7 +18,31 @@ defmodule HalC2.Space.ImageGeneration do
   alias HalC2.TextGeneration
 
   @supported ~w(codex grok)
-  @builtin ~w(codex claudeAgent cursor grok opencode antigravity pi)
+
+  # The image models each provider's own image tool can be told to use; "auto" leaves the
+  # choice to the provider. Codex's tool always asks for `gpt-image-2` and OpenAI picks
+  # the model that runs it, with no setting to choose one (openai/codex,
+  # codex-rs/ext/image-generation/src/tool.rs, and its issue #43965). Grok's takes
+  # `features.image_gen_model_override`, which `GROK_IMAGE_GEN_MODEL_OVERRIDE` sets; the
+  # ids are xAI's (https://docs.x.ai/docs/models).
+  @models %{
+    "codex" => [
+      %{
+        "slug" => "auto",
+        "name" => "GPT Image",
+        "description" => "OpenAI picks the model. Codex cannot choose it."
+      }
+    ],
+    "grok" => [
+      %{"slug" => "auto", "name" => "Grok Imagine", "description" => "Grok picks the model."},
+      %{
+        "slug" => "grok-imagine-image-2.0",
+        "name" => "Grok Imagine Image 2.0",
+        "description" => nil
+      },
+      %{"slug" => "grok-imagine-image", "name" => "Grok Imagine Image", "description" => nil}
+    ]
+  }
 
   @doc """
   How long an agent may take to make an image: 5 minutes. Tests shorten it with the
@@ -27,71 +51,74 @@ defmodule HalC2.Space.ImageGeneration do
   def timeout, do: Application.get_env(:hal_c2, :image_generation_timeout, 300_000)
 
   @doc """
-  `space.image.providers`: each provider with whether it can make an image here, and the
-  selection used when the user does not choose.
+  `space.image.providers`: each provider that can make an image, whether it is ready to,
+  and the image models it can be told to use; and the selection used when the user does
+  not choose. Providers that cannot make images are left out.
   """
   def providers do
     settings = HalC2.Settings.settings()
 
     %{
-      "providers" => Enum.map(instances(settings), &provider(settings, &1)),
+      "providers" => for(id <- instances(settings), do: provider(settings, id)),
       "selection" => default(settings)
     }
   end
 
-  defp instances(settings),
-    do: Enum.uniq(@builtin ++ Map.keys(settings["providerInstances"] || %{}))
+  # The built-in instances first, then those the settings add, of a driver that can.
+  defp instances(settings) do
+    (@supported ++ Map.keys(settings["providerInstances"] || %{}))
+    |> Enum.uniq()
+    |> Enum.filter(&(TextGeneration.driver(&1) in @supported))
+  end
 
   defp provider(settings, id) do
     driver = TextGeneration.driver(id)
+    ready = TextGeneration.usable?(settings, %{"instanceId" => id})
 
-    {status, message} =
-      cond do
-        driver not in @supported -> {"unsupported", unsupported(id)}
-        TextGeneration.usable?(settings, %{"instanceId" => id}) -> {"ready", nil}
-        true -> {"unavailable", unavailable(id)}
-      end
-
-    %{"instanceId" => id, "driver" => driver, "status" => status, "message" => message}
+    %{
+      "instanceId" => id,
+      "driver" => driver,
+      "status" => if(ready, do: "ready", else: "unavailable"),
+      "message" => if(ready, do: nil, else: unavailable(id)),
+      "models" => @models[driver]
+    }
   end
 
   defp unsupported(id), do: "#{id} does not generate images here."
   defp unavailable(id), do: "#{id} is not enabled or not installed."
 
-  # The model chosen for writing text when it can make images, else the first instance
-  # that can, the built-in ones before those settings add.
+  # The provider chosen for writing text when it can make images, else the first instance
+  # that can, the built-in ones before those settings add; its provider picks the model.
   defp default(settings) do
     text = settings["textGenerationModelSelection"]
 
-    if is_map(text) and TextGeneration.driver(text) in @supported and
-         TextGeneration.usable?(settings, text) do
-      selection(text)
-    else
-      Enum.find_value(instances(settings), fn id ->
-        driver = TextGeneration.driver(id)
-        selection = %{"instanceId" => id, "model" => TextGeneration.default_model(driver)}
-        if driver in @supported and TextGeneration.usable?(settings, selection), do: selection
-      end)
-    end
-  end
+    preferred =
+      if is_map(text) and is_binary(text["instanceId"]), do: [text["instanceId"]], else: []
 
-  defp selection(selection), do: Map.take(selection, ~w(instanceId model))
+    Enum.find_value(preferred ++ instances(settings), fn id ->
+      if TextGeneration.driver(id) in @supported and
+           TextGeneration.usable?(settings, %{"instanceId" => id}),
+         do: %{"instanceId" => id, "model" => "auto"}
+    end)
+  end
 
   @doc """
   Runs the agent and leaves its image as a pending upload for
   `HalC2.Space.add_image/5`: `{:ok, attachment_id, selection used}`, or `{:error, reason,
-  message}` with reason `:unsupported`, `:unavailable` or `:failed`.
+  message}` with reason `:unsupported`, `:unavailable` or `:failed`. The selection's
+  model is an image model of `providers/0`; any other, such as an older client's chat
+  model, leaves the choice to the provider. The agent itself runs on the provider's
+  model for writing text, which the MC picks.
   """
   def generate(prompt, selection) do
-    with {:ok, selection} <- choose(selection),
-         selection = with_model(selection) do
+    with {:ok, selection} <- choose(selection) do
       dir = HalC2.Scratch.dir("hal-c2-image")
 
       try do
         with {:ok, _} <- run(selection, dir, instruction(prompt)),
              {:ok, file} <- newest_image(dir),
              {:ok, upload} <- pending(file) do
-          {:ok, upload, selection(selection)}
+          {:ok, upload, selection}
         else
           {:error, message} -> {:error, :failed, message}
         end
@@ -103,11 +130,17 @@ defmodule HalC2.Space.ImageGeneration do
 
   defp choose(%{"instanceId" => id} = selection) when is_binary(id) do
     settings = HalC2.Settings.settings()
+    driver = TextGeneration.driver(id)
 
     cond do
-      TextGeneration.driver(id) not in @supported -> {:error, :unsupported, unsupported(id)}
-      TextGeneration.usable?(settings, selection) -> {:ok, selection}
-      true -> {:error, :unavailable, unavailable(id)}
+      driver not in @supported ->
+        {:error, :unsupported, unsupported(id)}
+
+      TextGeneration.usable?(settings, selection) ->
+        {:ok, %{"instanceId" => id, "model" => image_model(driver, selection["model"])}}
+
+      true ->
+        {:error, :unavailable, unavailable(id)}
     end
   end
 
@@ -122,12 +155,10 @@ defmodule HalC2.Space.ImageGeneration do
     end
   end
 
-  defp with_model(%{"model" => model} = selection) when is_binary(model) and model != "",
-    do: selection
-
-  defp with_model(selection) do
-    model = TextGeneration.default_model(TextGeneration.driver(selection))
-    Map.put(selection, "model", model)
+  # A model the provider's tool cannot be told, such as the chat model an older client's
+  # Generate dialog sent, leaves the choice to the provider.
+  defp image_model(driver, model) do
+    if Enum.any?(@models[driver], &(&1["slug"] == model)), do: model, else: "auto"
   end
 
   defp instruction(prompt) do
@@ -155,7 +186,8 @@ defmodule HalC2.Space.ImageGeneration do
           ["exec"] ++
             launch ++
             ~w(--skip-git-repo-check -s workspace-write) ++
-            ["--model", selection["model"], "--config", ~s(model_reasoning_effort="low"), "-"]
+            ["--model", TextGeneration.default_model("codex")] ++
+            ["--config", ~s(model_reasoning_effort="low"), "-"]
 
         TextGeneration.run_cli([TextGeneration.codex_command(id) | args], dir, instruction,
           timeout: timeout()
@@ -163,11 +195,16 @@ defmodule HalC2.Space.ImageGeneration do
 
       "grok" ->
         with {:ok, [command | _], env} <- HalC2.Acp.command(id) do
-          args = ["-p", instruction, "--cwd", dir, "-m", selection["model"], "--yolo"]
+          model = TextGeneration.default_model("grok")
+          args = ["-p", instruction, "--cwd", dir, "-m", model, "--yolo"]
+          env = env ++ grok_image_model(selection["model"])
           TextGeneration.run_cli([command | args], dir, "", timeout: timeout(), env: env)
         end
     end
   end
+
+  defp grok_image_model("auto"), do: []
+  defp grok_image_model(model), do: [{"GROK_IMAGE_GEN_MODEL_OVERRIDE", model}]
 
   # What the agent left in its directory: regular files only, never a link it made, and
   # the newest that passes the checks.

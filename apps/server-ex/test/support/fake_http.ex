@@ -32,6 +32,7 @@ defmodule HalC2.Test.FakeHttp do
   @impl true
   def call(conn, {routes, log}) do
     {:ok, body, conn} = read_body(conn)
+    conn = assign(conn, :fake_http_body, body)
 
     Agent.update(log, fn requests ->
       [

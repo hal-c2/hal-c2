@@ -63,7 +63,7 @@ Feature: Adding terminal output to a message
     When the user sends the message
     Then the empty excerpt is not sent
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The user is told when expired terminal excerpts are left out of a message
     Given the draft reads "Why did this fail?" and holds <count> whose text is gone
     When the user sends the message
@@ -75,14 +75,16 @@ Feature: Adding terminal output to a message
       | one terminal excerpt  | Expired terminal context omitted from message  |
       | two terminal excerpts | Expired terminal contexts omitted from message |
 
-  @backlog @desktop
+  @desktop
   Scenario: A draft holding only expired terminal excerpts is not sent
     Given the draft holds nothing but a terminal excerpt whose text is gone
     When the user sends the message
     Then nothing is sent and the draft is kept
     And the user sees a "warning" toast "Expired terminal context won't be sent" saying "Remove it or re-add it to include terminal output."
 
-  @backlog @desktop
+  # This is the web's draft format. The desktop's drafts never held placeholders and the
+  # WebEngine's storage is deliberately not migrated.
+  @dropped @desktop
   Scenario: Drafts saved by older versions keep their terminal excerpts
     Given a draft saved before excerpts were inline links
     When the user opens that draft
@@ -95,7 +97,7 @@ Feature: Adding terminal output to a message
     When the user adds the selected output to the prompt
     Then the prompt gains a removable excerpt naming the terminal
 
-  @backlog @mobile
+  @mobile
   Scenario: The user adds terminal output to a message on the phone
     Given the phone shows a thread's terminal
     When the user selects output and adds it to the message

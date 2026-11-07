@@ -82,17 +82,24 @@ Item {
             compare(Shell.dispatchedActions[0].payload.revealed, true);
         }
 
-        // The summary is the second line of the name's column, so the switch's height spans it.
-        function test_the_summary_sits_beside_the_switch_not_under_it() {
+        // The switch centres on the name's line, so a summary that wraps to
+        // several lines grows the row downwards instead of pushing the switch off it.
+        function test_the_switch_centres_on_the_names_line() {
             Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({}) };
             const page = createTemporaryObject(pageComponent, root);
             const tool = findChild(page, "sourceControlTool:github");
+            const name = findChild(tool, "nameLine");
             const summary = findChild(tool, "summary");
             const availability = findChild(tool, "availability");
-            const top = summary.mapToItem(tool, 0, 0).y;
-            const switchTop = availability.mapToItem(tool, 0, 0).y;
-            verify(top < switchTop + availability.height && top + summary.height > switchTop,
-                   "the summary overlaps the switch vertically, not below it");
+            const nameCentre = name.mapToItem(tool, 0, name.height / 2).y;
+            const switchCentre = availability.mapToItem(tool, 0, availability.height / 2).y;
+            verify(Math.abs(nameCentre - switchCentre) <= 1,
+                   "the switch centres on the name's line (" + nameCentre + " vs " + switchCentre + ")");
+            verify(summary.mapToItem(tool, 0, 0).y >= name.mapToItem(tool, 0, name.height).y,
+                   "the summary is under the name's line");
+            const summaryLeft = summary.mapToItem(tool, 0, 0).x;
+            verify(summaryLeft + summary.width <= availability.mapToItem(tool, 0, 0).x,
+                   "the summary sits beside the switch, not under it");
         }
 
         // Rescan is a named icon, not a bare word that reads as a column label.

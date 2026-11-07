@@ -20,70 +20,51 @@ defmodule HalC2.UpgradeTest do
 
   setup %{tmp_dir: dir} do
     Application.put_env(:hal_c2, :home, dir)
-    # The tests load several versions of the same module.
-    Code.put_compiler_option(:ignore_module_conflict, true)
-    on_exit(fn -> Code.put_compiler_option(:ignore_module_conflict, false) end)
     :ok
   end
 
-  # A bundle holding `modules` ({new source, running source}) compiled into
-  # lib/hal_c2-2.0.0/ebin; the running version stays loaded.
-  defp bundle(dir, manifest, modules) do
+  # A bundle whose only file is its release's upgrade manifest.
+  defp bundle(dir, manifest) do
     root = Path.join(dir, "bundle")
-    ebin = Path.join([root, "lib", "hal_c2-2.0.0", "ebin"])
+    File.rm_rf!(root)
     rel = Path.join([root, "releases", manifest["version"]])
-    File.mkdir_p!(ebin)
     File.mkdir_p!(rel)
     File.write!(Path.join(rel, "upgrade.json"), JSON.encode!(manifest))
-
-    for {source, running} <- modules do
-      for {mod, bin} <- Code.compile_string(source),
-          do: File.write!(Path.join(ebin, "#{mod}.beam"), bin)
-
-      Code.compile_string(running)
-    end
-
     root
   end
 
-  test "a change to plain modules loads in place; a supervisor or runtime change restarts",
+  test "this platform's release goes in place; another's code goes in place or restarts",
        %{tmp_dir: dir} do
-    running_plain = "defmodule HalC2.UpgradeTest.Plain do def v, do: 1 end"
+    running = Map.merge(@manifest, %{"releaseUpgrades" => true, "platform" => Upgrade.platform()})
 
-    running_tree =
-      "defmodule HalC2.UpgradeTest.Tree do use Supervisor; def init(_), do: Supervisor.init([], strategy: :one_for_one) end"
+    assert {:in_place, :release} = Upgrade.plan(bundle(dir, running), running)
 
-    Code.compile_string(running_plain)
-    Code.compile_string(running_tree)
+    for {change, reason} <- [
+          {%{"otpRelease" => "30"}, "OTP changes"},
+          {%{"vmArgs" => "+S 2"}, "the emulator's flags change"},
+          {%{"releaseUpgrades" => false}, "the bundle predates release upgrades"}
+        ] do
+      assert {:restart, [^reason]} =
+               Upgrade.plan(bundle(dir, Map.merge(running, change)), running)
+    end
 
-    plain = {"defmodule HalC2.UpgradeTest.Plain do def v, do: 2 end", running_plain}
+    assert {:restart, ["the running release predates release upgrades"]} =
+             Upgrade.plan(bundle(dir, running), Map.delete(running, "releaseUpgrades"))
 
-    assert {:hot, [HalC2.UpgradeTest.Plain]} =
-             Upgrade.plan(bundle(dir, @manifest, [plain]), @manifest)
+    # Another patch of Erlang, or another platform, built it: its own code goes in place
+    # on the running release, unless the rest of the release changes too.
+    elsewhere = Map.merge(running, %{"erts" => "17.0.6", "platform" => "elsewhere-x64"})
+    assert {:in_place, :code} = Upgrade.plan(bundle(dir, elsewhere), running)
 
-    File.rm_rf!(Path.join(dir, "bundle"))
-
-    tree =
-      {"defmodule HalC2.UpgradeTest.Tree do use Supervisor; def init(_), do: Supervisor.init([{Task, fn -> :ok end}], strategy: :one_for_one) end",
-       running_tree}
-
-    assert {:restart, [reason]} = Upgrade.plan(bundle(dir, @manifest, [plain, tree]), @manifest)
-    assert reason =~ "HalC2.UpgradeTest.Tree supervises processes"
-
-    File.rm_rf!(Path.join(dir, "bundle"))
-    # Another patch of Erlang, or another platform, built it: its code loads all the same.
-    elsewhere = Map.merge(@manifest, %{"erts" => "17.0.6", "platform" => "linux-x64"})
-
-    assert {:hot, [HalC2.UpgradeTest.Plain]} =
-             Upgrade.plan(bundle(dir, elsewhere, [plain]), @manifest)
-
-    File.rm_rf!(Path.join(dir, "bundle"))
-    dependency = Map.put(@manifest, "dependencies", %{"exqlite" => "0.42.0"})
-    assert {:restart, [reason]} = Upgrade.plan(bundle(dir, dependency, [plain]), @manifest)
+    dependency = Map.put(elsewhere, "dependencies", %{"exqlite" => "0.42.0"})
+    assert {:restart, [reason]} = Upgrade.plan(bundle(dir, dependency), running)
     assert reason =~ "exqlite"
 
+    assert {:restart, ["configuration changes"]} =
+             Upgrade.plan(bundle(dir, Map.put(elsewhere, "config", "d")), running)
+
     assert {:restart, ["the running release has no upgrade manifest"]} =
-             Upgrade.plan(Path.join(dir, "bundle"), nil)
+             Upgrade.plan(bundle(dir, running), nil)
   end
 
   test "an MC run from a checkout does not install versions" do
@@ -463,61 +444,6 @@ defmodule HalC2.UpgradeTest do
            } = JSON.decode!(File.read!(Path.join(new_rel, "upgrade.json")))
   end
 
-  test "the step after a hot update is called by name, so the code that loads runs it" do
-    # A local call stays in the module version making it, the one being replaced; a
-    # call by name reaches the version the update just loaded.
-    {:beam_file, HalC2.Upgrade, _, _, _, functions} =
-      :beam_disasm.file(:code.which(HalC2.Upgrade))
-
-    calls = fn kinds, target ->
-      for {:function, name, arity, _, code} <- functions,
-          Enum.any?(code, &hot_step?(&1, kinds, target)),
-          do: {name, arity}
-    end
-
-    external = [:call_ext, :call_ext_only, :call_ext_last]
-    local = [:call, :call_only, :call_last]
-
-    # The one path to the step, by name; none of them locally.
-    assert Enum.sort(calls.(external, :after_hot_update)) == [run_after_hot_update: 2]
-    assert calls.(local, :after_hot_update) == []
-
-    # The other half of the contract: both call sites reach that path locally.
-    # By name would compile and pass everything here, then raise after a rollback
-    # swap, when the newly loaded older beam exports neither function — exactly
-    # the crash run_after_hot_update/2 exists to prevent.
-    assert Enum.sort(calls.(local, :run_after_hot_update)) == [
-             load: 4,
-             reload_code_path: 0
-           ]
-
-    assert calls.(external, :run_after_hot_update) == []
-    # `function_exported?/3` does not load the module, and no other test may have yet.
-    Code.ensure_loaded!(HalC2.Upgrade)
-    assert function_exported?(HalC2.Upgrade, :after_hot_update, 2)
-  end
-
-  test "running the hot step against a version without the public step asks for a restart" do
-    # This models the guard in isolation, not the whole rollback dispatch: the
-    # stripped beam still exports run_after_hot_update/2, which a real pre-public
-    # beam would not. In a real rollback nothing calls it by name on the loaded
-    # copy — the pre-swap code calls its own copy locally, whose by-name call
-    # then lands here. The disassembly test above pins that dispatch half
-    # (local calls only, from both call sites).
-    {HalC2.Upgrade, original, file} = :code.get_object_code(HalC2.Upgrade)
-
-    try do
-      load_beam(file, without_export(original, :after_hot_update, 2))
-      refute function_exported?(HalC2.Upgrade, :after_hot_update, 2)
-      assert function_exported?(HalC2.Upgrade, :run_after_hot_update, 2)
-      assert HalC2.Upgrade.run_after_hot_update([], []) == [HalC2.Upgrade]
-    after
-      load_beam(file, original)
-    end
-
-    assert function_exported?(HalC2.Upgrade, :after_hot_update, 2)
-  end
-
   test "the installed MC's record is found under a named root, and named when absent",
        %{tmp_dir: dir} do
     home = {:root, dir}
@@ -567,45 +493,6 @@ defmodule HalC2.UpgradeTest do
     assert reason =~ "access-token"
   end
 
-  # A copy of a beam with one function no longer exported, as a version built
-  # before it went public would load.
-  defp without_export(bin, name, arity) do
-    {:ok, {mod, [debug_info: {:debug_info_v1, backend, data}]}} =
-      :beam_lib.chunks(bin, [:debug_info])
-
-    {:ok, forms} = backend.debug_info(:erlang_v1, mod, data, [])
-
-    forms =
-      Enum.map(forms, fn
-        {:attribute, line, :export, exports} ->
-          {:attribute, line, :export, List.delete(exports, {name, arity})}
-
-        form ->
-          form
-      end)
-
-    {:ok, ^mod, beam} = :compile.forms(forms, [:binary, :debug_info])
-    beam
-  end
-
-  defp load_beam(file, beam) do
-    :code.purge(HalC2.Upgrade)
-    {:module, HalC2.Upgrade} = :code.load_binary(HalC2.Upgrade, file, beam)
-    :ok
-  end
-
-  # A call instruction of one of `kinds` to `target/2`, by name or locally.
-  defp hot_step?(instruction, kinds, target) when is_tuple(instruction) do
-    steps = [
-      {:extfunc, HalC2.Upgrade, target, 2},
-      {HalC2.Upgrade, target, 2}
-    ]
-
-    elem(instruction, 0) in kinds and Enum.any?(Tuple.to_list(instruction), &(&1 in steps))
-  end
-
-  defp hot_step?(_instruction, _kinds, _target), do: false
-
   test "a socket opened before an upgrade keeps its subscriptions" do
     # Its state as the previous version kept it: one id per watched config, one
     # per followed stream, and one id per followed terminal.
@@ -627,7 +514,7 @@ defmodule HalC2.UpgradeTest do
              HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, old)
 
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
-    assert state.v == 9
+    assert state.v == 11
     assert state.scopes == :all
     refute Map.has_key?(state, :item_types)
     assert state.by_terminal[{:settings, node()}] == %{1 => nil}
@@ -639,6 +526,7 @@ defmodule HalC2.UpgradeTest do
     assert state.shell == %{}
     assert state.terminals == %{}
     assert state.lost == %{}
+    assert state.terminal_windows == %{}
     # A stream followed before sends no tag.
     assert state.by_stream == %{"th-old" => {2, nil}}
 
@@ -680,7 +568,7 @@ defmodule HalC2.UpgradeTest do
              HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, state)
 
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
-    assert migrated.v == 9
+    assert migrated.v == 11
     assert migrated.subs == state.subs
     # The terminal entry holds both subscriptions `subs` held; the config entry
     # holds its one by id too, with no watch ref of its own (v8).
@@ -771,9 +659,21 @@ defmodule HalC2.UpgradeTest do
     }
 
     # One still on its way from the subscription the upgrade carried over. The
-    # v7 state is first migrated to v9, so the returned state is that migration.
-    migrated = Map.merge(state, %{v: 9, terminals: %{}, lost: %{}})
-    assert {:ok, ^migrated} = HalC2.Web.Socket.handle_info({:hal_c2_stream, "th", :resync}, state)
+    # v7 state is first migrated to v11, so the returned state is that migration
+    # (less `opened_at`, the clock at migration).
+    migrated =
+      Map.merge(state, %{
+        v: 11,
+        terminals: %{},
+        lost: %{},
+        terminal_windows: %{},
+        following: %{},
+        trace: nil
+      })
+
+    assert {:ok, got} = HalC2.Web.Socket.handle_info({:hal_c2_stream, "th", :resync}, state)
+    assert is_integer(got.opened_at)
+    assert Map.delete(got, :opened_at) == migrated
 
     assert {:push, [{:text, frame}], _} =
              HalC2.Web.Socket.handle_info({:hal_c2_stream, {"th", tag}, :resync}, state)

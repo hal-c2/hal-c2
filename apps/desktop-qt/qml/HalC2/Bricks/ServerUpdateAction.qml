@@ -26,7 +26,7 @@ RowLayout {
         visible: action.offered && action.machine.path === "desktop-manual"
         text: qsTr("Update the desktop app on that machine to update this server.")
         color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
 

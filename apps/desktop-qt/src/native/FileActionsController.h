@@ -21,7 +21,7 @@ class ShellBridge;
 //                                  preferred one without an id)
 //   `files.copyMention {path}`     the file as a draft links it, on the clipboard
 //   `files.addToChat {path}`       that link at the end of the open draft
-//   `files.openInSpace {path}`     the file as a page of a Space (SpaceController::openFile)
+//   `files.editAsPage {path}`      the file as a page in its project's section (SpaceController::openFile)
 //   `files.copyContents`           the viewer's open text file, whole, on the
 //                                  clipboard (the palette's "Copy file contents")
 class FileActionsController : public QObject, public NativeController {

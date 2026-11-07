@@ -1,6 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22777
 #   docs/user/composer.md (message limits, sending, background prompts, multiple models)
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (text sync, submit, draft target)
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (text sync, submit, draft target, the folding toolbar, Send's accent)
 #   apps/desktop-qt/tests/tst_Composer.qml
 #   apps/desktop-qt/src/native/ComposerController.cpp (isSendBusy while a message is on its way)
 #   apps/desktop-qt/qml/HalC2/Bricks/Timeline.qml (Sending…)
@@ -13,6 +14,7 @@
 #   packages/contracts/src/settings.ts (sendShortcut)
 #   apps/web/src/components/composerFooterLayout.ts, apps/web/src/components/chat/ChatComposer.tsx (when the composer shrinks to one line)
 #   apps/web/src/components/chat/CompactComposerControlsMenu.tsx (controls of a narrow composer)
+#   https://github.com/pingdotgg/t3code/pull/15050
 
 Feature: Drafting and sending a message
   The user writes a turn and sends it to the agent. Drafts survive switching
@@ -52,7 +54,7 @@ Feature: Drafting and sending a message
       | Mod+Enter                        | "hello"             | Enter     | a new line is added to the draft |
       | Mod+Enter                        | "hello"             | Mod+Enter | the message is sent              |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A hardware keyboard on the phone follows the send shortcut setting
     Given the send shortcut setting is "Mod+Enter"
     And the user has typed "hello" on a hardware keyboard
@@ -81,14 +83,23 @@ Feature: Drafting and sending a message
     When the user switches to thread B before the draft is saved
     Then thread B's draft does not contain "for thread A"
 
-  @desktop @tui @mobile @backlog-mobile
+  # Upstream #22777: arrow keys in an Arabic line stopped at inline code, since the editor took
+  # its direction from the whole composer rather than the line.
+  @desktop @backlog
+  Scenario: The arrow keys in a right-to-left line move the way the line reads
+    Given the user typed "اكتب دالة `sumBy` تجمع القيم" in the composer
+    When the user walks the line with the left arrow
+    Then the caret moves on through the code to the end of the line
+    And a new line started with Shift+Enter keeps reading right to left
+
+  @desktop @tui @mobile @backlog-mobile @priority-high
   Scenario: Each thread keeps its own draft
     Given the user has typed "draft for A" in thread A
     When the user switches to thread B and back to thread A
     Then thread A's draft reads "draft for A"
     And thread B's draft is empty
 
-  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-high
   Scenario: The thread says a message is sending until its MC takes it
     Given the user has typed "Fix the failing test"
     When the user sends it before the MC answers
@@ -131,14 +142,14 @@ Feature: Drafting and sending a message
     When the user types "second"
     Then the draft reads "second" after the send completes
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: A message over the character limit is refused before sending
     Given the user has typed a prompt 10 characters over the 120,000-character limit
     When the user tries to send it
     Then the message is not sent
     And the user is told the prompt is 10 characters over the limit and to shorten or split it
 
-  @desktop @tui @mobile @backlog-mobile
+  @desktop @tui @mobile @backlog-mobile @priority-high
   Scenario: Sending while disconnected keeps the draft
     Given the environment is disconnected
     And the user has typed "are you there"
@@ -146,7 +157,7 @@ Feature: Drafting and sending a message
     Then the user is told the message was not sent because they are not connected
     And the draft still reads "are you there"
 
-  @desktop @tui @mobile @backlog-mobile
+  @desktop @tui @mobile @backlog-mobile @priority-high
   Scenario: A send the MC rejects restores the draft
     Given the user has typed "do the thing"
     When the user sends it and the MC rejects the message
@@ -206,7 +217,7 @@ Feature: Drafting and sending a message
     Then one thread per model starts with "Add caching"
     And each thread works in its own worktree
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Scrolling a long conversation shrinks the composer to one line
     Given the conversation is longer than the window and "Collapse composer on scroll" is on
     And the draft holds one line of text
@@ -215,7 +226,7 @@ Feature: Drafting and sending a message
     When the user clicks into the composer
     Then the composer is back at its full size
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: The composer keeps its size while it has something to show
     Given the conversation is longer than the window and "Collapse composer on scroll" is on
     And <state>
@@ -235,13 +246,13 @@ Feature: Drafting and sending a message
       | the last send was refused and the reason is shown  |
       | a draft image may not have been saved              |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A conversation that fits the window never shrinks the composer
     Given the conversation is shorter than the window
     When the user scrolls the conversation
     Then the composer keeps its full size
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Clicking away or switching windows does not shrink or grow the composer
     Given the composer is at its full size
     When the user clicks a message in the conversation
@@ -250,7 +261,7 @@ Feature: Drafting and sending a message
     When the user switches to another application and back
     Then the composer is still one line
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A shrunk composer still shows the draft's images
     Given the draft carries five images and the composer has shrunk to one line
     Then three of the images are shown small beside the draft
@@ -258,16 +269,33 @@ Feature: Drafting and sending a message
     When the user chooses to see the rest
     Then the composer is back at its full size showing all five
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A control opened by its shortcut grows the composer first
     Given the composer has shrunk to one line and its controls are hidden
     When the user presses the model picker shortcut
     Then the composer is back at its full size with the model picker open
 
-  @backlog @desktop
-  Scenario: A narrow composer folds its mode and access controls into one menu
-    Given the composer is too narrow to show all its controls
-    Then the mode, access and model option controls are offered in one menu of further controls
+  @desktop
+  Scenario: A narrow composer folds its controls into one menu instead of wrapping
+    Given the composer offers its reasoning effort, plan and access controls
+    When the composer is too narrow to show all its controls
+    Then its toolbar is still one line
+    And the reasoning effort is offered in its menu of further controls
     And the model can still be chosen beside it
-    When the user chooses "Plan" as the mode in that menu
-    Then the next turn plans instead of making changes
+    When the user chooses "Plan" in that menu
+    Then plan mode is requested
+
+  @desktop
+  Scenario: Send stands out only when there is something to send
+    Given the composer is empty
+    Then the send control cannot be used
+    When the user types "hello" into the composer
+    Then the send control can be used and is the composer's accent
+
+  # Upstream #15050: mod+alt+enter on an existing thread sends and opens a new thread
+  @backlog @shared
+  Scenario: Send and start a new thread from an existing thread
+    Given the user has written a follow-up in an existing thread
+    When the user uses Send and Start New Thread
+    Then the message is sent as usual, queued or steered while a turn runs
+    And a fresh composer opens for new work

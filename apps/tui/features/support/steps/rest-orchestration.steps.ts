@@ -151,7 +151,7 @@ step("the run is marked failed", async (ctx: TurnWorld) => {
   expect(workLines(ctx).join("\n")).toContain("The model stopped responding.");
   const screen = await snapshot(ctx);
   expect(screen).toContain("The model stopped responding.");
-  expect(screen).not.toContain("● Working…");
+  expect(screen).not.toContain("● Working");
 });
 
 // --- A provider retry -----------------------------------------------------------------------
@@ -358,7 +358,7 @@ step("neither is discarded or sent early", async (ctx: TurnWorld) => {
   // The failed turn is the latest one; nothing runs and nothing was sent from here.
   expect(ctx.thread!.latestTurn).toMatchObject({ turnId: "run-1", state: "error" });
   expect(hostState(ctx, "timeline").working).toBeNull();
-  expect(await snapshot(ctx)).not.toContain("● Working…");
+  expect(await snapshot(ctx)).not.toContain("● Working");
   expect(recorded(ctx, "sendReply")).toEqual([]);
   expect(ctx.thread!.messages.filter((message) => message.role === "user")).toHaveLength(3);
 });
@@ -481,7 +481,7 @@ step("the user looks at the change", async (ctx: TurnWorld) => {
   await settleHost(ctx);
   const row = workLines(ctx).find((line) => line.includes("src/cart.ts"))!;
   expect(row).toContain("+2 -1");
-  await clickText(ctx, "Changed src/cart.ts");
+  await clickText(ctx, "src/cart.ts ✓");
   await settleHost(ctx);
   expect(ctx.host!.state.get("mode")).toBe("diff");
 });
@@ -613,5 +613,5 @@ step("a new run starts from that plan", async (ctx: TurnWorld) => {
     sourceProposedPlan: { threadId: "t1", planId: "plan-tax" },
   });
   expect(hostState(ctx, "timeline").plan).toBeNull();
-  expect(await snapshot(ctx)).toContain("● Working…");
+  expect(await snapshot(ctx)).toContain("● Working");
 });

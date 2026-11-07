@@ -181,8 +181,10 @@ import {
   ClusterInvite,
   ClusterInviteInput,
   ClusterJoinInput,
+  ClusterReconnectInput,
   ClusterRemoveInput,
   ClusterStatus,
+  ClusterSwitchInput,
   ClusterUpdateResult,
 } from "./cluster.ts";
 import { InvalidPushRegistration, PushRegistrationInput } from "./push.ts";
@@ -379,6 +381,8 @@ import {
   SpacePageVersionRef,
   SpacePageAskAgentInput,
   SpacePageAgentRef,
+  SpacePageAgentTarget,
+  SpacePageAgentTargetInput,
   SpacePageAgentResult,
   SpacePageDismissAgentResult,
   SpaceRenameInput,
@@ -568,7 +572,6 @@ export const WS_METHODS = {
   spacePageImportMarkdown: "space.page.importMarkdown",
   spacePageOpenFile: "space.page.openFile",
   spacePageSyncFile: "space.page.syncFile",
-  spacePageUnlinkFile: "space.page.unlinkFile",
   spaceFilesList: "space.files.list",
   spaceFilesScan: "space.files.scan",
   spacePageCreateFromThread: "space.page.createFromThread",
@@ -576,6 +579,7 @@ export const WS_METHODS = {
   spacePageVersion: "space.page.version",
   spacePageRestoreVersion: "space.page.restoreVersion",
   spacePageAskAgent: "space.page.askAgent",
+  spacePageAgentTarget: "space.page.agentTarget",
   spacePageStopAgent: "space.page.stopAgent",
   spacePageDismissAgent: "space.page.dismissAgent",
   spacePageScheduleSet: "space.page.schedule.set",
@@ -617,6 +621,8 @@ export const WS_METHODS = {
   clusterInvite: "cluster.invite",
   clusterJoin: "cluster.join",
   clusterRemove: "cluster.remove",
+  clusterSwitch: "cluster.switch",
+  clusterReconnect: "cluster.reconnect",
   clusterUpdate: "cluster.update",
 
   // Agent push to the calling client's UnifiedPush endpoint (MCs only)
@@ -997,6 +1003,23 @@ const WsClusterJoinRpc = Rpc.make(WS_METHODS.clusterJoin, {
 /** Stops every member admitting `id`; answers the new status. */
 const WsClusterRemoveRpc = Rpc.make(WS_METHODS.clusterRemove, {
   payload: ClusterRemoveInput,
+  success: ClusterStatus,
+  error: ClusterRpcError,
+});
+
+/**
+ * Switches the member `id` off, kept but cut off from every member with its threads gone
+ * from the sidebar, or back on; answers the new status.
+ */
+const WsClusterSwitchRpc = Rpc.make(WS_METHODS.clusterSwitch, {
+  payload: ClusterSwitchInput,
+  success: ClusterStatus,
+  error: ClusterRpcError,
+});
+
+/** Tries the member `id` again at once and often, after it was found offline; answers the status. */
+const WsClusterReconnectRpc = Rpc.make(WS_METHODS.clusterReconnect, {
+  payload: ClusterReconnectInput,
   success: ClusterStatus,
   error: ClusterRpcError,
 });
@@ -1949,13 +1972,6 @@ const WsSpacePageSyncFileRpc = Rpc.make(WS_METHODS.spacePageSyncFile, {
   error: SpaceRpcError,
 });
 
-/** Makes a file-backed page an ordinary page; the file stays as it is. */
-const WsSpacePageUnlinkFileRpc = Rpc.make(WS_METHODS.spacePageUnlinkFile, {
-  payload: SpacePageRef,
-  success: SpacePageResult,
-  error: SpaceRpcError,
-});
-
 const WsSpaceFilesListRpc = Rpc.make(WS_METHODS.spaceFilesList, {
   payload: SpaceFilesProjectInput,
   success: SpaceFilesListResult,
@@ -1989,6 +2005,12 @@ const WsSpacePageVersionRpc = Rpc.make(WS_METHODS.spacePageVersion, {
 const WsSpacePageAskAgentRpc = Rpc.make(WS_METHODS.spacePageAskAgent, {
   payload: SpacePageAskAgentInput,
   success: SpacePageAgentResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageAgentTargetRpc = Rpc.make(WS_METHODS.spacePageAgentTarget, {
+  payload: SpacePageAgentTargetInput,
+  success: SpacePageAgentTarget,
   error: SpaceRpcError,
 });
 
@@ -2291,7 +2313,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpacePageImportMarkdownRpc,
   WsSpacePageOpenFileRpc,
   WsSpacePageSyncFileRpc,
-  WsSpacePageUnlinkFileRpc,
   WsSpaceFilesListRpc,
   WsSpaceFilesScanRpc,
   WsSpacePageCreateFromThreadRpc,
@@ -2299,6 +2320,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpacePageVersionRpc,
   WsSpacePageRestoreVersionRpc,
   WsSpacePageAskAgentRpc,
+  WsSpacePageAgentTargetRpc,
   WsSpacePageStopAgentRpc,
   WsSpacePageDismissAgentRpc,
   WsSpacePageScheduleSetRpc,
@@ -2340,6 +2362,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsClusterInviteRpc,
   WsClusterJoinRpc,
   WsClusterRemoveRpc,
+  WsClusterSwitchRpc,
+  WsClusterReconnectRpc,
   WsClusterUpdateRpc,
   WsRegisterPushRpc,
   WsUnregisterPushRpc,

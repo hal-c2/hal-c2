@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19686
+#   https://github.com/pingdotgg/t3code/pull/15864
+#   https://github.com/pingdotgg/t3code/pull/14912 (automatic pull no longer holds readiness)
 #   docs/user/project-settings.md (Project category, removal)
 #   apps/server-ex/lib/hal_c2/projects.ex (project.update, project.delete, auto_pull)
 #   apps/web/src/components/settings/ProjectsSettings.tsx (removal)
@@ -36,19 +39,27 @@ Feature: Removing and updating projects
     When a client renames an unknown project
     Then the MC answers "unknown project"
 
-  @desktop @mobile @tui @backlog-mobile
+  @desktop @mobile @tui @backlog-mobile @priority-high
   Scenario: Removing a project asks for confirmation and explains what is lost
     Given "shop" has 4 threads
     When the user asks to remove "shop"
     Then the user is told 4 threads and their conversation history will be cleared
     And the user is told the files on disk are kept
 
-  @desktop @mobile @tui @backlog-mobile
+  @desktop @mobile @tui @backlog-mobile @priority-high
   Scenario: Confirming removal clears the project and its drafts
     Given "shop" has an unsent draft
     When the user confirms removing "shop"
     Then "shop" is no longer listed for "laptop"
     And the draft for "shop" is gone
+
+  # Upstream #15864: removing a project no longer opens a new thread for it
+  @backlog @shared
+  Scenario: Removing the most recent project does not open a new thread in it
+    Given "shop" is the project the user worked in most recently
+    When the user confirms removing "shop"
+    Then the app does not land on a new thread for "shop", even before the list has caught up
+    And a new thread that was already being started for "shop" is not created
 
   @desktop @mobile @tui @backlog-mobile
   Scenario: Cancelling removal keeps the project
@@ -62,7 +73,7 @@ Feature: Removing and updating projects
     When the MC removes the project "shop"
     Then the removal confirmation is closed
 
-  @desktop @mobile @tui @backlog-mobile
+  @desktop @mobile @tui @backlog-mobile @priority-high
   Scenario: A removal the environment refuses keeps the project and says why
     Given the environment refuses to change projects with "Project shop is busy."
     When the user confirms removing "shop"
@@ -112,6 +123,25 @@ Feature: Removing and updating projects
       When the MC starts
       Then "shop" is not pulled
 
+    # The MC already does this (HalC2.Projects.auto_pull runs as a Task child after the web server);
+    # @backlog only until its steps exist.
+    # Upstream #14912: the startup project sync no longer delays the app window
+    @backlog @mc
+    Scenario: Automatic pull does not hold the MC's readiness
+      Given "shop" and "api" have automatic pull on
+      And pulling "shop" fails
+      When the MC starts
+      Then clients are served as soon as the MC is ready
+      And "api" is still pulled once in the background
+      And the failure to pull "shop" is logged
+
+    # Upstream #19686: an automatic pull that fails reads the project's status again.
+    @backlog @mc @priority-low
+    Scenario: A failed automatic pull leaves the changes up to date
+      Given a project that pulls automatically
+      When an automatic pull fails part-way
+      Then the project's changes are read again and show what is on disk
+
   Rule: Managing projects from the command line
 
     @backlog @mc
@@ -131,7 +161,7 @@ Feature: Removing and updating projects
       Then the command fails saying an active project already exists for "/home/sam/shop"
       And "shop" is still the only project at that folder
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario Outline: An empty title is refused from the command line
       When the operator <command>
       Then the command fails saying the project title cannot be empty
@@ -158,7 +188,7 @@ Feature: Removing and updating projects
       When the operator runs "hal-c2 project remove /home/sam/shop"
       Then "shop" is no longer listed for "laptop"
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Renaming a project to its own title changes nothing
       When the operator runs "hal-c2 project rename shop shop"
       Then the command says "shop" is already named that
@@ -169,7 +199,7 @@ Feature: Removing and updating projects
       When the operator runs "hal-c2 project remove /home/sam/nothing"
       Then the command fails saying no active project was found for "/home/sam/nothing"
 
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: Removing a project that has threads needs force
       Given "shop" has threads
       When the operator runs "hal-c2 project remove shop"

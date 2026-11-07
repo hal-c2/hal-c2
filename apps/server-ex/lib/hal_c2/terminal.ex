@@ -18,6 +18,11 @@ defmodule HalC2.Terminal do
   since its snapshot already holds them: a socket fans those out to the
   subscriptions it already held, and other direct subscribers may ignore the
   shape (it says nothing its snapshot does not).
+
+  A close ends the process but not who follows it: the attached pids wait in the hub,
+  and the next process under that key is handed them when it reports to the hub, and
+  sends each a snapshot, so a client stays attached through a close and reopen. A pid that stops following calls
+  `detach/3`, closed or not.
   """
 
   use GenServer, restart: :temporary
@@ -32,11 +37,15 @@ defmodule HalC2.Terminal do
   @default_rows 30
   @output_ms 8
   @persist_ms 500
+  @term_ms 1_000
   @stop_ms 5_000
   @call_timeout 15_000
+  @default_terminal_id "term-1"
   @fallback_shells ~w(/bin/zsh /bin/bash /bin/sh)
   @excluded_env ~w(PORT ELECTRON_RENDERER_PORT ELECTRON_RUN_AS_NODE BINDIR ROOTDIR EMU PROGNAME)
   @excluded_env_prefixes ~w(HAL_C2_ VITE_ RELEASE_ ERL_)
+  @appimage_env ~w(APPIMAGE APPDIR ARGV0 OWD)
+  @appimage_search_paths ~w(PATH LD_LIBRARY_PATH XDG_DATA_DIRS GSETTINGS_SCHEMA_DIR)
   @max_file_name 255
   @hashed_prefix "terminal-hashed_"
 
@@ -67,14 +76,21 @@ defmodule HalC2.Terminal do
              do: call(ensure(input), {:attach, input, subscriber})
 
       {pid, _} ->
-        with {:ok, input} <- running_attach_env(input),
-             do: call(pid, {:attach, input, subscriber})
+        case running_attach_env(input) do
+          {:ok, input} -> call(pid, {:attach, input, subscriber})
+          # Only starting a shell needs the provider: a running one can still be attached.
+          {:error, _} = refused -> call(pid, {:attach_running, input, subscriber, refused})
+        end
     end
   end
 
   @doc "Stops sending a terminal's events to `subscriber`."
   def detach(thread_id, terminal_id, subscriber) do
     if pid = lookup(thread_id, terminal_id), do: GenServer.cast(pid, {:detach, subscriber})
+    # The hub may still hold it for a process that has not reported yet, or be handed
+    # it by one closing now. Told after the terminal, the hub hears this after any
+    # `Hub.closed` the detach arrived too late for (`retire/2`).
+    Hub.forget(thread_id, terminal_id, subscriber)
     :ok
   end
 
@@ -126,7 +142,7 @@ defmodule HalC2.Terminal do
     receive do
       {:DOWN, ^ref, :process, _, _} -> :ok
     after
-      @stop_ms -> Process.demonitor(ref, [:flush])
+      @call_timeout -> Process.demonitor(ref, [:flush])
     end
   end
 
@@ -145,7 +161,7 @@ defmodule HalC2.Terminal do
 
   @doc """
   `terminal.list`: the thread's terminals, running or with saved scrollback, in
-  tab order (`term-N` by number, then others by name).
+  tab order (`default`, then `term-N` by number, then others by name).
   """
   def list(%{"threadId" => thread_id}) do
     running = running(thread_id)
@@ -155,8 +171,8 @@ defmodule HalC2.Terminal do
       |> Enum.uniq()
       |> Enum.sort_by(fn id ->
         case Regex.run(~r/^term-(\d+)$/, id) do
-          [_, n] -> {0, String.to_integer(n), id}
-          nil -> {1, 0, id}
+          [_, n] -> {1, String.to_integer(n), id}
+          nil -> {if(id == "default", do: 0, else: 2), 0, id}
         end
       end)
 
@@ -404,6 +420,12 @@ defmodule HalC2.Terminal do
     {:reply, {:ok, snapshot(state)}, %{state | subscribers: subscribers}}
   end
 
+  def handle_call({:attach_running, _input, _subscriber, refused}, _from, %{os_pid: nil} = state),
+    do: {:reply, refused, state}
+
+  def handle_call({:attach_running, input, subscriber, _refused}, from, state),
+    do: handle_call({:attach, Map.delete(input, "cwd"), subscriber}, from, state)
+
   def handle_call({:write, _data}, _from, %{os_pid: nil} = state),
     do: {:reply, {:error, not_running_error(state)}, state}
 
@@ -441,10 +463,7 @@ defmodule HalC2.Terminal do
   end
 
   def handle_call({:close, delete_history}, _from, state) do
-    state = stop_shell(state) |> emit(%{"type" => "closed"})
-    Hub.remove(state.thread_id, state.terminal_id)
-    unless delete_history, do: persist(state)
-    {:stop, :normal, {:ok, nil}, %{state | persist_timer: nil, cwd: nil}}
+    {:stop, :normal, {:ok, nil}, state |> stop_shell() |> retire(delete_history)}
   end
 
   @impl true
@@ -503,6 +522,29 @@ defmodule HalC2.Terminal do
 
   def handle_info(:output, state), do: {:noreply, flush_output(state)}
 
+  # From `HalC2.Terminal.Hub`: too many terminals have ended. Started again since, this
+  # one stays.
+  def handle_info(:evict, %{os_pid: nil} = state), do: {:stop, :normal, retire(state, false)}
+
+  # Who followed this terminal when its last process closed.
+  def handle_info({:followers, pids}, state) do
+    state = flush_output(state)
+    key = {state.thread_id, state.terminal_id}
+    event = %{"type" => "snapshot", "snapshot" => snapshot(state)}
+
+    subscribers =
+      Enum.reduce(pids, state.subscribers, fn pid, subscribers ->
+        if is_map_key(subscribers, pid) do
+          subscribers
+        else
+          send(pid, {:hal_c2_terminal, key, event})
+          Map.put(subscribers, pid, Process.monitor(pid))
+        end
+      end)
+
+    {:noreply, %{state | subscribers: subscribers}}
+  end
+
   # From a restarted `HalC2.Terminal.Hub`, which lost its list.
   def handle_info(:report, state) do
     Hub.upsert(summary(state), self())
@@ -546,11 +588,35 @@ defmodule HalC2.Terminal do
     :ok
   end
 
+  # The end of the process, its followers left with the hub for the next one.
+  defp retire(state, delete_history) do
+    state = emit(state, %{"type" => "closed"})
+    Hub.closed(state.thread_id, state.terminal_id, Map.keys(state.subscribers))
+    forget_detached(state)
+    unless delete_history, do: persist(state)
+    %{state | persist_timer: nil, cwd: nil}
+  end
+
+  # Detaches that arrived while the close was stopping the shell, too late for the
+  # list `Hub.closed` took: the hub hears of them after it, from this process, so it
+  # drops them. One that arrives later still finds the hub told, as `detach/3` tells
+  # the hub after this process.
+  defp forget_detached(state) do
+    receive do
+      {:"$gen_cast", {:detach, subscriber}} ->
+        Hub.forget(state.thread_id, state.terminal_id, subscriber)
+        forget_detached(state)
+    after
+      0 -> :ok
+    end
+  end
+
   # Starts the shell, or updates a running one, the way `terminal.open` does: a new
   # cwd, worktree, or env replaces the shell and its scrollback; an exited shell is
   # started again with empty scrollback.
   defp open_session(state, input) do
     worktree = Map.get(input, "worktreePath", state.worktree_path)
+    ended? = state.status in ["exited", "error"]
 
     changed =
       state.cwd != nil and
@@ -559,7 +625,7 @@ defmodule HalC2.Terminal do
 
     state =
       cond do
-        changed or state.status in ["exited", "error"] ->
+        changed or ended? ->
           state
           |> stop_shell()
           |> launch_context(input)
@@ -578,7 +644,7 @@ defmodule HalC2.Terminal do
       else:
         start_shell(
           %{state | cols: input["cols"] || state.cols, rows: input["rows"] || state.rows},
-          "started",
+          if(ended?, do: "restarted", else: "started"),
           input["command"]
         )
   end
@@ -674,22 +740,40 @@ defmodule HalC2.Terminal do
 
   defp stop_shell(%{os_pid: nil} = state), do: state
 
-  # `:exec.stop` only signals the shell; the monitor's DOWN says it is gone (SIGKILL
-  # follows the SIGTERM after `kill_timeout`), so a close or restart that returns has
-  # freed the OS process.
+  # `:exec.stop` only signals the shell, and an interactive shell ignores its SIGTERM.
+  # erlexec's own SIGKILL waits for its event loop to fall idle, which output from any
+  # other process it runs can put off indefinitely, so the kill is sent from here. The
+  # monitor's DOWN says the shell is gone, so a close or restart that returns has freed
+  # the OS process.
   defp stop_shell(state) do
-    state = if :exec.stop(state.os_pid) == :ok, do: await_down(state), else: state
+    state = if :exec.stop(state.os_pid) == :ok, do: kill_unless_gone(state), else: state
     %{flush_output(state) | os_pid: nil}
   end
 
+  defp kill_unless_gone(state) do
+    case await_down(state, @term_ms) do
+      {:gone, state} ->
+        state
+
+      {:running, state} ->
+        :exec.kill(state.os_pid, 9)
+        {_, state} = await_down(state, @stop_ms)
+        state
+    end
+  end
+
   # erlexec sends all of a shell's output before its DOWN; what arrives in between is
-  # still the shell's and belongs in the scrollback a close saves.
-  defp await_down(%{os_pid: os_pid} = state) do
+  # still the shell's and belongs in the scrollback a close saves. `ms` bounds the
+  # whole wait, so a shell that keeps printing cannot renew it.
+  defp await_down(state, ms),
+    do: await_until(state, System.monotonic_time(:millisecond) + ms)
+
+  defp await_until(%{os_pid: os_pid} = state, deadline) do
     receive do
-      {:stdout, ^os_pid, data} -> await_down(take_output(state, data))
-      {:DOWN, ^os_pid, :process, _pid, _reason} -> state
+      {:stdout, ^os_pid, data} -> await_until(take_output(state, data), deadline)
+      {:DOWN, ^os_pid, :process, _pid, _reason} -> {:gone, state}
     after
-      @stop_ms -> state
+      max(deadline - System.monotonic_time(:millisecond), 0) -> {:running, state}
     end
   end
 
@@ -825,12 +909,39 @@ defmodule HalC2.Terminal do
 
     env =
       base
+      |> without_appimage()
       |> Map.merge(runtime_env || %{})
       |> Map.put("TERM", "xterm-256color")
       |> Map.put_new("COLORTERM", "truecolor")
 
     for {key, value} <- env, value != "" or key == "COLORTERM", do: {key, value}
   end
+
+  # Started from an AppImage, the MC's environment describes the AppImage: its markers,
+  # and search paths into its temporary mount. A shell resolving tools there would run
+  # the bundle's, so only the user's entries are left, and a search path with none goes,
+  # for its consumers to use their defaults.
+  defp without_appimage(env) when is_map_key(env, "APPIMAGE") or is_map_key(env, "APPDIR") do
+    mount = env |> Map.get("APPDIR", "") |> String.trim_trailing("/")
+    env = Map.drop(env, @appimage_env)
+
+    if mount == "",
+      do: env,
+      else: Enum.reduce(@appimage_search_paths, env, &drop_mount(&2, &1, mount))
+  end
+
+  defp without_appimage(env), do: env
+
+  defp drop_mount(env, key, mount) when is_map_key(env, key) do
+    kept =
+      env[key]
+      |> String.split(":", trim: true)
+      |> Enum.reject(&(&1 == mount or String.starts_with?(&1, mount <> "/")))
+
+    if kept == [], do: Map.delete(env, key), else: Map.put(env, key, Enum.join(kept, ":"))
+  end
+
+  defp drop_mount(env, _key, _mount), do: env
 
   # --- history on disk ------------------------------------------------------------
 
@@ -860,9 +971,19 @@ defmodule HalC2.Terminal do
         File.read!(path)
 
       {:error, _} ->
-        ""
+        if adopt_thread_log(thread_id, terminal_id, path),
+          do: read_history(thread_id, terminal_id),
+          else: ""
     end
   end
+
+  # An older layout kept one log per thread, which is the default terminal's history.
+  defp adopt_thread_log(thread_id, @default_terminal_id, path) do
+    safe_thread_id = String.replace(thread_id, ~r/[^a-zA-Z0-9._-]/, "_")
+    File.rename(Path.join(Path.dirname(path), "#{safe_thread_id}.log"), path) == :ok
+  end
+
+  defp adopt_thread_log(_thread_id, _terminal_id, _path), do: false
 
   @doc """
   A thread's saved scrollback as `[{terminal_id, text}]`, read from disk so it works
@@ -874,6 +995,9 @@ defmodule HalC2.Terminal do
   @doc "Saves scrollback for a thread's terminal, as a thread file brings it."
   def put_scrollback(thread_id, terminal_id, text),
     do: write_history(thread_id, terminal_id, text)
+
+  @doc "Removes the saved scrollback of a thread's terminal."
+  def delete_scrollback(thread_id, terminal_id), do: delete_history(thread_id, terminal_id)
 
   defp write_history(thread_id, terminal_id, text) do
     path = history_path(thread_id, terminal_id)

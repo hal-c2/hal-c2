@@ -1,4 +1,23 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16941
+#   https://github.com/pingdotgg/t3code/pull/19931
+#   https://github.com/pingdotgg/t3code/pull/19913
+#   https://github.com/pingdotgg/t3code/pull/20994
+#   https://github.com/pingdotgg/t3code/pull/24056
+#   https://github.com/pingdotgg/t3code/pull/24356
+#   https://github.com/pingdotgg/t3code/pull/23895
+#   https://github.com/pingdotgg/t3code/pull/18146
+#   https://github.com/pingdotgg/t3code/pull/17429
+#   https://github.com/pingdotgg/t3code/pull/20085
+#   https://github.com/pingdotgg/t3code/pull/19737
+#   https://github.com/pingdotgg/t3code/pull/20446
+#   https://github.com/pingdotgg/t3code/pull/16956
+#   https://github.com/pingdotgg/t3code/pull/16963
+#   https://github.com/pingdotgg/t3code/pull/17360
+#   https://github.com/pingdotgg/t3code/pull/17693
+#   https://github.com/pingdotgg/t3code/pull/18556
+#   https://github.com/pingdotgg/t3code/pull/13559
+#   https://github.com/pingdotgg/t3code/pull/13558
 #   https://github.com/pingdotgg/t3code/pull/13064
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/preview_automation.ex (host registration, routing, timeouts, current tab, error messages)
@@ -20,6 +39,11 @@
 #   apps/desktop/src/preview/Manager.ts (recording, snapshots, input guard, agent control errors and limits)
 #   apps/desktop/src/preview/PlaywrightInjectedRuntime.ts (locator parsing injected into the page)
 #   Cross-domain: settings/ owns the preference for whether agent-opened previews come to the front.
+#   https://github.com/pingdotgg/t3code/pull/14573
+#   https://github.com/pingdotgg/t3code/pull/15008
+#   https://github.com/pingdotgg/t3code/pull/25184
+#   https://github.com/pingdotgg/t3code/pull/24618
+#   https://github.com/pingdotgg/t3code/pull/22156
 
 Feature: Agents drive the preview browser
   An agent can open, read and operate the thread's browser tabs through its preview tools. The
@@ -90,6 +114,30 @@ Feature: Agents drive the preview browser
       And the MC drops that desktop so it has to register again
       And the action is not tried a second time
 
+    # Upstream #17693: the MC gave up at the same moment the page did, so the browser's own
+    # timeout answer, a few milliseconds late, cost the agent its browser.
+    @backlog @mc
+    Scenario: A browser that reports its own page timeout stays connected
+      Given an agent is waiting for a page in a desktop browser
+      When the page wait times out and the browser says so within a second of the time limit
+      Then the tool fails with the browser's timeout
+      And the agent's next action goes to the same browser
+
+    # Upstream #24356: preview_open named the 660000ms request budget when navigation stopped at 15000ms.
+    @backlog @mc @priority-low
+    Scenario: A page that does not load in time names the wait that ran out
+      Given the page an agent opens takes 20 seconds to answer
+      When the agent opens it with preview_open
+      Then the tool fails saying the navigation timed out after 15000ms
+
+    # Upstream #16941: queued actions ran after their caller timed out, clicking stale pages.
+    @backlog @mc @priority-high
+    Scenario: A queued browser action whose caller gave up is not started
+      Given an agent's click is queued behind another action in the same browser
+      When the click's time limit passes before its turn comes
+      Then the click is never performed
+      But a queued stop of a recording still runs, so the capture is cleaned up
+
     @mc
     Scenario: A browser that disconnects fails its unanswered actions
       Given an agent is waiting on an action in a desktop browser
@@ -140,6 +188,86 @@ Feature: Agents drive the preview browser
       When an agent opens a preview and asks to show it
       Then the browser comes to the front with the page
 
+    # Upstream #16956: agents saw only the tabs they opened, so "what is on this page?" failed.
+    @backlog @mc
+    Scenario: An agent sees every browser tab of its thread and who has each
+      Given the thread has a tab the user opened, a tab this agent opened and a tab another agent session opened
+      When the agent asks for the preview status
+      Then every tab is listed with whether a person, an agent or nobody has it, whether it is this agent's, whether it is shown and its profile
+
+    # Upstream #18146: threads that share a provider session keep their browser tabs apart.
+    @backlog @mc
+    Scenario: Threads sharing a provider session keep their own browser tabs
+      Given the threads "Tax fix" and "Docs" share one provider session
+      And "Tax fix" has the browser tab "Checkout"
+      When the agent in "Docs" lists its browser tabs
+      Then "Checkout" is not listed
+
+    @backlog @mc
+    Scenario: An agent reads the user's tab while the user is using it
+      Given the user is typing in a tab the user opened
+      When an agent takes a snapshot of that tab by its id
+      Then the tool returns the page without waiting for the user's input to finish
+
+    @backlog @mc
+    Scenario: An agent with no tab of its own reads the one the user is looking at
+      Given the agent has opened no tab and the user is looking at "http://localhost:5173/cart"
+      When the agent takes a snapshot without naming a tab
+      Then the tool returns "http://localhost:5173/cart"
+
+    @backlog @mc
+    Scenario Outline: An agent acts on a tab it did not open only while no one else has it
+      Given a tab <tab>
+      When an agent clicks on that tab by its id
+      Then <outcome>
+
+      Examples:
+        | tab                                      | outcome                                                      |
+        | the user opened and is not using         | the click happens                                            |
+        | the user opened and is using             | the tool fails saying a person is in control of the tab      |
+        | another agent session opened             | the tool fails saying the tab belongs to another agent       |
+
+    @backlog @mc @priority-low
+    Scenario: Only the agent session that opened a tab can close it
+      Given a tab the user opened
+      When an agent closes that tab
+      Then the tab stays open and the agent is told it did not open it
+
+    # Upstream #17429: closing another session's tab says why it was refused.
+    @backlog @mc
+    Scenario: An agent refused a tab it did not open is told whose it is
+      Given another agent session opened the browser tab "Checkout"
+      When an agent asks to close "Checkout"
+      Then the agent is told the tab belongs to another agent session
+
+    @backlog @mc @priority-low
+    Scenario: An agent's new tab opens in the user's default browser profile
+      Given the desktop reports the profiles "Default" and "Work", with "Work" the default
+      When an agent opens a preview without naming a profile
+      Then the tab opens in the profile "Work"
+
+    @backlog @mc @priority-low
+    Scenario Outline: An agent can name the profile a new tab opens in
+      Given the desktop reports the profiles "Default" and "Work"
+      When an agent opens a preview in the profile "<named>"
+      Then <outcome>
+
+      Examples:
+        | named    | outcome                                                          |
+        | work     | the tab opens in the profile "Work"                              |
+        | personal | the tool fails and lists "Default" and "Work" as the profiles to use |
+
+    @backlog @mc @priority-low
+    Scenario Outline: An agent's instructions let it use another browser only when the preview cannot do the job
+      When <situation>
+      Then the agent's instructions let it use another browser <how>
+
+      Examples:
+        | situation                                                              | how                                         |
+        | the user invokes a skill or written workflow that names another browser | and report any missing prerequisite         |
+        | the preview fails twice on the same step of an open tab                | after quoting the error, without asking     |
+        | the preview works                                                      | not at all, the preview stays the default   |
+
     @mc
     Scenario: An action reports the page it left the tab on
       Given an agent's current tab shows "http://localhost:5173/cart"
@@ -159,10 +287,91 @@ Feature: Agents drive the preview browser
       Then the tool returns the page's address, its text and its interactive elements
       And the tool returns the page's screenshot
 
+    # Upstream #16956: providers replay a tool's images on every later request, and some refuse
+    # them, so the screenshot is only sent when asked for. Replaces the scenario above once the
+    # MC carries it.
+    @backlog @mc
+    Scenario: A snapshot returns the page text and leaves the screenshot out unless asked
+      Given an agent's current tab shows a page
+      When the agent takes a snapshot
+      Then the tool returns the page's address, its text and its interactive elements
+      And the tool returns no screenshot
+      When the agent takes a snapshot and asks for the image
+      Then the tool returns the page's screenshot
+
+    @backlog @mc
+    Scenario: A snapshot saved as a file returns only the address and the path unless the image is asked for
+      Given an agent's current tab shows a page
+      When the agent takes a snapshot and saves the screenshot
+      Then the tool returns only the page's address and the saved file's path
+
     @mc
     Scenario: An agent takes a snapshot without the image
       When an agent takes a snapshot and asks for no image
       Then the tool returns the page's text without the screenshot
+
+    # Upstream #24618: a scaled capture drew blurred backdrops wrong; snapshots are now taken at
+    # full scale and shrunk afterwards.
+    @backlog @mc @desktop @priority-low
+    Scenario: A snapshot's screenshot shows blurred backdrops as the page draws them
+      Given an agent's current tab shows a page with a blurred panel over its content
+      And the page is zoomed to 125%
+      When the agent takes a snapshot and asks for the image
+      Then the screenshot shows the panel blurred as it is on screen
+      And the screenshot has no black padding
+
+    # Upstream #19913: at 150% display scale a 1280×800 page gave a 960×600 image labelled 1280×800.
+    @backlog @mc @desktop
+    Scenario: A snapshot's screenshot matches the page's viewport and the display's scale
+      Given an agent's current tab is 1280×800 on a display scaled to 150%
+      When the agent takes a snapshot and asks for the image
+      Then the screenshot covers the whole 1280×800 viewport
+      And the size the snapshot reports is the image's own size
+
+    # Upstream #19931: a hidden or minimized preview returned stale pixels or failed.
+    @backlog @desktop
+    Scenario: A snapshot of a preview the user cannot see shows the page as it is now
+      Given an agent's current tab is hidden behind another tab or the window is minimized
+      And the page changed since it was last on screen
+      When the agent takes a snapshot and asks for the image
+      Then the screenshot shows the page as it is now, not as it was last drawn
+
+    # Upstream #20446: snapshots mask what password fields hold, in every frame.
+    @backlog @mc @desktop @priority-high
+    Scenario: A snapshot never shows what a password field holds
+      Given an agent's current tab shows a sign-in form with a password typed in
+      When the agent takes a snapshot
+      Then the snapshot shows the password field with its value masked
+      And the password appears nowhere in the page text, including fields drawn as dots
+
+    # Upstream #20446: a snapshot it cannot vouch for fails instead of risking a leak.
+    @backlog @mc @desktop
+    Scenario: A snapshot of a page that changes while it is read fails instead of leaking
+      Given an agent's current tab shows a password field whose value changes while the snapshot is taken
+      When the agent takes a snapshot
+      Then the tool fails saying the page was too busy to read safely
+      And it answers within 10 seconds
+
+    # Upstream #13558: a save-only snapshot returns the path, not the page metadata.
+    @mc @backlog
+    Scenario: A snapshot saved as a file without its image returns only the address and the file's path
+      Given an agent's current tab shows a page
+      When the agent takes a snapshot with no image and saves the screenshot
+      Then the tool returns only the page's address and the saved file's path
+
+    # Upstream #13559: a missing preview tab says what to do next, not just that it is missing.
+    @mc @backlog
+    Scenario: An agent that names a tab which is not open is told to open a preview first
+      When an agent takes a snapshot of a tab that is not open
+      Then the tool fails saying to open a preview with preview_open first
+
+    # Upstream #19737: preview_open refuses a tab id that is not open
+    @mc @backlog
+    Scenario: Opening a preview on a tab that is not open fails instead of opening a new tab
+      Given the thread has no browser tab "tab-9"
+      When an agent opens a preview naming the tab "tab-9"
+      Then the agent is told the tab is not open
+      And no new tab is opened
 
     @mc
     Scenario Outline: A large snapshot is cut down and says what was left out
@@ -203,6 +412,13 @@ Feature: Agents drive the preview browser
       Then the recording is attached to the thread
       And the tool result gives the attachment's path
 
+    # Upstream #23895: agent recordings were captured at 30 fps whatever the setting said.
+    @backlog @mc @desktop
+    Scenario: An agent's recording uses the recording frame rate the user chose
+      Given the user's default recording frame rate is 60 fps
+      When an agent records the preview
+      Then the recording is captured at up to 60 frames a second
+
     @mc
     Scenario Outline: A recording that cannot be brought to the MC fails clearly
       Given an agent is recording the preview
@@ -227,111 +443,122 @@ Feature: Agents drive the preview browser
         | the recording is larger than 50 MiB        | The recording exceeds 50 MiB. The saved copy remains on the desktop.   |
         | the transfer is not finished in time       | The recording transfer deadline expired. The saved copy remains on the desktop. |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Stopping a recording that was never started fails
       Given an agent's current tab is not being recorded
       When the agent stops the recording
       Then the tool fails saying no recording is active for that tab
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Only one tab is recorded at a time
       Given an agent is recording one tab of the thread
       When the agent starts a recording of another tab
       Then the tool fails saying the other tab cannot be recorded while the first is already being recorded
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Typing into something that cannot take text fails
       Given an agent's current tab has the focus on a page area that is not editable
       When the agent types text into the page
       Then the tool fails saying the action needs an editable target in that tab
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A page that never draws at the requested size fails the resize
       Given an agent's current tab shows a page
       When the agent resizes the page and the desktop never renders that size within the wait
       Then the tool fails saying the viewport was not rendered in time
 
-    @backlog @desktop
+    # Proved by tst_PreviewAutomationHostProp.cpp (an action on a tab with no page), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop @priority-low
     Scenario: A browser that is not showing the tab in time fails the open
       When an agent opens a preview and the desktop does not show the page's browser within the wait
       Then the tool fails saying the browser did not register in time
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An action on a tab that was replaced by an MC restart fails
       Given an agent's current tab was opened before the MC restarted
       When the agent asks for an action on that tab after the restart
       Then the tool fails saying the tab is no longer available
       And the desktop does not act on the tab it had before the restart
 
-    @backlog @desktop
+    # Proved by tst_PreviewAutomationHostProp.cpp (the user closes the tab mid-action), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop @priority-low
     Scenario: An action on a tab the user has since closed fails
       Given an agent's current tab shows a page
       When the user closes the tab before the agent's action reaches the desktop
       Then the tool fails saying the tab is no longer available
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A page the agent is waiting on is not acted on before its size is applied
       Given an agent has just opened a tab at a fixed size
       When the agent acts on the page before the desktop has rendered that size
       Then the desktop waits until the page is at the requested size, give or take a pixel
       And only then acts
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A tab that is not on screen is still recorded in full
       Given an agent is recording a tab the user is not looking at
       Then the recording has every frame of the page
       And it is not cut off because the tab is out of sight
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Closing a tab that is being recorded stops its recording first
       Given an agent is recording a tab
       When the user closes that tab
       Then the recording is stopped before the tab goes away
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A second tab cannot start recording while another is still starting
       Given an agent asked to record one tab and its recording has not started yet
       When the agent asks to record another tab within ten seconds
       Then the tool fails saying the first tab is still claiming the capture stream
       And the first tab's recording is not disturbed
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A recording that was asked for but never started frees the way after ten seconds
       Given an agent asked to record a tab and the recording never started
       When ten seconds pass
       Then the agent can record another tab
 
-    @backlog @desktop
+    # Upstream #20085: a recording warmup that never settles no longer holds up stopping
+    @backlog @desktop @priority-low
+    Scenario: A recording whose warmup never settles can still be stopped
+      Given a recording of the preview has started and its warmup never settles
+      When the recording is stopped
+      Then it stops without waiting for the warmup
+
+    @backlog @desktop @priority-low
     Scenario: A recording is not started while the app window is closed
       Given the desktop's main window is closed
       When an agent asks to record a tab
       Then the tool fails saying recording cannot start while the main window is closed
 
-    @backlog @desktop
+    # Proved by tst_PreviewAutomationWeb.cpp (keepsOffDevTools), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop @priority-low
     Scenario: An agent cannot control a tab while its developer tools are open
       Given the user has the developer tools open on a tab
       When an agent acts on that tab
       Then the tool fails saying to close the preview's developer tools before using agent browser control
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An agent cannot control a tab another debugger is attached to
       Given another debugger is attached to a tab's page
       When an agent acts on that tab
       Then the tool fails saying agent control cannot attach because another debugger owns the page
 
-    @backlog @desktop
+    # Proved by tst_PreviewAutomationWeb.cpp (keepsOffDevTools), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop @priority-low
     Scenario: Agent control comes back once the developer tools are closed
       Given an agent was refused because the developer tools were open on a tab
       When the user closes the developer tools
       Then the agent's next action on that tab goes through
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A click outside the page is refused with the page's size
       Given an agent's current tab is rendered at 1280 by 800
       When the agent clicks at a point beyond the page's edge
       Then the tool fails naming the point and saying it is outside the 1280x800 viewport
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A click on an element that cannot be clicked is reported as not found
       Given an agent's current tab shows a page with a button that is <state>
       When the agent clicks that button
@@ -344,33 +571,51 @@ Feature: Agents drive the preview browser
         | hidden                |
         | disabled              |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A target the agent describes badly is rejected with the reason
       Given an agent's current tab shows a page
       When the agent clicks a target written in a way the page cannot understand
       Then the tool fails saying the target was rejected
       And the reason the page gave is reported
 
-    @backlog @desktop
+    # Proved by tst_PreviewAutomationWeb.cpp (evaluates), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop @priority-low
     Scenario: A script that throws reports what it threw
       Given an agent's current tab shows a page
       When the agent evaluates a script that throws an error
       Then the tool fails saying the evaluation failed
       And the error's own message is reported
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A script result of more than sixty-four thousand bytes is refused
       Given an agent's current tab shows a page
       When the agent evaluates a script whose result is larger than 64,000 bytes
       Then the tool fails saying the result was too large and what the maximum is
 
+    # Upstream #16963: a script that never returned held the tab's queue of actions.
     @backlog @desktop
+    Scenario: A script that runs past the time limit is stopped
+      Given an agent's current tab shows a page
+      When the agent evaluates a script that never finishes
+      Then the tool fails saying the evaluation timed out
+      And the script is stopped in the page
+      And the agent's next action on the tab runs at once
+
+    # Upstream #17360: a drag that timed out before it finished took the whole server down.
+    @backlog @desktop @priority-low
+    Scenario: A drag that times out fails without taking the browser down
+      Given an agent's current tab shows a page
+      When the agent drags an element and the drag times out while the cursor is still moving
+      Then the tool fails with the drag's error
+      And the desktop and the MC keep running with the thread's work untouched
+
+    @backlog @desktop @priority-low
     Scenario: Waiting for text gives up after fifteen seconds by default
       Given an agent's current tab shows a page without the text the agent waits for
       When the agent waits for that text without saying how long
       Then the tool fails after fifteen seconds saying the condition did not match in time
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A key press the page never received is reported
       Given an agent's current tab shows a page
       When the agent presses a key and the page does not confirm having received it within five seconds
@@ -423,30 +668,88 @@ Feature: Agents drive the preview browser
       When the agent closes that tab
       Then the tab is gone for every client
 
+    # Upstream #20994: file requests are intercepted only while an agent acts or a streamed
+    # controller drives the tab; otherwise the desktop opens the system file picker.
+    @backlog @desktop
+    Scenario: A file input the user clicks opens the system file picker
+      Given an agent has used the preview tab "Upload"
+      And no agent action is running on "Upload"
+      When the user clicks a file input on "Upload"
+      Then the system file picker opens
+
   Rule: The desktop hosts the agent's browser
 
-    @backlog @desktop
+    # Proved by tst_PreviewAutomationWeb.cpp (navigatesAndSnapshots, clicksTypesAndPresses), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario: The desktop offers the thread's browser to agents
       Given the user has the thread's browser available on the desktop
       Then agents in that thread can open and operate browser tabs there
 
-    @backlog @desktop
+    # Proved by tst_AgentCue.qml, not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario: The user sees where the agent is acting
       Given an agent is clicking through a page in the thread's browser
       Then the user sees the agent's pointer move to each element it acts on
 
-    @backlog @desktop
+    # Proved by tst_AgentCue.qml, not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
+    Scenario: The user sees which tab an agent is using
+      Given an agent is acting in one of the thread's browser tabs
+      Then that tab shows that the agent is using it
+      And the mark goes once the agent's action ends
+
+    # Proved by tst_AgentCue.qml, not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
+    Scenario: The agent's clicks do not animate when the user asks for less motion
+      Given the user has asked for reduced motion
+      When an agent clicks in a page
+      Then the agent's pointer moves without animating and no ripple is drawn
+
+    # Proved by tst_PreviewAutomationWeb.cpp (tellsTheUserFromTheAgent, yieldsToTheUser), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario: The user taking over interrupts the agent's action
       Given an agent is typing into a page
       When the user clicks inside the page
       Then the agent's action stops
       And the agent is told its action was interrupted by human input in that tab
 
-    @backlog @desktop
+    # Proved by tst_PreviewAutomationHostProp.cpp (focus, blur) for the desktop's half, not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario: A desktop focusing its window becomes the preferred browser
       Given two desktops offer their browsers
       When the user focuses the second desktop's window
       Then a new agent session's first action goes to the second desktop
+
+    # Upstream #25184: driving a tab once kept it running at full speed long after anyone looked
+    # at it, a preview tab of another thread waking about 20 times a second.
+    @backlog @desktop @mc
+    Scenario Outline: A preview tab out of sight slows down like a background page
+      Given a preview tab of "Checkout" is not on screen
+      And <use>
+      Then the tab <runs>
+
+      Examples:
+        | use                                                       | runs                                                       |
+        | nothing has used it for five seconds                      | slows its timers down like a background page               |
+        | the agent of "Checkout" used it during the running turn   | keeps running at full speed until that turn ends           |
+        | an agent's action on it has not answered yet              | keeps running at full speed until the action answers       |
+        | it is being streamed or recorded                          | keeps running at full speed until the stream stops         |
+
+    # Upstream #24056: a tab's renderer dying while overlapping screenshots were pending crashed the
+    # whole desktop app and the MC with it.
+    @backlog @desktop
+    Scenario: A preview tab takes one agent screenshot at a time
+      Given an agent's snapshot of a stalled preview tab timed out with its screenshot still pending
+      When the agent takes another snapshot of that tab
+      Then its screenshot waits until the pending one answers or the tab loads a new page
+      And a screenshot left waiting for a tab the agent let go of is never taken
+
+    # Upstream #25184: a hidden tab keeps painting until a capture of it finishes.
+    @backlog @desktop @mc
+    Scenario: A screenshot of a preview tab out of sight shows the page as it is now
+      Given a preview tab of "Checkout" is not on screen and has slowed down
+      When an agent takes a snapshot of it and asks for the image
+      Then the screenshot shows the page's current content
 
     @backlog @desktop
     Scenario: A tab an agent opens renders at a fixed size unless the user chose one
@@ -463,7 +766,7 @@ Feature: Agents drive the preview browser
       When an agent opens the same page again
       Then the existing tab is reused at 500 by 700
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: An agent can ask for the floating preview to show or stay hidden
       Given auto-show floating preview is <setting>
       When an agent opens a preview and says <request>
@@ -476,14 +779,14 @@ Feature: Agents drive the preview browser
         | off     | to show it           | shown   |
         | on      | not to show it       | hidden  |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An agent acting on a tab brings the floating preview into view
       Given auto-show floating preview is on
       And an agent opened a preview tab and did not ask to hide it
       When the agent clicks on the page after the user closed the floating preview
       Then the floating preview shows again
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An agent that asked not to show a preview is not shown one when it acts
       Given an agent opened a preview tab asking not to show it
       When the agent clicks on the page
@@ -508,13 +811,13 @@ Feature: Agents drive the preview browser
       Then the tool fails saying the navigation did not reach load readiness in time
       And the failure arrives before the MC gives up on the browser
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The agent's pointer shows where it last acted and fades when idle
       Given an agent clicked an element of a page in the thread's browser
       Then the agent's pointer rests on that element, brighter for a moment after the click
       And it fades when the agent is idle, more so while the user is in control
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The agent's pointer is cleared when the page navigates
       Given the agent's pointer rests on an element of the page
       When the tab navigates to another page
@@ -547,14 +850,14 @@ Feature: Agents drive the preview browser
       Then it lists the first 200 interactive elements
       And it carries the first 20,000 characters of the visible text
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A screenshot for a snapshot is no wider than 1280 pixels
       Given a page rendered 1920 pixels wide
       When an agent takes a snapshot
       Then the screenshot is scaled down to 1280 pixels wide
       And a page narrower than that is not scaled
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A snapshot is retried when the page has no picture to give yet
       Given a page that cannot be captured on the first try
       When an agent takes a snapshot
@@ -608,6 +911,28 @@ Feature: Agents drive the preview browser
       When the agent types text without naming a target
       Then the text goes into the focused field
 
+    @backlog @desktop @priority-high
+    Scenario: An agent typing in a preview tab does not type into the app the user is using
+      Given the user is typing in the composer
+      And an agent's current tab shows a page with a focused text field
+      When the agent types "pairing-code" and presses Enter in the tab
+      Then the page's field holds "pairing-code" and receives the Enter
+      And the composer keeps its text and its focus
+
+    @backlog @desktop @priority-low
+    Scenario: An agent's copy, cut and paste keys in a preview tab without focus are ignored
+      Given the preview tab does not have the focus
+      When the agent presses the copy, cut or paste key in the tab
+      Then nothing is copied, cut or pasted
+      And the user's clipboard is unchanged
+
+    @backlog @desktop @priority-low
+    Scenario: Typing into a frame from another site fails clearly while the preview has no focus
+      Given the preview tab does not have the focus
+      And the page's focus is in a frame from another site
+      When the agent types text in the tab
+      Then the tool fails saying the text cannot reach that frame
+
     @backlog @desktop
     Scenario: Typing into a field that is read-only or disabled fails
       Given an agent's current tab shows a field that cannot be edited
@@ -632,3 +957,40 @@ Feature: Agents drive the preview browser
       Given an agent's current tab shows a page
       When the agent waits for text and allows ten minutes
       Then the tool refuses the request, saying the wait may be at most 60,000 milliseconds
+
+  @backlog @desktop
+  Scenario: Downloads from a page the agent drove save without a dialog
+    Given the agent last drove the preview page
+    When the page starts a download
+    Then it is saved to the browser artifacts folder with no Save dialog
+    And once the user clicks, types or navigates, downloads show the Save dialog again
+
+  # Upstream #22156: a data: address is the file's contents, so reporting it echoed the whole
+  # file into every later tool result and the event log.
+  @backlog @desktop
+  Scenario: A download from a data address is reported by its media type alone
+    Given the agent's page downloaded a file from a "data:text/plain" address
+    When the agent reads the browser's status, navigates or takes a snapshot
+    Then the download, navigation reports, network entries and link targets show "data:text/plain,…"
+    And none of them holds the file's contents
+
+  # Upstream #22156: only messages the browser writes itself are redacted; the page's own logs stay.
+  @backlog @desktop @priority-low
+  Scenario: A page's own console output keeps any data address it wrote
+    Given the agent's page logs a message containing a "data:" address
+    And the browser blocked a navigation to a "data:" address
+    When the agent reads the console
+    Then the page's message is as it was written
+    And the browser's own message shows only the address's media type
+
+  # Upstream #22156: downloads were written with the process umask.
+  @backlog @desktop
+  Scenario: Files the agent's browser downloads are readable by the user alone
+    When the agent's page downloads a file
+    Then the file and the folder it is saved in can be read only by the user
+
+  @backlog @desktop @priority-high
+  Scenario: Agent clicks do not steal composer focus
+    Given the user is typing in the composer
+    When the agent clicks in the preview
+    Then the composer keeps keyboard focus

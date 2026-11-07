@@ -13,7 +13,8 @@ defmodule HalC2.GitActions do
   subscriber as `{:hal_c2_git_action, action_id, event}`.
   """
 
-  alias HalC2.{Git, TextGeneration, Vcs}
+  alias HalC2.{Git, GitHub, PullRequests, TextGeneration, Vcs}
+  alias HalC2.SourceControl.{ChangeRequests, Forgejo}
   alias HalC2.TextGeneration.Style
 
   @commit_actions ~w(commit commit_push commit_push_pr)
@@ -60,6 +61,8 @@ defmodule HalC2.GitActions do
 
         {:error, message}
     after
+      # A pull request it opened or pushed to is asked about again, not held.
+      HalC2.PullRequests.Branches.forget(cwd)
       Vcs.Watch.refresh(cwd)
     end
   end
@@ -444,19 +447,29 @@ defmodule HalC2.GitActions do
     end
   end
 
-  # GitHub pull requests through `gh`: the open one for this branch, or a new one.
+  # The open pull request for this branch, or a new one: on Forgejo through its API,
+  # anywhere else through `gh`.
   defp pull_request(cwd, branch) do
-    gh =
-      System.find_executable(Application.get_env(:hal_c2, :gh_command, "gh")) ||
-        fail!("Creating a PR needs the GitHub CLI (gh).")
+    remote = Git.primary_remote(cwd)
+    url = remote && remote_url(cwd, remote)
 
-    base =
-      (Git.base_branch(cwd, branch) || "main")
-      |> String.replace_prefix("#{Git.primary_remote(cwd)}/", "")
-      |> then(&if(&1 == branch, do: "main", else: &1))
+    case url && PullRequests.parse_remote(url) do
+      %{kind: "forgejo"} = target -> forgejo_pull_request(cwd, branch, Map.put(target, :url, url))
+      _ -> github_pull_request(cwd, branch)
+    end
+  end
+
+  # The user asked for this pull request: its reads and the create go through a pause.
+  defp github_pull_request(cwd, branch),
+    do: GitHub.asked(fn -> create_github_pull_request(cwd, branch) end)
+
+  defp create_github_pull_request(cwd, branch) do
+    System.find_executable(Application.get_env(:hal_c2, :gh_command, "gh")) ||
+      fail!("Creating a PR needs the GitHub CLI (gh).")
+
+    base = pr_base(cwd, branch)
 
     case gh_json(
-           gh,
            cwd,
            ~w(pr list --state open --limit 1 --json number,title,url,baseRefName,headRefName --head) ++
              [branch]
@@ -472,50 +485,15 @@ defmodule HalC2.GitActions do
         }
 
       _ ->
-        base_ref = base_ref(cwd, base)
-        range = "#{base_ref}...HEAD"
-        {:ok, commits} = Git.ok(cwd, ["log", "--oneline", String.replace(range, "...", "..")])
-        {:ok, %{out: stat}} = Git.run(cwd, ["diff", "--stat", range], max_bytes: 100_000)
+        %{"title" => title, "body" => body} = pr_content(cwd, base, branch)
 
-        {:ok, %{out: patch}} =
-          Git.run(cwd, ["diff", "--no-ext-diff", "--patch", "--minimal", range],
-            max_bytes: 200_000
-          )
+        args =
+          ["pr", "create", "--base", base, "--head", branch, "--title", title] ++
+            ["--body-file", "-"]
 
-        %{"title" => title, "body" => body} =
-          case TextGeneration.pr_content(cwd, base, branch, commits, stat, patch,
-                 policy: Style.policy(cwd),
-                 template: Style.pr_template(cwd, base_ref)
-               ) do
-            {:ok, content} -> content
-            {:error, reason} -> fail!("Could not write the PR description: #{reason}")
-          end
-
-        case Exile.stream(
-               [
-                 gh,
-                 "pr",
-                 "create",
-                 "--base",
-                 base,
-                 "--head",
-                 branch,
-                 "--title",
-                 title,
-                 "--body-file",
-                 "-"
-               ],
-               cd: cwd,
-               input: [body],
-               stderr: :consume
-             )
-             |> Enum.reduce({"", ""}, fn
-               {:stdout, d}, {o, e} -> {o <> IO.iodata_to_binary(d), e}
-               {:stderr, d}, {o, e} -> {o, e <> IO.iodata_to_binary(d)}
-               {:exit, _}, acc -> acc
-             end) do
-          {out, err} ->
-            case Regex.run(~r{https://\S+/pull/(\d+)}, out <> err) do
+        case GitHub.gh(cwd, args, input: body, timeout: 120_000) do
+          {:ok, out} ->
+            case Regex.run(~r{https://\S+/pull/(\d+)}, out) do
               [url, number] ->
                 %{
                   "status" => "created",
@@ -527,12 +505,129 @@ defmodule HalC2.GitActions do
                 }
 
               nil ->
-                fail!("gh pr create failed: #{last_lines(err)}")
+                fail!("gh pr create failed: #{last_lines(out)}")
             end
+
+          {:error, {_, detail}} ->
+            fail!("gh pr create failed: #{detail}")
         end
     end
-  rescue
-    error in [Exile.Stream.AbnormalExit] -> fail!("gh failed: #{Exception.message(error)}")
+  end
+
+  # As the Forgejo provider's `createChangeRequest`: in the repository the primary
+  # remote names, from `owner:branch` when the branch is pushed to a fork of it.
+  defp forgejo_pull_request(cwd, branch, target) do
+    base = pr_base(cwd, branch)
+    {head_branch, fork} = forgejo_head(cwd, branch, target)
+    owner = fork && fork |> String.split("/") |> hd()
+
+    # Only a pull request from this branch's own repository is its pull request: a fork
+    # can hold a branch of the same name.
+    case ChangeRequests.forgejo_list(cwd, target, head_branch,
+           state: "open",
+           limit: 1,
+           head_repository: fork || target.repository
+         ) do
+      [pr | _] ->
+        %{
+          "status" => "opened_existing",
+          "url" => pr["url"],
+          "number" => pr["number"],
+          "baseBranch" => pr["baseRef"],
+          "headBranch" => pr["headRef"],
+          "title" => pr["title"]
+        }
+
+      [] ->
+        %{"title" => title, "body" => body} = pr_content(cwd, base, branch)
+
+        request = %{
+          "base" => base,
+          "head" => if(owner, do: "#{owner}:#{head_branch}", else: head_branch),
+          "title" => title,
+          "body" => body
+        }
+
+        path = "repos/#{Forgejo.encode_repository(target.repository)}/pulls"
+
+        with {:ok, out, _} <-
+               Forgejo.api(cwd, [repository: target.repository, remote_url: target.url], path,
+                 method: "POST",
+                 body: request
+               ),
+             {:ok, %{"number" => number} = pr} <- JSON.decode(out) do
+          %{
+            "status" => "created",
+            "url" => pr["html_url"],
+            "number" => number,
+            "baseBranch" => base,
+            "headBranch" => head_branch,
+            "title" => title
+          }
+        else
+          {:error, {_reason, detail}} -> fail!("Forgejo could not create the PR: #{detail}")
+          _ -> fail!("Forgejo answered the new PR in an unexpected shape.")
+        end
+    end
+  end
+
+  # The branch the pull request is from, as its upstream names it, and the fork it was
+  # pushed to as `owner/name` (nil when that is the target repository itself).
+  defp forgejo_head(cwd, branch, target) do
+    config = fn key ->
+      case Git.ok(cwd, ["config", "--get", "branch.#{branch}.#{key}"]) do
+        {:ok, value} -> String.trim(value)
+        _ -> nil
+      end
+    end
+
+    head =
+      case config.("merge") do
+        "refs/heads/" <> head -> head
+        _ -> branch
+      end
+
+    fork =
+      with remote when is_binary(remote) <- config.("remote"),
+           url when is_binary(url) <- remote_url(cwd, remote),
+           %{repository: repository} <- PullRequests.parse_remote(url),
+           false <- String.downcase(repository) == String.downcase(target.repository),
+           do: repository,
+           else: (_ -> nil)
+
+    {head, fork}
+  end
+
+  defp remote_url(cwd, remote) do
+    case Git.ok(cwd, ["config", "--get", "remote.#{remote}.url"]) do
+      {:ok, url} -> String.trim(url)
+      _ -> nil
+    end
+  end
+
+  defp pr_base(cwd, branch) do
+    (Git.base_branch(cwd, branch) || "main")
+    |> String.replace_prefix("#{Git.primary_remote(cwd)}/", "")
+    |> then(&if(&1 == branch, do: "main", else: &1))
+  end
+
+  # The title and body the text generator writes for the branch's commits since `base`.
+  defp pr_content(cwd, base, branch) do
+    base_ref = base_ref(cwd, base)
+    range = "#{base_ref}...HEAD"
+    {:ok, commits} = Git.ok(cwd, ["log", "--oneline", String.replace(range, "...", "..")])
+    {:ok, %{out: stat}} = Git.run(cwd, ["diff", "--stat", range], max_bytes: 100_000)
+
+    {:ok, %{out: patch}} =
+      Git.run(cwd, ["diff", "--no-ext-diff", "--patch", "--minimal", range], max_bytes: 200_000)
+
+    case TextGeneration.pr_content(cwd, base, branch, commits, stat, patch,
+           policy: Style.policy(cwd),
+           template: Style.pr_template(cwd, base_ref)
+         ) do
+      {:ok, content} -> content
+      {:error, reason} -> fail!("Could not write the PR description: #{reason}")
+    end
   end
 
   defp base_ref(cwd, base) do
@@ -544,9 +639,9 @@ defmodule HalC2.GitActions do
        else: base
   end
 
-  defp gh_json(gh, cwd, args) do
-    case System.cmd(gh, args, cd: cwd, stderr_to_stdout: false) do
-      {out, 0} -> JSON.decode!(out)
+  defp gh_json(cwd, args) do
+    case GitHub.gh(cwd, args) do
+      {:ok, out} -> JSON.decode!(out)
       _ -> nil
     end
   rescue

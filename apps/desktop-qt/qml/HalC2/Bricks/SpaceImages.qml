@@ -7,6 +7,8 @@ import HalC2.Shell
 // The Space's images (Spaces.images), or those in its trash (Spaces.imageTrash),
 // as a grid of thumbnails: only the cards on screen fetch and decode anything,
 // each scaled as it is decoded. An image in the trash comes back or goes for good.
+// Under the grid, the timeline's prompt makes an image of its words with the
+// image model picked beside it (ComposerController's images prompt).
 Rectangle {
     id: browser
 
@@ -18,7 +20,6 @@ Rectangle {
     property bool trashShown: false
 
     signal addRequested
-    signal generateRequested
     signal closeRequested
 
     color: Theme.palette.color("canvas", "#09090b")
@@ -30,7 +31,7 @@ Rectangle {
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Theme.space.sm
 
             ShellButton {
                 objectName: "spaceImagesClose"
@@ -45,7 +46,7 @@ Rectangle {
                 text: browser.trashShown ? qsTr("Images in the trash") : qsTr("Images")
                 elide: Text.ElideRight
                 color: browser.foreground
-                font.pixelSize: Math.round(20 * Theme.fontScale)
+                font.pixelSize: Theme.type.display.size
                 font.weight: Font.DemiBold
             }
 
@@ -58,15 +59,6 @@ Rectangle {
             }
 
             ShellButton {
-                objectName: "spaceImageGenerate"
-                primary: true
-                iconName: "plus"
-                text: browser.space.generatingImage === true ? qsTr("Generating…") : qsTr("Generate")
-                enabled: browser.space.generatingImage !== true
-                onClicked: browser.generateRequested()
-            }
-
-            ShellButton {
                 objectName: "spaceImagesTrash"
                 subtle: true
                 iconName: browser.trashShown ? "image" : "trash"
@@ -75,14 +67,14 @@ Rectangle {
             }
         }
 
-        Text {
+        ShellEmptyState {
             objectName: "spaceImagesEmpty"
-            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignHCenter
+            Layout.topMargin: Theme.space.xxl
             visible: grid.count === 0
-            wrapMode: Text.Wrap
-            text: browser.trashShown ? qsTr("The trash is empty.") : qsTr("%1 has no images yet. Add one from a file or generate one from a prompt.").arg(Spaces.spaceName)
-            color: browser.muted
-            font.pixelSize: Math.round(14 * Theme.fontScale)
+            iconName: browser.trashShown ? "trash" : "image"
+            title: browser.trashShown ? qsTr("The trash is empty") : qsTr("No images yet")
+            description: browser.trashShown ? "" : qsTr("Add one from a file, or describe one below to generate it.")
         }
 
         GridView {
@@ -118,7 +110,7 @@ Rectangle {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 130
-                        radius: Math.min(Theme.radius, 8)
+                        radius: Theme.radiusMd
                         color: Theme.palette.color("muted", "#27272a")
                         clip: true
 
@@ -140,7 +132,7 @@ Rectangle {
                             visible: thumbnail.status === Image.Error
                             text: qsTr("Could not be shown")
                             color: browser.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
                     }
 
@@ -154,7 +146,7 @@ Rectangle {
                             text: card.name
                             elide: Text.ElideMiddle
                             color: browser.foreground
-                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            font.pixelSize: Theme.type.body.size
                         }
 
                         ShellButton {
@@ -198,7 +190,7 @@ Rectangle {
                         text: card.prompt
                         elide: Text.ElideRight
                         color: browser.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     // Holds a card's top, with or without a prompt, level with the others.
@@ -207,6 +199,18 @@ Rectangle {
                     }
                 }
             }
+        }
+
+        Composer {
+            id: composer
+
+            objectName: "spaceImagesComposer"
+            Layout.fillWidth: true
+            Layout.leftMargin: -composer.gutter
+            Layout.rightMargin: -composer.gutter
+            imagesHost: true
+            visible: !browser.trashShown && ready
+            color: "transparent"
         }
     }
 }

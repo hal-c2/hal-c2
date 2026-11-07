@@ -112,7 +112,9 @@ defmodule HalC2.Vcs do
   @doc """
   `VcsStatusRemoteResult`, or nil outside a repository. With `fetch: true` the
   upstream is fetched first so the behind count is current; with `pr: true` the
-  branch's change request is looked up on its host (otherwise `pr` is nil).
+  branch's change request is looked up on its host (otherwise `pr` is nil), GitHub's
+  answered from what the MC already holds of it (`HalC2.PullRequests.Branches`) unless
+  `pr: :fresh`.
   """
   def remote_status(cwd, opts \\ []) do
     with true <- File.dir?(cwd),
@@ -139,7 +141,10 @@ defmodule HalC2.Vcs do
         "aheadCount" => if(branch.upstream, do: branch.ahead, else: ahead_of_base),
         "behindCount" => if(branch.upstream, do: branch.behind, else: 0),
         "aheadOfDefaultCount" => if(branch.head && not default?, do: ahead_of_base, else: 0),
-        "pr" => if(opts[:pr] && branch.head, do: pull_request(cwd, branch.head, default?))
+        "pr" =>
+          if(opts[:pr] && branch.head,
+            do: pull_request(cwd, branch.head, default?, opts[:pr] == :fresh)
+          )
       }
     else
       _ -> nil
@@ -152,7 +157,7 @@ defmodule HalC2.Vcs do
   """
   def refresh_status(%{"cwd" => cwd}) do
     with {:ok, local} <- read_local_status(cwd) do
-      remote = remote_status(cwd, fetch: true, pr: true)
+      remote = remote_status(cwd, fetch: true, pr: :fresh)
       HalC2.Vcs.Watch.publish(cwd, local, remote)
       {:ok, Map.merge(local, remote || empty_remote())}
     else
@@ -164,11 +169,11 @@ defmodule HalC2.Vcs do
   # hosts' through `HalC2.SourceControl.ChangeRequests`. On the default branch only an
   # open one counts: merged or closed matches there are reverse merges.
   @doc "The newest pull request whose head is `branch`, in any state, or nil."
-  def branch_pull_request(cwd, branch), do: pull_request(cwd, branch, false)
+  def branch_pull_request(cwd, branch), do: pull_request(cwd, branch, false, false)
 
-  defp pull_request(cwd, branch, default?) do
+  defp pull_request(cwd, branch, default?, fresh?) do
     with {:ok, url} <- Git.ok(cwd, ~w(remote get-url origin)),
-         %{"state" => state} = pr <- host_pull_request(cwd, String.trim(url), branch),
+         %{"state" => state} = pr <- host_pull_request(cwd, String.trim(url), branch, fresh?),
          true <- state == "open" or not default? do
       pr
     else
@@ -176,28 +181,21 @@ defmodule HalC2.Vcs do
     end
   end
 
-  defp host_pull_request(cwd, url, branch) do
+  defp host_pull_request(cwd, url, branch, fresh?) do
     if String.contains?(url, "github.com"),
-      do: github_pull_request(cwd, branch),
+      do: github_pull_request(cwd, branch, fresh?),
       else: other_host_change_request(cwd, url, branch)
   end
 
-  defp github_pull_request(cwd, branch) do
-    with gh when is_binary(gh) <-
-           System.find_executable(Application.get_env(:hal_c2, :gh_command, "gh")),
-         [pr | _] <- gh_pr_list(gh, cwd, branch) do
-      %{
-        "number" => pr["number"],
-        "title" => pr["title"],
-        "url" => pr["url"],
-        "baseRef" => pr["baseRefName"],
-        "headRef" => pr["headRefName"],
-        "state" => String.downcase(pr["state"] || "open"),
-        "isDraft" => pr["isDraft"] == true,
-        "updatedAt" => pr["updatedAt"]
-      }
-    else
-      _ -> nil
+  # Asked once for every reader of the branch (`HalC2.PullRequests.Branches`).
+  # Unauthenticated, offline or rate limited `gh` means no pull request, quietly.
+  defp github_pull_request(cwd, branch, fresh?) do
+    case HalC2.PullRequests.Branches.pull_request(cwd, branch, fresh: fresh?) do
+      {:ok, %{} = pr} ->
+        Map.take(pr, ~w(number title url baseRef headRef state isDraft updatedAt))
+
+      _ ->
+        nil
     end
   end
 
@@ -214,22 +212,6 @@ defmodule HalC2.Vcs do
         _ -> nil
       end
     end
-  end
-
-  defp gh_pr_list(gh, cwd, branch) do
-    args =
-      ~w(pr list --state all --limit 1 --json number,title,url,baseRefName,headRefName,state,isDraft,updatedAt --head) ++
-        [branch]
-
-    # Unauthenticated or offline `gh` means no pull request, quietly.
-    task = Task.async(fn -> System.cmd(gh, args, cd: cwd, stderr_to_stdout: true) end)
-
-    case Task.yield(task, 10_000) || Task.shutdown(task, :brutal_kill) do
-      {:ok, {out, 0}} -> JSON.decode!(out)
-      _ -> []
-    end
-  rescue
-    _ -> []
   end
 
   defp empty_remote,

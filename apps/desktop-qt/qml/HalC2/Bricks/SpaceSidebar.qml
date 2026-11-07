@@ -5,7 +5,9 @@ import QtQuick.Layouts
 import HalC2.Shell
 
 // The Space view's own sidebar (SpaceController): which Space is shown and
-// what can be done to it, its page tree, its decks, and its trash.
+// what can be done to it, its page tree, a section for each project with Space
+// files (`Spaces.projects`, collapsed until the user expands it), its decks, and
+// its trash. A file picked in a section is edited as a page of its project.
 Rectangle {
     id: sidebar
 
@@ -63,11 +65,16 @@ Rectangle {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 10
-        spacing: 6
+        anchors.margins: Theme.space.sm
+        spacing: Theme.space.sm
 
+        // On the header line a thread's header shares (Theme.headerHeight),
+        // from the window's top to the hairline under it.
         RowLayout {
+            objectName: "spaceHeader"
             Layout.fillWidth: true
+            Layout.topMargin: -Theme.space.sm
+            Layout.preferredHeight: Theme.headerHeight
             spacing: 4
 
             ShellButton {
@@ -90,15 +97,6 @@ Rectangle {
                 Accessible.name: qsTr("Import Markdown")
                 enabled: Spaces.spaceId !== ""
                 onClicked: sidebar.importRequested()
-            }
-
-            ShellButton {
-                objectName: "spaceFromProjectFiles"
-                subtle: true
-                iconName: "folder-open"
-                Accessible.name: qsTr("Add a page from a project's files")
-                enabled: Spaces.spaceId !== ""
-                onClicked: Shell.dispatch("space.files.pick", {})
             }
 
             ShellButton {
@@ -178,7 +176,11 @@ Rectangle {
 
             objectName: "spacePageTree"
             Layout.fillWidth: true
+            // As tall as its pages, less when the sidebar is short: the
+            // project sections follow the last page, not the sidebar's foot.
             Layout.fillHeight: true
+            Layout.preferredHeight: contentHeight
+            Layout.maximumHeight: contentHeight
             clip: true
             spacing: 1
             model: Spaces.pages
@@ -198,7 +200,7 @@ Rectangle {
                 objectName: "spacePage:" + title
                 width: ListView.view.width
                 height: 30
-                radius: Math.min(Theme.radius, 6)
+                radius: Theme.radiusSm
                 color: selected ? sidebar.selectedFill : rowMouse.containsMouse ? sidebar.hoverFill : "transparent"
 
                 MouseArea {
@@ -219,9 +221,9 @@ Rectangle {
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 8 + row.depth * 14
+                    anchors.leftMargin: Theme.space.sm + row.depth * Theme.space.md
                     anchors.rightMargin: 2
-                    spacing: 6
+                    spacing: Theme.space.sm
 
                     ShellIcon {
                         name: row.fromThread ? "message-square" : "file-text"
@@ -234,7 +236,7 @@ Rectangle {
                         text: row.title
                         elide: Text.ElideRight
                         color: sidebar.foreground
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         font.weight: row.selected ? Font.Medium : Font.Normal
                     }
 
@@ -302,6 +304,113 @@ Rectangle {
             }
         }
 
+        ListView {
+            id: projectSections
+
+            objectName: "spaceProjects"
+            Layout.fillWidth: true
+            // The sections take the room they need, up to half the sidebar's.
+            Layout.preferredHeight: Math.min(contentHeight, sidebar.height / 2)
+            // More, up to all of it, when the pages leave the room.
+            Layout.fillHeight: true
+            Layout.maximumHeight: contentHeight
+            visible: count > 0
+            clip: true
+            spacing: 1
+            model: Spaces.projects
+            boundsBehavior: Flickable.StopAtBounds
+
+            // An expanded project can take more than the room: a thin
+            // scrollbar says the sections go on.
+            ShellScrollEdge {
+                target: projectSections
+            }
+
+            delegate: Rectangle {
+                id: entry
+
+                required property var model
+                required property string kind
+                required property string projectId
+                required property string path
+                required property string name
+                required property int depth
+                required property bool expanded
+                required property string pageId
+                readonly property bool section: kind === "project"
+                readonly property bool selected: kind === "file" && pageId !== "" && pageId === Spaces.pageId && Spaces.fileSpaceId !== "" && Spaces.deckId === ""
+
+                objectName: section ? "spaceProject:" + projectId : "spaceProject" + (kind === "file" ? "File:" : "Folder:") + projectId + ":" + path
+                width: ListView.view.width
+                height: section ? 28 : 26
+                radius: Theme.radiusSm
+                color: selected ? sidebar.selectedFill : entryMouse.containsMouse ? sidebar.hoverFill : "transparent"
+                border.width: activeFocus ? 1 : 0
+                border.color: Theme.palette.color("focus", "#3b82f6")
+                // Tab reaches each row; Space or Return does what a click does, Left and
+                // Right collapse and expand a section or a folder.
+                activeFocusOnTab: true
+
+                Accessible.role: kind === "file" ? Accessible.ListItem : Accessible.Button
+                Accessible.name: kind === "file" ? name : (expanded ? qsTr("Collapse %1") : qsTr("Expand %1")).arg(name)
+
+                function setExpanded(expanded) {
+                    if (kind === "file" || expanded === entry.expanded)
+                        return;
+                    Shell.dispatch("space.project.setExpanded", section ? { projectId: projectId, expanded: expanded } : { projectId: projectId, path: path, expanded: expanded });
+                }
+
+                function activate() {
+                    if (kind !== "file") {
+                        setExpanded(!expanded);
+                    } else {
+                        Shell.dispatch("space.openFile", { projectId: projectId, relativePath: path });
+                        sidebar.pageChosen();
+                    }
+                }
+
+                Keys.onPressed: event => {
+                    if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                        activate();
+                    else if ((event.key === Qt.Key_Left || event.key === Qt.Key_Right) && kind !== "file")
+                        setExpanded(event.key === Qt.Key_Right);
+                    else
+                        return;
+                    event.accepted = true;
+                }
+
+                MouseArea {
+                    id: entryMouse
+
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: entry.activate()
+                }
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: Theme.space.sm + entry.depth * Theme.space.md
+                    anchors.rightMargin: Theme.space.sm
+                    spacing: Theme.space.sm
+
+                    ShellIcon {
+                        name: entry.section ? (entry.expanded ? "chevron-down" : "chevron-right") : entry.kind === "folder" ? (entry.expanded ? "folder-open" : "folder") : "file-text"
+                        size: entry.section ? 12 : 14
+                        color: sidebar.muted
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: entry.name
+                        elide: entry.section ? Text.ElideRight : Text.ElideMiddle
+                        color: entry.section || entry.kind === "folder" ? sidebar.muted : sidebar.foreground
+                        font.pixelSize: entry.section ? Theme.type.meta.size : Theme.type.body.size
+                        font.weight: entry.selected || entry.section ? Font.Medium : Font.Normal
+                    }
+                }
+            }
+        }
+
         RowLayout {
             Layout.fillWidth: true
             Layout.leftMargin: 8
@@ -311,7 +420,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: qsTr("Decks")
                 color: sidebar.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             ShellButton {
@@ -346,7 +455,7 @@ Rectangle {
                 objectName: "spaceDeckRow:" + title
                 width: ListView.view.width
                 height: 30
-                radius: Math.min(Theme.radius, 6)
+                radius: Theme.radiusSm
                 color: selected ? sidebar.selectedFill : deckMouse.containsMouse ? sidebar.hoverFill : "transparent"
 
                 MouseArea {
@@ -369,7 +478,7 @@ Rectangle {
                     anchors.fill: parent
                     anchors.leftMargin: 8
                     anchors.rightMargin: 2
-                    spacing: 6
+                    spacing: Theme.space.sm
 
                     ShellIcon {
                         name: "monitor"
@@ -382,7 +491,7 @@ Rectangle {
                         text: deckRow.title
                         elide: Text.ElideRight
                         color: sidebar.foreground
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         font.weight: deckRow.selected ? Font.Medium : Font.Normal
                     }
 
@@ -421,9 +530,15 @@ Rectangle {
             }
         }
 
+        // What is left of the height, so Images and Trash keep to the foot.
+        Item {
+            Layout.fillHeight: true
+        }
+
+        // Images and Trash start where the rows' text does, not centred.
         ShellButton {
             objectName: "spaceImages"
-            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignLeft
             subtle: true
             iconName: "image"
             enabled: Spaces.spaceId !== ""
@@ -433,7 +548,7 @@ Rectangle {
 
         ShellButton {
             objectName: "spaceTrash"
-            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignLeft
             subtle: true
             chevron: true
             iconName: "trash"
@@ -447,7 +562,7 @@ Rectangle {
             visible: sidebar.trashShown && sidebar.trashCount === 0
             text: qsTr("The trash is empty.")
             color: sidebar.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         Repeater {
@@ -469,7 +584,7 @@ Rectangle {
                     text: trashed.title
                     elide: Text.ElideRight
                     color: sidebar.muted
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
 
                     MouseArea {
                         anchors.fill: parent
@@ -528,7 +643,7 @@ Rectangle {
                     text: trashedDeck.title
                     elide: Text.ElideRight
                     color: sidebar.muted
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
 
                     MouseArea {
                         anchors.fill: parent

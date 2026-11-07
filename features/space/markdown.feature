@@ -14,10 +14,17 @@
 #   ~/dev/pos-ecs again for lists, quotes and rules (1772 distinct .md files outside hidden directories:
 #     5388 lists, 77 of them kept raw; 24752 items, 1315 nested; 920 quotes, 23 of them alerts, 85 kept by
 #     their `> ` blank lines or two-space line breaks, and 4 kept raw; 598 rules, 152 of them not `---`)
+#   ~/dev/pos-ecs again for inline formatting, footnotes, math, collapsed sections and images (the same
+#     1772 files: no footnote definitions and 16 references, no `$$` or `math` blocks and 97 inline `$`
+#     spans, 229 collapsed sections read as blocks and 2569 `<details>` elements kept raw, most of them
+#     generated HTML with summaries over several lines; 176 images alone on a line read as images by
+#     their address, the rest titled, badges or inside text)
 #   apps/server-ex/lib/hal_c2/space/markdown.ex, apps/server-ex/lib/hal_c2/space/blocks.ex,
 #     apps/server-ex/lib/hal_c2/space/table.ex
 #   packages/contracts/src/space.ts (SpaceBlock, SpaceWritableBlockKind, SpaceTable, SpaceTableEdit,
 #     SpaceCalloutAlert)
+#   apps/desktop-qt/qml/HalC2/Bricks/SpaceBlock.qml (a page's diagram on the desktop)
+#   apps/mobile-qt/qml/HalC2/Mobile/SpaceBlockRow.qml (a page's diagram on the phone)
 
 Feature: GitHub Markdown in a page
   A page reads and writes GitHub Markdown. Whatever a page models (headings, paragraphs,
@@ -172,12 +179,150 @@ Feature: GitHub Markdown in a page
       Then the table is shown as its Markdown, exactly as written, in a fixed-width face
       And the user can edit it as text
 
+    # A table and code are drawn while the user reads them (see Tables and Code).
     # https://github.com/hal-c2/hal-c2/issues/854
     @shared
-    Scenario: A table and code are shown as their source until they are drawn as such
+    Scenario: A table and code are edited as their source
       Given the page "Plan" holds a table and a code block
       When the user opens "Plan"
-      Then the table and the code are each shown line for line in a fixed-width face
+      Then the user edits the table and the code each as its source, exactly as written
+
+    # The blocks the next scenario gives the clients, as the MC reads them from its Markdown;
+    # `-` is a field the block does not have.
+    @mc
+    Scenario: The blocks the clients show as Markdown are the MC's
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        3. Release
+        4. Ship
+           - Tag
+             1. Notes
+             2. Docs
+                - [x] Changelog
+        5. Announce
+
+        > [!WARNING]
+        > Ship on a weekday.
+
+        ---
+
+        Read the notes.[^wiki]
+
+        [^wiki]: Kept in the wiki.
+
+        <details>
+        <summary>Steps</summary>
+
+        Tag it.
+
+        </details>
+
+        $$
+        E = mc^2
+        $$
+
+        ```math
+        a^2 + b^2 = c^2
+        ```
+
+        ![Logo](https://example.com/logo.png)
+
+        ***
+
+        <details open><summary>More</summary>
+
+        Ship it.
+
+        </details>
+        """
+      Then the blocks of "Plan" are:
+        | kind        | text                   | depth | start | checked | alert   | label | language | fence | url                          | marker                  |
+        | numbered    | Release                | -     | 3     | false   | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Ship                   | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | bullet      | Tag                    | 1     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Notes                  | 2     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Docs                   | 2     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | checklist   | Changelog              | 3     | -     | true    | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Announce               | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | callout     | Ship on a weekday.     | -     | -     | false   | warning | -     | -        | -     | -                            | -                       |
+        | divider     | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | paragraph   | Read the notes.[^wiki] | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | footnote    | Kept in the wiki.      | -     | -     | false   | -       | wiki  | -        | -     | -                            | -                       |
+        | details     | Steps                  | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | paragraph   | Tag it.                | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | details_end | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | code        | E = mc^2               | -     | -     | false   | -       | -     | math     | $$    | -                            | -                       |
+        | code        | a^2 + b^2 = c^2        | -     | -     | false   | -       | -     | math     | -     | -                            | -                       |
+        | image       | Logo                   | -     | -     | false   | -       | -     | -        | -     | https://example.com/logo.png | -                       |
+        | divider     | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | ***                     |
+        | details     | More                   | -     | -     | false   | -       | -     | -        | -     | -                            | <details open><summary> |
+        | paragraph   | Ship it.               | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | details_end | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+
+    # Until the clients draw these kinds, each shows what the MC writes around its text, and
+    # the text stays editable as before; a checklist item keeps its tick and a callout its
+    # tint, which stand for `- [ ]` and `> `. A list item's marker is drawn with its text,
+    # after the indent that nests it, so its line reads as the MC writes it too.
+    # https://github.com/hal-c2/hal-c2/issues/869
+    # https://github.com/hal-c2/hal-c2/issues/877
+    @shared
+    Scenario: Blocks the clients do not draw yet are shown as the MC writes them
+      Given the page "Plan" holds the blocks:
+        | kind        | text                   | depth | start | checked | alert   | label | language | fence | url                          | marker                  |
+        | numbered    | Release                | -     | 3     | false   | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Ship                   | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | bullet      | Tag                    | 1     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Notes                  | 2     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Docs                   | 2     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | checklist   | Changelog              | 3     | -     | true    | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Announce               | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | callout     | Ship on a weekday.     | -     | -     | false   | warning | -     | -        | -     | -                            | -                       |
+        | divider     | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | paragraph   | Read the notes.[^wiki] | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | footnote    | Kept in the wiki.      | -     | -     | false   | -       | wiki  | -        | -     | -                            | -                       |
+        | details     | Steps                  | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | paragraph   | Tag it.                | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | details_end | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | code        | E = mc^2               | -     | -     | false   | -       | -     | math     | $$    | -                            | -                       |
+        | code        | a^2 + b^2 = c^2        | -     | -     | false   | -       | -     | math     | -     | -                            | -                       |
+        | image       | Logo                   | -     | -     | false   | -       | -     | -        | -     | https://example.com/logo.png | -                       |
+        | divider     | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | ***                     |
+        | details     | More                   | -     | -     | false   | -       | -     | -        | -     | -                            | <details open><summary> |
+        | paragraph   | Ship it.               | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | details_end | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+      When the user opens "Plan"
+      Then each block is shown as this Markdown, line for line:
+        """
+        3. Release
+        4. Ship
+           - Tag
+             1. Notes
+             2. Docs
+                - [x] Changelog
+        5. Announce
+        > [!WARNING]
+        > Ship on a weekday.
+        ---
+        Read the notes.[^wiki]
+        [^wiki]: Kept in the wiki.
+        <details>
+        <summary>Steps</summary>
+        Tag it.
+        </details>
+        $$
+        E = mc^2
+        $$
+        ```math
+        a^2 + b^2 = c^2
+        ```
+        ![Logo](https://example.com/logo.png)
+        ***
+        <details open><summary>More</summary>
+        Ship it.
+        </details>
+        """
 
   Rule: Headings
 
@@ -544,8 +689,9 @@ Feature: GitHub Markdown in a page
         |    12 |
         """
 
+    # Drawn by the Markdown the chat draws replies with.
     # https://github.com/hal-c2/hal-c2/issues/854
-    @shared @backlog
+    @shared
     Scenario: A table is shown as a table
       Given the page "Plan" with a table whose columns are aligned left, centre and right
       When the user opens "Plan"
@@ -639,20 +785,23 @@ Feature: GitHub Markdown in a page
         |   ```ts\n  x\n  ```               | raw   |
         | ``` ts\nx\n```                    | raw   |
 
+    # Drawn by the Markdown the chat draws replies with, coloured as it colours a reply's code.
     # https://github.com/hal-c2/hal-c2/issues/854
-    @shared @backlog
+    @shared
     Scenario: A code block is shown as code
       Given the page "Plan" with a "ts" code block
       When the user opens "Plan"
       Then its text is shown in a fixed-width face, coloured for that language where the surface can
       And its language is named on it
 
+    # The terminal copies the whole page (y), not one block.
     # https://github.com/hal-c2/hal-c2/issues/854
-    @shared @backlog
+    @shared @backlog-tui
     Scenario: The user copies a code block
       Given the page "Plan" with a code block
-      When the user copies the code block
-      Then the clipboard holds its text without the fence
+      When the user opens "Plan"
+      And the user copies the code block on the page
+      Then the code is on the clipboard without its fence
 
     # https://github.com/hal-c2/hal-c2/issues/854
     @shared @backlog
@@ -662,16 +811,18 @@ Feature: GitHub Markdown in a page
       Then the page shows the new text, named "bash"
 
   # https://github.com/hal-c2/hal-c2/issues/843
-  @backlog @mc @shared
+  @mc @shared @backlog-mc
   Rule: Mermaid diagrams
 
     # The diagram is drawn by the one Mermaid renderer the pages, the chat and the file
-    # viewer share. The terminal shows the diagram's source, named as a diagram.
+    # viewer share. The terminal shows it drawn in characters, or, for a type with no
+    # drawing in characters, its source, named as a diagram.
+    @priority-low
     Scenario Outline: A Mermaid diagram is drawn
       When the user imports a page holding a "<type>" Mermaid diagram
       Then the page has a diagram block of the type "<type>"
       And on the desktop and the phone the diagram is drawn
-      And in the terminal the diagram's source is shown, named as a "<type>" diagram
+      And in the terminal the diagram is drawn in characters, or its source is shown, named as a "<type>" diagram
 
       Examples:
         | type            |
@@ -681,23 +832,27 @@ Feature: GitHub Markdown in a page
         | stateDiagram-v2 |
         | gantt           |
 
+    @priority-low
     Scenario: A diagram type the renderer cannot draw shows its source and says why
       When the user imports a page holding a "block-beta" Mermaid diagram
       Then the diagram's source is shown
       And the user is told "block-beta" diagrams cannot be drawn yet
 
+    @priority-low
     Scenario: A diagram with a mistake shows its source and the mistake
       When the user imports a page holding a flowchart with an unclosed bracket
       Then the diagram's source is shown
       And the user is told where the mistake is
       And nothing claims the diagram is still being drawn
 
+    @priority-low
     Scenario: The user edits a diagram's source
       Given a page with a flowchart
       When the user adds a node to its source
       Then the diagram is drawn again with the new node
       And the export writes the new source
 
+    @priority-low
     Scenario: A diagram is drawn once, not over and over
       Given a page with a flowchart
       When the user scrolls the page past it and back
@@ -858,7 +1013,7 @@ Feature: GitHub Markdown in a page
       Then the user is told "Only a list item has a depth."
 
     # https://github.com/hal-c2/hal-c2/issues/869
-    @shared @backlog
+    @shared
     Scenario: A list is shown with its markers and nesting
       Given the page "Plan" with a bulleted list holding a numbered list
       When the user opens "Plan"
@@ -1016,14 +1171,40 @@ Feature: GitHub Markdown in a page
       When the user opens "Plan"
       Then a line is shown between them
 
-  # https://github.com/hal-c2/hal-c2/issues/845
-  @backlog @mc @shared
+  # Inline formatting is part of a block's text, kept exactly as written: the MC sends
+  # nothing new for it, and a surface renders it where it shows the text.
   Rule: Inline formatting
 
-    Scenario Outline: Text keeps its inline formatting
-      When the user imports a paragraph holding <formatting>
+    @mc
+    Scenario: Text keeps its inline formatting as written
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        **Bold**, _italic_, ~~struck~~ and `code`, a [link](https://example.com "Title"),
+        <https://example.com>, www.example.com, $x^2$ and a note[^1].
+        """
+      Then the blocks of "Plan" are of the kinds "paragraph"
+      And "Plan" has a paragraph holding:
+        """
+        **Bold**, _italic_, ~~struck~~ and `code`, a [link](https://example.com "Title"),
+        <https://example.com>, www.example.com, $x^2$ and a note[^1].
+        """
+      When the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        **Bold**, _italic_, ~~struck~~ and `code`, a [link](https://example.com "Title"),
+        <https://example.com>, www.example.com, $x^2$ and a note[^1].
+        """
+
+    # https://github.com/hal-c2/hal-c2/issues/877
+    @shared
+    Scenario Outline: Text is shown with its inline formatting
+      Given a page with a paragraph holding <formatting>
+      When the user opens the page
       Then the paragraph is shown with <formatting>
-      And the export writes it as it was
 
       Examples:
         | formatting                                |
@@ -1033,60 +1214,263 @@ Feature: GitHub Markdown in a page
         | a link with a title                       |
         | an autolinked address and a bare www link |
 
+    # https://github.com/hal-c2/hal-c2/issues/877
+    @shared
     Scenario: A link in a page never loads anything by itself
-      When the user imports a paragraph linking to a web address
+      Given a page with a paragraph linking to a web address
+      When the user opens the page
       Then nothing is fetched until the user opens the link
 
-  # https://github.com/hal-c2/hal-c2/issues/845
-  @backlog @mc @shared
+  # A footnote is a block of its own, its `label` and its note: `[^1]: A source.`, the
+  # note's further lines indented four spaces. Footnotes follow one another line under
+  # line. A reference `[^1]` is part of a block's text. A footnote written another way
+  # stays raw.
   Rule: Footnotes
 
-    Scenario: A footnote reference and its note go together
-      When the user imports a paragraph with the reference "[^1]" and the note "[^1]: Source"
-      Then the reference is shown as a link to the note
-      And the export writes both as they were
+    @mc
+    Scenario: A footnote is its label and its note
+      Given the page "Plan" imported from:
+        """
+        # Plan
 
-  # https://github.com/hal-c2/hal-c2/issues/845
-  @backlog @mc @shared
+        Tag first[^1], then ship[^later].
+
+        [^1]: The release guide.
+        [^later]: Once the tag is pushed,
+            and CI is green.
+        """
+      Then the blocks of "Plan" are of the kinds "paragraph, footnote, footnote"
+      And "Plan" has the footnote "later" holding:
+        """
+        Once the tag is pushed,
+        and CI is green.
+        """
+      When the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        Tag first[^1], then ship[^later].
+
+        [^1]: The release guide.
+        [^later]: Once the tag is pushed,
+            and CI is green.
+        """
+
+    @mc
+    Scenario: The user changes a footnote's label
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        [^1]: The release guide.
+        """
+      When the user labels "The release guide." as "guide"
+      And the user exports "Plan" as Markdown
+      Then the exported Markdown is "# Plan\n\n[^guide]: The release guide.\n"
+      When the user labels "The release guide." as "two words"
+      Then the user is told "A footnote's label is a word with no spaces or brackets, such as 1 or note."
+
+    @mc
+    Scenario: Only a footnote has a label
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        Ship it
+        """
+      When the user labels "Ship it" as "1"
+      Then the user is told "Only a footnote has a label."
+
+    # https://github.com/hal-c2/hal-c2/issues/877
+    @shared @backlog @priority-low
+    Scenario: A footnote reference and its note go together
+      Given a page with a paragraph holding the reference "[^1]" and the footnote "1"
+      When the user opens the page
+      Then the reference is shown as a link to the footnote
+      And the footnote is shown with its label
+
+  # Math is code in `math`. Math written between `$$` lines keeps that as its `fence`;
+  # such math with a blank line inside stays raw, as GitHub ends it there. Inline `$x^2$`
+  # is part of a block's text.
   Rule: Math
 
+    @mc
+    Scenario: Math between $$ lines is code in math
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        $$
+        x^2 + y^2 = z^2
+        $$
+
+        ```math
+        x^2
+        ```
+        """
+      Then the blocks of "Plan" are of the kinds "code, code"
+      And "Plan" has a code block in "math" holding:
+        """
+        x^2 + y^2 = z^2
+        """
+      When the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        $$
+        x^2 + y^2 = z^2
+        $$
+
+        ```math
+        x^2
+        ```
+        """
+
+    @mc
+    Scenario: Math made other code is written between fences
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        $$
+        x^2
+        $$
+        """
+      When the user makes the code block of "Plan" "latex" code holding:
+        """
+        x^2
+        """
+      And the user exports "Plan" as Markdown
+      Then the exported Markdown is "# Plan\n\n```latex\nx^2\n```\n"
+
+    # https://github.com/hal-c2/hal-c2/issues/877
+    @shared @backlog @priority-low
     Scenario Outline: Math is shown as math
-      When the user imports a page holding <math>
+      Given a page holding <math>
+      When the user opens the page
       Then it is shown typeset where the surface can, else as its source
-      And the export writes it as it was
 
       Examples:
-        | math                    |
-        | inline "$x^2$"          |
-        | a "$$" block            |
-        | a "math" fenced block   |
+        | math                   |
+        | inline "$x^2$"         |
+        | a "$$" block           |
+        | a "math" fenced block  |
 
-  # https://github.com/hal-c2/hal-c2/issues/845
-  @backlog @mc @shared
+  # A collapsed section is a `details` block, its text the summary, then the blocks
+  # inside it, then a `details_end` block. The MC models it when it is written as a page
+  # writes it: `<details>` and `<summary>…</summary>` on a line or two, a blank line,
+  # Markdown, and `</details>` alone with a blank line or the end under it. An opening
+  # written on one line, `open` or indented is kept as the block's `marker`. Any other
+  # `<details>` element stays raw whole, as before.
   Rule: Collapsed sections
 
+    @mc
+    Scenario: The section's contents are blocks of their own
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        <details>
+        <summary>Logs</summary>
+
+        | Step | Took |
+        | ---- | ---- |
+        | Tag  | 2s   |
+
+        </details>
+        """
+      Then the blocks of "Plan" are of the kinds "details, table, details_end"
+      And the collapsed section of "Plan" is titled "Logs"
+      When the user changes the "Took" of "Tag" in the table of "Plan" to "3s"
+      And the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        <details>
+        <summary>Logs</summary>
+
+        | Step | Took |
+        | ---- | ---- |
+        | Tag  | 3s   |
+
+        </details>
+        """
+
+    @mc
+    Scenario: A section opened on one line keeps how it was written
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        <details open><summary>Logs</summary>
+
+        Tagged.
+        </details>
+        """
+      Then the blocks of "Plan" are of the kinds "details, paragraph, details_end"
+      When the user exports "Plan" as Markdown
+      Then the exported Markdown is "# Plan\n\n<details open><summary>Logs</summary>\n\nTagged.\n</details>\n"
+
+    @mc
+    Scenario: A section written another way is kept as written
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        <details>
+        <summary>
+        Logs
+        </summary>
+
+        Tagged.
+
+        </details>
+        """
+      Then the blocks of "Plan" are of the kinds "raw"
+
+    # https://github.com/hal-c2/hal-c2/issues/877
+    @shared @backlog
     Scenario: A collapsed section opens and closes
-      When the user imports a page holding a "<details>" section titled "Logs"
-      Then the page shows "Logs" closed
+      Given a page with a collapsed section titled "Logs"
+      When the user opens the page
+      Then "Logs" is shown closed
       When the user opens "Logs"
       Then its contents are shown
       When the user closes "Logs"
       Then its contents are hidden again
 
-    Scenario: The section's contents are blocks of their own
-      Given a page with a collapsed section holding a table
-      When the user edits the table
-      Then the export writes the section with the new table inside
-
-  # https://github.com/hal-c2/hal-c2/issues/845
-  @backlog @mc @shared
+  # An image alone on its line, `![A cat](https://example.com/cat.png)`, is an image
+  # block by its `url`, beside the Space's own images by `imageId`. The MC never fetches
+  # it, and a site shows only its caption. An image with a title, inside a link (a
+  # badge) or beside other text is part of a paragraph's text.
   Rule: Images
 
+    @mc
+    Scenario: An image from the web is an image by its address
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        ![A cat](https://example.com/cat.png)
+        """
+      Then the blocks of "Plan" are of the kinds "image"
+      And "Plan" has the image "A cat" from "https://example.com/cat.png"
+      When the user exports "Plan" as Markdown
+      Then the exported Markdown is "# Plan\n\n![A cat](https://example.com/cat.png)\n"
+
+    # https://github.com/hal-c2/hal-c2/issues/877
+    @shared @backlog
     Scenario: An image from the web is shown only when the user asks
-      When the user imports a page holding an image from a web address
-      Then its description and address are shown in its place
+      Given a page with an image from a web address
+      When the user opens the page
+      Then its caption and address are shown in its place
       And nothing is fetched until the user asks to see it
 
+    # https://github.com/hal-c2/hal-c2/issues/878
+    @backlog @mc @shared
     Scenario: An image beside the file is shown from the project
       Given a page that is a project file holding an image beside it
       When the user opens the page

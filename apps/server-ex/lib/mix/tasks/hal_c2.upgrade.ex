@@ -114,11 +114,12 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   defp dev(mcs) do
     for mc <- mcs do
       case :erpc.call(mc, HalC2.Upgrade, :reload_checkout, [], 60_000) do
-        {:ok, %{changed: changed, needs_restart: restart}} ->
+        {:ok, %{changed: changed, needs_restart: restart} = report} ->
           loaded(mc, Enum.map(changed, &inspect/1), Enum.map(restart, &inspect/1))
+          lingering(mc, Enum.map(report[:lingering] || [], &inspect/1))
 
         {:error, reason} ->
-          Mix.shell().error("#{mc}: #{inspect(reason)}")
+          Mix.shell().error("#{mc}: #{HalC2.Upgrade.Release.describe(reason)}")
       end
     end
   end
@@ -149,6 +150,7 @@ defmodule Mix.Tasks.HalC2.Upgrade do
       {:ok, {{_, 200, _}, _, body}} ->
         report = JSON.decode!(body)
         loaded(base, report["changed"], report["needsRestart"])
+        lingering(base, report["lingering"] || [])
 
       {:ok, {{_, 404, _}, _, _}} ->
         Mix.raise("The MC at #{base} runs from a release; update it with --release")
@@ -319,8 +321,19 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   end
 
   defp loaded(mc, changed, restart) do
-    Mix.shell().info("#{mc}: loaded #{length(changed)} modules")
+    Mix.shell().info("#{mc}: upgraded #{length(changed)} modules in place")
     if restart != [], do: Mix.shell().info("#{mc}: restart for #{Enum.join(restart, ", ")}")
+  end
+
+  # Old code a process still runs is purged once it leaves it; an upgrade that would
+  # load the module again first is refused (`HalC2.Upgrade.Release`).
+  defp lingering(_mc, []), do: :ok
+
+  defp lingering(mc, modules) do
+    Mix.shell().info(
+      "#{mc}: old code of #{Enum.join(modules, ", ")} is still running; " <>
+        "it goes once those processes leave it, and the next upgrade of them waits for that"
+    )
   end
 
   @doc false

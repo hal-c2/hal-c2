@@ -10,7 +10,7 @@ defmodule HalC2.Subprocess.Durable do
     * `out`, an append-only file of the program's stdout. A file rather than a second
       FIFO because reading a FIFO consumes it: what a dying MC had read but not yet
       recorded would be gone. A program never blocks on it or gets SIGPIPE;
-    * `err`, likewise for stderr, only when the caller asked for a prefix;
+    * `err`, likewise for stderr, only when the caller asked for a prefix or its tail;
     * `status`, and a last line in `out`, once the program has ended;
     * `alive`, which the attached helper touches; a shim that sees it go stale ends
       the program, so one whose MC never comes back does not run on for good;
@@ -133,40 +133,49 @@ defmodule HalC2.Subprocess.Durable do
 
   @doc """
   Starts `cmd` detached for `thread_id`, and returns `{:ok, %{dir, pid, started, group}}`.
-  `opts`: `:cd` and `:env` as for a program.
+  A one-argument `cmd` receives the new durable directory before the program starts, so
+  launch files can live and be removed with it. `opts`: `:cd` and `:env` as for a program.
   """
   def launch(thread_id, cmd, opts) do
     dir = Path.join(root(), "#{hash(thread_id)}-#{System.unique_integer([:positive])}-#{now()}")
     {mark, entry} = Orphans.new_mark()
     opts = Keyword.update(opts, :env, [entry], &(Enum.to_list(&1 || []) ++ [entry]))
 
-    with :ok <- make_dir(dir),
-         :ok <- touch_files(dir),
-         {:ok, {group, pid}} <- detach(dir, cmd, opts),
-         started when is_binary(started) <- Orphans.started(pid) do
-      meta = %{
-        "thread" => thread_id,
-        "pid" => pid,
-        "started" => started,
-        "group" => group,
-        "mark" => mark,
-        "created" => now()
-      }
+    try do
+      with :ok <- make_dir(dir),
+           :ok <- touch_files(dir),
+           cmd = command(cmd, dir),
+           {:ok, {group, pid}} <- detach(dir, cmd, opts),
+           started when is_binary(started) <- Orphans.started(pid) do
+        meta = %{
+          "thread" => thread_id,
+          "pid" => pid,
+          "started" => started,
+          "group" => group,
+          "mark" => mark,
+          "created" => now()
+        }
 
-      File.write!(Path.join(dir, "meta"), JSON.encode!(meta))
-      {:ok, %{dir: dir, pid: pid, started: started, group: group}}
-    else
-      nil ->
-        kill_dir(dir)
-        {:error, :no_start_time}
+        File.write!(Path.join(dir, "meta"), JSON.encode!(meta))
+        {:ok, %{dir: dir, pid: pid, started: started, group: group}}
+      else
+        nil ->
+          kill_dir(dir)
+          {:error, :no_start_time}
 
-      {:error, reason} ->
-        File.rm_rf(dir)
-        {:error, reason}
+        {:error, reason} ->
+          File.rm_rf(dir)
+          {:error, reason}
+      end
+    rescue
+      e ->
+        remove(dir)
+        {:error, {:durable, Exception.message(e)}}
     end
-  rescue
-    e -> {:error, {:durable, Exception.message(e)}}
   end
+
+  defp command(cmd, dir) when is_function(cmd, 1), do: cmd.(dir)
+  defp command(cmd, _dir), do: cmd
 
   defp make_dir(dir) do
     HalC2.Paths.mkdir_private!(root())
@@ -188,7 +197,12 @@ defmodule HalC2.Subprocess.Durable do
   # its own and leaves it running when the port closes or the VM goes, and it gets no
   # background job's ignored signals. The shim lets go of the port's pipes first thing.
   defp detach(dir, cmd, opts) do
-    err = if opts[:stderr_prefix], do: Path.join(dir, "err"), else: "/dev/null"
+    # Kept stderr grows for the session's life, as `out` does with far more, and goes
+    # with the dir when the session stops; only its end is ever read.
+    err =
+      if opts[:stderr_prefix] || opts[:stderr_tail],
+        do: Path.join(dir, "err"),
+        else: "/dev/null"
 
     args = ["-c", @shim, "shim", dir, "#{@wait_minutes}", err | cmd]
     look = Application.get_env(:hal_c2, :durable_look_seconds, 30)
@@ -368,9 +382,9 @@ defmodule HalC2.Subprocess.Durable do
     for dir <- dirs(), entry = read(dir), into: %{}, do: {entry.thread, entry}
   end
 
-  defp dirs do
-    case File.ls(root()) do
-      {:ok, names} -> Enum.map(names, &Path.join(root(), &1))
+  defp dirs(root \\ root()) do
+    case File.ls(root) do
+      {:ok, names} -> Enum.map(names, &Path.join(root, &1))
       {:error, _} -> []
     end
   end
@@ -409,9 +423,18 @@ defmodule HalC2.Subprocess.Durable do
     _ -> nil
   end
 
-  @doc "Whether the program of `dir` is still the one started there, or has reported its end."
+  @doc """
+  Whether the program of `dir` is still the one started there, or has reported its end,
+  and its pipes are still there to reach it by.
+  """
   def attachable?(dir) do
-    File.exists?(Path.join(dir, "status")) or running?(dir)
+    pipes?(dir) and (File.exists?(Path.join(dir, "status")) or running?(dir))
+  end
+
+  # A helper opening a missing `in` would make a plain file the program never reads.
+  defp pipes?(dir) do
+    match?({:ok, %{type: :other}}, File.lstat(Path.join(dir, "in"))) and
+      File.regular?(Path.join(dir, "out"))
   end
 
   defp running?(dir) do
@@ -450,6 +473,36 @@ defmodule HalC2.Subprocess.Durable do
     status = read_status(dir)
     remove(dir)
     if status, do: {:ok, status}, else: {:error, :killed}
+  end
+
+  @doc """
+  Stops every program under `root` (this MC's by default), as `stop/2` does: no MC
+  is coming back to them (the service was removed), and waiting out their watch would
+  keep them working for minutes.
+  """
+  def stop_all(root \\ root()) do
+    Enum.each(dirs(root), &stop/1)
+  end
+
+  @doc "Up to the last `bytes` the program of `dir` wrote to stderr, if it was kept."
+  def stderr_tail(dir, bytes) do
+    path = Path.join(dir, "err")
+
+    with {:ok, %{size: size}} when size > 0 <- File.stat(path),
+         {:ok, file} <- File.open(path, [:read, :binary]) do
+      try do
+        start = max(size - bytes, 0)
+
+        case :file.pread(file, start, size - start) do
+          {:ok, data} -> data
+          _eof_or_error -> ""
+        end
+      after
+        File.close(file)
+      end
+    else
+      _none -> ""
+    end
   end
 
   @doc "Kills the program of `dir` at once and removes the dir."

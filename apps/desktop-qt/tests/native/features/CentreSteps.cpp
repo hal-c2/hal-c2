@@ -1,14 +1,21 @@
-// The thread in the window's centre, past its rows: copying a message
-// (TimelineModel::copy), the two ways into a revert, a reply's and the diff
+// The thread in the window's centre, past its rows: copying a message from
+// its copy button (TimelineModel::copy), which says beside itself whether it
+// did, the two ways into a revert, a reply's and the diff
 // panel's, which both ask Panel.diff (ThreadDiff) and so the same question,
 // and following a thread again after its MC stopped sending it
 // (ThreadStore::reload) (timeline/streaming.feature, timeline/checkpoints.feature,
 // and the reply without a checkpoint in features/desktop/native-centre.feature).
 
 #include <QClipboard>
+#include <QElapsedTimer>
 #include <QGuiApplication>
 #include <QJsonObject>
+#include <QQuickItem>
+#include <QTest>
 
+#include <memory>
+
+#include "Brick.h"
 #include "Harness.h"
 #include "RightPanelController.h"
 #include "Stream.h"
@@ -24,7 +31,48 @@ using namespace stream;
 // The agent replies the steps' thread has, in order.
 struct FakeTurns {
   QStringList replies;
+  // Since the user last clicked a copy button.
+  QElapsedTimer copied;
 };
+
+// The open thread's timeline as the Timeline brick draws it.
+Brick& timelineBrick(World& world) {
+  if (!world.brick) {
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nTimeline {}\n", QSize(820, 1400));
+    world.brick->root()->setProperty("model", QVariant::fromValue(static_cast<QObject*>(&timeline(world))));
+  }
+  return *world.brick;
+}
+
+void collect(QQuickItem* item, const QString& name, QList<QQuickItem*>& out) {
+  if (item->objectName() == name) out.append(item);
+  for (QQuickItem* child : item->childItems()) collect(child, name, out);
+}
+
+// The copy button the timeline draws for `rowId`, or null.
+QQuickItem* copyButton(World& world, const QString& rowId) {
+  QList<QQuickItem*> buttons;
+  collect(timelineBrick(world).window().contentItem(), QStringLiteral("copyMessage"), buttons);
+  for (QQuickItem* button : std::as_const(buttons)) {
+    if (button->isVisible() && button->property("rowId").toString() == rowId) return button;
+  }
+  return nullptr;
+}
+
+// What the first reply's copy button says beside itself: empty while it says nothing.
+QStringList copyNotice(World& world) {
+  QQuickItem* button = copyButton(world, world.mc.part<FakeTurns>().replies.value(0));
+  QList<QQuickItem*> found;
+  if (button) collect(button, QStringLiteral("copyNotice"), found);
+  if (found.isEmpty() || !found.first()->isVisible()) return {};
+  QStringList said;
+  for (const QString& name : {QStringLiteral("copyNoticeTitle"), QStringLiteral("copyNoticeReason")}) {
+    QList<QQuickItem*> text;
+    collect(found.first(), name, text);
+    if (!text.isEmpty() && text.first()->isVisible()) said.append(text.first()->property("text").toString());
+  }
+  return said;
+}
 
 QString threadKey(World& world) {
   const FakeStreams& fake = world.mc.part<FakeStreams>();
@@ -82,7 +130,35 @@ const Steps steps([] {
   step(QStringLiteral("the user copies the reply"), [](World& world, const Captures&, const Table&) {
     QGuiApplication::clipboard()->clear();
     const QString reply = world.mc.part<FakeTurns>().replies.value(0);
-    expect(timeline(world).copy(reply), QStringLiteral("the reply cannot be copied; %1").arg(describe(timeline(world))));
+    QQuickItem* button = nullptr;
+    world.waitFor([&] { return (button = copyButton(world, reply)) != nullptr; },
+                  [&] { return QStringLiteral("the reply's copy button; %1").arg(describe(timeline(world))); });
+    Brick& brick = timelineBrick(world);
+    QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(button));
+    world.mc.part<FakeTurns>().copied.start();
+  });
+  step(QStringLiteral("the clipboard refuses the copy"), [](World& world, const Captures&, const Table&) {
+    timeline(world).setClipboardWriter([](const QString&) { return false; });
+    // And the shell's, which the plan menu copies with.
+    world.clipboardFails = true;
+    world.reason = QStringLiteral("The clipboard could not be written.");
+  });
+  step(QStringLiteral("the copy button shows that the reply was copied"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* button = copyButton(world, world.mc.part<FakeTurns>().replies.value(0));
+    expect(button && button->property("icon").toString() == QLatin1String("check"), QStringLiteral("the copy button shows no check"));
+    expect(copyNotice(world) == QStringList{QStringLiteral("Copied!")}, QStringLiteral("beside the copy button: [%1]").arg(copyNotice(world).join(QStringLiteral(", "))));
+  });
+  step(QStringLiteral("that confirmation goes away after about a second"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return copyNotice(world).isEmpty(); }, QStringLiteral("the confirmation to go away"));
+    const qint64 shown = world.mc.part<FakeTurns>().copied.elapsed();
+    expect(shown >= 800 && shown < 3000, QStringLiteral("the confirmation went away after %1ms").arg(shown));
+    QQuickItem* button = copyButton(world, world.mc.part<FakeTurns>().replies.value(0));
+    expect(button && button->property("icon").toString() == QLatin1String("copy"), QStringLiteral("the copy button still shows a check"));
+  });
+  step(QStringLiteral("the user sees a %1 message beside the copy button with the reason").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QStringList said = copyNotice(world);
+    expect(said.size() == 2 && said.first() == c[0] && said.last() == QLatin1String("The clipboard could not be written."),
+           QStringLiteral("beside the copy button: [%1]").arg(said.join(QStringLiteral(", "))));
   });
   step(QStringLiteral("the reply's markdown is on the clipboard"), [](World&, const Captures&, const Table&) {
     const QString copied = QGuiApplication::clipboard()->text();

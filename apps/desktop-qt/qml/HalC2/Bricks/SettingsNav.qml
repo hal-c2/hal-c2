@@ -16,7 +16,7 @@ Rectangle {
     // The section showing, from the shell's route.
     readonly property var route: Shell.state.route ?? null
     readonly property string currentSection: Pages.current(route !== null && route.kind === "settings" ? route.section : "")
-    readonly property string query: search.text.trim().toLowerCase()
+    readonly property string query: search.text.trim()
     // A query set from elsewhere (settings.search); the field follows each asking.
     readonly property int searchSeq: route !== null ? (route.searchSeq ?? 0) : 0
 
@@ -37,13 +37,21 @@ Rectangle {
                         action: section.action
                     }));
         }
-        return Pages.searchRows(query, state, Keybindings.bindings).filter(offered).map(section => ({
+        return Pages.searchRows(query, state, Keybindings.bindings, commands).filter(offered).map(section => ({
                     result: true,
                     to: section.to,
                     title: section.label,
                     sectionLabel: section.detail ?? section.label,
                     action: section.action,
                     targetId: section.targetId
+                }));
+    }
+    // Every keyboard command, a key or not, as search finds them.
+    readonly property var commands: {
+        Keybindings.bindings;
+        return Keybindings.commandOptions().map(command => ({
+                    command: command,
+                    label: Keybindings.commandLabel(command)
                 }));
     }
     readonly property color foreground: Theme.palette.color("sidebarForeground", "#e4e4e7")
@@ -98,7 +106,7 @@ Rectangle {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.margins: 10
+            Layout.margins: Theme.space.sm
             Layout.bottomMargin: 4
             spacing: 8
 
@@ -113,7 +121,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: qsTr("Settings")
                 color: nav.foreground
-                font.bold: true
+                font.weight: Font.DemiBold
             }
         }
 
@@ -122,9 +130,9 @@ Rectangle {
             objectName: "search"
 
             Layout.fillWidth: true
-            Layout.leftMargin: 10
-            Layout.rightMargin: 10
-            Layout.bottomMargin: 6
+            Layout.leftMargin: Theme.space.sm
+            Layout.rightMargin: Theme.space.sm
+            Layout.bottomMargin: Theme.space.sm
             placeholderText: qsTr("Search settings")
             Accessible.name: qsTr("Search settings")
             text: nav.route !== null ? (nav.route.search ?? "") : ""
@@ -135,13 +143,18 @@ Rectangle {
                 text = "";
             }
             Keys.onDownPressed: list.forceActiveFocus()
+            // Tab goes on to the sections, at the one showing.
+            KeyNavigation.tab: list
         }
 
         ShellButton {
             objectName: "restoreDefaults"
-            Layout.leftMargin: 10
-            Layout.bottomMargin: 6
+            Layout.leftMargin: Theme.space.sm
+            Layout.bottomMargin: Theme.space.sm
             subtle: true
+            // A quiet way back, not a call to action.
+            font.weight: Font.Normal
+            tint: Theme.palette.color("inkSecondary", "#b8bdc7")
             enabled: nav.changedLabels.length > 0
             text: qsTr("Restore device defaults")
             onClicked: restoreDialog.open()
@@ -149,6 +162,7 @@ Rectangle {
 
         ListView {
             id: list
+            objectName: "sections"
 
             readonly property bool searching: nav.query.length > 0
 
@@ -201,9 +215,9 @@ Rectangle {
 
                 background: Rectangle {
                     anchors.fill: parent
-                    anchors.leftMargin: 6
-                    anchors.rightMargin: 6
-                    radius: 6
+                    anchors.leftMargin: Theme.space.sm
+                    anchors.rightMargin: Theme.space.sm
+                    radius: Theme.radiusSm
                     color: row.current ? Theme.palette.color("sidebarRowSelected", "#2a2a30") : row.hovered || row.visualFocus || row.cursor ? Theme.palette.color("sidebarRowHover", "#1c1c21") : "transparent"
                     border.color: Theme.palette.color("focus", "#3b82f6")
                     border.width: row.cursor ? 1 : 0
@@ -219,7 +233,7 @@ Rectangle {
                         Layout.fillWidth: true
                         text: row.isResult ? row.modelData.title : row.modelData.label
                         color: nav.foreground
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         elide: Text.ElideRight
                     }
 
@@ -228,7 +242,7 @@ Rectangle {
                         visible: row.isResult
                         text: row.isResult ? row.modelData.sectionLabel : ""
                         color: nav.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                         elide: Text.ElideRight
                     }
                 }
@@ -240,7 +254,7 @@ Rectangle {
                 visible: list.searching && list.count === 0
                 text: qsTr("No matching settings")
                 color: nav.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
         }
     }
@@ -255,32 +269,29 @@ Rectangle {
         scale: Shell.state.layout?.zoom ?? 1
         transformOrigin: Item.TopLeft
         width: Math.min(440, (parent?.width ?? 472) / scale - 32)
-        padding: 20
+        padding: Theme.space.xl
         title: qsTr("Restore default settings?")
         onAccepted: nav.restoreDefaults()
 
-        background: Rectangle {
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: Theme.palette.color("border", "#27272a")
-            radius: Math.min(Theme.radius, 16)
-        }
+        Overlay.modal: ShellScrim {}
+        background: ShellPopoverSurface {}
         header: Label {
             text: restoreDialog.title
-            padding: 20
-            bottomPadding: 4
-            font.pixelSize: Math.round(17 * Theme.fontScale)
+            padding: Theme.space.xl
+            bottomPadding: Theme.space.xs
+            font.pixelSize: Theme.type.title.size
             font.weight: Font.DemiBold
             color: Theme.palette.color("text", "#e4e4e7")
         }
         contentItem: ColumnLayout {
-            spacing: 12
+            spacing: Theme.space.md
 
             Label {
                 objectName: "restoreList"
                 Layout.fillWidth: true
                 text: qsTr("This will reset: %1.").arg(nav.changedLabels.join(", "))
                 color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 wrapMode: Text.Wrap
             }
 

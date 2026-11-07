@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13767
 #   apps/desktop-qt/src/native/LocalCache.cpp (the client's SQLite cache: thread list rows, thread copies and their cursors)
 #   apps/desktop-qt/src/native/ShellStore.cpp (the kept thread list, `have`, changed rows and resets)
 #   apps/desktop-qt/src/native/ThreadStore.cpp, TimelineModel.cpp (restoring a thread, resuming it, trimming what is kept)
@@ -19,7 +20,7 @@ Feature: What a client keeps between runs
   Background:
     Given a connected environment with the project "shop"
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: The thread list and the open thread show before the MC answers
     Given the user was reading a thread in "shop" when the app quit
     When the app starts while its MC is not answering
@@ -119,3 +120,12 @@ Feature: What a client keeps between runs
     Then the MC sends its whole thread list
     And the MC sends the thread whole
     And the thread shows the conversation it kept
+
+  # Upstream #13767: a write the browser store fails reports only "abort", which left the save
+  # waiting forever, so no later save ran.
+  @desktop @mobile @backlog @priority-low
+  Scenario: A failed save of what the client keeps does not stop later saves
+    Given the disk is full when the client saves its thread list
+    When the save fails and the disk has room again
+    And the thread list changes
+    Then the thread list is saved again

@@ -12,12 +12,14 @@
 #include <QTest>
 
 #include <memory>
+#include <optional>
 
 #include "Brick.h"
 #include "Harness.h"
 #include "NavigationController.h"
 #include "PlanController.h"
 #include "Stream.h"
+#include "Turn.h"
 #include "World.h"
 
 namespace {
@@ -26,9 +28,11 @@ using namespace stream;
 
 const QString kPlan = QStringLiteral("# Tax line\n\n- Add the line\n- Test it\n");
 
-// What the MC's `projects.writeFile` was asked to write.
+// What the MC's `projects.writeFile` was asked to write, and why it refuses
+// to when `refusal` is set.
 struct FakeWrites {
   QList<QJsonObject> files;
+  std::optional<QString> refusal;
 };
 
 QString downloads(World& world) {
@@ -39,26 +43,52 @@ QString downloads(World& world) {
 void choose(World& world, const QString& entry) {
   world.native().controller<PlanController>()->setDownloadDirectory(downloads(world));
   world.mc.onRpc(QStringLiteral("projects.writeFile"), [&mc = world.mc](const FakeMc::Rpc& rpc) {
-    mc.part<FakeWrites>().files.append(rpc.payload);
+    FakeWrites& writes = mc.part<FakeWrites>();
+    if (writes.refusal) return mc.refuse(rpc, *writes.refusal);
+    writes.files.append(rpc.payload);
     mc.reply(rpc, QJsonObject{{QStringLiteral("relativePath"), rpc.payload.value(QLatin1String("relativePath"))}});
   });
-  if (!world.brick) world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nTurnRequests {}\n", QSize(820, 500));
-  Brick& brick = *world.brick;
-  world.waitFor([&] { return brick.shows(QStringLiteral("Tax line")); }, QStringLiteral("the plan card to be drawn"));
+  Brick& brick = turnRequestsBrick(world);
+  world.waitFor([&] { return brick.find(QStringLiteral("planMore")) && brick.find(QStringLiteral("planMore"))->isVisible(); },
+                QStringLiteral("the plan card to be drawn"));
   brick.click(QStringLiteral("planMore"));
   world.waitFor([&] { return brick.item(entry)->isVisible(); }, QStringLiteral("the plan's actions to open"));
   brick.click(entry);
   world.sync();
 }
 
-void saveTo(World& world, const QString& path) {
+// Whether the plan's thread has a workspace to save into: without one the
+// menu only says so, and no dialog opens.
+bool hasWorkspace(World& world) {
+  return !at(world.state(QStringLiteral("turn")), QStringLiteral("plan.workspaceRoot")).toString().isEmpty();
+}
+
+// The save dialog, open.
+void askWhere(World& world) {
   choose(world, QStringLiteral("planSave"));
   Brick& brick = *world.brick;
   world.waitFor([&] { return brick.item(QStringLiteral("planSavePath"))->isVisible(); }, QStringLiteral("the save dialog to open"));
-  brick.click(QStringLiteral("planSavePath"));
-  for (const QChar ch : path) QTest::keyClick(&brick.window(), ch.toLatin1());
+}
+
+// Saves to `path`, typed over the file name the dialog starts from, or to
+// that file name when there is no `path`.
+void saveTo(World& world, const std::optional<QString>& path = {}) {
+  if (!hasWorkspace(world)) return choose(world, QStringLiteral("planSave"));
+  askWhere(world);
+  Brick& brick = *world.brick;
+  if (path) {
+    brick.click(QStringLiteral("planSavePath"));
+    QTest::keyClick(&brick.window(), Qt::Key_A, Qt::ControlModifier);
+    if (path->isEmpty()) QTest::keyClick(&brick.window(), Qt::Key_Backspace);
+    for (const QChar ch : *path) QTest::keyClick(&brick.window(), ch.toLatin1());
+  }
   brick.click(QStringLiteral("planSaveConfirm"));
   world.sync();
+}
+
+QString fieldText(World& world, const QString& name) {
+  QQuickItem* item = world.brick ? world.brick->find(name) : nullptr;
+  return item ? item->property("text").toString() : QString();
 }
 
 QList<QJsonObject> launches(World& world) {
@@ -151,8 +181,63 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("the user saves the plan to the workspace"), [](World& world, const Captures&, const Table&) {
-    saveTo(world, QStringLiteral("docs/tax-plan.md"));
-    expect(world.mc.part<FakeWrites>().files.isEmpty(), QStringLiteral("the MC was asked to write a file"));
+    saveTo(world);
+    if (!hasWorkspace(world)) expect(world.mc.part<FakeWrites>().files.isEmpty(), QStringLiteral("the MC was asked to write a file"));
+  });
+
+  // The copy's name, and the save dialog (ProposedPlanCard).
+  step(QStringLiteral("the new thread is titled %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QList<QJsonObject> launched = launches(world);
+    expect(!launched.isEmpty() && launched.last().value(QLatin1String("title")) == c[0],
+           QStringLiteral("the MC was asked to start %1").arg(launched.isEmpty() ? QStringLiteral("nothing") : show(launched.last().toVariantMap())));
+  });
+  step(QStringLiteral("the file is named %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QStringList files = QDir(downloads(world)).entryList(QDir::Files);
+    expect(files == QStringList{c[0]}, QStringLiteral("the downloads are %1").arg(files.join(u", ")));
+  });
+  step(QStringLiteral("the user (?:chooses to save the plan to the workspace|is asked where in the workspace to save it)"), [](World& world, const Captures&, const Table&) {
+    askWhere(world);
+  });
+  step(QStringLiteral("the user is asked for a path relative to the workspace"), [](World& world, const Captures&, const Table&) {
+    const QString hint = fieldText(world, QStringLiteral("planSaveHint"));
+    expect(world.brick->item(QStringLiteral("planSavePath"))->isVisible() && hint == QLatin1String("Enter a path relative to /work/shop."),
+           QStringLiteral("the dialog says \"%1\"").arg(hint));
+  });
+  step(QStringLiteral("the path starts as %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString path = fieldText(world, QStringLiteral("planSavePath"));
+    expect(path == c[0], QStringLiteral("the path reads \"%1\"").arg(path));
+  });
+  step(QStringLiteral("the user clears the path and saves"), [](World& world, const Captures&, const Table&) {
+    Brick& brick = *world.brick;
+    brick.click(QStringLiteral("planSavePath"));
+    QTest::keyClick(&brick.window(), Qt::Key_A, Qt::ControlModifier);
+    QTest::keyClick(&brick.window(), Qt::Key_Backspace);
+    brick.click(QStringLiteral("planSaveConfirm"));
+    world.sync();
+  });
+  step(QStringLiteral("nothing is written to the workspace"), [](World& world, const Captures&, const Table&) {
+    const QList<QJsonObject> files = world.mc.part<FakeWrites>().files;
+    expect(files.isEmpty(), QStringLiteral("the MC was asked to write %1").arg(files.isEmpty() ? QString() : show(files.first().toVariantMap())));
+  });
+  step(QStringLiteral("the workspace refuses the write"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<FakeWrites>().refusal = QStringLiteral("EACCES: permission denied");
+    world.reason = QStringLiteral("EACCES: permission denied");
+  });
+  step(QStringLiteral("the user can try another path"), [](World& world, const Captures&, const Table&) {
+    Brick& brick = *world.brick;
+    world.waitFor([&] { return brick.item(QStringLiteral("planSaveConfirm"))->isEnabled(); }, QStringLiteral("the save to settle"));
+    expect(brick.item(QStringLiteral("planSavePath"))->isVisible() && fieldText(world, QStringLiteral("planSavePath")) == QLatin1String("docs/tax-plan.md"),
+           QStringLiteral("the save dialog closed"));
+  });
+  step(QStringLiteral("the plan is kept whole with its title and ends with a single newline"), [](World& world, const Captures&, const Table&) {
+    const QString expected = QStringLiteral("# Tax line\n\n- Add the line\n- Test it\n");
+    QStringList kept;
+    if (!world.clipboard.isEmpty()) kept.append(world.clipboard);
+    QFile file(QDir(downloads(world)).filePath(QStringLiteral("tax-line.md")));
+    if (file.open(QIODevice::ReadOnly)) kept.append(QString::fromUtf8(file.readAll()));
+    world.waitFor([&] { return !world.mc.part<FakeWrites>().files.isEmpty() || !kept.isEmpty(); }, QStringLiteral("the plan to be kept"));
+    for (const QJsonObject& write : world.mc.part<FakeWrites>().files) kept.append(write.value(QLatin1String("contents")).toString());
+    expect(kept.size() == 1 && kept.first() == expected, QStringLiteral("the plan was kept as [%1]").arg(kept.join(QStringLiteral("], ["))));
   });
 });
 

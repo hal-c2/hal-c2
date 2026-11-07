@@ -4,10 +4,12 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import HalC2.Shell
 
-// One thread (or draft) row of the Sidebar brick: a card for pinned and
-// active threads (project, status or age, title, branch), a slim line for
-// snoozed and settled ones. Hovering or focusing the row swaps the status
-// slot for the section's actions (snooze and settle, wake, un-settle).
+// One thread (or draft) row of the Sidebar brick: the project's mark, the
+// title, and under it "project · branch"; `slim` keeps the title alone (the
+// shelves, and every row in a narrow window). The fixed slot on the right
+// shows one thing: the section's actions while hovered or focused (unpin or
+// snooze, and settle; wake; un-settle), else the jump key while its modifier
+// is held, else the status icon, else the age.
 Item {
     id: row
 
@@ -15,6 +17,8 @@ Item {
     required property bool active
     property bool slim: false
     property string projectName: ""
+    // Whether line 2 names the project; a list of one project's threads leaves it to the mark.
+    property bool projectInDetail: true
     // The project's icon as `projectIcons` publishes it; null draws a folder.
     property var projectIcon: null
     // Which sidebar group the row sits in: pinned, active, snoozed, settled
@@ -46,12 +50,14 @@ Item {
     signal unpinRequested
     signal wokeDismissed
 
-    readonly property color textColor: Theme.palette.color("sidebarForeground", "#e4e4e7")
-    readonly property color secondaryColor: Theme.palette.color("secondaryLabel", "#8b8b93")
-    // Themes may colour the project and branch lines and mark the active
-    // row with a bar; without those roles the row stays monochrome.
-    readonly property color projectColor: Theme.palette.color("projectForeground", secondaryColor)
-    readonly property color branchColor: Theme.palette.color("branchForeground", secondaryColor)
+    readonly property color textColor: Theme.palette.color("ink", "#e4e4e7")
+    readonly property color secondaryColor: Theme.palette.color("inkSecondary", "#b8bdc7")
+    readonly property color tertiaryColor: Theme.palette.color("inkTertiary", "#8b919e")
+    // Themes may colour the project and branch and mark the active row with
+    // a bar; without those roles the text stays neutral and the project's
+    // colour is only in its mark.
+    readonly property color projectColor: Theme.palette.color("projectForeground", tertiaryColor)
+    readonly property color branchColor: Theme.palette.color("branchForeground", tertiaryColor)
     readonly property color indicatorColor: Theme.palette.color("sidebarActiveIndicator", "transparent")
     readonly property color focusColor: Theme.palette.color("focus", "#3b82f6")
     readonly property bool draft: section === "draft"
@@ -67,8 +73,13 @@ Item {
     readonly property bool canSettle: !draft && !parked && item.canSettle === true
     readonly property bool canSnooze: !draft && !parked && item.canSnooze === true
     readonly property bool pinned: !draft && item.pinned === true
-    readonly property bool hasActions: !offline && (parked || canSettle || canSnooze)
+    readonly property bool hasActions: !offline && (parked || pinned || canSettle || canSnooze)
+    // The key that opens the row, shown in the status slot while the jump
+    // modifier is held.
+    readonly property string jumpLabel: item.jumpLabel ?? ""
     readonly property bool showActions: hasActions && (hover.hovered || focused)
+    // What the status slot shows: "actions", "jump", "status" or "age".
+    readonly property string slot: showActions ? "actions" : jumpLabel.length > 0 ? "jump" : statusIcon.length > 0 ? "status" : "age"
     // The status word for each state; empty when the
     // row is at rest, then the slot shows the age (or the wake time).
     readonly property string statusWord: {
@@ -102,7 +113,7 @@ Item {
     }
     readonly property string statusIcon: {
         if (row.offline) {
-            return "";
+            return "cloud";
         }
         if (row.movingTo.length > 0) {
             return "arrow-right-left";
@@ -110,7 +121,14 @@ Item {
         switch (item.status) {
         case "working":
             return "circle-dashed";
+        case "waiting":
+            return "pause";
+        case "approval":
+            return "shield";
+        case "input":
+            return "message-circle";
         case "limited":
+            return "circle-alert";
         case "failed":
             return "circle-x";
         }
@@ -124,7 +142,7 @@ Item {
     }
     readonly property color statusColor: {
         if (row.offline || row.movingTo.length > 0) {
-            return row.secondaryColor;
+            return row.tertiaryColor;
         }
         switch (item.status) {
         case "approval":
@@ -134,7 +152,7 @@ Item {
         case "working":
             return Theme.palette.color("info", "#38bdf8");
         case "waiting":
-            return row.secondaryColor;
+            return row.tertiaryColor;
         case "limited":
             return Theme.palette.color("warningForeground", "#f59e0b");
         case "failed":
@@ -146,7 +164,7 @@ Item {
         if (item.unread === true) {
             return Theme.palette.color("success", "#34d399");
         }
-        return row.secondaryColor;
+        return row.tertiaryColor;
     }
     readonly property bool showStatus: statusWord.length > 0
     // In-flight and read-ready rows recede: prominence is for rows that need
@@ -156,6 +174,15 @@ Item {
     // so a multi-line title never overflows the card.
     readonly property string oneLineTitle: (item.title ?? "").replace(/\s+/g, " ").trim()
     readonly property string ageLabel: item.wakeLabel ? item.wakeLabel : relativeAge(item.timeAt ?? item.updatedAt, ageNow)
+    // Line 2: "project · branch", either alone when the other is missing.
+    readonly property string branchName: item.branch ?? ""
+    readonly property string detailProject: projectInDetail ? projectName : ""
+    readonly property bool hasDetail: detailProject.length > 0 || branchName.length > 0
+    // DIRECTION's 44px slot: two 20px actions and the gap between them.
+    readonly property int slotWidth: Theme.icon.lg * 2 + Theme.space.xs
+    // The slot at rest, holding only the age: 28px, or the age's own width
+    // when that is less, so the title gets the rest.
+    readonly property int restingSlotWidth: Theme.icon.lg + Theme.space.sm
 
     function relativeAge(iso, now) {
         if (!iso) {
@@ -194,9 +221,11 @@ Item {
         row.snoozeRequested(p.x, p.y);
     }
 
-    implicitHeight: slim ? 36 : 78
+    // Two lines and their padding (52 at the default type), or one control's height.
+    implicitHeight: slim ? Theme.control.lg : Theme.space.sm * 2 + Theme.type.body.lineHeight + Theme.space.xxs + Theme.type.meta.lineHeight
     Accessible.role: Accessible.ListItem
     Accessible.name: item.title
+    Accessible.description: [statusWord, projectName, branchName].filter(part => part.length > 0).join(", ")
     // The keyboard opens a row from the Sidebar's list (Enter at its cursor).
     Accessible.onPressAction: row.activated()
     // A pooled delegate (the list reuses them) is hidden but stays a child of
@@ -207,29 +236,22 @@ Item {
         id: rowBackground
         objectName: "rowBackground"
         anchors.fill: parent
-        radius: 8
+        radius: Theme.radiusMd
         // Fade alpha without interpolating through black on light themes.
         readonly property color hoverColor: Theme.palette.color("sidebarRowHover", "#1c1c21")
         color: row.active || row.selected ? Theme.palette.color("sidebarRowActive", "#2a2a30") : Qt.alpha(hoverColor, hover.hovered ? hoverColor.a : 0)
         border.width: row.focused ? 1 : 0
         border.color: row.focusColor
-
-        Behavior on color {
-            ColorAnimation {
-                duration: 100
-                easing.type: Easing.OutCubic
-            }
-        }
     }
 
     Rectangle {
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.bottom: parent.bottom
-        anchors.topMargin: 8
-        anchors.bottomMargin: 8
-        width: 3
-        radius: 1.5
+        anchors.topMargin: Theme.space.sm
+        anchors.bottomMargin: Theme.space.sm
+        width: Theme.space.xxs
+        radius: Theme.radiusPill
         color: row.indicatorColor
         visible: row.active && row.indicatorColor.a > 0
     }
@@ -238,15 +260,46 @@ Item {
         id: hover
     }
 
-    // Resting the pointer on a row previews the thread.
-    ToolTip.visible: hover.hovered && !row.draft && !row.showActions && !!row.item.preview
-    ToolTip.delay: 700
-    ToolTip.text: {
-        const preview = row.item.preview;
-        if (!preview) {
-            return "";
+    // Resting the pointer on a row previews the thread in a standard
+    // tooltip: the status icon's word, the whole title, project, branch and
+    // the latest activity. A hidden list (the phone's, under the thread a tap
+    // opened) keeps its hover, so the row must be on screen too. The tip
+    // stays in the row's column, under the row (over it when the window ends
+    // first), so it covers the rows below for a moment and never the thread
+    // beside the list. It is built only while the pointer rests here.
+    readonly property ToolTip previewCard: previewLoader.item?.card ?? null
+
+    Loader {
+        id: previewLoader
+
+        active: row.visible && hover.hovered && !slotHover.hovered && !row.draft && !!row.item.preview
+        sourceComponent: Item {
+            readonly property alias card: card
+
+            ToolTip {
+                id: card
+
+                objectName: "rowPreview"
+                parent: row
+                x: 0
+                y: row.height + Theme.space.xxs
+                // Wraps rather than reach past the column; the window's edge
+                // flips it over the row.
+                width: Math.min(implicitWidth, row.width)
+                visible: true
+                delay: 600
+                text: {
+                    const preview = row.item.preview;
+                    if (!preview) {
+                        return "";
+                    }
+                    return [row.statusWord, row.oneLineTitle, preview.project, preview.branch, preview.activity].filter(line => !!line).join("\n");
+                }
+            }
+            ShellToolTip {
+                tip: card
+            }
         }
-        return [row.oneLineTitle, preview.project, preview.branch, preview.activity].filter(line => !!line).join("\n");
     }
 
     DropArea {
@@ -258,32 +311,6 @@ Item {
                 row.filesDropped(drop.urls);
                 drop.accept(Qt.CopyAction);
             }
-        }
-    }
-
-    // The key that opens the row, while the jump modifier is held.
-    Rectangle {
-        objectName: "jumpHint"
-        visible: !!row.item.jumpLabel
-        anchors.right: parent.right
-        anchors.rightMargin: 6
-        anchors.verticalCenter: parent.verticalCenter
-        z: 1
-        implicitWidth: jumpText.implicitWidth + 12
-        implicitHeight: 20
-        radius: 10
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.width: 1
-        border.color: Theme.palette.color("border", "#27272a")
-
-        Text {
-            id: jumpText
-
-            anchors.centerIn: parent
-            text: row.item.jumpLabel ?? ""
-            color: row.textColor
-            font.pixelSize: Math.round(10 * Theme.fontScale)
-            font.weight: Font.Medium
         }
     }
 
@@ -348,37 +375,231 @@ Item {
     component RowAction: ShellButton {
         subtle: true
         focusPolicy: Qt.NoFocus
-        implicitHeight: 22
-        implicitWidth: 22
-        iconSize: 14
-        iconTint: row.secondaryColor
+        implicitHeight: Theme.icon.lg
+        implicitWidth: Theme.icon.lg
+        iconSize: Theme.icon.sm
+        iconTint: hovered ? row.textColor : row.secondaryColor
     }
 
-    // The project's icon, else a folder in `folderColor`. A Loader, so a row
-    // builds only the one it draws and the layout it is not shown in builds none.
-    component ProjectMark: Loader {
-        property color folderColor: row.secondaryColor
+    RowLayout {
+        anchors.fill: parent
+        anchors.leftMargin: Theme.space.sm
+        anchors.rightMargin: Theme.space.xs
+        spacing: Theme.space.sm
 
-        Layout.alignment: Qt.AlignVCenter
-        Layout.preferredWidth: 16
-        Layout.preferredHeight: 16
-        active: parent.visible
-        sourceComponent: row.projectIcon ? iconMark : folderMark
+        // The project's mark; the project's colour is here and nowhere else
+        // on the row.
+        ProjectIcon {
+            objectName: "projectMark"
+            // Centred on the title's line, one or two lines alike.
+            Layout.alignment: Qt.AlignTop
+            Layout.topMargin: Math.round((row.height - lines.implicitHeight) / 2 + (Theme.type.body.lineHeight - size) / 2)
+            Layout.preferredWidth: size
+            Layout.preferredHeight: size
+            // DIRECTION's 14px mark.
+            size: Theme.icon.sm + Theme.space.xxs
+            icon: row.projectIcon
+            name: row.projectName
+        }
 
-        Component {
-            id: iconMark
-            ProjectIcon {
-                icon: row.projectIcon
-                size: 16
+        ColumnLayout {
+            id: lines
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignVCenter
+            spacing: Theme.space.xxs
+
+            Text {
+                objectName: "cardTitle"
+                Layout.fillWidth: true
+                text: row.oneLineTitle
+                color: row.recedes ? row.secondaryColor : row.textColor
+                font.pixelSize: Theme.type.body.size
+                font.weight: Font.Medium
+                lineHeight: Theme.type.body.lineHeight
+                lineHeightMode: Text.FixedHeight
+                verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideRight
+                maximumLineCount: 1
+            }
+
+            // "project · branch": the project keeps at most half the line,
+            // the branch takes the rest and loses its middle.
+            Item {
+                objectName: "rowDetail"
+                Layout.fillWidth: true
+                implicitHeight: Theme.type.meta.lineHeight
+                visible: !row.slim && row.hasDetail
+
+                Text {
+                    id: projectText
+                    objectName: "rowDetailProject"
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.min(implicitWidth, row.branchName.length > 0 ? parent.width / 2 : parent.width)
+                    visible: row.detailProject.length > 0
+                    text: row.detailProject
+                    color: row.projectColor
+                    font.pixelSize: Theme.type.meta.size
+                    elide: Text.ElideRight
+                }
+
+                Text {
+                    id: detailSeparator
+                    anchors.left: projectText.visible ? projectText.right : parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: projectText.visible && row.branchName.length > 0
+                    width: visible ? implicitWidth : 0
+                    text: " · "
+                    color: row.tertiaryColor
+                    font.pixelSize: Theme.type.meta.size
+                }
+
+                Text {
+                    objectName: "rowDetailBranch"
+                    anchors.left: detailSeparator.right
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: row.branchName.length > 0
+                    text: row.branchName
+                    color: row.branchColor
+                    font.pixelSize: Theme.type.meta.size
+                    elide: Text.ElideMiddle
+                }
             }
         }
 
-        Component {
-            id: folderMark
+        PluginMark {}
+
+        // The status slot: one thing at a time. It holds DIRECTION's 44px
+        // only while something occupies it (the actions, the jump key, a
+        // status); a row at rest with just its age keeps 28px or the age's
+        // width, whichever is less, and gives the title the rest.
+        Item {
+            objectName: "statusSlot"
+            Layout.preferredWidth: row.slot === "age" ? Math.min(Math.ceil(ageText.implicitWidth), row.restingSlotWidth) : row.slotWidth
+            Layout.fillHeight: true
+
+            // Over the actions their own tooltips speak, not the preview.
+            HoverHandler {
+                id: slotHover
+            }
+
+            Row {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Theme.space.xs
+                visible: row.slot === "actions"
+
+                // Built only for pinned rows, so the hundreds of others pay nothing.
+                Loader {
+                    active: row.pinned && row.showActions
+                    visible: active
+                    sourceComponent: RowAction {
+                        objectName: "unpinAction"
+                        iconName: "pin-off"
+                        Accessible.name: qsTr("Unpin thread")
+                        onClicked: row.unpinRequested()
+                    }
+                }
+
+                RowAction {
+                    id: snoozeButton
+
+                    visible: !row.pinned && row.canSnooze
+                    iconName: "clock"
+                    objectName: "snoozeAction"
+                    Accessible.name: qsTr("Snooze")
+                    onClicked: row.requestSnooze(snoozeButton)
+                }
+
+                RowAction {
+                    visible: row.canSettle
+                    iconName: "check"
+                    objectName: "settleAction"
+                    Accessible.name: qsTr("Settle")
+                    onClicked: row.settleRequested()
+                }
+
+                RowAction {
+                    visible: row.section === "snoozed"
+                    iconName: "alarm-clock-off"
+                    objectName: "wakeAction"
+                    Accessible.name: qsTr("Wake")
+                    toolTip: row.item.wakeDescription ? qsTr("Wakes %1").arg(row.item.wakeDescription) : ""
+                    onClicked: row.unsnoozeRequested()
+                }
+
+                RowAction {
+                    visible: row.section === "settled"
+                    iconName: "undo-2"
+                    objectName: "unsettleAction"
+                    Accessible.name: qsTr("Un-settle")
+                    onClicked: row.unsettleRequested()
+                }
+            }
+
+            Rectangle {
+                objectName: "jumpHint"
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                visible: row.slot === "jump"
+                width: Math.min(parent.width, jumpText.implicitWidth + Theme.space.md)
+                height: Theme.icon.lg
+                radius: Theme.radiusPill
+                color: Theme.palette.color("surfaceOverlay", "#18181b")
+                border.width: 1
+                border.color: Theme.palette.color("border", "#27272a")
+
+                Text {
+                    id: jumpText
+
+                    anchors.centerIn: parent
+                    text: row.jumpLabel
+                    color: row.textColor
+                    font.pixelSize: Theme.type.caption.size
+                    font.weight: Font.Medium
+                }
+            }
+
+            // A woke row's alarm acknowledges the wake when clicked.
+            ShellButton {
+                objectName: "wokeDismiss"
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                visible: row.slot === "status" && row.woke
+                subtle: true
+                focusPolicy: Qt.NoFocus
+                implicitWidth: Theme.icon.lg
+                implicitHeight: Theme.icon.lg
+                iconName: "alarm-clock"
+                iconSize: Theme.icon.sm
+                iconTint: Theme.palette.color("warningForeground", "#f59e0b")
+                toolTip: qsTr("Dismiss woke")
+                Accessible.name: qsTr("Dismiss woke")
+                onClicked: row.wokeDismissed()
+            }
+
             ShellIcon {
-                name: "folder"
-                size: 16
-                color: folderColor
+                objectName: "statusIcon"
+                anchors.right: parent.right
+                anchors.rightMargin: (Theme.icon.lg - size) / 2
+                anchors.verticalCenter: parent.verticalCenter
+                visible: row.slot === "status" && !row.woke
+                name: row.statusIcon
+                size: Theme.icon.md
+                color: row.statusColor
+            }
+
+            // Never elided: an age wider than the resting slot ("11mo")
+            // reaches into the gap before the title instead.
+            Text {
+                id: ageText
+                objectName: "rowAge"
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                visible: row.slot === "age"
+                text: row.ageLabel
+                color: row.tertiaryColor
+                font.pixelSize: Theme.type.meta.size
             }
         }
     }
@@ -396,202 +617,6 @@ Item {
         sourceComponent: PluginThreadPart {
             objectName: "pluginRowMark"
             thread: row.item.plugin ? { id: row.item.threadId, title: row.item.title, environmentId: row.item.environmentId, plugin: row.item.plugin } : null
-        }
-    }
-
-    // The right-hand slot: the section's actions while hovered or focused,
-    // the woke pill (click acknowledges the wake), else the status or age.
-    component StatusSlot: RowLayout {
-        spacing: 2
-
-        // A pinned row says so, and the pin unpins it. Made only for pinned
-        // rows, so the hundreds of others pay nothing. The row builds a slot
-        // for both its layouts; only the one in view gets the button.
-        Loader {
-            active: row.pinned && parent.visible
-            visible: active
-            Layout.alignment: Qt.AlignVCenter
-            sourceComponent: RowAction {
-                objectName: "unpinAction"
-                iconName: "pin"
-                iconTint: hovered || row.showActions ? row.textColor : Qt.alpha(row.secondaryColor, 0.7)
-                Accessible.name: qsTr("Unpin thread")
-                onClicked: row.unpinRequested()
-            }
-        }
-
-        RowAction {
-            id: snoozeButton
-
-            visible: row.showActions && row.canSnooze
-            iconName: "clock"
-            objectName: "snoozeAction"
-            Accessible.name: qsTr("Snooze")
-            onClicked: row.requestSnooze(snoozeButton)
-        }
-
-        RowAction {
-            visible: row.showActions && row.canSettle
-            iconName: "check"
-            objectName: "settleAction"
-            Accessible.name: qsTr("Settle")
-            onClicked: row.settleRequested()
-        }
-
-        RowAction {
-            visible: row.showActions && row.section === "snoozed"
-            iconName: "alarm-clock-off"
-            objectName: "wakeAction"
-            Accessible.name: qsTr("Wake")
-            toolTip: row.item.wakeDescription ? qsTr("Wakes %1").arg(row.item.wakeDescription) : ""
-            onClicked: row.unsnoozeRequested()
-        }
-
-        RowAction {
-            visible: row.showActions && row.section === "settled"
-            iconName: "undo-2"
-            objectName: "unsettleAction"
-            Accessible.name: qsTr("Un-settle")
-            onClicked: row.unsettleRequested()
-        }
-
-        ShellButton {
-            visible: row.woke && !row.showActions
-            subtle: true
-            focusPolicy: Qt.NoFocus
-            implicitHeight: 22
-            leftPadding: 6
-            rightPadding: 6
-            iconName: "alarm-clock"
-            iconSize: 12
-            font.pixelSize: Math.round(12 * Theme.fontScale)
-            text: qsTr("Woke")
-            tint: row.statusColor
-            iconTint: row.statusColor
-            objectName: "wokeDismiss"
-            Accessible.name: qsTr("Dismiss woke")
-            onClicked: row.wokeDismissed()
-        }
-
-        ShellIcon {
-            visible: !row.showActions && !row.woke && row.showStatus && row.statusIcon.length > 0
-            name: row.statusIcon
-            size: 14
-            color: row.statusColor
-            Layout.alignment: Qt.AlignVCenter
-        }
-
-        Text {
-            visible: !row.showActions && !row.woke
-            text: row.showStatus ? row.statusWord : row.ageLabel
-            color: row.showStatus ? row.statusColor : row.secondaryColor
-            font.pixelSize: Math.round(12 * Theme.fontScale)
-            font.weight: Font.Medium
-        }
-    }
-
-    // Slim line: dimmed folder, title, status or age.
-    RowLayout {
-        anchors.fill: parent
-        anchors.leftMargin: 10
-        anchors.rightMargin: 8
-        spacing: 10
-        visible: row.slim
-
-        ProjectMark {
-            objectName: "projectMark"
-            opacity: hover.hovered || row.focused ? 1 : 0.4
-
-            Behavior on opacity {
-                NumberAnimation {
-                    duration: 120
-                    easing.type: Easing.OutCubic
-                }
-            }
-        }
-
-        Text {
-            Layout.fillWidth: true
-            text: row.oneLineTitle
-            color: row.secondaryColor
-            font.pixelSize: Math.round(14 * Theme.fontScale)
-            elide: Text.ElideRight
-        }
-
-        PluginMark {}
-
-        StatusSlot {
-            Layout.alignment: Qt.AlignVCenter
-        }
-    }
-
-    // Card: project line, title, branch.
-    ColumnLayout {
-        anchors.fill: parent
-        anchors.leftMargin: 10
-        anchors.rightMargin: 8
-        anchors.topMargin: 8
-        anchors.bottomMargin: 8
-        spacing: 0
-        visible: !row.slim
-
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 22
-            spacing: 6
-
-            ProjectMark {
-                objectName: "cardProjectMark"
-                folderColor: row.projectColor
-            }
-
-            Text {
-                Layout.fillWidth: true
-                text: row.projectName
-                color: row.projectColor
-                font.pixelSize: Math.round(12 * Theme.fontScale)
-                font.weight: Font.Medium
-                elide: Text.ElideRight
-            }
-
-            PluginMark {}
-
-            StatusSlot {
-                Layout.alignment: Qt.AlignVCenter
-            }
-        }
-
-        Text {
-            Layout.fillWidth: true
-            Layout.topMargin: 2
-            objectName: "cardTitle"
-            text: row.oneLineTitle
-            color: row.recedes ? Qt.alpha(row.textColor, 0.72) : row.textColor
-            font.pixelSize: Math.round(14 * Theme.fontScale)
-            font.weight: Font.Medium
-            elide: Text.ElideRight
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.topMargin: 2
-            spacing: 6
-
-            ShellIcon {
-                visible: row.item.branch !== null && row.item.branch !== undefined
-                name: "git-branch"
-                size: 12
-                color: row.branchColor
-                Layout.alignment: Qt.AlignVCenter
-            }
-
-            Text {
-                Layout.fillWidth: true
-                text: row.item.branch ?? ""
-                color: row.branchColor
-                font.pixelSize: Math.round(12 * Theme.fontScale)
-                elide: Text.ElideRight
-            }
         }
     }
 }

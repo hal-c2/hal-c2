@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24229
+#   https://github.com/pingdotgg/t3code/pull/19645
+#   https://github.com/pingdotgg/t3code/pull/16838
+#   https://github.com/pingdotgg/t3code/pull/19399
 #   docs/internals/resource-telemetry.md
 #   apps/server/src/resourceTelemetry/NativeTelemetryClient.ts (sample intervals by power state, stale host power,
 #     restart backoff, give-up rule, request timeouts)
@@ -17,6 +21,7 @@
 #   apps/web/src/components/settings/ProcessSignalActions.tsx
 #   apps/tui/src/host/sections/resourceMonitor.ts (groups by purpose)
 
+@priority-low
 Feature: Resource monitor
   The resource monitor shows live CPU and memory for everything the MC runs,
   grouped by what it is for, and keeps a bounded history.
@@ -32,6 +37,19 @@ Feature: Resource monitor
     Then the MC samples every 15 seconds
     And it keeps at most one hour of samples
 
+  # Upstream #19399 stopped idle sampling. Replaces the scenario above once the MC samples
+  # only on request.
+  @backlog @mc
+  Scenario: The MC samples only on request while nobody watches
+    Given no client watches the resource monitor
+    Then the MC takes no samples on its own
+    And the monitor's interval reads "On demand"
+    When a client starts watching the resource monitor
+    Then the MC samples at the watched cadence
+    When the last client stops watching
+    Then the MC stops sampling again
+    And it keeps at most one hour of samples
+
   @mc
   Scenario: Retrying the monitor takes a sample now
     When the user retries the resource monitor
@@ -43,7 +61,7 @@ Feature: Resource monitor
     Then host power state is shown as unavailable
 
   # Likely already implemented: apps/server-ex/lib/hal_c2/diagnostics.ex (stale host power)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Host power that stops being reported is shown as stale
     Given a client reported the host's power state to the MC
     When no newer report arrives for longer than the reporting interval plus a grace period
@@ -123,6 +141,12 @@ Feature: Resource monitor
       | the platform and architecture have no monitor build               | Resource monitoring is unsupported on <platform>/<architecture>.    |
       | no monitor build or override is found for this platform           | Resource monitor binary was not found for <platform>/<architecture>. |
       | the configured monitor path is not an executable file             | Resource monitor binary at '<path>' is not executable.             |
+
+  @backlog @mc
+  Scenario: A folder given as the monitor binary is refused
+    Given the configured monitor path is a folder
+    When the MC starts the resource monitor
+    Then the monitor is unavailable with a message naming that path as not a file
 
   @backlog @desktop
   Scenario: The desktop app reports host power to the monitor
@@ -206,6 +230,14 @@ Feature: Resource monitor
     Then usage is shown for the MC and its agents, for the desktop app and for the monitor's own overhead
     And each shows its process count, CPU, memory, and read and write rates
 
+  # Upstream #19645: agents and terminals the MC runs no longer count as the desktop app's when
+  # the desktop app started the MC.
+  @backlog @desktop
+  Scenario: Agents count under the MC even when the desktop app started it
+    Given the desktop app started the MC and the MC runs agents and terminals
+    When the user watches the resource monitor
+    Then the agents and terminals count under the MC and its agents, not under the desktop app
+
   @backlog @desktop
   Scenario: Host state shows power, idle, session and thermal state
     Given the desktop app supplies host signals
@@ -247,6 +279,14 @@ Feature: Resource monitor
     Given the process monitor is stopped
     When the user retries the monitor and the retry fails
     Then the user is told "Could not restart resource monitor" with the reason
+
+  # Upstream #24229: a retry that worked left the old error on screen until a reload.
+  @backlog @desktop
+  Scenario: A retry that works clears the monitor's error
+    Given the process monitor failed to start and its error is shown
+    When the user retries the monitor and it starts
+    Then the error is no longer shown
+    And the resource timeline fills again
 
   @backlog @desktop
   Scenario: The resource timeline charts CPU and I/O for the chosen period

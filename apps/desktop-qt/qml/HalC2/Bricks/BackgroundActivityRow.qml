@@ -14,25 +14,25 @@ ColumnLayout {
     readonly property var model: Shell.state.backgroundActivity ?? null
     readonly property var profiles: model?.profiles ?? []
     readonly property bool editable: Shell.state.settingsScope?.editable ?? false
-    readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color foreground: Theme.palette.color("ink", "#e4e4e7")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
 
     objectName: "settingsRow:" + spec.id
     Layout.fillWidth: true
-    spacing: 6
+    spacing: Theme.space.sm
 
     RowLayout {
         Layout.fillWidth: true
-        spacing: 12
+        spacing: Theme.space.md
 
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 2
+            spacing: Theme.space.xxs
 
             Label {
                 text: row.spec.title
                 color: row.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
 
@@ -40,7 +40,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 text: row.spec.description
                 color: row.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
         }
@@ -61,15 +61,15 @@ ColumnLayout {
 
     RowLayout {
         Layout.fillWidth: true
-        Layout.leftMargin: 12
+        Layout.leftMargin: Theme.space.md
         visible: row.model?.advanced ?? false
-        spacing: 12
+        spacing: Theme.space.md
 
         Label {
             Layout.fillWidth: true
             text: qsTr("Git fetch interval, in seconds (0 never fetches in the background)")
             color: row.foreground
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             wrapMode: Text.Wrap
         }
 
@@ -87,15 +87,15 @@ ColumnLayout {
 
     RowLayout {
         Layout.fillWidth: true
-        Layout.leftMargin: 12
+        Layout.leftMargin: Theme.space.md
         visible: row.model?.advanced ?? false
-        spacing: 12
+        spacing: Theme.space.md
 
         Label {
             Layout.fillWidth: true
             text: qsTr("Pause background work while the host is locked")
             color: row.foreground
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             wrapMode: Text.Wrap
         }
 

@@ -11,10 +11,14 @@
 #include <QWindow>
 #include <QtLogging>
 
+#include <QtWebEngineQuick/QQuickWebEngineProfile>
+#include <QtWebEngineQuick/qtwebenginequickglobal.h>
+
 #include "PlatformWindow.h"
 #include "LayoutController.h"
 #include "AlertController.h"
 #include "BackendProcess.h"
+#include "Browser.h"
 #include "DesktopUpdateSystem.h"
 #include "LicensesController.h"
 #include "LocalFolderModel.h"
@@ -125,6 +129,8 @@ int main(int argc, char* argv[]) {
   // a development shell is hal-c2-dev (below).
   QGuiApplication::setDesktopFileName(QStringLiteral("hal-c2"));
 
+  // The in-app browser's engine shares the app's GL context: before the app.
+  QtWebEngineQuick::initialize();
   QGuiApplication app(argc, argv);
   // Closing a window closes only it; the last one quits (NativeShell::lastWindowClosed).
   QGuiApplication::setQuitOnLastWindowClosed(false);
@@ -207,6 +213,14 @@ int main(int argc, char* argv[]) {
     if (QFileInfo(argument).isDir()) launchFolders.append(QFileInfo(argument).absoluteFilePath());
   }
   if (!launchFolders.isEmpty() && SingleInstance::forward(storage.state, launchFolders)) return 0;
+
+  // The in-app browser's pages keep their cookies and storage with the home's
+  // data, apart from any other browser on the machine.
+  auto* browserProfile = new QQuickWebEngineProfile(QStringLiteral("hal-c2"), &app);
+  browserProfile->setPersistentStoragePath(QDir(storage.data).filePath(QStringLiteral("browser")));
+  browserProfile->setCachePath(QDir(storage.cache).filePath(QStringLiteral("browser")));
+  Browser::setProfile(browserProfile);
+  Browser::setSupported(true);
 
   ShellBridge bridge;
   bridge.setLocalFolderImportEnabled(!parser.isSet(urlOption) || parser.isSet(localFolderImportOption));
@@ -309,7 +323,7 @@ int main(int argc, char* argv[]) {
     QObject::connect(&native, &NativeShell::ready, &native, [launch, launchFolders] { launch(launchFolders); }, Qt::SingleShotConnection);
   }
   BackendProcess backend(backendOptions);
-  QObject::connect(&backend, &BackendProcess::ready, &native, &NativeShell::open);
+  QObject::connect(&backend, &BackendProcess::ready, &native, [&native](const QUrl& origin, const QString& token) { native.open(origin, token); });
   QObject::connect(&backend, &BackendProcess::failed, &bridge, [&bridge](const QString& message) {
     qCritical().noquote() << "[shell]" << message;
     bridge.publish(QStringLiteral("backendError"), message);

@@ -638,7 +638,7 @@ defmodule HalC2Plugins.CodeReview do
             if status == "completed",
               do:
                 "The agent finished without reporting its findings. If it could not reach the #{@tool} tool, check that the project lets agents use HAL-C2's tools.",
-              else: "The agent's turn ended (#{status}) before it reported its findings."
+              else: ended_early(status, failure)
 
           review =
             Map.merge(review, %{"status" => "failed", "error" => error, "finishedAt" => now()})
@@ -1375,6 +1375,13 @@ defmodule HalC2Plugins.CodeReview do
 
   defp minutes_from_now(minutes),
     do: DateTime.utc_now() |> DateTime.add(trunc((minutes || 5) * 60), :second)
+
+  # Why the run failed, when it said, is what the user needs to act on.
+  defp ended_early(status, %{"message" => why}) when is_binary(why) and why != "",
+    do: "The agent's turn ended (#{status}) before it reported its findings: #{why}"
+
+  defp ended_early(status, _failure),
+    do: "The agent's turn ended (#{status}) before it reported its findings."
 
   # The structured class where the provider gives one, and the words of the
   # failure where it does not.

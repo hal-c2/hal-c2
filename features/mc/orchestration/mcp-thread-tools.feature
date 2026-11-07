@@ -1,5 +1,19 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18194
+#   https://github.com/pingdotgg/t3code/pull/18360
+#   https://github.com/pingdotgg/t3code/pull/17454
+#   https://github.com/pingdotgg/t3code/pull/21027
+#   https://github.com/pingdotgg/t3code/pull/17791
+#   https://github.com/pingdotgg/t3code/pull/17823
+#   https://github.com/pingdotgg/t3code/pull/17145
+#   https://github.com/pingdotgg/t3code/pull/16782
+#   https://github.com/pingdotgg/t3code/pull/15627
+#   https://github.com/pingdotgg/t3code/pull/15617
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/24784
+#   https://github.com/pingdotgg/t3code/pull/22732
+#   https://github.com/pingdotgg/t3code/pull/22901
+#   https://github.com/pingdotgg/t3code/pull/22452
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (hal_c2_thread_list, hal_c2_thread_read, hal_c2_thread_send,
 #     hal_c2_thread_wait, hal_c2_thread_interrupt, hal_c2_thread_search, hal_c2_environment_read,
 #     hal_c2_environment_preferences_update)
@@ -49,6 +63,14 @@ Feature: Agents working with threads through MCP tools
     Then it receives the messages at positions 3 and 4, the next position and whether more remain
     And the thread's recent runs, newest first
 
+  # Upstream #18194: reading a thread names the thread that sent each agent message
+  @backlog @mc
+  Scenario: Reading a thread says which thread sent a message
+    Given the agent of "caller" sent "check the tests" to "t2"
+    When another agent reads "t2"
+    Then "check the tests" names "caller" as the thread that sent it
+    And messages the user typed name no sending thread
+
   @mc
   Scenario: The activity view includes tool work, not just messages
     When the agent of "caller" reads "t2" in the activity view
@@ -60,10 +82,30 @@ Feature: Agents working with threads through MCP tools
     When the agent of "caller" reads it with a limit of 20,000 characters
     Then the text is cut to 20,000 characters and can be read on from an offset
 
+  # Upstream #22901: limits above their maximum failed the read.
+  @backlog @mc
+  Scenario Outline: Reading a thread with a limit over its maximum uses the maximum
+    When the agent of "caller" reads "t2" with <argument> of <value>
+    Then <result>
+
+    Examples:
+      | argument          | value  | result                                  |
+      | limit             | 500    | it reads with a limit of 100            |
+      | runLimit          | 500    | it reads with a run limit of 50         |
+      | maxCharsPerItem   | 900000 | it reads with at most 50,000 characters |
+      | limit             | 0      | the read is refused                     |
+
   @mc
   Scenario: Reading without a thread id reads the caller
     When the agent of "caller" reads without naming a thread
     Then it receives "caller"
+
+  # Upstream #17823: agents paging with "cursor" had it dropped and read from the start again.
+  @backlog @mc @priority-low
+  Scenario: Reading a thread with an argument the tool does not take is refused
+    When the agent of "caller" reads "t2" with a "cursor" argument
+    Then the read is refused because "cursor" is not one of its arguments
+    And the tool's description says it takes no arguments other than its own
 
   @mc
   Scenario Outline: Sending a message picks how it is delivered
@@ -84,6 +126,15 @@ Feature: Agents working with threads through MCP tools
     Given "t2" is idle
     When the agent of "caller" sends a message to "t2" in mode "restart"
     Then it fails with code "thread_not_sendable"
+
+  # Upstream #21027: a send the orchestrator refuses reports the orchestrator's reason, the one
+  # a client would show, instead of a generic dispatch failure.
+  @backlog @mc
+  Scenario: A send the orchestrator refuses says why
+    Given "t2" has a turn running whose provider session is gone
+    When the agent of "caller" sends a message to "t2" in mode "restart"
+    Then it fails with the orchestrator's reason for refusing it
+    And not only with the name of the command that failed
 
   @mc
   Scenario: An archived thread cannot be messaged
@@ -175,6 +226,53 @@ Feature: Agents working with threads through MCP tools
     Then a new thread is created by an agent through MCP with the caller's model and modes
     And its first turn starts with that message
 
+  # Upstream #22732: a launch from outside any thread ignored the model saved in settings and
+  # always took the caller's full access.
+  @backlog @mc @priority-high
+  Scenario: A thread launched from outside any thread starts with the project's defaults
+    Given the project "demo" defaults to the model "gpt-5.5" in Supervised mode
+    And an agent outside HAL-C2 is signed in with Full access approved
+    When that agent launches a thread in "demo" with message "Find why the tests are slow"
+    Then the thread starts with "gpt-5.5" in Supervised mode
+
+  # Upstream #22732: the defaults never go past what the outside caller was approved for.
+  @backlog @mc @priority-high
+  Scenario: A thread launched from outside any thread stays within the caller's approved access
+    Given the project "demo" defaults to Full access
+    And an agent outside HAL-C2 is signed in with Supervised access approved
+    When that agent launches a thread in "demo"
+    Then the thread starts in Supervised mode
+
+  # Upstream #22732: scripts and terminals drive threads with the same thread tools, signed in
+  # for the length of one command.
+  @backlog @mc @priority-low
+  Scenario: A thread is started and messaged from the terminal
+    Given the MC is running and the terminal is in a folder of the project "demo"
+    When the user starts a thread there from the terminal with "Find why the tests are slow"
+    Then the thread's id is printed
+    And sending "Now fix it" to that id from the terminal queues it behind any running turn
+    And the terminal's sign-in is revoked when each command ends
+
+  # Upstream #22732: waiting reports that run's own outcome in the exit status.
+  @backlog @mc @priority-low
+  Scenario Outline: Waiting on a thread from the terminal exits by how its run ended
+    Given the user sent a message to a thread from the terminal and waits for it
+    When that run <ends>
+    Then the terminal prints <printed> and exits with <status>
+
+    Examples:
+      | ends                      | printed                  | status |
+      | ends with a reply         | the reply                | 0      |
+      | fails or is stopped       | the error                | 1      |
+      | waits for the user's answer | that it needs an answer | 2      |
+
+  # Upstream #22732: a launch onto a base ref that does not exist made a thread in the project folder.
+  @backlog @mc
+  Scenario: A launch onto a base ref that does not exist is refused before anything is made
+    When the agent of "caller" launches a thread in a new worktree from the base ref "no-such-branch"
+    Then the launch is refused naming the ref
+    And no thread or worktree is created
+
   @mc
   Scenario: An agent launches a thread in a new worktree on a named branch
     When the agent of "caller" launches a thread in "demo" in a new worktree based on "feature/base" on branch "feature/demo"
@@ -215,6 +313,27 @@ Feature: Agents working with threads through MCP tools
     When the agent of "caller" launches a thread in project "nowhere"
     Then it fails with code "invalid_request" and "The project was not found."
 
+  # Upstream #17791: the launch said it succeeded and the new thread failed a moment later.
+  @backlog @mc
+  Scenario: A launch in a new worktree on a base that does not exist is refused
+    Given "demo" has no branch, tag or commit named "hal-c2/b1ffc1cb" in any namespace
+    When the agent of "caller" launches a thread in "demo" in a new worktree based on "hal-c2/b1ffc1cb" without starting from origin
+    Then it fails with code "invalid_request" naming "hal-c2/b1ffc1cb", the project and its folder
+    And no thread or run is created
+
+  @backlog @mc
+  Scenario Outline: A launch on a base the MC cannot rule out goes ahead
+    Given <situation>
+    When the agent of "caller" launches a thread in "demo" in a new worktree based on "feature/base"
+    Then a new thread exists in "demo"
+
+    Examples:
+      | situation                                                               |
+      | "feature/base" exists only as "origin/feature/base"                     |
+      | the launch starts from origin and "demo" has an origin remote           |
+      | "demo" is a repository with no commit yet                               |
+      | "demo"'s folder is not a repository                                     |
+
   @mc
   Scenario: Creating threads in a batch puts them beside the caller
     When the agent of "caller" creates 3 threads with prompts
@@ -228,6 +347,18 @@ Feature: Agents working with threads through MCP tools
     When it repeats the request with request key "k1"
     Then it fails because the threads already exist
     And no extra threads are created
+
+  # Upstream #18360: a repeat of an accepted batch is answered with the threads it created, even
+  # once the project has turned its provider off; a new batch is judged by today's settings.
+  # Replaces the scenario above once the MC carries it.
+  @mc @backlog
+  Scenario: Repeating a batch with the same request key answers with the threads it created
+    Given the agent of "caller" created threads on "codex-work" with request key "k1"
+    And the project then turned "codex-work" off
+    When it repeats the request with request key "k1"
+    Then it is answered with the threads the first request created
+    And no extra threads are created
+    But a new batch on "codex-work" is refused because the provider is off for the project
 
   @mc
   Scenario Outline: Batch-created thread titles
@@ -304,6 +435,7 @@ Feature: Agents working with threads through MCP tools
   Scenario Outline: Configuring the caller's model
     When the agent of "caller" configures model <selection>
     Then <result>
+    And the result names the selection for the next turn and the model of the turn in progress
 
     Examples:
       | selection                      | result                                   |
@@ -315,12 +447,66 @@ Feature: Agents working with threads through MCP tools
     When the agent of "caller" reads the configuration of "t2"
     Then it receives the model selection, runtime mode and interaction mode of "t2"
 
+  # A switch applies from the next turn; the read tells the two apart (#1048).
+  @mc
+  Scenario: Reading the configuration of a thread switched during its turn
+    When the agent of "caller" configures model "claude-sonnet-5" on "claudeAgent"
+    And the agent of "caller" reads the configuration of "caller"
+    Then the configuration shows "claudeAgent" for the next turn and "codex" for the turn in progress
+
   @mc
   Scenario: Listing or reading a thread shows whether it can settle
     Given thread "t2" has a settlement decision
     When the agent of "caller" lists or reads "t2"
     Then the response includes the settlement state of "t2"
     And it says why "t2" can or cannot settle
+
+  # Upstream #17454: thread list and read include the thread's visible pull request links, the
+  # list list_thread_pull_requests returns, without dismissed stack members.
+  @backlog @mc
+  Scenario: Listing or reading a thread shows every pull request linked to it
+    Given "t2" is linked to pull request 42 in "demo" and pull request 7 in another repository
+    When the agent of "caller" lists or reads "t2"
+    Then the response names both pull requests with their host, repository, number and state
+
+  # Upstream #16782: agents see snooze state, can filter on it, and are told how to link a thread.
+  @backlog @mc
+  Scenario: Listing or reading a thread shows whether it is snoozed and until when
+    Given thread "t2" is snoozed until tomorrow 09:00
+    When the agent of "caller" lists or reads "t2"
+    Then the response says "t2" is snoozed until tomorrow 09:00
+
+  @backlog @mc @priority-low
+  Scenario Outline: Listing threads can be filtered by snooze
+    Given thread "t2" is snoozed and thread "t3" in "demo" is not
+    When the agent of "caller" lists threads with snoozed <filter>
+    Then the list holds <listed>
+
+    Examples:
+      | filter | listed                      |
+      | true   | "t2" and not "t3"           |
+      | false  | "t3" and not "t2"           |
+
+  @backlog @mc
+  Scenario: Agents are told how to link to a thread in their answers
+    When an agent reads the orchestration instructions
+    Then they say a thread is linked by its id with a thread link, not by a copied title
+
+  # Upstream #24784: every thread tool result carries the thread's link ready-made, so agents
+  # do not build it from a bare id or a title.
+  @backlog @mc
+  Scenario Outline: A thread tool returns a ready link for each thread it names
+    When the agent of "caller" <calls>
+    Then each thread in the result carries a thread link holding its exact id
+
+    Examples:
+      | calls                                  |
+      | lists threads                          |
+      | reads "t2"                             |
+      | searches threads for "tax"             |
+      | launches a thread                      |
+      | sends "go on" to "t2"                  |
+      | delegates a task and checks its status |
 
   @mc
   Scenario Outline: Organizing a thread
@@ -399,6 +585,19 @@ Feature: Agents working with threads through MCP tools
     When the agent of "caller" reads "t2"
     Then the tool fails with code "thread_not_found" saying "Thread t2 is no longer available."
 
+  # Upstream #22452: an agent naming a thread by its bare id gets pointed at the right one.
+  @backlog @mc @priority-low
+  Scenario Outline: Reading a thread by a bare id suggests the full id only when that thread exists
+    Given <thread>
+    When the agent of "caller" reads "4f1c"
+    Then the tool fails with code "thread_not_found" <hint>
+
+    Examples:
+      | thread                                     | hint                                               |
+      | thread "mcp:4f1c" exists                   | ending in "Did you mean `mcp:4f1c`?"               |
+      | thread "mcp:4f1c" was deleted              | with its usual message                             |
+      | no thread "mcp:4f1c" exists                | with its usual message                             |
+
   @mc
   Scenario Outline: Interrupting a thread says what happened
     Given <situation>
@@ -437,3 +636,36 @@ Feature: Agents working with threads through MCP tools
     When it repeats the interrupt with request key "k1"
     Then the answer's status is no_active_run
     And the new turn of "t2" was not interrupted
+
+  @backlog @mc
+  Scenario: A tool that fails as declared is marked as an error
+    When an agent asks to read a thread that does not exist
+    Then the tool call is marked as an error
+    And it carries the failure code "thread_not_found"
+
+  @backlog @mc
+  Scenario: A refused thread command says why
+    Given a thread has an active run
+    When an agent asks to settle the thread
+    Then the refusal carries the reason the MC gave, up to 1000 characters
+
+  # Upstream #17145: "fix it and then settle this thread" was refused because the asking turn was still running.
+  @backlog @mc
+  Scenario Outline: An agent that settles its own thread settles it when its turn ends
+    Given the agent in "Ship checkout" asks to settle "Ship checkout" during its turn
+    Then the answer says the thread settles when the turn ends
+    When <ending>
+    Then "Ship checkout" is <outcome>
+
+    Examples:
+      | ending                                                  | outcome |
+      | the turn completes                                      | settled |
+      | the turn fails                                          | active  |
+      | the user interrupts the turn                            | active  |
+      | the user queues a message before the turn completes     | active  |
+
+  @backlog @mc
+  Scenario: A settle waiting on the agent's turn is forgotten when the MC restarts
+    Given the agent in "Ship checkout" asked to settle its own thread during its turn
+    When the MC restarts before the turn ends
+    Then "Ship checkout" stays active

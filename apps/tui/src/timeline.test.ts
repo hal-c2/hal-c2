@@ -11,10 +11,12 @@ import {
   deriveTimelineEntries,
   diffStat,
   formatDuration,
+  formatWorkingTimer,
   isWorking,
   MAX_VISIBLE_WORK_LOG_ENTRIES,
   revertableCheckpoints,
   workingElapsedSeconds,
+  workingStartedAt,
 } from "./timeline.ts";
 
 const message = (
@@ -173,6 +175,14 @@ describe("formatDuration", () => {
     expect(formatDuration(299_000)).toBe("4m 59s");
     expect(formatDuration(120_000)).toBe("2m");
   });
+
+  it("writes hours, minutes and seconds, leaving out empty steps", () => {
+    expect(formatDuration(340)).toBe("340ms");
+    expect(formatDuration(4_260)).toBe("4.3s");
+    expect(formatDuration(62_000)).toBe("1m 2s");
+    expect(formatDuration(3_605_000)).toBe("1h 5s");
+    expect(formatDuration(7_260_000)).toBe("2h 1m");
+  });
 });
 
 describe("work-group collapsing", () => {
@@ -208,6 +218,31 @@ describe("working indicator", () => {
     const started = "2026-06-19T00:00:00.000Z";
     const now = Date.parse("2026-06-19T00:00:12.500Z");
     expect(workingElapsedSeconds(started, now)).toBe(12);
+  });
+
+  it("counts from the message while the turn has not begun, then from when it began", () => {
+    const requestedAt = "2026-06-19T00:00:00.000Z";
+    const starting = thread({ latestTurn: { requestedAt, startedAt: null } as never });
+    expect(workingStartedAt(starting)).toBe(requestedAt);
+    const startedAt = "2026-06-19T00:00:04.000Z";
+    const begun = thread({ latestTurn: { requestedAt, startedAt } as never });
+    expect(workingStartedAt(begun)).toBe(startedAt);
+  });
+
+  it("does not count a promoted queued turn from when it was queued", () => {
+    // Queued an hour before the agent got to it; the timer starts when it began.
+    const begun = thread({
+      latestTurn: {
+        requestedAt: "2026-06-19T00:00:00.000Z",
+        startedAt: "2026-06-19T01:00:00.000Z",
+      } as never,
+    });
+    expect(workingStartedAt(begun)).toBe("2026-06-19T01:00:00.000Z");
+  });
+
+  it("writes the timer in whole seconds, then minutes", () => {
+    expect(formatWorkingTimer(12)).toBe("12s");
+    expect(formatWorkingTimer(62)).toBe("1m 2s");
   });
 
   it("returns null when there is no start time", () => {

@@ -166,11 +166,18 @@ void SettingsScopeController::update() {
   emit changed();
 }
 
+QJsonObject SettingsScopeController::capabilitiesOf(const QString& environmentId) const {
+  // A followed environment's own config is the latest word; any other's is
+  // what the shell last heard of it.
+  if (m_capabilities.contains(environmentId)) return m_capabilities.value(environmentId);
+  return m_store->environment(environmentId).value(QLatin1String("capabilities")).toObject();
+}
+
 QStringList SettingsScopeController::lacking(const QString& capability) const {
   QStringList result;
   for (const QString& environmentId : targets()) {
     if (!m_documents->settings(environmentId)) continue;
-    if (m_capabilities.value(environmentId).value(capability) != QJsonValue(true)) result.append(environmentId);
+    if (capabilitiesOf(environmentId).value(capability) != QJsonValue(true)) result.append(environmentId);
   }
   return result;
 }
@@ -264,7 +271,9 @@ void SettingsScopeController::publish() {
   QVariantList environments;
   for (const QString& id : listed()) {
     environments.append(QVariantMap{
-        {QStringLiteral("id"), id}, {QStringLiteral("label"), label(id)}, {QStringLiteral("online"), online(id)}});
+        {QStringLiteral("id"), id}, {QStringLiteral("label"), label(id)}, {QStringLiteral("online"), online(id)},
+        {QStringLiteral("readable"), m_documents->settings(id).has_value()},
+        {QStringLiteral("capabilities"), capabilitiesOf(id).toVariantMap()}});
   }
   QVariantList projects;
   QString projectLabel = QStringLiteral("All projects");
@@ -289,6 +298,7 @@ void SettingsScopeController::publish() {
                               {QStringLiteral("message"), resolved.message},
                               {QStringLiteral("projects"), projects},
                               {QStringLiteral("environments"), environments},
+                              {QStringLiteral("targets"), QVariant(targets())},
                               {QStringLiteral("editable"), reason.isEmpty()},
                               {QStringLiteral("disabledReason"), reason},
                           });

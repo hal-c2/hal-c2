@@ -41,8 +41,11 @@ Popup {
             open();
         }
     }
+    // Dismissed without a choice: answers only for the request it showed. A
+    // request that arrives while the sheet is on its way out reopens it, which
+    // cancels the way out, so no late `closed` answers for the new one.
     onClosed: {
-        if (!chosen)
+        if (!chosen && request !== null && request.requestId === shownRequestId)
             choose(null);
     }
 
@@ -78,7 +81,7 @@ Popup {
 
             objectName: "mobileMenuItem:" + modelData.id
             width: ListView.view.width
-            height: modelData.header === true ? 36 : 48
+            height: modelData.header === true ? 36 : (modelData.subtitle ?? "").length > 0 ? 60 : 48
             enabled: usable
             Accessible.name: modelData.label
             onClicked: {
@@ -96,13 +99,27 @@ Popup {
                     color: Qt.alpha(row.tint, row.usable ? 0.8 : 0.4)
                 }
 
-                Label {
+                ColumnLayout {
                     Layout.fillWidth: true
-                    text: row.modelData.label
-                    elide: Text.ElideRight
-                    color: Qt.alpha(row.tint, row.usable || row.modelData.header === true ? 1 : 0.5)
-                    font.pixelSize: Math.round((row.modelData.header === true ? 13 : 15) * Theme.fontScale)
-                    font.weight: row.modelData.header === true ? Font.DemiBold : Font.Normal
+                    spacing: 0
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: row.modelData.label
+                        elide: Text.ElideRight
+                        color: Qt.alpha(row.tint, row.usable || row.modelData.header === true ? 1 : 0.5)
+                        font.pixelSize: Math.round((row.modelData.header === true ? 13 : 15) * Theme.fontScale)
+                        font.weight: row.modelData.header === true ? Font.DemiBold : Font.Normal
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        visible: text.length > 0
+                        text: row.modelData.subtitle ?? ""
+                        elide: Text.ElideMiddle
+                        color: Theme.palette.color("textMuted", "#a1a1aa")
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                    }
                 }
 
                 ShellIcon {

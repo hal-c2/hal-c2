@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18814
+#   https://github.com/pingdotgg/t3code/pull/9814
+#   https://github.com/pingdotgg/t3code/pull/18288
+#   https://github.com/pingdotgg/t3code/pull/8011
+#   https://github.com/pingdotgg/t3code/pull/15642
+#   https://github.com/pingdotgg/t3code/pull/11594
 #   docs/user/appearance.md (appearance, composer context, motion)
 #   apps/web/src/components/settings/ThemeSettings.tsx (mode tiles, light and dark pairing)
 #   apps/web/src/components/settings/SettingsPanels.tsx (AppearanceSettingsPanel: interface, motion, fonts)
@@ -153,7 +159,7 @@ Feature: Appearance
       And the app still uses "iris" in light
 
     # Legacy: apps/web/src/themePalette.ts (resolveThemeAppearance, resolveDesktopTheme)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A theme that has only one appearance is drawn in that appearance
       Given "Midnight" only has a dark palette and is the theme choice
       And the appearance is <mode>
@@ -174,7 +180,7 @@ Feature: Appearance
       Then the app uses "iris"
 
     # Legacy: apps/web/src/hooks/useSettings.ts (resolveEnvironmentIdentificationMode)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A theme the user made shows the version pill where a built-in theme shows artwork
       Given environment identification is set to "Artwork"
       And the environment is a Nightly build
@@ -183,7 +189,7 @@ Feature: Appearance
       And the setting still reads "Artwork"
 
     # Legacy: apps/web/src/components/settings/ThemeSettings.tsx (CustomThemeCollectionCard, variantNavigation)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A theme collection offers its variants separately for light and dark
       Given the installed collection "Dusk" has the variants "Dusk Soft", "Dusk Bold" and "Dusk Night"
       When the user looks at the "Dusk" card
@@ -193,7 +199,7 @@ Feature: Appearance
       And the dark theme is unchanged
 
     # Legacy: apps/web/src/components/settings/ThemeSettings.tsx (selectCollectionDefaults)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Choosing a theme collection uses its first light and first dark variants
       Given the installed collection "Dusk" has several light and dark variants
       When the user chooses the "Dusk" card
@@ -208,17 +214,17 @@ Feature: Appearance
       Then <effect>
 
       Examples:
-        | setting       | value | effect                                   |
-        | glass opacity | 50    | translucent surfaces are more see-through |
+        | setting       | value | effect                                           |
+        | glass opacity | 50    | toasts and floating buttons are more see-through |
 
       # Contrast runs from 50 to 200 (packages/contracts settings.ts), so 20 is not a
       # value the row can take, and below 100 it softens rather than sharpens.
-      @backlog
+      @backlog @priority-low
       Examples: Not drawn by the desktop yet
         | setting       | value | effect                                   |
         | contrast      | 20    | text and borders stand out more          |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: Interface sliders keep to their range
       When the user drags <setting> to its <end>
       Then <setting> is <value>
@@ -232,6 +238,24 @@ Feature: Appearance
         | panel animations | minimum | 0 ms   |
         | panel animations | maximum | 400 ms |
 
+    # Upstream #11594. Mobile has no fixed-width chat column, so the setting is desktop-only.
+    @backlog @desktop
+    Scenario Outline: The chat column follows the chat width setting
+      When the user chooses <width> as the chat width
+      Then the chat timeline and composer use <columns>
+
+      Examples:
+        | width       | columns             |
+        | Comfortable | the standard column |
+        | Wide        | a wider column      |
+        | Full        | the full window     |
+
+    @backlog @desktop
+    Scenario: Restore defaults puts the chat width back to Comfortable
+      Given the chat width is Full
+      When the user restores the default settings
+      Then the chat width is Comfortable
+
     @desktop
     Scenario Outline: The environment can be identified at a glance
       When the user sets environment identification to "<mode>"
@@ -244,7 +268,7 @@ Feature: Appearance
         | Version pill | the app shows a Nightly version pill           |
         | None         | the app shows no environment marker            |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: The environment's version decides whether it is a Nightly build
       Given the app's own stage is "Alpha"
       And the primary environment runs version "<version>"
@@ -272,7 +296,7 @@ Feature: Appearance
 
     # A rice's sidebar can leave off the brand band (Sidebar.showBrand); the
     # stage moves above the list then.
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile @backlog-mobile @priority-low
     Scenario Outline: A shell without the brand band still shows which build it is
       Given the app's own stage is "Dev"
       And the user's shell leaves off the sidebar's brand band
@@ -298,7 +322,7 @@ Feature: Appearance
         | Dev     | HAL-C2 (Dev)      |
 
       # The desktop has no Alpha stage of its own yet.
-      @backlog
+      @backlog @priority-low
       Examples: Not yet on the desktop
         | stage   | name              |
         | Alpha   | HAL-C2 (Alpha)    |
@@ -320,6 +344,13 @@ Feature: Appearance
         | scheme        | colors          |
         | Red & green   | green and red   |
         | Blue & orange | blue and orange |
+
+    # Upstream #18288: diff counts follow the selected colour palette
+    @backlog @desktop @priority-low
+    Scenario: Added and removed line counts use the chosen diff colors
+      Given the user has chosen other diff colors
+      When the user looks at a thread's changes and at a file change's details
+      Then the added and removed line counts use the chosen colors
 
     @desktop
     Scenario: Composer context stays visible after the first message
@@ -377,7 +408,7 @@ Feature: Appearance
       Then the panels snap to that thread's layout
 
     # Legacy: apps/web/src/components/settings/PanelAnimationsPreview.tsx
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The motion setting previews its duration and can be replayed
       Given panel animations are set to 200 ms
       When the user looks at the panel animation setting
@@ -385,6 +416,13 @@ Feature: Appearance
       When the user activates the preview
       Then the preview plays again
       And the preview does not animate when the operating system asks for reduced motion
+
+    # Upstream #18814: some status dots kept pulsing with Reduce Motion on.
+    @backlog @desktop
+    Scenario: Status dots stay still when the system asks for reduced motion
+      Given the operating system asks for reduced motion
+      When a thread is working and the connection is reconnecting
+      Then the thread's and the connection's status dots show without pulsing
 
   Rule: Fonts and text
 
@@ -406,11 +444,27 @@ Feature: Appearance
       When the user sets the interface font to "Inter" at 14
       Then the label is written in "Inter"
 
+    # Upstream #8011: the file trees held a fixed size; at the default interface size they read
+    # three quarters of it.
+    @backlog @desktop @priority-low
+    Scenario: File trees grow and shrink with the interface font size
+      Given the Files tree and a diff's file tree are open
+      When the user sets the interface font size from 16 to 20
+      Then the names in both trees grow from 12 to 15
+
     @desktop
     Scenario: A font preference can be reset to the system font
       Given the user set the interface font to "Inter"
       When the user resets the interface font
       Then the interface uses the system default font
+
+    # Upstream #9814: filtering the font picker keeps the keyboard highlight on the matches.
+    @backlog @desktop @priority-low
+    Scenario: A filtered font list can be picked from the keyboard
+      Given the user opens the interface font picker
+      When the user types "Jet"
+      Then the first matching font is highlighted
+      And pressing Enter applies it and closes the picker
 
     # Legacy: apps/web/src/components/settings/SettingsFontPreviews.tsx
     @backlog @desktop
@@ -449,13 +503,13 @@ Feature: Appearance
       Then the prompt, code and terminal fonts and sizes can be set one by one
       And leaving the terminal font empty uses the terminal's default instead of the code font
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The advanced typography choice stays on this device
       Given the user turned on advanced typography
       When the user restarts HAL-C2
       Then advanced typography is still on
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Jumping to an advanced font setting from search shows it
       Given advanced typography is off
       When the user opens the terminal font from settings search
@@ -542,8 +596,15 @@ Feature: Appearance
       And the user can search them
       And a search with no match says "No fonts found."
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Without a font list the user types the font name
       Given the computer does not let HAL-C2 list installed fonts
       When the user opens the interface font setting
       Then a plain field accepts a font family name
+
+  @backlog @desktop @priority-low
+  Scenario: Only the chosen font family is validated
+    Given the user can list every installed font family
+    When they pick one
+    Then only that family is checked as monospace
+    And a proportional pick is refused and the previous font stays

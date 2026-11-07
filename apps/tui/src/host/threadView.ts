@@ -1,4 +1,8 @@
-import type { OrchestrationThread, ProviderApprovalDecision } from "@hal-c2/contracts";
+import type {
+  OrchestrationThread,
+  ProviderApprovalDecision,
+  TimestampFormat,
+} from "@hal-c2/contracts";
 import type { PropertyMap } from "opentui-qml";
 
 import {
@@ -23,6 +27,8 @@ import {
 import { createAttachmentPreviews } from "./attachmentPreviews.ts";
 import { buildImageViewerState, type TuiImageViewerState } from "./imageViewer.ts";
 import type { TuiMode, TuiSize } from "./layoutState.ts";
+import { createCodeColours, type CodeColours } from "./codeColours.ts";
+import { createMermaidDiagrams, type MermaidDiagrams } from "./mermaidDiagrams.ts";
 import { memoryMutedThreads, type MutedThreadsStore } from "./mutedThreads.ts";
 import type { PaletteCommand } from "./paletteState.ts";
 import { chunk, styled } from "./styledText.ts";
@@ -60,6 +66,8 @@ export interface ThreadViewOptions {
   /** The host's mode switch; "compose" resolves through `composeMode`. */
   readonly setMode: (mode: TuiMode) => void;
   readonly nowMs: () => number;
+  /** How this device writes times (default: the locale's). */
+  readonly timestampFormat?: () => TimestampFormat;
   readonly palette?: Palette;
   /** The terminal draws inline images: load previews for image attachments. */
   readonly inlineImages?: boolean;
@@ -77,6 +85,10 @@ export interface ThreadViewOptions {
   readonly mutedThreads?: MutedThreadsStore | undefined;
   /** Put text on the terminal's clipboard; false when the terminal refuses. */
   readonly copyToClipboard?: ((text: string) => boolean) | undefined;
+  /** The Mermaid diagrams the MC drew, shared with the other panes (default: its own). */
+  readonly diagrams?: MermaidDiagrams | undefined;
+  /** Code coloured by its language, shared with the other panes (default: its own). */
+  readonly codeColours?: CodeColours | undefined;
 }
 
 export interface ThreadView {
@@ -203,6 +215,13 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   const muted = new Set(mutedStore.load());
   /** Turns the user stopped in this session: their work stays open once they settle. */
   const interruptedTurns = new Set<string>();
+  /**
+   * The failure the user dismissed on each thread, as its run and message: another
+   * error, or the same one from a later run, shows again.
+   */
+  const dismissedErrors = new Map<string, string>();
+  /** The error the timeline last drew, to redraw when the shell row says another. */
+  let shownError = "null";
   /** The code block or table just copied, and the timer that clears the mark. */
   let copied: string | null = null;
   let copiedTimer: ReturnType<typeof setTimeout> | null = null;
@@ -211,8 +230,13 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   const attachments = createAttachmentPreviews({
     client,
     inlineImages: options.inlineImages === true,
+    nowMs: options.nowMs,
     onChange: () => publishTimeline(),
   });
+  const diagrams = options.diagrams ?? createMermaidDiagrams(client);
+  const stopDiagrams = diagrams.listen(() => publishTimeline());
+  const codeColours = options.codeColours ?? createCodeColours();
+  const stopCodeColours = codeColours.listen(() => publishTimeline());
 
   const activeQuestion = (): PendingUserInput | null => questions[0] ?? null;
   const questionOpen = () => activeQuestion() !== null && !question.deferred;
@@ -239,11 +263,27 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     };
   };
 
+  /** The error the thread's shell row reports for its latest run. */
+  const threadError = () => {
+    const row = detail ? shellThread(detail.id) : null;
+    const message = row?.session?.lastError;
+    if (!detail || !row || !message) return null;
+    const key = `${row.latestTurn?.turnId ?? ""}\u0000${message}`;
+    return {
+      message,
+      key,
+      usageLimit:
+        row.lastErrorClass === "usage_limit" ? { resetAt: row.usageLimitResetAt ?? null } : null,
+      dismissed: dismissedErrors.get(detail.id) === key,
+    };
+  };
+
   const publishTimeline = () => {
     timeline = buildTimelineState({
       detail,
       hasOlderTurns: page?.hasMore ?? false,
       loadingOlderTurns: page?.loadingOlder ?? false,
+      unreachable: page?.unreachable ?? null,
       approvalCount: approvals.length,
       view,
       openTurns: interruptedTurns,
@@ -252,12 +292,21 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       parent: parentThread(),
       paneWidth,
       nowMs: options.nowMs(),
+      timestampFormat: options.timestampFormat?.() ?? "locale",
       palette,
       emptyHint: projectHint
         ? `${projectHint} — Enter to expand, then Alt+↑/↓ to pick a thread.`
         : "Select a thread to view its conversation.",
+      error: threadError(),
       attachments: attachments.get,
       cellPixels: cellPixels(),
+      diagrams: diagrams.get,
+      codeColours: codeColours.lines,
+      workspaceRoot:
+        detail?.worktreePath ??
+        store.getState().shell?.projects.find((project) => project.id === detail?.projectId)
+          ?.workspaceRoot ??
+        null,
     });
     state.set("timeline", timeline);
   };
@@ -348,6 +397,16 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
           },
         ]
       : []),
+    ...(viewedThreadId !== null
+      ? [
+          {
+            id: "scroll-to-end",
+            title: "Scroll to end",
+            keywords: "bottom latest jump",
+            action: "timeline.showEnd",
+          },
+        ]
+      : []),
     ...(latestReply()
       ? [
           {
@@ -377,8 +436,16 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     } else if (page?.hasMore && !page.loadingOlder) {
       pendingOlder = { detailId: detail.id, rowCount: timeline.rowCount };
       client.loadOlderThreadTurns(detail.id as never);
+      // The page lands above the row being read; the timeline keeps that row in place.
+      return;
     }
     requestScroll("top");
+  };
+
+  /** Back to the newest rows and the bottom, from wherever the window and scroll are. */
+  const showEnd = () => {
+    if (view.windowEnd !== null) setView({ windowEnd: null });
+    requestScroll("bottom");
   };
 
   const showNewer = () => {
@@ -394,6 +461,11 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     if (pendingOlder.detailId !== detail?.id) {
       pendingOlder = null;
     } else if (timeline.rowCount > pendingOlder.rowCount) {
+      // Everything still fits the window: the page just grows the timeline upward.
+      if (timeline.rowCount <= TIMELINE_WINDOW_SIZE) {
+        pendingOlder = null;
+        return;
+      }
       const end = timeline.rowCount - pendingOlder.rowCount;
       pendingOlder = null;
       setView({ windowEnd: end });
@@ -929,9 +1001,18 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       if (!next.detail) publishTimeline();
     }
 
-    if (prev && prev.detail === next.detail && prev.threadPage === next.threadPage) return;
+    if (prev && prev.detail === next.detail && prev.threadPage === next.threadPage) {
+      // The error comes from the shell row, which changes without the thread.
+      const error = JSON.stringify(threadError());
+      if (error !== shownError) {
+        shownError = error;
+        publishTimeline();
+      }
+      return;
+    }
     const threadChanged = (detail?.id ?? null) !== (next.detail?.id ?? null);
     detail = next.detail;
+    shownError = JSON.stringify(threadError());
     page = next.threadPage;
     if (threadChanged) {
       view = EMPTY_TIMELINE_VIEW;
@@ -1018,11 +1099,23 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
         if (!detail || !latestActionableProposedPlan(detail)) return false;
         implementPlan();
         return true;
+      // The working row's time moved on (WorkingIndicator's timer).
+      case "timeline.stamp": {
+        const full = field(payload, "full");
+        if (typeof full === "string") store.setStatus(full, "info");
+        return true;
+      }
+      case "timeline.tick":
+        publishTimeline();
+        return true;
       case "timeline.showOlder":
         showOlder();
         return true;
       case "timeline.showNewer":
         showNewer();
+        return true;
+      case "timeline.showEnd":
+        showEnd();
         return true;
       case "timeline.scroll": {
         const to = field(payload, "to");
@@ -1038,6 +1131,15 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       case "timeline.fold.toggle":
         setView({ expandedFolds: toggled(view.expandedFolds, String(field(payload, "id"))) });
         return true;
+      case "timeline.error.dismiss":
+      case "timeline.error.show": {
+        const error = threadError();
+        if (!detail || !error) return true;
+        if (action === "timeline.error.dismiss") dismissedErrors.set(detail.id, error.key);
+        else dismissedErrors.delete(detail.id);
+        publishTimeline();
+        return true;
+      }
       case "timeline.message.toggle":
         setView({ expandedMessages: toggled(view.expandedMessages, String(field(payload, "id"))) });
         return true;
@@ -1056,6 +1158,9 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       }
       case "timeline.table.toggle":
         setView({ collapsedTables: toggled(view.collapsedTables, String(field(payload, "key"))) });
+        return true;
+      case "timeline.diagram.toggle":
+        setView({ diagramSources: toggled(view.diagramSources, String(field(payload, "key"))) });
         return true;
       case "timeline.reply.copy": {
         const reply = latestReply();
@@ -1196,8 +1301,14 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     paletteCommands,
     dispose: () => {
       if (copiedTimer) clearTimeout(copiedTimer);
+      stopDiagrams();
+      stopCodeColours();
     },
-    settled: attachments.settled,
+    settled: async () => {
+      await attachments.settled();
+      await diagrams.settled();
+      await codeColours.settled();
+    },
     question: () => {
       const current = activeQuestion()?.questions[question.questionIndex];
       return current && !question.deferred

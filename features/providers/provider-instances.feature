@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19525
+#   https://github.com/pingdotgg/t3code/pull/22918
+#   https://github.com/pingdotgg/t3code/pull/14545
+#   https://github.com/pingdotgg/t3code/pull/16580
+#   https://github.com/pingdotgg/t3code/pull/14319
+#   https://github.com/pingdotgg/t3code/pull/16772
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/internals/providers.md (route by instance, unknown drivers keep their configuration)
 #   apps/server-ex/lib/hal_c2/settings.ex (providerInstances, provider_enabled?, instance_command/2 binaryPath of Codex and Claude)
@@ -78,20 +84,20 @@ Feature: Provider instances
       | 9lives          | Instance ID must start with a letter and use only letters, digits, '-', or '_'. |
       | codex           | An instance named 'codex' already exists.                                 |
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: An instance can be renamed and given an accent colour
     Given the instance "claudeAgent_work"
     When the user renames it to "Work Claude" and picks a green accent
     Then the model picker shows "Work Claude" in green
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: Clearing the accent colour goes back to the default
     Given the instance "claudeAgent_work" has a green accent
     When the user clears the accent colour
     Then the instance uses the default colour
 
   # Legacy: apps/web/src/components/settings/ProviderAccentColorPicker.tsx
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A typed accent colour is taken only as a complete hex value
     Given the instance "claudeAgent_work" has a green accent
     When the user types "<typed>" as its accent colour
@@ -104,7 +110,7 @@ Feature: Provider instances
       | #22C55E | becomes #22c55e        |
 
   # Legacy: apps/web/src/components/settings/ProviderAccentColorPicker.tsx (FALLBACK_ACCENT_COLOR)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The accent chooser starts from a blue when the instance has none
     Given the instance "claudeAgent_work" has no accent colour
     When the user opens its accent colour chooser
@@ -126,7 +132,7 @@ Feature: Provider instances
       | codex            | names only with the driver's own label     | Codex              |
 
   # Legacy: packages/client-runtime/src/state/providerInstanceDisplay.ts (providerInstanceInitials, shouldShowInstanceBadge)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario Outline: An instance's icon carries a badge only where the brand alone would be ambiguous
     Given <situation>
     When the user sees the icon of the instance
@@ -140,8 +146,16 @@ Feature: Provider instances
       | two agents from the ACP registry that are different agents                  | have no badge               |
       | two instances of the same agent from the ACP registry                       | have a badge with initials  |
 
+  # Upstream #14545: disabled instances counted toward the badge of their enabled sibling.
+  @backlog @desktop @mobile @priority-low
+  Scenario: A disabled instance does not make its sibling carry a badge
+    Given "Codex" and "Codex Work" are instances of the same provider with no accent colour
+    When the user disables "Codex Work"
+    Then "Codex" has no badge
+    And the threads that ran on "Codex Work" still show its badge
+
   # Legacy: packages/client-runtime/src/state/providerInstanceDisplay.ts (providerInstanceInitials, normalizeProviderAccentColor)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario Outline: A badge shows up to two initials of the instance's name
     Given the instance is shown as "<name>"
     When the user sees its badge
@@ -155,8 +169,14 @@ Feature: Provider instances
       | Claude Code CLI | CC      |
       | 🙂 Smile       | 🙂S      |
 
+    # Upstream #22918: punctuation in a name was taken as an initial, so "Codex (hub)" read "C(".
+    Examples: punctuation is not an initial
+      | name           | initials |
+      | Codex (hub)    | CH       |
+      | Codex 'hub'    | CH       |
+
   # Legacy: packages/client-runtime/src/state/providerInstanceDisplay.ts (normalizeProviderAccentColor)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: A stored accent colour that is not a complete hex value is ignored
     Given the settings give the instance "claudeAgent_work" the accent "green"
     When the user sees the instance in a picker or a thread row
@@ -220,6 +240,14 @@ Feature: Provider instances
     Then that instance is listed as unavailable
     And later settings changes are still applied
 
+  # Upstream #16580: provider settings saved while the provider list is starting are not lost
+  @backlog
+  Scenario: An instance saved while the MC is still starting is not lost
+    Given the MC is still reading its provider instances at startup
+    When the user saves a new provider instance
+    Then the instance appears in the provider list once startup finishes
+    And settings saved earlier never replace it
+
   Scenario: Sensitive environment variables are stored separately and never sent back
     When the user adds the sensitive variable "ANTHROPIC_AUTH_TOKEN" to a Claude instance
     Then the value is stored in the MC's secrets
@@ -240,7 +268,7 @@ Feature: Provider instances
     When the user removes that variable
     Then Grok no longer runs with it
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-high
   Scenario: A client with view-only access cannot change providers
     Given the client has view-only access to the environment
     When the user opens provider settings
@@ -282,6 +310,19 @@ Feature: Provider instances
       | failing its startup checks   | Unavailable               |
       | signed in                    | Authenticated             |
 
+  # Said once: "Disabled", and only what the environment's message adds to it.
+  @desktop @mobile @backlog-mobile @backlog-mc
+  Scenario Outline: A disabled provider says so once
+    Given a provider that is disabled, with the message "<message>"
+    When the user opens the provider list
+    Then the provider reads "Disabled", explained by "<detail>"
+
+    Examples:
+      | message                                                                 | detail                      |
+      | Codex Work is disabled in HAL-C2 settings.                              |                             |
+      |                                                                         |                             |
+      | Codex Work is disabled in HAL-C2 settings. A server URL is configured.  | A server URL is configured. |
+
   @backlog @desktop
   Scenario Outline: A provider that works but cannot be fully verified says so
     Given a provider that is <state>
@@ -308,7 +349,6 @@ Feature: Provider instances
     Examples:
       | state                      | detail                                                                 |
       | not checked yet            | Waiting for the server to report installation and authentication details. |
-      | disabled                   | This provider is installed but disabled for new sessions in HAL-C2.    |
       | not installed              | CLI not detected on PATH.                                              |
       | failing its startup checks | The provider failed its startup checks.                                |
 
@@ -327,7 +367,7 @@ Feature: Provider instances
 
   # The Node server persists each instance's last status under its instance id and sorts
   # built-in providers first (providerStatusCache.ts hydrateCachedProvider, orderProviderSnapshots).
-  @backlog
+  @backlog @priority-low
   Scenario: Providers are listed in a stable order
     Given Codex, Claude, Cursor, Grok, OpenCode, Antigravity and a custom "acme" instance are configured
     When a client lists the providers
@@ -355,7 +395,7 @@ Feature: Provider instances
     When the MC restarts and a client lists the providers
     Then "codex_work" is not listed with that status
 
-  @backlog
+  @backlog @priority-low
   Scenario: A last known model list keeps what is still configured
     Given Codex's last known models included a custom model the user has since removed
     And a built-in model it has not reported again
@@ -363,7 +403,7 @@ Feature: Provider instances
     Then the removed custom model is not listed
     And the built-in model is still listed
 
-  @backlog
+  @backlog @priority-low
   Scenario: A damaged last known status is ignored
     Given the last known status of Codex cannot be read
     When the MC restarts and a client lists the providers
@@ -391,6 +431,7 @@ Feature: Provider instances
     When a thread runs on that instance
     Then the "grok" executable found on the path is started
 
+  # Upstream #2829: the new orchestrator expands a binary path in the user's home directory
   Scenario Outline: A binary path in the user's home directory is expanded
     Given the <provider> instance has the binary path "<path>"
     When a thread runs on that instance
@@ -433,3 +474,39 @@ Feature: Provider instances
       | provider | instance    | path                        |
       | Codex    | codex_work  | /opt/codex-work/bin/codex   |
       | Claude   | claude_work | /opt/claude-work/bin/claude |
+
+  # Upstream #16772: disabled providers stop checking for CLI updates
+  @backlog @mc @priority-low
+  Scenario: A disabled provider is not checked for updates
+    Given the Codex instance "codex_work" is disabled
+    When the MC refreshes the providers' status
+    Then the MC does not look for the binary of "codex_work" or check it for updates
+
+  # Upstream #16772: disabled providers stop checking for CLI updates
+  @backlog @mc @plugin-antigravity @priority-low
+  Scenario: A disabled Antigravity records no account changes
+    Given the Antigravity instance is disabled
+    When the user signs in or out of Antigravity elsewhere
+    Then the Antigravity instance shows no account and no model list
+
+  # Upstream #19525: an escaped quote in launch arguments stays a literal character.
+  @backlog @priority-low
+  Scenario: An escaped quote in launch arguments is kept as written
+    Given a provider's launch arguments are `--name it\'s --verbose`
+    When the provider starts
+    Then it is given "--name", "it's" and "--verbose" as three arguments
+
+  # Upstream #14319: cached discovery hid new models after a CLI update.
+  @backlog
+  Scenario: Updating a provider's CLI refreshes the models of every account using it
+    Given two Codex accounts use the same Codex CLI
+    When the user updates the Codex CLI from one of them
+    Then both accounts list the models the new CLI offers
+    And only one update command runs
+
+  # Upstream #14319: a failed discovery after an update no longer reports success.
+  @backlog
+  Scenario: An update whose new CLI cannot be checked is not reported as done
+    Given the user updates the Codex CLI
+    When reading the updated CLI's models fails
+    Then the user is told the update finished but could not be verified

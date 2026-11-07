@@ -5,7 +5,7 @@ defmodule HalC2.ClusterPropTest do
   `HalC2.Cluster` runs against a fake transport (`HalC2.Prop.ClusterTransport`) and a
   model of the member table: for each other machine its fingerprint, label, addresses
   and whether it is a member, plus which members are connected. Commands admit and
-  remove machines, gossip tables in from members (newer than anything seen, with a
+  remove machines, switch members off and on again, gossip tables in from members (newer than anything seen, with a
   clock an hour ahead, or older than what is known), connect members, fire the gossip
   timer, change version and restart the process. After each one the cluster must say
   what the model says: in `peers/0` (what discovery tries), `status/0`, the tables it
@@ -15,7 +15,10 @@ defmodule HalC2.ClusterPropTest do
   `HalC2.Cluster.Discovery` runs against an attempt the test holds open, so the test
   decides when each attempt ends and how: one attempt at a time, polls during one
   coalesce into a single next attempt, a crashed attempt only ends early, and an idle
-  discovery always has its next attempt scheduled.
+  discovery always has its next attempt scheduled. An attempt reports which members it
+  reached: one it missed is offline (giving up at once here), left out of the attempts
+  after the first until it is reached or asked for with `reconnect/1`, and one no longer
+  reported is forgotten.
 
   `HalC2.Cluster.Discovery.connect/3` is checked against a reachability the test picks:
   it tries the documented candidates in order, stops at the first that reaches the
@@ -24,6 +27,10 @@ defmodule HalC2.ClusterPropTest do
 
   `HalC2.Cluster.merge/3` is checked on its own: any three updates of one machine's
   entry merge to one table whatever their order, grouping or repetition.
+
+  The join property runs Auth and Cluster together: a bad proof or certificate does not
+  consume the invite, a valid live one admits once, an expired or replayed one admits
+  nobody, and no cluster invite can be exchanged for a client session.
   """
 
   use ExUnit.Case, async: false
@@ -66,7 +73,8 @@ defmodule HalC2.ClusterPropTest do
 
   # --- model ------------------------------------------------------------------
 
-  # members: id => %{fp, label, addresses, member}; connected: ids of connected members
+  # members: id => %{fp, label, addresses, member, off}; connected: ids of connected
+  # members
   def initial_state, do: %{own: HalC2.Environment.id(), members: %{}, connected: MapSet.new()}
 
   def command(state) do
@@ -76,6 +84,7 @@ defmodule HalC2.ClusterPropTest do
     frequency([
       {4, {:call, __MODULE__, :admit, [any_id, fingerprint(), label(), addresses(), version()]}},
       {3, {:call, __MODULE__, :remove, [oneof([any_id | known])]}},
+      {3, {:call, __MODULE__, :switch, [oneof([any_id | known]), boolean()]}},
       {4, {:call, __MODULE__, :gossip, [gossip_entries(state)]}},
       {3, {:call, __MODULE__, :nodeup, [oneof(["stranger" | @ids])]}},
       {2, {:call, __MODULE__, :peers, []}},
@@ -130,9 +139,25 @@ defmodule HalC2.ClusterPropTest do
   end
 
   def next_state(state, _result, {:call, _, :remove, [id]}) do
-    if id != state.own and member?(state, id),
-      do: drop(put_in(state.members[id].member, false), id),
+    if id != state.own and (member?(state, id) or off?(state, id)),
+      do: drop(update_in(state.members[id], &%{&1 | member: false, off: false}), id),
       else: state
+  end
+
+  def next_state(state, _result, {:call, _, :switch, [id, on]}) do
+    cond do
+      id == state.own ->
+        state
+
+      on and off?(state, id) ->
+        update_in(state.members[id], &%{&1 | member: true, off: false})
+
+      not on and member?(state, id) ->
+        drop(update_in(state.members[id], &%{&1 | member: false, off: true}), id)
+
+      true ->
+        state
+    end
   end
 
   def next_state(state, _result, {:call, _, :gossip, [entries]}) do
@@ -172,7 +197,8 @@ defmodule HalC2.ClusterPropTest do
           do: addresses |> Enum.filter(&is_binary/1) |> Enum.uniq(),
           else: []
         ),
-      member: member
+      member: member,
+      off: false
     }
 
     put_in(state.members[id], entry)
@@ -180,6 +206,7 @@ defmodule HalC2.ClusterPropTest do
 
   defp drop(state, id), do: update_in(state.connected, &MapSet.delete(&1, id))
   defp member?(state, id), do: match?(%{member: true}, state.members[id])
+  defp off?(state, id), do: match?(%{off: true}, state.members[id])
 
   def postcondition(state, {:call, _, :admit, [id, fp, _, _, version]} = call, {result, seen}) do
     next = next_state(state, result, call)
@@ -201,6 +228,20 @@ defmodule HalC2.ClusterPropTest do
     expected =
       cond do
         id == state.own -> {:error, :cannot_remove_self}
+        member?(state, id) or off?(state, id) -> :ok
+        true -> {:error, :not_a_member}
+      end
+
+    result == expected and observed?(state, next_state(state, result, call), seen)
+  end
+
+  def postcondition(state, {:call, _, :switch, [id, on]} = call, {result, seen}) do
+    expected =
+      cond do
+        id == state.own -> {:error, :cannot_switch_off_self}
+        not member?(state, id) and not off?(state, id) -> {:error, :not_a_member}
+        on and off?(state, id) -> :ok
+        on -> {:error, :not_switched_off}
         member?(state, id) -> :ok
         true -> {:error, :not_a_member}
       end
@@ -238,12 +279,14 @@ defmodule HalC2.ClusterPropTest do
 
   def postcondition(state, {:call, _, :status, []}, {result, seen}) do
     expected =
-      for {id, %{member: true} = m} <- state.members do
+      for {id, m} <- state.members, m.member or m.off do
         %{
           "id" => id,
           "label" => m.label || id,
           "addresses" => m.addresses,
-          "connected" => id in state.connected
+          "connected" => id in state.connected,
+          "off" => m.off,
+          "offline" => false
         }
       end
 
@@ -293,7 +336,8 @@ defmodule HalC2.ClusterPropTest do
          fp: entry["fingerprint"],
          label: entry["label"],
          addresses: entry["addresses"],
-         member: Cluster.member?(entry)
+         member: Cluster.member?(entry),
+         off: Cluster.off?(entry)
        }}
     end
   end
@@ -315,13 +359,14 @@ defmodule HalC2.ClusterPropTest do
   end
 
   def remove(id), do: observe(Cluster.remove(id))
+  def switch(id, on), do: observe(Cluster.switch(id, on))
 
   def gossip(entries) do
     %{members: members, id: own} = :sys.get_state(Cluster)
 
     seen =
       for {_, entry} <- members,
-          time <- [entry["admittedAt"], entry["removedAt"], entry["updatedAt"]],
+          time <- [entry["admittedAt"], entry["removedAt"], entry["offAt"], entry["updatedAt"]],
           is_integer(time),
           reduce: 0,
           do: (latest -> max(latest, time))
@@ -412,45 +457,80 @@ defmodule HalC2.ClusterPropTest do
 
     alias HalC2.Cluster.Discovery
 
-    def initial_state, do: %{running: true, again: false}
+    @ids ~w(m1 m2 m3)
+
+    # offline: the members it missed last and has not reached since; skip: what the
+    # running attempt was told to leave out, which is nothing for the first one.
+    def initial_state,
+      do: %{running: true, again: false, offline: MapSet.new(), skip: MapSet.new()}
 
     def command(state) do
       frequency(
         [
           {4, {:call, __MODULE__, :poll, []}},
+          {2, {:call, __MODULE__, :reconnect, [oneof(@ids)]}},
           {1, {:call, __MODULE__, :restart, []}}
         ] ++
           if(state.running,
-            do: [{5, {:call, __MODULE__, :finish, [oneof([:ok, :crash])]}}],
+            do: [{5, {:call, __MODULE__, :finish, [oneof([:ok, :crash, results()])]}}],
             else: []
           )
       )
     end
 
+    defp results,
+      do: map(oneof(@ids), oneof([true, false, :skipped]))
+
     def precondition(state, {:call, _, :finish, _}), do: state.running
     def precondition(_state, _call), do: true
 
-    def next_state(state, _result, {:call, _, :poll, []}),
-      do: if(state.running, do: %{state | again: true}, else: %{state | running: true})
+    def next_state(state, _result, {:call, _, :poll, []}), do: poll_state(state)
 
-    def next_state(state, _result, {:call, _, :finish, [_]}),
-      do: %{running: state.again, again: false}
+    def next_state(state, _result, {:call, _, :reconnect, [id]}),
+      do: poll_state(%{state | offline: MapSet.delete(state.offline, id)})
 
-    def next_state(_state, _result, {:call, _, :restart, []}),
-      do: %{running: true, again: false}
+    def next_state(state, _result, {:call, _, :finish, [how]}) do
+      offline =
+        if is_map(how) do
+          for {id, result} <- how,
+              result == false or (result == :skipped and id in state.offline),
+              into: MapSet.new(),
+              do: id
+        else
+          state.offline
+        end
 
-    def postcondition(state, call, discovery) do
+      skip = if state.again, do: offline, else: state.skip
+      %{state | running: state.again, again: false, offline: offline, skip: skip}
+    end
+
+    def next_state(_state, _result, {:call, _, :restart, []}), do: initial_state()
+
+    defp poll_state(%{running: true} = state), do: %{state | again: true}
+    defp poll_state(state), do: %{state | running: true, skip: state.offline}
+
+    def postcondition(state, call, {discovery, skip}) do
       next = next_state(state, nil, call)
 
       # Idle, it has the next attempt scheduled; running, nothing else is.
       discovery != nil and discovery.task != nil == next.running and
         discovery.again == next.again and
-        discovery.timer != nil == not next.running
+        discovery.timer != nil == not next.running and
+        discovery.offline == next.offline and
+        MapSet.new(Map.keys(discovery.failing)) == next.offline and
+        skip == next.skip
     end
 
     def poll do
       running? = :sys.get_state(Discovery).task != nil
       Discovery.poll()
+      if not running?, do: await_attempt()
+      settle()
+    end
+
+    def reconnect(id) do
+      running? = :sys.get_state(Discovery).task != nil
+      :ok = Discovery.reconnect(id)
       if not running?, do: await_attempt()
       settle()
     end
@@ -477,7 +557,9 @@ defmodule HalC2.ClusterPropTest do
 
     def await_attempt do
       receive do
-        {:attempt, pid} -> Process.put(:attempt, pid)
+        {:attempt, pid, skip} ->
+          Process.put(:attempt, pid)
+          Process.put(:skip, skip)
       after
         # A failsafe, not a wait: the attempt announces itself as it starts.
         5_000 -> Process.put(:attempt, nil)
@@ -485,14 +567,16 @@ defmodule HalC2.ClusterPropTest do
     end
 
     defp settle do
-      if Process.whereis(Discovery), do: :sys.get_state(Discovery)
+      if Process.whereis(Discovery), do: {:sys.get_state(Discovery), Process.get(:skip)}
     end
   end
 
-  property "discovery runs one attempt at a time and never stops looking",
+  property "discovery runs one attempt at a time, never stops looking and knows who it missed",
     numtests: HalC2.Prop.numtests(100),
     max_size: 30 do
     Application.put_env(:hal_c2, :cluster_poll_interval, :timer.hours(1))
+    Application.put_env(:hal_c2, :cluster_give_up_after, 0)
+    Application.put_env(:hal_c2, :cluster_offline_interval, :timer.hours(1))
 
     forall cmds <- commands(Scheduling) do
       trap_exit do
@@ -500,15 +584,15 @@ defmodule HalC2.ClusterPropTest do
         started = :ets.new(:attempts, [:public])
 
         # Each attempt says whether another is still alive as it starts.
-        attempt = fn ->
+        attempt = fn skip ->
           others = for {pid} <- :ets.tab2list(started), Process.alive?(pid), do: pid
           if others != [], do: send(test, :overlap)
           :ets.insert(started, {self()})
-          send(test, {:attempt, self()})
+          send(test, {:attempt, self(), skip})
 
           receive do
             {:release, :crash} -> exit(:boom)
-            {:release, :ok} -> :ok
+            {:release, how} -> how
           end
         end
 
@@ -536,7 +620,7 @@ defmodule HalC2.ClusterPropTest do
 
   defp flush_attempts do
     receive do
-      {:attempt, _} -> flush_attempts()
+      {:attempt, _, _} -> flush_attempts()
     after
       0 -> :ok
     end
@@ -569,16 +653,17 @@ defmodule HalC2.ClusterPropTest do
 
   # Entries for one machine, with times close enough that updates tie.
   defp member_entry do
-    let {fp, label, addresses, admitted, removed, updated, version} <-
+    let {fp, label, addresses, admitted, removed, off, updated, version} <-
           {oneof(@fingerprints), oneof(["box", "laptop", nil]),
            oneof([["10.0.0.1:4370"], ["10.0.0.2:5000"]]), range(1, 3), oneof([nil, 2, 3]),
-           range(1, 3), oneof(["1.0.0", "1.0.1"])} do
+           oneof([nil, 2, 3]), range(1, 3), oneof(["1.0.0", "1.0.1"])} do
       %{
         "fingerprint" => fp,
         "label" => label,
         "addresses" => addresses,
         "admittedAt" => admitted,
         "removedAt" => removed,
+        "offAt" => off,
         "updatedAt" => updated,
         "version" => version
       }
@@ -661,5 +746,107 @@ defmodule HalC2.ClusterPropTest do
       {2, let({a, b, c, d} <- ip(), do: "#{a}.#{b}.#{c}.#{d}")},
       {1, oneof(["10.0.0.1:0", "10.0.0.1:x", "a:b:c"])}
     ])
+  end
+
+  # --- joining with a one-time invite ------------------------------------------
+
+  property "a cluster invite admits only its certificate's entry, once and before expiry",
+    numtests: HalC2.Prop.numtests(30) do
+    forall {attack, expired} <- {oneof([:none, :wrong_proof, :wrong_entry]), boolean()} do
+      trap_exit do
+        HalC2.Prop.scratch_home("cluster-join")
+        ClusterTransport.install()
+
+        HalC2.Prop.start_services([
+          {HalC2.Store, path: HalC2.Store.home_path()},
+          HalC2.Auth,
+          Cluster
+        ])
+
+        key = X509.PrivateKey.new_ec(:secp256r1)
+        cert = X509.Certificate.self_signed(key, "/CN=property-joiner.hal-c2")
+        pin = Cluster.fingerprint(cert)
+
+        entry = %{
+          "id" => "property-joiner",
+          "fingerprint" => pin,
+          "label" => "Property joiner",
+          "addresses" => [],
+          "version" => HalC2.Upgrade.version()
+        }
+
+        {:ok, %{"id" => invite, "credential" => token}} = HalC2.Auth.create_cluster_invite()
+        {:ok, request, private} = HalC2.Cluster.Join.challenge(invite)
+        {:ok, answer} = Cluster.join_challenge(request)
+        own_pin = :sys.get_state(Cluster).fingerprint
+
+        {:ok, admission} =
+          HalC2.Cluster.Join.seal(request, answer, token, own_pin, entry, cert, key, private)
+
+        attack_result =
+          case attack do
+            :none ->
+              :ok
+
+            :wrong_proof ->
+              bad = %{admission | "proof" => Base.encode64(:binary.copy(<<0>>, 32))}
+              Cluster.join_admit(bad)
+
+            :wrong_entry ->
+              wrong = %{entry | "fingerprint" => own_pin}
+
+              {:ok, bad} =
+                HalC2.Cluster.Join.seal(
+                  request,
+                  answer,
+                  token,
+                  own_pin,
+                  wrong,
+                  cert,
+                  key,
+                  private
+                )
+
+              Cluster.join_admit(bad)
+          end
+
+        attack_ok =
+          attack == :none or
+            (match?({:error, _}, attack_result) and Cluster.status()["members"] == [])
+
+        if expired,
+          do: Application.put_env(:hal_c2, :auth_now, HalC2.Auth.now() + :timer.minutes(6))
+
+        result = Cluster.join_admit(admission)
+        replay = Cluster.join_admit(admission)
+        members = Cluster.status()["members"]
+        stored_pin = get_in(:sys.get_state(Cluster).members, [entry["id"], "fingerprint"])
+
+        outcome =
+          attack_ok and HalC2.Auth.exchange(token) == :error and
+            if expired do
+              match?({:error, :link_invalid}, result) and members == []
+            else
+              match?({:ok, _}, result) and match?({:error, :link_invalid}, replay) and
+                length(members) == 1 and hd(members)["id"] == entry["id"] and stored_pin == pin
+            end
+
+        Application.delete_env(:hal_c2, :auth_now)
+        HalC2.Prop.stop_services()
+        drain()
+
+        outcome
+        |> when_fail(
+          IO.inspect(%{
+            attack: attack,
+            expired: expired,
+            attack_result: attack_result,
+            result: result,
+            replay: replay,
+            members: members
+          })
+        )
+      end
+    end
   end
 end

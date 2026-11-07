@@ -1,4 +1,13 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20306
+#   https://github.com/pingdotgg/t3code/pull/22846
+#   https://github.com/pingdotgg/t3code/pull/12513
+#   https://github.com/pingdotgg/t3code/pull/19291
+#   https://github.com/pingdotgg/t3code/pull/18461
+#   https://github.com/pingdotgg/t3code/pull/16917 (covered: an idle Codex thread's session is released; background work keeps it)
+#   https://github.com/pingdotgg/t3code/pull/19750
+#   https://github.com/pingdotgg/t3code/pull/17715
+#   https://github.com/pingdotgg/t3code/pull/17223
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (run.updated, run-attempt.updated, provider-turn.updated,
 #     node.updated, turn-item.updated, message.updated, runtime-request.updated,
@@ -31,6 +40,8 @@
 #   apps/server/src/orchestration-v2/RestartContinuation.ts (which cut-off turns are continued, once)
 #   packages/contracts/src/orchestrationV2.ts (OrchestrationV2LimitRecovery)
 #   docs/user/ (continuing threads after an update)
+#   https://github.com/pingdotgg/t3code/pull/15323
+#   https://github.com/pingdotgg/t3code/pull/15604
 Feature: Recovering from restarts and releasing idle sessions
   Provider processes that cannot go on through a restart (reattach-after-restart.feature)
   are killed at the next boot, before any thread goes on. At boot the engine ends
@@ -68,9 +79,9 @@ Feature: Recovering from restarts and releasing idle sessions
     And a program starts
     Then the provider process and its background command have been killed
 
-  # hal-c2/hal-c2#387: the boot kills the provider's process group, which a command
-  # that started a session or group of its own has left.
-  @backlog @mc
+  # hal-c2/hal-c2#387: a command that started a session or group of its own has left
+  # the provider's process group, so the boot goes by the mark it still carries.
+  @mc
   Scenario: A command a dead MC's provider ran in a session of its own is killed at the next boot
     Given a provider process with a command in a session of its own was running when the MC died
     When the MC restarts
@@ -91,20 +102,20 @@ Feature: Recovering from restarts and releasing idle sessions
     Then the subagent thread is settled or interrupted
     And it is not left running
 
-  @backlog @mc
+  @mc
   Scenario: Work cut off by a restart says the restart ended it
     Given thread "t1" had a running turn with a running command
     When the MC restarts
     Then the command says it was cancelled because the server restarted before the provider work completed
 
-  @backlog @mc
+  @mc
   Scenario: A clean shutdown ends running turns before the MC stops
     Given thread "t1" has a running turn with a running command
     When the MC shuts down cleanly
     Then the run and the command are ended before the MC stops
     And the command says it was cancelled because the server shut down before the provider work completed
 
-  @backlog @mc
+  @mc
   Scenario: A turn that had finished but not yet captured its checkpoint is not cut off
     Given the provider turn of "t1" had ended and its checkpoint was still to be captured when the MC stopped
     When the MC restarts
@@ -131,6 +142,45 @@ Feature: Recovering from restarts and releasing idle sessions
     Then "t1" receives one continuation turn
     And the continuation names the background command the restart ended
 
+  # Upstream #19291: a run that ended to wait on a monitor or subagent never woke after an update,
+  # and its delegating parent took the interim message as the result.
+  @backlog @mc @priority-high
+  Scenario Outline: A run that ended to wait on work the restart stopped is continued
+    Given project "demo" continues threads after a server update
+    And thread "t1" ended its turn to wait on <work>
+    When the MC restarts
+    Then "t1" receives one continuation turn
+    And a task delegated to "t1" reports "interrupted" until that continuation ends, not "completed"
+
+    Examples:
+      | work                  |
+      | a monitor             |
+      | a subagent            |
+      | a background task     |
+
+  @backlog @mc
+  Scenario: A shutdown releases every provider session at once
+    Given ten threads have provider sessions open
+    When the MC shuts down cleanly
+    Then the sessions are released side by side, not one after another
+    And none is left running for the next MC to resume beside it
+
+  # Upstream #12513: helpers that ignored SIGTERM hung shutdown and survived the backend;
+  # they are now killed a second after the stop request.
+  @backlog @mc
+  Scenario: A helper process that ignores the stop request does not outlive the MC
+    Given a provider's helper process ignores the request to stop
+    When the MC shuts down
+    Then the helper is killed a second after it was asked to stop
+    And the MC finishes shutting down
+
+  @backlog @mc @priority-high
+  Scenario: Agents a killed MC left running are stopped before new ones start
+    Given an MC was killed while its agents were still running
+    When a new MC on the same files launches its first agent
+    Then the agents the killed MC left are stopped first
+    And terminals the user started are left alone
+
   @mc
   Scenario: A cut-off thread continues after the restart when the project allows it
     Given project "demo" continues threads after a server update
@@ -156,7 +206,7 @@ Feature: Recovering from restarts and releasing idle sessions
       | the run was waiting on the user rather than running     |
       | the provider conversation has no native thread to resume |
 
-  @backlog @mc
+  @mc
   Scenario: A thread switched to another provider since its cut-off turn is not continued
     Given project "demo" continues threads after a server update
     And thread "t1" was mid-turn on "codex" when the MC stopped
@@ -164,19 +214,65 @@ Feature: Recovering from restarts and releasing idle sessions
     When the MC restarts
     Then no continuation message is sent to "t1"
 
-  @backlog @mc
+  @mc
   Scenario: A continuation cut off by a second restart before its agent started is sent on
     Given project "demo" continues threads after a server update
     And the continuation turn of "t1" had not reached its provider when the MC stopped again
     When the MC restarts
     Then "t1" is continued from that turn
 
-  @backlog @mc
+  @mc
   Scenario: A cut-off turn is continued only once
     Given project "demo" continues threads after a server update
     And thread "t1" was mid-turn on a provider conversation that can resume
     When the MC restarts and its recovery runs twice for "t1"
     Then "t1" receives one "Continue where you left off." message
+
+  # Upstream #18461: a turn that crashed the server was otherwise resumed after every restart.
+  @backlog @mc
+  Scenario: A thread is continued at most three times in a row without the user
+    Given project "demo" continues threads after a server update
+    And "t1" has been continued after 3 restarts in a row without a message from the user
+    And thread "t1" was mid-turn on a provider conversation that can resume
+    When the MC restarts
+    Then no continuation message is sent to "t1"
+    And "t1" waits for the user's next message
+    When the user sends "Try again" to "t1"
+    Then "t1" may be continued after a later restart again
+
+  # Upstream #20306: the restart guard counts only continuations requested within five minutes
+  # of the interrupted run finishing; rapid loops still stop at three.
+  @backlog @mc
+  Scenario: Continuations far apart do not use up the restart limit
+    Given project "demo" continues threads after a server update
+    And "t1" has been continued after 3 restarts, each after more than five minutes of work
+    And thread "t1" was mid-turn on a provider conversation that can resume
+    When the MC restarts
+    Then "t1" receives "Continue where you left off." from the server
+
+  @backlog @mc
+  Scenario Outline: A cut-off thread that should not be answered for is not continued
+    Given project "demo" continues threads after a server update
+    And thread "t1" was mid-turn when the MC stopped
+    And <reason>
+    When the MC restarts
+    Then no continuation message is sent to "t1"
+
+    Examples:
+      | reason                                                         |
+      | the restart closed an approval "t1" was waiting on             |
+      | the restart closed a question "t1" was asking the user         |
+      | the restart closed a request for a secret from "t1"            |
+      | the provider's turn had already ended                          |
+      | "t1" is settled                                                |
+      | "t1" is snoozed until tomorrow                                 |
+
+  @backlog @mc
+  Scenario: A continuation is checked again when it is delivered
+    Given project "demo" continues threads after a server update
+    And the continuation of "t1" was recorded but not yet delivered
+    When "t1" is archived before it is delivered
+    Then no continuation message is sent to "t1"
 
   # The runtime is the MC's process driving the provider; its provider process
   # goes down with it.
@@ -263,6 +359,48 @@ Feature: Recovering from restarts and releasing idle sessions
       | starts                                    |
       | launches a subagent in the background     |
       | reports progress on a subagent it resumed |
+
+  @backlog @mc @plugin-claude
+  Scenario: A Claude workflow that keeps reporting progress outlives the background cap
+    Given thread "t1" left a Claude workflow running in the background
+    And the workflow reports progress at least once every hour
+    When four hours have passed since the turn ended
+    And the MC checks for idle sessions
+    Then the provider process of "t1" keeps running
+    And "t1" lists the workflow as background work
+
+  @backlog @mc @plugin-claude
+  Scenario: A Claude workflow silent for the whole background cap is stopped
+    Given thread "t1" left a Claude workflow running in the background
+    And the workflow has reported nothing for four hours
+    When the MC checks for idle sessions
+    Then the provider process of "t1" stops
+
+  @backlog @mc
+  Scenario: Stopping a thread settles its native subagents' own threads
+    Given thread "t1" has a provider-native subagent running with its own thread
+    When the user stops "t1"
+    Then the subagent reads as stopped, not running, and its timer stops
+    And the subagent's thread no longer shows a working turn
+
+  @backlog @mc
+  Scenario: A restart settles a native subagent the stop left running
+    Given thread "t1" was stopped while its native subagent's record still read as running
+    When the MC restarts
+    Then the subagent and its thread read as stopped
+
+  # Upstream #22846: ending a native subagent's turn left the provider turn under it running.
+  @backlog @mc
+  Scenario Outline: Ending a native subagent's turn also ends its provider turn
+    Given thread "t1" has a provider-native subagent with a running turn
+    When <event>
+    Then the subagent's provider turn no longer reads as running
+
+    Examples:
+      | event                                   |
+      | the user stops the subagent             |
+      | the user interrupts "t1"                |
+      | the MC restarts after it stopped        |
 
   @mc @plugin-codex
   Scenario: A Codex background command keeps its session past the idle timeout
@@ -358,12 +496,12 @@ Feature: Recovering from restarts and releasing idle sessions
     When Codex reports the command exited with "bye"
     Then "t1" runs a turn telling Codex the background command finished
 
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario Outline: A Codex background command's wake says how the command ended
     Given thread "t1" left the Codex command "npm run dev" running in the background
     When Codex reports the command ended <ending>
     Then the wake of "t1" is marked <outcome> and reads "<summary>"
-    And Codex is told "<told>"
+    And its turn tells Codex "<told>"
 
     Examples:
       | ending               | outcome   | summary                               | told                                               |
@@ -371,20 +509,20 @@ Feature: Recovering from restarts and releasing idle sessions
       | with exit code 2     | failed    | Background command exited with code 2 | Background command completed (exit 2): npm run dev |
       | without an exit code | unknown   | Background command finished           | Background command completed: npm run dev          |
 
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario: A Codex background command's wake carries the end of its output
     Given thread "t1" left a Codex command running in the background
     When the command ends after writing 5,000 characters of output
     Then Codex is told the command ended, followed by "Output tail:" and the last 1,000 characters
     And a command line longer than 200 characters is cut there and ends with "..."
 
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario: A Codex background command wakes the thread once
     Given thread "t1" left a Codex command running in the background
     When Codex reports the command ended twice
     Then "t1" runs one turn for it
 
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario Outline: A Codex command that ends without having been left running wakes nothing
     Given thread "t1" has a Codex command <situation>
     When the command ends
@@ -397,27 +535,27 @@ Feature: Recovering from restarts and releasing idle sessions
       | left running by a turn that failed      |
       | left running by a subagent              |
 
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario: A Codex background command that will not end fails the stop
     Given thread "t1" left a Codex command running in the background
     When the user stops "t1" and Codex still lists the command's terminal after being asked to end it
     Then the stop fails saying the background terminal remained active after termination
 
-  @backlog @mc
+  @mc
   Scenario: A wake for finished background work waits behind the running turn
     Given thread "t1" has a running turn and work left running in the background
     When the provider reports the background work finished
     Then "t1" gets one message from the agent reading "Background task completed."
     And it runs after the running turn
 
-  @backlog @mc
+  @mc
   Scenario: A wake that cannot be delivered is tried again
     Given thread "t1" left work running in the background
     When the work finishes and the wake cannot be delivered at first
     Then the MC tries again, waiting 100 milliseconds at first and never more than 5 seconds between tries
     And "t1" is woken once
 
-  @backlog @mc
+  @mc
   Scenario Outline: A wake for a thread the user put away is dropped
     Given thread "t1" left work running in the background and was then <state>
     When the work finishes
@@ -453,21 +591,27 @@ Feature: Recovering from restarts and releasing idle sessions
     When the MC checks for idle sessions
     Then that provider process stops
 
-  @backlog @mc
+  @mc
   Scenario: A provider process that will not close is still released
     Given the provider process of "t1" does not exit when it is asked to
     When the session of "t1" is released
     Then the session is recorded as stopped after at most 30 seconds
     And "t1" can take its next message
 
-  @backlog @mc
+  # Blocked on hal-c2/hal-c2#904: each MC thread has a provider session of its own, and a
+  # provider's native subagents are entities of their parent thread, so no session has
+  # several threads to serve. Carry upstream's attached-threads sessions, or drop these.
+  @backlog @blocked @mc
   Scenario: A session serving several threads stays until the last one leaves
     Given one provider session serves thread "t1" and a subagent thread of "t1"
     When the subagent thread leaves the session while its turn is running
     Then only the subagent thread's turn is interrupted
     And the provider process keeps running for "t1"
 
-  @backlog @mc
+  # Blocked on hal-c2/hal-c2#904: each MC thread has a provider session of its own, and a
+  # provider's native subagents are entities of their parent thread, so no session has
+  # several threads to serve. Carry upstream's attached-threads sessions, or drop these.
+  @backlog @blocked @mc
   Scenario: A provider that serves one thread per session refuses a second thread
     Given a provider whose sessions serve one thread each has a session for "t1"
     When another thread is attached to that session
@@ -509,3 +653,48 @@ Feature: Recovering from restarts and releasing idle sessions
     And "t1" records a limit recovery with auto-resume for that run and reset
     When 14:00 passes
     Then nothing is sent to "t1"
+
+  @backlog @mc @priority-high
+  Scenario: A restart does not report a delegated child's interrupted result as final
+    Given "continue threads after restarts" is on
+    When the MC restarts mid-delegation
+    Then the child's interrupted result is held until its continuation settles
+
+  @backlog @mc @priority-high
+  Scenario: A restart keeps queued work waiting and work the user stopped stopped
+    Given "continue threads after restarts" is on and a thread has held queued work and a stopped run
+    When the MC restarts
+    Then the queued work waits for recovery and the stopped run is not continued
+
+  @backlog @mc @priority-high
+  Scenario: A settled thread stays asleep after a restart
+    Given a completed thread has leftover background tool or subagent records
+    When the MC restarts
+    Then the thread is not woken
+    And its background cleanup note reaches the provider once, on the next manual turn
+
+  # Upstream #19750: work a subagent started belongs to that subagent, so losing it leaves
+  # the parent waiting on the subagent. The note names the subagent to resume.
+  @backlog @mc @plugin-claude
+  Scenario: A restart that cut a Claude subagent's background command wakes the thread
+    Given "continue threads after restarts" is on
+    And a background Claude subagent of "t1" started a background command and ended its turn
+    And "t1" ended its turn waiting on the subagent
+    When the MC restarts and the command could not be kept
+    Then "t1" is continued with a note naming the subagent by its id
+    And the note says the work will not report back on its own and should be resumed and awaited
+
+  @backlog @mc @plugin-codex
+  Scenario: A turn cut by a restart is told which native subagents it was waiting on
+    Given "continue threads after restarts" is on
+    And a running Codex turn of "t1" was waiting on a native subagent
+    When the MC restarts and the turn could not be kept
+    Then the continuation of "t1" names the subagent by its own thread id
+    And says it will not report back on its own
+
+  @backlog @mc
+  Scenario: A wake that never started does not hide the run that lost the work
+    Given "continue threads after restarts" is on
+    And a wake of "t1" was still starting when the MC stopped, after a settled run whose background work was lost
+    When the MC restarts
+    Then "t1" is continued from the settled run that lost the work

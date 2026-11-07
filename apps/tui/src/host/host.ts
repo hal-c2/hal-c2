@@ -35,7 +35,11 @@ import { createClusterController, NO_CLUSTER_STATE } from "./clusterState.ts";
 import { createComposer } from "./composerState.ts";
 import { detailCommands } from "./detailCommands.ts";
 import { memoryMutedThreads, type MutedThreadsStore } from "./mutedThreads.ts";
+import { memoryTimestampFormat, type TimestampFormatStore } from "./timestampFormatSetting.ts";
+import { TIMESTAMP_FORMAT_LABELS, TIMESTAMP_FORMATS } from "../timestampFormat.ts";
 import { createFilesController, type TuiFilesState } from "./filesState.ts";
+import { createCodeColours } from "./codeColours.ts";
+import { createMermaidDiagrams } from "./mermaidDiagrams.ts";
 import { createSpaceController } from "./spaceState.ts";
 import {
   buildTuiLayoutState,
@@ -166,6 +170,10 @@ export interface HostOptions {
   readonly cellPixels?: () => CellPixels | null;
   /** Where this device keeps the threads whose alerts it muted (default: this run only). */
   readonly mutedThreads?: MutedThreadsStore;
+  /** Where this device keeps how it writes times (default: this run only). */
+  readonly timestampFormat?: TimestampFormatStore;
+  /** Where this device keeps the Space pane's expanded project sections (default: this run only). */
+  readonly projectSections?: MutedThreadsStore;
   /**
    * The HAL-C2 version this client shipped as. A server on an older one is
    * offered its update; without it no server is known to be behind.
@@ -175,6 +183,8 @@ export interface HostOptions {
   readonly dismissedUpdates?: MutedThreadsStore;
   /** Sees every action dispatched, from QML, keymaps or the palette (tests, debugging). */
   readonly trace?: (action: string, payload: unknown) => void;
+  /** Run `run` after `ms`, returning its cancel (default: setTimeout); tests fire it by hand. */
+  readonly after?: (ms: number, run: () => void) => () => void;
   /** Warnings from before the host existed (keymap.json conflicts, missing plugin directories). */
   readonly startupWarnings?: ReadonlyArray<string>;
   /** keymap.json's entries, which the QML engine merges over the published layers. */
@@ -302,6 +312,7 @@ export function createHost(options: HostOptions): Host {
   let editorRows: number | undefined;
   let popoverRows = 0;
   let settlementSupported = false;
+  let autoSettleOptOutSupported = false;
   let scrollTop = 0;
   // PgUp / PgDn on a pane that scrolls itself (settings, the diff): the brick
   // named by `pane` scrolls by `by` rows each time `seq` changes.
@@ -392,13 +403,22 @@ export function createHost(options: HostOptions): Host {
   // Republish a key only when what it is derived from changed, so bindings
   // on other keys are not re-evaluated by every store emit.
   let last: StoreState | null = null;
+  // Mermaid diagrams the MC drew, shared by replies, pages and the file viewer.
+  const diagrams = createMermaidDiagrams(client);
+  // Code coloured by its language, shared the same way.
+  const codeColours = createCodeColours();
+  const timestampFormats = options.timestampFormat ?? memoryTimestampFormat();
+  let timestampFormat = timestampFormats.load();
   const threadView = createThreadView({
     store,
     client,
     state,
+    diagrams,
+    codeColours,
     mode: () => mode,
     setMode: (next) => setMode(next),
     nowMs: () => Date.parse(now()),
+    timestampFormat: () => timestampFormat,
     inlineImages: (options.inlineImages ?? null) !== null,
     ...(options.cellPixels ? { cellPixels: options.cellPixels } : {}),
     // The image preview fills the conversation pane (ImageLightbox).
@@ -734,6 +754,8 @@ export function createHost(options: HostOptions): Host {
   // The file browser and viewer take the conversation pane's place.
   const files = createFilesController({
     client,
+    diagrams,
+    codeColours,
     cwd: () => filesFor?.cwd ?? selectedWorkspace()?.cwd ?? null,
     height: () => layout.panesRows,
     width: () => layout.chatWidth,
@@ -770,6 +792,8 @@ export function createHost(options: HostOptions): Host {
   const home = options.homeDir ?? NodeOS.homedir();
   const space = createSpaceController({
     client,
+    diagrams,
+    codeColours,
     height: () => layout.panesRows,
     width: () => layout.chatWidth,
     setOpen: (open) => {
@@ -783,7 +807,7 @@ export function createHost(options: HostOptions): Host {
       }
       publishLayout();
       if (open) setMode("space");
-      else if (mode === "space") setMode(restingMode());
+      else if (mode === "space" || mode === "pagePrompt") setMode(restingMode());
       palette.sync();
     },
     publish: (next) => state.set("space", next),
@@ -819,6 +843,7 @@ export function createHost(options: HostOptions): Host {
       dispatch("thread.open", { key: threadKey(threadId) });
     },
     projects: () => homeProjects().map((project) => ({ id: project.id, title: project.title })),
+    ...(options.projectSections ? { projectSections: options.projectSections } : {}),
     showFile: (projectId, path) => {
       const project = homeProjects().find((entry) => entry.id === projectId);
       if (!project) {
@@ -831,6 +856,12 @@ export function createHost(options: HostOptions): Host {
       filesFor = null;
     },
     commandsChanged: () => palette.sync(),
+    // The prompt below the page writes on it: it re-aims, and ^P moves the keys.
+    promptChanged: () => {
+      if (mode === "space" || mode === "pagePrompt") setMode("compose");
+      composer?.relayout();
+    },
+    askInPrompt: () => composer?.dispatch("composer.page.ask"),
   });
   // Adding a project is a page over the conversation (mode "project").
   const addProject = createAddProjectController({
@@ -955,7 +986,7 @@ export function createHost(options: HostOptions): Host {
     const worktree = browsing !== null && browsing !== project.workspaceRoot;
     return [
       {
-        title: worktree ? "Open the project's copy in a Space" : "Open this file in a Space",
+        title: worktree ? "Edit the project's copy as a page" : "Edit as a page",
         action: "space.openProjectFile",
         payload: { projectId, path },
       },
@@ -982,9 +1013,11 @@ export function createHost(options: HostOptions): Host {
     client,
     store,
     state,
+    page: () => space.prompt(),
     mode: () => mode,
     setMode,
     chatWidth: () => layout.chatWidth,
+    addProject: () => void addProject.dispatch("project.add", {}),
     popover: () => popoverViewport(),
     question: () => threadView.question(),
     inlineImages: (options.inlineImages ?? null) !== null,
@@ -1324,6 +1357,17 @@ export function createHost(options: HostOptions): Host {
       case "terminal.toggle":
         terminal.toggle();
         return true;
+      case "timeline.code.run": {
+        // A reply's shell block runs like a project script, without becoming the
+        // project's last-run script (pingdotgg/t3code#13060).
+        const command = payloadField(payload, "command");
+        if (
+          typeof command === "string" &&
+          !terminal.runAction({ name: "Chat code block", command })
+        )
+          store.setStatus("Open a thread to run a command in its terminal.", "warning");
+        return true;
+      }
       case "terminal.open":
         terminal.open();
         return true;
@@ -1432,6 +1476,26 @@ export function createHost(options: HostOptions): Host {
         repaint();
         return true;
       }
+      case "timestampFormat.pick":
+        composer!.pick({
+          title: "time format",
+          options: TIMESTAMP_FORMATS.map((format) => ({
+            label: TIMESTAMP_FORMAT_LABELS[format],
+            value: format,
+          })),
+          index: TIMESTAMP_FORMATS.indexOf(timestampFormat),
+          onChoose: (value) => handle("timestampFormat.set", { format: value }),
+        });
+        return true;
+      case "timestampFormat.set": {
+        const format = TIMESTAMP_FORMATS.find((entry) => entry === payloadField(payload, "format"));
+        if (!format) return true;
+        timestampFormat = format;
+        timestampFormats.save(format);
+        threadView.dispatch("timeline.tick", null);
+        store.setStatus(`Times → ${TIMESTAMP_FORMAT_LABELS[format]}`, "success");
+        return true;
+      }
       case "theme.set": {
         const id = payloadField(payload, "id");
         if (!COLOUR_THEME_CHOICES.some((choice) => choice.id === id)) return true;
@@ -1480,6 +1544,7 @@ export function createHost(options: HostOptions): Host {
     setMode,
     restingMode,
     settlementSupported: () => settlementSupported,
+    autoSettleOptOutSupported: () => autoSettleOptOutSupported,
     copyToClipboard: options.copyToClipboard,
     offline: () => offline(),
     now,
@@ -1531,6 +1596,7 @@ export function createHost(options: HostOptions): Host {
   const ready = client.getServerConfig().then(
     (config) => {
       settlementSupported = config.environment?.capabilities?.threadSettlement === true;
+      autoSettleOptOutSupported = config.environment?.capabilities?.threadAutoSettleOptOut === true;
       publishSidebar();
       // The shortcuts the user gave project actions join the client's own chords.
       state.set("projectActionKeys", projectActionKeymap(config.keybindings ?? []));
@@ -1590,20 +1656,41 @@ export function createHost(options: HostOptions): Host {
   }
   // A server restart reads here as the connection dropping and coming back.
   // What the user was doing (the thread, the draft, open panels) is the
-  // host's own state and stays; the status line says what happened.
+  // host's own state and stays; the status line says what happened. A drop
+  // that is over within a second and a half says nothing, as on the desktop.
+  const after =
+    options.after ??
+    ((ms: number, run: () => void) => {
+      const timer = setTimeout(run, ms);
+      return () => clearTimeout(timer);
+    });
+  let cancelDropNotice: (() => void) | null = null;
+  let dropAnnounced = false;
   const unsubscribeConnection = client.subscribeConnection((phase) => {
     const before = connectionPhase;
     connectionPhase = phase;
     state.set("connection", connectionState(phase));
     if (phase === "reconnecting") space.connectionLost();
     if (before === "connected" && phase === "reconnecting") {
-      store.setStatus("The server went away; reconnecting…", "busy");
+      cancelDropNotice?.();
+      cancelDropNotice = after(RECONNECT_GRACE_MS, () => {
+        cancelDropNotice = null;
+        dropAnnounced = true;
+        store.setStatus("The server went away; reconnecting…", "busy");
+      });
     } else if (before === "reconnecting" && phase === "connected") {
-      store.setStatus("The server is back; carrying on where you were.", "success");
+      cancelDropNotice?.();
+      cancelDropNotice = null;
+      if (dropAnnounced) {
+        dropAnnounced = false;
+        store.setStatus("The server is back; carrying on where you were.", "success");
+      }
     }
     // A report belongs to the socket it was sent on: a new connection sends it again.
     if (phase === "connected") {
       clientActivity.renew();
+      // A diagram the lost connection refused is asked for again.
+      diagrams.retry();
       // Whether threads can move depends on the cluster this connection reaches.
       void cluster.refresh();
       // And the server may have come back on another version.
@@ -1657,6 +1744,7 @@ export function createHost(options: HostOptions): Host {
       disposeStatusRow();
       clientActivity.dispose();
       unsubscribeConnection();
+      cancelDropNotice?.();
       unsubscribeCluster();
       unsubscribe();
       terminal.dispose();
@@ -1667,6 +1755,9 @@ export function createHost(options: HostOptions): Host {
     },
   };
 }
+
+/** How long a dropped connection may take to come back before the status line says so. */
+const RECONNECT_GRACE_MS = 1500;
 
 function connectionState(phase: TuiConnectionPhase): TuiConnectionState {
   return {

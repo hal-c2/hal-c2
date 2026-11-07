@@ -5,6 +5,7 @@ set(hal_c2_bricks_qml_files
     ClusterSettings.qml
     ConnectionsSettings.qml
     LoadBalancingGroup.qml
+    SavedEnvironmentsGroup.qml
     Composer.qml
     ComposerAttachment.qml
     ModelPicker.qml
@@ -20,12 +21,18 @@ set(hal_c2_bricks_qml_files
     GitActions.qml
     Notifications.qml
     RightPanel.qml
+    Stage.qml
+    ThreadArea.qml
+    PanelTabDrag.qml
+    PanelBodySlot.qml
+    PanelBodies.qml
     SettingsNav.qml
     ShellErrorOverlay.qml
     ConnectionNotice.qml
     UsageModelPrices.qml
     ProviderModelList.qml
     ComposerUsageLimits.qml
+    RedactedText.qml
     ConnectionStatusRow.qml
     ServerUpdateAction.qml
     ServerUpdatesList.qml
@@ -39,6 +46,12 @@ set(hal_c2_bricks_qml_files
     ShellMenu.qml
     ShellMenuItem.qml
     ShellMenuSeparator.qml
+    ShellPopover.qml
+    ShellPopoverSurface.qml
+    ShellScrim.qml
+    ShellScrollEdge.qml
+    ShellToolTip.qml
+    ShellEmptyState.qml
     ShellTextField.qml
     ShellSwitch.qml
     ShellSpinBox.qml
@@ -59,6 +72,7 @@ set(hal_c2_bricks_qml_files
     SettingsHost.qml
     SettingsPage.qml
     SettingsRow.qml
+    SettingsHeading.qml
     BackgroundActivityRow.qml
     TextGenerationRow.qml
     ProjectActionsSettings.qml
@@ -76,6 +90,7 @@ set(hal_c2_bricks_qml_files
     EditFromHereDialog.qml
     WorktreeSetupCard.qml
     LimitRecoveryBanner.qml
+    ThreadNotice.qml
     ProviderUpdateNotice.qml
     ThreadLineage.qml
     DiffPanel.qml
@@ -97,6 +112,7 @@ set(hal_c2_bricks_qml_files
     js/settingsPages.js
     js/settingsRows.js
     CentreHost.qml
+    RouteView.qml
     ThreadView.qml
     js/centreViews.js
     js/changedFilesTree.js
@@ -108,11 +124,13 @@ set(hal_c2_bricks_qml_files
     RevertDialog.qml
     TerminalSplits.qml
     TerminalMenu.qml
+    TerminalScrollbar.qml
     TextEditMenu.qml
     Plugin.qml
     Contribution.qml
     PluginSlot.qml
     PluginRegistry.qml
+    Format.qml
     PluginsSettings.qml
     ShellTabs.qml
     PluginPages.qml
@@ -127,11 +145,12 @@ set(hal_c2_bricks_qml_files
     TerminalPanel.qml
     PullRequestsPanel.qml
     PullRequestReviewPanel.qml
+    PullRequestLinkCard.qml
     PreviewsPanel.qml
     ThreadDetailsPanel.qml
     CommandPalette.qml
     PullRequestsPage.qml HomePage.qml UsagePage.qml UsageChart.qml
-    SpaceWorkspace.qml SpaceSidebar.qml SpacePage.qml SpaceAgentStrip.qml SpaceViewers.qml SpaceBlock.qml SpaceSlashMenu.qml SpaceComments.qml SpaceBlockImage.qml SpaceImages.qml SpaceImageDialog.qml SpaceFilePicker.qml
+    SpaceWorkspace.qml SpaceSidebar.qml SpacePage.qml SpaceAgentStrip.qml SpaceViewers.qml SpaceBlock.qml SpaceSlashMenu.qml SpaceComments.qml SpaceBlockImage.qml SpaceImages.qml SpaceFilePicker.qml
     SpaceDeck.qml SpacePresenter.qml
     SpaceChart.qml SpaceHistoryPanel.qml SpacePageUpdate.qml SpaceUpdateDialog.qml SpaceVersionView.qml
     ProvidersSettings.qml
@@ -159,11 +178,17 @@ set(hal_c2_bricks_qml_files
     Markdown.qml
     MermaidDiagram.qml
     js/markdown.js
+    BrowserPanel.qml
+    BrowserDevicesView.qml
+    DevicesPicker.qml
+    AgentCue.qml
+    js/browser.js
 )
 set(hal_c2_bricks_resources
     qmldir
     plugin/Text.qml
     icons/antigravity.png
+    fonts/SymbolsNerdFontMono-Regular.woff2
     models/phone.glb
     models/tablet.glb
     models/tablet-keyboard.glb

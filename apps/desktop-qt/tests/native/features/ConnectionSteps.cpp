@@ -91,7 +91,7 @@ const Steps steps([] {
       for (int x = 0; x < shot.width() && colours.size() < 3; x += 4) colours.insert(shot.pixel(x, y));
     }
     expect(colours.size() >= 3, QStringLiteral("the screenshot is one flat colour"));
-    const QQuickItem* title = world.brick->item(QStringLiteral("homeTitle"));
+    const QQuickItem* title = world.brick->item(QStringLiteral("homeState"))->findChild<QQuickItem*>(QStringLiteral("emptyStateTitle"));
     expect(title->isVisible() && !title->property("text").toString().isEmpty(), QStringLiteral("the home page has no title"));
   });
   step(QStringLiteral("the MC holds back its snapshot"), [](World& world, const Captures&, const Table&) {

@@ -1,9 +1,19 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19366
+#   https://github.com/pingdotgg/t3code/pull/18429
+#   https://github.com/pingdotgg/t3code/pull/11305
+#   https://github.com/pingdotgg/t3code/pull/19395
+#   https://github.com/pingdotgg/t3code/pull/17091
+#   https://github.com/pingdotgg/t3code/pull/18519
+#   https://github.com/pingdotgg/t3code/pull/20289
+#   https://github.com/pingdotgg/t3code/pull/17178
 #   docs/user/terminal.md
 #   docs/internals/terminal-runtime.md (pending writes drain before clear, restart and close)
 #   packages/contracts/src/terminal.ts (TerminalWriteInput, TerminalResizeInput, TerminalClearInput, TerminalRestartInput, TerminalCloseInput, TerminalEvent)
 #   apps/server-ex/lib/hal_c2/terminal.ex (write, resize, clear, restart, close, exit status, output batching)
 #   apps/server-ex/lib/hal_c2/terminal/hub.ex (activity and running-command labels)
+#   apps/server-ex/lib/hal_c2/terminal/output_window.ex (the unacknowledged output window)
+#   apps/tui/src/host/terminalState.ts (acknowledging what the emulator has parsed)
 #   apps/server-ex/test/hal_c2/terminal_test.exs
 #   apps/tui/src/components/ChatView.tsx (clearActiveTerminal, restartActiveTerminal, onTerminalKey, onTerminalCopy)
 #   apps/tui/src/components/ThreadTerminalDrawer.tsx (paste, resize of the visible pane, scrollback)
@@ -42,19 +52,109 @@ Feature: Terminal input and output
       Then attached clients receive the lines in a few batched output events
       And no output is lost
 
-    @backlog @mc
-    Scenario: A client that falls behind pauses the shell's output instead of buffering it
+    # Upstream #18429: a slow terminal client queued output without bound.
+    @mc @tui
+    Scenario: A client that falls behind stops receiving the shell's output instead of buffering it
       Given a running terminal whose shell prints continuously
       When a client stops acknowledging the output it has received
       Then only a small amount of output waits unacknowledged for that client
       And the MC stops sending output to that client until it catches up
       And the shell itself keeps running
 
+    # Upstream #17178: a client that only watched waited for an acknowledgement after
+    # every chunk, so it slowed with network latency.
+    @backlog @mc @priority-low
+    Scenario: A client that only watches a terminal gets output as freely as one that types
+      Given a client watches a running terminal without typing into it
+      When the shell prints continuously
+      Then up to eight chunks or 64 KiB of output reach that client before it must acknowledge any
+      And it is held back like a client that types once it falls further behind
+
+    @desktop
+    Scenario: The desktop says what it has read in batches, not per chunk
+      Given the terminal shows a running shell
+      And saying what was read waits as long as it can
+      When the shell prints a little, five times
+      Then the MC has heard nothing about that output yet
+      When the shell prints 20 KiB more
+      Then the MC hears once that all of it has been read
+
+    @desktop
+    Scenario: Output that stops is still said to be read, so the desktop never stalls itself
+      Given the terminal shows a running shell
+      When the shell prints a little
+      Then the MC hears that all of it has been read
+
+    @desktop
+    Scenario: A hidden terminal keeps reading
+      Given the terminal shows a running shell
+      When the user hides the terminal drawer
+      And the shell prints a little
+      Then the MC hears that all of it has been read
+
+    @desktop
+    Scenario: A new connection starts over from its snapshot
+      Given the terminal shows a running shell
+      And saying what was read waits as long as it can
+      When the shell prints a little
+      And the connection to the MC drops and comes back
+      Then the terminal asks again to say what it has read
+      And the MC hears once, of the new snapshot
+
+    @desktop
+    Scenario: A terminal of a thread the user left stops reading until they return
+      Given the terminal shows a running shell
+      When the user goes to another thread
+      And the shell prints more than the MC sends a client that has not read it
+      Then the MC holds the rest back
+      And the terminal stays attached
+      When the user returns to the terminal's thread
+      Then the terminal has everything the shell printed
+      And the MC holds nothing back
+
+    @tui
+    Scenario: A terminal the client has hidden costs nothing and catches up when shown
+      Given a running terminal whose shell prints continuously
+      When the terminal drawer is closed
+      Then the shell goes on printing with nothing reaching the client
+      When the terminal drawer opens again
+      Then the client catches up from a snapshot and follows the shell again
+
+    @tui
+    Scenario: A terminal in a background tab keeps taking its shell's output
+      Given a running terminal whose shell prints continuously
+      When another terminal opens in front of it
+      Then the terminal behind it goes on taking the shell's output
+
+    @tui
+    Scenario: Restarting a terminal lets a client that fell behind see the new shell
+      Given a running terminal whose shell prints continuously
+      And a client stops acknowledging the output it has received
+      And only a small amount of output waits unacknowledged for that client
+      When the terminal is restarted
+      Then the held back client shows the new shell
+
+    # Upstream #18429: a client that caught up resumed from a snapshot instead of the queued output.
+    @tui
+    Scenario: A client that fell behind and reconnects starts over from a snapshot
+      Given a running terminal whose shell prints continuously
+      And a client stops acknowledging the output it has received
+      And only a small amount of output waits unacknowledged for that client
+      When the client's connection drops and it stops being held back
+      Then the client catches up from a snapshot and follows the shell again
+
     @mc
     Scenario: Resizing a terminal tells the running program its new size
       Given a running terminal at 120 columns and 30 rows
       When a client resizes it to 80 columns and 24 rows
       Then the running program sees 80 columns and 24 rows
+
+    @backlog @desktop @priority-low
+    Scenario: Releasing a resize drag tells the shell its new size at once
+      Given the user is dragging the divider beside a running terminal
+      When the user releases the drag at a narrower width
+      Then the shell is told the final size once, without waiting out the resize delay
+      And typing straight after the release lays out at the new width
 
     @mc
     Scenario: Clearing a terminal empties its history for every client
@@ -72,20 +172,27 @@ Feature: Terminal input and output
       And every attached client is told the terminal restarted
       And the history starts empty
 
-    @backlog @mc
+    @mc
     Scenario: A shell that ignores the stop request is killed after a short grace period
       Given a running terminal whose shell ignores the stop request
       When a client closes it
       Then the shell is asked to stop first
       And the shell is killed if it is still running a second later
 
+    @mc @backlog
+    Scenario: A shell that stops when asked is not killed and the close does not wait
+      Given a running terminal whose shell stops as soon as it is asked
+      When a client closes it
+      Then the shell is asked to stop
+      And it is never killed
+      And the close finishes without waiting out the grace period
+
     # Legacy: apps/server/src/terminal/Manager.test.ts (scoped runtime shutdown stops active terminals
     #   cleanly)
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (terminate stops the shell)
-    @backlog @mc
+    @mc
     Scenario: Stopping the MC stops every running shell
       Given running terminals, one of whose shells ignores the stop request
-      When the MC shuts down
+      When the MC shuts down with them running
       Then each shell is asked to stop
       And the shell that ignores it is killed after the grace period
       And the MC does not wait for them longer than that
@@ -123,7 +230,7 @@ Feature: Terminal input and output
       Then the terminal is no longer marked as running a command
       And its label returns to "Terminal 1"
 
-    @backlog @mc
+    @mc
     Scenario: A terminal keeps working when the MC cannot list running processes
       Given a running terminal
       And the MC cannot read the list of processes on its machine
@@ -240,6 +347,40 @@ Feature: Terminal input and output
         | Copy   | the selected text is on the clipboard      |
         | Paste  | the clipboard text is sent to the shell    |
 
+    @backlog @desktop @priority-low
+    Scenario: Select all in the terminal's menu selects the whole kept history
+      Given the terminal has more output than fits on screen
+      When the user chooses "Select all" from the terminal's menu and copies
+      Then all the output the terminal keeps is on the clipboard, including what is scrolled off screen
+
+    @backlog @desktop
+    Scenario Outline: The user reads the history without leaving the terminal's input
+      Given the terminal has more output than fits on screen and a shell prompt
+      When the user presses "<keys>" in the terminal
+      Then <outcome>
+      And the keys do not reach the shell
+
+      Examples:
+        | keys                  | outcome                                       |
+        | Shift+PageUp          | the terminal shows the page of history above  |
+        | Shift+PageDown        | the terminal shows the page of history below  |
+        | Mod+Shift+Home        | the terminal shows the oldest output it keeps |
+        | Mod+Shift+End         | the terminal shows the latest output          |
+        | Mod+A on macOS        | all the output the terminal keeps is selected |
+        | Ctrl+Shift+A on Linux | all the output the terminal keeps is selected |
+
+    @backlog @desktop
+    Scenario: History keys belong to a full-screen program
+      Given a full-screen program runs in the terminal
+      When the user presses "Shift+PageUp" or "Ctrl+A"
+      Then the program receives the keys
+
+    @backlog @desktop
+    Scenario: Jump to latest returns a scrolled-back terminal to its current output
+      Given the user has scrolled the terminal back into its history
+      When the user chooses "Jump to latest" from the terminal's menu
+      Then the terminal shows the live output again
+
     @desktop
     Scenario Outline: The usual copy and paste keys work in the terminal
       Given the terminal has a selection
@@ -250,6 +391,15 @@ Feature: Terminal input and output
         | keys   | outcome                                 |
         | Ctrl+C | the selected text is on the clipboard   |
         | Ctrl+V | the clipboard text is sent to the shell |
+
+    # Upstream #19366: a keyboard paste in the terminal is sent once, never twice.
+    @backlog @desktop
+    Scenario: A paste from the keyboard reaches the shell once
+      Given the clipboard holds "echo hi"
+      When the user presses "Ctrl+V" in the terminal
+      Then the shell receives "echo hi" once
+      When the user then chooses "Paste" from the terminal's menu
+      Then the shell receives "echo hi" a second time
 
     @desktop
     Scenario: Ctrl+C with nothing selected still interrupts the program
@@ -262,24 +412,24 @@ Feature: Terminal input and output
       When the user clears the terminal from the keyboard
       Then the shell receives Ctrl-L and redraws its prompt at the top
 
-    @backlog @desktop
+    @desktop
     Scenario: Cmd+K clears the terminal on macOS
       Given the user is on macOS
       When the user presses "Cmd+K" in the terminal
       Then the shell receives Ctrl-L and redraws its prompt at the top
 
-    @backlog @desktop
+    @desktop
     Scenario: Cmd+Backspace deletes to the start of the line on macOS
       Given the user is on macOS
       And the shell prompt holds "git status --short"
       When the user presses "Cmd+Backspace" in the terminal
       Then the shell receives the command that deletes to the start of the line
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Arrow keys with a modifier move by word or line
       Given the user is on <platform>
       When the user presses "<keys>" in the terminal
-      Then the cursor moves <movement>
+      Then the terminal's cursor moves <movement>
 
       Examples:
         | platform | keys        | movement                 |
@@ -291,32 +441,51 @@ Feature: Terminal input and output
         | Linux    | Alt+Right   | one word right           |
         | Windows  | Ctrl+Right  | one word right           |
 
-    @backlog @desktop
+    @desktop
     Scenario: Selecting with Shift and an arrow is left to the terminal
       Given the user is on macOS
       When the user presses "Shift+Option+Left" in the terminal
       Then the shell receives the key as the terminal encodes it
       And no word or line movement is sent
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Clicking again selects a word and then a line
-      Given the terminal shows "git commit -m fix"
+      Given the shell has printed "git commit -m fix"
       When the user clicks <times> in quick succession on "commit"
-      Then <selected> is selected
+      Then <selected> is selected in the terminal
 
       Examples:
-        | times  | selected           |
-        | twice  | "commit"           |
+        | times   | selected            |
+        | twice   | "commit"            |
         | 3 times | "git commit -m fix" |
 
-    @backlog @desktop
+    @desktop
     Scenario: Dragging a selection past the edge scrolls the history while it grows
       Given the terminal has scrolled-back output
       When the user drags a selection past the top of the terminal and holds it there
       Then the history keeps scrolling up
       And the selection grows with it
 
-    @backlog @desktop
+    # Upstream #11305: on a touch screen a drag selected text instead of scrolling.
+    @backlog @desktop @mobile
+    Scenario Outline: A finger dragged up or down a terminal scrolls it instead of selecting
+      Given the terminal on a touch screen is showing <content>
+      When the user drags a finger down the terminal and back up
+      Then <outcome>
+      And no text is selected
+
+      Examples:
+        | content                  | outcome                                          |
+        | scrolled-back output     | the history scrolls back and forth with the finger |
+        | a full-screen program    | the program receives the scrolling                |
+
+    @backlog @desktop @mobile @priority-low
+    Scenario: Touching a split terminal that is not active makes it active
+      Given the terminal is split in two and the left one is active
+      When the user touches the right one
+      Then the right terminal is active and has focus
+
+    @desktop
     Scenario Outline: The Linux and Windows copy and paste keys work in the terminal
       Given the user is on <platform>
       And the terminal has a selection
@@ -332,7 +501,7 @@ Feature: Terminal input and output
         | Windows  | Ctrl+Insert  | the selected text is on the clipboard   |
         | Windows  | Shift+Insert | the clipboard text is sent to the shell |
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Ctrl+C copies once on Linux and Windows and then interrupts
       Given the user is on <platform>
       And the terminal has a selection
@@ -347,7 +516,7 @@ Feature: Terminal input and output
         | Linux    |
         | Windows  |
 
-    @backlog @desktop
+    @desktop
     Scenario: On macOS Cmd+C copies and Ctrl+C always interrupts
       Given the user is on macOS
       And the terminal has a selection
@@ -357,14 +526,16 @@ Feature: Terminal input and output
       When the user presses "Ctrl+C" in the terminal
       Then the shell receives Ctrl-C
 
-    @backlog @desktop
+    # The terminal does this, but the offscreen platform the scenarios run on has
+    # no selection clipboard to paste from. Needs an X11 or Wayland run.
+    @backlog @desktop @priority-low
     Scenario: Middle-clicking on Linux pastes the selected text
       Given the user is on Linux
       And the terminal has a selection
       When the user middle-clicks the terminal
       Then the selected text is sent to the shell as a paste
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Middle-clicking where the button means something else does not paste
       Given the user is on <platform>
       And the terminal has a selection
@@ -376,14 +547,14 @@ Feature: Terminal input and output
         | macOS    |
         | Windows  |
 
-    @backlog @desktop
+    @desktop
     Scenario: A program that asks for the mouse receives the user's clicks
       Given a program in the terminal has asked to receive mouse events
       When the user clicks and drags in the terminal
       Then the program receives the presses, motion and releases
       And no text is selected
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Holding a modifier selects text even while a program has the mouse
       Given a program in the terminal has asked to receive mouse events
       When the user drags in the terminal holding <modifier>
@@ -396,39 +567,46 @@ Feature: Terminal input and output
         | Ctrl     |
         | Cmd      |
 
-    @backlog @desktop
+    @desktop
     Scenario: Scrolling the wheel in a full-screen program moves it with arrow keys
       Given a full-screen program such as an editor or pager is showing
       When the user scrolls the wheel down three rows
       Then the shell receives three down-arrow keys
       And the terminal's own history does not scroll
 
-    @backlog @desktop
+    @desktop
     Scenario: Small wheel movements add up to whole rows
       Given the terminal has history above what is on screen
       When the user scrolls with a trackpad in many movements each smaller than a row
       Then the terminal scrolls one row each time the movements add up to a row
       And no movement is lost
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The wheel scrolls by the unit the device reports
       Given the terminal has history above what is on screen
       When the wheel reports <movement>
       Then the terminal scrolls <result>
 
       Examples:
-        | movement        | result              |
-        | three lines     | three rows          |
-        | one page        | one screenful       |
-        | pixels          | by that many pixels, rounded down to rows |
+        | movement    | result                                    |
+        | three lines | three rows                                |
+        | pixels      | by that many pixels, rounded down to rows |
 
-    @backlog @desktop
+      # Qt's wheel events report only pixels and angles, so a wheel that moves in
+      # pages cannot be told from one that moves that far in lines.
+      @dropped
+      Examples:
+        | movement | result        |
+        | one page | one screenful |
+
+    @desktop
     Scenario: The terminal shows a scrollbar for its history
       Given the terminal has more output than fits on screen
       Then a scrollbar shows where the view sits in the history
+      And the drawer's buttons leave the scrollbar clear
       And the scrollbar is hidden while everything fits
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The user moves through the history with the scrollbar
       Given the terminal has more output than fits on screen
       When the user <gesture>
@@ -444,43 +622,51 @@ Feature: Terminal input and output
         | presses End on the scrollbar            | moves to the newest output              |
         | presses an arrow key on the scrollbar   | moves one row                           |
 
-    @backlog @desktop
+    @desktop
     Scenario: The scrollbar's thumb stays large enough to grab
       Given the terminal has a very long history
       Then the scrollbar's thumb is never smaller than a small grab target
 
-    @backlog @desktop
+    @desktop
     Scenario: With history above it, the prompt sits flush with the bottom edge
       Given the terminal has history and its height is not a whole number of rows
       Then the leftover space is above the first row and not below the prompt
       And the prompt does not shift while the user drags a selection across rows
 
-    @backlog @desktop
+    @desktop
     Scenario: Scrolling the wheel reaches a program that asked for the mouse
       Given a program in the terminal has asked to receive mouse events
       When the user scrolls the wheel
       Then the program receives wheel events
 
-    @backlog @desktop
+    @desktop
     Scenario: Characters composed with an input method reach the shell once
       When the user composes "日本語" with an input method in the terminal
       Then the shell receives "日本語" once the composition is committed
       And the keys pressed during the composition are not sent separately
 
-    @backlog @desktop
+    @desktop
+    Scenario: What an input method is composing shows at the cursor
+      When the user is composing with an input method in the terminal
+      Then what is being composed is drawn at the cursor
+      When the user cancels the composition
+      Then nothing is drawn in its place
+
+    @desktop
     Scenario: A character typed with AltGr is typed as text
       Given the user's keyboard layout types "@" with AltGr
       When the user types "@" with AltGr in the terminal
       Then the shell receives "@"
 
-    @backlog @desktop
+    @desktop
     Scenario: The terminal draws prompt symbols without an installed symbol font
       Given the machine has no Nerd Font installed
       When the shell prints a prompt with powerline separators and file-type icons
       Then the terminal draws those symbols
       And the text keeps its own font and cell size
+      And text outside the terminal does not take the symbol font
 
-    @backlog @desktop
+    @desktop
     Scenario: The cursor blinks only while the terminal has focus
       Given the shell asked for a blinking cursor
       When the terminal has focus
@@ -488,7 +674,7 @@ Feature: Terminal input and output
       When the terminal loses focus
       Then the cursor is drawn as an outline and does not blink
 
-    @backlog @desktop
+    @desktop
     Scenario: The cursor stays steady when the user prefers reduced motion
       Given the shell asked for a blinking cursor
       And the user prefers reduced motion
@@ -506,7 +692,7 @@ Feature: Terminal input and output
       Given the terminal's shell exits after the user types "exit"
       Then the terminal closes without a confirmation
 
-    @backlog @mobile
+    @mobile
     Scenario: The user types into a terminal from the phone
       Given the phone shows a thread's terminal
       When the user types "git status" and sends it

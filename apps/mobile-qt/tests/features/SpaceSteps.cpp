@@ -9,12 +9,15 @@
 
 #include <QAbstractItemModel>
 #include <QBuffer>
+#include <QClipboard>
 #include <QDateTime>
 #include <QFile>
 #include <QFontInfo>
+#include <QGuiApplication>
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QMap>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QRegularExpression>
@@ -26,25 +29,41 @@
 #include <optional>
 #include <utility>
 
+#include "CodeFence.h"
+#include "CommandRegistry.h"
 #include "FakeFiles.h"
 #include "FakeThreads.h"
 #include "Harness.h"
+#include "KeybindingController.h"
+#include "Mermaid.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "Phone.h"
 #include "RightPanelController.h"
+#include "SettingsController.h"
 #include "ShellBridge.h"
 #include "Space.h"
 #include "SpaceController.h"
 #include "WorkspaceFiles.h"
 #include "World.h"
 
+// ComposerSteps.cpp's: the providers the MC offers, pushed to the phone.
+void offerProviders(FakeMc& mc, const QJsonArray& providers);
+
 namespace {
 
 using S = QString;
 
 const QString kIndex = QStringLiteral("spaces");
+// The project of the phone's threads, whose files are the Files tab's.
+const QString kProject = QStringLiteral("shop");
 const QString kNow = QStringLiteral("2026-09-23T10:00:00Z");
+
+// The page's prompt (space/prompt.feature), which the agent's steps ask through.
+QVariantMap prompt(World& world);
+QQuickItem* promptEditor(QQuickItem* composer);
+QQuickItem* typeInPrompt(World& world, const QString& title, const QString& text);
+void sendPrompt(World& world, QQuickItem* composer);
 
 QString streamOf(const QString& spaceId) {
   return QStringLiteral("space:") + spaceId;
@@ -82,6 +101,8 @@ struct FakeSpaces {
   QString writes;
   // How image generation answers: available, unavailable or failed.
   QString imageGeneration = QStringLiteral("available");
+  // Whether Grok is installed beside Codex, and can draw.
+  bool grok = false;
   // The images a client asked an address for.
   QStringList signedImages;
   // The folder the last summary was written in, and the thread it was of.
@@ -91,6 +112,8 @@ struct FakeSpaces {
   bool refuseAsk = false;
   bool ignoresStop = false;
   int stops = 0;
+  // What the last ask carried, as the MC was sent it.
+  QJsonObject lastAsk;
   // Who is on each page: the other devices, and the agents by thread title.
   QHash<QString, QStringList> devices;
   QHash<QString, QStringList> agents;
@@ -139,6 +162,8 @@ struct FakeSpaces {
   // the MC neither lists nor opens them.
   bool onWorktree = false;
   QSet<QString> worktreeOnly;
+  // The files of each project but the scenario's, whose are the Files tab's.
+  QHash<QString, QMap<QString, QString>> projectFiles;
 };
 
 FakeSpaces& fake(FakeMc& mc) {
@@ -354,6 +379,8 @@ QString exportMarkdown(FakeMc& mc, const QString& space, const QJsonObject& page
       QStringList quoted;
       for (const QString& part : said.split(QLatin1Char('\n'))) quoted.append((QStringLiteral("> ") + part).trimmed());
       line = quoted.join(QLatin1Char('\n'));
+    } else if (kind == QLatin1String("code")) {
+      line = codeFence::write(block);
     } else if (kind == QLatin1String("subpage_link")) {
       const QString linked = text(block, QLatin1String("linkedPageId"));
       const QString title = titleOf(mc, space, linked);
@@ -379,7 +406,7 @@ std::pair<QString, QList<QJsonObject>> parseMarkdown(const QString& markdown) {
   static const QRegularExpression heading(QStringLiteral("^#{2,6}\\s+(.*)$"));
   static const QRegularExpression item(QStringLiteral("^\\s*[-*]\\s+\\[([ xX])\\]\\s?(.*)$"));
   static const QRegularExpression link(QStringLiteral("^\\[(.+)\\]\\(#([\\w-]+)\\)$"));
-  static const QRegularExpression notParagraph(QStringLiteral("^(#{1,6}\\s|>|```|\\s*[-*]\\s+\\[[ xX]\\])"));
+  static const QRegularExpression notParagraph(QStringLiteral("^(#{1,6}\\s|>|\\s*[-*]\\s+\\[[ xX]\\])"));
   const auto block = [](const QString& kind, const QString& said) {
     return QJsonObject{{QStringLiteral("kind"), kind}, {QStringLiteral("text"), said}, {QStringLiteral("checked"), false},
                        {QStringLiteral("linkedPageId"), QJsonValue::Null}};
@@ -392,11 +419,10 @@ std::pair<QString, QList<QJsonObject>> parseMarkdown(const QString& markdown) {
     QRegularExpressionMatch match;
     if (line.trimmed().isEmpty()) {
       ++i;
-    } else if (line.startsWith(QLatin1String("```"))) {
-      QStringList code{line};
-      while (++i < lines.size() && !lines.at(i).startsWith(QLatin1String("```"))) code.append(lines.at(i));
-      if (i < lines.size()) code.append(lines.at(i++));
-      blocks.append(block(QStringLiteral("paragraph"), code.join(QLatin1Char('\n'))));
+    } else if (!codeFence::opens(line).isEmpty()) {
+      const auto [fenced, next] = codeFence::read(lines, i, block);
+      blocks.append(fenced);
+      i = next;
     } else if ((match = title.match(line)).hasMatch()) {
       // A `# ` heading anywhere but the top is an ordinary heading.
       if (blocks.isEmpty() && pageTitle.isNull()) {
@@ -428,7 +454,9 @@ std::pair<QString, QList<QJsonObject>> parseMarkdown(const QString& markdown) {
       blocks.append(block(QStringLiteral("callout"), quote.join(QLatin1Char('\n'))));
     } else {
       QStringList paragraph;
-      for (; i < lines.size() && !lines.at(i).trimmed().isEmpty() && !notParagraph.match(lines.at(i)).hasMatch(); ++i) {
+      for (; i < lines.size() && !lines.at(i).trimmed().isEmpty() && !notParagraph.match(lines.at(i)).hasMatch() &&
+             codeFence::opens(lines.at(i)).isEmpty();
+           ++i) {
         paragraph.append(lines.at(i));
       }
       blocks.append(block(QStringLiteral("paragraph"), paragraph.join(QLatin1Char('\n'))));
@@ -460,8 +488,10 @@ Answer createPage(FakeMc& mc, const QString& space, const QString& title, const 
 Answer insertBlock(FakeMc& mc, const QString& space, const QString& pageId, const QJsonObject& spec, const QJsonValue& after,
                    const QJsonObject& author) {
   if (const auto why = writable(mc, space, pageId)) return *why;
-  static const QStringList kinds{QStringLiteral("paragraph"), QStringLiteral("heading"), QStringLiteral("checklist"),
-                                 QStringLiteral("callout"), QStringLiteral("subpage_link"), QStringLiteral("image"), QStringLiteral("raw"), QStringLiteral("table"), QStringLiteral("code")};
+  static const QStringList kinds{QStringLiteral("paragraph"), QStringLiteral("heading"), QStringLiteral("checklist"), QStringLiteral("bullet"),
+                                 QStringLiteral("numbered"), QStringLiteral("callout"), QStringLiteral("divider"), QStringLiteral("subpage_link"),
+                                 QStringLiteral("image"), QStringLiteral("raw"), QStringLiteral("table"), QStringLiteral("code"),
+                                 QStringLiteral("footnote"), QStringLiteral("details"), QStringLiteral("details_end")};
   const QString kind = text(spec, QLatin1String("kind"));
   if (!kinds.contains(kind)) return refused(QStringLiteral("invalid"), QStringLiteral("There is no block kind %1.").arg(kind));
   const QString linked = text(spec, QLatin1String("linkedPageId"));
@@ -470,7 +500,8 @@ Answer insertBlock(FakeMc& mc, const QString& space, const QString& pageId, cons
   }
   const QString imageId = text(spec, QLatin1String("imageId"));
   const QJsonObject image = one(mc, streamOf(space), QStringLiteral("image"), imageId);
-  if (kind == QLatin1String("image")) {
+  const QString url = text(spec, QLatin1String("url"));
+  if (kind == QLatin1String("image") && url.isEmpty()) {
     if (image.isEmpty()) return refused(QStringLiteral("notFound"), QStringLiteral("There is no image %1 in this Space.").arg(imageId));
     if (trashed(image)) return refused(QStringLiteral("trashed"), QStringLiteral("The image \"%1\" is in the trash.").arg(text(image, QLatin1String("name"))));
   }
@@ -490,9 +521,29 @@ Answer insertBlock(FakeMc& mc, const QString& space, const QString& pageId, cons
   if (kind == QLatin1String("checklist")) block.insert(QStringLiteral("checked"), spec.value(QLatin1String("checked")).toBool());
   if (kind == QLatin1String("heading") && spec.contains(QLatin1String("level"))) block.insert(QStringLiteral("level"), spec.value(QLatin1String("level")));
   if (kind == QLatin1String("subpage_link")) block.insert(QStringLiteral("linkedPageId"), linked);
-  if (kind == QLatin1String("image")) {
+  if (kind == QLatin1String("image") && !url.isEmpty()) {
+    block.insert(QStringLiteral("url"), url);
+  } else if (kind == QLatin1String("image")) {
     block.insert(QStringLiteral("imageId"), imageId);
     if (text(block, QLatin1String("text")).isEmpty()) block.insert(QStringLiteral("text"), image.value(QLatin1String("name")));
+  }
+  // The fields only some kinds keep, as the MC's `with_extras` keeps them.
+  const bool code = kind == QLatin1String("code");
+  const bool item = kind == QLatin1String("bullet") || kind == QLatin1String("numbered") || kind == QLatin1String("checklist");
+  const std::pair<QLatin1String, bool> extras[] = {
+      {QLatin1String("language"), code},
+      {QLatin1String("fence"), code},
+      {QLatin1String("info"), code},
+      {QLatin1String("depth"), item && spec.value(QLatin1String("depth")).toInt() != 0},
+      {QLatin1String("indent"), item},
+      {QLatin1String("marker"), QStringList{QStringLiteral("bullet"), QStringLiteral("numbered"), QStringLiteral("divider"), QStringLiteral("callout"),
+                                            QStringLiteral("details")}.contains(kind)},
+      {QLatin1String("start"), kind == QLatin1String("numbered") && spec.value(QLatin1String("start")).toInt(1) != 1},
+      {QLatin1String("alert"), kind == QLatin1String("callout")},
+      {QLatin1String("label"), kind == QLatin1String("footnote")},
+  };
+  for (const auto& [field, kept] : extras) {
+    if (kept && spec.contains(field) && !spec.value(field).isNull()) block.insert(field, spec.value(field));
   }
   set(mc, streamOf(space), QStringLiteral("block"), id, block);
   return {{{QStringLiteral("block"), block}}};
@@ -523,9 +574,28 @@ QString hashOf(const QString& contents) {
   return QString::number(qHash(contents), 16);
 }
 
-// The page of any Space that is `path` of `project`, with its Space; none when no page is.
+// What the files of `project` say, by path.
+QMap<QString, QString>& filesOf(FakeMc& mc, const QString& project) {
+  return project == kProject ? fakeFiles(mc).files : fake(mc).projectFiles[project];
+}
+
+// The project's own Space (`HalC2.Space.project_space/2`), made the first time one of its files opens.
+QString projectSpace(FakeMc& mc, const QString& project, bool make = false) {
+  for (const QJsonObject& space : all(mc, kIndex, QStringLiteral("projectSpace"))) {
+    if (text(space, QLatin1String("projectId")) == project) return text(space, QLatin1String("id"));
+  }
+  if (!make) return {};
+  const QString id = newId(mc, QStringLiteral("space"));
+  const QString at = stamp(mc);
+  set(mc, kIndex, QStringLiteral("projectSpace"), id,
+      {{QStringLiteral("id"), id}, {QStringLiteral("name"), text(mc.projects.value(project), QLatin1String("title"))}, {QStringLiteral("projectId"), project},
+       {QStringLiteral("createdAt"), at}, {QStringLiteral("updatedAt"), at}});
+  return id;
+}
+
+// The page that is `path` of `project`, with its Space, the project's; none when no page is.
 std::pair<QString, QJsonObject> pageOfFile(FakeMc& mc, const QString& project, const QString& path) {
-  for (const QJsonObject& space : all(mc, kIndex, QStringLiteral("space"))) {
+  for (const QJsonObject& space : all(mc, kIndex, QStringLiteral("projectSpace"))) {
     const QString id = text(space, QLatin1String("id"));
     for (const QJsonObject& page : all(mc, streamOf(id), QStringLiteral("page"))) {
       const QJsonObject file = page.value(QLatin1String("file")).toObject();
@@ -538,7 +608,7 @@ std::pair<QString, QJsonObject> pageOfFile(FakeMc& mc, const QString& project, c
 // The page's blocks, made again from what its file says now, and the file as read.
 void takeFile(FakeMc& mc, const QString& space, const QString& pageId, const QJsonObject& changes = {}) {
   QJsonObject file = one(mc, streamOf(space), QStringLiteral("page"), pageId).value(QLatin1String("file")).toObject();
-  const QString contents = fakeFiles(mc).files.value(text(file, QLatin1String("path")));
+  const QString contents = filesOf(mc, text(file, QLatin1String("projectId"))).value(text(file, QLatin1String("path")));
   for (const QJsonObject& block : blocksOf(mc, space, pageId)) remove(mc, streamOf(space), QStringLiteral("block"), text(block, QLatin1String("id")));
   for (const QJsonObject& block : parseMarkdown(contents).second) insertBlock(mc, space, pageId, block, QJsonValue::Undefined, kFile);
   file.insert(QStringLiteral("hash"), hashOf(contents));
@@ -563,7 +633,7 @@ Answer filesCall(FakeMc& mc, const QString& method, const QJsonObject& in) {
   if (method == QLatin1String("files.list")) {
     ++fake(mc).listings;
     QJsonArray files;
-    const QMap<QString, QString>& contents = fakeFiles(mc).files;
+    const QMap<QString, QString>& contents = filesOf(mc, project);
     for (auto it = contents.cbegin(); it != contents.cend(); ++it) {
       if (!spaceFile(it.key()) || fake(mc).worktreeOnly.contains(it.key())) continue;
       const auto [space, page] = pageOfFile(mc, project, it.key());
@@ -572,7 +642,9 @@ Answer filesCall(FakeMc& mc, const QString& method, const QJsonObject& in) {
                                                                       {QStringLiteral("title"), page.value(QLatin1String("title"))}});
       files.append(QJsonObject{{QStringLiteral("relativePath"), it.key()}, {QStringLiteral("kind"), QStringLiteral("page")}, {QStringLiteral("page"), open}});
     }
-    return {{{QStringLiteral("config"), QStringLiteral("default")}, {QStringLiteral("files"), files}}};
+    const QString space = projectSpace(mc, project);
+    return {{{QStringLiteral("config"), QStringLiteral("default")}, {QStringLiteral("files"), files},
+             {QStringLiteral("spaceId"), space.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(space)}}};
   }
   if (method == QLatin1String("files.scan")) {
     return {{{QStringLiteral("status"), fake(mc).scan},
@@ -581,37 +653,13 @@ Answer filesCall(FakeMc& mc, const QString& method, const QJsonObject& in) {
   return refused(QStringLiteral("invalid"), QStringLiteral("space.%1 is missing a required field.").arg(method));
 }
 
-// `space.page.openFile`: the file's page, made in `space` unless a Space already has it.
-Answer openFile(FakeMc& mc, const QString& space, const QJsonObject& in) {
-  const QString project = text(in, QLatin1String("projectId"));
-  const QString path = text(in, QLatin1String("relativePath"));
-  if (path.startsWith(QLatin1Char('/')) || path.split(QLatin1Char('/')).contains(QStringLiteral(".."))) {
-    return refused(QStringLiteral("invalid"), QStringLiteral("%1 is outside the project.").arg(path));
-  }
-  if (!mc.projects.contains(project) || !fakeFiles(mc).files.contains(path) || fake(mc).worktreeOnly.contains(path)) {
-    return refused(QStringLiteral("notFound"), QStringLiteral("There is no file %1 in the project %2.").arg(path, project));
-  }
-  if (!spaceFile(path)) return refused(QStringLiteral("notSpaceFile"), QStringLiteral("%1 is not in the spaces section of the project.").arg(path));
-  if (const auto [where, page] = pageOfFile(mc, project, path); !page.isEmpty()) {
-    return {{{QStringLiteral("spaceId"), where}, {QStringLiteral("page"), page}, {QStringLiteral("created"), false}}};
-  }
-  const QString contents = fakeFiles(mc).files.value(path);
-  const QJsonObject file{{QStringLiteral("projectId"), project},  {QStringLiteral("path"), path},       {QStringLiteral("hash"), hashOf(contents)},
-                         {QStringLiteral("size"), contents.toUtf8().size()}, {QStringLiteral("missing"), false}, {QStringLiteral("conflictAt"), QJsonValue::Null}};
-  Answer made = importMarkdown(mc, space, contents, {}, QJsonValue::Null, {{QStringLiteral("file"), file}}, kFile);
-  if (!made.error.isEmpty()) return made;
-  made.result.insert(QStringLiteral("spaceId"), space);
-  made.result.insert(QStringLiteral("created"), true);
-  return made;
-}
-
 // `space.page.syncFile`: the file read again; what changed in it is the page's.
 Answer syncFile(FakeMc& mc, const QString& space, const QJsonObject& page) {
   ++fake(mc).syncs;
   const QJsonObject file = page.value(QLatin1String("file")).toObject();
   if (file.isEmpty()) return refused(QStringLiteral("invalid"), QStringLiteral("The page is not a project file."));
   const QString id = text(page, QLatin1String("id"));
-  const QMap<QString, QString>& files = fakeFiles(mc).files;
+  const QMap<QString, QString>& files = filesOf(mc, text(file, QLatin1String("projectId")));
   const QString path = text(file, QLatin1String("path"));
   if (!files.contains(path)) {
     loseFile(mc, space, page);
@@ -621,6 +669,33 @@ Answer syncFile(FakeMc& mc, const QString& space, const QJsonObject& page) {
   return {{{QStringLiteral("page"), one(mc, streamOf(space), QStringLiteral("page"), id)}}};
 }
 
+// `space.page.openFile`: the file's page, made in the project's Space unless it has one.
+Answer openFile(FakeMc& mc, const QJsonObject& in) {
+  const QString project = text(in, QLatin1String("projectId"));
+  const QString path = text(in, QLatin1String("relativePath"));
+  if (path.startsWith(QLatin1Char('/')) || path.split(QLatin1Char('/')).contains(QStringLiteral(".."))) {
+    return refused(QStringLiteral("invalid"), QStringLiteral("%1 is outside the project.").arg(path));
+  }
+  if (!mc.projects.contains(project)) return refused(QStringLiteral("notFound"), QStringLiteral("There is no project %1 on this MC.").arg(project));
+  if (!spaceFile(path)) return refused(QStringLiteral("notSpaceFile"), QStringLiteral("%1 is not in the spaces section of the project.").arg(path));
+  // The page the file already is, read again: one whose file is gone says so.
+  if (const auto [where, page] = pageOfFile(mc, project, path); !page.isEmpty()) {
+    const QJsonObject synced = syncFile(mc, where, page).result.value(QLatin1String("page")).toObject();
+    return {{{QStringLiteral("spaceId"), where}, {QStringLiteral("page"), synced}, {QStringLiteral("created"), false}}};
+  }
+  if (!filesOf(mc, project).contains(path) || fake(mc).worktreeOnly.contains(path)) {
+    return refused(QStringLiteral("notFound"), QStringLiteral("There is no file %1 in the project %2.").arg(path, project));
+  }
+  const QString contents = filesOf(mc, project).value(path);
+  const QString space = projectSpace(mc, project, true);
+  const QJsonObject file{{QStringLiteral("projectId"), project},  {QStringLiteral("path"), path},       {QStringLiteral("hash"), hashOf(contents)},
+                         {QStringLiteral("size"), contents.toUtf8().size()}, {QStringLiteral("missing"), false}, {QStringLiteral("conflictAt"), QJsonValue::Null}};
+  Answer made = importMarkdown(mc, space, contents, {}, QJsonValue::Null, {{QStringLiteral("file"), file}}, kFile);
+  if (!made.error.isEmpty()) return made;
+  made.result.insert(QStringLiteral("spaceId"), space);
+  made.result.insert(QStringLiteral("created"), true);
+  return made;
+}
 
 // The summary text generation writes of a thread.
 const QString kSummaryTitle = QStringLiteral("Release plan");
@@ -628,6 +703,11 @@ const QString kSummary = QStringLiteral("Ship pages on Friday, once the Space st
 
 QJsonObject spaceOf(FakeMc& mc, const QString& id) {
   return one(mc, kIndex, QStringLiteral("space"), id);
+}
+
+// A Space of the user's or of a project, for what any page does.
+bool anySpace(FakeMc& mc, const QString& id) {
+  return !spaceOf(mc, id).isEmpty() || !one(mc, kIndex, QStringLiteral("projectSpace"), id).isEmpty();
 }
 
 QJsonObject makeSpace(FakeMc& mc, const QString& name) {
@@ -672,7 +752,10 @@ Answer imageCall(FakeMc& mc, const QString& space, const QString& method, const 
     if (fake(mc).imageGeneration == QLatin1String("unavailable")) return refused(QStringLiteral("unavailable"), QStringLiteral("No provider that can make an image is set up."), tag);
     if (fake(mc).imageGeneration == QLatin1String("failed")) return refused(QStringLiteral("failed"), QStringLiteral("The provider left no image."), tag);
     const QString prompt = text(in, QLatin1String("prompt"));
-    return keepImage(mc, space, prompt + QStringLiteral(".png"), prompt, QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5")}});
+    // The image remembers who drew it with which image model: as chosen, else Codex's own pick.
+    const QJsonObject chosen = in.value(QLatin1String("modelSelection")).toObject();
+    const QJsonObject by = chosen.isEmpty() ? QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("auto")}} : chosen;
+    return keepImage(mc, space, prompt + QStringLiteral(".png"), prompt, by);
   }
   const QString id = text(in, QLatin1String("imageId"));
   const QJsonObject image = one(mc, stream, QStringLiteral("image"), id);
@@ -921,6 +1004,7 @@ Answer agentCall(FakeMc& mc, const QString& method, const QJsonObject& in) {
   const QJsonObject asked = one(mc, stream, QStringLiteral("pageAgent"), pageId);
   const bool active = text(asked, QLatin1String("status")) == QLatin1String("running") || text(asked, QLatin1String("status")) == QLatin1String("stopping");
   if (method == QLatin1String("page.askAgent")) {
+    fake(mc).lastAsk = in;
     if (std::exchange(fake(mc).refuseAsk, false)) return refused(QStringLiteral("invalid"), QStringLiteral("An agent is already working on this page."));
     QString request = text(in, QLatin1String("request")).trimmed();
     if (request.startsWith(QLatin1String("@agent"))) request = request.mid(6).trimmed();
@@ -1046,13 +1130,28 @@ Answer decide(FakeMc& mc, const QString& method, const QJsonObject& in);
 
 // A change, with what it means for the Space's sites: the site of a page gone or
 // in the trash comes down, and the others are behind when publishing would change them.
+// Where an ask from a page would run: the project of the thread the user last worked in.
+Answer agentTarget(FakeMc& mc) {
+  QJsonValue project = mc.projects.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(mc.projects.firstKey());
+  QString latest;
+  for (const QJsonObject& thread : std::as_const(mc.threads)) {
+    const QString at = text(thread, QLatin1String("updatedAt"));
+    if (at < latest || !mc.projects.contains(text(thread, QLatin1String("projectId")))) continue;
+    latest = at;
+    project = thread.value(QLatin1String("projectId"));
+  }
+  return {{{QStringLiteral("projectId"), project}}};
+}
+
 Answer call(FakeMc& mc, const QString& method, const QJsonObject& in) {
+  if (method == QLatin1String("page.agentTarget")) return agentTarget(mc);
   if (method.endsWith(QLatin1String("Agent"))) return agentCall(mc, method, in);
   const bool history = method == QLatin1String("page.history") || method == QLatin1String("page.version") || method == QLatin1String("page.restoreVersion");
   const Answer answer = history ? historyCall(mc, method, in) : decide(mc, method, in);
-  const QString space = text(in, QLatin1String("spaceId"));
-  if (space.isEmpty()) return answer;
   const bool fromFile = method == QLatin1String("page.openFile") || method == QLatin1String("page.syncFile");
+  // A file opens in its project's Space, which the answer names.
+  const QString space = method == QLatin1String("page.openFile") ? text(answer.result, QLatin1String("spaceId")) : text(in, QLatin1String("spaceId"));
+  if (space.isEmpty()) return answer;
   if (!history && answer.error.isEmpty()) {
     noteEdits(mc, space, method == QLatin1String("page.schedule.runNow") ? kSchedule : fromFile ? kFile : kUser);
   }
@@ -1089,17 +1188,26 @@ Answer decide(FakeMc& mc, const QString& method, const QJsonObject& in) {
     return {{{QStringLiteral("space"), makeSpace(mc, text(in, QLatin1String("name")).trimmed())}}};
   }
   if (method == QLatin1String("image.providers")) {
-    const auto provider = [](const char* id, const char* status, const QString& message) {
-      return QJsonObject{{QStringLiteral("instanceId"), QLatin1String(id)}, {QStringLiteral("driver"), QLatin1String(id)}, {QStringLiteral("status"), QLatin1String(status)}, {QStringLiteral("message"), message}};
+    // As the MC's (lib/hal_c2/space/image_generation.ex): only who can draw, each with its image models.
+    const auto model = [](const char* slug, const char* name) {
+      return QJsonObject{{QStringLiteral("slug"), QLatin1String(slug)}, {QStringLiteral("name"), QLatin1String(name)}, {QStringLiteral("description"), QJsonValue::Null}};
     };
-    const bool able = fake(mc).imageGeneration == QLatin1String("available");
-    return {{{QStringLiteral("providers"), QJsonArray{provider("codex", able ? "ready" : "unavailable", {}), provider("claudeAgent", "unsupported", QStringLiteral("Claude does not generate images here."))}},
-             {QStringLiteral("selection"), able ? QJsonValue(QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5")}}) : QJsonValue(QJsonValue::Null)}}};
+    const auto provider = [](const char* id, bool ready, const QString& message, const QJsonArray& models) {
+      return QJsonObject{{QStringLiteral("instanceId"), QLatin1String(id)}, {QStringLiteral("driver"), QLatin1String(id)},
+                         {QStringLiteral("status"), ready ? QStringLiteral("ready") : QStringLiteral("unavailable")}, {QStringLiteral("message"), message.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(message)},
+                         {QStringLiteral("models"), models}};
+    };
+    const bool able = fake(mc).imageGeneration != QLatin1String("unavailable");
+    const bool grok = able && fake(mc).grok;
+    return {{{QStringLiteral("providers"), QJsonArray{provider("codex", able, able ? QString() : QStringLiteral("Codex is not installed."), {model("auto", "GPT Image")}),
+                                                      provider("grok", grok, grok ? QString() : QStringLiteral("Grok is not installed."),
+                                                               {model("auto", "Grok Imagine"), model("grok-imagine-image-2.0", "Grok Imagine Image 2.0"), model("grok-imagine-image", "Grok Imagine Image")})}},
+             {QStringLiteral("selection"), able ? QJsonValue(QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("auto")}}) : QJsonValue(QJsonValue::Null)}}};
   }
   if (method.startsWith(QLatin1String("files."))) return filesCall(mc, method, in);
-  if (spaceOf(mc, space).isEmpty()) return refused(QStringLiteral("notFound"), QStringLiteral("There is no Space %1.").arg(space));
+  if (method == QLatin1String("page.openFile")) return openFile(mc, in);
+  if (!anySpace(mc, space)) return refused(QStringLiteral("notFound"), QStringLiteral("There is no Space %1.").arg(space));
   if (method.startsWith(QLatin1String("image."))) return imageCall(mc, space, method, in);
-  if (method == QLatin1String("page.openFile")) return openFile(mc, space, in);
   if (method == QLatin1String("rename")) {
     if (blank(in.value(QLatin1String("name")))) return refused(QStringLiteral("invalid"), QStringLiteral("A Space needs a name."));
     set(mc, kIndex, QStringLiteral("space"), space, {{QStringLiteral("name"), text(in, QLatin1String("name")).trimmed()}, {QStringLiteral("updatedAt"), stamp(mc)}});
@@ -1141,10 +1249,6 @@ Answer decide(FakeMc& mc, const QString& method, const QJsonObject& in) {
     const auto answer = [&] { return Answer{{{QStringLiteral("page"), one(mc, stream, QStringLiteral("page"), pageId)}}}; };
     if (method == QLatin1String("page.exportMarkdown")) return {{{QStringLiteral("markdown"), exportMarkdown(mc, space, page)}}};
     if (method == QLatin1String("page.syncFile")) return syncFile(mc, space, page);
-    if (method == QLatin1String("page.unlinkFile")) {
-      set(mc, stream, QStringLiteral("page"), pageId, {{QStringLiteral("file"), QJsonValue::Null}, {QStringLiteral("updatedAt"), stamp(mc)}});
-      return answer();
-    }
     if (method == QLatin1String("page.restore")) {
       if (!trashed(page)) return refused(QStringLiteral("invalid"), QStringLiteral("The page is not in the trash."));
       // Back where it was, unless that page is gone or in the trash itself.
@@ -1461,6 +1565,46 @@ QString idOfComment(World& world, const QString& body) {
   fail(QStringLiteral("the Space has no comment %1").arg(body));
 }
 
+// The item named `objectName` in `item`'s tree, or null.
+QQuickItem* named(QQuickItem* item, const QString& objectName) {
+  if (item->objectName() == objectName) return item;
+  for (QQuickItem* child : item->childItems()) {
+    if (QQuickItem* found = named(child, objectName)) return found;
+  }
+  return nullptr;
+}
+
+// The visible blocks of a page, top to bottom, each as the lines of Markdown it shows.
+QStringList shownMarkdown(QQuickItem* root) {
+  QList<QQuickItem*> blocks;
+  const std::function<void(QQuickItem*)> collect = [&](QQuickItem* item) {
+    if (item->objectName().startsWith(QLatin1String("spaceBlock:")) && item->isVisible()) blocks.append(item);
+    for (QQuickItem* child : item->childItems()) collect(child);
+  };
+  collect(root);
+  std::sort(blocks.begin(), blocks.end(), [](QQuickItem* a, QQuickItem* b) { return a->mapToScene({}).y() < b->mapToScene({}).y(); });
+  QStringList lines;
+  for (QQuickItem* block : blocks) {
+    const QString said = block->property("text").toString();
+    const auto shown = [&](const QString& name) {
+      QQuickItem* item = named(block, name + said);
+      return item && item->isVisible() ? item->property("text").toString() : QString();
+    };
+    QQuickItem* tick = named(block, S("spaceTick:") + said);
+    const QString ticked = tick && tick->isVisible() ? (block->property("checked").toBool() ? S("- [x] ") : S("- [ ] ")) : QString();
+    QStringList own;
+    if (const QString above = shown(S("spaceMarkdownAbove:")); !above.isEmpty()) own.append(above);
+    own.append((shown(S("spaceMarkdownLead:")) + ticked + shown(S("spaceBlockEditor:")) + shown(S("spaceBlockText:")) + shown(S("spaceMarkdownTail:")))
+                   .split(QLatin1Char('\n')));
+    if (const QString below = shown(S("spaceMarkdownBelow:")); !below.isEmpty()) own.append(below);
+    for (const QString& line : own) {
+      if (line.isEmpty()) continue;
+      lines.append(block->property("kind").toString() == QLatin1String("callout") ? S("> ") + line : line);
+    }
+  }
+  return lines;
+}
+
 // What the MC is told by the scenario's setting up, as a client would ask it.
 QJsonObject given(World& world, const QString& method, QJsonObject in) {
   if (method != QLatin1String("create") && !in.contains(QLatin1String("spaceId"))) in.insert(QStringLiteral("spaceId"), current(world));
@@ -1502,6 +1646,11 @@ QString threadNamed(World& world, const QString& title) {
 }
 
 // --- The client -------------------------------------------------------------
+
+// The diagram a page holds, as its block's text is now.
+struct Diagram {
+  QString source;
+};
 
 SpaceController* viewOf(World& world) {
   auto* controller = world.native().controller<SpaceController>();
@@ -1953,6 +2102,64 @@ void imageMenu(World& world, const QString& said, bool trash, const QString& cho
   settle(world);
 }
 
+// `name` inside `within`, on screen.
+QQuickItem* inside(World& world, QQuickItem* within, const QString& name) {
+  QQuickItem* found = nullptr;
+  world.waitFor([&] {
+    found = world.findWhere([&](QQuickItem* item) {
+      if (item->objectName() != name) return false;
+      for (QQuickItem* up = item->parentItem(); up; up = up->parentItem()) {
+        if (up == within) return true;
+      }
+      return false;
+    });
+    return found != nullptr;
+  }, [&] { return S("%1 in %2; %3").arg(name, within->objectName(), describe(world)); });
+  return found;
+}
+
+// The images of the Space `id` on screen, with their prompt aimed at them and knowing who can draw.
+QQuickItem* imagesPromptOn(World& world, const QString& id) {
+  lookAtImages(world, id, false);
+  world.waitFor([&] {
+    return world.state(S("composer")).toMap().value(S("routeKind")) == S("images") &&
+           world.state(S("space")).toMap().value(S("imageProviders")).toMap().contains(S("providers"));
+  }, [&] { return S("the prompt to be the images', knowing who can draw; it is %1").arg(show(prompt(world))); });
+  return world.item(S("spaceImagesComposer"));
+}
+
+// The picker's instances: {instanceId: [model slugs]}, and who is available.
+QVariantMap pickerOffer(World& world, QStringList* available = nullptr) {
+  QVariantMap offer;
+  for (const QVariant& value : world.state(S("modelPicker")).toMap().value(S("instances")).toList()) {
+    const QVariantMap instance = value.toMap();
+    QStringList slugs;
+    for (const QVariant& model : instance.value(S("models")).toList()) slugs.append(model.toMap().value(S("slug")).toString());
+    offer.insert(instance.value(S("instanceId")).toString(), slugs);
+    if (available && instance.value(S("isAvailable")).toBool()) available->append(instance.value(S("instanceId")).toString());
+  }
+  return offer;
+}
+
+// The user types `words` in the images' prompt and taps its send.
+void generateInPrompt(World& world, QQuickItem* composer, const QString& words) {
+  QQuickItem* editor = promptEditor(composer);
+  world.tap(editor);
+  world.type(words);
+  QMetaObject::invokeMethod(composer, "flushText");
+  world.sync();
+  world.waitFor([&] { return prompt(world).value(S("text")) == words; },
+                [&] { return S("the prompt to hold \"%1\"; it is %2").arg(words, show(prompt(world))); });
+  // Without anyone to draw the send is held back; the MC's refusal is what that scenario is about.
+  QQuickItem* send = inside(world, composer, S("primaryAction"));
+  if (send->isEnabled()) {
+    sendPrompt(world, composer);
+  } else {
+    world.bridge().dispatch(S("composer.submit"), QVariantMap{{S("text"), words}, {S("intent"), S("foreground")}});
+    world.sync();
+  }
+}
+
 bool imageTrashed(World& world, const QString& id) {
   return viewOf(world)->imageTrash()->indexOf(id) >= 0;
 }
@@ -2164,6 +2371,170 @@ void runCommand(World& world, const QString& title) {
   world.awaitPopup(S("commandPalette"), false);
 }
 
+// The project `id` on the MC, beside "shop".
+void haveProject(World& world, const QString& id) {
+  if (world.mc.projects.contains(id)) return;
+  world.mc.projects.insert(id, {{S("id"), id}, {S("title"), id}, {S("workspaceRoot"), S("/work/") + id}, {S("scripts"), QJsonArray()},
+                                {S("createdAt"), kNow}, {S("updatedAt"), kNow}});
+  world.mc.sendRow(id, world.mc.projects.value(id), S("project"));
+  world.sync();
+}
+
+// The page `title` of a project's Space, with that Space.
+std::pair<QString, QJsonObject> filePage(World& world, const QString& title) {
+  for (const QJsonObject& space : all(world.mc, kIndex, S("projectSpace"))) {
+    const QString id = text(space, QLatin1String("id"));
+    for (const QJsonObject& page : all(world.mc, streamOf(id), S("page"))) {
+      if (text(page, QLatin1String("title")) == title) return {id, page};
+    }
+  }
+  fail(S("no project's Space has the page %1").arg(title));
+}
+
+// The rows of the project sections under the Space's pages.
+QList<QVariantMap> sectionRows(World& world) {
+  return viewOf(world)->projects()->rows();
+}
+
+std::optional<QVariantMap> sectionRow(World& world, const QString& kind, const QString& project, const QString& path = {}) {
+  for (const QVariantMap& row : sectionRows(world)) {
+    if (row.value(S("kind")) == kind && row.value(S("projectId")) == project && row.value(S("path")) == path) return row;
+  }
+  return std::nullopt;
+}
+
+QString describeSections(World& world) {
+  QStringList rows;
+  for (const QVariantMap& row : sectionRows(world)) {
+    rows.append(S("%1 %2 %3%4").arg(row.value(S("kind")).toString(), row.value(S("projectId")).toString(), row.value(S("path")).toString(),
+                                    row.value(S("expanded")).toBool() ? S(" (expanded)") : QString()));
+  }
+  return S("the sections are [%1]; %2").arg(rows.join(S(", ")), describe(world));
+}
+
+// The row of the sections for `kind`, `project` and `path`, scrolled into the
+// sections' list first: it builds only the rows on screen.
+QQuickItem* sectionItem(World& world, const QString& kind, const QString& project, const QString& path = {}) {
+  const QList<QVariantMap> rows = sectionRows(world);
+  for (qsizetype i = 0; i < rows.size(); ++i) {
+    const QVariantMap& row = rows.at(i);
+    if (row.value(S("kind")) != kind || row.value(S("projectId")) != project || row.value(S("path")) != path) continue;
+    QMetaObject::invokeMethod(world.item(S("spaceProjects")), "positionViewAtIndex", Q_ARG(int, int(i)), Q_ARG(int, 4 /* ListView.Contain */));
+    break;
+  }
+  const QString name = kind == QLatin1String("project") ? S("spaceProject:") + project
+                       : S("spaceProject%1:%2:%3").arg(kind == QLatin1String("file") ? S("File") : S("Folder"), project, path);
+  return world.item(name);
+}
+
+// The pages of the scenario's Space, or of the first the MC has, where the sections are.
+void lookAtSidebar(World& world) {
+  // The palette is a tablet's; the sections under test are the phone's.
+  if (world.find(S("desktopLayout"))) {
+    world.resize(412, 915);
+    world.item(S("phoneLayout"));
+  }
+  if (!fake(world.mc).current.isEmpty()) {
+    look(world, current(world));
+    return;
+  }
+  openSpaces(world);
+  look(world, viewOf(world)->spaceId().isEmpty() ? viewOf(world)->spaces()->get(0).value(S("id")).toString() : viewOf(world)->spaceId());
+}
+
+// The section of `project`, on screen.
+QQuickItem* lookAtSection(World& world, const QString& project) {
+  lookAtSidebar(world);
+  world.waitFor([&] { return sectionRow(world, S("project"), project).has_value(); },
+                [&] { return S("a section of %1; %2").arg(project, describeSections(world)); });
+  return sectionItem(world, S("project"), project);
+}
+
+bool expanded(World& world, const QString& project) {
+  const auto row = sectionRow(world, S("project"), project);
+  return row && row->value(S("expanded")).toBool();
+}
+
+// A tap on the section of `project` when it is not already `open`.
+void setSection(World& world, const QString& project, bool open) {
+  QQuickItem* section = lookAtSection(world, project);
+  if (expanded(world, project) != open) world.tap(section);
+  world.waitFor([&] { return expanded(world, project) == open; },
+                [&] { return S("the section of %1 to be %2; %3").arg(project, open ? S("expanded") : S("collapsed"), describeSections(world)); });
+}
+
+bool folderOpen(World& world, const QString& project, const QString& path) {
+  const auto row = sectionRow(world, S("folder"), project, path);
+  return row && row->value(S("expanded")).toBool();
+}
+
+// The folder's row on screen, in its expanded section.
+QQuickItem* lookAtFolder(World& world, const QString& project, const QString& path) {
+  lookAtSection(world, project);
+  world.waitFor([&] { return sectionRow(world, S("folder"), project, path).has_value(); },
+                [&] { return S("the section of %1 to show the folder %2; %3").arg(project, path, describeSections(world)); });
+  return sectionItem(world, S("folder"), project, path);
+}
+
+void waitForFolder(World& world, const QString& project, const QString& path, bool open) {
+  world.waitFor([&] { return sectionRow(world, S("folder"), project, path).has_value() && folderOpen(world, project, path) == open; },
+                [&] { return S("the folder %1 of %2 to be %3; %4").arg(path, project, open ? S("expanded") : S("collapsed"), describeSections(world)); });
+}
+
+// A tap on the folder when it is not already `open`, or Right or Left on a hardware keyboard.
+void setFolder(World& world, const QString& project, const QString& path, bool open, bool keyboard = false) {
+  QQuickItem* folder = lookAtFolder(world, project, path);
+  if (keyboard) {
+    folder->forceActiveFocus(Qt::TabFocusReason);
+    expect(folder->hasActiveFocus(), S("the folder %1 of %2 took no keyboard focus").arg(path, project));
+    world.press(open ? S("Right") : S("Left"));
+  } else if (folderOpen(world, project, path) != open) {
+    world.tap(folder);
+  }
+  waitForFolder(world, project, path, open);
+}
+
+// `path` tapped in the expanded section of `project`, through its folders.
+void pickInSection(World& world, const QString& project, const QString& path) {
+  setSection(world, project, true);
+  const QStringList parts = path.split(QLatin1Char('/'));
+  for (qsizetype i = 1; i < parts.size(); ++i) setFolder(world, project, parts.mid(0, i).join(QLatin1Char('/')), true);
+  world.waitFor([&] { return sectionRow(world, S("file"), project, path).has_value(); },
+                [&] { return S("the section of %1 to show %2; %3").arg(project, path, describeSections(world)); });
+  world.tap(sectionItem(world, S("file"), project, path));
+}
+
+// The file's page on show, from its project's Space, its row showing in its section.
+void expectFilePage(World& world, const QString& title, const QString& project) {
+  expectOpened(world, title);
+  expectShown(world, [&] {
+    const QString space = projectSpace(world.mc, project);
+    const QString path = shownFile(world).value(S("path")).toString();
+    return !space.isEmpty() && viewOf(world)->fileSpaceId() == space && expanded(world, project) && viewOf(world)->projects()->isExpanded(project) &&
+           !path.isEmpty() && sectionRow(world, S("file"), project, path).has_value();
+  }, S("the page %1 to be shown from its row in the section of %2; %3").arg(title, project, describeSections(world)));
+}
+
+// The user picks the page's file in its project's section, the phone's way to
+// a file's page; the MC reads the file again each time.
+void lookAtFilePage(World& world, const QString& title) {
+  const auto [space, page] = filePage(world, title);
+  const QString id = text(page, QLatin1String("id"));
+  const QJsonObject file = page.value(QLatin1String("file")).toObject();
+  const QString project = text(file, QLatin1String("projectId"));
+  const QString path = text(file, QLatin1String("path"));
+  if (filesOf(world.mc, project).contains(path)) {
+    pickInSection(world, project, path);
+  } else {
+    // A file that is gone has no row, and its page says so: as the row's tap asks for it.
+    lookAtSidebar(world);
+    act(world, S("space.openFile"), {{S("projectId"), project}, {S("relativePath"), path}});
+  }
+  expectStep(world, S("page"));
+  world.waitFor([&] { return viewOf(world)->fileSpaceId() == space && viewOf(world)->pageId() == id; },
+                [&] { return S("the page %1 to be shown from its project's Space; %2").arg(title, describe(world)); });
+}
+
 const Steps steps([] {
   const QString q = kQuoted;
 
@@ -2193,7 +2564,8 @@ const Steps steps([] {
     givenSpace(world, c[0]);
   });
   step(S("the Space %1 with the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    givenSpace(world, c[0]);
+    // A Space the Background made already is the one meant.
+    spaceNamed(world, c[0]);
     givenPage(world, c[1]);
   });
   // Who else is on the page.
@@ -2530,8 +2902,9 @@ const Steps steps([] {
   });
   step(S("the user changes the block %1 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     lookAtPage(world, text(blockSaying(world, c[0]), QLatin1String("pageId")));
+    // A tap on the drawn text shows its source to edit.
+    world.tap(world.item(S("spaceBlockText:") + c[0]));
     QQuickItem* editor = world.item(S("spaceBlockEditor:") + c[0]);
-    world.tap(editor);
     world.waitFor([&] { return editor->hasActiveFocus(); }, S("the block's text to take the keyboard"));
     QMetaObject::invokeMethod(editor, "selectAll");
     world.type(c[1]);
@@ -2619,26 +2992,19 @@ const Steps steps([] {
 
   // A page's agent.
   step(S("the user asks %1 on the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    lookAtPage(world, idOfPage(world, c[1]));
-    world.tap(S("spacePageActions"));
-    choose(world, S("agent"));
-    if (!fake(world.mc).refuseAsk) {
-      answer(world, c[0]);
-      return;
-    }
-    // A refusal asks again, so the dialog does not stay closed for `answer`.
-    world.awaitPopup(S("spaceTextDialog"));
-    world.type(c[0]);
-    world.tap(S("spaceTextSave"));
-    world.waitFor([&] { return !fake(world.mc).refuseAsk; }, [] { return S("the ask to reach the MC"); });
+    const QString words = c[0].trimmed().startsWith(QLatin1String("@agent")) ? c[0] : S("@agent ") + c[0];
+    const QString page = idOfPage(world, c[1]);
+    sendPrompt(world, typeInPrompt(world, c[1], words));
+    world.waitFor([&] { return fake(world.mc).lastMethod == QLatin1String("space.page.askAgent") && text(fake(world.mc).lastAsk, QLatin1String("pageId")) == page; },
+                  [] { return S("the ask to reach the MC"); });
     world.sync();
   });
   step(S("the MC refuses the next ask"), [](World& world, const Captures&, const Table&) { fake(world.mc).refuseAsk = true; });
   step(S("the words %1 are kept to ask again").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.awaitPopup(S("spaceTextDialog"));
-    const QString kept = world.item(S("spaceTextField"))->property("text").toString();
-    expect(kept == c[0], S("the dialog holds \"%1\"").arg(kept));
-    world.tap(S("spaceTextCancel"));
+    QQuickItem* composer = world.item(S("spaceComposer"));
+    const QString kept = S("@agent ") + c[0];
+    world.waitFor([&] { return promptEditor(composer)->property("text") == kept && prompt(world).value(S("text")) == kept; },
+                  [&] { return S("the prompt to hold \"%1\"; it is %2").arg(kept, show(prompt(world))); });
   });
   step(S("the agent of %1 does not stop when asked").arg(q), [](World& world, const Captures&, const Table&) { fake(world.mc).ignoresStop = true; });
   step(S("%1 says its agent is stopping").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -2970,6 +3336,102 @@ const Steps steps([] {
     expectShown(world, [&] { return blockTable(world) == wanted; }, S("the blocks %1").arg(show(tableOf(wanted))));
   });
 
+  // Mermaid diagrams on a page: imported as the MC reads a "mermaid" fence (a
+  // code block in "mermaid" holding the bare source), and drawn by the page
+  // through the fake renderer (MermaidSteps.cpp).
+  static const QMap<QString, QString> kDiagrams{
+      {S("flowchart"), mermaid::kFlowchart},
+      {S("graph"), S("graph TD\n  Cart --> Pay")},
+      {S("sequenceDiagram"), S("sequenceDiagram\n  Cart->>Pay: order")},
+      {S("stateDiagram-v2"), S("stateDiagram-v2\n  [*] --> Cart")},
+      {S("gantt"), S("gantt\n  title Launch\n  section Build\n  MC :a1, 2026-11-01, 3d")},
+      {S("block-beta"), S("block-beta\n  columns 2\n  Cart Pay")}};
+  // Imports a page holding `source`, then `after` paragraphs, pasted as a
+  // phone's Markdown comes, and lands on it.
+  const auto importDiagram = [](World& world, const QString& source, int after) {
+    QString markdown = S("# Ordering\n\nHow an order is paid:\n\n```mermaid\n%1\n```\n").arg(source);
+    for (int step = 1; step <= after; ++step) markdown += S("\nStep %1 of paying.\n").arg(step);
+    world.mc.part<Diagram>().source = source;
+    look(world, current(world));
+    world.tap(S("spaceImport"));
+    world.awaitPopup(S("spaceTextDialog"));
+    world.item(S("spaceTextField"))->setProperty("text", markdown);
+    world.tap(S("spaceTextSave"));
+    settle(world);
+    expectStep(world, S("page"));
+    expectShown(world, [&] { return column(viewOf(world)->blocks(), S("text")).contains(source); }, S("the imported page"));
+  };
+  const auto sourceEditor = [](World& world) {
+    return world.item(S("spaceBlockEditor:") + world.mc.part<Diagram>().source);
+  };
+  step(S("the user imports a page holding a %1 Mermaid diagram").arg(q), [importDiagram](World& world, const Captures& c, const Table&) {
+    expect(kDiagrams.contains(c[0]), S("no %1 diagram to import").arg(c[0]));
+    importDiagram(world, kDiagrams.value(c[0]), 0);
+  });
+  step(S("the user imports a page holding a flowchart with an unclosed bracket"), [importDiagram](World& world, const Captures&, const Table&) {
+    importDiagram(world, mermaid::kBrokenFlowchart, 0);
+  });
+  // Paragraphs after it, enough to scroll it off the screen.
+  step(S("a page with a flowchart"), [importDiagram](World& world, const Captures&, const Table&) {
+    importDiagram(world, mermaid::kFlowchart, 40);
+  });
+  step(S("the page has a diagram block of the type %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString source = world.mc.part<Diagram>().source;
+    expect(source.section(QLatin1Char('\n'), 0, 0).section(QLatin1Char(' '), 0, 0) == c[0], S("the page holds a %1 diagram, not %2").arg(c[0], source));
+    expectShown(world, [&] {
+      const QList<QVariantMap>& rows = viewOf(world)->blocks()->rows();
+      return std::any_of(rows.cbegin(), rows.cend(), [&](const QVariantMap& block) {
+        return block.value(S("kind")) == QLatin1String("code") && block.value(S("language")) == QLatin1String("mermaid") && block.value(S("text")) == source;
+      });
+    }, S("a code block in \"mermaid\" holding the diagram"));
+  });
+  step(S("on the desktop and the phone the diagram is drawn"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return mermaid::drawn(world).size() == 1; }, [&] { return S("the diagram to be drawn; %1").arg(describe(world)); });
+    const QQuickItem* image = mermaid::drawn(world).first();
+    expect(image->width() > 0 && image->x() + image->width() <= world.window().width(),
+           S("the diagram is %1 wide at %2 on a %3 wide screen").arg(image->width()).arg(image->x()).arg(world.window().width()));
+    expect(!world.find(S("spaceBlockEditor:") + world.mc.part<Diagram>().source), S("the diagram's source shows with its picture"));
+  });
+  step(S("the user adds a node to its source"), [sourceEditor](World& world, const Captures&, const Table&) {
+    Diagram& diagram = world.mc.part<Diagram>();
+    world.waitFor([&] { return mermaid::drawn(world).size() == 1; }, S("the diagram to be drawn"));
+    world.tap(S("spaceDiagramSource:") + diagram.source);
+    QQuickItem* editor = sourceEditor(world);
+    world.tap(editor);
+    world.waitFor([&] { return editor->hasActiveFocus(); }, S("the source to take the keyboard"));
+    editor->setProperty("cursorPosition", diagram.source.size());
+    QTest::keyClick(&world.window(), Qt::Key_Return);
+    world.type(S("  Pay --> Done"));
+    world.tap(S("spaceEditDone"));
+    world.sync();
+    diagram.source += S("\n  Pay --> Done");
+  });
+  step(S("the diagram is drawn again with the new node"), [](World& world, const Captures&, const Table&) {
+    const QString source = world.mc.part<Diagram>().source;
+    world.waitFor([&] {
+      return mermaid::drawn(world).size() == 1 && world.find(S("spaceDiagram:") + source) && !world.find(S("spaceBlockEditor:") + source);
+    }, [&] { return S("the new source to be drawn; %1").arg(describe(world)); });
+    expect(mermaid::asked(world) == 2, S("the MC was asked %1 times, not for the first and the new source").arg(mermaid::asked(world)));
+  });
+  step(S("the export writes the new source"), [](World& world, const Captures&, const Table&) {
+    world.clipboard.clear();
+    pageMenu(world, S("Ordering"), S("copy"));
+    settle(world);
+    const QString fence = S("```mermaid\n%1\n```").arg(world.mc.part<Diagram>().source);
+    world.waitFor([&] { return world.clipboard.contains(fence); }, [&] { return S("the export to hold %1; it holds \"%2\"").arg(fence, world.clipboard); });
+  });
+  step(S("the user scrolls the page past it and back"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return mermaid::drawn(world).size() == 1; }, S("the diagram to be drawn"));
+    QQuickItem* list = world.item(S("spaceBlocks"));
+    QMetaObject::invokeMethod(list, "positionViewAtEnd");
+    world.waitFor([&] { return mermaid::drawn(world).isEmpty(); }, S("the page to scroll past the diagram"));
+    QMetaObject::invokeMethod(list, "positionViewAtBeginning");
+    world.waitFor([&] { return mermaid::drawn(world).size() == 1; }, S("the diagram to be back"));
+  });
+  step(S("the diagram is not drawn again"), [](World& world, const Captures&, const Table&) {
+    expect(mermaid::asked(world) == 1, S("the MC was asked to draw it %1 times").arg(mermaid::asked(world)));
+  });
+
   // Markdown the page keeps as written, and headings by level.
   // A table wider than a phone, its cells padded to line up as people write them.
   static const QString table = S("| Step  | Owner | Before it ships to everyone            |\n"
@@ -3003,21 +3465,131 @@ const Steps steps([] {
     world.waitFor([&] { return !findBlock(world, edited).isEmpty(); }, [&] { return S("the MC to hold the edited table; %1").arg(describe(world)); });
     expect(text(findBlock(world, edited), QLatin1String("kind")) == QLatin1String("raw"), S("the table is no longer kept as written"));
   });
-  // A table and a code block, which the page shows as their source until #854 draws them.
+  // A table and a code block: drawn by the chat's Markdown while read, edited as their
+  // source (#854).
   static const QString modelledTable = S("| Step | Owner |\n| ---- | ----- |\n| MC   | Ada   |");
   static const QString code = S("run()\n    done()");
+  static const QString alignedTable = S("| Step | Owner | Done |\n| :--- | :---: | ---: |\n| **MC** | a \\| b | 3 |");
+  // The grid of a drawn table, or the box of a drawn code block, once it is laid out.
+  const auto drawnPart = [](World& world, const QString& said, const QString& part) {
+    QQuickItem* found = nullptr;
+    world.waitFor([&] {
+      QQuickItem* drawn = world.find(S("spaceBlockText:") + said);
+      found = drawn ? named(drawn, part) : nullptr;
+      return found && found->isVisible() && found->height() > 0 && drawn->height() >= found->height();
+    }, [&] { return S("%1 to draw %2; %3").arg(said, part, describe(world)); });
+    return found;
+  };
   step(S("the page %1 holds a table and a code block").arg(q), [](World& world, const Captures& c, const Table&) {
     givenBlock(world, c[0], S("table"), modelledTable);
     givenBlock(world, c[0], S("code"), code);
   });
-  step(S("the table and the code are each shown line for line in a fixed-width face"), [](World& world, const Captures&, const Table&) {
-    for (const QString& said : {modelledTable, code}) {
+  step(S("the user edits the table and the code each as its source, exactly as written"), [drawnPart](World& world, const Captures&, const Table&) {
+    for (const auto& [said, part] : {std::pair{modelledTable, S("markdownTable")}, std::pair{code, S("codeText")}}) {
+      // A tap on what is drawn, clear of its buttons, edits it.
+      world.tap(drawnPart(world, said, part));
       QQuickItem* editor = world.item(S("spaceBlockEditor:") + said);
-      expect(editor->property("text").toString() == said, S("the block shows as \"%1\"").arg(editor->property("text").toString()));
+      world.waitFor([&] { return editor->hasActiveFocus(); }, S("%1 to take the keyboard").arg(said));
+      expect(editor->property("text").toString() == said, S("the block's source reads \"%1\"").arg(editor->property("text").toString()));
+      // One line on screen for each it was written in, however narrow the phone.
       expect(editor->property("lineCount").toInt() == said.count(QLatin1Char('\n')) + 1,
              S("%1 is shown in %2 lines").arg(said).arg(editor->property("lineCount").toInt()));
       expect(QFontInfo(editor->property("font").value<QFont>()).fixedPitch(), S("%1 is not in a fixed-width face").arg(said));
+      // Done with it unchanged, it is drawn again.
+      world.tap(S("spaceEditDone"));
+      world.waitFor([&] { return world.find(S("spaceBlockEditor:") + said) == nullptr && world.find(S("spaceBlockText:") + said); },
+                    S("%1 to be drawn again").arg(said));
     }
+  });
+  step(S("the page %1 with a table whose columns are aligned left, centre and right").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenBlock(world, c[0], S("table"), alignedTable);
+  });
+  // The grid's cells as the Markdown brick holds them: a header, rows, and an alignment a column.
+  const auto gridSpec = [drawnPart](World& world) { return drawnPart(world, alignedTable, S("markdownTable"))->property("spec").toMap(); };
+  step(S("the table is shown as a grid of its cells, its header row apart"), [gridSpec](World& world, const Captures&, const Table&) {
+    const QVariantMap spec = gridSpec(world);
+    const QStringList header = spec.value(S("header")).toStringList();
+    expect(header == QStringList({S("Step"), S("Owner"), S("Done")}), S("the header is %1").arg(header.join(S(", "))));
+    expect(spec.value(S("rows")).toList().size() == 1, S("the table has %1 rows").arg(spec.value(S("rows")).toList().size()));
+  });
+  step(S("each column is aligned as it was written"), [gridSpec](World& world, const Captures&, const Table&) {
+    const QStringList align = gridSpec(world).value(S("align")).toStringList();
+    expect(align == QStringList({S("left"), S("center"), S("right")}), S("the columns are aligned %1").arg(align.join(S(", "))));
+  });
+  step(S("a cell's formatting is shown, a %1 as a pipe").arg(q), [gridSpec](World& world, const Captures&, const Table&) {
+    const QStringList row = gridSpec(world).value(S("rows")).toList().value(0).toStringList();
+    expect(QRegularExpression(S("<(b|strong)>MC</(b|strong)>")).match(row.value(0)).hasMatch(), S("the bold cell is %1").arg(row.value(0)));
+    expect(row.value(1) == QLatin1String("a | b"), S("the escaped pipe's cell is %1").arg(row.value(1)));
+  });
+  // A code block, with its language when it has one.
+  const auto givenCode = [](World& world, const QString& title, const QString& language) {
+    given(world, S("block.insert"), {{S("pageId"), givenPage(world, title)}, {S("kind"), S("code")}, {S("text"), code}, {S("language"), language}});
+  };
+  step(S("the page %1 with a %1 code block").arg(q), [givenCode](World& world, const Captures& c, const Table&) { givenCode(world, c[0], c[1]); });
+  step(S("the page %1 with a code block").arg(q), [givenCode](World& world, const Captures& c, const Table&) { givenCode(world, c[0], QString()); });
+  // Coloured as the brick colours a reply's code, which this does not hold it to.
+  step(S("its text is shown in a fixed-width face, coloured for that language where the surface can"), [drawnPart](World& world, const Captures&, const Table&) {
+    QQuickItem* box = drawnPart(world, code, S("markdownCode"));
+    expect(box->property("code").toString() == code, S("the code reads \"%1\"").arg(box->property("code").toString()));
+    QQuickItem* codeText = named(box, S("codeText"));
+    const QFont font = codeText->property("font").value<QFont>();
+    expect(QFontInfo(font).fixedPitch(), S("the code is in %1, not a fixed-width face").arg(QFontInfo(font).family()));
+    // The phone links the desktop's highlighter (timeline/markdown.feature).
+    QObject* highlighter = codeText->findChild<QObject*>(S("codeHighlighter"));
+    expect(highlighter, S("the code block has no highlighter"));
+    world.waitFor([&] { return highlighter->property("coloured").toBool(); },
+                  [&] { return S("the code to be coloured as %1").arg(highlighter->property("language").toString()); });
+  });
+  step(S("its language is named on it"), [drawnPart](World& world, const Captures&, const Table&) {
+    const QString language = text(findBlock(world, code), QLatin1String("language"));
+    const QString label = named(drawnPart(world, code, S("markdownCode")), S("codeLabel"))->property("text").toString();
+    expect(!language.isEmpty() && label == language, S("the code is named \"%1\", not %2").arg(label, language));
+  });
+  step(S("the user copies the code block on the page"), [drawnPart](World& world, const Captures&, const Table&) {
+    QQuickItem* copy = named(drawnPart(world, code, S("markdownCode")), S("copyCode"));
+    QGuiApplication::clipboard()->clear();
+    world.tap(copy);
+    world.waitFor([&] { return !QGuiApplication::clipboard()->text().isEmpty(); }, S("the code to be copied"));
+    expect(world.find(S("spaceBlockEditor:") + code) == nullptr, S("copying the code edits it"));
+  });
+  step(S("the code is on the clipboard without its fence"), [](World&, const Captures&, const Table&) {
+    expect(QGuiApplication::clipboard()->text() == code, S("the clipboard holds \"%1\"").arg(QGuiApplication::clipboard()->text()));
+  });
+  // Blocks as the MC keeps them, a field per column; `-` is a field the block does not have.
+  step(S("the page %1 holds the blocks:").arg(q), [](World& world, const Captures& c, const Table& table) {
+    const QStringList header = table.value(0);
+    for (const QStringList& row : table.mid(1)) {
+      QJsonObject block{{S("pageId"), givenPage(world, c[0])}};
+      for (qsizetype i = 0; i < header.size(); ++i) {
+        const QString& field = header.at(i);
+        const QString cell = row.value(i, S("-"));
+        if (cell == QLatin1String("-")) {
+          if (field == QLatin1String("text")) block.insert(field, QString());
+        } else if (field == QLatin1String("checked")) {
+          block.insert(field, cell == QLatin1String("true"));
+        } else if (field == QLatin1String("depth") || field == QLatin1String("start")) {
+          block.insert(field, cell.toInt());
+        } else {
+          block.insert(field, cell);
+        }
+      }
+      given(world, S("block.insert"), block);
+    }
+  });
+  // The page's lines as Markdown, from what each block shows: what the MC writes around its
+  // text, then a tick standing for `- [ ]` and a callout's tint for `> `. A tall phone shows
+  // every block at once.
+  step(S("each block is shown as this Markdown, line for line:"), [](World& world, const Captures&, const Table& table) {
+    QStringList wanted;
+    for (const QString& line : table.value(0).value(0).split(QLatin1Char('\n'))) {
+      if (!line.trimmed().isEmpty()) wanted.append(line);
+    }
+    world.resize(430, 2400);
+    QStringList shown;
+    world.waitFor([&] {
+      shown = shownMarkdown(world.window().contentItem());
+      return shown == wanted;
+    }, [&] { return S("the page to show\n%1\nbut it shows\n%2").arg(wanted.join(QLatin1Char('\n')), shown.join(QLatin1Char('\n'))); });
   });
   step(S("the page %1 with headings of every level from 1 to 6").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString page = givenPage(world, c[0]);
@@ -3026,10 +3598,95 @@ const Steps steps([] {
     }
   });
   step(S("each heading is smaller than the one of the level above it"), [](World& world, const Captures&, const Table&) {
-    const auto size = [&](int level) { return world.item(S("spaceBlockEditor:Level %1").arg(level))->property("font").value<QFont>().pixelSize(); };
+    const auto size = [&](int level) { return world.item(S("spaceBlockText:Level %1").arg(level))->property("fontSize").toInt(); };
     for (int level = 2; level <= 6; ++level) {
       expect(size(level) < size(level - 1), S("a level %1 heading is %2px, a level %3 one %4px").arg(level).arg(size(level)).arg(level - 1).arg(size(level - 1)));
     }
+  });
+  // Inline formatting (markdown.feature): a paragraph is drawn by the chat's Markdown brick,
+  // each kind of formatting as the brick writes it, with none of its markers left.
+  static const QMap<QString, std::pair<QString, QStringList>> inlined{
+      {S("bold and italic text"), {S("**Bold** and _italic_"), {S("<b>Bold</b>"), S("<i>italic</i>")}}},
+      {S("struck-through text"), {S("~~struck~~"), {S("<s>struck</s>")}}},
+      {S("inline code"), {S("`mix test`"), {S("class=\"c\""), S("mix test")}}},
+      {S("a link with a title"), {S("a [link](https://example.com \"Title\")"), {S("href=\"https://example.com\">link</a>")}}},
+      {S("an autolinked address and a bare www link"),
+       {S("<https://example.com> and www.example.com"),
+        {S("href=\"https://example.com\">https://example.com</a>"), S("href=\"http://www.example.com\">www.example.com</a>")}}}};
+  static const QString linking = S("[the docs](https://example.com/docs) hold ![Signups](https://example.com/signups.png)");
+  const auto prose = [](World& world, const QString& said) {
+    QQuickItem* drawn = world.item(S("spaceBlockText:") + said);
+    expect(!world.find(S("spaceBlockEditor:") + said), S("the paragraph shows its source"));
+    expect(!drawn->property("trusted").toBool(), S("the paragraph is drawn trusted"));
+    QQuickItem* html = named(drawn, S("markdownProse"));
+    expect(html != nullptr, S("the paragraph is not drawn as prose"));
+    return html;
+  };
+  step(S("a page with a paragraph holding (.+)"), [](World& world, const Captures& c, const Table&) {
+    expect(inlined.contains(c[0]), S("no paragraph holds %1").arg(c[0]));
+    givenBlock(world, S("Notes"), S("paragraph"), inlined.value(c[0]).first);
+  });
+  step(S("a page with a paragraph linking to a web address"), [](World& world, const Captures&, const Table&) {
+    givenBlock(world, S("Notes"), S("paragraph"), linking);
+  });
+  step(S("the user opens the page"), [](World& world, const Captures&, const Table&) {
+    lookAtPage(world, idOfPage(world, S("Notes")));
+  });
+  step(S("the paragraph is shown with (.+)"), [prose](World& world, const Captures& c, const Table&) {
+    const auto& [said, wanted] = inlined.value(c[0]);
+    const QString html = prose(world, said)->property("text").toString();
+    for (const QString& part : wanted) expect(html.contains(part), S("%1 is not drawn in %2").arg(part, html));
+    for (const QString& marker : {S("**"), S("~~"), S("`"), S("]("), S("Title")}) expect(!html.contains(marker), S("%1 shows in %2").arg(marker, html));
+  });
+  step(S("nothing is fetched until the user opens the link"), [prose](World& world, const Captures&, const Table&) {
+    QQuickItem* drawn = prose(world, linking);
+    const QString html = drawn->property("text").toString();
+    expect(!html.contains(S("<img")), S("the picture is loaded: %1").arg(html));
+    expect(html.contains(S("href=\"https://example.com/signups.png\">")), S("the picture is no link: %1").arg(html));
+    expect(world.openedUrls.isEmpty(), S("the phone opened %1").arg(world.openedUrls.size()));
+    // The link starts the paragraph: a click on its first letters follows it.
+    QTest::mouseClick(&world.window(), Qt::LeftButton, {}, drawn->mapToScene(QPointF(4, drawn->height() / 2)).toPoint());
+    world.waitFor([&] { return !world.openedUrls.isEmpty(); }, S("the link to open"));
+    expect(world.openedUrls == QList<QUrl>{QUrl(S("https://example.com/docs"))}, S("the phone opened %1").arg(world.openedUrls.value(0).toString()));
+  });
+
+  // Lists (markdown.feature): each item is a block the brick draws as a list of one, its
+  // marker the one its depth takes, nested by the indent before it.
+  struct Nested {
+    QString kind, text;
+    int depth;
+    QString list;  // what the brick draws it in
+  };
+  static const QList<Nested> nested{
+      {S("bullet"), S("Plan the release"), 0, S("<ul style=\"-qt-list-indent:0;list-style-type:disc;")},
+      {S("numbered"), S("Tag"), 1, S("<ol style=\"-qt-list-indent:0;list-style-type:decimal;")},
+      {S("numbered"), S("Ship"), 1, S("<ol start=\"2\" style=\"-qt-list-indent:0;list-style-type:decimal;")},
+      {S("bullet"), S("Notes"), 2, S("<ul style=\"-qt-list-indent:0;list-style-type:circle;")},
+      {S("bullet"), S("Announce"), 0, S("<ul style=\"-qt-list-indent:0;list-style-type:disc;")}};
+  step(S("the page %1 with a bulleted list holding a numbered list").arg(q), [](World& world, const Captures& c, const Table&) {
+    for (const Nested& item : nested)
+      given(world, S("block.insert"), {{S("pageId"), givenPage(world, c[0])}, {S("kind"), item.kind}, {S("text"), item.text}, {S("depth"), item.depth}});
+  });
+  step(S("each item is shown with its bullet or its number, indented under its parent"), [](World& world, const Captures&, const Table&) {
+    QMap<QString, qreal> left;
+    for (const Nested& item : nested) {
+      QQuickItem* drawn = world.item(S("spaceBlockText:") + item.text);
+      QQuickItem* prose = named(drawn, S("markdownProse"));
+      expect(prose != nullptr, S("%1 is not drawn as prose").arg(item.text));
+      const QString html = prose->property("text").toString();
+      expect(html.contains(item.list) && html.contains(S(">%1</").arg(item.text)), S("%1 is drawn as %2").arg(item.text, html));
+      QQuickItem* lead = world.find(S("spaceMarkdownLead:") + item.text);
+      expect(!lead || !lead->isVisible() || lead->property("text").toString().trimmed().isEmpty(),
+             S("%1 shows its marker as text: %2").arg(item.text, lead ? lead->property("text").toString() : QString()));
+      left.insert(item.text, drawn->mapToScene({}).x());
+    }
+    const auto under = [&](const QString& child, const QString& parent) {
+      expect(left.value(child) > left.value(parent), S("%1 (at %2) is not indented under %3 (at %4)").arg(child).arg(left.value(child)).arg(parent).arg(left.value(parent)));
+    };
+    under(S("Tag"), S("Plan the release"));
+    under(S("Notes"), S("Ship"));
+    expect(qFuzzyCompare(left.value(S("Tag")), left.value(S("Ship"))), S("Tag and Ship are not at one depth"));
+    expect(qFuzzyCompare(left.value(S("Announce")), left.value(S("Plan the release"))), S("Announce is not back at the top"));
   });
 
   // A page from a thread.
@@ -3596,9 +4253,67 @@ const Steps steps([] {
     fake(world.mc).imageGeneration = QStringLiteral("failed");
   });
   step(QStringLiteral("the user generates an image of %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    look(world, idOfSpace(world, c[1]));
-    // The dialog holds back a blank prompt or no provider; the MC's answer is what this is about.
-    act(world, QStringLiteral("space.image.generate"), {{QStringLiteral("prompt"), c[0]}});
+    generateInPrompt(world, imagesPromptOn(world, idOfSpace(world, c[1])), c[0]);
+  });
+  step(QStringLiteral("(\\w+) is installed and can generate images"), [](World& world, const Captures& c, const Table&) {
+    signImages(world);
+    fake(world.mc).imageGeneration = QStringLiteral("available");
+    if (c[0] == QLatin1String("grok")) fake(world.mc).grok = true;
+  });
+  step(QStringLiteral("the user generates an image of %1 in %1 with (\\w+) using %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* composer = imagesPromptOn(world, idOfSpace(world, c[1]));
+    world.waitFor([&] { return pickerOffer(world).value(c[2]).toStringList().contains(c[3]); },
+                  [&] { return S("the picker to offer %1's %2; it offers %3").arg(c[2], c[3], show(pickerOffer(world))); });
+    world.tap(inside(world, composer, S("modelPicker")));
+    const QString row = S("modelPickerRow:%1:%2").arg(c[2], c[3]);
+    world.waitFor([&] { return world.find(row) != nullptr || world.find(S("modelPickerProvider:") + c[2]) != nullptr; },
+                  [&] { return S("the picker to open; %1").arg(describe(world)); });
+    if (world.find(row) == nullptr) world.tap(S("modelPickerProvider:") + c[2]);
+    world.tap(world.item(row));
+    world.waitFor([&] { const QVariantMap state = world.state(S("composer")).toMap(); return state.value(S("selectedInstanceId")) == c[2] && state.value(S("selectedModel")) == c[3]; },
+                  [&] { return S("the prompt to be on %1's %2; it is %3").arg(c[2], c[3], show(prompt(world))); });
+    world.waitFor([&] { return world.find(row) == nullptr; }, S("the model picker to close"));
+    generateInPrompt(world, composer, c[0]);
+  });
+  step(QStringLiteral("the image remembers it was made by (\\w+) using %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString stream = streamOf(current(world));
+    world.waitFor([&] {
+      for (const QJsonObject& image : all(world.mc, stream, S("image"))) {
+        const QJsonObject by = image.value(QLatin1String("generatedBy")).toObject();
+        if (by.value(QLatin1String("instanceId")) == c[0] && by.value(QLatin1String("model")) == c[1]) return true;
+      }
+      return false;
+    }, [&] { return S("an image made by %1 using %2").arg(c[0], c[1]); });
+  });
+  step(QStringLiteral("only the providers that can generate are offered, with their image models"), [](World& world, const Captures&, const Table&) {
+    imagesPromptOn(world, current(world));
+    const QVariantMap wanted{{S("codex"), QStringList{S("auto")}}, {S("grok"), QStringList{S("auto"), S("grok-imagine-image-2.0"), S("grok-imagine-image")}}};
+    QStringList available;
+    world.waitFor([&] { available.clear(); return pickerOffer(world, &available) == wanted && available == QStringList{S("codex")}; },
+                  [&] { return S("the picker to offer %1 with only codex available; it offers %2 with %3").arg(show(wanted), show(pickerOffer(world)), available.join(u',')); });
+  });
+  step(QStringLiteral("the prompt area asks what the image should show"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* editor = world.item(S("spaceImagesComposer"))->property("editor").value<QQuickItem*>();
+    world.waitFor([&] { return editor->property("placeholderText") == S("What should the image show?"); },
+                  [&] { return S("the prompt to ask what the image should show; it is %1").arg(show(prompt(world))); });
+    expect(world.find(S("attachButton")) == nullptr, S("the images' prompt offers attachments"));
+  });
+  step(QStringLiteral("its model picker offers only image models"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return pickerOffer(world) == QVariantMap{{S("codex"), QStringList{S("auto")}}, {S("grok"), QStringList{S("auto"), S("grok-imagine-image-2.0"), S("grok-imagine-image")}}}; },
+                  [&] { return S("the picker to offer only image models; it offers %1").arg(show(pickerOffer(world))); });
+  });
+  step(QStringLiteral("the prompt area still holds %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* editor = promptEditor(world.item(S("spaceImagesComposer")));
+    world.waitFor([&] {
+      return !prompt(world).value(S("isSendBusy")).toBool() && prompt(world).value(S("text")) == c[0] && editor->property("text") == c[0] &&
+             !world.state(S("space")).toMap().value(S("generatingImage")).toBool();
+    }, [&] { return S("the prompt to still hold \"%1\" once the answer came; it is %2").arg(c[0], show(prompt(world))); });
+  });
+  step(QStringLiteral("the prompt area says no provider can generate images"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* composer = world.item(S("spaceImagesComposer"));
+    QQuickItem* editor = composer->property("editor").value<QQuickItem*>();
+    world.waitFor([&] { return editor->property("placeholderText") == S("No provider here can generate images. Set up Codex or Grok in Settings."); },
+                  [&] { return S("the prompt to say no provider can generate images; it is %1").arg(show(prompt(world))); });
   });
   step(QStringLiteral("%1 has a generated image of %1").arg(q), [](World& world, const Captures& c, const Table&) {
     look(world, idOfSpace(world, c[0]));
@@ -3610,17 +4325,6 @@ const Steps steps([] {
                                                           : QStringLiteral("Image generation is unavailable, so no image was made.");
     world.waitFor([&] { return toldOf(world, start); }, [&] { return QStringLiteral("the user to be told \"%1\"; toasts %2").arg(start, show(toasts(world))); });
     expect(!world.state(QStringLiteral("space")).toMap().value(QStringLiteral("generatingImage")).toBool(), QStringLiteral("the Space view still says it is generating"));
-  });
-  step(QStringLiteral("the image providers on offer say which can generate"), [](World& world, const Captures&, const Table&) {
-    openSpaces(world);
-    act(world, QStringLiteral("space.image.providers"), {});
-    QVariantMap status;
-    world.waitFor([&] {
-      for (const QVariant& provider : world.state(QStringLiteral("space")).toMap().value(QStringLiteral("imageProviders")).toMap().value(QStringLiteral("providers")).toList()) {
-        status.insert(provider.toMap().value(QStringLiteral("instanceId")).toString(), provider.toMap().value(QStringLiteral("status")));
-      }
-      return status.value(QStringLiteral("codex")) == QLatin1String("ready") && status.value(QStringLiteral("claudeAgent")) == QLatin1String("unsupported");
-    }, [&] { return QStringLiteral("the providers to say which can generate; they say %1").arg(show(status)); });
   });
   step(QStringLiteral("the image %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(idOfSpace(world, c[1]) == current(world), QStringLiteral("%1 is not the scenario's Space").arg(c[1]));
@@ -3696,24 +4400,140 @@ const Steps steps([] {
     world.waitFor([&] { return fake(world.mc).signedImages.contains(idOfImage(world, c[0])); }, [&] { return QStringLiteral("an address to be signed for %1").arg(c[0]); });
   });
 
-  // Project files as pages (features/space/project-files.feature, "Opening project files from the clients").
+  // Project files in the Space sidebar (features/space/project-files.feature).
   step(S("%1 has the file %1 reading %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    expect(c[0] == QLatin1String("shop"), S("the phone's threads are all in shop"));
-    fakeFiles(world.mc).files.insert(c[1], QString(c[2]).replace(S("\\n"), S("\n")));
+    expect(c[0] == kProject, S("the phone's threads are all in shop"));
+    filesOf(world.mc, c[0]).insert(c[1], QString(c[2]).replace(S("\\n"), S("\n")));
     // A thread to show the project's files in.
     haveThread(world, kFilesThread);
     world.sync();
   });
+  step(S("the project %1 has the file %1 reading %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    haveProject(world, c[0]);
+    filesOf(world.mc, c[0]).insert(c[1], QString(c[2]).replace(S("\\n"), S("\n")));
+  });
+  step(S("the project %1 has no Space files").arg(q), [](World& world, const Captures& c, const Table&) {
+    haveProject(world, c[0]);
+  });
+  step(S("the user is in the Space %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    look(world, spaceNamed(world, c[0]));
+  });
+  step(S("the sidebar's project sections are %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtSidebar(world);
+    const QStringList wanted = c[0].split(S(", "));
+    world.waitFor([&] {
+      QStringList projects;
+      for (const QVariantMap& row : sectionRows(world)) {
+        if (row.value(S("kind")) == QLatin1String("project")) projects.append(row.value(S("projectId")).toString());
+      }
+      return projects == wanted;
+    }, [&] { return S("the project sections to be %1; %2").arg(c[0], describeSections(world)); });
+    for (const QString& project : wanted) sectionItem(world, S("project"), project);
+  });
+  step(S("the section of %1 is collapsed").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtSection(world, c[0]);
+    world.waitFor([&] {
+      const QList<QVariantMap> rows = sectionRows(world);
+      return std::none_of(rows.cbegin(), rows.cend(), [&](const QVariantMap& row) {
+        return row.value(S("projectId")) == c[0] && (row.value(S("kind")) != QLatin1String("project") || row.value(S("expanded")).toBool());
+      });
+    }, [&] { return S("the section of %1 to be collapsed; %2").arg(c[0], describeSections(world)); });
+    // The list lets go of a removed row on its next pass.
+    world.waitFor([&] { return world.find(S("spaceProjectFolder:%1:docs").arg(c[0])) == nullptr; }, S("the collapsed section to hide its folders"));
+  });
+  step(S("the section of %1 is expanded").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtSection(world, c[0]);
+    world.waitFor([&] { return expanded(world, c[0]); }, [&] { return S("the section of %1 to be expanded; %2").arg(c[0], describeSections(world)); });
+  });
+  step(S("the user (?:expands|expanded) the section of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    setSection(world, c[0], true);
+  });
+  step(S("the user collapses the section of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    setSection(world, c[0], false);
+  });
+  step(S("the folder %1 of %1 is collapsed").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtFolder(world, c[1], c[0]);
+    waitForFolder(world, c[1], c[0], false);
+    world.waitFor([&] {
+      const QList<QVariantMap> rows = sectionRows(world);
+      return std::none_of(rows.cbegin(), rows.cend(), [&](const QVariantMap& row) {
+        return row.value(S("projectId")) == c[1] && row.value(S("path")).toString().startsWith(c[0] + QLatin1Char('/'));
+      });
+    }, [&] { return S("nothing in the folder %1 of %2 to show; %3").arg(c[0], c[1], describeSections(world)); });
+  });
+  step(S("the user (?:expands|expanded) the folder %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    setFolder(world, c[1], c[0], true);
+  });
+  step(S("the user collapses the folder %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    setFolder(world, c[1], c[0], false);
+  });
+  step(S("the user expands the folder %1 of %1 from the keyboard").arg(q), [](World& world, const Captures& c, const Table&) {
+    setFolder(world, c[1], c[0], true, true);
+  });
+  step(S("the user collapses the folder %1 of %1 from the keyboard").arg(q), [](World& world, const Captures& c, const Table&) {
+    setFolder(world, c[1], c[0], false, true);
+  });
+  step(S("the section of %1 shows %1 in the folder %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtSection(world, c[0]);
+    world.waitFor([&] {
+      const QList<QVariantMap> rows = sectionRows(world);
+      for (qsizetype i = 0; i + 1 < rows.size(); ++i) {
+        const QVariantMap& folder = rows.at(i);
+        const QVariantMap& file = rows.at(i + 1);
+        if (folder.value(S("kind")) != QLatin1String("folder") || folder.value(S("projectId")) != c[0] || folder.value(S("path")) != c[2]) continue;
+        return file.value(S("kind")) == QLatin1String("file") && file.value(S("path")) == c[2] + QLatin1Char('/') + c[1] && file.value(S("name")) == c[1] &&
+               file.value(S("depth")).toInt() == folder.value(S("depth")).toInt() + 1;
+      }
+      return false;
+    }, [&] { return S("the section of %1 to show %2 in %3; %4").arg(c[0], c[1], c[2], describeSections(world)); });
+    sectionItem(world, S("folder"), c[0], c[2]);
+    sectionItem(world, S("file"), c[0], c[2] + QLatin1Char('/') + c[1]);
+  });
+  step(S("the client starts again"), [](World& world, const Captures&, const Table&) {
+    world.close();
+    world.open();
+    world.waitFor([&] { return world.state(S("connection")).toMap().value(S("phase")) == QLatin1String("connected"); },
+                  [&] { return S("the reopened app to connect; it is %1").arg(show(world.state(S("connection")))); });
+  });
+  step(S("the user picks %1 in the section of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    pickInSection(world, c[1], c[0]);
+  });
+  step(S("the page editor shows the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectOpened(world, c[0]);
+  });
+  step(S("the page editor shows the page %1 in the section of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectFilePage(world, c[0], c[1]);
+  });
+  step(S("the page %1 is not among the pages of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString space = spaceNamed(world, c[1]);
+    expect(viewOf(world)->spaceId() == space, S("the Space screen shows %1, not %2").arg(viewOf(world)->spaceName(), c[1]));
+    expect(!column(viewOf(world)->pages(), S("title")).contains(c[0]), S("the Space screen lists %1 among the pages of %2").arg(c[0], c[1]));
+    const QList<QJsonObject> pages = all(world.mc, streamOf(space), S("page"));
+    expect(std::none_of(pages.cbegin(), pages.cend(), [&](const QJsonObject& page) { return text(page, QLatin1String("title")) == c[0]; }),
+           S("the MC put %1 in %2").arg(c[0], c[1]));
+  });
+  step(S("the user is editing %1 of %1 from its section").arg(q), [](World& world, const Captures& c, const Table&) {
+    pickInSection(world, c[1], c[0]);
+    expectStep(world, S("page"));
+    world.waitFor([&] {
+      const QString space = projectSpace(world.mc, c[1]);
+      return !space.isEmpty() && viewOf(world)->fileSpaceId() == space && shownFile(world).value(S("path")) == c[0];
+    }, [&] { return S("%1 to be shown from its section; %2").arg(c[0], describe(world)); });
+  });
+  // Back to the Space's pages, where the page is a tap away.
+  step(S("the user picks the page %1 in the sidebar").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString id = idOfPage(world, c[0]);
+    backTo(world, S("pages"));
+    world.tap(S("spacePage:") + c[0]);
+    expectStep(world, S("page"));
+    world.waitFor([&] { return viewOf(world)->pageId() == id; }, [&] { return S("the page %1 to open; %2").arg(c[0], describe(world)); });
+  });
   step(S("the user is browsing the files of %1").arg(q), [](World& world, const Captures&, const Table&) {
     browseFiles(world);
   });
-  step(S("the user opens %1 in a Space from its menu").arg(q), [](World& world, const Captures& c, const Table&) {
-    browseFiles(world);
+  step(S("the user picks \"Edit as a page\" on %1").arg(q), [](World& world, const Captures& c, const Table&) {
     holdEntry(world, c[0]);
-    world.tap(S("fileEntryOpenInSpace"));
-  });
-  step(S("the Space shows the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    expectOpened(world, c[0]);
+    world.tap(S("fileEntryEditAsPage"));
   });
   step(S("the user is reading %1 in the file viewer").arg(q), [](World& world, const Captures& c, const Table&) {
     browseFiles(world);
@@ -3721,8 +4541,8 @@ const Steps steps([] {
     world.waitFor([&] { return viewerOf(world).openPath() == c[0] && viewerOf(world).fileStatus() != QLatin1String("loading"); },
                   [&] { return S("the viewer to open %1; it has \"%2\"").arg(c[0], viewerOf(world).openPath()); });
   });
-  step(S("the user opens it in a Space"), [](World& world, const Captures&, const Table&) {
-    world.tap(world.item(S("fileOpenInSpace")));
+  step(S("the user picks \"Edit as a page\" in the file viewer"), [](World& world, const Captures&, const Table&) {
+    world.tap(world.item(S("fileEditAsPage")));
   });
   step(S("the agent's message in a thread of %1 links %1").arg(q), [](World& world, const Captures& c, const Table&) {
     inFilesThread(world);
@@ -3741,22 +4561,15 @@ const Steps steps([] {
     fake(world.mc).link = c[1];
   });
   // A finger held on the link asks for its menu (tst_Markdown.qml holds one).
-  step(S("the user opens that link in a Space"), [](World& world, const Captures&, const Table&) {
+  step(S("the user picks \"Edit as a page\" on that link"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(S("link.menu"), QVariantMap{{S("url"), fake(world.mc).link}, {S("x"), 10}, {S("y"), 10}});
     world.awaitPopup(S("mobileMenu"));
-    world.tap(S("mobileMenuItem:open-in-space"));
+    world.tap(S("mobileMenuItem:edit-as-page"));
   });
-  step(S("the user is in the Space %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    look(world, spaceNamed(world, c[0]));
-  });
-  step(S("the user adds a page from the files of %1 and picks %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.tap(S("spaceFromProjectFiles"));
-    pickFile(world, c[1]);
-    expect(at(world.state(S("space")), S("picking")).toString() == c[0], S("the picker offers another project than %1").arg(c[0]));
-  });
-  step(S("the user asks the command palette to open %1 in a Space").arg(q), [](World& world, const Captures& c, const Table&) {
-    runCommand(world, S("Open a project file in a Space"));
+  step(S("the user asks the command palette to edit %1 of %1 as a page").arg(q), [](World& world, const Captures& c, const Table&) {
+    runCommand(world, S("Edit a project file as a page"));
     pickFile(world, c[0]);
+    expect(at(world.state(S("space")), S("picking")).toString() == c[1], S("the picker offers another project than %1").arg(c[1]));
   });
   step(S("the user asks the command palette to scan %1 for Space files").arg(q), [](World& world, const Captures&, const Table&) {
     runCommand(world, S("Scan project for Space files"));
@@ -3764,32 +4577,24 @@ const Steps steps([] {
   step(S("the user is told the scan wrote the spaces section"), [](World& world, const Captures&, const Table&) {
     expectShown(world, [&] { return toldOf(world, S("Wrote the spaces section")); }, S("a toast that the scan wrote the spaces section"));
   });
-  step(S("%1 offers no way to open it in a Space").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(S("%1 offers no \"Edit as a page\"").arg(q), [](World& world, const Captures& c, const Table&) {
     holdEntry(world, c[0]);
     world.sync();
-    expect(world.find(S("fileEntryOpenInSpace")) == nullptr, S("the menu of %1 offers opening it in a Space").arg(c[0]));
+    expect(world.find(S("fileEntryEditAsPage")) == nullptr, S("the menu of %1 offers editing it as a page").arg(c[0]));
     closeEntryMenu(world);
     // The Markdown beside it is offered, so the menu is not merely waiting.
     holdEntry(world, S("docs/guide.md"));
-    world.item(S("fileEntryOpenInSpace"));
+    world.item(S("fileEntryEditAsPage"));
     closeEntryMenu(world);
   });
-  step(S("every Space was deleted"), [](World& world, const Captures&, const Table&) {
-    for (const QJsonObject& space : all(world.mc, kIndex, S("space"))) remove(world.mc, kIndex, S("space"), text(space, QLatin1String("id")));
-  });
-  step(S("the user last had the Space %1 open").arg(q), [](World& world, const Captures& c, const Table&) {
-    look(world, spaceNamed(world, c[0]));
-  });
-  step(S("the page %1 is in %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    expectOpened(world, c[0], c[1]);
-  });
-  step(S("the user has opened %1 of %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    spaceNamed(world, c[2]);
-    const QJsonObject page = given(world, S("page.openFile"), {{S("projectId"), c[1]}, {S("relativePath"), c[0]}}).value(QLatin1String("page")).toObject();
-    name(world, S("page"), text(page, QLatin1String("title")), text(page, QLatin1String("id")));
+  step(S("the user has opened %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    haveProject(world, c[1]);
+    const Answer answer = call(world.mc, S("page.openFile"), {{S("projectId"), c[1]}, {S("relativePath"), c[0]}});
+    expect(answer.error.isEmpty(), S("the MC refused space.page.openFile: %1").arg(answer.error));
+    world.sync();
   });
   step(S("the user shows the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    lookAtPage(world, idOfPage(world, c[0]));
+    lookAtFilePage(world, c[0]);
   });
   step(S("the page says it is the file %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expectShown(world, [&] {
@@ -3802,7 +4607,7 @@ const Steps steps([] {
     world.waitFor([&] { return fake(world.mc).syncs >= 1; }, S("showing the page to read its file again"));
   });
   step(S("the user shows the file of the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    lookAtPage(world, idOfPage(world, c[0]));
+    lookAtFilePage(world, c[0]);
     world.tap(world.item(S("spacePageFileShow")));
   });
   step(S("the file viewer shows %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -3838,7 +4643,7 @@ const Steps steps([] {
     });
   });
   step(S("an agent in %1 deleted %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    fakeFiles(world.mc).files.remove(c[1]);
+    filesOf(world.mc, c[0]).remove(c[1]);
     // As the MC's watcher sees it go.
     const auto [space, page] = pageOfFile(world.mc, c[0], c[1]);
     if (!page.isEmpty()) loseFile(world.mc, space, page);
@@ -3850,10 +4655,11 @@ const Steps steps([] {
     expect(world.find(S("spacePageFileShow")) == nullptr, S("the page offers to show a file that is gone"));
   });
   step(S("the file won over the user's edit of %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    givenBlock(world, c[0], S("paragraph"), S("An edit of mine."));
-    const QString space = current(world);
-    const QString page = idOfPage(world, c[0]);
-    QString& contents = fakeFiles(world.mc).files[text(one(world.mc, streamOf(space), S("page"), page).value(QLatin1String("file")).toObject(), QLatin1String("path"))];
+    const auto [space, found] = filePage(world, c[0]);
+    const QString page = text(found, QLatin1String("id"));
+    given(world, S("block.insert"), {{S("spaceId"), space}, {S("pageId"), page}, {S("kind"), S("paragraph")}, {S("text"), S("An edit of mine.")}, {S("checked"), false}});
+    const QJsonObject file = found.value(QLatin1String("file")).toObject();
+    QString& contents = filesOf(world.mc, text(file, QLatin1String("projectId")))[text(file, QLatin1String("path"))];
     contents += S("\n\nAn agent's line.");
     takeFile(world.mc, space, page, {{S("conflictAt"), stamp(world.mc)}});
     noteEdits(world.mc, space, kFile);
@@ -3869,18 +4675,8 @@ const Steps steps([] {
       return versions.size() >= 2 && versions.first().value(S("byFile")).toBool() && !versions.at(1).value(S("byFile")).toBool();
     }, S("the history to hold the file's version over the user's edit"));
   });
-  step(S("the user unlinks the page %1 from its file").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QString page = idOfPage(world, c[0]);
-    lookAtPage(world, page);
-    expectShown(world, [&] { return !shownFile(world).isEmpty(); }, S("the page to say it is a file"));
-    openPageMenu(world, page, S("unlinkFile"));
-  });
-  step(S("the page no longer says it is a file"), [](World& world, const Captures&, const Table&) {
-    expectShown(world, [&] { return shownFile(world).isEmpty() && world.find(S("spacePageFile")) == nullptr; }, S("the page to be an ordinary page"));
-    expect(fakeFiles(world.mc).files.contains(S("docs/guide.md")), S("unlinking the page deleted its file"));
-  });
   step(S("%1 of %1 was rewritten outside HAL-C2 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    fakeFiles(world.mc).files.insert(c[0], QString(c[2]).replace(S("\\n"), S("\n")));
+    filesOf(world.mc, c[1]).insert(c[0], QString(c[2]).replace(S("\\n"), S("\n")));
   });
   // The worktree's copy is the thread's alone; the MC lists and opens the project folder's files.
   step(S("a thread of %1 works in a worktree where %1 reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -3892,18 +4688,416 @@ const Steps steps([] {
     }
     world.sync();
   });
-  step(S("the user opens the project's copy of %1 in a Space from its menu").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(S("the user picks \"Edit the project's copy as a page\" on %1").arg(q), [](World& world, const Captures& c, const Table&) {
     browseFiles(world);
     holdEntry(world, c[0]);
-    QQuickItem* item = world.item(S("fileEntryOpenInSpace"));
-    expect(item->property("text").toString().contains(S("project's copy")), S("the entry did not say it opens the project's copy: %1").arg(item->property("text").toString()));
+    QQuickItem* item = world.item(S("fileEntryEditAsPage"));
+    expect(item->property("text").toString() == QLatin1String("Edit the project's copy as a page"),
+           S("the entry did not say it edits the project's copy: %1").arg(item->property("text").toString()));
     world.tap(item);
   });
   step(S("the page %1 shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    // Already open where the file opened it, which may be another Space than the scenario's.
-    if (viewOf(world)->page().value(S("title")).toString() != c[0]) lookAtPage(world, idOfPage(world, c[0]));
+    // Already open where the file opened it, its project's Space rather than the scenario's.
+    if (viewOf(world)->page().value(S("title")).toString() != c[0]) lookAtFilePage(world, c[0]);
     expectShown(world, [&] { return blockTexts(world).contains(c[1]); }, S("the page %1 to say %2").arg(c[0], c[1]));
   });
 });
 
+
+// --- The page's prompt: the timeline's Composer, aimed at the page (SpacePageView) ---
+
+// What the scenario chose in a page's prompt, to find in the ask.
+struct PromptChoice {
+  bool offered = false;
+  QString model;
+};
+
+// A provider with models that have an effort, and the skill "review".
+QJsonObject promptProvider(const QString& id, const QString& name, const QStringList& models) {
+  QJsonArray choices;
+  for (const char* level : {"low", "medium", "high"}) choices.append(QJsonObject{{S("id"), S(level)}, {S("label"), S(level)}});
+  const QJsonObject effort{{S("id"), S("reasoningEffort")}, {S("label"), S("Reasoning")}, {S("type"), S("select")}, {S("options"), choices}, {S("currentValue"), S("medium")}};
+  QJsonArray list;
+  for (const QString& slug : models) list.append(QJsonObject{{S("slug"), slug}, {S("name"), slug}, {S("capabilities"), QJsonObject{{S("optionDescriptors"), QJsonArray{effort}}}}});
+  return {{S("instanceId"), id}, {S("driver"), id}, {S("displayName"), name}, {S("enabled"), true}, {S("installed"), true}, {S("status"), S("ready")}, {S("models"), list},
+          {S("skills"), QJsonArray{QJsonObject{{S("name"), S("review")}, {S("description"), S("Review the changes")}, {S("enabled"), true}}}}};
+}
+
+QVariantMap prompt(World& world) {
+  return world.state(S("composer")).toMap();
+}
+
+// The MC's Codex and Claude, and its threads each on a model: Claude's second.
+void offerModels(World& world) {
+  if (std::exchange(world.mc.part<PromptChoice>().offered, true)) return;
+  for (auto it = world.mc.threads.begin(); it != world.mc.threads.end(); ++it) {
+    if (it->contains(QLatin1String("modelSelection"))) continue;
+    it->insert(S("modelSelection"), QJsonObject{{S("instanceId"), S("claudeAgent")}, {S("model"), S("claude-sonnet")}});
+    world.mc.sendRow(it.key(), *it);
+  }
+  offerProviders(world.mc, {promptProvider(S("codex"), S("Codex"), {S("gpt-5"), S("gpt-5-codex")}),
+                            promptProvider(S("claudeAgent"), S("Claude"), {S("claude-opus"), S("claude-sonnet")})});
+  world.waitFor([&] { return world.state(S("modelPicker")).toMap().value(S("instances")).toList().size() == 2; }, S("the picker to list Codex and Claude"));
+}
+
+QQuickItem* promptEditor(QQuickItem* composer) {
+  return composer->property("editor").value<QQuickItem*>();
+}
+
+// The page `title` open with its prompt on screen, aimed at it and knowing where an ask runs.
+QQuickItem* promptOn(World& world, const QString& title) {
+  const QString id = idOfPage(world, title);
+  offerModels(world);
+  lookAtPage(world, id);
+  world.waitFor([&] {
+    const QVariantMap state = prompt(world);
+    return state.value(S("target")) == S("page#") + id && !state.value(S("project")).isNull() && !state.value(S("selectedModel")).isNull();
+  }, [&] { return S("the prompt to be the page's; it is %1").arg(show(prompt(world))); });
+  QQuickItem* composer = world.item(S("spaceComposer"));
+  QQuickItem* editor = promptEditor(composer);
+  world.waitFor([&] { return editor->property("text") == prompt(world).value(S("text")); },
+                [&] { return S("the page to show its prompt; the editor reads \"%1\"").arg(editor->property("text").toString()); });
+  return composer;
+}
+
+// The editor and the shell agree on what the prompt holds.
+void settlePrompt(World& world, QQuickItem* composer) {
+  QMetaObject::invokeMethod(composer, "flushText");
+  world.sync();
+  world.waitFor([&] { return promptEditor(composer)->property("text") == prompt(world).value(S("text")); },
+                [&] { return S("the editor to read what the shell has: %1").arg(show(prompt(world))); });
+}
+
+// The user taps into the prompt of `title` and types `text` at the end of it.
+QQuickItem* typeInPrompt(World& world, const QString& title, const QString& text) {
+  QQuickItem* composer = promptOn(world, title);
+  QQuickItem* editor = promptEditor(composer);
+  world.tap(editor);
+  expect(editor->hasActiveFocus(), S("the prompt did not take the keyboard"));
+  editor->setProperty("cursorPosition", editor->property("text").toString().size());
+  world.type(text);
+  settlePrompt(world, composer);
+  return composer;
+}
+
+// The user taps the prompt's send.
+void sendPrompt(World& world, QQuickItem* composer) {
+  world.tap(S("primaryAction"));
+  settlePrompt(world, composer);
+  world.sync();
+}
+
+// The ask the MC was sent last, once one came.
+QJsonObject lastAsk(World& world) {
+  world.waitFor([&] { return !fake(world.mc).lastAsk.isEmpty(); }, S("an ask to reach the MC"));
+  return fake(world.mc).lastAsk;
+}
+
+QStringList attachmentNames(const QVariantMap& state) {
+  QStringList names;
+  for (const QVariant& attachment : state.value(S("attachments")).toList()) names.append(attachment.toMap().value(S("name")).toString());
+  return names;
+}
+
+// Attaches `name` to the prompt of `title`: a picture, or a PDF that uploads.
+// The system's picker is not this app's; what it answers with goes here.
+void attachToPrompt(World& world, const QString& title, const QString& name) {
+  promptOn(world, title);
+  takeUploads(world);
+  const bool image = name.endsWith(QLatin1String(".png"));
+  const QByteArray bytes = image ? pngBytes() : QByteArrayLiteral("%PDF-1.4\n");
+  world.bridge().dispatch(S("composer.attach"), QVariantMap{{S("files"), QVariantList{QVariantMap{{S("name"), name},
+                                                                                                   {S("mimeType"), image ? S("image/png") : S("application/pdf")},
+                                                                                                   {S("base64"), QString::fromLatin1(bytes.toBase64())}}}}});
+  // A file is the MC's once its upload is done.
+  world.waitFor([&] {
+    for (const QVariant& attachment : prompt(world).value(S("attachments")).toList()) {
+      if (attachment.toMap().value(S("name")) == name) return attachment.toMap().value(S("status")).toString().isEmpty();
+    }
+    return false;
+  }, [&] { return S("the prompt to hold %1; it holds %2").arg(name, show(prompt(world).value(S("attachments")))); });
+}
+
+// Types `typed` into the prompt of `title` and picks the suggestion `id` it offers.
+void suggestInPrompt(World& world, const QString& title, const QString& typed, const QString& id) {
+  typeInPrompt(world, title, typed);
+  world.waitFor([&] {
+    for (const QVariant& item : prompt(world).value(S("suggestions")).toList()) {
+      if (item.toMap().value(S("id")).toString().contains(id)) {
+        world.bridge().dispatch(S("composer.suggest.select"), QVariantMap{{S("id"), item.toMap().value(S("id"))}});
+        return true;
+      }
+    }
+    return false;
+  }, [&] { return S("the prompt to offer %1; it offers %2").arg(id, show(prompt(world).value(S("suggestions")))); });
+  world.sync();
+}
+
+bool hasEffort(const QJsonObject& selection, const QString& level) {
+  const QJsonArray options = selection.value(QLatin1String("options")).toArray();
+  return std::any_of(options.begin(), options.end(), [&](const QJsonValue& option) {
+    return option.toObject().value(QLatin1String("id")) == QLatin1String("reasoningEffort") && option.toObject().value(QLatin1String("value")) == level;
+  });
+}
+
+// `key` runs `command`, as the MC pushes the user's keybindings.
+void bindKey(World& world, const QString& key, const QString& command) {
+  const QJsonArray rules{QJsonObject{{S("key"), key}, {S("command"), command}}};
+  for (const int id : world.mc.subscribers(S("config"))) world.mc.send({{S("t"), S("config.keybindings")}, {S("id"), id}, {S("rules"), rules}});
+  world.sync();
+}
+
+const Steps promptSteps([] {
+  const QString q = kQuoted;
+
+  step(S("the page %1 in the Space %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(idOfSpace(world, c[1]) == current(world), S("the scenario's Space is not %1").arg(c[1]));
+    givenPage(world, c[0]);
+  });
+  step(S("the user (?:typed|types) %1 in the prompt of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    typeInPrompt(world, c[1], c[0]);
+  });
+  step(S("the user sends %1 from the prompt of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    sendPrompt(world, typeInPrompt(world, c[1], c[0]));
+  });
+  step(S("the user is offered the kinds of block, and %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.awaitPopup(S("spaceSlashMenu"));
+    QObject* slash = world.popup(S("spaceSlashMenu"));
+    QStringList labels;
+    world.waitFor([&] {
+      labels.clear();
+      for (const QVariant& entry : slash->property("shown").toList()) labels.append(entry.toMap().value(S("label")).toString());
+      return labels.contains(c[0]) && labels.contains(S("Heading")) && labels.contains(S("Checklist"));
+    }, [&] { return S("the slash menu to offer the kinds and %1; it offers %2").arg(c[0], labels.join(u", ")); });
+    // The page's own menu, not the thread's slash commands.
+    expect(prompt(world).value(S("suggestions")).toList().isEmpty(), S("the prompt also offers %1").arg(show(prompt(world).value(S("suggestions")))));
+  });
+  // Older than the Background's thread, so an ask still runs in its project by default.
+  step(S("the thread %1 of the project %1 runs on another model").arg(q), [](World& world, const Captures& c, const Table&) {
+    haveProject(world, c[1]);
+    const QString id = S("t-") + c[0].toLower();
+    world.mc.threads.insert(id, {{S("id"), id}, {S("title"), c[0]}, {S("projectId"), c[1]},
+                                 {S("createdAt"), S("2026-09-22T09:00:00Z")}, {S("updatedAt"), S("2026-09-22T09:00:00Z")},
+                                 {S("modelSelection"), QJsonObject{{S("instanceId"), S("codex")}, {S("model"), S("gpt-5")}}}});
+    world.mc.sendRow(id, world.mc.threads.value(id));
+    world.sync();
+  });
+  step(S("the user starts an ask on %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* composer = promptOn(world, c[0]);
+    world.bridge().dispatch(S("composer.ask"), QVariantMap());
+    world.waitFor([&] { return prompt(world).value(S("text")).toString().startsWith(QLatin1String("@agent ")); },
+                  [&] { return S("the prompt to start an ask; it reads %1").arg(show(prompt(world).value(S("text")))); });
+    settlePrompt(world, composer);
+  });
+  step(S("the prompt of %1 says the ask runs in the project %1 on the model of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    promptOn(world, c[0]);
+    QQuickItem* project = world.item(S("spaceAskProject"));
+    world.waitFor([&] { return project->isVisible() && project->property("text") == c[1]; },
+                  [&] { return S("the prompt to say the project %1; it says \"%2\"").arg(c[1], project->property("text").toString()); });
+    const QJsonObject model = world.mc.threads.value(threadNamed(world, c[2])).value(QLatin1String("modelSelection")).toObject();
+    const QVariantMap state = prompt(world);
+    expect(state.value(S("selectedModel")) == model.value(QLatin1String("model")).toString() &&
+               state.value(S("selectedInstanceId")) == model.value(QLatin1String("instanceId")).toString(),
+           S("the prompt is on %1 of %2, %3 on %4").arg(state.value(S("selectedModel")).toString(), state.value(S("selectedInstanceId")).toString(), c[2], show(model)));
+  });
+
+  // What an ask chose.
+  step(S("the user chooses (another model|high effort|planning|approval for each action|the project %1|the image %1|the file %1|a mention of %1|the skill %1) in the prompt of %1").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         // Each choice that names something has its own group: one of them matched.
+         const QString title = c.last();
+         promptOn(world, title);
+         const QString what = c[0];
+         const QString named = c.mid(1, c.size() - 2).join(QString());
+         if (what == QLatin1String("another model")) {
+           const QString now = prompt(world).value(S("selectedModel")).toString();
+           const QString other = now == QLatin1String("gpt-5-codex") ? S("gpt-5") : S("gpt-5-codex");
+           world.mc.part<PromptChoice>().model = other;
+           world.bridge().dispatch(S("composer.model.select"), QVariantMap{{S("instanceId"), S("codex")}, {S("model"), other}});
+           world.waitFor([&] { return prompt(world).value(S("selectedModel")) == other; }, S("the prompt to be on %1").arg(other));
+         } else if (what == QLatin1String("high effort")) {
+           world.bridge().dispatch(S("composer.option.set"), QVariantMap{{S("id"), S("reasoningEffort")}, {S("value"), S("high")}});
+           world.sync();
+         } else if (what == QLatin1String("planning")) {
+           auto* settings = world.native().controller<SettingsController>();
+           expect(settings->writeDevice(S("planModeEnabled"), true), settings->deviceError());
+           world.waitFor([&] { return prompt(world).value(S("showInteractionModeToggle")).toBool(); }, S("the prompt to offer planning"));
+           world.bridge().dispatch(S("composer.interactionMode.set"), QVariantMap{{S("mode"), S("plan")}});
+           world.waitFor([&] { return prompt(world).value(S("interactionMode")) == QLatin1String("plan"); }, S("the prompt to plan"));
+         } else if (what == QLatin1String("approval for each action")) {
+           world.bridge().dispatch(S("composer.runtimeMode.set"), QVariantMap{{S("mode"), S("approval-required")}});
+           world.waitFor([&] { return prompt(world).value(S("runtimeMode")) == QLatin1String("approval-required"); }, S("the prompt to ask before each action"));
+         } else if (what.startsWith(QLatin1String("the project"))) {
+           haveProject(world, named);
+           // The project button's sheet, as the user picks from it.
+           world.tap(S("spaceAskProject"));
+           choose(world, named);
+           settle(world);
+           world.waitFor([&] { return prompt(world).value(S("project")).toMap().value(S("id")) == named; },
+                         [&] { return S("the ask to run in %1; it runs in %2").arg(named, show(prompt(world).value(S("project")))); });
+         } else if (what.startsWith(QLatin1String("the image")) || what.startsWith(QLatin1String("the file"))) {
+           attachToPrompt(world, title, named);
+         } else if (what.startsWith(QLatin1String("a mention"))) {
+           fakeFiles(world.mc).files.insert(named, S("# shop\n"));
+           suggestInPrompt(world, title, S("@") + named.left(4), named);
+         } else {
+           suggestInPrompt(world, title, S("$") + named.left(3), S(":") + named);
+         }
+         settlePrompt(world, promptOn(world, title));
+       });
+  step(S("the agent's thread of %1 has (another model|high effort|planning|approval for each action|the project %1|the image %1|the file %1|a mention of %1|the skill %1)").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         const QJsonObject ask = lastAsk(world);
+         const QString what = c[1];
+         const QString named = c.mid(2).join(QString());
+         const QJsonObject model = ask.value(QLatin1String("modelSelection")).toObject();
+         QStringList attached;
+         for (const QJsonValue& attachment : ask.value(QLatin1String("attachments")).toArray()) attached.append(attachment.toObject().value(QLatin1String("name")).toString());
+         bool has = false;
+         if (what == QLatin1String("another model")) has = model.value(QLatin1String("model")) == world.mc.part<PromptChoice>().model;
+         else if (what == QLatin1String("high effort")) has = hasEffort(model, S("high"));
+         else if (what == QLatin1String("planning")) has = ask.value(QLatin1String("interactionMode")) == QLatin1String("plan");
+         else if (what == QLatin1String("approval for each action")) has = ask.value(QLatin1String("runtimeMode")) == QLatin1String("approval-required");
+         else if (what.startsWith(QLatin1String("the project"))) has = ask.value(QLatin1String("projectId")) == named;
+         else if (what.startsWith(QLatin1String("the image")) || what.startsWith(QLatin1String("the file"))) has = attached.contains(named);
+         else if (what.startsWith(QLatin1String("a mention"))) has = text(ask, QLatin1String("request")).contains(named);
+         else has = text(ask, QLatin1String("request")).contains(S("$") + named);
+         // And it is the ask the user sent, the page's agent working on it.
+         expect(has && text(ask, QLatin1String("request")).endsWith(QLatin1String("tidy this")), S("the ask was %1").arg(show(ask)));
+         expectAgent(world, c[0], [](const QVariantMap& agent) { return agent.value(S("status")) == QLatin1String("running"); }, S("working"));
+       });
+
+  // The ways to an ask.
+  step(S("the user asks an agent about %1 from (the page's menu|the command palette|its keybinding)").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* composer = promptOn(world, c[0]);
+    if (c[1] == QLatin1String("the page's menu")) {
+      // From the list of pages, where the prompt is no longer the page's: the ask has
+      // to open the page and aim the prompt at it before it starts.
+      const QString target = S("page#") + idOfPage(world, c[0]);
+      look(world, current(world));
+      world.waitFor([&] { return prompt(world).value(S("target")) != target; },
+                    [&] { return S("the prompt to leave the page on the list; it is %1").arg(show(prompt(world))); });
+      pageMenu(world, c[0], S("agent"));
+      expectStep(world, S("page"));
+    } else if (c[1] == QLatin1String("the command palette")) {
+      expect(world.native().controller<KeybindingController>()->commands()->run(SpaceController::kAskAgent), S("the palette has no way to ask an agent"));
+    } else {
+      bindKey(world, S("mod+alt+y"), SpaceController::kAskAgent);
+      world.press(S("Ctrl+Alt+Y"));
+    }
+    world.sync();
+    settlePrompt(world, composer);
+  });
+  step(S("the prompt of %1 is ready to ask an agent").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* editor = promptEditor(promptOn(world, c[0]));
+    world.waitFor([&] { return editor->property("text").toString().startsWith(QLatin1String("@agent ")) && editor->hasActiveFocus(); },
+                  [&] { return S("the prompt to start an ask with the keyboard in it; it reads \"%1\"").arg(editor->property("text").toString()); });
+    expect(world.item(S("spaceAskProject"))->isVisible(), S("the prompt does not say where the ask runs"));
+  });
+  step(S("the user takes \"@agent\" out of the prompt of %1 and sends %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* composer = promptOn(world, c[0]);
+    QQuickItem* editor = promptEditor(composer);
+    world.tap(editor);
+    editor->setProperty("cursorPosition", editor->property("text").toString().size());
+    while (!editor->property("text").toString().isEmpty()) QTest::keyClick(&world.window(), Qt::Key_Backspace);
+    settlePrompt(world, composer);
+    sendPrompt(world, typeInPrompt(world, c[0], c[1]));
+  });
+  step(S("the user stops from the prompt of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    promptOn(world, c[0]);
+    QQuickItem* button = world.item(S("primaryAction"));
+    world.waitFor([&] { return button->property("stopMode").toBool() && button->isEnabled(); },
+                  [&] { return S("the prompt to offer a stop; it is %1").arg(show(prompt(world))); });
+    world.tap(button);
+    world.sync();
+  });
+
+  // Drafts.
+  step(S("the user opens %1 and comes back to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    promptOn(world, c[0]);
+    promptOn(world, c[1]);
+  });
+  step(S("the user opens the thread %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString key = world.mc.environmentId + QLatin1Char(':') + threadNamed(world, c[0]);
+    world.bridge().dispatch(S("thread.open"), QVariantMap{{S("key"), key}});
+    world.waitFor([&] { return prompt(world).value(S("target")) == key; }, S("the prompt to be the thread's"));
+  });
+  step(S("the prompt of %1 (reads|does not read) %1(?: with the image %1)?").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (findPage(world, c[0]).isEmpty()) {
+      // A thread's prompt.
+      const QString key = world.mc.environmentId + QLatin1Char(':') + threadNamed(world, c[0]);
+      world.sync();
+      const QVariantMap state = prompt(world);
+      expect(state.value(S("target")) == key && (state.value(S("text")) == c[2]) == (c[1] == QLatin1String("reads")), S("the prompt of %1 is %2").arg(c[0], show(state)));
+      return;
+    }
+    QQuickItem* editor = promptEditor(promptOn(world, c[0]));
+    const bool reads = c[1] == QLatin1String("reads");
+    world.waitFor([&] {
+      const QVariantMap state = prompt(world);
+      const bool same = state.value(S("text")) == c[2] && editor->property("text") == c[2] && (c.value(3).isEmpty() || attachmentNames(state) == QStringList{c[3]});
+      return same == reads;
+    }, [&] { return S("the prompt to %1 \"%2\"; it is %3").arg(c[1], c[2], show(prompt(world))); });
+  });
+  step(S("the prompt of %1 is empty").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* editor = promptEditor(promptOn(world, c[0]));
+    expect(prompt(world).value(S("text")).toString().isEmpty() && editor->property("text").toString().isEmpty() && prompt(world).value(S("attachments")).toList().isEmpty(),
+           S("the prompt is %1").arg(show(prompt(world))));
+  });
+  step(S("the user stashes the prompt of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    settlePrompt(world, promptOn(world, c[0]));
+    world.bridge().dispatch(S("composer.stash"), QVariantMap());
+    world.sync();
+    expect(prompt(world).value(S("text")).toString().isEmpty(), S("the prompt kept %1").arg(show(prompt(world))));
+  });
+  step(S("the user brings %1 back from the stash").arg(q), [](World& world, const Captures& c, const Table&) {
+    QString id;
+    for (const QVariant& entry : world.state(S("composerStash")).toMap().value(S("entries")).toList()) {
+      if (entry.toMap().value(S("snippet")) == c[0]) id = entry.toMap().value(S("id")).toString();
+    }
+    expect(!id.isEmpty(), S("the stash holds %1").arg(show(world.state(S("composerStash")))));
+    world.bridge().dispatch(S("composer.stash.restore"), QVariantMap{{S("id"), id}});
+    world.sync();
+  });
+  step(S("the user turned on (vim keys|rich text)"), [](World& world, const Captures& c, const Table&) {
+    const QString key = c[0] == QLatin1String("vim keys") ? S("composerVimKeys") : S("composerRichTextEnabled");
+    // What the General page's switch does (SettingsRow), from off.
+    world.native().controller<SettingsController>()->set(key, false);
+    world.native().controller<SettingsController>()->set(key, true);
+  });
+  step(S("the prompt of %1 edits with (vim keys|rich text)").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* composer = promptOn(world, c[0]);
+    if (c[1] == QLatin1String("vim keys")) {
+      QObject* vim = composer->property("vim").value<QObject*>();
+      expect(vim && vim->property("vimEnabled").toBool(), S("the page's prompt has Vim keys off"));
+      // Escape leaves insert mode, as in a thread's prompt.
+      world.tap(promptEditor(composer));
+      QTest::keyClick(&world.window(), Qt::Key_Escape);
+      world.waitFor([&] { return !vim->property("insertMode").toBool(); }, S("Escape to leave insert mode"));
+    } else {
+      expect(composer->property("richText").toBool(), S("the page's prompt has rich text off"));
+    }
+  });
+  step(S("the user attached the image %1 in the prompt of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    attachToPrompt(world, c[1], c[0]);
+  });
+});
+
 }  // namespace
+
+namespace mermaid {
+
+bool onPage(World& world) {
+  return !world.mc.part<Diagram>().source.isEmpty();
+}
+
+void expectPageSource(World& world) {
+  const QString source = world.mc.part<Diagram>().source;
+  world.waitFor([&] {
+    QQuickItem* editor = world.find(QStringLiteral("spaceBlockEditor:") + source);
+    return editor && editor->property("text") == source && asked(world) == 1;
+  }, [&] { return QStringLiteral("the diagram's source; %1").arg(describe(world)); });
+  expect(drawn(world).isEmpty(), QStringLiteral("a picture is drawn"));
+}
+
+}  // namespace mermaid

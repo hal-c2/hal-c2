@@ -91,13 +91,13 @@ Feature: Plugin catalog
     Then the user is told the update failed
     And the previous version keeps running
 
-  @backlog @desktop @mobile @tui
+  @backlog @desktop @mobile @tui @priority-low
   Scenario: A plugin can be rolled back to the version before the last update
     Given "quota" was updated from 1.0 to 1.1
     When the user rolls "quota" back
     Then "quota" 1.0 runs again
 
-  @backlog @desktop @mobile @tui
+  @backlog @desktop @mobile @tui @priority-low
   Scenario Outline: The trust level of a plugin depends on its source
     Given a plugin from <source>
     When the user installs it
@@ -238,14 +238,14 @@ Feature: Plugin catalog
       When the user opens the plugin list
       Then "code-review" shows that version 1.1 is available
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: The registry can be searched offline from the MC's last copy
       Given the MC fetched the plugin registry earlier
       And the registry cannot be reached now
       When the user searches the plugin registry
       Then the results come from the last copy and say how old it is
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: An MC can use a plugin registry other than HAL-C2's
       Given the MC is set to use a self-hosted plugin registry
       When the user searches the plugin registry

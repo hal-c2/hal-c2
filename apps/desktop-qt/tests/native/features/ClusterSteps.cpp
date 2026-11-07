@@ -11,25 +11,11 @@
 
 #include <optional>
 
+#include "FakeCluster.h"
 #include "Harness.h"
 #include "World.h"
 
 namespace {
-
-// This machine's cluster as apps/server-ex lib/hal_c2/rpc.ex answers
-// `cluster.*`: the other members, whether the MC listens only on loopback,
-// and why it refuses to read the cluster or join (when it does). Reads are
-// held while the MC holds `cluster.status`.
-struct FakeCluster {
-  QJsonArray members;
-  bool loopbackOnly = false;
-  QString statusRefusal;
-  QString joinRefusal;
-  // The version this machine runs, and why a member cannot take it, by label.
-  QString version;
-  QHash<QString, QString> updateRefusals;
-  QList<QPair<QString, QJsonObject>> calls;
-};
 
 QJsonObject clusterStatus(FakeMc& mc) {
   return {
@@ -97,6 +83,27 @@ void answerCluster(FakeMc& mc, const FakeMc::Rpc& rpc) {
       }
     }
     result = QJsonObject{{QStringLiteral("version"), cluster.version}, {QStringLiteral("members"), updates}};
+  } else if (rpc.method == QLatin1String("cluster.switch")) {
+    // Off keeps the member listed, and the shell drops it and its rows as
+    // for a removal; on brings it back.
+    const QString id = rpc.payload.value(QLatin1String("id")).toString();
+    const bool on = rpc.payload.value(QLatin1String("on")).toBool();
+    for (qsizetype index = 0; index < cluster.members.size(); ++index) {
+      QJsonObject member = cluster.members.at(index).toObject();
+      if (member.value(QLatin1String("id")).toString() != id) continue;
+      member.insert(QStringLiteral("off"), !on);
+      member.insert(QStringLiteral("connected"), on);
+      cluster.members.replace(index, member);
+    }
+    if (!on && mc.peers.contains(id)) {
+      cluster.switchedOff.insert(id, mc.peers.value(id));
+      mc.remove(id);
+    } else if (on && cluster.switchedOff.contains(id)) {
+      mc.join(cluster.switchedOff.take(id), id);
+    }
+    result = clusterStatus(mc);
+  } else if (rpc.method == QLatin1String("cluster.reconnect")) {
+    mc.setTrying(rpc.payload.value(QLatin1String("id")).toString(), true);
   } else if (rpc.method == QLatin1String("cluster.remove")) {
     const QString removed = rpc.payload.value(QLatin1String("id")).toString();
     for (qsizetype index = cluster.members.size() - 1; index >= 0; --index) {

@@ -14,6 +14,9 @@
 #include "FakeConfig.h"
 #include "CommandPaletteController.h"
 #include "DevicePanelSteps.h"
+#include "PlanCard.h"
+#include "PullRequestSteps.h"
+#include "ThreadSettle.h"
 #include "FilesIdentity.h"
 #include "FilesViewer.h"
 #include "Harness.h"
@@ -207,7 +210,7 @@ const Steps steps([] {
   // What is drawn.
   step(QStringLiteral("the app uses the standard theme"), [](World& world, const Captures&, const Table&) {
     usesTheme(world, QStringLiteral("hal-c2"));
-    const QColor standard(themes(world)->appearance() == QLatin1String("dark") ? QStringLiteral("#0a0a0a") : QStringLiteral("#fcfcfc"));
+    const QColor standard(themes(world)->appearance() == QLatin1String("dark") ? QStringLiteral("#0d0e11") : QStringLiteral("#f7f7f5"));
     expect(drawnCanvas(world) == standard, describe(world));
   });
   step(QStringLiteral("the app uses %1").arg(q), [](World& world, const Captures& c, const Table&) { usesTheme(world, c[0]); });
@@ -378,6 +381,12 @@ const Steps steps([] {
     if (onboardingChooses(world, c[0])) return;
     // The Device tab's Refresh devices.
     if (deviceChooses(world, c[0])) return;
+    // A thread from a pull request's thread picker.
+    if (pullRequestThreadChooses(world, c[0])) return;
+    // A long plan's Expand plan / Collapse plan (TimelineSteps).
+    if (planCardChooses(world, c[0])) return;
+    // The open thread's notice (Un-settle).
+    if (threadNoticeChooses(world, c[0])) return;
     // From an open command palette (its Change theme submenu among them): its
     // entry of that title.
     if (auto* palette = world.native().controller<CommandPaletteController>(); palette && palette->isOpen()) {

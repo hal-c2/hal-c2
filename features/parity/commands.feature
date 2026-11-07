@@ -5,8 +5,8 @@
 #   apps/server-ex/lib/hal_c2/orchestration.ex (dispatch clauses, @thread_updates)
 #   apps/server-ex/lib/hal_c2/import/v2.ex (how each Node event becomes an entity patch)
 #   apps/server/src/orchestration/decider.ts, apps/server/src/orchestration/projector.ts
-#   Counts: 47 commands (37 aligned, 0 backlog, 10 dropped);
-#   41 version 2 events (all aligned); 32 version 1 events (all aligned).
+#   Counts: 48 commands (38 aligned, 10 dropped);
+#   42 version 2 events (all aligned); 33 version 1 events (all aligned).
 #   The MC stores whole-entity changes as patches keyed by entity kind, so an event
 #   is aligned when the MC records the same entity change and streams it to clients.
 #   Shared domain: mc/orchestration/ holds what each command does to a thread.
@@ -26,7 +26,7 @@ Feature: Command and event parity with the TypeScript server
     Then the MC accepts it through its <kind> path
     And clients following the thread see the resulting change
 
-    Examples: 37 aligned commands
+    Examples: 38 aligned commands
       | command                         | kind          |
       | thread.create                   | dispatch      |
       | thread.archive                  | thread update |
@@ -41,6 +41,7 @@ Feature: Command and event parity with the TypeScript server
       | thread.unpin                    | thread update |
       | thread.pin.reorder              | thread update |
       | thread.active.reorder           | thread update |
+      | thread.auto-settle.set          | thread update |
       | thread.visit                    | thread update |
       | thread.mark-unread              | thread update |
       | thread.metadata.update          | thread update |
@@ -93,7 +94,7 @@ Feature: Command and event parity with the TypeScript server
     Then it stores <recorded as>
     And streams it to clients following the <entity>
 
-    Examples: 41 version 2 events
+    Examples: 42 version 2 events
       | event                           | entity           | recorded as                                            |
       | checkpoint.captured             | checkpoint       | a patch on the checkpoint entity                       |
       | checkpoint.rollback-requested   | checkpoint       | a patch on the checkpoint entity                       |
@@ -117,6 +118,7 @@ Feature: Command and event parity with the TypeScript server
       | subagent.updated                | subagent         | a patch on the subagent entity                         |
       | thread.active-reordered         | thread           | a patch on the thread entity                           |
       | thread.archived                 | thread           | a patch on the thread entity                           |
+      | thread.auto-settle-set          | thread           | a patch on the thread entity                           |
       | thread.created                  | thread           | a patch on the thread entity                           |
       | thread.deleted                  | thread           | a patch on the thread entity                           |
       | thread.interaction-mode-updated | thread           | a patch on the thread entity                           |
@@ -161,7 +163,7 @@ Feature: Command and event parity with the TypeScript server
     When the MC imports the log
     Then the thread's history includes the change
 
-    Examples: 25 version 1 thread events
+    Examples: 26 version 1 thread events
       | event                                | entity |
       | thread.created                       | thread |
       | thread.deleted                       | thread |
@@ -174,6 +176,7 @@ Feature: Command and event parity with the TypeScript server
       | thread.pinned                        | thread |
       | thread.unpinned                      | thread |
       | thread.pin-reordered                 | thread |
+      | thread.auto-settle-set               | thread |
       | thread.meta-updated                  | thread |
       | thread.pull-request-linked           | thread |
       | thread.pull-request-unlinked         | thread |

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QDateTime>
 #include <QPoint>
 #include <QSize>
 #include <QString>
@@ -15,6 +16,7 @@
 #include "FakePushSystem.h"
 #include "MobileApp.h"
 #include "PairableMc.h"
+#include "SecretStore.h"
 
 class NativeShell;
 class QQuickItem;
@@ -56,6 +58,9 @@ public:
   // recorded instead of reaching the system's browser and clipboard.
   QList<QUrl> openedUrls;
   QString clipboard;
+  // The system's secure storage the saved environments' credentials go to,
+  // kept across restarts as the system keeps it; never the device's own.
+  std::shared_ptr<MemorySecretStore::Keys> secrets = std::make_shared<MemorySecretStore::Keys>();
 
   // The user opens the app; nothing when it is open.
   void open();
@@ -85,6 +90,9 @@ public:
   // The window becomes `width` by `height`, now and each time the app opens:
   // a tablet's or a laptop's window, a rotation, a fold.
   void resize(int width, int height);
+  // The time the app's thread and composer read from now on, as a clock on
+  // the wall would show it; the system's until a step sets it.
+  void setTime(const QDateTime& time);
 
   // What is on screen. An item counts when it is visible, so an objectName
   // two screens share is the one of the screen showing.
@@ -113,6 +121,8 @@ public:
   // land inside the window. The item is waited for until it can be tapped.
   void tap(QQuickItem* item);
   void tap(const QString& objectName);
+  // The connection notice's panel, opened from its icon if it is not.
+  void openConnectionNotice();
   // A finger held on the item's middle until `until` holds (a long press's
   // menu is up), then lifted.
   void hold(QQuickItem* item, const std::function<bool()>& until, const QString& what);

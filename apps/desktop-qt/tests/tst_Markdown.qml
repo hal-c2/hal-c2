@@ -86,6 +86,20 @@ Item {
             verify(md.implicitHeight > 0);
         }
 
+        // A list drawn inside other lists (a Space page's nested item) takes
+        // the marker of its depth, and the same text at another depth is not
+        // served the kept one.
+        function test_aNestedListTakesTheMarkerOfItsDepth() {
+            const html = (text, props) => segmentsOf(make(text, props))[0].html;
+            verify(html("- Kept item").indexOf("list-style-type:disc;") >= 0);
+            verify(html("- Kept item", { bulletDepth: 1 }).indexOf("list-style-type:circle;") >= 0);
+            verify(html("1. Kept item", { numberDepth: 1 }).indexOf("list-style-type:lower-alpha;") >= 0);
+            verify(html("3. Kept item").indexOf("<ol start=\"3\"") >= 0);
+            const md = make("- Kept item");
+            md.bulletDepth = 2;
+            verify(segmentsOf(md)[0].html.indexOf("list-style-type:square;") >= 0);
+        }
+
         // Clicks the middle of `word` in the first segment's prose.
         function clickWord(md, word, link, modifiers) {
             linkSpy.target = md;
@@ -218,6 +232,35 @@ Item {
             compare(clipboardText(), source);
             compare(button.iconName, "check");
             tryCompare(button, "iconName", "copy", 3000);
+        }
+
+        // A code block runs only as one complete shell command (t3code#13060).
+        function test_onlyOneCompleteShellCommandRuns() {
+            const command = text => Md.shellCommand(Md.segments(text, {}).find(seg => seg.kind === "code"));
+            compare(command("```bash\n  bun test cart  \n```"), "bun test cart");
+            compare(command("```pwsh\nGet-ChildItem\n```"), "Get-ChildItem");
+            compare(command("```sh\nbun install\nbun test\n```"), "", "several lines");
+            compare(command("```sh\nbun test \\\n```"), "", "continued on a line that is not there");
+            compare(command("```zsh\n\n```"), "", "empty");
+            compare(command("```python\nprint(1)\n```"), "", "not a shell");
+            compare(command("```bash\nbun test cart"), "", "its fence is still open");
+            compare(command("```bash\nrm -rf ‮/tmp\n```"), "", "a hidden direction mark");
+            compare(command("```bash\necho 󠁁\n```"), "", "a hidden tag character");
+            compare(command("```bash\necho café\n```"), "echo café");
+        }
+
+        function test_aShellBlockOffersRunOnlyWhereTheHostRunsIt() {
+            const plain = make("```bash\nbun test cart\n```");
+            verify(!findChild(plain, "runCode").visible, "a message that cannot run commands offers none");
+            const md = make("```bash\nbun test cart\n```", { runnable: true });
+            const run = findChild(md, "runCode");
+            verify(run.visible);
+            const ran = [];
+            md.runCommand.connect(command => ran.push(command));
+            mouseClick(run);
+            compare(ran, ["bun test cart"]);
+            md.streaming = true;
+            verify(!run.visible, "not while the reply is written");
         }
 
         // What the MC draws for a small flowchart, as MermaidController keeps it.
@@ -447,6 +490,54 @@ Item {
             compare(edit.selectedText, "Refunds");
             keySequence(StandardKey.Copy);
             compare(clipboardText(), "Refunds");
+        }
+
+        // A short inline code never splits across lines, at a slash, a
+        // hyphen or a space, and copies and cites as written.
+        function test_shortInlineCodeKeepsToOneLine() {
+            const md = make("The MC server is in `apps/server-ex mix-test` and more words follow here.", { citable: true });
+            const edit = prose(segmentsOf(md)[0]);
+            const start = plain(edit).indexOf("apps");
+            const end = plain(edit).indexOf(" and more");
+            let wrapped = 0;
+            for (let width = 200; width <= 560; width += 3) {
+                md.width = width;
+                if (edit.lineCount > 1)
+                    ++wrapped;
+                compare(edit.positionToRectangle(start).y, edit.positionToRectangle(end - 1).y, "split at " + width);
+            }
+            verify(wrapped > 0, "the line did wrap somewhere");
+            md.width = 560;
+            edit.forceActiveFocus();
+            edit.select(start, end);
+            keySequence(StandardKey.Copy);
+            compare(clipboardText(), "apps/server-ex mix-test");
+            citeSpy.target = md;
+            citeSpy.clear();
+            mouseClick(findChild(md, "citeSelection"));
+            compare(citeSpy.signalArguments[0][0].text, "apps/server-ex mix-test");
+        }
+
+        // A long one breaks only after a slash or a hyphen, never at its
+        // spaces, and stays inside the reply.
+        function test_longInlineCodeBreaksOnlyAfterASlashOrHyphen() {
+            const md = make("See `cd ~/.local/share/mise/installs/codex-cli/latest/bin && ./codex --version` for the wrapper.", { width: 240 });
+            const edit = prose(segmentsOf(md)[0]);
+            verify(edit.lineCount > 2, "it wraps: " + edit.lineCount);
+            verify(edit.contentWidth <= 240, "fits: " + edit.contentWidth);
+            const raw = plain(edit);
+            const start = raw.indexOf("cd ");
+            const end = raw.indexOf(" for the");
+            for (let i = start + 1; i < end; ++i) {
+                if (edit.positionToRectangle(i).y !== edit.positionToRectangle(i - 1).y)
+                    verify("/-".includes(raw[i - 1] === "\u2060" ? raw[i - 2] : raw[i - 1]), "broke after " + JSON.stringify(raw.slice(start, i)));
+            }
+        }
+
+        // Punctuation after a chip follows it with no space, as written.
+        function test_inlineCodeAddsNoSpacesAroundIt() {
+            const md = make("a bare `:closed`. Then (`ad49b68fcf`, here) `x`: y");
+            compare(Md.plain(plain(prose(segmentsOf(md)[0]))), "a bare :closed. Then (ad49b68fcf, here) x: y");
         }
 
         function test_citeQuotesTheSelectionInItsReply() {

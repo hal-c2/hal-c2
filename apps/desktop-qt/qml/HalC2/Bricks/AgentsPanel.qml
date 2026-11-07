@@ -35,16 +35,14 @@ Rectangle {
     objectName: "agentsPanel"
     color: Theme.palette.color("surface", "#0f0f11")
 
-    Text {
+    ShellEmptyState {
         objectName: "agentsEmpty"
         anchors.centerIn: parent
-        width: parent.width - 32
+        width: Math.min(implicitWidth, parent.width - 2 * Theme.space.xl)
         visible: list.count === 0
-        horizontalAlignment: Text.AlignHCenter
-        wrapMode: Text.Wrap
-        text: qsTr("No subagents, running commands or background work in this thread.")
-        color: root.muted
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        iconName: "bot"
+        title: qsTr("No background work")
+        description: qsTr("Subagents, running commands and background work in this thread show here.")
     }
 
     ListView {
@@ -52,7 +50,7 @@ Rectangle {
 
         objectName: "agentsList"
         anchors.fill: parent
-        anchors.margins: 6
+        anchors.margins: Theme.space.sm
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         reuseItems: true
@@ -64,11 +62,11 @@ Rectangle {
             width: ListView.view.width
             topPadding: 8
             bottomPadding: 4
-            leftPadding: 6
+            leftPadding: Theme.space.sm
             text: section === "active" ? qsTr("Active") : qsTr("Finished")
             elide: Text.ElideRight
             color: root.muted
-            font.pixelSize: Math.round(11 * Theme.fontScale)
+            font.pixelSize: Theme.type.caption.size
             font.weight: Font.Medium
         }
 
@@ -99,7 +97,7 @@ Rectangle {
                 threadKey: row.childThreadKey
             })
             background: Rectangle {
-                radius: 6
+                radius: Theme.radiusSm
                 color: row.hovered || row.visualFocus ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
                 border.width: row.visualFocus ? 1 : 0
                 border.color: Theme.palette.color("focus", "#3b82f6")
@@ -112,7 +110,7 @@ Rectangle {
                 y: 12
                 width: 6
                 height: 6
-                radius: 3
+                radius: Theme.radiusPill
                 color: root.dotColor(row.status)
             }
 
@@ -128,7 +126,7 @@ Rectangle {
                 elide: Text.ElideRight
                 maximumLineCount: 1
                 color: root.foreground
-                font.pixelSize: row.kind === "command" ? 12 : 13
+                font.pixelSize: row.kind === "command" ? Theme.type.meta.size : Theme.type.body.size
                 font.family: row.kind === "command" ? root.mono : Application.font.family
                 font.weight: row.kind === "command" ? Font.Normal : Font.Medium
             }
@@ -141,7 +139,7 @@ Rectangle {
                 y: 7
                 text: row.elapsed
                 color: root.muted
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
                 font.family: root.mono
             }
 
@@ -155,7 +153,7 @@ Rectangle {
                 elide: Text.ElideRight
                 maximumLineCount: 1
                 color: row.status === "failed" ? root.errorColor : root.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             Text {
@@ -168,7 +166,7 @@ Rectangle {
                 elide: Text.ElideRight
                 maximumLineCount: 1
                 color: root.muted
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
                 font.family: root.mono
             }
         }

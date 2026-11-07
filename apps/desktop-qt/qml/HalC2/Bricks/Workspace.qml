@@ -41,12 +41,38 @@ Rectangle {
     // `trailingInset` how much of the strip's right end they cover.
     property bool windowControls: true
     property real trailingInset: 0
-    // What the strip has for its own items. Narrow strips (a wide right
-    // panel) drop the pill labels, and tight ones the run and open pills,
-    // which the thread details also offer, before anything overlaps.
-    readonly property real room: width - Math.max(0, trailingInset - 20)
-    readonly property bool compact: room < 720
-    readonly property bool tight: room < 520
+    // How the strip fits its items, decided by what they need rather than a
+    // width, giving way in one order so the thread title is the last thing
+    // cut: first the project segment of the breadcrumb goes whole
+    // (`showProject`), then the pills show icons only (`compact`), then the
+    // run and open pills fold into one overflow menu (`tight`; the thread
+    // details offer them too), and only then does the title shorten. The
+    // title, the git pill and the toggles always stay.
+    readonly property real room: width - (sidebarToggle === true ? 52 : 20) - Math.max(20, trailingInset)
+    readonly property bool hasScripts: ready && model.scripts.length > 0
+    readonly property bool hasEditors: ready && model.editors.length > 0
+    readonly property bool hasSshNote: ready && (model.noSshRoute ?? "") !== ""
+    readonly property bool hasProject: ready && model.projectTitle !== null
+    // The project segment: folder, name (at most 160) and the slash, each
+    // with the gap before the next.
+    readonly property real projectNeed: hasProject ? folderIcon.implicitWidth + Math.min(Math.ceil(projectLabel.implicitWidth), 160) + crumbSlash.implicitWidth + crumb.spacing * 3 : 0
+    // Room the title keeps before anything else keeps its place: all of it,
+    // up to about forty characters, so a long title still leaves a wide
+    // window everything.
+    readonly property real titleReserve: Math.min(titleSlot.implicitWidth, Theme.type.body.size * 24)
+    // Room it keeps before the pills fold away: its start.
+    readonly property real titleMinimum: Math.min(titleSlot.implicitWidth, 120)
+    // The toggles and window buttons, whatever the level (each with the gap before it).
+    readonly property real fixedNeed: [terminalToggle, detailsButton, panelButton, windowButtons].reduce((sum, item) => sum + (item.visible ? item.implicitWidth + item.Layout.leftMargin + rowSpacing : 0), 0)
+    readonly property real rowSpacing: Theme.space.md
+    readonly property real labelledPills: (hasScripts ? scriptsPill.fullWidth + rowSpacing : 0) + (hasSshNote ? sshNote.implicitWidth + rowSpacing : 0) + (hasEditors ? editorPill.fullWidth + rowSpacing : 0) + (gitPill.visible ? gitPill.fullWidth + rowSpacing : 0)
+    readonly property real iconPills: (hasScripts ? scriptsPill.compactWidth + rowSpacing : 0) + (hasSshNote ? sshNote.implicitWidth + rowSpacing : 0) + (hasEditors ? editorPill.compactWidth + rowSpacing : 0) + (gitPill.visible ? gitPill.compactWidth + rowSpacing : 0)
+    readonly property real fullNeed: projectNeed + labelledNeed
+    readonly property real labelledNeed: titleReserve + fixedNeed + labelledPills
+    readonly property real iconNeed: titleMinimum + fixedNeed + iconPills
+    readonly property bool showProject: hasProject && fullNeed <= room
+    readonly property bool compact: labelledNeed > room
+    readonly property bool tight: iconNeed > room
 
     function beginRename() {
         if (strip.ready && !strip.model.isDraft) {
@@ -54,7 +80,7 @@ Rectangle {
         }
     }
 
-    implicitHeight: 52
+    implicitHeight: Theme.headerHeight
     color: Theme.palette.color("canvas", "#0f0f12")
     // Never over the panel beside it.
     clip: true
@@ -77,13 +103,13 @@ Rectangle {
     }
 
     ShellButton {
-        x: 12
-        y: 12
+        x: Theme.space.md
+        y: Theme.space.md
         subtle: true
-        implicitHeight: 28
+        implicitHeight: Theme.control.md
         visible: strip.sidebarToggle === true
         iconName: "panel-left"
-        iconSize: 16
+        iconSize: Theme.icon.md
         iconTint: strip.iconMuted
         Accessible.name: qsTr("Show sidebar")
         onClicked: Shell.dispatch("sidebar.toggle")
@@ -93,15 +119,19 @@ Rectangle {
         anchors.fill: parent
         anchors.leftMargin: strip.sidebarToggle === true ? 52 : 20
         anchors.rightMargin: Math.max(20, strip.trailingInset)
-        spacing: 12
+        spacing: strip.rowSpacing
 
         // Breadcrumb: project / title.
         RowLayout {
+            id: crumb
+
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Theme.space.sm
 
             ShellIcon {
-                visible: strip.ready && strip.model.projectTitle !== null
+                id: folderIcon
+
+                visible: strip.showProject
                 name: "folder"
                 size: 14
                 color: strip.iconMuted
@@ -115,10 +145,10 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 24
                 Layout.maximumWidth: Math.min(Math.ceil(implicitWidth), 160)
-                visible: strip.ready && strip.model.projectTitle !== null
+                visible: strip.showProject
                 text: strip.ready ? (strip.model.projectTitle ?? "") : ""
                 color: projectHover.hovered ? strip.foreground : strip.projectColor
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
                 elide: Text.ElideRight
                 activeFocusOnTab: true
@@ -136,12 +166,6 @@ Rectangle {
                 ToolTip.delay: 500
                 ToolTip.text: text
 
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 120
-                    }
-                }
-
                 HoverHandler {
                     id: projectHover
 
@@ -154,7 +178,7 @@ Rectangle {
                     anchors.margins: -3
                     visible: projectLabel.activeFocus
                     color: "transparent"
-                    radius: 4
+                    radius: Theme.radiusXs
                     border.width: 1
                     border.color: Theme.palette.color("focus", "#3b82f6")
                 }
@@ -165,10 +189,12 @@ Rectangle {
             }
 
             Text {
-                visible: strip.ready && strip.model.projectTitle !== null
+                id: crumbSlash
+
+                visible: strip.showProject
                 text: "/"
                 color: strip.iconMuted
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
 
             Item {
@@ -203,7 +229,7 @@ Rectangle {
                 Layout.fillWidth: true
                 // Room for a few letters of the title beside the chevron (40 px).
                 Layout.minimumWidth: Math.min(Math.ceil(titleRow.implicitWidth), 40 + titleRow.spacing + 14)
-                implicitHeight: 28
+                implicitHeight: Theme.control.md
                 implicitWidth: titleRow.implicitWidth
                 activeFocusOnTab: !editing && strip.ready && !strip.model.isDraft
                 Accessible.role: Accessible.Button
@@ -259,7 +285,7 @@ Rectangle {
                     height: parent.height
                     visible: titleSlot.activeFocus
                     color: "transparent"
-                    radius: 4
+                    radius: Theme.radiusXs
                     border.width: 1
                     border.color: Theme.palette.color("focus", "#3b82f6")
                 }
@@ -282,14 +308,14 @@ Rectangle {
                         Layout.maximumWidth: Math.ceil(implicitWidth)
                         text: strip.ready ? strip.model.threadTitle : qsTr("No thread")
                         color: strip.foreground
-                        font.pixelSize: Math.round(14 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         font.weight: Font.Medium
                         elide: Text.ElideRight
                     }
 
-                    ShellIcon {
-                        name: "chevron-down"
-                        size: 14
+                    ShellChevron {
+                        direction: "down"
+                        size: Theme.icon.sm
                         color: strip.muted
                         opacity: titleHover.hovered ? 1 : 0
                         Layout.alignment: Qt.AlignVCenter
@@ -308,7 +334,7 @@ Rectangle {
 
                     anchors.fill: parent
                     visible: titleSlot.editing
-                    font.pixelSize: Math.round(14 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                     onAccepted: {
                         titleSlot.editing = false;
@@ -330,7 +356,7 @@ Rectangle {
                 visible: strip.ready && strip.model.offline === true
                 text: qsTr("Offline")
                 color: strip.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 font.weight: Font.Medium
                 Layout.alignment: Qt.AlignVCenter
             }
@@ -340,7 +366,7 @@ Rectangle {
             id: scriptsPill
             objectName: "runActionButton"
 
-            visible: strip.ready && strip.model.scripts.length > 0 && !strip.tight
+            visible: strip.hasScripts && !strip.tight
             compact: strip.compact
             iconName: "play"
             text: strip.preferredScript ? qsTr("Run %1").arg(strip.preferredScript.name) : ""
@@ -382,8 +408,9 @@ Rectangle {
         }
 
         ShellButton {
+            id: sshNote
             objectName: "noSshRoute"
-            visible: strip.ready && (strip.model.noSshRoute ?? "") !== "" && !strip.tight
+            visible: strip.hasSshNote && !strip.tight
             subtle: true
             iconName: "external-link"
             text: strip.ready ? strip.model.noSshRoute ?? "" : ""
@@ -391,8 +418,9 @@ Rectangle {
         }
 
         ShellSplitButton {
+            id: editorPill
             objectName: "openEditorButton"
-            visible: strip.ready && strip.model.editors.length > 0 && !strip.tight
+            visible: strip.hasEditors && !strip.tight
             compact: strip.compact
             iconName: "external-link"
             text: qsTr("Open")
@@ -433,58 +461,128 @@ Rectangle {
             }
         }
 
+        // Run and open, once the strip has no room for their pills.
+        ShellButton {
+            objectName: "headerOverflow"
+            visible: strip.tight && (strip.hasScripts || strip.hasEditors || strip.hasSshNote)
+            subtle: true
+            // The pills' height, in their place.
+            implicitHeight: Theme.control.sm
+            iconName: "ellipsis"
+            iconSize: Theme.icon.md
+            iconTint: strip.iconMuted
+            Accessible.name: qsTr("More actions")
+            onClicked: overflowMenu.open()
+
+            ShellMenu {
+                id: overflowMenu
+                objectName: "headerOverflowMenu"
+
+                y: parent.height + Theme.space.xs
+                x: parent.width - width
+
+                Instantiator {
+                    model: strip.hasScripts ? strip.model.scripts : []
+
+                    delegate: ShellMenuItem {
+                        required property var modelData
+
+                        text: qsTr("Run %1").arg(modelData.name)
+                        iconName: "play"
+                        onTriggered: Shell.dispatch("workspace.runScript", {
+                            scriptId: modelData.id
+                        })
+                    }
+
+                    onObjectAdded: (index, object) => overflowMenu.insertItem(index, object)
+                    onObjectRemoved: (index, object) => overflowMenu.removeItem(object)
+                }
+
+                Instantiator {
+                    model: strip.hasEditors ? strip.model.editors : []
+
+                    delegate: ShellMenuItem {
+                        required property var modelData
+
+                        text: qsTr("Open in %1").arg(modelData.label)
+                        iconName: "external-link"
+                        onTriggered: Shell.dispatch("workspace.openInEditor", {
+                            editorId: modelData.id
+                        })
+                    }
+
+                    // After the scripts, whatever order the two fill in.
+                    onObjectAdded: (index, object) => overflowMenu.addItem(object)
+                    onObjectRemoved: (index, object) => overflowMenu.removeItem(object)
+                }
+
+                ShellMenuItem {
+                    visible: strip.hasSshNote
+                    height: visible ? implicitHeight : 0
+                    iconName: "external-link"
+                    text: strip.hasSshNote ? strip.model.noSshRoute : ""
+                    onTriggered: Shell.dispatch("workspace.openInEditor", {})
+                }
+            }
+        }
+
         GitActions {
+            id: gitPill
             objectName: "gitActions"
             compact: strip.compact
         }
 
         // The terminal drawer's toggle is the strip's, next to the panel's.
         ShellButton {
+            id: terminalToggle
             visible: Terminals.available
             subtle: true
-            implicitHeight: 28
+            implicitHeight: Theme.control.md
             iconName: "panel-bottom"
-            iconSize: 16
+            iconSize: Theme.icon.md
             iconTint: Terminals.open ? strip.foreground : strip.iconMuted
-            Layout.leftMargin: 4
+            Layout.leftMargin: Theme.space.xs
             objectName: "terminalToggle"
             Accessible.name: Terminals.open ? qsTr("Hide terminal") : qsTr("Show terminal")
             onClicked: Shell.dispatch("terminal.toggle")
         }
 
         ShellButton {
+            id: detailsButton
             objectName: "threadDetailsToggle"
             visible: strip.detailsToggle !== null
             subtle: true
-            implicitHeight: 28
+            implicitHeight: Theme.control.md
             iconName: "info"
-            iconSize: 16
+            iconSize: Theme.icon.md
             iconTint: strip.detailsToggle === true ? strip.foreground : strip.iconMuted
-            Layout.leftMargin: 4
+            Layout.leftMargin: Theme.space.xs
             Accessible.name: strip.detailsToggle === true ? qsTr("Hide thread details") : qsTr("Show thread details")
             onClicked: Shell.dispatch("threadPanel.toggle")
         }
 
         ShellButton {
+            id: panelButton
             objectName: "panelToggle"
             visible: strip.panelToggle !== null
             subtle: true
-            implicitHeight: 28
+            implicitHeight: Theme.control.md
             iconName: strip.panelToggle === true ? "panel-right-close" : "panel-right"
-            iconSize: 16
+            iconSize: Theme.icon.md
             iconTint: strip.iconMuted
-            Layout.leftMargin: 4
+            Layout.leftMargin: Theme.space.xs
             Accessible.name: strip.panelToggle === true ? qsTr("Close panel") : qsTr("Open panel")
             onClicked: Shell.dispatch("rightPanel.toggle")
         }
 
         WindowControls {
+            id: windowButtons
             objectName: "windowControls"
             visible: strip.framelessChrome && strip.windowControls && Qt.platform.os !== "osx"
             window: strip.window
             buttonWidth: 32
             buttonHeight: 28
-            Layout.leftMargin: 8
+            Layout.leftMargin: Theme.space.sm
         }
     }
 }

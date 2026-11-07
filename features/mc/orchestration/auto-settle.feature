@@ -1,5 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24617
+#   https://github.com/pingdotgg/t3code/pull/17789
+#   https://github.com/pingdotgg/t3code/pull/15783
+#   https://github.com/pingdotgg/t3code/pull/18232
+#   https://github.com/pingdotgg/t3code/pull/19937
 #   packages/contracts/src/orchestrationV2.ts (thread.auto-settle, thread.settled)
+#   https://github.com/pingdotgg/t3code/pull/11846 (per-thread auto-settle switch)
 #   packages/contracts/src/settings.ts (sidebarAutoSettleOnMerge, sidebarAutoSettleAfterDays)
 #   apps/server-ex/lib/hal_c2/orchestration/settlement.ex
 #   apps/server-ex/lib/hal_c2/orchestration.ex (thread.auto-settle)
@@ -7,6 +13,8 @@
 #   apps/server/src/orchestration-v2/ThreadSettlementService.ts (several pull requests, branch lookups,
 #     reused branches, lookup failures, project-only rules)
 #   docs/user/thread-sidebar.md
+#   https://github.com/pingdotgg/t3code/pull/15355
+#   https://github.com/pingdotgg/t3code/pull/15388
 Feature: Threads settle on their own
   A thread that is done, because its pull request merged or closed or because
   nobody has touched it for days, settles itself. Anything that shows the thread
@@ -29,6 +37,14 @@ Feature: Threads settle on their own
     When the MC sweeps for threads to settle
     Then thread "t1" is not settled
 
+  # Upstream #15783: an empty thread settles from its creation time
+  @backlog @mc
+  Scenario: A thread nobody ever wrote in settles from when it was made
+    Given thread "t1" was made 4 days ago and has no message or run
+    When the MC sweeps for threads to settle
+    Then thread "t1" is settled
+    And its settled time is when it was made
+
   @mc
   Scenario: A thread whose pull request merged settles
     Given thread "t1" links a pull request that merged after the user last worked in it
@@ -40,6 +56,26 @@ Feature: Threads settle on their own
     Given thread "t1" links a pull request that closed after the user last worked in it
     When the MC sweeps for threads to settle
     Then thread "t1" is settled
+
+  # Upstream #19937: Bitbucket pull requests settle their thread at the time Bitbucket recorded.
+  @backlog @mc @priority-low
+  Scenario Outline: A thread whose Bitbucket pull request <outcome> settles
+    Given a thread linked to a Bitbucket pull request
+    When Bitbucket reports the pull request <outcome>
+    Then the thread settles as of the time Bitbucket recorded
+
+    Examples:
+      | outcome  |
+      | merged   |
+      | declined |
+
+  # Upstream #19937: a merge Bitbucket has not timed yet is read again.
+  @backlog @mc @priority-low
+  Scenario: A Bitbucket merge without a merge time yet is read again
+    Given a thread linked to a Bitbucket pull request
+    When Bitbucket reports the pull request merged but gives no merge time yet
+    Then the thread stays active
+    And it settles once Bitbucket gives the merge time
 
   @mc
   Scenario: A merged pull request does not settle the thread when settle-on-merge is off
@@ -55,12 +91,37 @@ Feature: Threads settle on their own
     When the MC sweeps for threads to settle
     Then thread "t1" is not settled
 
+  # Upstream #18232: a pull request already finished when it was linked does not settle the thread.
+  @backlog @mc
+  Scenario: A pull request that was already finished when linked does not settle the thread
+    Given thread "t1" is working
+    When a pull request that merged an hour ago is linked to "t1"
+    And the MC sweeps for threads to settle
+    Then thread "t1" is not settled
+
   @mc
   Scenario: An open pull request keeps the thread active
     Given thread "t1" links an open pull request
     And thread "t1" finished its last turn 10 days ago
     When the MC sweeps for threads to settle
     Then thread "t1" is not settled
+
+  # Upstream #24617: a linked open pull request skipped the inactivity rule, whatever
+  # "Keep threads with a PR" said.
+  # Replaces the scenario above once the MC carries it.
+  @backlog @mc
+  Scenario Outline: An open pull request keeps a quiet thread active only when the user keeps such threads
+    Given the MC settles threads after 3 days of inactivity
+    And "Keep threads with a PR" is <keep>
+    And thread "t1" links an open pull request
+    And thread "t1" finished its last turn 10 days ago
+    When the MC sweeps for threads to settle
+    Then thread "t1" <outcome>
+
+    Examples:
+      | keep | outcome          |
+      | on   | is not settled   |
+      | off  | is settled       |
 
   @mc
   Scenario: A linked pull request that has not synced yet keeps the thread active
@@ -96,6 +157,30 @@ Feature: Threads settle on their own
     And its linked pull request merged after that
     When the MC sweeps for threads to settle
     Then thread "t1" is settled
+
+  # Upstream #17789: interrupted runs woke a snoozed thread for settling.
+  @backlog @mc
+  Scenario: An interrupted run does not wake a snoozed thread for settling
+    Given thread "t1" was snoozed and a run was interrupted after the snooze
+    And its linked pull request merged after that
+    When the MC sweeps for threads to settle
+    Then thread "t1" is still snoozed and not settled
+
+  # Upstream #11846: per-thread auto-settle switch
+  @mc
+  Scenario: A thread with auto-settle disabled is never settled on its own
+    Given thread "t1" has auto-settle disabled
+    And thread "t1" finished its last turn 2 days ago
+    And thread "t1" links a pull request that merged an hour ago
+    When the MC sweeps for threads to settle
+    Then thread "t1" is not settled
+
+  # Upstream #11846: per-thread auto-settle switch
+  @mc
+  Scenario: Disabled auto-settle survives a manual settle and un-settle
+    Given thread "t1" has auto-settle disabled
+    When the user settles "t1" and then un-settles it
+    Then "t1" still has auto-settle disabled
 
   @mc
   Scenario: A project override replaces the global auto-settle settings
@@ -138,34 +223,34 @@ Feature: Threads settle on their own
     And the MC sweeps for threads to settle
     Then thread "t1" is not settled
 
-  @backlog @mc
+  @mc
   Scenario: A closed pull request settles the thread even when settle-on-merge is off
     Given auto-settle on merge is off
     And thread "t1" links a pull request that closed after the user last worked in it
     When the MC sweeps for threads to settle
     Then thread "t1" is settled
 
-  @backlog @mc
+  @mc
   Scenario: One open pull request among several linked ones keeps the thread active
     Given thread "t1" links a pull request that merged an hour ago and another that is still open
     When the MC sweeps for threads to settle
     Then thread "t1" is not settled
 
-  @backlog @mc
+  @mc
   Scenario: With several finished pull requests the one that finished last decides
     Given thread "t1" links a pull request that merged before the user's last message
     And thread "t1" links another pull request that merged after it
     When the MC sweeps for threads to settle
     Then thread "t1" is settled
 
-  @backlog @mc
+  @mc
   Scenario: A thread with no linked pull request settles from the merged one on its branch
     Given thread "t1" is on a branch whose pull request merged after the user last worked in it
     And thread "t1" links no pull request
     When the MC sweeps for threads to settle
     Then thread "t1" is settled
 
-  @backlog @mc
+  @mc
   Scenario: The branch's pull request is looked up in the project folder when the worktree is gone
     Given thread "t1" is on a branch whose pull request merged after the user last worked in it
     And the worktree of "t1" has been removed
@@ -174,28 +259,28 @@ Feature: Threads settle on their own
     And thread "t1" is settled
 
   # A branch name used again for new work: the old merge must not settle it.
-  @backlog @mc
+  @mc
   Scenario: A new open pull request on the branch keeps the thread active after the old one merged
     Given the pull request of "t1" merged after the user last worked in it
     And the branch of "t1" now has a new open pull request in the repository of "demo"
     When the MC sweeps for threads to settle
     Then thread "t1" is not settled
 
-  @backlog @mc
+  @mc
   Scenario: A merge settles only the threads of that pull request
     Given thread "t1" belongs to pull request 7 and thread "t2" to pull request 8, both open
     When the MC learns pull request 7 merged
     Then thread "t1" is settled without waiting for the next periodic sweep
     And thread "t2" is not settled
 
-  @backlog @mc
+  @mc
   Scenario: A quiet thread settles although its pull request cannot be looked up
     Given thread "t1" finished its last turn 4 days ago
     And the source control host cannot be reached
     When the MC sweeps for threads to settle
     Then thread "t1" is settled
 
-  @backlog @mc
+  @mc
   Scenario: One failed pull request lookup does not stop the rest of the sweep
     Given the pull request of "t1" cannot be looked up
     And thread "t2" links a pull request that merged after the user last worked in it
@@ -203,7 +288,7 @@ Feature: Threads settle on their own
     Then thread "t1" is not settled
     And thread "t2" is settled
 
-  @backlog @mc
+  @mc
   Scenario: A project that turns settling on is swept although the environment has it off
     Given auto-settle after days and auto-settle on merge are both off for the environment
     And project "demo" sets auto-settle after 1 day
@@ -211,9 +296,25 @@ Feature: Threads settle on their own
     When the MC sweeps for threads to settle
     Then thread "t1" is settled
 
-  @backlog @mc
+  @mc
   Scenario: A message whose turn failed to start does not hold the thread
     Given the user sent a message in "t1" a minute ago and its turn failed to start
     And the linked pull request of "t1" merged after that message
     When the MC sweeps for threads to settle
     Then thread "t1" is settled
+
+  # Upstream #15355: Stop ends a dev server left running before a provider switch
+  @backlog @mc
+  Scenario: Stop ends a dev server left by another provider
+    Given a thread moved from one provider to another left a dev server running
+    When the user stops the running command
+    Then every provider session of the thread holding background work is interrupted
+    And a command left running no longer keeps the thread from settling, though subagents and monitors do
+
+  # Upstream #15388: merged threads settle even after the agent wakes on its own
+  @backlog @mc
+  Scenario: An agent waking on its own does not undo a merge settle
+    Given a thread's pull request merged and later an agent notification started a turn
+    When settle on merge is evaluated
+    Then it compares against the last message the user wrote, so the thread settles
+    And a message the user writes after the merge keeps it active

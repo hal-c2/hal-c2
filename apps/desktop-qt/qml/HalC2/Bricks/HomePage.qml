@@ -20,51 +20,28 @@ Rectangle {
 
     color: Theme.palette.color("canvas", "#0b0b0d")
 
-    ColumnLayout {
-        anchors.centerIn: parent
-        width: Math.min(parent.width - 48, 480)
-        spacing: 10
-
-        Label {
-            objectName: "homeTitle"
-            Layout.fillWidth: true
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.Wrap
-            color: Theme.palette.color("text", "#e4e4e7")
-            visible: !home.opening
-            font.pixelSize: home.sidebar ? 24 : 13
-            text: home.failed ? qsTr("Couldn’t start a new thread")
-                : home.sidebar ? qsTr("What should we work on?") : qsTr("Waiting for the app…")
-        }
-
-        Label {
-            objectName: "homeDetail"
-            Layout.fillWidth: true
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.Wrap
-            visible: home.failed || (home.sidebar !== null && !home.hasProjects)
-            color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: Math.round(13 * Theme.fontScale)
-            text: home.failed ? qsTr("The project is still available. Try opening the draft again.")
-                : qsTr("Add a project to start your first thread.")
-        }
-
-        ShellButton {
-            objectName: "homeAction"
-            Layout.alignment: Qt.AlignHCenter
-            visible: home.sidebar !== null && !home.opening
-            primary: true
-            iconName: home.failed ? "refresh-cw" : "folder-plus"
-            text: home.failed ? qsTr("Try again") : qsTr("Add project")
-            onClicked: {
-                if (home.failed)
-                    Shell.dispatch("landing.retry");
-                // A local folder is picked here, as the sidebar does; without local folders the command palette asks.
-                else if (Shell.localFolderImportEnabled && (home.sidebar.localFolders ?? false))
-                    addProjectDialog.open();
-                else
-                    Shell.dispatch("project.add");
-            }
+    // Placed by its top a third of the way down, so waiting, the invitation and
+    // the failure keep the tile and title in one place.
+    ShellEmptyState {
+        objectName: "homeState"
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: Math.round(home.height / 3)
+        visible: !home.opening
+        status: home.failed ? "error" : home.sidebar ? "empty" : "loading"
+        iconName: "folder-plus"
+        title: home.failed ? qsTr("Couldn’t start a new thread")
+            : home.sidebar ? qsTr("What should we work on?") : qsTr("Waiting for the app…")
+        description: home.failed ? qsTr("The project is still available. Try opening the draft again.")
+            : home.sidebar && !home.hasProjects ? qsTr("Add a project to start your first thread.") : ""
+        actionText: home.sidebar === null ? "" : home.failed ? qsTr("Try again") : qsTr("Add project")
+        onActionTriggered: {
+            if (home.failed)
+                Shell.dispatch("landing.retry");
+            // A local folder is picked here, as the sidebar does; without local folders the command palette asks.
+            else if (Shell.localFolderImportEnabled && (home.sidebar.localFolders ?? false))
+                addProjectDialog.open();
+            else
+                Shell.dispatch("project.add");
         }
     }
 

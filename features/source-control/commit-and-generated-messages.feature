@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20175
+#   https://github.com/pingdotgg/t3code/pull/19605
+#   https://github.com/pingdotgg/t3code/pull/19181
+#   https://github.com/pingdotgg/t3code/pull/18754
 #   docs/user/source-control.md (Commit, push and PR with generated messages)
 #   packages/contracts/src/git.ts (GitStackedAction, GitRunStackedActionInput, GitActionProgressEvent)
 #   packages/contracts/src/rpc.ts (git.runStackedAction)
@@ -15,6 +19,9 @@
 #   apps/tui/src/store.ts (runGitAction)
 #   apps/server/src/textGeneration/TextGenerationUtils.ts (commit subject cap, PR title fallback)
 #   apps/server/src/git/GitManager.ts (runPrStep: reuse, base branch, bounded context, body file)
+#   https://github.com/pingdotgg/t3code/pull/15532
+#   https://github.com/pingdotgg/t3code/pull/15441
+#   https://github.com/pingdotgg/t3code/pull/22848
 
 Feature: Committing with written or generated messages
   The user reviews what goes into a commit, may leave the message to the writer model,
@@ -29,6 +36,14 @@ Feature: Committing with written or generated messages
     When the user commits with the message "Add tax to the cart"
     Then a commit "Add tax to the cart" holds both files
     And the user is told the commit was made with its short hash
+
+  # Upstream #19605: a message the user wrote skips building the diff the writer model would
+  # need; a blank message still gets the full context.
+  @backlog @mc @priority-low
+  Scenario: A commit with the user's own message does not need a readable diff
+    Given a git text converter configured for "src/tax.ts" fails
+    When the user commits with the message "Add tax to the cart"
+    Then a commit "Add tax to the cart" holds both files
 
   @mc @desktop
   Scenario: A blank message is written by the writer model
@@ -46,6 +61,11 @@ Feature: Committing with written or generated messages
       | a subject longer than 72 characters  | cut to at most 72 characters             |
       | empty                                | "Update project files"                   |
 
+    # Upstream #19181: a subject cut to length could split an emoji or an accented letter.
+    Examples:
+      | raw                                                                                | subject                                            |
+      | a subject longer than 72 characters, with an emoji and accented letters at the cut | cut to at most 72 characters without splitting one |
+
   @tui
   Scenario: A blank message is written for the user in the terminal client
     When the user commits from the terminal client without writing a message
@@ -62,6 +82,15 @@ Feature: Committing with written or generated messages
     When the user leaves "src/tax.ts" out of the commit and commits
     Then the commit holds only "src/cart.ts"
     And "src/tax.ts" is still changed in the working tree
+
+  # Upstream #20175: in a project nested inside its repository the picked files resolved against
+  # the wrong folder.
+  @backlog @mc @desktop @priority-high
+  Scenario: Committing only the picked files of a project inside a larger repository
+    Given "shop" is the folder "apps/shop" of a larger repository
+    When the user leaves "src/tax.ts" out of the commit and commits
+    Then the commit holds only "apps/shop/src/cart.ts"
+    And opening "src/cart.ts" in the editor opens "apps/shop/src/cart.ts"
 
   @desktop
   Scenario: Leaving every file out disables committing
@@ -121,6 +150,14 @@ Feature: Committing with written or generated messages
     When the user commits without writing a message
     Then the writer model also sees the repository's CLAUDE.md
 
+  # Upstream #22848: a CLAUDE.md that copies AGENTS.md was sent twice.
+  @backlog @mc @priority-low
+  Scenario: A CLAUDE.md that says the same as AGENTS.md is not read twice
+    Given the writing style is Repository conventions and the writer model is a Claude model
+    And the repository's CLAUDE.md holds the same text as its AGENTS.md
+    When the user commits without writing a message
+    Then the writer model sees the conventions once
+
   @mc
   Scenario Outline: A generated pull request follows the writing style
     Given the project's source control writing style is <style>
@@ -175,6 +212,37 @@ Feature: Committing with written or generated messages
       | the host cannot be asked and the remote's default branch is "master"                   | master  |
       | nothing records a default branch                                                       | main    |
 
+  # Upstream #18754: configured pull request bases resolve to branch names
+  @mc @backlog
+  Scenario Outline: A recorded base that is not a branch gives way to the default branch
+    Given "feature/tax" has the recorded merge base <ref> and the host's default is "main"
+    When the user runs "Create PR"
+    Then the pull request targets "main"
+
+    Examples:
+      | ref                     |
+      | the commit "a1b2c3d"    |
+      | the tag "v1.2.0"        |
+      | the revision "HEAD~2"   |
+
+  # Upstream #18754: configured pull request bases resolve to branch names
+  @mc @backlog
+  Scenario Outline: A recorded base names the branch the pull request targets
+    Given "feature/tax" has the recorded merge base "<ref>"
+    When the user runs "Create PR"
+    Then the pull request targets "<base>"
+
+    Examples:
+      | ref            | base    |
+      | release        | release |
+      | origin/release | release |
+
+  # Upstream #18754: configured pull request bases resolve to branch names
+  @mc @backlog
+  Scenario: A worktree made from a commit records no pull request base
+    When the user makes a worktree for "feature/tax" from the commit "a1b2c3d"
+    Then "feature/tax" has no recorded merge base
+
   # Legacy: apps/server/src/git/GitManager.ts (resolveBaseRangeRef)
   @mc @backlog
   Scenario: The pull request text describes the changes since the base as the remote has it
@@ -183,7 +251,7 @@ Feature: Committing with written or generated messages
     Then the writer is given the commits and changes since "origin/main"
 
   # Legacy: apps/server/src/git/GitManager.ts (runPrStep: limitContext 20,000 / 20,000 / 60,000)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario Outline: The writer is given a bounded view of a large pull request
     Given the branch has a <part> longer than <limit> characters
     When the user runs "Create PR"
@@ -196,7 +264,7 @@ Feature: Committing with written or generated messages
       | patch             | 60,000 |
 
   # Legacy: apps/server/src/git/GitManager.ts (runPrStep: bodyFile)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: The written description is handed to the host through a file that is removed afterwards
     When the user runs "Create PR" and the host accepts or refuses the pull request
     Then the description file in the MC's temporary folder is gone
@@ -296,3 +364,17 @@ Feature: Committing with written or generated messages
     And the user commits with the message "Add tax"
     Then the action ran on "env-c"
     And a commit "Add tax" holds both files
+
+  # Upstream #15532: failed message generation no longer stages the user's changes
+  @backlog @mc @priority-high
+  Scenario: Failing to write a commit message leaves staging alone
+    Given some changes are unstaged
+    When generating the commit message fails
+    Then nothing was staged and no commit exists
+
+  # Upstream #15441: Forgejo and Gitea mergeability maps only true to mergeable
+  @backlog @mc @priority-low
+  Scenario: A Forgejo or Gitea pull request is not called conflicted without evidence
+    Given the host reports the pull request as not mergeable
+    When its status is read
+    Then mergeability is unknown, not conflicted

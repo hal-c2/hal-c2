@@ -232,7 +232,9 @@ defmodule HalC2.ClusterTest do
   defp note(id), do: {"note", id, %{"s" => %{"v" => 1}}}
 
   # Found by proof/hal_c2/stream_relay_proof_test.exs. A suspended socket still takes
-  # the messages sent to it.
+  # the messages sent to it. The follow runs in a process the socket spawns, so its
+  # answer is seen as that process sends it: a suspended process's receive trace waits
+  # until something makes it handle its signals.
   test "a client whose follow is answered as the MCs part and meet again is told it failed",
        %{tmp_dir: dir, port: port} do
     {peer, c} = member(dir)
@@ -253,23 +255,22 @@ defmodule HalC2.ClusterTest do
     tracer = Node.spawn(c, HalC2.Test.Forward, :loop, [self()])
     1 = :erpc.call(c, :erlang, :trace, [stream, true, [:receive, {:tracer, tracer}]])
     :ok = :erpc.call(c, :sys, :suspend, [stream])
+    :erlang.trace(socket, true, [:send, :set_on_spawn])
     shape = %{"type" => "stream", "mc" => Atom.to_string(c), "stream" => "split-th"}
     client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
 
-    assert_receive {:trace, ^stream, :receive,
-                    {:"$gen_call", {worker, _}, {:subscribe, ^socket, _, _}}},
+    assert_receive {:trace, ^stream, :receive, {:"$gen_call", _, {:subscribe, ^socket, _, _}}},
                    5_000
 
     # The answer lands, and the MCs part and meet again, before the socket reads it.
-    :erlang.trace(socket, true, [:receive])
     true = :erlang.suspend_process(socket)
     :ok = :erpc.call(c, :sys, :resume, [stream])
-    assert_receive {:trace, ^socket, :receive, {:DOWN, _, :process, ^worker, _}}, 5_000
+    assert_receive {:trace, _follow, :send, {:hal_c2_followed, _, {:ok, _}}, ^socket}, 5_000
     true = Node.disconnect(c)
     true = Node.connect(c)
     assert :erpc.call(c, :sys, :get_state, [stream]).subscribers == %{}
     true = :erlang.resume_process(socket)
-    :erlang.trace(socket, false, [:receive])
+    :erlang.trace(socket, false, [:send, :set_on_spawn])
 
     {error, _, client} = WsClient.recv_until(client, &(&1["id"] == 2), 30_000)
     assert %{"t" => "error", "id" => 2} = error
@@ -354,7 +355,15 @@ defmodule HalC2.ClusterTest do
 
     :peer.stop(peer)
     {down, _, client} = WsClient.recv_until(client, &(&1["t"] == "shell.mc"), 5_000)
-    assert down == %{"t" => "shell.mc", "id" => 1, "mc" => b_name, "online" => false}
+
+    assert down == %{
+             "t" => "shell.mc",
+             "id" => 1,
+             "mc" => b_name,
+             "online" => false,
+             "trying" => true
+           }
+
     assert Enum.any?(HalC2.Shell.rows(), &match?({{^b, "remote-th"}, _}, &1))
 
     # Removed from the cluster, it is gone with its rows, for clients too.

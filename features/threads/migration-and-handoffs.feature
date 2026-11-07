@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15072
 #   docs/user/thread-migration.md
 #   docs/user/portable-handoffs.md
 #   docs/internals/context-handoffs.md
@@ -202,7 +203,7 @@ Feature: Carrying threads and context across servers and agents
     Then "Alpha" has all 2502 of its messages
     And that install offers "Alpha" as imported
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Threads from the first version are migrated once
     Given the first version's database holds the thread "Legacy work"
     When the environment starts for the first time on the new version
@@ -254,6 +255,11 @@ Feature: Carrying threads and context across servers and agents
     When the user opens the app
     Then the user is told the threads were brought over
 
+  @desktop @mobile @backlog-mobile
+  Scenario: The user is told about threads migrated while the app is open
+    When threads are migrated from the first version while the app is open
+    Then the user is told the threads were brought over
+
   @mc
   Scenario: A short conversation is handed over whole
     Given the thread "Alpha" has a short conversation on Codex
@@ -279,7 +285,7 @@ Feature: Carrying threads and context across servers and agents
     When the user sends a message after switching agents
     Then the user is told the conversation is too large to hand over
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: The handoff budget follows its setting
     Given the handoff token cap is set to <cap>
     When a conversation is handed to another agent
@@ -309,3 +315,11 @@ Feature: Carrying threads and context across servers and agents
     When the user switches "Alpha" to another agent and sends a message
     Then the agent receives at most 60,000 characters of history
     And every message it receives is whole
+
+  # Dropped: upstream's V2 desktop imported stashed prompts and drafts from the V1 Chromium
+  # profile's local storage; HAL-C2 has no web client or Chromium profile to import from.
+  @dropped @desktop
+  Scenario: Drafts and layout come across from the previous app's browser profile
+    Given the previous app kept drafts in a browser profile
+    When the new app starts for the first time
+    Then the drafts and layout are imported

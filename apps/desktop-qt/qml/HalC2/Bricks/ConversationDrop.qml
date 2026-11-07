@@ -28,7 +28,7 @@ DropArea {
         anchors.fill: parent
         anchors.margins: 8
         visible: root.containsDrag
-        radius: 16
+        radius: Theme.radiusXl
         color: Qt.alpha(Theme.palette.color("accent", "#3b82f6"), 0.035)
         border.color: Qt.alpha(Theme.palette.color("accent", "#3b82f6"), 0.6)
         border.width: 2
@@ -59,7 +59,7 @@ DropArea {
                     anchors.verticalCenter: parent.verticalCenter
                     text: qsTr("Drop files to attach")
                     color: Theme.palette.color("text", "#e4e4e7")
-                    font.pixelSize: Math.round(14 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                     Accessible.role: Accessible.StatusBar
                 }

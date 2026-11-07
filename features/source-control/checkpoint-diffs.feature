@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19533
+#   https://github.com/pingdotgg/t3code/pull/18152
+#   https://github.com/pingdotgg/t3code/pull/17161
 #   packages/contracts/src/checkpointDiff.ts (TurnCountRange, getTurnDiff, getFullThreadDiff)
 #   packages/contracts/src/rpc.ts (orchestration.getTurnDiff, orchestration.getFullThreadDiff)
 #   apps/server-ex/lib/hal_c2/checkpoint.ex (turn_diff, capture, start_ref)
@@ -12,6 +15,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/DiffPanel.qml
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 
+@priority-high
 Feature: What each turn changed
   Every finished turn leaves a hidden checkpoint of the checkout, so the user can see what
   one turn changed or everything the thread has changed since it began.
@@ -55,6 +59,37 @@ Feature: What each turn changed
     When the user opens the diff of turn 2
     Then the user is told there are no changes
 
+  # Upstream #17161: one rebase listed 13,434 changed files. A file counts as the turn's
+  # own when it had uncommitted edits at the turn's start or end, a commit made during the
+  # turn touched it (rebased commits too), a conflict resolution touched it, or a commit
+  # that left the branch did. When unsure, the file is kept.
+  @backlog @mc
+  Scenario: A turn's diff leaves out what git brought in
+    Given during turn 2 the agent merged "main", which changed 40 files, and edited "README.md"
+    When the user opens the diff of turn 2
+    Then only "README.md" is shown
+    And the turn's changed files list "README.md" alone, matching the diff
+    But restoring turn 2's checkpoint still restores all 41 files
+
+  @backlog @mc
+  Scenario: A turn that only pulled has no changed files
+    Given turn 2 only pulled new commits from the remote
+    When the user opens the diff of turn 2
+    Then the user is told there are no changes
+
+  @backlog @mc
+  Scenario: A rebased commit of the agent's own stays in its turn's diff
+    Given during turn 2 the agent committed a change to "src/cart.ts" and then rebased it onto "main"
+    When the user opens the diff of turn 2
+    Then the change to "src/cart.ts" is shown
+    And files only "main" changed are not
+
+  @backlog @mc
+  Scenario: A conflict the agent resolved is part of its turn
+    Given during turn 2 the agent merged "main" and resolved a conflict in "src/tax.ts"
+    When the user opens the diff of turn 2
+    Then the resolution in "src/tax.ts" is shown
+
   @mc
   Scenario: A turn without a finished checkpoint
     Given turn 4 is still running
@@ -80,6 +115,14 @@ Feature: What each turn changed
     And the user can switch to any earlier turn or to all changes
 
   @desktop @mobile @backlog-mobile
+  Scenario: The diff opens on all changes when the latest turn changed nothing
+    Given turn 4 only answered a question after turns that changed files
+    When the user opens the diff of the latest turn
+    Then the diff shows all changes
+    When the user picks the latest turn
+    Then the user is told there are no changes
+
+  @desktop @mobile @backlog-mobile
   Scenario: A turn's diff that cannot be loaded can be asked for again
     Given the MC cannot read the checkpoints of "Tax work"
     When the user opens the diff of the latest turn
@@ -98,6 +141,14 @@ Feature: What each turn changed
     When the user collapses "src/rates.ts" in the diff
     Then "src/rates.ts" is listed collapsed
 
+  # Upstream #19533: switching to another side panel tab and back expanded every file again.
+  @backlog @desktop @priority-low
+  Scenario: Collapsed files stay collapsed across side panel tabs
+    Given the user collapsed "src/cart.ts" in the diff of the latest turn
+    When the user switches to another side panel tab and back to the diff
+    Then "src/cart.ts" is still collapsed
+    But after the app starts again the diff opens with its usual folding
+
   @desktop
   Scenario: Every file of a diff can be collapsed and expanded at once
     When the user opens the diff of the latest turn
@@ -114,3 +165,12 @@ Feature: What each turn changed
     Then the removed and added line of "src/cart.ts" are shown side by side
     When the user shows the diff as one column
     Then the removed and added line of "src/cart.ts" are shown one above the other
+
+  # Upstream #18152: projects opened through a symlink into a repository's subfolder resolve the right repository.
+  @backlog @mc
+  Scenario: A project opened through a symlink uses the repository it points into
+    Given the project folder is a symlink into the "web" folder of the repository "shop"
+    And another repository sits next to the symlink
+    When a turn finishes
+    Then its checkpoint is taken in "shop"
+    And the branch list shows the branches of "shop"

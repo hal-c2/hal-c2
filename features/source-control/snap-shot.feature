@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15538
+#   https://github.com/pingdotgg/t3code/pull/11325
+#   https://github.com/pingdotgg/t3code/pull/11037
 #   docs/user/snap-shot.md
 #   docs/internals/linux-snap-shot.md
 #   apps/web/src/components/desktop/SnapShotCoordinator.tsx
@@ -14,7 +17,7 @@
 # text or capture effects, and directly on macOS, where captures can carry the
 # app's text.
 
-@desktop
+@desktop @priority-low
 Feature: Snap Shot captures another app's window into the draft
   With a global shortcut the user captures the window they are working in and it lands
   in the current draft, optionally with the app's text and controls.
@@ -33,6 +36,14 @@ Feature: Snap Shot captures another app's window into the draft
     When the user presses the Snap Shot shortcut from another app
     Then a new draft in "shop" holds the capture
 
+  # Upstream #15538: a capture taken while the agent asked a question went to the hidden draft.
+  @backlog
+  Scenario: A capture taken while the agent asks a question is attached to the answer
+    Given the thread open in HAL-C2 is waiting on the agent's question
+    When the user presses the Snap Shot shortcut
+    Then the capture is attached to the answer to that question
+    But a capture that finishes after the question closed goes to the thread's draft
+
   Scenario: Capturing while HAL-C2 is in front captures HAL-C2
     Given HAL-C2 is the app in front
     When the user presses the Snap Shot shortcut
@@ -48,6 +59,7 @@ Feature: Snap Shot captures another app's window into the draft
     When the user presses the Snap Shot shortcut
     Then nothing is attached and the user is told the capture was too large
 
+  # Upstream #11037: shortcut repeats during a capture's flight are ignored.
   @backlog @desktop
   Scenario: Pressing the shortcut again while a capture is being taken is ignored
     Given the user has just pressed the Snap Shot shortcut
@@ -241,6 +253,16 @@ Feature: Snap Shot captures another app's window into the draft
     When the user presses the Snap Shot shortcut
     Then the image is attached without any app text
     And no other window's text is attached
+
+  # Upstream #11325: Chrome on macOS lost its app text because its title names the browser and
+  # profile; that suffix is allowed for the captured Chrome process only.
+  @backlog
+  Scenario: A Chrome window on macOS gives its app text though its title names the browser
+    Given including app text is on
+    And Chrome on macOS is in front with a window titled "Shop - Google Chrome - Work"
+    When the user presses the Snap Shot shortcut
+    Then the page's app text is attached with the image
+    And no other Chrome process's window gives its text
 
   @backlog @desktop
   Scenario: Very long app text is cut at its limit and marked incomplete

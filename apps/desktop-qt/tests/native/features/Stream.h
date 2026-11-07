@@ -73,6 +73,8 @@ struct FakeStreams {
   // thread loads slowly.
   bool slow = false;
   QList<std::function<void()>> waiting;
+  // How long the MC takes to load a thread for a `sub` (FakeMc::busy()).
+  int loadMs = 0;
   // Environments that are down (a cluster member that left): a stream on one
   // is refused.
   QSet<QString> offline;
@@ -86,6 +88,13 @@ struct FakeStreams {
   QList<QPersistentModelIndex> kept;
   // The files the current turn changed, for the checkpoint it leaves.
   QStringList changedFiles;
+};
+
+// A duration as the thread writes it (streaming.feature), for "it reads"
+// (TimelineActivitySteps) to compare against instead of a group's summary.
+struct ShownDuration {
+  bool shown = false;
+  QString text;
 };
 
 inline const QString kProject = QStringLiteral("shop");

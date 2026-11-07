@@ -64,7 +64,7 @@ Item {
 
     component ChartLabel: Label {
         color: chart.muted
-        font.pixelSize: Math.round(10 * Theme.fontScale)
+        font.pixelSize: Theme.type.caption.size
         font.features: {
             "tnum": 1
         }
@@ -185,7 +185,7 @@ Item {
             y: beside(hover.point.position.y, height, plot.height)
             width: Math.min(plot.width, Math.max(144, readoutRows.implicitWidth + 20))
             height: readoutRows.implicitHeight + 16
-            radius: Math.min(Theme.radius, 12)
+            radius: Theme.radiusLg
             color: Theme.palette.color("surfaceOverlay", "#18181b")
             border.color: Theme.palette.color("border", "#27272a")
             border.width: 1
@@ -194,7 +194,7 @@ Item {
                 id: readoutRows
 
                 anchors.fill: parent
-                anchors.leftMargin: 10
+                anchors.leftMargin: Theme.space.sm
                 anchors.rightMargin: 10
                 anchors.topMargin: 8
                 anchors.bottomMargin: 8
@@ -205,7 +205,7 @@ Item {
                     Layout.bottomMargin: 2
                     text: readout.column ? readout.column.heading : ""
                     color: chart.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 Repeater {
@@ -218,7 +218,7 @@ Item {
                         required property int index
 
                         Layout.fillWidth: true
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         ProviderIcon {
                             driverKind: part.modelData.driverKind
@@ -227,10 +227,10 @@ Item {
 
                         Label {
                             Layout.fillWidth: true
-                            Layout.rightMargin: 6
+                            Layout.rightMargin: Theme.space.sm
                             text: part.modelData.label
                             color: chart.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             elide: Text.ElideRight
                         }
 
@@ -238,7 +238,7 @@ Item {
                             objectName: "usageChartValue_" + part.index
                             text: readout.column ? chart.format(readout.column.values[part.index] ?? 0) : ""
                             color: chart.foreground
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
                     }
                 }
@@ -252,21 +252,21 @@ Item {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 6
+                    spacing: Theme.space.sm
 
                     Label {
                         Layout.fillWidth: true
-                        Layout.rightMargin: 6
+                        Layout.rightMargin: Theme.space.sm
                         text: qsTr("Total")
                         color: chart.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     ChartLabel {
                         objectName: "usageChartTotal"
                         text: readout.column ? chart.format(readout.column.values.reduce((sum, value) => sum + value, 0)) : ""
                         color: chart.foreground
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
                 }
             }

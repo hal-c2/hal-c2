@@ -1,3 +1,4 @@
+import type { MermaidRenderResult } from "@hal-c2/contracts";
 import { TextAttributes, type RGBA, type TextChunk } from "@opentui/core";
 
 import { parseMarkdownTable, type MarkdownTable } from "../markdownTable.ts";
@@ -7,7 +8,8 @@ import type { Palette } from "../theme.ts";
 // object with a `chunks` array, so the host pre-styles timeline lines and the
 // bricks stay dumb. Markdown goes through a small line formatter instead of
 // OpenTUI's Markdown renderable, whose syntax style and async code highlighting
-// cannot be driven from QML.
+// cannot be driven from QML; code is coloured here instead, from OpenTUI's
+// tree-sitter (`codeColours.ts`).
 
 export interface StyledText {
   readonly chunks: ReadonlyArray<TextChunk>;
@@ -19,6 +21,7 @@ export interface ChunkStyle {
   readonly bold?: boolean;
   readonly italic?: boolean;
   readonly underline?: boolean;
+  readonly strikethrough?: boolean;
   readonly link?: string;
 }
 
@@ -26,7 +29,8 @@ export function chunk(text: string, style: ChunkStyle = {}): TextChunk {
   const attributes =
     (style.bold ? TextAttributes.BOLD : 0) |
     (style.italic ? TextAttributes.ITALIC : 0) |
-    (style.underline ? TextAttributes.UNDERLINE : 0);
+    (style.underline ? TextAttributes.UNDERLINE : 0) |
+    (style.strikethrough ? TextAttributes.STRIKETHROUGH : 0);
   return {
     __isChunk: true,
     text,
@@ -44,8 +48,22 @@ export const styled = (...chunks: ReadonlyArray<TextChunk | null | false>): Styl
 /** The plain text of a styled line (steps and tests read it). */
 export const plainText = (text: StyledText): string => text.chunks.map((c) => c.text).join("");
 
-const INLINE =
-  /(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)|\*\*([^*\n]+)\*\*|__([^_\n]+)__|\*([^*\s][^*\n]*)\*|(!)?\[([^\]\n]*)\]\(((?:[^()\s]|\([^()\s]*\))+)\)|<(https?:\/\/[^>\s]+)>/g;
+// GitHub's inline Markdown, one span at a time: an underscore or a `www.` address
+// counts only where no letter or digit runs into it, so snake_case stays a word.
+const INLINE = new RegExp(
+  [
+    /(?<ticks>`+)(?<code>[^`]|[^`][\s\S]*?[^`])\k<ticks>(?!`)/u.source,
+    /\*\*(?<strong>[^*\n]+)\*\*|__(?<under>[^_\n]+)__/u.source,
+    /~~(?<struck>[^~\n]+)~~/u.source,
+    /\*(?<em>[^*\s][^*\n]*)\*/u.source,
+    /(?<![\p{L}\p{N}_])_(?<emu>[^_\s][^_\n]*?)_(?![\p{L}\p{N}_])/u.source,
+    /(?<image>!)?\[(?<label>[^\]\n]*)\]\((?<url>(?:[^()\s]|\([^()\s]*\))+)(?:\s+"[^"\n]*")?\)/u
+      .source,
+    /<(?<auto>https?:\/\/[^>\s]+)>/u.source,
+    /(?<![\p{L}\p{N}_/.])(?<www>www\.[^\s<>]*[^\s<>.,;:!?'"\]*_~])/u.source,
+  ].join("|"),
+  "gu",
+);
 
 /**
  * A link the terminal may open: the web, mail, or a path. A message's text is
@@ -57,9 +75,22 @@ export function isSafeLink(url: string): boolean {
 }
 
 /**
- * Inline Markdown: code spans, bold, italic, links and autolinks. An image is
- * a link to its address (nothing is fetched); a link that is not safe to open
- * is just its text. HTML is not Markdown here: it shows as it was written.
+ * Where a `www.` address ends, as GitHub reads it: trailing punctuation is no
+ * part of it, nor a `)` that closes no `(` inside it.
+ */
+function addressEnd(address: string): string {
+  for (;;) {
+    const end = address.replace(/[.,;:!?'"*_~\]]+$/u, "");
+    if (!end.endsWith(")") || end.split(")").length <= end.split("(").length) return end;
+    address = end.slice(0, -1);
+  }
+}
+
+/**
+ * Inline Markdown: code spans, bold, italic, strikethrough, links (their title
+ * left out) and autolinks, `<https://…>` and `www.…`. An image is a link to its
+ * address (nothing is fetched); a link that is not safe to open is just its
+ * text. HTML is not Markdown here: it shows as it was written.
  */
 export function inlineMarkdown(text: string, palette: Palette, base: ChunkStyle = {}): TextChunk[] {
   const chunks: TextChunk[] = [];
@@ -67,26 +98,129 @@ export function inlineMarkdown(text: string, palette: Palette, base: ChunkStyle 
   const push = (value: string, style: ChunkStyle) => {
     if (value.length > 0) chunks.push(chunk(value, { fg: palette.text, ...base, ...style }));
   };
+  const linked = (label: string, url: string) =>
+    push(label, { fg: palette.accent, underline: true, link: url });
   for (const match of text.matchAll(INLINE)) {
     const index = match.index ?? 0;
+    const span = match.groups ?? {};
     push(text.slice(last, index), {});
     last = index + match[0].length;
-    if (match[2] !== undefined) push(match[2], { fg: palette.warning });
-    else if (match[3] !== undefined || match[4] !== undefined) {
-      push(match[3] ?? match[4]!, { bold: true });
-    } else if (match[5] !== undefined) push(match[5], { italic: true });
-    else if (match[8] !== undefined) {
-      const url = match[8];
-      const label = match[7] !== "" ? match[7]! : match[6] ? url : "";
+    if (span.code !== undefined) push(span.code, { fg: palette.warning });
+    else if (span.strong !== undefined || span.under !== undefined) {
+      push(span.strong ?? span.under!, { bold: true });
+    } else if (span.struck !== undefined) push(span.struck, { strikethrough: true });
+    else if (span.em !== undefined || span.emu !== undefined) {
+      push(span.em ?? span.emu!, { italic: true });
+    } else if (span.url !== undefined) {
+      const url = span.url;
+      const label = span.label !== "" ? span.label! : span.image ? url : "";
       if (label === "") push(match[0], {});
-      else if (isSafeLink(url)) push(label, { fg: palette.accent, underline: true, link: url });
+      else if (isSafeLink(url)) linked(label, url);
       else push(label, {});
-    } else if (match[9] !== undefined) {
-      push(match[9], { fg: palette.accent, underline: true, link: match[9] });
+    } else if (span.auto !== undefined) linked(span.auto, span.auto);
+    else if (span.www !== undefined) {
+      // What is cut off the address is given back as plain text.
+      const address = addressEnd(span.www);
+      if (address.length > "www.".length) {
+        linked(address, `http://${address}`);
+        last = index + address.length;
+      } else push(match[0], {});
     }
   }
   push(text.slice(last), {});
   return chunks;
+}
+
+const sameStyle = (a: TextChunk, b: TextChunk) =>
+  a.fg === b.fg &&
+  a.bg === b.bg &&
+  (a.attributes ?? 0) === (b.attributes ?? 0) &&
+  a.link?.url === b.link?.url;
+
+/** `chunks` with each run of one style as one chunk. */
+function joined(chunks: ReadonlyArray<TextChunk>): TextChunk[] {
+  const out: TextChunk[] = [];
+  for (const part of chunks) {
+    const before = out.at(-1);
+    if (before && sameStyle(before, part))
+      out[out.length - 1] = { ...before, text: before.text + part.text };
+    else out.push(part);
+  }
+  return out;
+}
+
+/**
+ * Styled text on lines of `width` cells, broken as `wrapWords` breaks plain text: at a
+ * line end, and at spaces, a run of them closing up to one in the style it was written
+ * in; a word wider than a line is cut across lines.
+ */
+export function wrapChunks(
+  chunks: ReadonlyArray<TextChunk>,
+  width: number,
+  narrowest = 8,
+): TextChunk[][] {
+  const size = Math.max(narrowest, width);
+  const lines: TextChunk[][] = [];
+  let line: TextChunk[] = [];
+  let used = 0;
+  let word: TextChunk[] = [];
+  let gap: TextChunk | null = null;
+  const endLine = () => {
+    lines.push(joined(line));
+    line = [];
+    used = 0;
+  };
+  const place = () => {
+    let rest = joined(word);
+    word = [];
+    let cells = rest.reduce((sum, part) => sum + Bun.stringWidth(part.text), 0);
+    if (cells === 0) return;
+    while (cells > size) {
+      if (line.length > 0) endLine();
+      const [head, tail] = cutCells(rest, size);
+      lines.push(head);
+      rest = tail;
+      cells = rest.reduce((sum, part) => sum + Bun.stringWidth(part.text), 0);
+    }
+    if (line.length > 0 && used + 1 + cells > size) endLine();
+    if (line.length > 0) {
+      line.push({ ...(gap ?? rest[0]!), text: " " });
+      used += 1;
+    }
+    line.push(...rest);
+    used += cells;
+  };
+  for (const part of chunks) {
+    for (const piece of part.text.split(/(\n|[^\S\n]+)/)) {
+      if (piece === "") continue;
+      if (piece === "\n") {
+        place();
+        endLine();
+      } else if (/^\s+$/.test(piece)) {
+        place();
+        gap = part;
+      } else word.push({ ...part, text: piece });
+    }
+  }
+  place();
+  endLine();
+  return lines;
+}
+
+/** The first `width` cells of a styled word, and the rest of it. */
+function cutCells(word: ReadonlyArray<TextChunk>, width: number): [TextChunk[], TextChunk[]] {
+  const head: TextChunk[] = [];
+  let room = width;
+  for (const [index, part] of word.entries()) {
+    const taken = clipCells(part.text, room);
+    if (taken.length < part.text.length) {
+      if (taken !== "") head.push({ ...part, text: taken });
+      return [head, [{ ...part, text: part.text.slice(taken.length) }, ...word.slice(index + 1)]];
+    }
+    head.push(part);
+    room -= Bun.stringWidth(part.text);
+  }
+  return [head, []];
 }
 
 const FENCE = /^[ \t]{0,3}(`{3,}|~{3,})/;
@@ -98,8 +232,9 @@ const TABLE_ROW = /^\s*\|.*\|\s*$/;
 
 /**
  * A pipe table boxed across `width` in equal columns, header cells in the list
- * style. A cell longer than its column wraps onto more lines of its row, or is
- * cut to one line when the table's cells are `collapsed`.
+ * style, each cell's inline Markdown drawn and aligned as its column says. A cell
+ * longer than its column wraps onto more lines of its row, or is cut to one line
+ * when the table's cells are `collapsed`.
  */
 function tableLines(
   table: MarkdownTable,
@@ -116,18 +251,26 @@ function tableLines(
   const border = (left: string, mid: string, right: string) =>
     styled(chunk(left + widths.map((w) => "─".repeat(w)).join(mid) + right, { fg: palette.faint }));
   const row = (cells: ReadonlyArray<string>, style: ChunkStyle): StyledText[] => {
-    const wrapped = widths.map((w, index) =>
-      collapsed ? [clipCells(cells[index] ?? "", w)] : wrapCell(cells[index] ?? "", w),
-    );
+    const wrapped = widths.map((w, index) => {
+      const text = inlineMarkdown(cells[index] ?? "", palette, { fg: palette.text, ...style });
+      return collapsed ? [cutCells(text, w)[0]] : wrapChunks(text, w, 1);
+    });
     const height = Math.max(1, ...wrapped.map((lines) => lines.length));
     return Array.from({ length: height }, (_, line) =>
       styled(
         ...widths.flatMap((w, index) => {
-          const text = wrapped[index]![line] ?? "";
+          const parts = wrapped[index]![line] ?? [];
+          const spare = Math.max(
+            0,
+            w - parts.reduce((sum, part) => sum + Bun.stringWidth(part.text), 0),
+          );
+          const align = table.alignments[index];
+          const before = align === "right" ? spare : align === "center" ? Math.floor(spare / 2) : 0;
           return [
             chunk("│", { fg: palette.faint }),
-            chunk(text, { fg: palette.text, ...style }),
-            chunk(" ".repeat(Math.max(0, w - Bun.stringWidth(text)))),
+            before > 0 && chunk(" ".repeat(before)),
+            ...parts,
+            spare - before > 0 && chunk(" ".repeat(spare - before)),
           ];
         }),
         chunk("│", { fg: palette.faint }),
@@ -181,33 +324,84 @@ function clipCells(text: string, width: number): string {
 /**
  * Markdown as styled lines, laid out like OpenTUI's Markdown renderable with
  * the TUI syntax style (theme.ts createTuiSyntaxStyle): headings bold in the
- * accent colour, list markers as written in bold accent, fenced code in the
- * code colour and set off by a blank line on each side, quotes behind a faint
+ * accent colour, list markers as written in bold accent, fenced code in its
+ * language's colours (`colours`), or the code colour until it is read, set off
+ * by a blank line on each side, quotes behind a faint
  * bar, rules and tables across `width`, inline emphasis, code spans and links.
  */
-export function markdownLines(markdown: string, palette: Palette, width = 24): StyledText[] {
-  return markdownBlockLines(markdown, palette, width).map((entry) => entry.text);
+export function markdownLines(
+  markdown: string,
+  palette: Palette,
+  width = 24,
+  diagrams?: MarkdownDiagrams,
+  colours?: CodeColouring,
+): StyledText[] {
+  return markdownBlockLines(markdown, palette, width, undefined, diagrams, colours).map(
+    (entry) => entry.text,
+  );
+}
+
+/**
+ * The lines of a code block coloured as its fence's language (`codeColours.ts`): those read
+ * so far, or null to show it in the code colour.
+ */
+export type CodeColouring = (
+  info: string,
+  source: string,
+  closed: boolean,
+  palette: Palette,
+) => ReadonlyArray<ReadonlyArray<TextChunk>> | null;
+
+/** How Markdown shows its `mermaid` code blocks; without it they are code blocks. */
+export interface MarkdownDiagrams {
+  /** What the MC said of a diagram's source; undefined until it answers (`mermaidDiagrams.ts`). */
+  readonly get: (source: string) => MermaidRenderResult | undefined;
+  /** The diagrams (counted from 0) the user switched to their source. */
+  readonly showSource?: (index: number) => boolean;
 }
 
 /** A line of rendered Markdown, with the code block or table it belongs to. */
 export interface MarkdownLine {
   readonly text: StyledText;
-  /** The fenced code block this line is in (counted from 0) and its whole source. */
-  readonly code?: { readonly index: number; readonly source: string };
+  /**
+   * The fenced code block this line is in (counted from 0), its whole source, the
+   * first word of its info string, and whether its closing fence was written.
+   */
+  readonly code?: {
+    readonly index: number;
+    readonly source: string;
+    readonly language: string;
+    readonly closed: boolean;
+  };
   /** The table this line is in (counted from 0). */
   readonly table?: { readonly index: number; readonly table: MarkdownTable };
   /** The alert this line titles (`> [!NOTE]`). */
   readonly alert?: string;
+  /**
+   * The Mermaid diagram this line is part of (counted from 0); its lines carry `code`
+   * too, with the diagram's source. `title` is its first line; `drawable` when the
+   * user can switch between its drawing and its source.
+   */
+  readonly diagram?: {
+    readonly index: number;
+    readonly title: boolean;
+    readonly drawable: boolean;
+  };
 }
 
 const ALERT = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*$/i;
 
-/** `markdownLines` with each line's block; `collapsedTables` cuts those tables' cells to a line. */
+/**
+ * `markdownLines` with each line's block; `collapsedTables` cuts those tables' cells to a
+ * line, and `colours` colours code by its language.
+ */
 export function markdownBlockLines(
   markdown: string,
   palette: Palette,
   width = 24,
   collapsedTables: (index: number) => boolean = () => false,
+  diagrams?: MarkdownDiagrams,
+  colours?: CodeColouring,
 ): MarkdownLine[] {
   const lines: MarkdownLine[] = [];
   const blankLast = () => lines.length === 0 || plainText(lines.at(-1)!.text) === "";
@@ -222,20 +416,51 @@ export function markdownBlockLines(
   let table: string[] = [];
   let tableCount = 0;
   let codeCount = 0;
+  let diagramCount = 0;
   // The open code block's lines: each carries the whole source once the block ends.
   let codeStart = -1;
-  const closeCode = () => {
+  // The open block is a `mermaid` one (and diagrams are drawn).
+  let mermaid = false;
+  let language = "";
+  const closeCode = (closed = false) => {
     if (codeStart < 0) return;
     const block = lines.slice(codeStart);
     const code = {
       index: codeCount,
       source: block.map((entry) => plainText(entry.text)).join("\n"),
+      language,
+      closed,
     };
-    block.forEach((entry, offset) => {
-      lines[codeStart + offset] = { text: entry.text, code };
-    });
+    if (mermaid && closed && diagrams) {
+      // Drawn only once its fence closes: a diagram being written is code so far.
+      const index = diagramCount;
+      const shown = mermaidLines(
+        code.source,
+        diagrams.get(code.source),
+        palette,
+        width,
+        diagrams.showSource?.(index) ?? false,
+      );
+      lines.length = codeStart;
+      shown.lines.forEach((text, offset) => {
+        lines.push({
+          text,
+          code,
+          diagram: { index, title: offset === 0, drawable: shown.drawable },
+        });
+      });
+      diagramCount += 1;
+    } else {
+      // Its lines read so far in their language's colours, the rest in the code colour.
+      const coloured = colours?.(language, code.source, closed, palette);
+      block.forEach((entry, offset) => {
+        const parts = coloured?.[offset];
+        lines[codeStart + offset] = { text: parts?.length ? { chunks: parts } : entry.text, code };
+      });
+    }
     codeCount += 1;
     codeStart = -1;
+    mermaid = false;
   };
   let quoteOpen = false;
   const flushTable = () => {
@@ -259,7 +484,7 @@ export function markdownBlockLines(
         fenceMatch[1].length >= fence.length
       ) {
         fence = null;
-        closeCode();
+        closeCode(true);
         afterBlock = true;
         continue;
       }
@@ -276,6 +501,8 @@ export function markdownBlockLines(
     flushTable();
     if (fenceMatch?.[1]) {
       fence = fenceMatch[1];
+      mermaid = isMermaidInfo(raw.slice(fenceMatch[0].length));
+      language = raw.slice(fenceMatch[0].length).trim().split(/\s+/)[0] ?? "";
       separate();
       codeStart = lines.length;
       continue;
@@ -340,6 +567,115 @@ export function markdownBlockLines(
   flushTable();
   while (lines.length > 0 && plainText(lines.at(-1)!.text) === "") lines.pop();
   return lines;
+}
+
+/** A fence's info string names Mermaid (` ```mermaid `). */
+const isMermaidInfo = (info: string) => info.trim().split(/\s+/)[0]?.toLowerCase() === "mermaid";
+
+/**
+ * The source of a Markdown text that is one `mermaid` code block and nothing else (a
+ * page keeps such a block as written), or null.
+ */
+export function mermaidFenceSource(markdown: string): string | null {
+  const lines = markdown.replace(/\r\n?/g, "\n").replace(/\n+$/, "").split("\n");
+  const open = lines[0]?.match(FENCE);
+  if (!open?.[1] || lines.length < 2 || !isMermaidInfo(lines[0]!.slice(open[0].length))) {
+    return null;
+  }
+  const fence = open[1];
+  const closes = (line: string) => {
+    const close = /^[ \t]{0,3}(`{3,}|~{3,})\s*$/.exec(line)?.[1];
+    return close !== undefined && close[0] === fence[0] && close.length >= fence.length;
+  };
+  const end = lines.findIndex((line, index) => index > 0 && closes(line));
+  return end === lines.length - 1 ? lines.slice(1, end).join("\n") : null;
+}
+
+/** The type a diagram's source names itself by: its first word past front matter and comments. */
+function mermaidKind(source: string): string | null {
+  let lines = source.split("\n").map((line) => line.trim());
+  if (lines.find((line) => line !== "") === "---") {
+    const start = lines.indexOf("---");
+    const end = lines.indexOf("---", start + 1);
+    lines = end < 0 ? [] : lines.slice(end + 1);
+  }
+  const first = lines.find((line) => line !== "" && !line.startsWith("%%"));
+  return first?.split(/\s+/)[0] ?? null;
+}
+
+/** A Mermaid diagram as the terminal shows it: a title line, then its drawing or its source. */
+export interface MermaidView {
+  readonly lines: StyledText[];
+  /** The MC drew it in characters that fit: the user may switch to the source and back. */
+  readonly drawable: boolean;
+}
+
+/**
+ * A Mermaid diagram from what the MC said of it (`result`, undefined while it is asked):
+ * its title names its type, then comes its drawing in characters when there is one that
+ * fits `width` and the user has not asked for the `source`, else the source under the
+ * reason it is not drawn, wrapped to `width`. Drawing and source are never wrapped.
+ */
+export function mermaidLines(
+  source: string,
+  result: MermaidRenderResult | undefined,
+  palette: Palette,
+  width: number,
+  showSource = false,
+): MermaidView {
+  const kind = result?.kind ?? mermaidKind(source) ?? "Mermaid";
+  const drawing =
+    result?.status === "drawn" && result.text !== undefined
+      ? result.text
+          .replace(/\s+$/, "")
+          .split("\n")
+          .map((line) => line.trimEnd())
+      : null;
+  const wide = drawing ? Math.max(0, ...drawing.map((line) => Bun.stringWidth(line))) : 0;
+  const drawable = drawing !== null && wide <= width;
+  const note = result === undefined ? " · drawing…" : drawable && showSource ? " · source" : "";
+  const title = styled(
+    chunk(`◇ ${kind} diagram`, { fg: palette.accent, bold: true }),
+    note !== "" && chunk(note, { fg: palette.dim }),
+  );
+  const sourceLines = source
+    .split("\n")
+    .map((line) => styled(chunk(line, { fg: palette.warning })));
+  if (drawable && !showSource) {
+    return {
+      drawable,
+      lines: [title, ...drawing.map((line) => styled(chunk(line, { fg: palette.text })))],
+    };
+  }
+  const reason =
+    result === undefined || drawable
+      ? null
+      : drawing
+        ? {
+            text: `Drawn ${wide} columns wide, wider than the ${width} here: its source instead.`,
+            fg: palette.dim,
+          }
+        : result.status === "drawn"
+          ? null
+          : {
+              text:
+                result.line != null
+                  ? `Line ${result.line}${result.column != null ? `, column ${result.column}` : ""}: ${result.reason}`
+                  : result.reason,
+              fg: result.status === "unsupported" ? palette.dim : palette.error,
+            };
+  return {
+    drawable,
+    lines: [
+      title,
+      ...(reason
+        ? wrapCell(reason.text, Math.max(8, width)).map((text) =>
+            styled(chunk(text, { fg: reason.fg })),
+          )
+        : []),
+      ...sourceLines,
+    ],
+  };
 }
 
 function alertColor(title: string, palette: Palette): RGBA {

@@ -282,7 +282,8 @@ defmodule HalC2.Codex.ThreadRuntime do
              adopt: %{dir: dir, offset: snapshot.offset, channel: snapshot.channel},
              handler: self(),
              log: snapshot.state.thread_id,
-             program: "Codex App Server"
+             program: "Codex App Server",
+             stderr_tail: true
            ),
          {:ok, restored} <- code_change(nil, snapshot.state, nil) do
       # A stop that was out when the MC went keeps its deadline.
@@ -339,9 +340,9 @@ defmodule HalC2.Codex.ThreadRuntime do
       {:ok, state} ->
         {:reply, :ok, state}
 
-      {:error, %{"message" => "Codex App Server process exited" <> _}, state} ->
-        Logger.warning("codex turn failed to start: the app-server exited")
-        finish(state, "failed", "The provider stopped while starting the turn.")
+      {:error, %{"message" => "Codex App Server process exited" <> _} = exit, state} ->
+        Logger.warning("codex turn failed to start: the app-server exited\n#{exit["stderr"]}")
+        finish(state, "failed", stopped_while_starting(exit))
         {:reply, :ok, %{state | turn: nil}}
 
       # The app-server exited before the turn began.
@@ -427,8 +428,12 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   # Between turns, stopping the thread stops the commands it left running.
-  def handle_call(:interrupt, _from, %{turn: nil} = state) when state.background != %{},
-    do: {:reply, :ok, end_background(state, "interrupted")}
+  def handle_call(:interrupt, _from, %{turn: nil} = state) when state.background != %{} do
+    case end_background(state, "interrupted", :errors) do
+      {state, []} -> {:reply, :ok, state}
+      {state, [reason | _]} -> {:reply, {:error, reason}, state}
+    end
+  end
 
   def handle_call(:interrupt, _from, state), do: {:reply, {:error, "no running turn"}, state}
 
@@ -710,9 +715,20 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
     state = %{state | conn: nil}
-    state = if state.turn, do: end_turn(state, "failed", "Codex exited unexpectedly"), else: state
-    # Its terminals went with it.
-    state = end_background(state, "failed")
+
+    # A stream the MC itself ends while shutting down is not the provider failing the
+    # turn: the run stays as it is for the next boot's recovery to settle.
+    state =
+      if state.turn && not HalC2.Orchestration.Recovery.stopping?(),
+        do: end_turn(state, "failed", "Codex exited unexpectedly"),
+        else: state
+
+    # Its terminals went with it (and, when stopping, are left marked for the next boot).
+    state =
+      if HalC2.Orchestration.Recovery.stopping?(),
+        do: state,
+        else: end_background(state, "failed")
+
     # The native thread was loaded in that app-server; the next one resumes it.
     {:noreply, %{state | conn: nil, native_thread_id: nil}}
   end
@@ -1013,6 +1029,13 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   # The end of a turn let go of before it started (`begin_turn/2`).
 
+  # What Codex said on its way out is the only account of why it died: a wrapper
+  # script that failed, a config it could not read.
+  defp stopped_while_starting(%{"stderr" => said}) when said != "",
+    do: "The provider stopped while starting the turn. It said:\n#{said}"
+
+  defp stopped_while_starting(_exit), do: "The provider stopped while starting the turn."
+
   defp rpc_message(%{"message" => message}) when is_binary(message), do: message
   defp rpc_message(reason), do: inspect(reason)
 
@@ -1041,7 +1064,8 @@ defmodule HalC2.Codex.ThreadRuntime do
              env: env,
              log: turn.ids.thread,
              durable: turn.ids.thread,
-             program: "Codex App Server"
+             program: "Codex App Server",
+             stderr_tail: true
            ),
          {:ok, _} <-
            Connection.call(conn, "initialize", %{
@@ -2120,59 +2144,81 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp background_done(state, native, item) do
     {%{item: %{id: item_id, node: node_id}}, background} = Map.pop(state.background, native)
     end_command(state, item_id, node_id, command_status(item), &command_result(&1, item))
-    state = %{state | background: background}
-    # Between turns Codex does not hear of it by itself: the thread tells it.
-    if state.turn == nil, do: wake(state.thread_id, item)
-    state
+    # Codex does not hear of it by itself: the thread tells it, after any running turn.
+    wake(state, item)
+    %{state | background: background}
   end
 
-  # A turn telling Codex that a command it left in the background ended, queued like
-  # any message. Off this process, since starting the run calls back into it. An
-  # archived or deleted thread is left alone.
-  defp wake(thread_id, item) do
-    Task.start(fn ->
-      stream = HalC2.Streams.state(thread_id)
-      thread = HalC2.StreamState.get(stream, "thread")[thread_id] || %{}
+  # A turn telling Codex that a command it left in the background ended
+  # (apps/server CodexAdapterV2.ts).
+  defp wake(state, item) do
+    code = item["exitCode"]
 
-      # Not a held queue's run, which waits with a higher ordinal behind the one that ran.
-      latest = HalC2.Projection.Shell.latest_run(HalC2.StreamState.list(stream, "run")) || %{}
-
-      message_id = Entities.new_id("message")
-
-      ended =
-        case item["exitCode"] do
-          code when is_integer(code) -> "exited with code #{code}"
-          _ -> "ended (#{command_status(item)})"
-        end
-
-      if thread["archivedAt"] == nil and thread["deletedAt"] == nil do
-        with {:error, reason} <-
-               Orchestration.dispatch(%{
-                 "type" => "message.dispatch",
-                 "commandId" => "command:codex-background:#{message_id}",
-                 "threadId" => thread_id,
-                 "messageId" => message_id,
-                 "text" => "The background command `#{item["command"]}` #{ended}.",
-                 "attachments" => [],
-                 "modelSelection" => latest["modelSelection"],
-                 "dispatchMode" => %{"type" => "queue_after_active"},
-                 "createdBy" => "agent",
-                 "creationSource" => "provider"
-               }) do
-          Logger.warning("codex background wake in #{thread_id} has no run: #{inspect(reason)}")
-        end
-      end
-    end)
+    HalC2.Orchestration.Wake.deliver(
+      state.thread_id,
+      %{
+        "text" => background_detail(item),
+        "notification" => %{
+          "source" => %{"kind" => "background_command"},
+          "outcome" =>
+            case code do
+              0 -> "completed"
+              nil -> "unknown"
+              _ -> "failed"
+            end,
+          "summary" =>
+            if(code in [nil, 0],
+              do: "Background command finished",
+              else: "Background command exited with code #{code}"
+            ),
+          "detail" => item["command"] || ""
+        }
+      },
+      instance: state.conn_instance
+    )
   end
 
-  # Stops every background command, and ends its item as `status`.
-  defp end_background(state, status) do
-    for {_native, %{item: item, process: process}} <- state.background do
-      terminate_terminal(state, process)
-      end_command(state, item.id, item.node, status, & &1)
-    end
+  @doc false
+  # What Codex is told: the command, cut at 200 characters, how it exited, and the
+  # last 1,000 characters of its output.
+  def background_detail(item) do
+    command = item["command"] || ""
 
-    %{state | background: %{}}
+    command =
+      if String.length(command) > 200, do: String.slice(command, 0, 200) <> "...", else: command
+
+    exit = if is_integer(item["exitCode"]), do: " (exit #{item["exitCode"]})", else: ""
+    output = String.trim_trailing(item["aggregatedOutput"] || "")
+
+    tail =
+      if String.length(output) > 1_000,
+        do: "..." <> String.slice(output, -1_000, 1_000),
+        else: output
+
+    header = "Background command completed#{exit}: #{command}"
+    if tail == "", do: header, else: "#{header}\n\nOutput tail:\n#{tail}"
+  end
+
+  # Stops every background command, and ends its item as `status`. One whose terminal
+  # Codex keeps running stays, and `end_background/3` returns why.
+  defp end_background(state, status), do: elem(end_background(state, status, :errors), 0)
+
+  defp end_background(state, status, :errors) do
+    {left, errors} =
+      Enum.reduce(state.background, {%{}, []}, fn {native,
+                                                   %{item: item, process: process} = entry},
+                                                  {left, errors} ->
+        case terminate_terminal(state, process) do
+          {:error, reason} ->
+            {Map.put(left, native, entry), [reason | errors]}
+
+          :ok ->
+            end_command(state, item.id, item.node, status, & &1)
+            {left, errors}
+        end
+      end)
+
+    {%{state | background: left}, Enum.reverse(errors)}
   end
 
   defp end_command(state, item_id, node_id, status, fun) do
@@ -2194,24 +2240,52 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   # Codex keeps a unified exec process running when its turn is interrupted; this
   # stops it. Without the app-server there is nothing to ask (its terminals went with
-  # it), and a command outside unified exec has no process to name.
+  # it), and a command outside unified exec has no process to name. Codex saying it
+  # did not terminate one still listed is an error (apps/server CodexAdapterV2.ts).
   defp terminate_terminal(%{conn: conn} = state, process)
        when conn != nil and process != nil do
     params = %{"threadId" => state.native_thread_id, "processId" => process}
 
     case Connection.call(conn, "thread/backgroundTerminals/terminate", params, 10_000) do
+      {:ok, %{"terminated" => false}} ->
+        still_listed(state, process, nil)
+
       {:ok, _} ->
         :ok
 
       {:error, reason} ->
-        Logger.warning("codex terminal #{process} not terminated: #{inspect(reason)}")
+        Logger.warning("codex terminal #{process} not terminated: #{rpc_message(reason)}")
     end
   catch
     :exit, reason ->
       Logger.warning("codex terminal #{process} not terminated: #{inspect(reason)}")
+      :ok
   end
 
   defp terminate_terminal(_state, _process), do: :ok
+
+  defp still_listed(state, process, cursor) do
+    params =
+      %{"threadId" => state.native_thread_id}
+      |> then(&if(cursor, do: Map.put(&1, "cursor", cursor), else: &1))
+
+    case Connection.call(state.conn, "thread/backgroundTerminals/list", params, 10_000) do
+      {:ok, %{"data" => terminals} = page} ->
+        cond do
+          Enum.any?(terminals, &(&1["processId"] == process)) ->
+            {:error, "Codex background terminal #{process} remained active after termination."}
+
+          page["nextCursor"] != nil ->
+            still_listed(state, process, page["nextCursor"])
+
+          true ->
+            :ok
+        end
+
+      _ ->
+        :ok
+    end
+  end
 
   defp complete_item(state, %{"type" => "agentMessage", "id" => native} = item) do
     text = item["text"] || ""

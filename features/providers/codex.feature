@@ -1,5 +1,39 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24600
+#   https://github.com/pingdotgg/t3code/pull/21787
+#   https://github.com/pingdotgg/t3code/pull/23840
+#   https://github.com/pingdotgg/t3code/pull/24200
+#   https://github.com/pingdotgg/t3code/pull/23361
+#   https://github.com/pingdotgg/t3code/pull/19936
+#   https://github.com/pingdotgg/t3code/pull/24737
+#   https://github.com/pingdotgg/t3code/pull/19154
+#   https://github.com/pingdotgg/t3code/pull/20537
+#   https://github.com/pingdotgg/t3code/pull/15623
+#   https://github.com/pingdotgg/t3code/pull/18991
+#   https://github.com/pingdotgg/t3code/pull/18415
+#   https://github.com/pingdotgg/t3code/pull/21366
+#   https://github.com/pingdotgg/t3code/pull/18548
+#   https://github.com/pingdotgg/t3code/pull/18248
+#   https://github.com/pingdotgg/t3code/pull/20991
+#   https://github.com/pingdotgg/t3code/pull/15839
+#   https://github.com/pingdotgg/t3code/pull/17501
+#   https://github.com/pingdotgg/t3code/pull/19733
+#   https://github.com/pingdotgg/t3code/pull/17265
+#   https://github.com/pingdotgg/t3code/pull/15945
+#   https://github.com/pingdotgg/t3code/pull/16236
+#   https://github.com/pingdotgg/t3code/pull/17026
+#   https://github.com/pingdotgg/t3code/pull/17027
+#   https://github.com/pingdotgg/t3code/pull/17040
+#   https://github.com/pingdotgg/t3code/pull/19368
+#   https://github.com/pingdotgg/t3code/pull/17663
+#   https://github.com/pingdotgg/t3code/pull/18200
+#   https://github.com/pingdotgg/t3code/pull/15546
+#   https://github.com/pingdotgg/t3code/pull/15592
+#   https://github.com/pingdotgg/t3code/pull/13547
+#   https://github.com/pingdotgg/t3code/pull/14290
+#   https://github.com/pingdotgg/t3code/pull/14304
 #   https://github.com/pingdotgg/t3code/pull/13328
+#   https://github.com/pingdotgg/t3code/pull/13481 (the 0.156 floor and its support ranges)
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/providers-codex.md
 #   docs/internals/providers.md (Codex async questions, shadow homes, update ownership)
@@ -18,6 +52,10 @@
 #   apps/server/src/provider/CodexDeveloperInstructions.ts, apps/server/src/provider/CodexTurnTokenUsage.ts
 #   apps/server/src/provider/CodexToolPresentation.ts, apps/server/src/provider/Layers/codexLaunchArgs.ts
 #   packages/contracts/src/rpc.ts (provider.uploadFeedback, provider.consumeResetCredit)
+#   https://github.com/pingdotgg/t3code/pull/15389
+#   https://github.com/pingdotgg/t3code/pull/25426
+#   https://github.com/pingdotgg/t3code/pull/22541
+#   https://github.com/pingdotgg/t3code/pull/21750
 
 @plugin-codex @mc
 Feature: Codex
@@ -158,6 +196,13 @@ Feature: Codex
       | the MC checks Codex's version         |
       | Codex writes a title for a new thread |
 
+  # Upstream #15839: MCP servers in Codex's launch arguments are kept beside HAL-C2's own
+  @backlog
+  Scenario: MCP servers named in Codex's launch arguments stay alongside HAL-C2's
+    Given the Codex instance's launch arguments add the MCP server "docs"
+    When a Codex thread starts, resumes, forks or is rolled back
+    Then Codex has both "docs" and HAL-C2's tools
+
   Scenario: Reverting a Codex turn rolls Codex back too
     Given a Codex thread with three turns
     When the user reverts to the end of the first turn
@@ -260,10 +305,25 @@ Feature: Codex
     When the Codex app-server exits unexpectedly
     Then the turn fails saying Codex exited unexpectedly
 
+  # Upstream #19733: the reader ends the session on a line above 128 MiB.
+  @backlog
+  Scenario: A Codex message larger than 128 MiB ends the session
+    Given a Codex turn is running
+    When Codex sends a message larger than 128 MiB
+    Then the turn fails saying Codex sent a message too large to read
+    And requests waiting on Codex fail too
+
   Scenario: Codex stopping on a usage limit names the limit and the reset
     When Codex stops because the weekly limit is used up
     Then the thread says the weekly limit is used up and when it resets
     And it says to send the message again after the reset
+
+  # Upstream #17501: retry exhaustion on HTTP 429 was a generic error.
+  @backlog
+  Scenario: Codex giving up after repeated 429 responses is a usage limit
+    When Codex ends a turn after too many failed attempts that each answered 429
+    Then the thread is marked as limited
+    And the run does not fail as a provider error
 
   Scenario: A workspace plan out of credits says who can fix it
     Given the Codex account is on a workspace plan with no credits left
@@ -278,6 +338,15 @@ Feature: Codex
       | option       | choices                                               |
       | reasoning    | none, minimal, low, medium, high, extra high, max     |
       | service tier | standard or fast                                      |
+
+  # Upstream #20991: an unset effort follows the model's default instead of being forced to medium
+  @backlog
+  Scenario: A Codex turn with no reasoning chosen runs at the model's own default
+    Given a Codex model whose default reasoning is "high"
+    And the thread has no reasoning level chosen
+    When the user sends a message
+    Then the turn runs at "high"
+    And a reasoning level the user picks is used instead, in plan mode too
 
   Scenario: Codex subagents appear as child threads
     When Codex starts a subagent
@@ -316,6 +385,19 @@ Feature: Codex
     When the user opens the provider list
     Then Codex is shown as unavailable with the message "Timed out while checking Codex app-server provider status."
 
+  # Codex's check starts its app server and reads the account, models and skills, so it
+  # gets twice the budget other providers' checks get (pingdotgg/t3code#15945).
+  @backlog
+  Scenario Outline: A slow but healthy Codex is not shown as unavailable
+    Given the Codex command answers its status check after <seconds> seconds
+    When the MC checks Codex
+    Then Codex is shown as <status>
+
+    Examples:
+      | seconds | status                                                                                       |
+      | 15      | available                                                                                    |
+      | 21      | unavailable with the message "Timed out while checking Codex app-server provider status."    |
+
   Scenario: A Codex that has not been checked yet says so
     Given the MC has just started and has not checked Codex yet
     When the user opens the provider list
@@ -336,10 +418,163 @@ Feature: Codex
     When Codex's usage has been checked
     Then Codex shows the account's email and its ChatGPT Pro plan
 
+  # Upstream #23361: a turn stopped by a ChatGPT sharing limit showed Codex's raw error. OpenAI's
+  # partner guidelines give each limit its own recovery.
+  @backlog @shared
+  Scenario Outline: A turn stopped by a ChatGPT plan limit says how to recover
+    Given Codex is signed in with <plan>
+    When a turn stops because the plan's limit for other apps is reached
+    Then the thread shows the ChatGPT limit with "<action>"
+
+    Examples:
+      | plan                               | action                  |
+      | a personal ChatGPT plan            | Manage usage            |
+      | a ChatGPT Business workspace       | Copy request for admin  |
+
+  @backlog @shared
+  Scenario: Copying the request for a workspace admin confirms it
+    Given a turn stopped at a ChatGPT Business workspace limit
+    When the user chooses "Copy request for admin"
+    Then the request for the admin is copied
+    And the user is told "Request copied · Send it to your workspace admin."
+
+  # Upstream #24200: the top Pro plan is now called Pro 500.
+  @backlog @priority-low
+  Scenario: A ChatGPT Pro 500 plan is shown by name
+    Given Codex is signed in with the ChatGPT plan Codex reports as "promax"
+    When Codex's usage has been checked
+    Then Codex shows the account's email and its "ChatGPT Pro 500 Subscription" plan
+
+  # Upstream #24200: OpenAI renamed its plans; Codex accounts showed the old names.
+  @backlog @priority-low
+  Scenario Outline: Codex shows the ChatGPT plan by its current name
+    Given Codex is signed in with the ChatGPT plan Codex reports as "<plan>"
+    When Codex's account is read
+    Then Codex shows the plan as "<name>"
+
+    Examples:
+      | plan                        | name                                 |
+      | prolite                     | ChatGPT Pro 100 Subscription         |
+      | pro                         | ChatGPT Pro 200 Subscription         |
+      | team                        | ChatGPT Business Subscription        |
+      | self_serve_business_prolite | ChatGPT Business Premium Subscription |
+
+  @backlog @priority-low
+  Scenario: A ChatGPT plan HAL-C2 does not know still signs the account in
+    Given Codex is signed in with a ChatGPT plan named by a newer Codex
+    When Codex's account is read
+    Then Codex shows as signed in and its plan is shown by the plan's own name
+
+  @backlog @shared @priority-low
+  Scenario: The Ultrafast service tier is offered for a model that lists it
+    Given the selected Codex model lists the "ultrafast" service tier
+    When the user opens the service tier choices
+    Then "Ultrafast" is offered with the description "Even faster, more expensive"
+
+  # Upstream #18200. Codex shares one model catalog cache between every client on the
+  # machine, and the plain CLI's catalog has no Ultrafast. Codex started by the MC asks for
+  # HAL-C2's own catalog, and the probe waits briefly for that refresh before it lists.
+  @backlog @mc @plugin-codex @priority-low
+  Scenario: Ultrafast stays offered after another Codex client refreshes the catalog
+    Given the ChatGPT account is entitled to the Ultrafast tier
+    And another Codex client on the machine wrote a model catalog without it
+    When the MC checks Codex's models
+    Then the models still list the Ultrafast tier
+    And a thread set to Ultrafast stays on Ultrafast
+
+  @backlog @mc @plugin-codex @priority-low
+  Scenario: Ultrafast is no longer offered once the account loses it
+    Given the ChatGPT account was entitled to the Ultrafast tier and no longer is
+    When the MC checks Codex's models
+    Then the models no longer list the Ultrafast tier
+
+  # Upstream #15623: Codex inheriting Fast from its global config showed the catalog's Standard default.
+  @backlog @shared @priority-low
+  Scenario: A Fast tier set in Codex's own config shows as selected
+    Given Codex's global config sets the service tier to fast
+    When the user opens the service tier choices for a model that offers Fast
+    Then Fast is shown as selected
+    And a model that does not offer Fast keeps its own default
+
+  # Upstream #20537: slow model discovery threw away a successful account check.
+  @backlog @priority-high
+  Scenario: A signed-in Codex stays signed in when its model list is slow to arrive
+    Given Codex's account check succeeds
+    And Codex's model list does not arrive before the check's deadline
+    When the user opens the provider list
+    Then Codex is shown as signed in with a warning
+    And the last model list Codex gave is still offered
+
+  # Upstream #19154: a bare Codex binary passed its probes while every Code Mode call failed.
+  @backlog @priority-low
+  Scenario: A Codex on the path without its Code Mode host is passed over for the managed install
+    Given the codex command on the MC's path has no "codex-code-mode-host" beside it
+    When the MC picks the Codex to run
+    Then it runs the managed Codex installation instead
+
   Scenario: Codex signed in with an API key says so
     Given Codex is signed in with an OpenAI API key
     When Codex's usage has been checked
     Then Codex shows that it uses an OpenAI API key
+
+  # A ChatGPT account signed in through HAL-C2 rather than the Codex CLI. Its credentials
+  # move to the environment the user picks; the primary environment runs the sign-in.
+  # Contradicts provider-setup.feature "Only providers that support it sign in from HAL-C2"
+  # (Codex "does not sign in here"), which is untagged and passes today. Reconcile when
+  # this backlog item is cleared.
+  @backlog @mc
+  Scenario: Codex connects a ChatGPT account from HAL-C2 without a Codex CLI login
+    Given the user has a ChatGPT plan and Codex is not signed in on the environment
+    When the user connects ChatGPT to Codex
+    And the user approves the sign-in with OpenAI
+    Then Codex on the environment is signed in with that account
+
+  @backlog @mc
+  Scenario: A ChatGPT account connected on one environment can be moved to another
+    Given the user connected a ChatGPT account on the primary environment
+    When the user chooses another environment for that Codex account
+    Then the other environment's Codex is signed in with the account
+
+  @backlog @mc
+  Scenario: Disconnecting a ChatGPT account signs its Codex out
+    Given Codex is connected with a ChatGPT account
+    When the user disconnects the account
+    Then Codex on that environment is no longer signed in with it
+
+  @backlog @shared @priority-low
+  Scenario: A connected ChatGPT account's email is hidden until the user reveals it
+    Given Codex is connected with a ChatGPT account
+    Then the account's email is not shown
+    When the user asks to show it
+    Then the email is shown
+
+  @backlog @shared @priority-low
+  Scenario: The first ChatGPT connection explains that plan usage counts against the plan
+    Given the user has never connected a ChatGPT account
+    When the user connects one
+    Then HAL-C2 explains that using Codex counts against the ChatGPT plan's usage
+
+  # Upstream #21750: a callback address pasted without its scheme still finishes the sign-in.
+  @backlog @mc
+  Scenario Outline: A pasted ChatGPT sign-in callback address is checked by where it points
+    Given the user is connecting ChatGPT to Codex and the browser could not reach the sign-in callback
+    When the user pastes the callback address <pasted>
+    Then <outcome>
+
+    Examples:
+      | pasted                                                 | outcome                                 |
+      | "http://localhost:1455/auth/callback?code=abc"         | the sign-in finishes                    |
+      | "localhost:1455/auth/callback?code=abc"                | the sign-in finishes                    |
+      | "  localhost:1455/auth/callback?code=abc" with spaces  | the sign-in finishes                    |
+      | "localhost:9999/auth/callback?code=abc"                | the address is refused as not the callback |
+      | "example.com:1455/auth/callback?code=abc"              | the address is refused as not the callback |
+
+  # Upstream #22541: a patch touching several files listed only the first.
+  @backlog @mc @shared
+  Scenario: A Codex change to several files lists every file
+    When Codex applies one patch that edits "a.ts", adds "b.ts" and renames "c.ts" to "d.ts"
+    Then the change in the timeline lists "a.ts", "b.ts" and "d.ts"
+    And the rename shows it came from "c.ts"
 
   Scenario: Codex offers its compact and feedback commands in the composer
     When the user types a slash in a Codex thread
@@ -378,6 +613,56 @@ Feature: Codex
     Given the "hal-c2" server is attached to a Codex thread
     When the user sends a message in plan mode and then one in default mode
     Then Codex receives HAL-C2's orchestration instructions with the second message only
+
+  # Upstream #18415: Codex threads get the whole orchestration instructions
+  @backlog @priority-high
+  Scenario: Codex receives the whole orchestration instructions
+    Given a Codex thread in default mode
+    When the turn starts
+    Then Codex is given every part of HAL-C2's orchestration instructions
+    And none is cut away by Codex's limit on the length of one instruction
+
+  # Upstream #13547: a model catalog's own default-mode text replaced the instructions sent
+  # inside the collaboration mode, so HAL-C2's details went missing on newer models.
+  @mc @plugin-codex @backlog @priority-high
+  Scenario: A model whose catalog replaces default mode still gets HAL-C2's runtime details
+    Given the "hal-c2" server is attached to a Codex thread on a model whose catalog replaces default mode
+    When the user sends a message in default mode
+    Then Codex is told the runtime, the model's name and slug, and the PR linking rules
+
+  # Upstream #24737: copies of Codex's own Plan and Default prompts drifted from the installed
+  # Codex, and a Default turn without the HAL-C2 server never left an earlier Plan mode.
+  @mc @plugin-codex @backlog
+  Scenario: Codex brings its own plan and default mode instructions
+    When the user sends a message in plan mode on a Codex thread
+    Then the turn names Codex's plan collaboration mode
+    And HAL-C2 sends no copy of Codex's mode instructions of its own
+
+  @mc @plugin-codex @backlog @priority-high
+  Scenario: A default-mode turn leaves plan mode even without the HAL-C2 server
+    Given a Codex thread without the "hal-c2" server whose last turn was in plan mode
+    When the user sends a message in default mode
+    Then the turn names Codex's default collaboration mode
+    And Codex may edit files again
+
+  @mc @plugin-codex @backlog @priority-high
+  Scenario: Codex gets HAL-C2's runtime and tool instructions again after compacting the thread
+    Given the "hal-c2" server is attached to a Codex thread
+    When Codex compacts the thread's context
+    Then the next message carries HAL-C2's runtime and tool instructions again
+
+  # Upstream #17265: unfinished Codex compactions settle when their turn ends; failed and stopped labels win.
+  @backlog @shared
+  Scenario Outline: A compaction Codex never finished ends with its turn
+    Given Codex started compacting the thread and never reported the compaction finished
+    When the turn <ends>
+    Then the compaction no longer reads as running
+    And it reads "<label>"
+
+    Examples:
+      | ends                   | label   |
+      | is stopped by the user | Stopped |
+      | fails                  | Failed  |
 
   Scenario: Codex is not told about browser or device tools it does not have
     Given the "hal-c2" server is attached to a Codex thread without browser or device tools
@@ -462,6 +747,14 @@ Feature: Codex
     Then the approval lists the first 20 files in path order
     And it ends with "+3 more"
 
+  # Upstream #18248: Codex's approval request carries no file names, only the change it belongs
+  # to; the files come from when Codex started that change.
+  @backlog
+  Scenario: A Codex approval names the files Codex said it would change
+    Given Codex started a change to edit "src/cart.ts" and delete "src/old.ts"
+    When Codex asks without a reason to approve that change, naming no files
+    Then the approval lists "src/cart.ts" to edit and "src/old.ts" to delete
+
   @mc
   Scenario Outline: An older Codex's approval requests are answered too
     Given a Codex that asks for approvals in its older form
@@ -498,6 +791,15 @@ Feature: Codex
   Scenario: A failed Codex MCP tool call shows the server's error
     When a tool Codex called on an MCP server fails
     Then the tool call is shown as failed with the error the server gave
+
+  @backlog @mc
+  Scenario: A new Codex thread waits briefly for MCP servers that are still starting
+    Given the user has an MCP server that takes five seconds to start
+    When a new Codex thread starts its first turn
+    Then Codex waits up to ten seconds for it
+    And the server's tools are in the first turn
+    But a server that takes longer is left out of the first turn and joins a later one
+    And the user can still stop the turn while Codex waits
 
   @mc
   Scenario Outline: A Codex web search shows what Codex did on the web
@@ -696,12 +998,52 @@ Feature: Codex
     When Codex reports an older state for that subagent
     Then the subagent stays completed
 
+  # Upstream #23840: a parent that ended its turn stayed idle when its native subagent finished
+  # later, until the user sent a message.
+  @backlog
+  Scenario: A Codex subagent that finishes after its parent's turn wakes the parent
+    Given a Codex turn started a subagent and then finished
+    When the subagent finishes
+    Then the parent thread starts a turn with the subagent's result
+    And the result is kept in the parent's history
+
+  @backlog
+  Scenario Outline: A finished Codex subagent does not wake a parent that <case>
+    Given a Codex subagent whose parent <case>
+    When the subagent finishes
+    Then the parent does not start another turn for it
+
+    Examples:
+      | case                         |
+      | was interrupted by the user  |
+      | is still running a turn      |
+      | is itself a Codex subagent   |
+
+  # Upstream #21787: a running Codex kept its launch-time sign-in and failed with expired tokens
+  # once the saved sign-in was renewed.
+  @backlog @priority-low
+  Scenario: A Codex turn keeps working after its ChatGPT sign-in is renewed
+    Given a Codex turn is running on a ChatGPT sign-in
+    When the sign-in's token expires and is renewed
+    Then the same turn carries on with the renewed sign-in
+    And a sign-in to another account is not used by that Codex
+
   @mc
   Scenario: Stopping a Codex turn stops its subagents
     Given a Codex turn with two subagents at work
     When the user stops the turn
     Then both subagents' turns are stopped
     And both subagents are shown as interrupted
+
+  # Upstream #21366: a failed root turn ends its run at once while its subagents carry on in their
+  # own threads; an interrupted turn still waits, since Stop interrupts the subagents too.
+  @backlog @priority-high
+  Scenario: A failed Codex turn does not hold the thread for its subagents
+    Given a Codex turn with two subagents at work
+    When the turn fails while the subagents keep working
+    Then the run ends as failed and the subagents carry on
+    And the thread no longer shows the agent thinking
+    And the next message the user sends starts a new turn instead of waiting in the queue
 
   @mc
   Scenario: A Codex subagent that starts work under a stopped turn is interrupted
@@ -754,6 +1096,14 @@ Feature: Codex
     When Codex exits with code 1
     Then the request fails with "Codex App Server process exited with code 1"
 
+  # Upstream #24600: requests hung when Codex closed its output but kept running.
+  @backlog @priority-high
+  Scenario: A request to Codex fails soon after Codex closes its output while still running
+    Given the MC is waiting on Codex for an answer
+    When Codex closes its output and keeps running
+    Then within a quarter of a second the request fails saying Codex's input ended
+    And an exit Codex reports within that time keeps its code
+
   @mc
   Scenario: Output from Codex that is not a protocol message ends the session
     Given a Codex turn is running
@@ -789,6 +1139,22 @@ Feature: Codex
       | a real file sits where a link to the shared home belongs | the entry already exists and is not a link            |
       | the login file is a link                              | the login must be a real file, not a link                |
 
+  # Upstream #18991: Finder metadata no longer blocks shadow-home setup
+  @backlog @priority-low
+  Scenario: A Finder ".DS_Store" does not stop a Codex account's home being set up
+    Given a Codex account's home folder holds only a ".DS_Store" file left by Finder
+    When the account is set up
+    Then its home is set up as if the folder were empty
+
+  # Upstream #17663: Codex 0.160 writes the lock at its home's root; a shadow home used
+  # on its own kept a real one and the instance stayed disabled.
+  @backlog @priority-low
+  Scenario: A Codex account's own sqlite maintenance lock is replaced by the shared one
+    Given a Codex instance's shadow home holds its own ".sqlite-maintenance.lock" file
+    When the instance is prepared
+    Then the lock is replaced by a link to the shared home's lock
+    And the instance is enabled
+
   @mc
   Scenario: Codex skills that cannot be read in 20 seconds are reported
     Given Codex does not answer when asked for the project's skills
@@ -802,8 +1168,8 @@ Feature: Codex
     When the MC checks Codex
     Then Codex's status is reported from the manifest the MC already has
 
-  # Statuses are the MC's: broken, unsupported, graceful (shown as limited) or unknown.
-  # No range names a version until the policy adds one, so the in-range rows are unknown.
+  # Statuses are the MC's: broken, unsupported, graceful (shown as limited), supported or unknown.
+  # Prereleases and versions no range names stay unknown.
   Scenario Outline: The version Codex runs decides whether this HAL-C2 release supports it
     Given Codex version "<version>" is installed
     When the MC checks Codex
@@ -812,5 +1178,154 @@ Feature: Codex
     Examples:
       | version         | status  |
       | 0.128.0         | broken  |
-      | 0.129.0         | unknown |
       | 0.129.0-alpha.1 | unknown |
+
+  # The floor follows T3 Code's Codex policy (its #13481). Below 0.149 Codex does not send
+  # Thread.projectId, so no session can start and the version is broken. 0.149 to 0.155 are
+  # outside the supported range.
+  @mc @backlog @plugin-codex
+  Scenario Outline: The Codex version sets its support level for this HAL-C2 release
+    Given Codex version "<version>" is installed
+    When the MC checks Codex
+    Then Codex is reported as "<status>" for this HAL-C2 release
+
+    Examples:
+      | version | status      |
+      | 0.129.0 | broken      |
+      | 0.148.0 | broken      |
+      | 0.149.0 | unsupported |
+      | 0.155.0 | unsupported |
+      | 0.156.0 | supported   |
+
+  @backlog @priority-high
+  Scenario: A thread whose Codex session was archived outside HAL-C2 resumes it
+    Given the native Codex session of a thread was archived by Codex itself
+    When the user sends a turn
+    Then the MC unarchives that same session and resumes it once
+    And an unrelated resume error is shown as it is
+
+  @backlog @mc @plugin-codex @priority-high
+  Scenario: Stop ends a Codex command after its thread was settled
+    Given Codex left a command running and the thread was settled
+    And Codex has since unloaded the thread
+    When the user presses Stop
+    Then the command counts as already stopped
+    And the running banner clears
+
+  # Upstream #19936: a dead command stayed running after Codex closed its native thread.
+  @backlog @priority-high
+  Scenario: A Codex command left running is interrupted when Codex closes the thread
+    Given Codex left a command running in a finished turn
+    When Codex closes its native thread
+    Then the command is shown as interrupted
+    And the turn stays completed
+    And a late completion for that command does not bring it back
+
+  @backlog @mc @shared @plugin-codex
+  Scenario Outline: /goal drives Codex's own goal
+    When the user sends "<input>" in a Codex thread
+    Then the thread uses Codex's goal for it
+    And while a goal is active, Codex's follow-up turns stay in the same run and the thread stays Working
+
+    Examples:
+      | input                |
+      | /goal ship the fix   |
+      | /goal pause          |
+      | /goal resume         |
+      | /goal clear          |
+      | /goal                |
+
+  # Upstream #25426: a Codex goal that Codex does not continue within its window is paused as the run ends.
+  @backlog @shared
+  Scenario: A Codex goal Codex does not continue is paused when the run ends
+    Given a Codex thread is working toward a goal
+    When the run ends and Codex does not continue the goal within five seconds
+    Then the goal shows as paused
+    And a turn Codex starts for it later is stopped
+
+  # Upstream #25426: setting a Codex goal flashed "Goal paused", and its first turn got the bare objective.
+  @backlog @priority-low
+  Scenario: Setting a Codex goal starts work on it without a paused flash
+    When the user sends "/goal ship the fix" in a Codex thread
+    Then the goal never shows as paused while it starts
+    And Codex is asked to start working toward "ship the fix"
+
+  Rule: An MCP app a Codex tool returns runs inside the thread
+
+    # Upstream #16236: a tool result pointing at a ui:// resource is an MCP app.
+    @backlog @shared
+    Scenario: An MCP app opens inline in the thread
+      Given a Codex tool call returned an MCP app
+      When the user looks at the tool call
+      Then the app is shown and running in the thread
+      And the user can open it full screen and close it again
+
+    @backlog @shared
+    Scenario Outline: An MCP app asks before it does anything that is not reading
+      Given an MCP app is open in a Codex thread
+      When the app <action>
+      Then the user is asked to approve it first
+
+      Examples:
+        | action                                  |
+        | calls a tool that is not read only      |
+        | sends a message to the thread           |
+        | downloads a file                        |
+
+    @backlog @shared @priority-low
+    Scenario: What an MCP app tells the model goes with the next message
+      Given an MCP app in a Codex thread gave the model some context
+      When the user sends the next message
+      Then that context goes with it, cut to 16 KiB
+      And a fork of the thread keeps it and a rollback past it drops it
+
+    @backlog @shared @priority-low
+    Scenario: An MCP app in a thread whose session stopped says so
+      Given the Codex session of a thread with an MCP app has stopped
+      When the user opens the app
+      Then the app says the session has stopped
+      And no session is started for it
+
+    @backlog @priority-low
+    Scenario: Deleting a thread removes its MCP apps' documents
+      Given a Codex thread with an MCP app
+      When the user deletes the thread
+      Then the app's stored documents are removed with it
+
+    # Upstream #17026: a Confluence result's canvas stayed white under dark text.
+    @backlog @shared @mc @priority-low
+    Scenario: An MCP app follows the app's light or dark appearance
+      Given an MCP app is open in a Codex thread
+      When the user switches the app between light and dark
+      Then the MCP app's page and its text follow the appearance
+      And an MCP app stored in the thread before this works the same
+
+    # Upstream #17027: Jira's app threw on reading cookies in its sandbox and vanished.
+    @backlog @shared @mc @priority-low
+    Scenario: An MCP app that reads cookies in its sandbox still shows
+      Given a Codex tool call returned an MCP app that reads its cookies while it starts
+      When the user looks at the tool call
+      Then the app is shown with its content
+      And the app sees no cookies and keeps none it sets
+
+    # Upstream #18548: an app went full screen on load and again right after the user left it.
+    @backlog @desktop @mobile @priority-high
+    Scenario: An MCP app goes full screen only after the user taps inside it
+      Given an MCP app is open in a Codex thread
+      When the app asks to go full screen without the user touching it
+      Then the app stays in the thread
+      When the user taps inside the app and it asks again
+      Then the app opens full screen
+      And the user can always leave full screen, and the app cannot go back without another tap
+
+    # Upstream #17040: a short card left a large gap under a fixed 420 point frame.
+    @backlog @mobile @priority-low
+    Scenario Outline: An MCP app in a thread on the phone is as tall as its content
+      Given an MCP app in a Codex thread reports content <height> points tall
+      When the user reads the thread on the phone
+      Then the app's card is <shown> points tall
+
+      Examples:
+        | height | shown                              |
+        | 150    | 150                                |
+        | 900    | 420, and the app scrolls inside it |

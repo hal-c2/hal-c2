@@ -18,18 +18,23 @@ Item {
     property real maximumTextWidth: 200
     // Icon only, for narrow header strips.
     property bool compact: false
+    // Its width with its label and without, whichever it shows, so a strip
+    // can choose before it sets `compact`. The chevron half and the seam are
+    // the same in both.
+    readonly property real fullWidth: Math.min(labelled.implicitWidth, maximumTextWidth) + 1 + Theme.control.sm
+    readonly property real compactWidth: Math.min(bare.implicitWidth, maximumTextWidth) + 1 + Theme.control.sm
 
     signal clicked
     signal menuRequested
 
-    implicitHeight: 24
+    implicitHeight: Theme.control.sm
     implicitWidth: row.implicitWidth
     opacity: enabled ? 1 : 0.64
 
     Rectangle {
         anchors.fill: parent
-        radius: Math.min(Theme.radius, 8)
-        color: Qt.alpha(Theme.palette.color("input", "#27272a"), 0.32)
+        radius: Theme.radiusMd
+        color: Theme.palette.color("inputSurface", "#121317")
         border.color: Theme.palette.color("input", "#27272a")
         border.width: 1
     }
@@ -47,10 +52,11 @@ Item {
             Layout.fillHeight: true
             Layout.maximumWidth: split.maximumTextWidth
             subtle: true
-            radius: 7
-            leftPadding: 7
-            rightPadding: 7
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            // Nested inside the 1px border.
+            radius: Math.max(0, Theme.radiusMd - 1)
+            leftPadding: Theme.space.sm
+            rightPadding: Theme.space.sm
+            font.pixelSize: Theme.type.meta.size
             iconName: split.iconName
             enabled: split.actionEnabled
             text: split.compact ? "" : split.text
@@ -70,15 +76,40 @@ Item {
         ShellButton {
             objectName: "menu"
             Layout.fillHeight: true
-            Layout.preferredWidth: 24
+            Layout.preferredWidth: Theme.control.sm
             subtle: true
-            radius: 7
+            radius: Math.max(0, Theme.radiusMd - 1)
             chevron: true
-            chevronSize: 16
+            chevronSize: Theme.icon.md
             enabled: split.menuEnabled
             // Two split buttons in one header must not both be "More options".
             Accessible.name: split.menuName
             onClicked: split.menuRequested()
         }
+    }
+
+    // Never drawn: the action half as it would be with and without its label.
+    ShellButton {
+        id: labelled
+
+        visible: false
+        height: Theme.control.sm
+        subtle: true
+        leftPadding: Theme.space.sm
+        rightPadding: Theme.space.sm
+        font.pixelSize: Theme.type.meta.size
+        iconName: split.iconName
+        text: split.text
+    }
+
+    ShellButton {
+        id: bare
+
+        visible: false
+        height: Theme.control.sm
+        subtle: true
+        leftPadding: Theme.space.sm
+        rightPadding: Theme.space.sm
+        iconName: split.iconName
     }
 }

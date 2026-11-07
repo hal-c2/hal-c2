@@ -50,10 +50,10 @@ Rectangle {
                 Text {
                     objectName: "spaceVersionWhen"
                     Layout.fillWidth: true
-                    text: view.arrived ? qsTr("The page as it was on %1").arg(Qt.formatDateTime(new Date(view.version.at), Qt.locale().dateTimeFormat(Locale.ShortFormat))) : qsTr("Loading this version…")
+                    text: view.arrived ? qsTr("The page as it was on %1").arg(Format.dateTime(view.version.at)) : qsTr("Loading this version…")
                     elide: Text.ElideRight
                     color: view.muted
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                 }
 
                 ShellButton {
@@ -87,7 +87,7 @@ Rectangle {
                 text: view.version.title ?? ""
                 elide: Text.ElideRight
                 color: view.foreground
-                font.pixelSize: Math.round(28 * Theme.fontScale)
+                font.pixelSize: Theme.type.display.size
                 font.weight: Font.Bold
             }
 
@@ -99,6 +99,12 @@ Rectangle {
                 level: model.level ?? 0
                 language: model.language ?? ""
                 chart: model.chart ?? ({})
+                markdownAbove: model.markdownAbove ?? ""
+                markdownLead: model.markdownLead ?? ""
+                listBullets: model.listBullets ?? 0
+                listNumbers: model.listNumbers ?? 0
+                markdownTail: model.markdownTail ?? ""
+                markdownBelow: model.markdownBelow ?? ""
                 readOnly: true
             }
         }

@@ -18,6 +18,12 @@ need "Qt for Android" "$qt" bin/qt-cmake QT_ANDROID_PREFIX
 need "this machine's Qt, the same version as the one for Android," "$host_qt" bin/androiddeployqt QT_HOST_PATH
 need "a JDK (Qt 6.11 wants 21)" "$JAVA_HOME" bin/java JAVA_HOME
 
+# The code highlighter (native/syntax) is Rust, built for the phone by
+# rustup's cargo (cmake/Syntax.cmake), which needs Android's target added.
+command -v rustup >/dev/null || { echo "mobile:android: rustup was not found; the code highlighter needs it (https://rustup.rs)." >&2; exit 1; }
+rustup target list --installed | grep -qx aarch64-linux-android ||
+  { echo "mobile:android: Rust has no Android target; run: rustup target add aarch64-linux-android" >&2; exit 1; }
+
 # Release with -g0: the NDK's toolchain adds -g to every build type, which
 # makes a 180 MB library. QT_ANDROID_DEPLOYMENT_TYPE keeps the package a debug
 # one, signed with the debug key; a Release build's is unsigned otherwise.

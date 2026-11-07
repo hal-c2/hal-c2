@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/10439 (find in thread)
 #   packages/contracts/src/rpc.ts (orchestration.searchThreads)
 #   packages/contracts/src/orchestration.ts (OrchestrationSearchThreadsInput, OrchestrationThreadSearchMatch)
 #   apps/server-ex/lib/hal_c2/search.ex
@@ -70,6 +71,29 @@ Feature: Searching threads by what was said
     And it starts shortly before "needle" and is marked with ellipses on both cut ends
 
   @mc
+  Scenario: The snippet shows words, never the ids in HAL-C2's markup
+    Given thread "t1" has a user message:
+      """
+      <delegated_task_result taskId="task-1f2e" title="Review" childThreadId="b29805a8-5d1c-4c1e-9d3a-0f6c2b7e9a11">
+      The review found no Vec<String> leaks
+      </delegated_task_result>
+      """
+    When a client searches for "review found"
+    Then the snippet reads "The review found no Vec<String> leaks"
+
+  @mc
+  Scenario: Markup someone wrote stays in the snippet
+    Given thread "t1" has a user message:
+      """
+      Please use <a href="/docs">the docs</a> for this
+      """
+    When a client searches for "the docs"
+    Then the snippet reads:
+      """
+      Please use <a href="/docs">the docs</a> for this
+      """
+
+  @mc
   Scenario: Messages written before the index existed are found after startup
     Given threads written by an MC that had no search index
     When the MC starts
@@ -96,3 +120,30 @@ Feature: Searching threads by what was said
   Scenario: A limit outside 1 to 50 is rejected
     When a client searches for "deploy" with limit 500
     Then the request is rejected as invalid
+
+  # Find in thread: one thread, every occurrence, for a client to move through.
+  # Upstream #10439: find messages and plans in the current thread
+  @backlog @mc
+  Scenario: Finding in a thread counts every occurrence the user can see
+    Given thread "t1" was forked from "t0", whose messages mention "deploy" twice
+    And "t1" mentions "deploy" three times since the fork
+    And "t1" was rolled back past one of them
+    And a cancelled queued message in "t1" mentions "deploy"
+    When a client finds "deploy" in "t1"
+    Then the MC answers with 4 matches
+    And the answer names the selected match without any message text
+
+  # Upstream #10439: find messages and plans in the current thread
+  @backlog @mc
+  Scenario: An answer a question card folded in is found in its card
+    Given the user answered a question in "t1" with "deploy on Friday"
+    When a client finds "Friday" in "t1"
+    Then the match is the question card
+
+  # Upstream #10439: find messages and plans in the current thread
+  @backlog @mc
+  Scenario: A finished turn changes the count of a find in that thread
+    Given a client found "deploy" 3 times in "t1"
+    When a turn in "t1" adds a message mentioning "deploy"
+    And the client finds "deploy" in "t1" again
+    Then the MC answers with 4 matches

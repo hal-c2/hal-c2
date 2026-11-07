@@ -806,23 +806,31 @@ defmodule HalC2.Steps.SourceControl.IssueTracker do
         flunk("the run is gone")
 
   # Looks again, and waits until that look (not an earlier one) has published.
-  # A look already running — the one the plugin starts with, before the
-  # scenario's project and answers exist — is drained first, or its empty
-  # queue would answer for this one.
+  # A look already running is drained first, or its queue would answer for this
+  # one: the one the plugin starts with, which saving settings restarts, can
+  # predate the scenario's answers. The live snapshot says whether one runs; the
+  # last frame seen may be the previous process's.
   defp look!(context) do
-    {previous, context} =
-      await_topic(context, fn value -> value["looking"] == false and value["checkedAt"] end)
+    since = System.system_time(:millisecond)
 
+    context =
+      if tracker!(context)["looking"] do
+        {_, context} = await_topic(context, &(&1["looking"] == false and looked_since(&1, since)))
+        context
+      else
+        context
+      end
+
+    since = System.system_time(:millisecond)
     {reply, context} = plugin(context, "refresh", %{})
     assert {:ok, _} = reply
 
-    {_, context} =
-      await_topic(context, fn value ->
-        value["checkedAt"] not in [nil, previous] and value["checkedAt"]
-      end)
-
+    {_, context} = await_topic(context, &(&1["looking"] == false and looked_since(&1, since)))
     context
   end
+
+  defp looked_since(value, since),
+    do: is_integer(value["checkedAt"]) and value["checkedAt"] >= since
 
   defp start_run(context, method, input) do
     {reply, context} = plugin(context, method, input)

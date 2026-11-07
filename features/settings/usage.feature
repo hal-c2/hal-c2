@@ -1,4 +1,22 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22443
+#   https://github.com/pingdotgg/t3code/pull/24834
+#   https://github.com/pingdotgg/t3code/pull/17055
+#   https://github.com/pingdotgg/t3code/pull/22936
+#   https://github.com/pingdotgg/t3code/pull/21055
+#   https://github.com/pingdotgg/t3code/pull/19245
+#   https://github.com/pingdotgg/t3code/pull/20349
+#   https://github.com/pingdotgg/t3code/pull/14477
+#   https://github.com/pingdotgg/t3code/pull/15575
+#   https://github.com/pingdotgg/t3code/pull/14672
+#   https://github.com/pingdotgg/t3code/pull/17759
+#   https://github.com/pingdotgg/t3code/pull/16970
+#   https://github.com/pingdotgg/t3code/pull/17147
+#   https://github.com/pingdotgg/t3code/pull/17869
+#   https://github.com/pingdotgg/t3code/pull/10076
+#   https://github.com/pingdotgg/t3code/pull/8208
+#   https://github.com/pingdotgg/t3code/pull/13991
+#   https://github.com/pingdotgg/t3code/pull/10158
 #   docs/user/usage.md
 #   apps/server-ex/lib/hal_c2/usage.ex (server.getUsageSummary, transcript sources, scan cache)
 #   apps/server-ex/lib/hal_c2/usage/aggregator.ex (de-duplication, day and hour buckets)
@@ -21,6 +39,8 @@
 #   apps/web/src/components/usage/usagePagePreferences.ts (environment subset)
 #   apps/web/src/components/usage/UsageLimitsPooled.tsx (account chips)
 #   packages/shared/src/usageMerge.ts, packages/shared/src/usageLimits.ts
+#   https://github.com/pingdotgg/t3code/pull/15108
+#   https://github.com/pingdotgg/t3code/pull/22558
 
 Feature: Usage and limits
   Usage adds up token use and estimated cost from each provider's local
@@ -34,6 +54,14 @@ Feature: Usage and limits
       Given Codex, Claude Code and Grok have session history on the machine
       When a client asks for the usage summary
       Then the summary has tokens, cache savings and estimated cost per model
+
+    # Upstream #22443: Muse Code history was not counted.
+    @backlog @mc @plugin-muse @priority-low
+    Scenario: Muse Code history counts in usage
+      Given Muse Code has session history on the machine, with child sessions and automated reviews
+      When a client asks for the usage summary
+      Then that history is counted, priced by its models
+      And a model without a price is listed as unpriced
 
     @mc
     Scenario: A provider home moved by environment variable is found
@@ -53,6 +81,25 @@ Feature: Usage and limits
       When a client asks for the usage summary
       Then the repeated turns count once
 
+    # Upstream #22558: a Codex session resumed in a new process starts its counters again;
+    # its first request was dropped as inconsistent and its cost lost.
+    @backlog @mc @plugin-codex
+    Scenario: A Codex session resumed in a new process counts its first request
+      Given a Codex session was resumed later in a new Codex process
+      When a client asks for the usage summary
+      Then the first request after the resume is counted and priced
+      And usage reports no skipped records
+
+    # Upstream #22558: after a context compaction Codex records the new context size with no
+    # input or output; that is not a request and not a malformed record.
+    @backlog @mc @plugin-codex
+    Scenario: A Codex compaction is not counted as a request or a bad record
+      Given a Codex session compacted its context
+      When a client asks for the usage summary
+      Then the compaction is not counted as a request
+      And usage reports no skipped records
+
+    # Upstream #14672: Claude's "<synthetic>" placeholder is not listed as a model, cached or not.
     @mc
     Scenario: Claude's local error replies are not counted as a model
       Given Claude Code's history holds a local error reply beside a real model's replies
@@ -88,6 +135,15 @@ Feature: Usage and limits
       When a client asks for daily usage in "Mars/Olympus"
       Then the buckets are in UTC
 
+    # Upstream #17759: OpenCode usage is read from each instance's own data folder.
+    @backlog @mc @plugin-opencode
+    Scenario: OpenCode instances with their own data folders are each counted
+      Given two OpenCode instances whose environments point at different data folders
+      When a client asks for the usage summary
+      Then the history of both folders is counted
+      And a folder both instances share is counted once
+
+  @priority-low
   Rule: Prices
 
     @mc
@@ -183,7 +239,15 @@ Feature: Usage and limits
         | no model ID                            | Enter a model ID.                            |
         | an output rate but no input rate       | Input is required on laptop.                 |
         | a negative output rate                 | Use non-negative numbers for prices.         |
-        | a rate that is not a number            | Use non-negative numbers for prices.         |
+
+    # Upstream #19245: custom price cells take only numbers, so letters never reach a rate.
+    @backlog @desktop
+    Scenario: A model's price takes only a number
+      Given the user is adding a price for a model
+      When the user types "abc" as its input rate
+      Then the input rate stays empty
+      When the user types "2.5"
+      Then the input rate is 2.5
 
     @backlog @desktop
     Scenario: A model that already has a price row is edited there
@@ -218,6 +282,35 @@ Feature: Usage and limits
       When the user opens model prices
       Then the user is asked to select an environment to see and change its model prices
 
+    # Upstream #21055: model prices fall back to GitHub's API.
+    @backlog @mc
+    Scenario: Prices are fetched another way when the usual address cannot be reached
+      Given the address the MC fetches model prices from cannot be reached
+      When the user refreshes usage prices
+      Then the MC fetches the prices through GitHub's API
+      And if that fails too, costs keep using the saved prices
+
+    # Upstream #24834: Antigravity's Gemini 4 Argon usage was "Unpriced": a price source listing
+    # the model under several providers, only some with a fast tier, was read as a conflict.
+    @backlog @mc @priority-low
+    Scenario: A model listed with and without a fast tier still has a price
+      Given the price list has "gemini-4-argon" twice at one base rate, once with a fast tier
+      When the MC reads usage of "gemini-4-argon"
+      Then the usage is priced at that base rate
+
+    # Upstream #24834
+    @backlog @mc @plugin-antigravity @priority-low
+    Scenario Outline: A model named with its thinking level is priced as its model
+      Given Antigravity recorded usage of "<model>"
+      When the user opens Usage
+      Then "<model>" is listed on its own row, priced at the rate of "gemini-4-argon"
+
+      Examples:
+        | model                  |
+        | gemini-4-argon-low     |
+        | gemini-4-argon-medium  |
+        | gemini-4-argon-high    |
+
   Rule: Reading usage
 
     @shared @backlog-mobile @backlog-tui
@@ -238,7 +331,7 @@ Feature: Usage and limits
       Then "server" usage is shown
       And "laptop" is shown as still scanning
 
-    @desktop @backlog-desktop
+    @desktop @backlog-desktop @priority-low
     Scenario: Usage shows one loading state until the first answer
       Given the first scan of session history is still running
       When the user views usage for the cost metric
@@ -256,12 +349,39 @@ Feature: Usage and limits
       When the user opens usage again
       Then it shows tokens
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile @backlog-tui @priority-low
     Scenario: An environment on an older server is left out of the totals
       Given "server" runs an older server version
       When the user views usage for all environments
       Then usage says "server runs an older server version and is excluded from totals."
       And the usage of "server" is not counted
+
+    # Upstream #8208: an environment on a newer usage contract than this app is left out, and the
+    # notice says the app is the side that is behind.
+    @shared @backlog @priority-low
+    Scenario: An environment on a newer usage format is left out and the app is named as behind
+      Given "server" reports usage in a newer format than this app reads
+      When the user views usage for all environments
+      Then usage says this app must be updated to show "server"
+      And the usage of "server" is not counted
+
+    # Upstream #10076: a provider this app does not know leaves the rest of the usage shown.
+    @shared @backlog @priority-low
+    Scenario: A provider this app does not know leaves the rest of usage shown
+      Given "server" reports usage for a provider this app does not know, alongside Claude
+      When the user views usage for all environments
+      Then the Claude usage of "server" is shown
+      And the unknown provider's usage is left out
+
+    # Upstream #13991: a cost estimate says what share of its window has no price.
+    @shared @backlog
+    Scenario: A cost estimate says what share of its window has no price
+      Given some usage in the past 90 days has no price
+      When the user views cost for the past 90 days
+      Then the cost is labelled as an API estimate
+      And the estimate says what share of the usage it leaves out
+      When the user views cost for the past 7 days
+      Then no share of usage left out is given
 
     @shared @backlog-mobile @backlog-tui
     Scenario: Usage that could not be read can be read again
@@ -285,6 +405,44 @@ Feature: Usage and limits
       When the user views usage for "server"
       Then the usage of "server" is shown
       And the usage of this environment is not counted
+
+    # Upstream #16970: the filter removes a provider before totals are made, not only its rows.
+    @backlog @shared
+    Scenario: Usage can be narrowed to the providers the user picks
+      Given usage has Codex and Claude sessions
+      When the user filters usage to Claude only
+      Then the totals, sessions, shares, chart, tables and limits count Claude alone
+      And the shares are worked out again among what is shown
+      And the choice is kept after usage is opened again
+
+    @backlog @shared @priority-low
+    Scenario: A provider that appears after the user filtered usage is shown
+      Given the user hid Codex from usage
+      When OpenCode reports usage for the first time
+      Then OpenCode is shown alongside the other providers the user did not hide
+
+    # Upstream #17147: Cursor's account history took up to half a minute to read every time.
+    @backlog @mc @priority-low
+    Scenario: Cursor usage is answered from what was last read while it is read again
+      Given Cursor's account usage was read before, even before the MC restarted
+      When the user views usage
+      Then usage answers at once with the Cursor figures last read, marked as refreshing
+      And the fresh Cursor figures follow when they have been read
+
+    @backlog @shared @priority-low
+    Scenario: Only the figures still being read are dimmed
+      Given Cursor's usage is refreshing and the other providers have answered
+      When the user views usage
+      Then Cursor's row, its models and the totals are dimmed
+      And the other providers' rows are not
+      But a hidden provider that is refreshing dims nothing
+
+    @backlog @shared @priority-low
+    Scenario: Switching the period keeps the previous one on screen until the new one answers
+      Given the user views cost for the past 7 days
+      When the user switches to the past 30 days
+      Then the past 7 days stay on screen, dimmed and labelled as the past 7 days
+      And the past 30 days replace them when they answer
 
     # The web's breakdown and environment choices the desktop's Usage page does not draw yet.
     @desktop @backlog-desktop
@@ -320,13 +478,25 @@ Feature: Usage and limits
       When the user views cost for the past 24 hours
       Then the chart tells the two hours labelled 1 AM apart
 
+    # Upstream #15575: the past 24 hours' hour labels ignored the Time format setting.
+    @backlog @desktop @priority-low
+    Scenario Outline: Hours in the past 24 hours follow the time format
+      Given the user set the time format to "<format>"
+      When the user views cost for the past 24 hours
+      Then midnight on the chart, in its hover and in the hourly table reads "<midnight>"
+
+      Examples:
+        | format  | midnight |
+        | 24-hour | 00:00    |
+        | 12-hour | 12 AM    |
+
     @desktop @backlog-desktop
     Scenario: Each model shows its share of the cost
       Given the user views cost for the past 7 days
       Then each model shows what percentage of the total cost it makes up
 
     # Legacy: packages/shared/src/usageFormat.ts (formatTokens, formatPercent, formatDayShort)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: Usage figures are written short enough to line up in a column
       Given a model used <tokens> tokens on "2026-08-07" and makes up a share of 0.123 of the cost
       When the user views usage broken down by model and by day
@@ -386,6 +556,15 @@ Feature: Usage and limits
       Then Codex shows one 5-hour number made up of both accounts
       And the account that resets soonest comes first
 
+    # Upstream #20349: accounts out of weekly allowance add no usable session quota to the pool.
+    @backlog @shared
+    Scenario: An account that spent its weekly allowance adds no session quota to the pool
+      Given two Codex accounts with all their 5-hour quota left
+      And one of them has spent its whole weekly allowance
+      When the user views limits
+      Then Codex's 5-hour number counts only the other account's quota
+      And the spent account's session quota is expected back no sooner than its weekly reset
+
     @desktop @backlog-desktop
     Scenario: Each account in Limits is told apart by its chip
       Given two Codex accounts
@@ -412,11 +591,29 @@ Feature: Usage and limits
       When the user views limits
       Then usage says "Codex: Could not read limits."
 
+    # Upstream #17055: a Codex that needs signing in lost its "codex login" guidance and said
+    # only that limits could not be read.
+    @mc @shared @backlog
+    Scenario: Limits of a Codex that needs signing in say how to sign in
+      Given Codex is not signed in
+      When the user views limits
+      Then the Codex limit says to sign in with "codex login"
+      And it does not say "Could not read limits."
+
     @shared @backlog-mobile @backlog-tui
     Scenario: Without limits to show the page says so
       Given no provider reports limits
       When the user views limits
       Then usage says "No provider on the selected environments reports subscription limits."
+
+    # Upstream #22936: an environment switched off in Connections kept its last limits on screen.
+    @shared @backlog
+    Scenario: Limits leave out an environment that is switched off
+      Given the environments "laptop" and "server" each report Codex limits
+      When the user switches "server" off in Connections
+      Then limits show only the Codex limits of "laptop"
+      When the user switches "server" back on
+      Then limits show the Codex limits of both again
 
     @shared @backlog-mobile @backlog-tui
     Scenario: Leaving usage stops following limits
@@ -470,16 +667,99 @@ Feature: Usage and limits
         | 50%     | 50%  | on pace with the window                               |
         | 80%     | 30%  | under pace: headroom left for the rest of the window  |
 
+    # Upstream #14477: pooled Limits bars lacked the even-pace mark single-account bars have.
+    @backlog @shared @priority-low
+    Scenario: A pooled limit marks where each account would be at an even pace
+      Given two Codex accounts whose 5-hour windows are 25% and 75% through
+      When the user views limits
+      Then Codex's pooled limit marks where each account's usage would be at an even pace
+      And each account's pace is also said in words
+      But an account whose window timing is unknown gets no mark
+
     @backlog @desktop
     Scenario: A limit says when it resets
       Given a limit window that resets in 3 hours
       When the user views limits
       Then the limit shows the time it resets and how long that is from now
 
-    @backlog @desktop
+    # Upstream #17869. Under a minute is not yet reset, so it never reads "resets in 0m".
+    @backlog @shared @priority-low
+    Scenario Outline: How long until a limit resets is worded for the time left
+      Given a limit window that resets in <time left>
+      When the user views limits
+      Then the limit says "<wording>"
+
+      Examples:
+        | time left     | wording            |
+        | 2 hours       | resets in 2h 0m    |
+        | 1 minute      | resets in 1m       |
+        | 45 seconds    | Resets momentarily |
+        | 1 second      | Resets momentarily |
+        | 0 seconds     | resets now         |
+
+    @backlog @desktop @priority-low
     Scenario: An account's email can be revealed and hidden
       Given the limits show a provider account whose email is masked
       When the user reveals the email
       Then the full email is shown
       When the user hides it again
       Then the email is masked
+
+  Rule: Keyboard shortcuts on the Usage page
+
+    # Upstream #10158. Letter shortcuts stay out of text fields, popups and dialogs.
+    @desktop @backlog @priority-low
+    Scenario Outline: A letter key shows that usage metric
+      Given the user is on the Usage page
+      When the user presses "<key>"
+      Then the Usage page shows the <metric> metric
+
+      Examples:
+        | key | metric |
+        | C   | cost   |
+        | T   | tokens |
+        | L   | limits |
+
+    @desktop @backlog @priority-low
+    Scenario Outline: Ctrl or Cmd with Shift and a number picks the usage period
+      Given the user is on the Usage page showing cost
+      When the user presses <shortcut>
+      Then usage covers the past <window>
+
+      Examples:
+        | shortcut     | window   |
+        | Ctrl+Shift+1 | 24 hours |
+        | Ctrl+Shift+2 | 7 days   |
+        | Ctrl+Shift+3 | 30 days  |
+        | Ctrl+Shift+4 | 90 days  |
+
+    @desktop @backlog @priority-low
+    Scenario: The usage period shortcuts do nothing while limits is shown
+      Given the user is on the Usage page showing limits
+      When the user presses Ctrl+Shift+2
+      Then the Usage page still shows limits
+
+    @desktop @backlog @priority-low
+    Scenario: Escape goes back from the Usage page to the page before it
+      Given the user opened usage from a thread
+      When the user presses Escape
+      Then the thread is shown again
+
+    @desktop @backlog @priority-low
+    Scenario: Escape in a text field on the Usage page does not leave the page
+      Given the user is typing in a text field on the Usage page
+      When the user presses Escape
+      Then the Usage page stays open
+
+    @desktop @backlog @priority-low
+    Scenario: A letter typed in a text field on the Usage page does not change the metric
+      Given the user is typing in a text field on the Usage page showing cost
+      When the user types "t"
+      Then the Usage page still shows cost
+
+  @backlog @shared
+  Scenario: Cost breaks down by token type, speed and model
+    When the user opens the Usage tab
+    Then cost is split by token type, and by speed when Fast or Ultrafast was used
+    And opening a model shows its cost, tokens, cost per million tokens, cache hit rate and trend
+    And an unpriced model offers Set price

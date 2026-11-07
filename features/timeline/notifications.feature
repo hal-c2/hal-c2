@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17540
+#   https://github.com/pingdotgg/t3code/pull/22520
 #   apps/web/src/components/ThreadNotificationCoordinator.tsx (titles, transitions only, archived threads skipped, toast only when focused elsewhere, Open thread, badge)
 #   apps/web/src/threadNotifications.ts (notification modes, sounds, badge)
 #   apps/web/src/shell/ShellToastBridge.tsx
@@ -81,6 +83,14 @@ Feature: Alerts when a thread needs the user
       | Sound only               | not shown    | played     |
       | Notifications with sound | shown        | played     |
 
+  # Upstream #17540: threads that finish together play one completion sound.
+  @backlog @desktop @priority-low
+  Scenario: Threads finishing together play one sound
+    Given alerts are set to "Sound only"
+    When three background threads complete at the same moment
+    Then one completion sound is played
+    And a thread that asks for approval right after still plays its sound
+
   @desktop
   Scenario: Clicking a system notification opens its own thread
     Given system notifications were shown for "Tax fix" and then for "Docs"
@@ -94,6 +104,19 @@ Feature: Alerts when a thread needs the user
     When the user clicks the older notification
     Then the second window shows "Tax fix" and comes to the front
     And the first window stays where it was
+
+  # Upstream #22520: on Windows a completion notification moved to Notification Center after
+  # about seven seconds, and clicking it there did nothing.
+  @backlog @desktop @priority-low
+  Scenario Outline: On Windows a completion notification stays until it is handled
+    Given the app runs on Windows
+    When "Tax fix" <change> while the user is in another app
+    Then its system notification <stays>
+
+    Examples:
+      | change              | stays                                                     |
+      | completes           | stays on screen until the user clicks or dismisses it     |
+      | needs an answer     | goes away after the usual time, as another device may answer it |
 
   @desktop
   Scenario: A newer alert for a thread replaces its older one

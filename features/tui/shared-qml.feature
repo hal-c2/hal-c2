@@ -59,7 +59,7 @@ Feature: Shared QML screens on every surface
     Given the shared Sidebar and Composer run in the terminal client
     Then every chord in the terminal keymap still works
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: Shared screens are driven by the same headless test in every runtime
     Given a Given/When/Then scenario for the shared Composer
     When it runs against Qt and against the opentui-qml test renderer

@@ -1,4 +1,16 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21299
+#   https://github.com/pingdotgg/t3code/pull/22826
+#   https://github.com/pingdotgg/t3code/pull/18329
+#   https://github.com/pingdotgg/t3code/pull/18549
+#   https://github.com/pingdotgg/t3code/pull/14345
+#   https://github.com/pingdotgg/t3code/pull/17749
+#   https://github.com/pingdotgg/t3code/pull/17662
+#   https://github.com/pingdotgg/t3code/pull/11922
+#   https://github.com/pingdotgg/t3code/pull/19078
+#   https://github.com/pingdotgg/t3code/pull/16246
+#   https://github.com/pingdotgg/t3code/pull/7079
+#   https://github.com/pingdotgg/t3code/pull/13669
 #   apps/server-ex/lib/hal_c2/editors.ex (availableEditors, shell.openInEditor)
 #   apps/server-ex/lib/hal_c2/codex/provider.ex (the version read a server config waits on)
 #   apps/server-ex/lib/hal_c2/local_servers.ex (subscribeDiscoveredLocalServers)
@@ -29,6 +41,32 @@ Feature: The MC working with its host machine
     Then the available editors include Cursor and Zed
     And the file manager is listed last
 
+  # Upstream #7079: the agy command is Google's Antigravity CLI, not the Antigravity IDE.
+  @backlog @mc @plugin-antigravity @priority-low
+  Scenario: The agy command is not taken for the Antigravity IDE
+    Given the Antigravity CLI "agy" is installed on the host and the Antigravity IDE is not
+    When a client reads the MC's server config
+    Then the available editors do not include Antigravity
+
+  @backlog @mc @plugin-antigravity @priority-low
+  Scenario: The Antigravity IDE opens a location at its line
+    Given the Antigravity IDE is installed on the host
+    When a client opens "src/app.ts" at line 12 column 4 in Antigravity IDE
+    Then the MC launches the Antigravity IDE at that line
+
+  # Upstream #13669: a long PATH does not empty the editor list.
+  @backlog @mc
+  Scenario: Editors installed on a long PATH are still listed
+    Given the host's PATH has more than seventy folders and Cursor is installed in the last one
+    When a client reads the MC's server config
+    Then the available editors include Cursor
+
+  @backlog @mc @priority-low
+  Scenario: On a Mac Zed is found by its app before a "zed" on the PATH
+    Given a Mac host with the Zed app installed and another program named "zed" earlier on its PATH
+    When a client opens "src/app.ts" in Zed
+    Then the Zed app opens it
+
   @mc
   Scenario Outline: Opening a location in an editor uses that editor's style
     When a client opens "src/app.ts" at line 12 column 4 in <editor>
@@ -41,6 +79,18 @@ Feature: The MC working with its host machine
       | Cursor   |
       | Zed      |
       | IntelliJ |
+
+  # Upstream #22826: JetBrains IDEs count columns from zero, so the column moves back by one.
+  @backlog @mc @priority-low
+  Scenario Outline: A JetBrains IDE opens a location at the column the user asked for
+    When a client opens "src/app.ts" at line 12 column <asked> in IntelliJ
+    Then IntelliJ is launched with line 12 and column <passed>
+
+    Examples:
+      | asked | passed |
+      | 4     | 3      |
+      | 1     | 0      |
+      | 0     | 0      |
 
   @mc
   Scenario: The user's default text editor is offered first
@@ -79,6 +129,20 @@ Feature: The MC working with its host machine
     Given the MC runs on Windows and opens text files in Notepad
     When a client opens "src/app.ts" at line 12 column 4 in the default editor
     Then Windows opens "src/app.ts" in Notepad and the MC holds no port for it
+
+  # Upstream #17749: a command shim re-reads its arguments through cmd.exe, which mangles
+  # a line break or a double quote. Neither can be in a Windows file name.
+  @backlog @mc @priority-low
+  Scenario Outline: On Windows an editor started through a command shim is not given a path it would mangle
+    Given the MC runs on Windows and the chosen editor is the command shim "code.cmd"
+    When a client opens <path> in that editor
+    Then <outcome>
+
+    Examples:
+      | path                                       | outcome                                            |
+      | a path holding a line break                | the editor is not started and the client is told it could not be opened |
+      | a path holding a double quote              | the editor is not started and the client is told it could not be opened |
+      | "C:\work\naïve & (draft) 100%.ts" at 12:4  | the editor opens that file at line 12 column 4     |
 
   @mc
   Scenario: On Windows a text association without a chosen program still names the editor
@@ -358,7 +422,7 @@ Feature: The MC working with its host machine
       | xdg-mime is not installed                           |
       | the query for the folder handler fails              |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A folder handler lookup that stalls drops only the file manager
     Given a Linux host with a display whose folder handler lookup never answers
     When a client reads the MC's server config
@@ -379,13 +443,13 @@ Feature: The MC working with its host machine
     Then the file manager is still offered for folders
     But revealing a file in it is not offered
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: On WSL a file is revealed in Windows Explorer through its Windows path
     Given the MC runs inside WSL with Explorer and PowerShell reachable from it
     When a client reveals a file in the file manager
     Then Windows Explorer shows that file selected under the distro's network path
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: On WSL a reveal that Windows cannot do falls back to the Linux file manager
     Given the MC runs inside WSL and <situation>
     When a client reveals a file in the file manager
@@ -410,14 +474,14 @@ Feature: The MC working with its host machine
     When a client reads the available editors
     Then the editor is offered launched through the PATH command
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Installing an editor shows up in the server config within a minute
     Given a client read the server config a moment ago
     When an editor is installed on the host
     Then the next read within a minute may still omit it
     But a read after a minute offers the new editor
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A client that disconnects during an editor scan does not break the next one
     Given a client disconnects while the MC is scanning for editors
     When another client reads the server config
@@ -430,7 +494,7 @@ Feature: The MC working with its host machine
     Then the host's default browser opens that link
     And the MC does not wait for the browser to close
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A host with no way to open a browser says which command it could not run
     Given the host has no command that opens a browser
     When the MC opens a link on its host
@@ -521,7 +585,15 @@ Feature: The MC working with its host machine
     Given a client asks the MC to run a command that is not installed
     Then the client is told the command could not be started and in which folder it was tried
 
+  # Upstream #14345: a spawn that fails because PATH runs through a file is a start failure
   @backlog @mc
+  Scenario: A command whose search path runs through a file is reported as not started
+    Given a PATH entry is a file, not a folder
+    When the MC runs a command found through that PATH
+    Then the user is told the command could not start and why
+    And the client stays connected
+
+  @backlog @mc @priority-low
   Scenario: Output that is not valid text is passed on and marked
     Given a command prints bytes that are not valid UTF-8
     When the command finishes
@@ -554,7 +626,7 @@ Feature: The MC working with its host machine
       | is answered | SSH       |
       | is refused  | HTTPS     |
 
-  # Asking SSH is a network round trip, at boot and after every hot update.
+  # Asking SSH is a network round trip, at boot and after every release upgrade.
   @mc
   Scenario: The MC does not wait for SSH to answer for GitHub
     Given the GitHub CLI on the host is signed in to github.com
@@ -627,14 +699,92 @@ Feature: The MC working with its host machine
       | a pushInsteadOf | https://github.com/acme/shop.git | git@github.com:acme/shop.git     |
 
   @mc
-  Scenario Outline: A sign-in or sign-out reaches git already running at the next hot update
+  Scenario Outline: A sign-in or sign-out reaches git already running at the next upgrade in place
     Given the GitHub CLI on the host is <before>
     And the MC sets up the git it starts
     And an agent's git is already running
-    When the GitHub CLI <change> and the MC is hot-updated
+    When the GitHub CLI <change> and the MC upgrades in place
     Then the agent's git fetches "git@github.com:acme/shop.git" over <transport>
 
     Examples:
       | before                  | change                  | transport |
       | not signed in           | signs in to github.com  | HTTPS     |
       | signed in to github.com | signs out               | SSH       |
+
+  @backlog @mc @priority-low
+  Scenario: A JetBrains editor whose application bundle carries a version is found
+    Given the editor "IntelliJ IDEA 2026.1.4.app" is installed in Applications on macOS
+    When the MC looks for installed editors
+    Then IntelliJ IDEA is available
+    And "Visual Studio Code - Insiders.app" is not taken for "Visual Studio Code"
+
+  # Upstream #17662: systemd-oomd kills a whole cgroup, so one greedy agent took the server and
+  # every other agent with it. Each agent and terminal now gets its own scope in an agents slice
+  # held below the machine's memory, and the kernel picks agents before the MC.
+  @backlog @mc
+  Scenario: An agent that runs out of memory on Linux is killed without the MC
+    Given the MC runs on Linux under a systemd user manager
+    And two threads each run an agent
+    When one agent uses more memory than the machine can give
+    Then that agent is killed and its turn fails with "Killed: out of memory."
+    And the MC and the other agent keep running
+
+  @backlog @mc @priority-low
+  Scenario: Where there is no systemd user manager agents start as before
+    Given the MC runs on macOS or in a container without a systemd user manager
+    When a thread starts an agent
+    Then the agent starts directly, with no scope around it
+
+  # Upstream #21299: agent-browser and Chrome left by an agent called setsid, escaped its process
+  # group and outlived it.
+  @backlog @mc
+  Scenario Outline: An agent's detached helpers end with it on Linux
+    Given the MC runs on Linux under a systemd user manager
+    And a <provider> agent started a browser that detached from it
+    When <ending>
+    Then the browser ends with the agent's scope
+
+    Examples:
+      | provider | ending                                               |
+      | Claude   | the user stops the thread                            |
+      | Claude   | a model change restarts the agent                    |
+      | Pi       | the agent exits on its own                           |
+      | Muse     | the agent is released after 30 minutes idle          |
+      | ACP      | the session ends while a helper still holds its pipe |
+
+  @backlog @mc @priority-low
+  Scenario: Agents that share one server keep their helpers when a session ends
+    Given Codex and OpenCode serve several threads from one server
+    When one of their sessions ends
+    Then the server and its helpers keep running
+
+  @backlog @mc
+  Scenario: An out-of-memory kill marks only the session it ended
+    Given a thread's agent was killed for using too much memory
+    When the thread starts a new agent session and that turn fails for another reason
+    Then the failure does not say "Killed: out of memory."
+
+  # Upstream #18329: an out-of-memory kill of one tool stopped the shared Codex app-server's
+  # scope, interrupting unrelated Codex threads; the shared scope now survives the kill.
+  @backlog @mc @plugin-codex
+  Scenario: A Codex tool killed for using too much memory does not stop other Codex threads
+    Given the MC runs on Linux under a systemd user manager
+    And two threads run turns on one Codex account
+    When a tool in one thread uses more memory than the machine can give and is killed
+    Then the other thread's Codex turn keeps running
+
+  # Upstream #11922: on macOS a terminal's ssh to a LAN host failed with "No route to host"
+  # until the app declared why it uses the local network.
+  @backlog @desktop @priority-low
+  Scenario: On macOS terminals and agents reach hosts on the local network
+    Given the packaged desktop app runs on macOS with its MC
+    When the user runs "ssh build-box.local hostname" in a HAL-C2 terminal
+    Then macOS asks once whether HAL-C2 may use the local network, saying it is for remote environments, terminals and agents
+    And once allowed, the command reaches "build-box.local"
+
+  # Upstream #18549: File Explorer opens the folder asked for, whatever its slashes
+  @backlog @mc @priority-low
+  Scenario: A folder written with forward slashes opens in File Explorer on Windows
+    Given the MC runs on Windows
+    When the user opens "C:/work/shop" in the file manager
+    Then File Explorer opens the folder "C:\work\shop"

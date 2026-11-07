@@ -17,6 +17,8 @@ defmodule HalC2.Attachments do
   @asset_ttl_ms 60 * 60_000
   @max_image_bytes 10 * 1024 * 1024
   @max_file_bytes 50 * 1024 * 1024
+  @chunk_bytes 64 * 1024
+  @stream_timeout_ms 60_000
   @pending_max_age_s 24 * 60 * 60
   @image_types %{
     "image/png" => ".png",
@@ -372,8 +374,10 @@ defmodule HalC2.Attachments do
   @doc """
   Serves a signed asset on this MC for a request with `headers` (`range` and
   `if-range`, lower-case): `{:ok, status, headers, body}` or `{:error, status, message}`.
-  A single byte range is answered with 206, so a player seeks a long video without
-  downloading it.
+  A successful file body is `{:stream, pid, ref}`; the consumer starts it with
+  `{ref, :start, consumer_pid}` and acknowledges each `{ref, :chunk, bytes}` with
+  `{ref, :ack}`. A single byte range is answered with 206, so a player seeks a
+  long video without downloading it.
   """
   def serve(token, headers \\ %{}) do
     case verify(token) do
@@ -382,6 +386,9 @@ defmodule HalC2.Attachments do
       {:error, message} -> {:error, 403, message}
     end
   end
+
+  @doc false
+  def chunk_bytes, do: @chunk_bytes
 
   defp serve_claims(%{"source" => "native-app-icon", "app" => app} = claims, headers) do
     case HalC2.Attachments.AppIcon.resolve(app) do
@@ -394,51 +401,133 @@ defmodule HalC2.Attachments do
     do: HalC2.Attachments.GitHubMedia.serve(claims, headers)
 
   defp serve_claims(%{"path" => nil}, _headers), do: {:error, 404, "The project has no favicon."}
-
-  defp serve_claims(%{"path" => path} = claims, headers) do
-    if claims["inode"] == nil or identity(path) == Map.take(claims, ["device", "inode"]),
-      do: serve_file(path, claims, headers),
-      else: {:error, 404, "The file is gone."}
-  end
+  defp serve_claims(%{"path" => path} = claims, headers), do: serve_file(path, claims, headers)
 
   defp serve_file(path, claims, headers) do
-    with {:ok, %File.Stat{type: :regular, size: size}} <- File.stat(path),
-         {:ok, file} <- File.open(path, [:read, :binary, :raw]) do
-      name = String.replace(claims["fileName"] || Path.basename(path), ~s("), "")
+    caller = self()
+    ref = make_ref()
+    {pid, monitor} = spawn_monitor(fn -> file_answer(caller, ref, path, claims, headers) end)
 
-      base = [
-        {"content-type", claims["mimeType"] || "application/octet-stream"},
-        {"content-disposition", ~s(#{claims["disposition"] || "inline"}; filename="#{name}")},
-        {"cache-control", "private, max-age=3600"},
-        {"accept-ranges", "bytes"}
-      ]
+    receive do
+      {^pid, ^ref, answer} ->
+        Process.demonitor(monitor, [:flush])
+        answer
 
-      try do
-        case byte_range(headers["range"], size) do
-          nil ->
-            {:ok, 200, base, read_span(file, 0, size)}
-
-          {first, last} ->
-            {:ok, 206, [{"content-range", "bytes #{first}-#{last}/#{size}"} | base],
-             read_span(file, first, last - first + 1)}
-
-          :unsatisfiable ->
-            {:ok, 416, [{"content-range", "bytes */#{size}"}], ""}
-        end
-      after
-        File.close(file)
-      end
-    else
-      _ -> {:error, 404, "The file is gone."}
+      {:DOWN, ^monitor, :process, ^pid, _reason} ->
+        {:error, 404, "The file is gone."}
+    after
+      @stream_timeout_ms ->
+        Process.exit(pid, :kill)
+        Process.demonitor(monitor, [:flush])
+        {:error, 404, "The file is gone."}
     end
   end
 
-  defp read_span(_file, _offset, 0), do: ""
+  defp file_answer(caller, ref, path, claims, headers) do
+    case :file.open(path, [:read, :binary, :raw]) do
+      {:ok, file} ->
+        try do
+          case opened_stat(file, claims) do
+            {:ok, size} -> send_file_answer(caller, ref, file, size, path, claims, headers)
+            :error -> send(caller, {self(), ref, {:error, 404, "The file is gone."}})
+          end
+        after
+          :file.close(file)
+        end
 
-  defp read_span(file, offset, length) do
-    case :file.pread(file, offset, length) do
-      {:ok, bytes} -> bytes
-      _ -> ""
+      _ ->
+        send(caller, {self(), ref, {:error, 404, "The file is gone."}})
+    end
+  end
+
+  # This stats the opened descriptor, not the path: after this point a rename or
+  # symlink swap cannot change which inode the stream reads.
+  defp opened_stat(file, claims) do
+    with {:ok, info} <- :file.read_file_info(file, [:raw]),
+         %File.Stat{type: :regular, size: size} = stat <- File.Stat.from_record(info),
+         true <-
+           claims["inode"] == nil or
+             {stat.major_device, stat.inode} == {claims["device"], claims["inode"]} do
+      {:ok, size}
+    else
+      _ -> :error
+    end
+  end
+
+  defp send_file_answer(caller, ref, file, size, path, claims, headers) do
+    name = String.replace(claims["fileName"] || Path.basename(path), ~s("), "")
+
+    base = [
+      {"content-type", claims["mimeType"] || "application/octet-stream"},
+      {"content-disposition", ~s(#{claims["disposition"] || "inline"}; filename="#{name}")},
+      {"cache-control", "private, max-age=3600"},
+      {"accept-ranges", "bytes"}
+    ]
+
+    case byte_range(headers["range"], size) do
+      nil ->
+        send_stream_answer(caller, ref, 200, [content_length(size) | base])
+        stream_file(file, ref, 0, size)
+
+      {first, last} ->
+        send_stream_answer(caller, ref, 206, [
+          content_length(last - first + 1),
+          {"content-range", "bytes #{first}-#{last}/#{size}"} | base
+        ])
+
+        stream_file(file, ref, first, last - first + 1)
+
+      :unsatisfiable ->
+        send(caller, {self(), ref, {:ok, 416, [{"content-range", "bytes */#{size}"}], ""}})
+    end
+  end
+
+  # A declared length lets a player show progress and keeps the HTTP server from
+  # compressing the stream; a body cut short is then visible to the client.
+  defp content_length(length), do: {"content-length", Integer.to_string(length)}
+
+  defp send_stream_answer(caller, ref, status, headers),
+    do: send(caller, {self(), ref, {:ok, status, headers, {:stream, self(), ref}}})
+
+  defp stream_file(file, ref, offset, length) do
+    receive do
+      {^ref, :start, consumer} ->
+        monitor = Process.monitor(consumer)
+        stream_span(file, ref, consumer, monitor, offset, length)
+    after
+      @stream_timeout_ms -> :ok
+    end
+  end
+
+  defp stream_span(_file, ref, consumer, _monitor, _offset, 0),
+    do: send(consumer, {ref, :done})
+
+  defp stream_span(file, ref, consumer, monitor, offset, length) do
+    case :file.pread(file, offset, min(length, @chunk_bytes)) do
+      {:ok, bytes} when byte_size(bytes) > 0 ->
+        case offer_chunk(ref, consumer, monitor, bytes) do
+          :ok ->
+            read = byte_size(bytes)
+            stream_span(file, ref, consumer, monitor, offset + read, length - read)
+
+          :stop ->
+            :ok
+        end
+
+      _ ->
+        send(consumer, {ref, :error, :read})
+    end
+  end
+
+  defp offer_chunk(ref, consumer, monitor, bytes) do
+    send(consumer, {ref, :chunk, bytes})
+
+    receive do
+      {^ref, :ack} -> :ok
+      {^ref, :stop} -> :stop
+      {:DOWN, ^monitor, :process, ^consumer, _reason} -> :stop
+    after
+      @stream_timeout_ms -> :stop
     end
   end
 
@@ -669,7 +758,8 @@ defmodule HalC2.Attachments do
 
   defp safe_id?(id), do: is_binary(id) and Regex.match?(~r/^[a-z0-9_-]{1,200}$/i, id)
 
-  defp thread_segment(thread_id) do
+  @doc "The part of a thread's attachment ids that names the thread."
+  def thread_segment(thread_id) do
     segment =
       thread_id
       |> String.downcase()

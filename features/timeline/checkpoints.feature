@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18982
+#   https://github.com/pingdotgg/t3code/pull/19775
 #   apps/server-ex/lib/hal_c2/checkpoint.ex (hidden commit per run, private index, 10 MB diff limit)
 #   apps/server-ex/lib/hal_c2/orchestration/rollback.ex (checkpoint.rollback, restoreFiles, errors)
 #   apps/server-ex/lib/hal_c2/projection/timeline.ex (rolled_back runs hidden)
@@ -52,18 +54,41 @@ Feature: Checkpoints and rewinding
       | the diff panel | Keep files       | the MC is asked to leave the files as they are |
       | the diff panel | Revert files too | the workspace files match the end of turn 1    |
 
+  # Upstream #19775: the Edit from here confirmation warns that reverting files also undoes the user's own edits.
+  @backlog @desktop
+  Scenario: Restoring files warns that the user's own edits go too
+    Given the user edited "src/cart.ts" by hand after turn 1
+    When the user asks to revert to turn 1 from its reply
+    Then the confirmation warns that "Revert files too" also undoes the user's own edits since then
+
   @mc
   Scenario: Rewinding hides the later turns from the timeline
     When the thread is rolled back to the checkpoint after turn 1
     Then turns 2 and 3 are no longer shown
     And the agent no longer remembers turns 2 and 3
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: Editing from a message returns the prompt to the composer
     Given the composer holds the draft "also check tax"
     When the user edits from the second message and reverts the files too
     Then the conversation rewinds to before the second message
     And the second message's prompt and attachments are added to the draft
+
+  # Upstream #18982: after an earlier rewind, Edit from here aimed at history that was gone.
+  @shared @backlog @priority-high
+  Scenario: Editing from a message works after an earlier rewind
+    Given the thread was rewound to turn 1 and has since run turns 2 and 3 again
+    When the user edits from the third message and reverts the files too
+    Then the conversation rewinds to the end of the new turn 2
+    And the workspace matches the end of the new turn 2
+
+  # Upstream #18982: the first message of a thread whose older turns are not loaded yet.
+  @shared @backlog @priority-low
+  Scenario: Editing from the first message rewinds to the thread's start
+    Given the thread's older turns are not loaded
+    When the user loads the whole thread and edits from its first message
+    Then the conversation rewinds to before the first message
+    And the first message's prompt is added to the draft
 
   @mc
   Scenario Outline: Rewinding can keep or restore the files
@@ -76,13 +101,13 @@ Feature: Checkpoints and rewinding
       | and files restored      | matches the end of turn 1                |
       | without restoring files | keeps every change made by turns 2 and 3 |
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: The user cancels a rewind
     When the user starts editing from the second message
     And the user cancels
     Then the conversation and the workspace are unchanged
 
-  @shared @backlog-mobile
+  @shared @backlog-mobile @priority-high
   Scenario: Rolling back to a checkpoint asks first because it cannot be undone
     When the user rolls back to a checkpoint
     Then the user is asked to confirm that the rollback cannot be undone
@@ -113,7 +138,7 @@ Feature: Checkpoints and rewinding
       | another thread shares the workspace     | File restore requires an isolated worktree. This workspace may contain changes from another thread. Rewind the conversation without restoring files instead. |
       | the thread has no provider conversation | No active provider thread exists for rollback.                                                                                                               |
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario Outline: The client explains why it cannot rewind
     Given <situation>
     When the user edits from the second message
@@ -132,7 +157,7 @@ Feature: Checkpoints and rewinding
     Then the user is told "Reconnect studio before reverting checkpoints."
     And the conversation and the workspace are unchanged
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario Outline: A message whose attachments cannot be brought back is not rewound
     Given the second message carries <attachment>
     When the user edits from the second message
@@ -144,26 +169,26 @@ Feature: Checkpoints and rewinding
       | the file "notes.pdf", which the environment no longer has | Could not restore attachment: notes.pdf                 |
       | an attachment of a kind the composer cannot hold         | This message has an attachment that cannot be restored. |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Editing from a message that has already gone says so
     Given another client rewound the thread past the second message
     When the user edits from the second message
     Then the thread shows "The message to rewind is no longer available."
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A rewind the environment never finishes stops waiting after two minutes
     Given the environment accepts a rewind but never reports it done
     When the user edits from the second message and two minutes pass
     Then the thread shows "Timed out waiting for the thread to rewind."
     And the thread can be used again
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: Editing from a message keeps what the user had already drafted
     Given the draft reads "also update the docs"
     When the user edits from the second message, which read "fix the totals"
     Then the draft reads "also update the docs", a blank line, then "fix the totals"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A rewind does not ask to confirm before it has been refused
     Given the agent is still working
     When the user rolls back to a checkpoint

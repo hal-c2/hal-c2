@@ -26,7 +26,7 @@ Rectangle {
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Theme.space.sm
 
             // On the left: the toasts stack in the window's top right corner.
             ShellButton {
@@ -41,7 +41,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: qsTr("History")
                 color: panel.foreground
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.title.size
                 font.weight: Font.DemiBold
             }
         }
@@ -59,7 +59,7 @@ Rectangle {
                 return Spaces.history.loading ? qsTr("Loading the history…") : qsTr("This page has no versions yet.");
             }
             color: panel.muted
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
         }
 
         ShellButton {
@@ -95,7 +95,7 @@ Rectangle {
                 objectName: "spaceHistoryRow:" + index
                 width: ListView.view.width
                 implicitHeight: content.implicitHeight + 16
-                radius: Math.min(Theme.radius, 8)
+                radius: Theme.radiusMd
                 color: Theme.palette.color("surfaceRaised", "#18181b")
                 border.color: row.open ? Theme.palette.color("focus", "#3b82f6") : panel.lineColor
 
@@ -119,10 +119,10 @@ Rectangle {
 
                     Text {
                         Layout.fillWidth: true
-                        text: Qt.formatDateTime(new Date(row.at), Qt.locale().dateTimeFormat(Locale.ShortFormat))
+                        text: Format.dateTime(row.at)
                         elide: Text.ElideRight
                         color: panel.foreground
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                     }
 
                     Text {
@@ -133,16 +133,16 @@ Rectangle {
                         }
                         elide: Text.ElideRight
                         color: panel.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                     }
 
                     Text {
                         Layout.fillWidth: true
                         visible: row.restoredFromAt !== ""
-                        text: qsTr("Restored from %1").arg(Qt.formatDateTime(new Date(row.restoredFromAt), Qt.locale().dateTimeFormat(Locale.ShortFormat)))
+                        text: qsTr("Restored from %1").arg(Format.dateTime(row.restoredFromAt))
                         elide: Text.ElideRight
                         color: panel.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                     }
 
                     ShellButton {

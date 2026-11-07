@@ -8,6 +8,7 @@ defmodule HalC2.Streams do
 
   use Supervisor
 
+  alias HalC2.StreamState
   alias HalC2.Streams.Server
 
   def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
@@ -38,6 +39,22 @@ defmodule HalC2.Streams do
           {:error, {:already_started, pid}} -> pid
         end
     end
+  end
+
+  @doc """
+  Stops the stream's server if one runs, so its next use loads the stream from the
+  store. For a writer that appended to the store behind it (an import): a server that
+  held the stream from before would apply its next commit over the events it never
+  saw, and snapshot that.
+  """
+  @spec stop(String.t()) :: :ok
+  def stop(stream_id) do
+    if Process.whereis(HalC2.Streams.Registry) do
+      for {pid, _} <- Registry.lookup(HalC2.Streams.Registry, stream_id),
+          do: DynamicSupervisor.terminate_child(HalC2.Streams.Supervisor, pid)
+    end
+
+    :ok
   end
 
   @tries 3
@@ -92,8 +109,20 @@ defmodule HalC2.Streams do
   def transact(stream_id, stream_kind, fun),
     do: with_server(stream_id, &Server.transact(&1, stream_kind, fun))
 
-  @doc "The stream's current state, started if needed."
+  @doc """
+  The stream's current state, started if needed. What walks its cold rows (a whole
+  thread's rows, a kind's entities, the changes since an offset) takes `read/2`.
+  """
   def state(stream_id), do: with_server(stream_id, &Server.state/1)
+
+  @doc """
+  Runs `fun` with the stream's current state, started if needed, its cold rows read
+  as they were when the state was taken however the stream moves on
+  (`HalC2.StreamState.read/2`). `fun` returns nothing that still reads them.
+  """
+  @spec read(String.t(), (StreamState.t() -> result)) :: result when result: term
+  def read(stream_id, fun),
+    do: stream_id |> with_server(&Server.read/1) |> StreamState.read(fun)
 
   @doc "See `HalC2.Streams.Server.sequence/1`."
   def sequence(stream_id), do: with_server(stream_id, &Server.sequence/1)

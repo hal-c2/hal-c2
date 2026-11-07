@@ -854,6 +854,15 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert Orphans.unreadable_stat(:eio) == :unknown
   end
 
+  test "a sweep passes over only what started before the program, in the same boot" do
+    assert Orphans.older?("boot-a:99", "boot-a:100")
+    refute Orphans.older?("boot-a:100", "boot-a:100")
+    refute Orphans.older?("boot-a:101", "boot-a:100")
+    # Ticks of another boot say nothing about this one's.
+    refute Orphans.older?("boot-b:1", "boot-a:100")
+    refute Orphans.older?("boot-a:1", nil)
+  end
+
   test "tracking a program already gone is fine, and gone? tells it from a running one" do
     boot(:mc)
     assert :ok = Orphans.track(self(), 2_000_000_000, "mark")

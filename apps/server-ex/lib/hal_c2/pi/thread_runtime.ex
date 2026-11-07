@@ -382,8 +382,10 @@ defmodule HalC2.Pi.ThreadRuntime do
   def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
     # With a turn open, `end_turn/3` already answered every outstanding steer;
     # without one there should be none, but answer any left rather than drop them.
+    # The MC ending Pi on the way down leaves the run for the next boot's recovery
+    # (`HalC2.Orchestration.Recovery.stopping?/0`).
     state =
-      if state.turn,
+      if state.turn && not HalC2.Orchestration.Recovery.stopping?(),
         do: end_turn(state, "failed", "Pi exited unexpectedly"),
         else: %{state | steers: unanswered(state.steers, "failed")}
 

@@ -1,8 +1,21 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24652
+#   https://github.com/pingdotgg/t3code/pull/21358
+#   https://github.com/pingdotgg/t3code/pull/19796
+#   https://github.com/pingdotgg/t3code/pull/15629
+#   https://github.com/pingdotgg/t3code/pull/20980
+#   https://github.com/pingdotgg/t3code/pull/20551
+#   https://github.com/pingdotgg/t3code/pull/18623
+#   https://github.com/pingdotgg/t3code/pull/18472
+#   https://github.com/pingdotgg/t3code/pull/15746
+#   https://github.com/pingdotgg/t3code/pull/7079
+#   https://github.com/pingdotgg/t3code/pull/13339
 #   https://github.com/pingdotgg/t3code/pull/13388 (Stop ends a command left running after its turn)
 #   https://github.com/pingdotgg/t3code/pull/13328
+#   https://github.com/pingdotgg/t3code/pull/13389 (the runtime's temp root beside the instance profile)
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/9514 (the sign-in link on stderr)
+#   https://github.com/pingdotgg/t3code/pull/22019
 #   docs/user/providers-antigravity.md
 #   docs/internals/providers.md (isolated profiles, installer leases, sign-in owned by the initiating session, reject revert before touching files)
 #   apps/server/src/provider/Layers/AntigravityProvider.ts, apps/server/src/provider/AntigravityAuth.ts
@@ -18,7 +31,7 @@
 #   packages/contracts/src/rpc.ts (provider.install.start, provider.install.cancel, provider.install.remove, provider.install.subscribe, provider.auth.complete)
 #   packages/contracts/src/providerSetup.ts (ProviderInstallState)
 
-@plugin-antigravity @mc
+@plugin-antigravity @mc @priority-low
 Feature: Antigravity
   Antigravity runs Google's official Antigravity ACP agent. The MC downloads and
   verifies the runtime itself, keeps a private Google profile for each instance, and
@@ -34,6 +47,15 @@ Feature: Antigravity
     Then the user sees the download progress in megabytes
     And then that it is extracting and then checking the runtime
     And finally that Antigravity is installed
+
+  # Windows can keep the checked runtime's files locked for a moment after its
+  # processes end, so the check must not fail the installation.
+  @backlog
+  Scenario: Installing the Antigravity runtime finishes on Windows on ARM
+    Given the MC runs on Windows on ARM and the Antigravity runtime is not installed
+    When the user installs the Antigravity runtime
+    Then the runtime is checked and Antigravity is installed
+    And no process of the check is left running
 
   Scenario: Installation continues when the user leaves settings or reconnects
     Given the Antigravity runtime is downloading
@@ -114,11 +136,21 @@ Feature: Antigravity
     Then Antigravity uses that installation
     And the managed installer leaves it alone
 
+  # The runtime unpacks deep paths. Windows fails them unless long paths are enabled, so its
+  # temporary folder must not sit inside the instance's profile.
+  @mc @backlog @plugin-antigravity
+  Scenario: Antigravity starts on Windows with long paths disabled
+    Given Windows has long paths disabled
+    When the user signs in to an Antigravity instance with a Google account
+    Then the instance starts and shows its models
+    And the Google sign-in page opens in the browser
+
   Scenario: A manual installation missing its helper is explained
     Given the binary path points to an Antigravity executable without its helper
     When the user refreshes provider status
     Then the user is told the executable or its helper is missing
 
+  # Upstream #18623: an unchecked Antigravity sign-in is shown neutrally, not as a warning.
   Scenario Outline: Antigravity's health states are explained
     Given <situation>
     When the user opens the provider list
@@ -160,6 +192,21 @@ Feature: Antigravity
     When Antigravity cannot confirm account access
     Then Antigravity is not shown as signed in
     And the user is told why
+
+  # Upstream #24652: with no route to Google, sign-in sat on "Starting sign-in…" for five
+  # minutes and then said it had expired.
+  @backlog
+  Scenario: A sign-in that has not reached Google says so after 30 seconds
+    Given the user started Google sign-in
+    When 30 seconds pass without Antigravity offering a Google link
+    Then the Account row says Antigravity has not reached Google yet
+    And it names broken IPv6 as a common cause
+
+  @backlog
+  Scenario: A sign-in that never reached Google says so when it gives up
+    Given the user started Google sign-in
+    When five minutes pass without Antigravity offering a Google link
+    Then the user is told Antigravity could not reach Google, not that sign-in expired
 
   Scenario: An Antigravity sign-in expires after five minutes
     Given the user started Google sign-in
@@ -240,6 +287,22 @@ Feature: Antigravity
       | a 15 MiB audio clip           | accepted |
       | files totalling 60 MiB        | rejected |
       | an unsupported file format    | rejected |
+
+  # Upstream #13339 turns the rejections of text, total and unsupported files into sends by saved
+  # path (the scenario below). These rows still describe the MC until that lands.
+  # Upstream #13339: files that are over a native limit, past the 50 MiB budget, or of a kind
+  # Antigravity does not read natively go to the agent by their saved path. Images keep native
+  # handling and are still refused over their limit.
+  @backlog @plugin-antigravity
+  Scenario Outline: Antigravity receives an attachment it cannot take natively by its saved path
+    When the user attaches <attachment> to an Antigravity message
+    Then the attachment is <outcome>
+
+    Examples:
+      | attachment                 | outcome                |
+      | a 2 MiB text file          | sent by its saved path |
+      | files totalling 60 MiB     | sent by its saved path |
+      | an unsupported file format | sent by its saved path |
 
   Scenario: Antigravity reads a file of a kind it does not recognise by its path
     Given the project has a file whose kind Antigravity does not recognise
@@ -349,6 +412,7 @@ Feature: Antigravity
     When the Antigravity runtime restarts and the thread continues
     Then the thread still uses that model
 
+  # Upstream #21358: PDFs, audio and text go to Antigravity in these forms when it says it takes them.
   Scenario Outline: Each kind of attachment reaches Antigravity in a form it can use
     When the user sends an Antigravity message with <attachment>
     Then Antigravity receives <form>
@@ -601,6 +665,7 @@ Feature: Antigravity
     Then "Allow for this thread" carries that warning
     And a warning longer than 512 characters is cut and ends with "..."
 
+  # Upstream #22019: options keep their own values, an id matches first, then a unique label.
   Scenario Outline: An answer to an Antigravity question may name an option by its label
     Given Antigravity asks a question with the options <options>
     When a client answers "<answer>"
@@ -667,3 +732,50 @@ Feature: Antigravity
       | version | status  |
       | 1.1.1   | unknown |
       | 1.2.0   | unknown |
+
+  @backlog @mc @plugin-antigravity
+  Scenario Outline: The agent is downloaded for each supported platform
+    Given a <platform> machine
+    When Antigravity is set up
+    Then the 1.3.0 agent for it is downloaded and checked against its hash
+
+    Examples:
+      | platform     |
+      | darwin-arm64 |
+      | darwin-x64   |
+      | linux-x64    |
+      | linux-arm64  |
+      | win32-x64    |
+      | win32-arm64  |
+
+  # Upstream #20980: the version learned at the ACP handshake survives a probe that cannot read it.
+  @backlog
+  Scenario: Antigravity keeps the version it reported when it started
+    Given Antigravity runs from a custom executable
+    And it reported version "1.4.0" when its session started
+    When a later version check of that executable cannot tell its version
+    Then Antigravity is still shown as version "1.4.0"
+
+  # Upstream #20551: Antigravity uses the system certificate bundle so it can reach Google on NixOS.
+  @backlog
+  Scenario: Antigravity reaches Google on NixOS
+    Given the MC runs on NixOS, where certificates are not in the usual places
+    When the user sends a message to Antigravity
+    Then Antigravity reaches Google and answers
+
+  # Upstream #15629: an abort before ACP start without IPv6 loopback read as a generic failure.
+  @backlog
+  Scenario: Antigravity that cannot start without IPv6 loopback says so
+    Given the MC's machine has no IPv6 loopback
+    When the user installs the Antigravity runtime or starts a session
+    Then the user is told Antigravity needs IPv6 loopback to start
+    And no Google sign-in address is shown in the error
+    And a failed check of a new runtime keeps the previous one
+
+  # Upstream #19796: a published page reported as "Running html_render" was hidden.
+  @backlog
+  Scenario: An HTML page Antigravity publishes shows in the thread
+    When Antigravity publishes an HTML page in the thread
+    And Antigravity reports the call only as "Running html_render"
+    Then the page shows in the thread as a published page
+    And a publish that failed shows no page

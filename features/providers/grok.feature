@@ -1,6 +1,18 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24605
+#   https://github.com/pingdotgg/t3code/pull/24609
+#   https://github.com/pingdotgg/t3code/pull/20881
+#   https://github.com/pingdotgg/t3code/pull/22849
+#   https://github.com/pingdotgg/t3code/pull/20180
+#   https://github.com/pingdotgg/t3code/pull/18772
+#   https://github.com/pingdotgg/t3code/pull/18771
+#   https://github.com/pingdotgg/t3code/pull/20358
+#   https://github.com/pingdotgg/t3code/pull/19938
+#   https://github.com/pingdotgg/t3code/pull/18075
 #   https://github.com/pingdotgg/t3code/pull/13328
+#   https://github.com/pingdotgg/t3code/pull/10607
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/13523 (one-click updates through `grok update`)
 #   apps/server-ex/lib/hal_c2/acp.ex (grok agent, permission-mode args, supportsTextGeneration)
 #   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex (permission requests, session/cancel, background tasks and subagents)
 #   apps/server-ex/lib/hal_c2/usage/transcripts.ex (Grok transcripts)
@@ -10,8 +22,10 @@
 #   apps/server/src/provider/acp/XAiAcpExtension.ts, apps/server/src/orchestration-v2/Adapters/XAiBackgroundTasks.ts
 #     (x.ai/task_backgrounded, x.ai/task_completed, background subagent notices, persistent monitors)
 #   apps/server/src/provider/acp/XAiBackgroundTasks.ts (how background tasks are listed and ended)
+#   https://github.com/pingdotgg/t3code/pull/14486
+#   https://github.com/pingdotgg/t3code/pull/22709
 
-@plugin-grok @mc
+@plugin-grok @mc @priority-low
 Feature: Grok
   Grok runs the local grok CLI as an ACP agent. Sign-in stays with the Grok CLI, or with
   an xAI API key in the instance's environment.
@@ -34,10 +48,40 @@ Feature: Grok
     When the user enables Grok
     Then Grok's models are offered in the model picker
 
+  # Upstream #22849: every Grok refresh added back cached models the CLI no longer advertised,
+  # so a model gateway's models stayed listed after Grok was disconnected from it.
+  @backlog @mc @plugin-grok @priority-low
+  Scenario: A Grok refresh drops models Grok no longer offers
+    Given Grok offered the models of a model gateway
+    And Grok was disconnected from the gateway
+    When the user refreshes Grok
+    Then only the models Grok now offers are in the model picker
+
+  # Upstream #22849
+  @backlog @mc @plugin-grok @priority-low
+  Scenario Outline: A Grok check that finds no models keeps the last known ones with a warning
+    Given Grok offered four models
+    When the MC checks Grok and <result>
+    Then Grok shows a warning
+    And the four models are still offered
+
+    Examples:
+      | result                         |
+      | Grok lists no models           |
+      | Grok fails to start a session  |
+
   Scenario: A signed-out Grok says so
     Given the grok command is installed but not signed in
     When the user enables Grok
     Then Grok is shown as signed out with a hint to sign in
+
+  # Upstream #20358: a logged-out Grok probe is checked once more before Grok is reported signed out.
+  @backlog
+  Scenario: A Grok refreshing its sign-in is not reported signed out
+    Given Grok's sign-in expired and Grok is refreshing it
+    When the MC checks Grok and is told Grok is signed out
+    Then the MC checks once more
+    And Grok is reported signed in
 
   Scenario: Grok permission requests become approvals
     Given the thread runs Grok with approval required
@@ -65,6 +109,45 @@ Feature: Grok
     When the user opens the provider list
     Then Grok shows that it uses an xAI API key
 
+  # Grok's own installer owns the binary, so its own updater is the update command.
+  # Upstream #13523: Grok is updated through `grok update`
+  @backlog
+  Scenario: An outdated Grok is offered an update through Grok's own updater
+    Given Grok was installed by its own installer and a newer version is released
+    When the MC checks provider versions
+    Then Grok is reported behind the latest version with an update command
+
+  # Upstream #13523: Grok is updated through `grok update`
+  @backlog
+  Scenario: Updating Grok runs its updater against the home its instance uses
+    Given Grok was installed by its own installer and this Grok instance has its own Grok home
+    When the user updates Grok
+    Then Grok's updater runs against that home and not the default one
+    And Grok is reported current
+
+  # Upstream #18772: a Homebrew-cask Grok is compared against the cask and upgraded with brew.
+  @backlog
+  Scenario: A Grok installed as a Homebrew cask is updated through that cask
+    Given Grok's executable lives in the Homebrew cask that installed it
+    When the user opens Grok's update details
+    Then Grok is compared against the version that cask would install
+    And the update command upgrades that cask through Homebrew and not Grok's own updater
+
+  # Upstream #18772: a cask the MC cannot prove owns Grok is left to the user.
+  @backlog
+  Scenario: A Grok in a Homebrew cask that cannot be proven is updated by hand
+    Given Grok's executable sits in a Homebrew cask under a different prefix than the brew on the path
+    When the user opens Grok's update details
+    Then no update command is offered for Grok
+
+  # A binary that cannot be resolved is never handed to an updater it does not belong to.
+  # Upstream #13523: Grok is updated through `grok update`
+  @backlog
+  Scenario: A Grok binary that cannot be resolved is updated by hand
+    Given the Grok instance's executable cannot be resolved
+    When the MC checks provider versions
+    Then Grok is reported behind the latest version with no update command
+
   # Health states of GrokProvider.ts checkGrokProviderStatus.
   @backlog
   Scenario Outline: Grok's health states are explained
@@ -81,6 +164,13 @@ Feature: Grok
       | the grok command is installed but signed out   | Grok CLI is installed but not logged in. Run `grok login`.                        |
       | Grok cannot report its model options           | Grok CLI is installed but ACP initialize failed. Model options may be incomplete. |
 
+  # Upstream #18771: Grok gets up to 20 seconds to answer initialize before it is reported failing.
+  @backlog
+  Scenario: A Grok that is slow to start is not reported as failing
+    Given Grok takes 15 seconds to answer when it starts
+    When the MC checks Grok
+    Then Grok is reported ready
+
   @backlog
   Scenario: Grok that cannot report its model options stays usable
     Given the grok command is installed and signed in
@@ -88,6 +178,34 @@ Feature: Grok
     When the user sends a message to Grok
     Then Grok answers it
     And Grok is listed with a warning, not as unavailable
+
+  # Upstream #18075: health probes run Grok with its auto-updater turned off
+  @backlog
+  Scenario Outline: Grok's health checks do not start Grok's own updater
+    Given the MC's environment lets Grok update itself
+    When the MC checks Grok's health by <probe>
+    Then Grok runs with its automatic updater turned off
+    And Grok's health, sign-in and models are still reported
+
+    Examples:
+      | probe                          |
+      | reading its version            |
+      | listing its models             |
+      | starting an agent connection   |
+      | listing a project's skills     |
+
+  # Upstream #18075: sessions, text generation and updates keep the caller's environment
+  @backlog
+  Scenario Outline: Grok updates itself as configured outside health checks
+    Given the MC's environment lets Grok update itself
+    When <use>
+    Then Grok runs with the MC's environment unchanged
+
+    Examples:
+      | use                                    |
+      | the user sends a message to Grok       |
+      | Grok writes a commit message or title  |
+      | the user updates Grok                  |
 
   Scenario: Grok's plan becomes a plan the user can implement
     When Grok proposes a plan
@@ -160,10 +278,41 @@ Feature: Grok
     Then Grok's command is cancelled
     And "Work" lists only the subagent as background work
 
+  # Upstream #22709: Grok does not always report a background command's end; the result of
+  # polling or killing it ends it too, and it is not listed again afterwards.
+  @backlog
+  Scenario Outline: A Grok background command ends when its result says so
+    Given Grok left a command running in the background
+    When <event> and Grok never reports the command ended
+    Then Grok's command is completed
+    And "Work" lists no background work
+
+    Examples:
+      | event                                               |
+      | Grok reads the command's output after it finished   |
+      | Grok kills the command                              |
+
+  # Upstream #22709: a command's result read alongside a subagent's does not end the subagent.
+  @backlog
+  Scenario: Reading a command's result does not end a subagent beside it
+    Given Grok left a command and a subagent running in the background
+    When Grok reads the finished command's output and the subagent's progress together
+    Then Grok's command is completed
+    And "Work" lists the subagent as background work
+
   # A persistent monitor watches until the session ends, so nothing waits on it.
   Scenario: A persistent Grok monitor is not background work
     Given Grok left a persistent monitor running
     Then Grok's monitor is not listed as background work
+
+  # Upstream #24609: a Grok monitor was listed as a command and noted as a shell on restart.
+  # Replaces the scenario above once the MC carries it.
+  @backlog
+  Scenario: A persistent Grok monitor is listed as a monitor that does not hold the thread
+    Given Grok left a persistent monitor running
+    Then "Work" lists the monitor as a monitor in its background work
+    And the note after a restart names it as a monitor
+    And "Work" does not stay Working for it
 
   @backlog
   Scenario: Grok monitor updates do not end or hold the turn
@@ -180,6 +329,19 @@ Feature: Grok
     Given Grok left a command and a subagent running in the background
     When Grok reports the command and the subagent ended
     Then "Work" runs a turn telling Grok its background work finished
+
+  # Upstream #24605: picking a skill writes "$name", but Grok only expands a leading "/name".
+  @backlog
+  Scenario Outline: A picked Grok skill at the start of a message runs as Grok's own command
+    Given the grok command reports the skill "deploy" for the project
+    When the user sends "<message>" to Grok
+    Then Grok receives "<received>"
+
+    Examples:
+      | message             | received            |
+      | $deploy to staging  | /deploy to staging  |
+      | please run $deploy  | please run $deploy  |
+      | $unknown to staging | $unknown to staging |
 
   @backlog
   Scenario: Grok skills are the ones the grok command reports
@@ -241,6 +403,7 @@ Feature: Grok
     When Grok runs a tool and gives it no title
     Then the tool call is named after the command, file or search it works on
 
+  # Upstream #20881: a Grok question that allows several answers keeps that.
   @backlog
   Scenario Outline: Grok's questions keep their shape
     When Grok asks a question <shape>
@@ -291,6 +454,25 @@ Feature: Grok
     Given a Grok thread with history
     When the user sends "/compact" with no attachments and the turn completes
     Then the work log shows "Context compacted" once
+
+  # Upstream #20180: Grok reports the selected model's context window from its session, so
+  # the handoff budget is sized by it instead of an assumed 128,000 tokens.
+  @backlog
+  Scenario: Switching a thread back to Grok sizes the handoff by Grok's context window
+    Given a thread used Grok before and has since run on another provider
+    And the Grok model reports a context window larger than 128,000 tokens
+    When the user switches the thread back to Grok and sends a message
+    Then the history is handed to Grok within that model's window
+    And the turn is not refused for lack of context allowance
+
+  # Legacy: apps/server/src/provider/Layers/GrokAdapter (a dead session is retired, then resumed)
+  # Upstream #10607: a terminated Grok session is retired so the next turn resumes it
+  @backlog
+  Scenario: A Grok process that exits between turns is resumed by the next message
+    Given the Grok process ends with an error while the conversation is idle
+    When the user sends a message on the same conversation
+    Then a fresh Grok process loads the saved session and answers
+    And the earlier messages stay in the thread
 
   @backlog
   Scenario: Stopping a running Grok turn ends everything Grok started
@@ -621,14 +803,34 @@ Feature: Grok
     When a Grok session is started
     Then its task tool is passed as disallowed
 
+  # Upstream #13328: restore a compatibility policy for every harness (Grok supported at 1.0.13)
   @backlog
   Scenario Outline: The version Grok runs decides whether this HAL-C2 release supports it
     Given Grok version "<version>" is installed
     When the MC checks Grok
     Then Grok is reported as "<status>" for this HAL-C2 release
 
-    # Statuses are the MC's (see the Claude Code outline); no range names a version yet.
+    # Statuses are the MC's (see the Claude Code outline). A CLI below 1.0.13 is refused by
+    # xAI's backend with 426 Upgrade Required, so it is broken and the warning points at >=1.0.13.
     Examples:
       | version | status  |
-      | 1.0.12  | unknown |
+      | 0.2.8   | broken  |
+      | 1.0.12  | broken  |
       | 1.0.13  | unknown |
+
+  # Upstream #14486: Grok CLIs older than 1.0.13 are marked broken
+  @backlog @desktop
+  Scenario: A broken Grok's warning names the version to update to
+    Given Grok version "0.2.8" is installed
+    When the user opens the Providers settings
+    Then Grok shows an incompatible-version warning
+    And the warning names version 1.0.13 or newer
+
+  # Upstream #19938: a Grok command that finishes before its prompt settles keeps its result;
+  # a sparse duplicate update does not turn a failure into success.
+  @backlog @shared
+  Scenario: A Grok background command that finished early reads as finished
+    Given Grok finishes a background command with a failure before its turn ends
+    And Grok then sends an update for the command without a result
+    When the turn ends
+    Then the command reads as failed, not running and not succeeded

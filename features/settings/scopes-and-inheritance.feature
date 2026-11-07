@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16581
+#   https://github.com/pingdotgg/t3code/pull/18503
+#   https://github.com/pingdotgg/t3code/pull/18582
+#   https://github.com/pingdotgg/t3code/pull/17370
+#   https://github.com/pingdotgg/t3code/pull/18334
+#   https://github.com/pingdotgg/t3code/pull/17879
 #   apps/web/src/components/settings/scopedSettings.ts (planScopedSettingsPatch)
 #   apps/web/src/components/settings/settingsScope.ts
 #   apps/web/src/components/settings/settingsScopeAxis.ts
@@ -71,8 +77,75 @@ Feature: Settings scopes and inheritance
       When the MC resolves the settings for "hal-c2"
       Then the default model is the environment's default model
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/settings.ex (the file is checked again every couple of seconds)
+    # Upstream #16581: a project's new model kept the previous model's options.
+    @backlog @mc @desktop
+    Scenario: A project's new model does not keep the old model's options
+      Given the project "hal-c2" overrides the default model with "gpt-6-astra" at extra high effort
+      When the user changes the project's default model to "gpt-6-luna"
+      Then the project's default model is "gpt-6-luna" with its own default options
+      And no effort is saved for it from "gpt-6-astra"
+
+    # Upstream #17879. A project's provider switch overrides the environment's, and the MC
+    # checks the project's value wherever a turn can start.
     @backlog @mc
+    Scenario Outline: A project turns a provider on or off apart from its environment
+      Given the "Codex" provider is <environment> on this environment
+      And the project "hal-c2" <project>
+      When a turn on "Codex" starts in "hal-c2"
+      Then the turn <result>
+
+      Examples:
+        | environment | project                              | result                             |
+        | enabled     | turns "Codex" off                    | is refused because "Codex" is off  |
+        | disabled    | turns "Codex" on                     | starts                             |
+        | disabled    | has no provider switch of its own    | is refused because "Codex" is off  |
+        | enabled     | has no provider switch of its own    | starts                             |
+
+    @backlog @mc
+    Scenario Outline: Every way a turn starts honours the project's provider switch
+      Given the project "hal-c2" turns "Codex" off
+      When <how> on "Codex" in "hal-c2"
+      Then no "Codex" turn starts
+
+      Examples:
+        | how                                               |
+        | the user starts a new thread                      |
+        | the user sends a message                          |
+        | a queued message comes up                         |
+        | a delegated task sends its follow-up              |
+        | an agent starts a child thread or delegates by MCP |
+        | a scheduled task runs                             |
+
+    @backlog @mc
+    Scenario: A running turn finishes when its project turns the provider off
+      Given a "Codex" turn is running on a thread in "hal-c2" for a delegated task
+      When the project "hal-c2" turns "Codex" off
+      Then the running turn finishes
+      And the delegated task's result still reaches its parent thread
+
+    @backlog @mc
+    Scenario: A provider off on the environment keeps running for a project that turned it on
+      Given the "Codex" provider is disabled on this environment
+      And the project "hal-c2" turns "Codex" on
+      Then "Codex" stays available for turns in "hal-c2"
+      And other projects still cannot start "Codex" turns
+
+    @backlog @mc
+    Scenario: Writing in a project falls back when the project turned the writer's provider off
+      Given titles and commit messages are written by "Codex"
+      And the project "hal-c2" turns "Codex" off
+      When a title is written for a thread in "hal-c2"
+      Then it is written by the next usable provider
+      And titles in other projects are still written by "Codex"
+
+    @backlog @mc
+    Scenario: Deleting a project drops its provider switches
+      Given the project "hal-c2" turns "Codex" off
+      When the project "hal-c2" is deleted
+      Then the settings keep no provider switch for "hal-c2"
+
+    # Likely already implemented: apps/server-ex/lib/hal_c2/settings.ex (the file is checked again every couple of seconds)
+    @backlog @mc @priority-high
     Scenario: A settings file edited by hand reaches connected clients
       Given a client is connected to the MC
       When the user changes a setting in settings.json with a text editor
@@ -84,6 +157,21 @@ Feature: Settings scopes and inheritance
       When the user saves a settings.json that is not valid JSON
       Then the MC keeps using the settings it had
       And connected clients are not sent broken settings
+
+    # Upstream #18582: a client's save no longer reverts a hand edit to settings.json the server had not read yet.
+    @backlog @mc
+    Scenario: A client's save keeps a hand edit the MC has not noticed yet
+      Given the user edited settings.json by hand a moment ago
+      When a client saves a different setting before the MC has read the edit
+      Then settings.json holds both the hand edit and the client's change
+
+    # Upstream #18582: a save over a settings.json that is not valid JSON is refused.
+    @backlog @mc
+    Scenario: A save over a settings file that is not valid JSON is refused and leaves it unchanged
+      Given settings.json holds a hand edit that is not valid JSON
+      When a client saves a setting
+      Then the save is refused
+      And settings.json still holds the user's text for them to fix
 
     @backlog @mc
     Scenario: A settings file that cannot be read at startup is kept for repair
@@ -107,7 +195,7 @@ Feature: Settings scopes and inheritance
         | cannot be opened                | the read fails and the user's saved choices are not overwritten  |
 
     # Likely already implemented: apps/server-ex/lib/hal_c2/settings.ex (write!: temporary file, owner-only, rename)
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: The settings file is private to its owner and replaced in one step
       When a client saves a setting
       Then settings.json is readable only by the user the MC runs as
@@ -120,7 +208,7 @@ Feature: Settings scopes and inheritance
       Then settings.json holds only that setting
       And a setting the user never changed follows a newer version's default
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario Outline: A retired streaming mode becomes the nearest current one
       Given settings.json sets the response streaming mode to "token"<where>
       When the MC reads the settings
@@ -191,6 +279,16 @@ Feature: Settings scopes and inheritance
       When the user chooses which environment settings apply to
       Then "Build box" is listed as offline
 
+    # Upstream #18503: with one environment chosen, the project picker lists only projects that
+    # have a checkout there; all environments still lists every project.
+    @backlog @desktop
+    Scenario: Choosing a project on one environment offers only projects checked out there
+      Given "notes" has a checkout only on "Build box"
+      And the user is editing settings on "Laptop"
+      When the user chooses which project settings apply to
+      Then "notes" is not offered
+      And with all environments chosen "notes" is offered again
+
     @backlog @desktop
     Scenario Outline: A scope that no longer exists explains why and saves nothing
       Given the user opened a settings link for <target>
@@ -205,26 +303,26 @@ Feature: Settings scopes and inheritance
         | a project that was removed           | This project is no longer available.                                           |
         | a checkout that was removed          | This checkout is no longer available in the selected project and environment. |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A section with nothing to change at this scope offers where to go instead
       Given the user is editing settings for the project "hal-c2"
       When the user opens a section that only has environment-wide settings
       Then the page offers each environment the section can be changed on
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Environments that share a name are told apart by address
       Given two environments are both named "Development"
       When the user chooses which environment settings apply to
       Then each is listed as "Development" followed by its address
       And when an environment has no address its id is used instead
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A renamed environment no longer needs its address shown
       Given two environments were both named "Development"
       When one is renamed "Production"
       Then each is listed by its name alone
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An older settings link for a project and environment still opens it
       Given the user opens a settings link that names a project and a machine from before checkouts existed
       When the settings page loads
@@ -267,6 +365,14 @@ Feature: Settings scopes and inheritance
       When the user changes a setting
       Then the user is told the setting saved on some environments and could not update "Build box"
 
+    @backlog @desktop @mobile @priority-low
+    Scenario: A setting an environment refuses names that environment and those that saved it
+      Given the user is editing settings across "Laptop" and "Build box"
+      And this device's session on "Build box" may not change settings
+      When the user changes a setting
+      Then the user is told "Build box" refused the change for lack of permission
+      And the user is told "Laptop" saved it
+
     @desktop
     Scenario: A setting cannot be changed while its environment is disconnected
       Given the user is editing settings for "Build box"
@@ -290,7 +396,7 @@ Feature: Settings scopes and inheritance
       Then the setting cannot be changed
       And the user is told to update that environment
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Changing one field of a project's writing style keeps the other fields
       Given "hal-c2" overrides the writing style with custom instructions "Keep it short."
       When the user changes only the custom instructions to "Be terse."
@@ -307,13 +413,13 @@ Feature: Settings scopes and inheritance
         | the default thread mode | the override is removed and the environment's value applies  |
         | the default model    | the project keeps an explicit "no default model" override        |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Clearing the last override of a project removes its entry
       Given "hal-c2" overrides only the default model
       When the user resets the default model for the project
       Then "hal-c2" has no overrides left on that environment
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Clearing one override leaves the project's other overrides
       Given "hal-c2" overrides the default model and auto pull
       When the user resets the default model for the project
@@ -325,6 +431,27 @@ Feature: Settings scopes and inheritance
       When the user looks at agent device access and device hosts
       Then agent device access can be changed for the project
       And device hosts can only be changed at environment scope
+
+    # Upstream #17879. The provider switch on the Providers page used to change the whole
+    # environment even with a project chosen.
+    @backlog @shared
+    Scenario: A provider switched off for a project stays on for the rest of the environment
+      Given the user is editing settings for the project "hal-c2" on "Laptop"
+      When the user turns the "Codex" provider off
+      Then "Codex" is off for every checkout of "hal-c2" on "Laptop"
+      And "Codex" stays on for the other projects on "Laptop"
+
+    @backlog @shared
+    Scenario: A project's provider switch can be reset to the environment's value
+      Given the project "hal-c2" turned "Codex" off while the environment has it on
+      When the user resets the "Codex" switch for "hal-c2"
+      Then "Codex" follows the environment's value for "hal-c2" again
+
+    @backlog @shared
+    Scenario: Model pickers in a project leave out providers the project turned off
+      Given the project "hal-c2" turned "Codex" off
+      When the user picks a model for a thread in "hal-c2"
+      Then no "Codex" model can be chosen
 
   Rule: The user can see and clear where a value comes from
 
@@ -386,7 +513,7 @@ Feature: Settings scopes and inheritance
         | "Build box" lists "opus" as unavailable                                    |
 
     # Legacy: apps/web/src/components/settings/settingsLayout.tsx (inheritance summary)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A setting says in one line where its value comes from
       Given <situation>
       When the user looks at the setting
@@ -403,7 +530,7 @@ Feature: Settings scopes and inheritance
         | nothing sets it                                                  | Built-in default                           |
 
     # Legacy: apps/web/src/components/settings/SettingInheritance.tsx (formatValue)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A layer with no value reads in the setting's own words
       Given no layer sets "<setting>"
       When the user asks where it comes from
@@ -419,7 +546,7 @@ Feature: Settings scopes and inheritance
         | Worktree submodules           | Inherit                |
 
     # Legacy: apps/web/src/components/settings/SettingInheritance.tsx (overridingProjects)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Projects overriding a value can be opened or reset together
       Given "hal-c2" and "docs" both override the default model on "Laptop"
       And the user is editing settings for "Laptop"
@@ -431,9 +558,18 @@ Feature: Settings scopes and inheritance
       Then neither project overrides the default model
 
     # Legacy: apps/web/src/components/settings/SettingInheritance.tsx (chains per target)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Across several environments the chain is listed once for each
       Given the user is editing settings across "Laptop" and "Build box"
       When the user asks where the default model comes from
       Then the layers are listed under "Laptop" and again under "Build box"
       And the layer in effect is marked on each
+
+    @backlog @shared @priority-low
+    Scenario: An environment that accepts a setting but does not keep it is named
+      Given the user is editing settings across "Laptop" and "Build box"
+      And "Build box" runs a build that does not know the setting being changed
+      When the user changes that setting
+      Then the change is saved on "Laptop"
+      And the user is told it could not be saved on "Build box", which does not support the setting and needs updating
+      But a value the environment kept with surrounding spaces trimmed counts as saved

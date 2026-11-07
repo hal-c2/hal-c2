@@ -25,7 +25,7 @@ ColumnLayout {
         Layout.fillWidth: true
         text: qsTr("Models in the picker on this device")
         color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
     }
 
     // How many there are, and a filter once the list is long.
@@ -40,7 +40,7 @@ ColumnLayout {
             text: list.provider.modelSummary ?? ""
             wrapMode: Text.Wrap
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         ShellTextField {
@@ -71,7 +71,7 @@ ColumnLayout {
                 // Its name, a star when it is a favourite, and what it can do.
                 text: (row.modelData.favorite ? "★ " : "") + (row.modelData.name.length > 0 ? row.modelData.name : row.modelData.slug) + ((row.modelData.labels ?? []).length > 0 ? " · " + row.modelData.labels.join(" · ") : "")
                 color: Theme.palette.color(row.modelData.hidden ? "textMuted" : "text", row.modelData.hidden ? "#a1a1aa" : "#e4e4e7")
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.strikeout: row.modelData.hidden === true
                 elide: Text.ElideRight
             }

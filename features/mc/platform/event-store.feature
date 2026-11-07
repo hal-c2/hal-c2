@@ -1,7 +1,14 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24571
+#   https://github.com/pingdotgg/t3code/pull/21122
+#   https://github.com/pingdotgg/t3code/pull/20948
+#   https://github.com/pingdotgg/t3code/pull/15937 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/15925 (dropped: the MC runs no numbered migrations)
+#   https://github.com/pingdotgg/t3code/pull/19435
+#   https://github.com/pingdotgg/t3code/pull/19436
 #   apps/server-ex/lib/hal_c2/store.ex (event log, snapshots, compression, read-only readers, WAL checkpoints)
 #   apps/server-ex/lib/hal_c2/patch.ex (set, append, unset, delete, quiet)
-#   apps/server-ex/lib/hal_c2/stream_state.ex (folded state, snapshot migration)
+#   apps/server-ex/lib/hal_c2/stream_state.ex (folded state, snapshot migration, hot and cold)
 #   apps/server-ex/lib/hal_c2/streams/server.ex (snapshot every 500 events, sidebar debounce,
 #     calls that wait for the store however long it takes)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_watch.ex (a run whose runtime exits is abandoned)
@@ -73,6 +80,15 @@ Feature: The MC's event store and projections
     When a thread is used for the first time
     Then it starts without waiting for the writer
 
+  # Upstream #24571: a brief lock on the database failed an otherwise healthy run.
+  @backlog @mc
+  Scenario: A provider event write retries after a brief database lock
+    Given a turn is running in the thread
+    And another writer holds the database lock past its timeout once
+    When the agent reports an event
+    Then the event is stored on a later try and the turn goes on
+    And a write that fails for any other reason fails at once
+
   # A write that waited a minute for a busy disk exited the runtime making it, and
   # the run was abandoned as one whose session had ended.
   @mc
@@ -109,6 +125,31 @@ Feature: The MC's event store and projections
     When the MC loads the thread
     Then the snapshot is migrated to the current format
 
+  # Memory holds the hot part of a thread: every run, and the items and messages of
+  # its latest and unfinished runs. Older runs' are read from disk when asked for.
+  @mc
+  Scenario: A long thread keeps its older runs on disk
+    Given a thread has finished 8 runs of 3 items while memory holds 2
+    Then the MC holds only the latest runs' items in memory
+    When a client subscribes to the thread
+    Then the client receives every entity of a fold of the log
+    And the thread's older runs are read from disk after a restart
+
+  # hal-c2.threadRows answers a page at a time, so a long thread's never builds whole.
+  @mc
+  Scenario: A client reads a long thread's entities a page at a time
+    Given a thread has finished 8 runs of 3 items while memory holds 2
+    When a client reads the thread's entities 5 at a time
+    Then it took more than one page, each entity once in the order they were created
+
+  # One from before paging asks without `after`, and would take a first page for all of it.
+  @mc
+  Scenario: A client from before paging still reads a long thread whole
+    Given a thread has finished 8 runs of 3 items while memory holds 2
+    And pages of 5 rows
+    When a client from before paging reads the thread's entities
+    Then it got each entity once in the order they were created, in one reply
+
   @mc
   Scenario: History survives a restart
     When the MC restarts
@@ -125,6 +166,16 @@ Feature: The MC's event store and projections
     Given threads written before the sidebar table existed
     When the MC starts
     Then it rebuilds their rows without delaying startup
+
+  # Upstream #21122: opening a large database no longer reads every table for planner
+  # statistics; an 11 GB copy opened in 50 to 66 ms instead of 108 s.
+  # Likely already implemented: apps/server-ex/lib/hal_c2/store.ex (opens with no ANALYZE or PRAGMA optimize)
+  @backlog @mc @priority-high
+  Scenario: Opening a large store does not hold up startup
+    Given a store of many gigabytes with no table statistics
+    When the MC starts
+    Then it opens the store without reading through its tables
+    And it accepts clients within a second of opening the store
 
   @mc
   Scenario: Messages written before the search index are indexed once
@@ -152,6 +203,16 @@ Feature: The MC's event store and projections
     When an older MC opens it
     Then it refuses to start and names the version it found
 
+  # T3 Code's #15937 has an older server skip event types a newer build wrote when a client
+  # resumes past them. The MC's log holds patches, not typed events, and an older MC refuses
+  # a newer store outright (above), so there is nothing to skip.
+  # Upstream #15937: an older server skips event types a newer build wrote when a client resumes past them
+  @dropped @mc
+  Scenario: A thread resumes past an event a newer build wrote
+    Given a thread's log holds an event of a type only a newer build knows
+    When a client resumes the thread from before that event
+    Then the event is skipped and the thread finishes syncing
+
   # The Node server builds these checks but nothing in it runs them yet; see the audit's
   # "Uncertain" list before implementing.
   @mc @backlog
@@ -169,7 +230,7 @@ Feature: The MC's event store and projections
       | the projections stopped at an earlier sequence than the log | the sequence they are at and the log's |
       | the projections were written by another projection format   | the format version it found            |
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: Projections are rebuilt from the log
     Given the projections of the MC are damaged
     When the projections are rebuilt
@@ -177,28 +238,105 @@ Feature: The MC's event store and projections
     And timeline items keep the order they first had
     And the check against the log passes
 
+  # Upstream #19435: superseded history is compacted in the background
   @mc @backlog
+  # Upstream keeps the oldest event of each message as well as the newest
+  # (pingdotgg/t3code#19435): a client adds a message where it first sees it.
   Scenario: Compacting the log removes only what a replay no longer needs
     Given a thread was renamed, pinned and visited many times and its messages streamed in many updates
     When the log is compacted
-    Then only the newest state of the thread and of each message is kept
-    And the thread's creation and every timeline item update stay in the log
+    Then only the newest state of the thread is kept
+    And the oldest and the newest update of each message and pull request link are kept
+    And the thread's creation, its deletion, its runs and every timeline item update stay in the log
     And rebuilding the projections gives the same threads as before
 
-  @mc @backlog
+  # Upstream #19435: superseded history is compacted in the background
+  @mc @backlog @priority-high
+  Scenario: A visit does not compact away the rename that carries the thread's activity time
+    Given a thread was renamed and then visited
+    When the log is compacted
+    Then the rename stays in the log
+    And of the visits and marks as unread only the newest is kept
+
+  # Upstream #19435: superseded history is compacted in the background
+  @mc @backlog @priority-high
+  Scenario: A client resuming from before a compaction ends in the same state
+    Given a client last read the log at an offset before many messages were streamed
+    And the log was compacted since
+    When the client resumes from its offset
+    Then it ends with the same threads and messages, in the same order, as a client that read every event
+
+  # Upstream #19435: superseded history is compacted in the background
+  @mc @backlog @priority-low
+  Scenario: The log is compacted in the background
+    When the MC has been running for one minute
+    Then the log is compacted
+    And it is compacted again every six hours after that
+    And the space it frees is given back to the disk a little at a time while the MC runs
+
+  @mc @backlog @priority-low
   Scenario: Compacting the log reports what it removed and what can be reclaimed
     When the log is compacted
     Then it reports how many events and receipts it removed
     And how many bytes the store can now give back
 
+  # Upstream #19435: superseded history is compacted in the background
   @mc @backlog
   Scenario: Compacting a long log does not hold up other work
     Given a log with many thousands of events
     When the log is compacted while clients send commands
-    Then the commands are accepted between the batches of 500 events it works through
+    Then the commands are accepted between the batches of 50 events it works through
+
+  # Upstream #19436: t3 doctor reclaims database space
+  @mc @backlog @priority-low
+  Scenario: The doctor command reclaims the space of a store that cannot shrink online
+    Given a store created before it could give space back to the disk while running
+    When the user runs the MC's doctor command with "--fix"
+    Then the projections are checked, the log is compacted and the projections are checked again
+    And the store is switched to give space back while running and is shrunk
+    And it reports the store's size before and after and how many events it removed
+    And a second run reports "Nothing to repair"
+
+  # Upstream #19436: t3 doctor reclaims database space
+  @mc @backlog
+  Scenario Outline: The doctor command asks before it repairs
+    When the user runs the MC's doctor command <how>
+    Then <outcome>
+
+    Examples:
+      | how                          | outcome                                                    |
+      | in a terminal                | the user chooses the repairs, with the recommended ones chosen |
+      | with "--dry-run"             | the repairs are listed and nothing changes                 |
+      | with "--dry-run" and "--fix" | the repairs are listed and nothing changes                 |
+
+  # Upstream #19436: t3 doctor reclaims database space
+  @mc @backlog @priority-high
+  Scenario: The doctor command does not repair a store that is open
+    Given an MC or a client has the store open
+    When the user runs the MC's doctor command with "--fix"
+    Then it refuses and changes nothing
+
+  # Upstream #19436: t3 doctor reclaims database space
+  @mc @backlog @priority-low
+  Scenario: The doctor command pauses this home's background service while it repairs
+    Given the MC runs as a background service for this home
+    When the user runs the MC's doctor command with "--fix"
+    Then the service is stopped for the repair and started again afterwards, even when the repair fails
+    And a service that was disabled is not enabled
+    And services for other homes are left alone
+
+  # Upstream #20948 lets t3 doctor delete, by opt-in, the database T3 Code kept for rolling
+  # back to before 0.1.0. The MC keeps no second database: what HAL-C2 moved in from lives in
+  # the old home, which HAL-C2 never changes.
+  @dropped @mc
+  Scenario: The doctor command offers to delete the database kept for rolling back
+    Given a store kept beside the current one only for rolling back to an older version
+    When the user runs the MC's doctor command
+    Then it offers to delete that store, unchosen, warning that the older version would start empty
 
   # The TypeScript server's numbered projection migrations. The MC stores entity
   # patches, and its state format migrates snapshots in place instead.
+  # Upstream #15925: a migration id clash stops startup with a clear error
   @dropped @mc
   Scenario: The server runs numbered projection migrations on startup
     Given a database from an older server

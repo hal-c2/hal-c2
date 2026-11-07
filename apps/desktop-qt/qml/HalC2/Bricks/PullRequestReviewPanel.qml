@@ -20,6 +20,7 @@ Rectangle {
     property string section: "overview"
 
     readonly property var detail: source?.detail ?? ({})
+    readonly property var threads: source?.threads ?? null
     readonly property bool online: source !== null && source.online
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
@@ -80,7 +81,7 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true
             Layout.margins: 8
-            spacing: 6
+            spacing: Theme.space.sm
 
             ShellIcon {
                 name: root.detail.state === "merged" ? "git-merge" : root.detail.state === "closed" ? "circle-x" : "git-pull-request"
@@ -97,7 +98,7 @@ Rectangle {
                     text: root.detail.title ?? qsTr("Pull request #%1").arg(root.source?.number ?? 0)
                     elide: Text.ElideRight
                     color: root.foreground
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                 }
                 Text {
@@ -105,7 +106,64 @@ Rectangle {
                     text: ["#" + (root.source?.number ?? 0), root.detail.stateLabel ?? "", root.detail.author ?? "", root.detail.branches ?? ""].filter(part => part.length > 0).join(" · ")
                     elide: Text.ElideRight
                     color: root.muted
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
+
+                    // The number's menu: copy its link, or open it on its host.
+                    TapHandler {
+                        acceptedButtons: Qt.RightButton
+                        enabled: (root.detail.url ?? "").length > 0
+                        // ljos-allow(focus-pointer-only): the header's Open and Copy buttons offer the same from the keyboard
+                        onTapped: eventPoint => Shell.dispatch("pullRequest.linkMenu", {
+                                url: root.detail.url,
+                                x: eventPoint.scenePosition.x,
+                                y: eventPoint.scenePosition.y
+                            })
+                    }
+                }
+            }
+            // PullRequestThreadLinks: how many threads work on it, which opens
+            // the palette on them, and linking it to this thread or another.
+            ShellButton {
+                objectName: "reviewLinkedThreads"
+                subtle: true
+                iconName: "message-square"
+                text: root.threads && root.threads.count > 0 ? root.threads.count : ""
+                visible: root.threads !== null && root.threads.available && root.threads.count > 0
+                Accessible.name: root.threads?.label ?? ""
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("%1. Search in the command palette.").arg(Accessible.name)
+                onClicked: root.threads.search()
+            }
+            ShellButton {
+                objectName: "reviewThreadMenu"
+                subtle: true
+                iconName: "link"
+                visible: root.threads !== null && root.threads.available
+                enabled: root.online && !(root.threads?.pending ?? true)
+                Accessible.name: qsTr("Linked threads")
+                ToolTip.visible: hovered
+                ToolTip.text: Accessible.name
+                onClicked: threadMenu.open()
+
+                ShellMenu {
+                    id: threadMenu
+
+                    y: parent.height
+
+                    ShellMenuItem {
+                        objectName: "reviewThreadToggle"
+                        text: root.threads?.menuLabel ?? ""
+                        iconName: "link"
+                        enabled: !(root.threads?.pending ?? true)
+                        onTriggered: root.threads.toggleHere()
+                    }
+                    ShellMenuItem {
+                        objectName: "reviewThreadPick"
+                        text: qsTr("Link to another thread…")
+                        iconName: "message-square-plus"
+                        enabled: !(root.threads?.pending ?? true)
+                        onTriggered: root.threads.pickerOpen = true
+                    }
                 }
             }
             ShellButton {
@@ -142,7 +200,7 @@ Rectangle {
             Layout.fillWidth: true
             Layout.leftMargin: 8
             Layout.rightMargin: 8
-            Layout.bottomMargin: 6
+            Layout.bottomMargin: Theme.space.sm
             spacing: 4
 
             Repeater {
@@ -181,12 +239,12 @@ Rectangle {
             Layout.fillWidth: true
             Layout.leftMargin: 12
             Layout.rightMargin: 12
-            Layout.bottomMargin: 6
+            Layout.bottomMargin: Theme.space.sm
             visible: root.source !== null && !root.online
             wrapMode: Text.Wrap
             text: qsTr("This environment is unreachable. The pull request shows as last read.")
             color: root.warningColor
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         Rectangle {
@@ -204,7 +262,7 @@ Rectangle {
                 anchors.centerIn: parent
                 width: parent.width - 32
                 visible: root.section !== "code" && (root.source?.status ?? "idle") !== "ready"
-                spacing: 10
+                spacing: Theme.space.sm
 
                 Text {
                     Layout.fillWidth: true
@@ -212,7 +270,7 @@ Rectangle {
                     wrapMode: Text.Wrap
                     text: root.source?.status === "error" ? root.source.message : root.source?.status === "loading" ? qsTr("Loading the pull request…") : ""
                     color: root.source?.status === "error" ? root.errorColor : root.muted
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                 }
                 ShellButton {
                     Layout.alignment: Qt.AlignHCenter
@@ -237,7 +295,7 @@ Rectangle {
                     x: 12
                     y: 12
                     width: parent.width - 24
-                    spacing: 10
+                    spacing: Theme.space.sm
 
                     // The host's stack this pull request is a layer of: where
                     // it sits, and merging or rebasing the stack, which ask first.
@@ -250,28 +308,28 @@ Rectangle {
                         objectName: "reviewStack"
                         Layout.fillWidth: true
                         visible: shown
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         Text {
                             objectName: "reviewStackTitle"
                             Layout.fillWidth: true
                             text: stackSection.shown ? qsTr("Stack #%1 · layer %2 of %3 onto %4").arg(stackSection.stack.number).arg(stackSection.stack.position).arg(stackSection.stack.size).arg(stackSection.stack.base) : ""
                             color: root.foreground
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             font.weight: Font.Medium
                             elide: Text.ElideRight
                         }
                         RowLayout {
                             Layout.fillWidth: true
                             visible: stackSection.stack.stale === true
-                            spacing: 6
+                            spacing: Theme.space.sm
 
                             Text {
                                 objectName: "reviewStackNotice"
                                 Layout.fillWidth: true
                                 text: stackSection.stack.notice ?? ""
                                 color: root.warningColor
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                                 wrapMode: Text.Wrap
                             }
                             ShellButton {
@@ -282,7 +340,7 @@ Rectangle {
                         }
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: 6
+                            spacing: Theme.space.sm
 
                             ShellButton {
                                 objectName: "reviewStackMerge"
@@ -307,7 +365,7 @@ Rectangle {
                     RowLayout {
                         Layout.fillWidth: true
                         visible: root.detail.canMerge === true
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         ShellButton {
                             objectName: "reviewMerge"
@@ -352,14 +410,14 @@ Rectangle {
                         wrapMode: Text.Wrap
                         text: (root.detail.behindBy ?? 0) === 1 ? qsTr("This branch is %n commit behind its base.", "", 1) : qsTr("This branch is %n commits behind its base.", "", root.detail.behindBy ?? 0)
                         color: root.warningColor
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
                     Text {
                         Layout.fillWidth: true
                         visible: root.detail.mergeability === "conflicting"
                         text: qsTr("This branch has conflicts with its base.")
                         color: root.errorColor
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
                     Text {
                         objectName: "reviewDescription"
@@ -368,7 +426,7 @@ Rectangle {
                         textFormat: Text.MarkdownText
                         text: (root.detail.body ?? "").length > 0 ? root.detail.body : qsTr("No description provided.")
                         color: (root.detail.body ?? "").length > 0 ? root.foreground : root.muted
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         linkColor: Theme.link
                         onLinkActivated: link => Qt.openUrlExternally(link)
                     }
@@ -378,7 +436,7 @@ Rectangle {
                         wrapMode: Text.Wrap
                         text: qsTr("Labels: %1").arg((root.detail.labels ?? []).join(", "))
                         color: root.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
                     Text {
                         Layout.fillWidth: true
@@ -386,20 +444,20 @@ Rectangle {
                         wrapMode: Text.Wrap
                         text: qsTr("Reviewers: %1").arg((root.detail.reviewers ?? []).join(", "))
                         color: root.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
                     Text {
-                        Layout.topMargin: 6
+                        Layout.topMargin: Theme.space.sm
                         text: qsTr("Checks")
                         color: root.foreground
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         font.weight: Font.Medium
                     }
                     Text {
                         visible: (root.detail.checks ?? []).length === 0
                         text: qsTr("No checks reported.")
                         color: root.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
                     Repeater {
                         model: root.detail.checks ?? []
@@ -409,12 +467,12 @@ Rectangle {
 
                             objectName: "reviewCheck-" + modelData.name
                             Layout.fillWidth: true
-                            spacing: 6
+                            spacing: Theme.space.sm
 
                             Rectangle {
                                 implicitWidth: 8
                                 implicitHeight: 8
-                                radius: 4
+                                radius: Theme.radiusPill
                                 color: root.checkColor(parent.modelData.status)
                             }
                             Text {
@@ -422,12 +480,12 @@ Rectangle {
                                 text: parent.modelData.name
                                 elide: Text.ElideRight
                                 color: root.foreground
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                             }
                             Text {
                                 text: parent.modelData.status
                                 color: root.checkColor(parent.modelData.status)
-                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                                font.pixelSize: Theme.type.caption.size
                             }
                         }
                     }
@@ -454,7 +512,7 @@ Rectangle {
                     model: root.source?.conversation ?? []
                     header: Column {
                         width: conversation.width
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         Repeater {
                             model: root.source?.reviewThreads ?? []
@@ -468,7 +526,7 @@ Rectangle {
                                 x: 12
                                 width: parent.width - 24
                                 height: threadColumn.implicitHeight + 16
-                                radius: 6
+                                radius: Theme.radiusSm
                                 color: "transparent"
                                 border.color: root.borderColor
 
@@ -488,7 +546,7 @@ Rectangle {
                                             text: reviewThread.modelData.path + (reviewThread.modelData.line > 0 ? ":" + reviewThread.modelData.line : "") + (reviewThread.modelData.outdated ? qsTr(" · outdated") : "") + (reviewThread.modelData.resolved ? qsTr(" · resolved") : "")
                                             elide: Text.ElideMiddle
                                             color: root.muted
-                                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                                            font.pixelSize: Theme.type.caption.size
                                         }
                                         ShellButton {
                                             objectName: "reviewThreadResolve"
@@ -509,7 +567,7 @@ Rectangle {
                                             text: "<b>" + modelData.author + "</b> " + modelData.body
                                             textFormat: Text.StyledText
                                             color: root.foreground
-                                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                                            font.pixelSize: Theme.type.meta.size
                                         }
                                     }
                                 }
@@ -531,7 +589,7 @@ Rectangle {
                             text: [comment.modelData.author, comment.modelData.reviewState.length > 0 ? comment.modelData.reviewState.toLowerCase().replace("_", " ") : "", comment.modelData.path].filter(part => part.length > 0).join(" · ")
                             elide: Text.ElideRight
                             color: root.muted
-                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                            font.pixelSize: Theme.type.caption.size
                         }
                         Text {
                             Layout.fillWidth: true
@@ -540,7 +598,7 @@ Rectangle {
                             textFormat: Text.MarkdownText
                             text: comment.modelData.body
                             color: root.foreground
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             linkColor: Theme.link
                             onLinkActivated: link => Qt.openUrlExternally(link)
                         }
@@ -556,7 +614,7 @@ Rectangle {
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.margins: 8
-                    spacing: 6
+                    spacing: Theme.space.sm
 
                     TextArea {
                         id: reply
@@ -569,9 +627,9 @@ Rectangle {
                         placeholderText: qsTr("Leave a comment")
                         placeholderTextColor: root.muted
                         color: root.foreground
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         background: Rectangle {
-                            radius: 6
+                            radius: Theme.radiusSm
                             color: "transparent"
                             border.color: reply.activeFocus ? Theme.palette.color("focus", "#3b82f6") : root.borderColor
                         }
@@ -583,11 +641,11 @@ Rectangle {
                         wrapMode: Text.Wrap
                         text: root.source?.problem ?? ""
                         color: root.errorColor
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         Item {
                             Layout.fillWidth: true
@@ -664,11 +722,8 @@ Rectangle {
         onAskedChanged: asked ? open() : close()
         onRejected: root.source.cancelStack()
 
-        background: Rectangle {
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: Theme.palette.color("border", "#27272a")
-            radius: Math.min(Theme.radius, 16)
-        }
+        Overlay.modal: ShellScrim {}
+        background: ShellPopoverSurface {}
         contentItem: ColumnLayout {
             spacing: 12
 
@@ -677,7 +732,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: stackConfirm.question.title ?? ""
                 color: root.foreground
-                font.pixelSize: Math.round(17 * Theme.fontScale)
+                font.pixelSize: Theme.type.title.size
                 font.weight: Font.DemiBold
                 wrapMode: Text.Wrap
             }
@@ -686,7 +741,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: stackConfirm.question.description ?? ""
                 color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 wrapMode: Text.Wrap
             }
             RowLayout {
@@ -706,6 +761,120 @@ Rectangle {
                     primary: true
                     text: stackConfirm.question.confirmLabel ?? qsTr("Confirm")
                     onClicked: root.source.confirmStack()
+                }
+            }
+        }
+    }
+
+    // The thread picker: the environment's active threads, newest first; one
+    // that already links the pull request shows "Linked" and cannot be chosen.
+    Dialog {
+        id: threadPicker
+
+        objectName: "reviewThreadPicker"
+        parent: Overlay.overlay
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(420, (parent?.width ?? 452) - 32)
+        padding: 8
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        visible: root.threads?.pickerOpen ?? false
+        onClosed: if (root.threads)
+            root.threads.pickerOpen = false
+        onOpened: threadSearch.forceActiveFocus()
+
+        Overlay.modal: ShellScrim {}
+        background: ShellPopoverSurface {}
+        contentItem: ColumnLayout {
+            spacing: Theme.space.sm
+
+            ShellTextField {
+                id: threadSearch
+
+                objectName: "reviewThreadSearch"
+                Layout.fillWidth: true
+                placeholderText: qsTr("Search threads or projects...")
+                text: root.threads?.query ?? ""
+                enabled: !(root.threads?.pending ?? false)
+                onTextEdited: root.threads.query = text
+            }
+            Text {
+                objectName: "reviewThreadPickerEmpty"
+                Layout.fillWidth: true
+                Layout.topMargin: 16
+                Layout.bottomMargin: 16
+                visible: threadList.count === 0
+                horizontalAlignment: Text.AlignHCenter
+                text: qsTr("No active threads found.")
+                color: root.muted
+                font.pixelSize: Theme.type.meta.size
+            }
+            ListView {
+                id: threadList
+
+                objectName: "reviewThreadList"
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(contentHeight, 320)
+                visible: count > 0
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                model: root.threads?.candidates ?? []
+
+                delegate: ItemDelegate {
+                    id: candidate
+
+                    required property var modelData
+
+                    objectName: "reviewThreadCandidate-" + modelData.id
+                    width: ListView.view.width
+                    enabled: !modelData.linked && !(root.threads?.pending ?? false)
+                    onClicked: root.threads.choose(modelData.id)
+
+                    background: Rectangle {
+                        color: candidate.hovered && candidate.enabled ? Theme.palette.color("accentSurface", "#27272a") : "transparent"
+                        radius: Theme.radiusSm
+                    }
+                    contentItem: RowLayout {
+                        spacing: 8
+
+                        ShellIcon {
+                            name: "message-square"
+                            size: 14
+                            color: root.muted
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 0
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: candidate.modelData.title
+                                elide: Text.ElideRight
+                                color: candidate.enabled ? root.foreground : root.muted
+                                font.pixelSize: Theme.type.body.size
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                visible: text.length > 0
+                                text: candidate.modelData.project
+                                elide: Text.ElideRight
+                                color: root.muted
+                                font.pixelSize: Theme.type.caption.size
+                            }
+                        }
+                        ShellIcon {
+                            visible: candidate.modelData.linked
+                            name: "check"
+                            size: 12
+                            color: root.muted
+                        }
+                        Text {
+                            visible: candidate.modelData.linked
+                            text: qsTr("Linked")
+                            color: root.muted
+                            font.pixelSize: Theme.type.caption.size
+                        }
+                    }
                 }
             }
         }

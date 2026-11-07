@@ -1,5 +1,24 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20054
+#   https://github.com/pingdotgg/t3code/pull/23135
+#   https://github.com/pingdotgg/t3code/pull/23814
+#   https://github.com/pingdotgg/t3code/pull/20299
+#   https://github.com/pingdotgg/t3code/pull/21417
+#   https://github.com/pingdotgg/t3code/pull/21474
+#   https://github.com/pingdotgg/t3code/pull/21483
+#   https://github.com/pingdotgg/t3code/pull/18919
+#   https://github.com/pingdotgg/t3code/pull/22052
+#   https://github.com/pingdotgg/t3code/pull/21499
+#   https://github.com/pingdotgg/t3code/pull/19849
+#   https://github.com/pingdotgg/t3code/pull/17539
+#   https://github.com/pingdotgg/t3code/pull/17945
+#   https://github.com/pingdotgg/t3code/pull/17761
+#   https://github.com/pingdotgg/t3code/pull/17764
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/22638
+#   https://github.com/pingdotgg/t3code/pull/25238
+#   https://github.com/pingdotgg/t3code/pull/25401
+#   https://github.com/pingdotgg/t3code/pull/25830
 #   docs/user/composer.md (Queued messages, Follow-up behavior)
 #   docs/user/updating.md (Continue threads after restarts)
 #   packages/contracts/src/orchestrationV2.ts (message.dispatch, run.interrupt, queue.resume, queued-run.reorder, queued-run.cancel, queued-run.edit, queued-message.promote-to-steer, provider-session.detach, run.created, run.updated, run_interrupt_request, run_interrupt_result)
@@ -39,6 +58,13 @@ Feature: Runs, interruptions and the queue
     When the user interrupts the turn
     Then the turn stops
     And the timeline marks the run as interrupted
+
+  # Upstream #25830: a stopped run read as a failure.
+  @backlog @shared @priority-low
+  Scenario: A run the user or an agent stopped is not shown as a failure
+    Given the run was stopped by the user, a goal, a steer or the agent that delegated it
+    When the user looks at the timeline
+    Then "Run interrupted" is shown as a stop, not as an error
 
   @mc
   Scenario: A message sent while the agent works waits its turn
@@ -86,7 +112,10 @@ Feature: Runs, interruptions and the queue
     Then "A" joins the running turn
     And the queue is empty
 
-  @shared @backlog-mobile @backlog-tui
+  # Upstream #21417: the phone marks sent steer and queued messages like the desktop, as muted
+  # text beside the time, not tappable pills.
+  # Since upstream #21474 a message that waited in the queue carries no marker; see the replacement below.
+  @shared @backlog-mobile @priority-high
   Scenario Outline: A sent message says how it reached the agent
     When the user's message was <how>
     Then the message is marked "<marker>"
@@ -97,7 +126,50 @@ Feature: Runs, interruptions and the queue
       | sent as a steer                      | Steered the active turn                                   |
       | queued and later promoted to a steer | Originally queued, then promoted to steer the active turn |
 
-  @backlog @mobile
+  # Upstream #21474: a sent message that had waited in the queue carries no marker; steers and
+  # queued messages promoted to steers keep theirs. Replaces the scenario above once the clients
+  # carry it.
+  @backlog @shared @priority-high
+  Scenario Outline: A sent message is marked only when it steered the agent
+    When the user's message was <how>
+    Then the message is <marked>
+
+    Examples:
+      | how                                  | marked                                                              |
+      | queued behind the active turn        | not marked                                                          |
+      | sent as a steer                      | marked "Steered the active turn"                                    |
+      | queued and later promoted to a steer | marked "Originally queued, then promoted to steer the active turn" |
+
+  @shared @backlog-desktop @backlog-mobile @priority-high
+  Scenario: A reply that finished before a steer stays the turn's answer
+    Given the agent finished its reply
+    When the user's steer restarts the run before the turn closed
+    Then the finished reply stays visible as the turn's answer
+    And it is not folded away as partial output
+
+  @shared @backlog-desktop @backlog-mobile @priority-high
+  Scenario: A reply cut off by a steer is folded as cut off
+    Given the agent is in the middle of its reply
+    When the user's steer restarts the run
+    Then what the agent had written is folded under "Cut off by a steer"
+
+  # Only a steer marks the run it interrupts; a crash, an MC restart or an imported
+  # thread that stopped mid-reply leaves the reply interrupted with no mark.
+  @shared @backlog-desktop @backlog-mobile @priority-high
+  Scenario: A reply that stopped without a steer is not folded as cut off
+    Given the agent is in the middle of its reply
+    When the run ends interrupted without a steer
+    Then what the agent had written is not folded as cut off
+
+  @backlog @shared
+  Scenario: A queued run that starts after a steer shows in a thread with only recent history loaded
+    Given a thread with only its recent history loaded has a queued follow-up
+    And a steer sent after it ran first
+    When the queued follow-up starts
+    Then its message and the agent's work appear in the thread
+    And they are still there after a reload
+
+  @backlog @mobile @priority-high
   Scenario: A message the MC has not acknowledged yet is marked as pending
     Given the user sent a message that the MC has not yet acknowledged
     When the user reads the thread
@@ -105,19 +177,19 @@ Feature: Runs, interruptions and the queue
     When the MC acknowledges the message
     Then the message shows the time it was sent
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @priority-high
   Scenario: A sent message shows its images
     When the user sent the image "cart.png" with a message
     Then the message shows the image "cart.png" from its MC
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @priority-high
   Scenario: An image is still shown after its address stops working
     Given the user sent the image "cart.png" with a message
     And the message shows the image "cart.png" from its MC
     When more than an hour passes
     Then the message shows the image "cart.png" from a new address
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @priority-high
   Scenario: A sent file shows its name, kind and size
     When the user sent the file "report.pdf" of 2 MB with a message
     Then the message shows "report.pdf" with its kind and size
@@ -142,7 +214,7 @@ Feature: Runs, interruptions and the queue
     When the user opens it
     Then the video plays
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-low
   Scenario: A sent attachment of a kind this client does not know is listed by name only
     Given the message carries an attachment of a kind a newer environment added
     Then the message lists the attachment by its name
@@ -186,7 +258,7 @@ Feature: Runs, interruptions and the queue
     When the provider exits before the turn starts
     Then the run fails with "The provider stopped while starting the turn."
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario Outline: A finished turn that left work running says what it is waiting on
     Given the turn has finished and left <tasks> running in the background
     Then the thread says "<notice>"
@@ -198,18 +270,44 @@ Feature: Runs, interruptions and the queue
       | the task "watch tests"             | Waiting on background task    |
       | the tasks "watch tests" and "lint" | Waiting on 2 background tasks |
 
-  @backlog @desktop
+  # Upstream #20054: a long task description hid the links to the subagents' threads.
+  @backlog @desktop @priority-low
+  Scenario: A long background task description keeps its subagent links in reach
+    Given the turn has finished and left a subagent running with a long description
+    Then the notice shows the description below its title
+    And the link to the subagent's thread is still shown
+    And Stop stays beside the notice's title
+
+  @backlog @desktop @priority-low
   Scenario: Background work is not announced while a turn is running
     Given a turn is running and has started background tasks
     Then the thread shows no notice about background work
     And stopping the turn is the way to stop them
 
-  @backlog @desktop
+  # Upstream #23814: a command the MC had finished still showed as running from the client's
+  # saved copy of the thread, and Stop did not clear it.
+  @backlog @shared
+  Scenario: Stop clears commands the MC already finished
+    Given the client's saved copy of "Fix checkout" shows "npm test" running
+    And the MC finished "npm test" long ago
+    When the user presses Stop in "Fix checkout"
+    Then "npm test" shows as finished, also after the app is reopened
+    And work that is still running stays shown as running
+
+  @backlog @desktop @priority-high
   Scenario: Stopping background work can be asked again
     Given the turn has finished and left the task "watch tests" running
     When the user stops the background work and the environment accepts
     And "watch tests" is still running
     Then the user can ask to stop it again
+
+  # Upstream #22052: a thread can be stopped without knowing which run is active.
+  @backlog @desktop @priority-high
+  Scenario: Background work left by a turn that is not loaded can still be stopped
+    Given an earlier turn left the task "watch tests" running
+    And that turn is older than the part of the thread the client has loaded
+    When the user stops the thread
+    Then "watch tests" is stopped
 
   @backlog @desktop
   Scenario: Background work that cannot be stopped says why
@@ -219,14 +317,37 @@ Feature: Runs, interruptions and the queue
     Then the thread shows the reason as its error
     And the notice about "watch tests" stays
 
-  @shared @backlog
+  @shared @backlog-desktop @backlog-mobile @priority-high
   Scenario: The user dismisses a thread's error
     Given the thread shows the error "Rate limited"
     When the user dismisses the error
     Then the error is hidden for this thread
     And a different error on the same thread is still shown
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-desktop @backlog-mobile @priority-high
+  Scenario: A later run that fails the same way shows its error again
+    Given the thread shows the error "Rate limited"
+    And the user dismisses the error
+    When a later run of the thread fails with "Rate limited"
+    Then the thread shows "Rate limited" as its error
+
+  # A failed run's error goes once a later run succeeds.
+  @shared @backlog-desktop @backlog-mobile @priority-high
+  Scenario: A later run that succeeds does not bring a dismissed error back
+    Given the thread shows the error "Rate limited"
+    And the user dismisses the error
+    When a later run of the thread completes
+    Then the thread shows no error
+
+  # Upstream #21483: a structured thread error filled the banner with its raw JSON.
+  @backlog @shared @priority-low
+  Scenario: A structured thread error reads as its message
+    Given the thread's error is a payload whose message is "Your request was blocked"
+    When the user looks at the thread's error
+    Then the error reads "Your request was blocked"
+    And the user can open the full error to read the whole payload
+
+  @shared @backlog-mobile @priority-high
   Scenario: A usage limit is one warning line naming when to retry
     Given the provider stopped the turn at its usage limit, resetting at the top of an hour
     Then the timeline shows one warning line naming when to retry
@@ -243,8 +364,8 @@ Feature: Runs, interruptions and the queue
       | chooses to resume at reset | the thread continues at 3 pm             |
       | cancels the auto-resume    | the thread waits for the user after 3 pm |
 
-  # TUI: renders the meter from apps/tui/src/contextWindow.ts, but the MC does not report context usage yet.
-  @shared @backlog
+  # The MC reports contextUsage and the TUI draws the meter (apps/tui/src/contextWindow.ts); the Qt clients do not show it yet.
+  @shared @backlog-desktop @backlog-mobile @priority-high
   Scenario Outline: The thread shows how full the context window is
     Given the agent has used 144,000 tokens <of>
     Then the context window reads "<reading>"
@@ -254,6 +375,18 @@ Feature: Runs, interruptions and the queue
       | of a 200,000 token window | 72% · 144k/200k |
       | of an unknown window      | 144k used       |
 
+  # Upstream #17539: counts just under a million rounded up inside the thousands and read "1000k".
+  @shared @backlog-desktop @backlog-mobile @priority-low
+  Scenario Outline: A context count that rounds up to a million reads as a million
+    Given the agent has used <tokens> tokens of an unknown window
+    Then the context window reads "<reading>"
+
+    Examples:
+      | tokens    | reading   |
+      | 999,499   | 999k used |
+      | 999,500   | 1m used   |
+      | 1,000,000 | 1m used   |
+
   @backlog @desktop
   Scenario: The context window reading is shown only when its setting is on
     Given the context window meter setting is off
@@ -262,7 +395,7 @@ Feature: Runs, interruptions and the queue
     When the user turns the context window meter setting on
     Then the context window reads "72% · 144k/200k"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A context window under a tenth full is read to one decimal
     Given the agent has used <used> tokens of a 200,000 token window
     Then the context window is "<percent>" full
@@ -310,7 +443,7 @@ Feature: Runs, interruptions and the queue
     Then the details show "Total processed" as 1.2m and "Cost" as "USD 0.42"
     And a thread whose provider reports no cost shows no cost
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: The context window's details say when the provider compacts on its own
     Given the thread runs on a model named "Sonnet" that compacts its context automatically
     And the provider <reports>
@@ -322,7 +455,7 @@ Feature: Runs, interruptions and the queue
       | says it compacts at 160,000 tokens         | Compacts automatically at 160,000 tokens.              |
       | does not say when it compacts              | Context for Sonnet compacts automatically when needed. |
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: The conversation is compacted from the context window's details
     Given the thread's provider can compact a conversation on request
     When the user chooses "Compact context" in the context window's details
@@ -369,7 +502,7 @@ Feature: Runs, interruptions and the queue
       | 99,999  | 3 hours    | not shown                                      |
       | 400,000 | 69 minutes | not shown                                      |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Only Claude threads are offered to continue with less context
     Given a Codex thread with 400,000 tokens in its context window that was last active 3 hours ago
     When the user opens the thread
@@ -386,13 +519,13 @@ Feature: Runs, interruptions and the queue
       | the agent is working on a turn     |
       | a question is waiting for the user |
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: Compacting from the offer compacts the conversation
     Given a Claude thread shows the offer "Resume with less context"
     When the user chooses "Compact"
     Then Claude is asked to compact the conversation
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Keeping the full history puts the offer away until the conversation moves on
     Given the Claude threads "Cart totals" and "Tax rounding" both show the offer "Resume with less context"
     When the user chooses "Keep full history" in "Cart totals"
@@ -400,13 +533,34 @@ Feature: Runs, interruptions and the queue
     When "Cart totals" runs another turn and again sits unused for 70 minutes
     Then the offer is shown in "Cart totals" again
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Telling Claude never to ask about compacting also ends HAL-C2's offer
     Given Claude asked whether to compact before resuming and the user answered never to be asked again
     When the user later comes back to a long Claude conversation on that Claude instance
     Then the offer "Resume with less context" is not shown
 
-  @desktop @backlog
+  @backlog @mc @desktop @mobile @tui @plugin-claude @priority-low
+  Scenario Outline: The offer to continue with less context follows Claude's prompt cache lifetime
+    Given a Claude thread with 100,000 tokens in its context window
+    And Claude's last reply <cache>
+    When the thread has been idle for <ago>
+    Then the offer "Resume with less context" is <shown>
+
+    Examples:
+      | cache                                 | ago        | shown     |
+      | wrote its prompt cache for 5 minutes  | 6 minutes  | shown     |
+      | wrote its prompt cache for 1 hour     | 59 minutes | not shown |
+      | wrote its prompt cache for 1 hour     | 61 minutes | shown     |
+      | wrote no prompt cache                 | 69 minutes | not shown |
+      | wrote no prompt cache                 | 70 minutes | shown     |
+
+  @backlog @desktop @mobile @tui @priority-low
+  Scenario: The offer reads the thread's newest usage after a provider handoff
+    Given a thread moved from Codex to Claude
+    When the user reloads the thread
+    Then the offer to continue with less context counts the tokens of Claude's latest turn, not an older one
+
+  @desktop @backlog @priority-high
   Scenario Outline: The thread says when its provider cannot run
     Given the thread in "shop" runs on Codex
     And Codex <problem>
@@ -448,7 +602,7 @@ Feature: Runs, interruptions and the queue
     When the user looks at the thread
     Then no provider notice is shown
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A message to Antigravity is held with the reason it cannot be sent
     Given the thread in "shop" runs on Antigravity
     And <state>
@@ -463,7 +617,7 @@ Feature: Runs, interruptions and the queue
       | Antigravity is signed in and lists no models                      | Refresh Antigravity models in provider settings before sending.     |
       | Antigravity is ready and the thread's model has left its catalog  | That Antigravity model is no longer available. Choose another model. |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A message to Antigravity is not held when only starting the turn can tell
     Given the thread in "shop" runs on Antigravity with a model chosen
     And <state>
@@ -492,8 +646,157 @@ Feature: Runs, interruptions and the queue
     Then the answer to "/usage-limits" is the notice shown
     And the composer no longer says there are other notices
 
+  # Upstream #25238: switching threads while a dismissed notice was still going away brought it back.
+  @backlog @desktop @priority-low
+  Scenario: A notice dismissed just before switching threads stays dismissed
+    Given the thread shows the error "Rate limited"
+    When the user dismisses the error and at once opens another thread
+    And the user comes back to the thread
+    Then the error is not shown
+
+  # Upstream #18919: activity notices took the front over a usage limit and hid its recovery
+  # actions; errors, warnings and urgent notices now come first, activity behind them.
   @backlog @desktop
-  Scenario: What the agent is doing stays in front of every notice
-    Given the thread says it is waiting on the background work "watch tests"
-    And the thread shows the error "Rate limited"
-    Then the notice about "watch tests" is the one shown and the error waits behind it
+  Scenario Outline: Errors and warnings stay in front of what the agent is doing
+    Given the thread <activity>
+    And the thread shows <notice>
+    Then <notice> is the notice shown
+    And the notice about what the agent is doing waits behind it
+
+    Examples:
+      | activity                                                | notice                                  |
+      | says it is waiting on the background work "watch tests" | the error "Rate limited"                |
+      | is working toward a goal                                | a usage limit with its recovery actions |
+
+  # Upstream #20299: a time that rounds up to a minute reads as a minute.
+  @backlog @shared @priority-low
+  Scenario: A time just under a minute reads as one minute
+    Given a turn has been working for 59.5 seconds
+    Then its elapsed time reads "1m", not "60s"
+
+  # Upstream #21499: a turn blocked only in a thread wait looked busy (its label is upstream #21500).
+  @backlog @mc @shared
+  Scenario: A turn that only waits on another thread says so
+    Given a thread's agent waits for the thread "Add search" to finish
+    And nothing else in the turn is running
+    Then the thread shows it is waiting on another thread, not working
+
+  @backlog @mc @shared
+  Scenario: A turn that waits on another thread and runs a command reads as working
+    Given a thread's agent waits for the thread "Add search" to finish
+    And the agent also runs a command
+    Then the thread shows it is working
+
+  # Upstream #22638: automation prompts are long runbooks repeated on every run; they fold to one line.
+  @backlog @shared
+  Scenario Outline: A message an automation sent is folded to one line
+    Given <task> sent its prompt into the thread
+    When the user looks at the thread
+    Then the message is a one-line bubble reading "Automation" and <label>
+
+    Examples:
+      | task                                                         | label                       |
+      | the scheduled task "PR dispatcher"                           | "PR dispatcher"             |
+      | a scheduled task since deleted, with "Triage new issues" first | "Triage new issues"       |
+
+  # Upstream #22638: opening the fold shows the whole prompt and only then its actions.
+  @backlog @shared
+  Scenario: Opening an automation message shows its prompt and actions
+    Given the scheduled task "PR dispatcher" sent its prompt into the thread
+    When the user opens the folded message
+    Then the whole prompt is shown
+    And the user can open the automation, see when it ran, edit from here and copy the prompt
+    And opening it again folds it back to one line
+
+  # Upstream #22638: find reaches into folded automation messages.
+  @backlog @shared
+  Scenario: Finding text inside a folded automation message opens it
+    Given a folded automation message whose prompt mentions "label events"
+    When the user finds "label events" in the thread
+    Then the message opens with the match shown
+
+  # Upstream #23135: a few messages from other agents pushed the user's own last message off the
+  # screen; they fold like automation prompts.
+  @backlog @shared
+  Scenario Outline: A message another agent sent is folded to one line
+    Given <sender> sent "Review notes:" and more lines into the thread
+    When the user looks at the thread
+    Then the message is a one-line bubble reading <label> and "Review notes:"
+
+    Examples:
+      | sender                                      | label                  |
+      | the agent of the thread "Review the 2.4 notes" | "Review the 2.4 notes" |
+      | an agent whose thread is not known          | "Agent"                |
+
+  @backlog @shared
+  Scenario: Opening another agent's message shows it whole and leads to its thread
+    Given the agent of "Review the 2.4 notes" sent a message into the thread
+    When the user opens the folded message
+    Then the whole message is shown with its time, a copy action and "Open thread"
+    And "Open thread" opens "Review the 2.4 notes"
+
+  @backlog @shared @priority-low
+  Scenario: Finding text inside a folded agent message opens it
+    Given a folded message from another agent mentions "release blocker"
+    When the user finds "release blocker" in the thread
+    Then the message opens with the match shown
+
+  @backlog @shared @priority-low
+  Scenario: Messages HAL-C2 sends stay whole
+    Given a delegated task's result was sent into the thread by HAL-C2
+    Then the message is shown whole, not folded
+
+  # Upstream #22638: older messages carried the schedule as a text prefix.
+  @backlog @shared @priority-low
+  Scenario: An older automation message is shown without its trigger prefix
+    Given a message from before automations were marked starts "[Triggered by schedule task: PR dispatcher]"
+    When the user opens it
+    Then the prompt is shown without that prefix
+
+  # Upstream #25401: thread state stacked as cards over the composer, showing one and hiding the
+  # rest. The end of the timeline now reads past, now, next; the composer keeps what affects sending.
+  Rule: The end of the timeline says what is happening now and what comes next
+
+    @backlog @desktop
+    Scenario Outline: What a thread is doing shows at the end of its timeline
+      Given <state>
+      When the user looks at the thread
+      Then the end of the timeline shows it, with <actions>
+      And nothing stacks over the composer
+
+      Examples:
+        | state                                         | actions                              |
+        | a subagent needs the user's input             | Open approval or Open question       |
+        | a finished turn left "vp run dev" running     | Stop                                 |
+        | the thread is pursuing a goal                 | the goal's usage and its actions     |
+        | the thread's messages are still loading       | no actions                           |
+
+    @backlog @desktop
+    Scenario: Queued messages show as Up next after the thread's status
+      Given two messages are queued behind the running turn
+      When the user looks at the thread
+      Then the end of the timeline shows them under "Up next", after the thread's status
+      And each can be edited, sent now or steered, removed or moved
+
+    @backlog @desktop @priority-low
+    Scenario: The agent's task list is in the work log where it wrote it
+      Given the agent wrote a task list and has done 2 of its 5 steps
+      When the user looks at the work log
+      Then the update reads "Tasks 2/5" with the current step, and opens to every step
+
+    @backlog @desktop
+    Scenario Outline: What affects sending stays with the composer
+      Given <state>
+      Then the composer says so
+
+      Examples:
+        | state                                    |
+        | the environment is offline or reconnecting |
+        | the branch changed under the thread      |
+        | a usage limit was reached                |
+
+    @backlog @desktop @priority-low
+    Scenario: Scroll to end names what waits at the end
+      Given the end of the timeline is out of view
+      And the thread needs the user's input and has 2 queued messages
+      Then "Scroll to end" reads "Needs input · 2 queued"

@@ -10,6 +10,7 @@ defmodule HalC2.ClusterProofTest do
   @off "an MC booted without distribution never clusters; the model's MCs all do"
   @address "which address and port reach a member; the model connects members by id"
   @task "Discovery's bookkeeping of the connection attempt it runs; connect models the attempt"
+  @offline "how long a member has failed, for clients; an offline member is still tried, as connect is"
   @settings "carries shared settings, no part of the table; settings_shared.maude models it"
 
   use HalC2.Proof,
@@ -33,6 +34,10 @@ defmodule HalC2.ClusterProofTest do
       "HalC2.Cluster.peers/0" => "connect",
       "HalC2.Cluster.admit/1" => "admit",
       "HalC2.Cluster.remove/1" => "remove",
+      # Off is a removal that the table keeps listing, on an admission from what it kept.
+      "HalC2.Cluster.switch/2" => ~w(admit remove),
+      "HalC2.Cluster handle_call {:switch, _, _}" => ~w(admit remove),
+      "HalC2.Cluster.reconnect/1" => "connect",
       "HalC2.Cluster.join/1" => ~w(admit merge),
       "HalC2.Cluster.merge/3" => ~w(merge mergeE),
       "HalC2.Cluster.stamp/1" => "stamp",
@@ -54,6 +59,8 @@ defmodule HalC2.ClusterProofTest do
       "HalC2.Cluster.Discovery.poll/0" => "connect",
       "HalC2.Cluster.Discovery.connect/3" => "connect",
       "HalC2.Cluster.Discovery handle_info :poll" => "connect",
+      "HalC2.Cluster.Discovery.reconnect/1" => "connect",
+      "HalC2.Cluster.Discovery handle_call {:reconnect, _}" => "connect",
       "HalC2.Cluster state :members" => "mc"
     },
     abstracts: %{
@@ -71,11 +78,24 @@ defmodule HalC2.ClusterProofTest do
       "HalC2.Cluster.mc_name/1" => @names,
       "HalC2.Cluster.fingerprint/1" => @names,
       "HalC2.Cluster.status/0" => @reads,
+      "HalC2.Cluster.off?/1" =>
+        "reads offAt, which marks a removal as a switch-off and decides no membership",
+      "HalC2.Cluster.Discovery.offline/0" => @reads,
+      "HalC2.Cluster.Discovery handle_call :offline" => @reads,
+      "HalC2.Cluster.Discovery.settle/3" => @offline,
+      "HalC2.Cluster.Discovery.offline/3" => @offline,
       "HalC2.Cluster handle_call :status" => @reads,
       "HalC2.Cluster handle_call :fingerprint" => @reads,
+      "HalC2.Cluster.removed?/1" => @reads,
+      "HalC2.Cluster handle_call {:removed?, _}" => @reads,
       "HalC2.Cluster handle_call :entry" =>
         "describes this MC to an inviter, whose admit takes it; changes nothing",
-      "HalC2.Cluster.invite/1" => "makes a pairing link; changes no table",
+      "HalC2.Cluster.invite/1" => "makes a cluster-only invite; changes no table",
+      "HalC2.Cluster.join_challenge/1" => "cluster_join.maude models the join handshake",
+      "HalC2.Cluster.join_admit/1" => "cluster_join.maude models the join handshake",
+      "HalC2.Cluster handle_call :identity" => "reads this MC's key for the join handshake",
+      "HalC2.Cluster handle_call {:join_admit, _}" =>
+        "cluster_join.maude models the join handshake",
       "HalC2.Cluster.describe/1" => @words,
       "HalC2.Cluster.reason/1" => @words,
       "HalC2.Cluster.detail/1" => @words,

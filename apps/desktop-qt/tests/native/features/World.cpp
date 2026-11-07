@@ -12,6 +12,7 @@
 
 #include "Brick.h"
 #include "ComposerController.h"
+#include "ComputerNoticeController.h"
 #include "DraftController.h"
 #include "Harness.h"
 #include "NavigationController.h"
@@ -19,13 +20,17 @@
 #include "ProviderSettingsController.h"
 #include "ProviderUpdateNotice.h"
 #include "SettingsController.h"
+#include "SlowRequestController.h"
 #include "FileActionsController.h"
 #include "PluginController.h"
 #include "ThreadMenuController.h"
+#include "ThreadPullRequests.h"
 #include "RightPanelController.h"
+#include "SavedEnvironmentsController.h"
 #include "ServerUpdateController.h"
 #include "ThisMachine.h"
 #include "ThreadStore.h"
+#include "IdentityController.h"
 #include "ToastController.h"
 #include "UsageController.h"
 
@@ -48,6 +53,7 @@ World::~World() {
 // As main.cpp wires them.
 void World::start() {
   m_bridge = std::make_unique<ShellBridge>();
+  SavedEnvironmentsController::setSecretStoreFactory([keys = secrets](const QString&) { return std::make_unique<MemorySecretStore>(keys); });
   m_native = std::make_unique<NativeShell>(m_bridge.get());
   m_native->client()->setRetryDelays({20});
   m_native->sidebar()->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
@@ -62,7 +68,11 @@ void World::start() {
   QObject::connect(m_bridge.get(), &ShellBridge::stateEntryChanged, m_theme.get(), [this](const QString& key, const QVariant& value) {
     if (key == QLatin1String("theme")) m_theme->applyBaseTheme(value);
   });
-  m_bridge->setUrlOpener([this](const QUrl& url) { openedUrls.append(url); });
+  m_bridge->setUrlOpener([this](const QUrl& url) {
+    if (browserFails) return false;
+    openedUrls.append(url);
+    return true;
+  });
   const auto writeClipboard = [this](const QString& text) {
     if (clipboardFails) return false;
     clipboard = text;
@@ -72,6 +82,7 @@ void World::start() {
   m_native->controller<FileActionsController>()->setClipboardWriter(writeClipboard);
   m_native->controller<ProviderSettingsController>()->setClipboardWriter(writeClipboard);
   m_native->controller<RightPanelController>()->review()->setClipboardWriter(writeClipboard);
+  m_native->controller<RightPanelController>()->pullRequests()->setClipboardWriter(writeClipboard);
   m_native->shared<ServerUpdateController>()->setClipboardWriter(writeClipboard);
   m_bridge->setClipboardWriter(writeClipboard);
   setTime(m_now);
@@ -97,6 +108,10 @@ ShellWindows& World::showWindows() {
 void World::closeWindow(NativeWindow* window) {
   ShellRuntime* runtime = showWindows().runtime(window);
   expect(runtime && runtime->window(), QStringLiteral("the window %1 is not on screen").arg(window->id()));
+  // A brick's engine draws the main window's controllers (its singletons are
+  // that window's): it goes with that window, as the window's own QML does,
+  // rather than outlive what it draws (heap corruption when it went later).
+  if (window == m_native->main()) brick.reset();
   runtime->window()->close();
   // The shell closes it once the window's own close is over.
   QCoreApplication::sendPostedEvents();
@@ -153,11 +168,20 @@ void World::setTime(const QDateTime& time) {
   m_native->controller<ToastController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ThreadStore>()->setClock([now] { return now.toUTC(); });
   m_native->controller<RightPanelController>()->agents()->setClock([now] { return now.toUTC(); });
+  m_native->controller<RightPanelController>()->pullRequests()->setClock([now] { return now.toUTC(); });
+  m_native->controller<RightPanelController>()->linkPreviews()->setClock([now] { return now.toUTC(); });
   m_native->controller<UsageController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<OnboardingController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ProviderUpdateNotice>()->setClock([now] { return now.toUTC(); });
+  m_native->controller<IdentityController>()->setClock([now] { return now.toMSecsSinceEpoch(); });
+  m_native->controller<SlowRequestController>()->setClock([now] { return now.toUTC(); });
+  m_native->controller<ComputerNoticeController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ToastController>()->expire();
+  m_native->controller<SlowRequestController>()->expire();
+  m_native->controller<ComputerNoticeController>()->expire();
   m_native->controller<ProviderUpdateNotice>()->expire();
+  // The favicon renewal timer runs on the real clock; time jumps here.
+  m_native->controller<IdentityController>()->renewFavicons();
 }
 
 void World::connect(const QString& token) {

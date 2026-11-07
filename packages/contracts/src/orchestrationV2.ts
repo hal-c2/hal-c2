@@ -408,6 +408,11 @@ export const OrchestrationV2AppThread = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Fractional-index slot in the user-arranged active order. */
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /**
+   * Set while the user has turned automatic settlement off for this thread
+   * (thread.auto-settle.set). Survives manual settle, un-settle and activity.
+   */
+  autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -495,6 +500,8 @@ export const OrchestrationV2Run = Schema.Struct({
   contextHandoffId: Schema.NullOr(ContextHandoffId),
   /** Links server-generated restart continuations to the interrupted run. */
   restartContinuationOfRunId: Schema.optional(RunId),
+  /** The run whose message (a steer or restart) interrupted this one to go first. */
+  steeredByRunId: Schema.optional(RunId),
   sourcePlanRef: Schema.optional(
     Schema.Struct({
       threadId: ThreadId,
@@ -1078,6 +1085,8 @@ const OrchestrationV2TurnItemBaseFields = {
   parentItemId: Schema.NullOr(TurnItemId),
   ordinal: NonNegativeInt,
   status: OrchestrationV2TurnItemStatus,
+  /** Why the item ended as it did, when something other than its provider ended it. */
+  statusDetail: Schema.optional(Schema.String),
   title: Schema.NullOr(Schema.String),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -1353,6 +1362,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.pinned",
       "thread.unpinned",
       "thread.pin-reordered",
+      "thread.auto-settle-set",
       "thread.active-reordered",
       "thread.visited",
       "thread.marked-unread",
@@ -1586,6 +1596,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Slot in the user-arranged active order; omitted by pre-reorder servers. */
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** Set while automatic settlement is off for the thread; omitted by older servers. */
+  autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   /**
    * Omitted by servers that predate server-side visited tracking; clients fall
    * back to their local visited state when the field is absent.
@@ -2147,6 +2159,7 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.pinned",
       "thread.unpinned",
       "thread.pin-reordered",
+      "thread.auto-settle-set",
       "thread.active-reordered",
       "thread.visited",
       "thread.marked-unread",
@@ -2394,6 +2407,16 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     orderKey: TrimmedNonEmptyString,
+  }),
+  /**
+   * Turns automatic settlement off (`enabled: false`) or back on for one
+   * thread. Settling, snoozing and archiving by hand still work while it is off.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.auto-settle.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    enabled: Schema.Boolean,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.visit"),

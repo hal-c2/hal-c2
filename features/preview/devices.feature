@@ -1,5 +1,17 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19975
+#   https://github.com/pingdotgg/t3code/pull/21197
+#   https://github.com/pingdotgg/t3code/pull/16040
+#   https://github.com/pingdotgg/t3code/pull/17020
+#   https://github.com/pingdotgg/t3code/pull/14534
+#   https://github.com/pingdotgg/t3code/pull/17566
+#   https://github.com/pingdotgg/t3code/pull/18502
+#   https://github.com/pingdotgg/t3code/pull/18326
+#   https://github.com/pingdotgg/t3code/pull/20077
+#   https://github.com/pingdotgg/t3code/pull/13574
+#   https://github.com/pingdotgg/t3code/pull/13534
 #   https://github.com/pingdotgg/t3code/pull/12787
+#   https://github.com/pingdotgg/t3code/pull/12813 (iPhone Duo postures, hinge and touch handoff; foldable Android)
 #   docs/user/devices.md (Device panel, agent access, remote streaming)
 #   docs/internals/devices.md
 #   packages/contracts/src/device.ts (DeviceServiceState, device.open, device.close)
@@ -15,10 +27,16 @@
 #   apps/server-ex/lib/hal_c2/devices.ex (devices shape, hubBasePath)
 #   apps/server-ex/lib/hal_c2/devices/proxy.ex (/api/device-hub/mcs/<MC>/vendor/*, 401 and 403)
 #   apps/desktop-qt/src/native/ThreadDevices.cpp, DeviceStream.cpp, DeviceDecoder.cpp, FFmpeg.cpp
+#   apps/desktop-qt/src/native/PanelStage.h (the stage's panes and layouts)
 #   apps/desktop-qt/qml/HalC2/Bricks/DevicePanel.qml
 #   apps/desktop-qt/tests/native/features/DeviceSteps.cpp
 #   Cross-domain: connections/device-hub.feature holds the MC's hub and proxy,
 #   mobile/usage-diagnostics-devices.feature holds the phone's device viewer.
+#   https://github.com/pingdotgg/t3code/pull/15551
+#   https://github.com/pingdotgg/t3code/pull/15435
+#   https://github.com/pingdotgg/t3code/pull/21841
+#   https://github.com/pingdotgg/t3code/pull/25714
+#   https://github.com/pingdotgg/t3code/pull/25815
 
 Feature: Device panel
   A thread's Device tab lists the simulators and emulators of the thread's environment,
@@ -117,6 +135,15 @@ Feature: Device panel
         | running | Running | Open   |
         | stopped | Stopped | Start  |
 
+    # Upstream #19975: a ready host's discovery warnings showed without a label, or not at all.
+    @backlog @desktop
+    Scenario: A machine whose device discovery warns says so by name while its devices still work
+      Given the machine "studio" lists its iOS Simulators but warns that Android discovery failed
+      When the user adds a Device tab
+      Then the list shows the warning under the name "studio"
+      And the iOS Simulators of "studio" can still be opened
+      And the warning goes away once Android discovery works again
+
     @desktop
     Scenario: Only one device is opened at a time from the list
       Given the thread's environment has the iOS Simulators "iPhone 17" and "iPad" running
@@ -165,6 +192,15 @@ Feature: Device panel
       Given the device hub is ready and reports "Using Xcode 26.1"
       When the user adds a Device tab
       Then the tab shows "Using Xcode 26.1" above the list of devices
+
+    # Upstream #25815: a Mac without the Android SDK warned about avdmanager on every refresh.
+    @backlog @mc @desktop @priority-low
+    Scenario: A machine without the Android SDK shows no Android tool warnings
+      Given the thread's environment has no Android SDK
+      When the user adds a Device tab and refreshes the devices
+      Then the tab says the Android SDK was not found
+      And no warning about Android's device tools is shown
+      But on a machine with the Android SDK, an Android tool failure is still shown
 
     @desktop
     Scenario: A machine with the Android SDK but no virtual devices says how to make one
@@ -274,6 +310,14 @@ Feature: Device panel
       When the user shows the "Pixel 9" tab
       Then the tab says "The MC refused the device stream. Reconnect to try again."
 
+    # Upstream #21841: a simulator locked to WebRTC (as EAS Simulator always is) refuses the
+    # usual video; the viewer switches to WebRTC instead of failing.
+    @backlog @desktop @mobile @priority-low
+    Scenario: A simulator that streams only over WebRTC is still shown
+      Given the thread has an iOS Simulator open that serves its screen only over WebRTC
+      When the user shows its tab
+      Then the tab shows the device's screen
+
     @desktop
     Scenario: An Android emulator that rotates starts its video over
       Given the thread has the Android Emulator "Pixel 9" open
@@ -281,6 +325,47 @@ Feature: Device panel
       When the emulator's video restarts
       Then the device is asked for a fresh keyframe
       And the tab "Pixel 9" shows the device's screen
+
+    # Upstream #18326. An idle simulator can go minutes without a keyframe of its own, so
+    # only the video is reconnected; input and the 3D view stay connected.
+    @desktop @backlog @priority-low
+    Scenario: A simulator picture that fell behind catches up within seconds
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user is watching the "iPhone 17" tab
+      When the picture falls behind while the simulator moves from Settings to Home
+      Then the tab "iPhone 17" shows Home within a few seconds
+      And the device's input and 3D view stay connected
+
+    @desktop @backlog
+    Scenario: A device that does not admit input says input is unavailable
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the device refuses input to the viewer
+      When the user shows the "iPhone 17" tab
+      Then the picture is shown and the tab says input is unavailable
+      And the device's buttons cannot be used
+
+    # Upstream #17566: a decoder backlog switched the viewer to still pictures for good and
+    # lost the 3D view.
+    @desktop @backlog @priority-low
+    Scenario: A decoder that falls behind starts again at a keyframe and keeps the video
+      Given the thread has the iOS Simulator "iPhone 17" open in 3D
+      And the user is watching the "iPhone 17" tab
+      When the desktop's decoder falls behind the device's video
+      Then the decoder starts again from the device's next keyframe
+      And the tab keeps showing video in the same 3D view
+
+    @desktop @backlog @priority-low
+    Scenario: A still picture that arrives late does not cover newer video
+      Given the "iPhone 17" tab has shown decoded video
+      When the device's first still picture arrives after it
+      Then the tab keeps showing the newer video
+
+    @desktop @backlog
+    Scenario: Input is offered only once the device has admitted it
+      Given the thread has the iOS Simulator "iPhone 17" open
+      When the user shows the "iPhone 17" tab
+      Then the device's buttons stay unavailable until the device admits the viewer's input
+      And they become available again when input recovers after being unavailable
 
     @desktop
     Scenario: A Device tab in the background streams nothing
@@ -290,6 +375,48 @@ Feature: Device panel
       Then no device stream is open
       When the user shows the "iPhone 17" tab
       Then the tab "iPhone 17" shows the device's screen
+
+    @desktop
+    Scenario: Two devices stream side by side in the centre
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the thread has the Android Emulator "Pixel 9" open
+      When the user puts "iPhone 17" and "Pixel 9" side by side in the centre
+      Then "iPhone 17" and "Pixel 9" both stream at once
+
+    @desktop
+    Scenario: A device hidden from the centre stops streaming and the other goes on
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the thread has the Android Emulator "Pixel 9" open
+      And "iPhone 17" and "Pixel 9" stream side by side in the centre
+      When the user shows only "iPhone 17" on the stage
+      Then "Pixel 9" streams nothing
+      And "iPhone 17" keeps its stream
+
+    @desktop
+    Scenario: Closing one of two devices leaves the other streaming
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the thread has the Android Emulator "Pixel 9" open
+      And "iPhone 17" and "Pixel 9" stream side by side in the centre
+      When the user closes the device "Pixel 9"
+      Then "Pixel 9" streams nothing
+      And "iPhone 17" keeps its stream
+
+    @desktop
+    Scenario: A device opens side by side with another from its tab
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the thread has the Android Emulator "Pixel 9" open
+      And the user is watching the "Pixel 9" tab
+      And the user is watching the "iPhone 17" tab
+      When the user opens it side by side with "Pixel 9"
+      Then "iPhone 17" and "Pixel 9" show side by side in the centre
+      And "iPhone 17" and "Pixel 9" both stream at once
+
+    @desktop
+    Scenario: A device moved to the centre keeps its stream
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user is watching the "iPhone 17" tab
+      When the user moves "iPhone 17" to the centre
+      Then "iPhone 17" keeps its stream
 
     @desktop
     Scenario: The tab shows which of its two steps it is on
@@ -353,6 +480,61 @@ Feature: Device panel
       When the user shows the device in 3D and drags across it
       Then the body turns with the drag
       And when the drag ends the body settles on the nearest view that faces its screen
+
+    @desktop @backlog @priority-low
+    Scenario: An iPhone Duo shows both of its screens on a body that folds
+      Given the thread has the iOS Simulator "iPhone Duo" open
+      And the user is watching the "iPhone Duo" tab
+      When the user shows the device in 3D
+      Then both of its screens are shown on a body with a hinge between them
+      And the device's screen is live on the screen facing the user
+
+    @desktop @backlog @priority-low
+    Scenario: The user picks a posture for an iPhone Duo
+      Given the user is viewing the iOS Simulator "iPhone Duo" in 3D
+      When the user picks the "Laptop" posture
+      Then the body folds into that posture
+      And both screens stay live
+
+    @desktop @backlog @priority-low
+    Scenario: Touches reach a Duo screen only once it faces the user
+      Given the user is viewing the iOS Simulator "iPhone Duo" in 3D
+      And the posture turns one screen away from the user
+      When the device turns the other screen to the user
+      Then touches go to that screen only after the device confirms the change and shows a fresh picture on it
+
+    @desktop @backlog @priority-low
+    Scenario: A device host that cannot report a Duo's posture shows it flat
+      Given the thread has the iOS Simulator "iPhone Duo" open
+      And the device host cannot report the Duo's posture
+      When the user shows the device in 3D
+      Then the device is shown in the flat view with its live screen
+
+    @desktop @backlog @priority-low
+    Scenario: A foldable Android emulator changes its picture when it is folded or opened
+      Given the thread has the Android Emulator "Pixel 9 Pro Fold" open
+      And the user is watching the "Pixel 9 Pro Fold" tab
+      When the emulator is folded or opened
+      Then the picture changes to the new size without the tab being reopened
+
+    # Upstream #13534: the fold controls drive the emulator's hinge and animate the 3D model.
+    @desktop @backlog @priority-low
+    Scenario: The user folds and unfolds a foldable Android emulator from the device panel
+      Given the thread has the Android Emulator "Pixel 10 Pro Fold" open in 3D
+      When the user folds the device and then unfolds it
+      Then the 3D model animates through each hinge angle
+      And the picture follows the device's posture
+
+    @desktop @backlog @priority-low
+    Scenario: Fold controls appear only for an emulator that reports folding
+      Given the thread has an Android Emulator open that does not report a fold posture
+      Then no fold controls are shown
+
+    # Upstream #13574: the fold model is sized from the inner screen, so a landscape panel is not stretched.
+    @desktop @backlog @priority-low
+    Scenario: The fold model keeps the shape of a landscape inner screen
+      Given the thread has the Android Emulator "Pixel Fold" open with a landscape inner screen
+      Then the 3D model is drawn with a landscape inner screen, not stretched
 
     @desktop
     Scenario Outline: A device shown in 3D keeps a plain body when its own model is missing
@@ -453,6 +635,12 @@ Feature: Device panel
       When the user watches a device
       Then the tab shows the device's still pictures instead
 
+    @backlog @mobile
+    Scenario: The device viewer fills the screen
+      When the user opens a simulator or device on the phone
+      Then its stream fills the screen at the device's aspect ratio
+      And its controls sit in an overlay that shows while connecting and on tap
+
   Rule: Driving a device
 
     @desktop
@@ -465,6 +653,15 @@ Feature: Device panel
       Then the device receives the key "a" going down and up
       When the user presses the device's Home button
       Then the device receives the "home" button
+
+    # Upstream #17020: right and middle clicks on the device's screen are no longer sent as touches.
+    @backlog @desktop
+    Scenario: Only the primary button touches the device
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user is watching the "iPhone 17" tab
+      When the user right-clicks the middle of the screen
+      And the user middle-clicks the middle of the screen
+      Then the device receives no touch
 
     @desktop
     Scenario: Touches, keys and buttons reach an emulator through the MC
@@ -516,6 +713,24 @@ Feature: Device panel
       When the user clicks the device's screen and types "a"
       Then the device receives the key "a" going down and up
 
+    # Upstream #14534: letters typed on a focused device screen no longer jump to the composer.
+    @backlog @desktop
+    Scenario: Letters typed on the device's screen do not move to the composer
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user is watching the "iPhone 17" tab
+      When the user clicks the device's screen and types "hello"
+      Then the device receives the keys "h", "e", "l", "l" and "o"
+      And the composer stays empty
+
+    # Upstream #14534: coming back to the window leaves focus on the device screen.
+    @backlog @desktop
+    Scenario: Coming back to the window keeps the device's screen focused
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user clicked the "iPhone 17" screen
+      When the user switches to another app and back
+      Then the device's screen still has the focus
+      And the composer does not take it
+
     @desktop
     Scenario: Command shortcuts stay with the app while the device has the focus
       Given the thread has the iOS Simulator "iPhone 17" open
@@ -549,6 +764,14 @@ Feature: Device panel
       And the user is watching the "iPhone 17" tab
       Then on a Mac the app keeps every Command chord but Command with "R"
 
+    # Upstream #21197: pasting into the focused device screen types the text into the Android device.
+    @backlog @desktop
+    Scenario: Pasting into a focused Android screen types into the device
+      Given an Android device's screen has the focus
+      When the user pastes "hello@example.com"
+      Then the device receives "hello@example.com" as typed text
+      And the composer does not receive it
+
   Rule: Closing
 
     @desktop
@@ -578,6 +801,17 @@ Feature: Device panel
       Then the right panel shows the "iPhone 17" tab
       When the user goes back to the first thread
       Then the right panel has no "iPhone 17" tab
+
+    # Upstream #16040: a device action's progress and error stay with the thread that started it.
+    @backlog @desktop
+    Scenario: A device action's progress and error stay with the thread that started it
+      Given the user starts opening the iOS Simulator "iPhone 17" in a thread
+      And the MC is slow to answer
+      When the user switches to another thread
+      Then that thread's Device tab shows no progress and offers its own device choice
+      When the MC answers that "iPhone 17" could not be opened
+      And the user goes back to the first thread
+      Then the first thread's Device tab says the device could not be opened
 
     @desktop
     Scenario: A device that cannot be powered off stays open and says why
@@ -627,6 +861,27 @@ Feature: Device panel
       And the user opens "iPhone 17" from the Device tab
       Then the right panel shows the "iPhone 17" tab
 
+    # Upstream #25714: a device an agent opened in a thread the user was not viewing never showed.
+    @backlog @desktop
+    Scenario: A device an agent opened while the user was elsewhere shows on returning
+      Given the user is looking at another thread
+      When an agent opens "iPhone 17" in "Fix checkout"
+      And the user switches to "Fix checkout"
+      Then "Fix checkout" shows "iPhone 17", floating or as a right panel tab as the user's setting says
+
+    # Upstream #25714: a floating device stayed open after its session ended in another thread.
+    @backlog @desktop
+    Scenario: A floating device closes when its session ends
+      Given "iPhone 17" floats over "Fix checkout"
+      When its session ends while the user is looking at another thread
+      Then "iPhone 17" no longer floats over "Fix checkout"
+
+    @backlog @desktop @priority-low
+    Scenario: Closing the right panel does not float a device whose session ended
+      Given the right panel shows the "iPhone 17" tab and its session has ended
+      When the user closes the right panel
+      Then no device floats over the conversation
+
   Rule: Setting devices up from the Device tab
     # Device support that is off already points to the Integrations settings (Choosing a
     # device); the legacy web client opened this wizard in front of the tab instead.
@@ -657,6 +912,16 @@ Feature: Device panel
     Scenario: The wizard cannot go on until the device hub is ready
       Given the wizard is at "Device hub" and the hub is off
       Then the user cannot continue
+
+    @desktop @backlog @priority-low
+    Scenario: A ready remote machine lets the wizard go on without local device tools
+      Given the thread's environment has no simulator tooling and its own hub is idle
+      And the remote machine "Mac mini" has its device tools ready with "iOS Simulator"
+      When the user opens the "Set up devices" wizard
+      Then the machines are checked without the user asking
+      And the user can continue
+      And the "Simulators" step reads "Xcode and iOS Simulator are available on Mac mini."
+      And it does not say that no simulator is installed
 
     @desktop
     Scenario: Turning the device hub off also turns agent access off
@@ -721,6 +986,14 @@ Feature: Device panel
         | updating                | Updating agent access…       |
         | ready with agent tools  | Agent tools are ready.       |
 
+    @backlog @mc @desktop
+    Scenario: Agent tools that exit at startup say why at once
+      Given the agent tools refuse to start because of a lock left by an older version
+      When the user turns on "Allow agents to control devices"
+      Then the device status says why the agent tools did not start and where their state is
+      And it says so without waiting 30 seconds for them to come up
+      And the old lock is left in place for the user to repair
+
     @desktop
     Scenario: Agent access can stay off
       Given the user is at the "Agent access" step
@@ -756,6 +1029,13 @@ Feature: Device panel
       When the hub fails with "Port 4400 is in use"
       Then the wizard shows "Port 4400 is in use" as an error
       And the user cannot continue
+
+    @backlog @desktop
+    Scenario: Missing platform tooling is explained before the hub is ready
+      Given devices are on and the local host has no usable platform
+      When the user opens the first wizard step or the Devices settings
+      Then each platform's diagnostics and its refresh are shown
+      And continuing still waits for a ready hub
 
   Rule: A machine preparing its device tools says so
     # A machine is the environment itself or a remote device host; each gets its own banner.

@@ -1,4 +1,14 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23852
+#   https://github.com/pingdotgg/t3code/pull/22634
+#   https://github.com/pingdotgg/t3code/pull/22832
+#   https://github.com/pingdotgg/t3code/pull/20223
+#   https://github.com/pingdotgg/t3code/pull/20394
+#   https://github.com/pingdotgg/t3code/pull/17365
+#   https://github.com/pingdotgg/t3code/pull/18941
+#   https://github.com/pingdotgg/t3code/pull/22937
+#   https://github.com/pingdotgg/t3code/pull/22399
+#   https://github.com/pingdotgg/t3code/pull/24813
 #   docs/user/thread-sidebar.md (Link a pull request, agent-managed metadata)
 #   apps/web/src/hooks/usePullRequestLinking.ts
 #   apps/web/src/hooks/useSupportsMultiplePullRequests.ts
@@ -21,6 +31,42 @@ Feature: Linking pull requests to threads
     When the environment looks for pull requests
     Then "Cart totals" is linked to that pull request
     And no client needs to be open for this to happen
+
+  # Upstream #23852: discovery kept spending the host's quota every minute with no one using a client.
+  @backlog @mc
+  Scenario: Looking for branch pull requests every minute waits for a client in the foreground
+    Given no client of the environment is in the foreground
+    When a minute passes
+    Then the environment does not look for branch pull requests
+    But a turn that ends on "Cart totals" still looks for its pull request
+    And the every-minute look resumes once a client is in the foreground
+
+  # Upstream #22634: a GitCafe pull request linked as "/pull/<n>" was stored apart from "/pulls/<n>".
+  @backlog @mc @priority-low
+  Scenario Outline: A GitCafe pull request is stored in one form however it was linked
+    When the user or the agent links "Cart totals" to <link>
+    Then the link is stored as "https://git.cafe/team/shop/pulls/42"
+
+    Examples:
+      | link                                  |
+      | "https://git.cafe/team/shop/pull/42"  |
+      | "https://git.cafe/team/shop/pulls/42" |
+      | "team/shop" number 42 on git.cafe     |
+
+  # Upstream #22937: Forgejo, Gitea and GitCafe pull request addresses use /pulls/<n>, which
+  # discovery did not read a repository from, so their pull requests were never linked.
+  @backlog @mc
+  Scenario Outline: A thread finds its branch's pull request on a host that uses /pulls/
+    Given the project's remote is on <host>
+    And a pull request is opened for "feature/cart" at "<url>"
+    When the environment looks for pull requests
+    Then "Cart totals" is linked to that pull request
+
+    Examples:
+      | host                                   | url                                                       |
+      | Codeberg                               | https://codeberg.org/team/shop/pulls/42                   |
+      | a Forgejo served from a port and path  | http://code.example:3000/forgejo/team/shop/pulls/42/files |
+      | GitCafe                                | https://git.cafe/team/shop/pulls/42                       |
 
   @mc
   Scenario: Archived threads are not linked to new pull requests
@@ -65,6 +111,35 @@ Feature: Linking pull requests to threads
     When the agent links pull request 43 to its thread
     Then "Cart totals" is linked to pull request 43
 
+  # Upstream #24813: agents missed linking what they opened, so a create command's printed
+  # address links the pull request to the thread that ran it.
+  @backlog @mc @priority-high
+  Scenario Outline: A pull request the agent opens from the shell is linked on its own
+    When the agent in "Cart totals" runs <command> and it prints the new pull request's address on its own line
+    Then "Cart totals" is linked to that pull request as one the thread created
+
+    Examples:
+      | command          |
+      | gh pr create     |
+      | glab mr create   |
+
+  @backlog @mc
+  Scenario Outline: Addresses other commands print are not linked
+    When the agent in "Cart totals" runs <command>
+    Then no pull request is linked to "Cart totals"
+
+    Examples:
+      | command                                                        |
+      | gh pr list --json url                                          |
+      | gh pr view 120 && gh pr create, printing the address of 120    |
+      | echo "gh pr create" with a pull request address in its output  |
+
+  @backlog @mc
+  Scenario: A pull request a delegated subagent opens is linked to the subagent's thread
+    Given "Cart totals" delegated a task to a subagent
+    When the subagent runs gh pr create and it prints the new pull request's address
+    Then the subagent's thread is linked to that pull request
+
   @desktop @mobile @backlog-mobile
   Scenario: Choosing a different pull request from a pull request link
     Given "Cart totals" shows a link to pull request 41
@@ -77,11 +152,72 @@ Feature: Linking pull requests to threads
     When the user unlinks pull request 41 from the thread
     Then "Cart totals" shows the pull request for "feature/cart" again
 
+  # Upstream #20394: a pull request is linked to a thread by its address, or by its number in
+  # the thread's repository.
+  @backlog @desktop @mobile
+  Scenario Outline: Linking a pull request to the thread by its address or number
+    When the user links "<given>" to "Cart totals"
+    Then "Cart totals" is linked to pull request 42 of the thread's repository
+
+    Examples:
+      | given                                |
+      | https://github.com/acme/shop/pull/42 |
+      | 42                                   |
+      | #42                                  |
+
+  # Upstream #20394: each linked pull request offers the desktop row menu's actions on the phone too.
+  @backlog @desktop @mobile
+  Scenario Outline: A linked pull request offers its actions
+    Given "Cart totals" is linked to the open pull request 42
+    When the user chooses "<action>" for pull request 42 of "Cart totals"
+    Then <outcome>
+
+    Examples:
+      | action             | outcome                                              |
+      | Copy link          | the clipboard holds the address of pull request 42   |
+      | Open in browser    | pull request 42 opens in the browser                 |
+      | Watch for changes  | pull request 42 is watched for changes               |
+      | Unlink from thread | "Cart totals" is no longer linked to pull request 42 |
+
+  # Upstream #20394: the MC refuses a watch on these threads, so it is not offered there.
+  @backlog @desktop @mobile
+  Scenario Outline: Watching is not offered on a thread that cannot be woken
+    Given "Cart totals" is <state> and linked to the open pull request 42
+    Then watching pull request 42 for changes is not offered
+
+    Examples:
+      | state             |
+      | archived          |
+      | settled           |
+      | a subagent thread |
+
+  # Upstream #20394: the link, unlink and watch actions need the orchestration-operate scope.
+  @backlog @desktop @mobile
+  Scenario: A session that may not operate the thread cannot change its pull requests
+    Given the user's session may read "Cart totals" but not operate it
+    Then linking, unlinking and watching pull requests is not offered for "Cart totals"
+
   @mc
   Scenario: Settled threads keep their links
     Given "Cart totals" is settled and linked to pull request 42
     When a new pull request is opened for "feature/cart"
     Then "Cart totals" stays linked to pull request 42
+
+  # Upstream #17365: pull request links stay while a reconnect changes the thread's details
+  @backlog @shared
+  Scenario: A linked pull request stays shown through a reconnect
+    Given "Cart totals" is linked to pull request 42
+    When the client reconnects and the thread's title or status has changed meanwhile
+    Then "Cart totals" still shows pull request 42
+
+  # Upstream #22832: a draft marked ready, or ready turned back to draft, changes nothing else
+  # about the pull request, and the sidebar kept showing the old status.
+  @backlog @mc @shared
+  Scenario: The sidebar shows a linked pull request leaving draft
+    Given "Cart totals" is linked to pull request 42, a draft
+    When pull request 42 is marked ready for review
+    Then the sidebar shows pull request 42 as open rather than draft
+    And so does a client connected to another machine of the cluster
 
   @desktop @mobile @backlog-mobile
   Scenario: An environment that cannot find pull requests says it needs an update
@@ -101,9 +237,12 @@ Feature: Linking pull requests to threads
       | merged |
       | closed |
 
-  @backlog @desktop
-  Scenario: A finished pull request is kept while the folder is on another branch
-    Given "Cart totals" is linked to pull request 42, which was merged
+  # Upstream #20223: only a finished pull request the environment found by itself is cleared
+  # once the folder is on another branch (mc/orchestration/pull-request-links.feature); one the
+  # user linked stays.
+  @backlog @desktop @priority-low
+  Scenario: A finished pull request the user linked is kept while the folder is on another branch
+    Given "Cart totals" was linked by hand to pull request 42, which was merged
     And the folder is on "main", which has an open pull request of its own
     When the user opens "Cart totals"
     Then "Cart totals" stays linked to pull request 42
@@ -115,7 +254,7 @@ Feature: Linking pull requests to threads
     Then the side panel shows pull request 57
     But a side panel showing a different pull request is left on it
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A thread that could not be moved to its new pull request says so
     Given "Cart totals" is linked to the merged pull request 42 and pull request 57 is open for its branch
     When the environment refuses to link pull request 57
@@ -146,7 +285,22 @@ Feature: Linking pull requests to threads
     Then the user is asked "Merge pull request?" and told it merges #42 using squash
     And nothing is merged unless the user confirms
 
+  # Upstream #22399: the thread details row always merged with a merge commit, ignoring the
+  # project's default and the method last chosen, as the pull request panel already honours.
   @backlog @desktop
+  Scenario Outline: Merging from the thread's details uses the method the pull request panel would
+    Given the repository of pull request 42 allows merge, squash and rebase
+    And <preference>
+    When the user chooses "Merge" for it in the thread's details
+    Then the user is told it merges #42 using <method>
+
+    Examples:
+      | preference                                                              | method |
+      | the project's default merge method is "rebase"                          | rebase |
+      | the default is "Last selected" and the user last chose squash and merge | squash |
+      | the default is "Last selected" and the user has not chosen one yet      | merge  |
+
+  @backlog @desktop @priority-low
   Scenario: A merge that was being confirmed is withdrawn when the pull request stops being mergeable
     Given the user is being asked whether to merge pull request 42 from the thread's details
     When the checks of pull request 42 start running again
@@ -166,3 +320,11 @@ Feature: Linking pull requests to threads
     Given "Cart totals" is linked to the open pull request 42 "Fix cart totals" from "feature/cart" into "main"
     When the user rests the pointer on it in the thread's details
     Then the summary names its title, number, state, both branches, its checks and how many files and lines it changes
+
+  # Upstream #18941: long badge lists ran below the window.
+  @backlog @desktop @priority-low
+  Scenario: A long list of linked pull requests scrolls within the window
+    Given a thread is linked to 40 pull requests
+    When the user opens the list of its pull requests
+    Then the list fits in the window and scrolls
+    And the user can open the 40th pull request

@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19072
+#   https://github.com/pingdotgg/t3code/pull/18340
+#   https://github.com/pingdotgg/t3code/pull/17658
 #   apps/desktop-qt/src/TerminalController.cpp (the drawer's tabs, sessions and RPCs against the MC)
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (the route's thread, drafts too, its project
 #   root, worktree and scripts, from the MC's rows)
@@ -200,6 +203,14 @@ Feature: The desktop's terminal drawer
         | bun test\r |
       And the terminal drawer shows the tabs "Terminal 1, Terminal 2"
 
+    # Upstream #18340: project actions open their own drawer terminal instead of reusing an idle right-panel terminal.
+    @backlog @desktop
+    Scenario: A script never runs in a terminal outside the drawer
+      Given "t1" has an idle terminal open outside the terminal drawer
+      When the user runs the script "test"
+      Then the script runs in a terminal of the terminal drawer
+      And the other terminal receives no writes
+
   Rule: The drawer keeps the user's chords and its place
 
     @desktop
@@ -213,3 +224,20 @@ Feature: The desktop's terminal drawer
       Given the user dragged the drawer to 400 pixels with "term-2" active
       When the desktop starts again
       Then the drawer is 400 pixels tall with "term-2" active
+
+    # Upstream #19072: the drawer was capped at a share of the window and could push the
+    # composer into the header.
+    @backlog @desktop
+    Scenario: The drawer leaves room for the thread's header and composer
+      Given the user dragged the drawer to 750 pixels
+      When the thread's column has room for only 500 pixels between its header and its composer
+      Then the drawer is held to 500 pixels
+      And the header and the composer stay fully shown
+
+    # Upstream #17658: the clamped height used to be saved for good.
+    @backlog @desktop @priority-low
+    Scenario: A window that shrinks and grows again gives the drawer back its height
+      Given the user dragged the drawer to 750 pixels
+      When the window shrinks so the drawer is held to 420 pixels, then grows back
+      Then the drawer is 750 pixels tall again
+      And it is 750 pixels tall after the desktop starts again

@@ -144,7 +144,7 @@ Feature: Load balancing new threads across machines
       | Less often  | fewer new threads than its free resources imply |
       | Manual only | no balanced threads, only ones the user picks   |
 
-  @backlog @desktop @tui
+  @backlog @desktop @tui @priority-low
   Scenario Outline: A preference saved by an older version shows as the nearest one
     Given a machine's saved weight is <weight>
     When the user opens load balancing settings
@@ -158,7 +158,7 @@ Feature: Load balancing new threads across machines
       | 10      | Less often  |
       | 80      | Prefer      |
 
-  @backlog @desktop @tui
+  @backlog @desktop @tui @priority-low
   Scenario: The closed load balancing section summarises what is not normal
     Given load balancing is on
     And "server" is set to Prefer and "laptop" to Less often
@@ -166,7 +166,7 @@ Feature: Load balancing new threads across machines
     When the user looks at load balancing with the section closed
     Then the summary reads "server prefer · laptop less often"
 
-  @backlog @desktop @tui
+  @backlog @desktop @tui @priority-low
   Scenario: The closed load balancing section says when it is off
     Given load balancing is off
     When the user looks at load balancing with the section closed

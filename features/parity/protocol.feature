@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19899
+#   https://github.com/pingdotgg/t3code/pull/15951
+#   https://github.com/pingdotgg/t3code/pull/16118
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (@version 3, client and server frames, shapes, decode)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (hello, snapshot, events, live, resync, end, shell.*, config.*, rpc.*)
 #   apps/server-ex/lib/hal_c2/web/router.ex (GET /ws)
@@ -125,10 +128,10 @@ Feature: Protocol 3 wire parity
       | error                    | a frame or subscription is refused                     | reason, and the id when there is one                          |
       | rpc.result               | a method succeeds                                      | id, result                                                    |
       | rpc.error                | a method fails                                         | id, error, and the contract error as detail when there is one |
-      | shell                    | the shell subscription opens                           | id, MCs with online, environment and version, rows            |
+      | shell                    | the shell subscription opens                           | id, MCs with online, trying, environment and version, rows    |
       | shell.rows               | projects or threads on one MC change                   | id, mc, rows, the version they bring the MC to                |
       | shell.environment        | an MC's environment descriptor changes                 | id, mc, environment                                           |
-      | shell.mc                 | an MC joins or leaves the cluster                      | id, mc, online, and removed once it is no longer a member     |
+      | shell.mc                 | an MC joins or leaves the cluster                      | id, mc, online, trying, and removed once it is not a member   |
       | snapshot                 | a stream subscription starts without a usable offset   | id, offset, at, part, rows in creation order, done, handle    |
       | events                   | stream entities change                                 | id, offset, events as seq, kind, id, patch and unix ms at     |
       | live                     | a stream has caught up                                 | id, offset, handle                                            |
@@ -217,3 +220,14 @@ Feature: Protocol 3 wire parity
     Given a client that speaks only the TypeScript server's orchestration protocol
     When it connects to the MC's socket
     Then the MC serves its requests
+
+  # Upstream #15951: clients tolerate union members they do not know yet
+  # Upstream #16118: project icons decode forward-compatibly
+  # Upstream #19899: a pull request action, review verdict or merge method the client does not know is dropped from the list instead of failing the pull request.
+  @backlog @shared
+  Scenario: A newer MC's unknown union member does not break an older client
+    Given the MC sends a thread item, event, attachment or project icon kind the client does not know
+    When the client decodes it
+    Then it ignores that member, or shows a project's default icon
+    And the thread still synchronizes
+    And a known kind with a broken payload still fails

@@ -1,5 +1,14 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16624
+#   https://github.com/pingdotgg/t3code/pull/19334
+#   https://github.com/pingdotgg/t3code/pull/19338
+#   https://github.com/pingdotgg/t3code/pull/13554
+#   https://github.com/pingdotgg/t3code/pull/13551 (the sync status waits 400 ms before it shows)
 #   https://github.com/pingdotgg/t3code/pull/13060 (Run a shell command from a reply in the thread terminal)
+#   https://github.com/pingdotgg/t3code/pull/13504 (section titles held until their text)
+#   https://github.com/pingdotgg/t3code/pull/22783
+#   https://github.com/pingdotgg/t3code/pull/21393
+#   https://github.com/pingdotgg/t3code/pull/21392
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (paragraph and turn streaming, flush interval, next queued message)
 #   apps/server-ex/lib/hal_c2/projection/timeline.ex (hidden items)
 #   packages/contracts/src/orchestrationV2.ts (message.updated, run.created, run.updated, ResponseStreamingMode)
@@ -37,6 +46,21 @@ Feature: Streaming the agent's reply
     Then each paragraph appears once it is finished
     And an unfinished code block is held back until it closes
 
+  # A section title is an ATX heading or a line of only bold text. It is held until the text
+  # under it arrives, so a title never sits alone while the paragraph below it is written.
+  @mc @backlog @priority-high
+  Scenario: A section title in paragraph streaming waits for the text under it
+    Given the project streams responses by paragraph
+    When the agent writes a section title and pauses before its paragraph
+    Then the title does not appear on its own
+    And the title appears with the first lines of its paragraph
+
+  @mc @backlog @priority-high
+  Scenario: A held section title appears when the turn ends
+    Given the project streams responses by paragraph
+    When the agent writes a section title and then finishes the turn
+    Then the title appears
+
   @mc
   Scenario: Turn streaming holds the reply until the turn reaches a boundary
     Given the project streams responses by turn
@@ -45,34 +69,44 @@ Feature: Streaming the agent's reply
     And tool calls and plans still appear as they happen
 
   # TUI: implemented in apps/tui/src/orchestrationV2Adapter.ts
-  @shared @backlog-mobile
+  @shared
   Scenario: Reasoning shows while it is written
     Given the agent is reasoning before it answers
     When the reasoning is streaming
     Then the reasoning is labelled "Thinking"
 
-  # The web's row (MessagesTimeline.tsx, remarkThoughtPreview). The TUI still says "Thought".
-  @shared @backlog-mobile @backlog-tui
+  # The web's row (MessagesTimeline.tsx, remarkThoughtPreview).
+  @shared
   Scenario: Finished reasoning is labelled by what was thought
     Given the agent is reasoning before it answers
     When the reasoning is finished
     Then the reasoning is labelled "The cart total needs"
 
   # A picture reads as its description (remarkThoughtPreview).
-  @shared @backlog-mobile @backlog-tui
+  @shared
   Scenario: Reasoning written in Markdown is labelled by its words alone
     Given the agent reasoned in Markdown
     Then the reasoning is labelled "Checking the cart total a chart"
 
+  @backlog @shared
+  Scenario: Opened reasoning keeps its newest text in view while it streams
+    Given the user opened the agent's reasoning while it is still being written
+    When more reasoning arrives
+    Then the reasoning box stays scrolled to the newest text without animating
+    When the user scrolls up inside the reasoning box
+    Then it stays where the user put it as more reasoning arrives
+    When the user scrolls back to its end
+    Then it follows the newest text again
+
   # TUI: implemented in apps/tui/src/components/WorkingIndicator.tsx
-  @shared @backlog-mobile @backlog-tui
+  @shared
   Scenario: A running turn shows how long the agent has been working
     When the agent has been working for 12 seconds
     Then the thread says the agent is working
     And the elapsed time keeps counting
 
   # Legacy: packages/shared/src/orchestrationTiming.ts (deriveActiveWorkStartedAt: requestedAt floor)
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui
   Scenario: The working time counts from the message while the agent is still starting up
     Given the user sent a message and the agent's session is still starting
     When the agent has not yet begun the turn
@@ -81,7 +115,7 @@ Feature: Streaming the agent's reply
     And it does not disappear and come back when the agent begins
 
   # Legacy: packages/shared/src/orchestrationTiming.ts (formatDuration)
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui
   Scenario Outline: A duration is written in hours, minutes and seconds, leaving out empty steps
     When the thread shows a duration of <duration>
     Then it reads "<shown>"
@@ -96,15 +130,32 @@ Feature: Streaming the agent's reply
       | 1 hour 5 seconds  | 1h 5s   |
 
   # TUI: implemented in apps/tui/src/timeline.ts
-  @shared @backlog-mobile
+  @shared
   Scenario: A finished turn folds its work behind how long it took
     Given the agent ran four tool calls and then answered
     When the turn completes after 2 minutes
     Then the tool calls fold behind "Worked for 2m"
     And the answer stays visible
 
+  # Upstream #21393: the phone left the agent's progress notes beside the final answer.
+  @backlog @shared
+  Scenario: Progress notes fold with the work and the final answer stays
+    Given the agent wrote two progress notes between its tool calls and then answered
+    When the turn completes
+    Then the progress notes fold with the tool calls
+    And only the final answer stays visible
+
+  # Upstream #21392: what a finished turn changed showed only in review.
+  @backlog @mobile
+  Scenario: A finished turn's row says how much it changed
+    Given a turn added 12 lines and removed 3 and folded behind "Worked for 2m"
+    Then the "Worked for 2m" row also reads "+12 -3"
+    When the user taps "+12 -3"
+    Then the review of that turn opens
+    But tapping the rest of the row opens the folded work
+
   # TUI: implemented in apps/tui/src/timeline.ts
-  @shared @backlog-mobile
+  @shared
   Scenario: A folded turn can be opened and closed again
     Given a finished turn is folded behind "Worked for 2m"
     When the user opens the folded work
@@ -113,7 +164,7 @@ Feature: Streaming the agent's reply
     Then the tool calls fold away
 
   # TUI: implemented in apps/tui/src/timeline.ts
-  @shared @backlog-mobile
+  @shared
   Scenario Outline: A stopped turn says who stopped it
     Given the user interrupted a turn <when>
     When the turn settles
@@ -124,14 +175,37 @@ Feature: Streaming the agent's reply
       | after 40 seconds       | You stopped after 40s     |
       | before it did any work | You stopped this response |
 
-  @shared @backlog-mobile
+  # Upstream #22783: each steer splits a finished turn's folded work; the first fold says how
+  # long the whole turn took and opens only the work before the first steer.
+  @backlog @shared
+  Scenario: The work before the first steer folds behind the whole turn's time
+    Given the agent ran two tool calls, the user steered, and the agent ran three more and answered
+    When the turn completes after 2 minutes
+    Then the first two tool calls fold behind "Worked for 2m" above the steer
+    And the three later tool calls fold behind a "Continued for" row below the steer
+
+  # Upstream #22783: a steer's "Continued for" row opens only the work done after that steer.
+  @backlog @shared
+  Scenario: Opening a steer's fold shows only the work after that steer
+    Given a finished turn with two steers, each followed by its own "Continued for" row
+    When the user opens the second steer's "Continued for" row
+    Then only the work done after the second steer is shown
+
+  # Upstream #22783: a steer that arrives before any output splits nothing.
+  @backlog @shared
+  Scenario: A steer sent before the agent did any work splits nothing
+    Given the user steered before the agent produced any output
+    When the turn completes
+    Then the turn's work folds behind one "Worked for" row
+
+  @shared
   Scenario: A turn interrupted in this session stays open
     Given the user interrupted the running turn a moment ago
     When the turn settles
     Then its work stays expanded so the user can see where it stopped
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
-  @shared @backlog-mobile
+  @shared
   Scenario: A long message can be expanded and collapsed
     Given a message longer than the preview length
     When the user shows the full message
@@ -140,7 +214,7 @@ Feature: Streaming the agent's reply
     Then the message returns to its preview
 
   # Legacy: packages/shared/src/chatMessages.ts (shouldCollapseUserMessage)
-  @backlog @desktop @tui
+  @desktop @tui
   Scenario Outline: A message the user sent is shortened only when it is long
     Given the user sent a message of <message>
     When the user looks at it in the conversation
@@ -154,20 +228,32 @@ Feature: Streaming the agent's reply
       | 9 short lines                     | shortened           |
       | only spaces and blank lines       | shown in full       |
 
-  @shared @backlog-mobile
+  # Upstream #16624: the length is measured on the text the user sees, not the hidden markup.
+  @backlog @desktop @tui @priority-low
+  Scenario Outline: A short message with references is measured by what it shows
+    Given the user sent a 200 character message holding <reference>
+    When the user looks at it in the conversation
+    Then it is shown in full
+
+    Examples:
+      | reference                                                     |
+      | a quote of a long earlier reply, shown by its label           |
+      | a link with a 700 character address, shown by its text        |
+
+  @shared
   Scenario: The user copies an assistant reply
     Given the agent has answered
     When the user copies the reply
     Then the reply's markdown is on the clipboard
 
-  @backlog @desktop
+  @desktop
   Scenario: A copied reply confirms itself beside its copy button for a moment
     Given the agent has answered
     When the user copies the reply
     Then the copy button shows that the reply was copied
     And that confirmation goes away after about a second
 
-  @backlog @desktop
+  @desktop
   Scenario: A reply that cannot be copied says why beside its copy button
     Given the agent has answered
     And the clipboard refuses the copy
@@ -177,14 +263,14 @@ Feature: Streaming the agent's reply
   # The Run action sits beside Copy on a shell block the agent wrote. It sends the command to
   # the thread's terminal, the same path a project script takes, and leaves the project's
   # selected script alone.
-  @backlog @shared
+  @shared
   Scenario: A complete shell command in a reply runs in the thread's terminal
     Given the agent's reply has a single-line shell command in a code block
     When the user runs the command from its code block
     Then the command runs in the thread's terminal in the thread's folder
     And the project's selected script is not changed
 
-  @backlog @shared
+  @shared
   Scenario Outline: A code block that is not one complete shell command offers no run
     Given the agent's reply has <block> in a code block
     Then the code block offers no run action
@@ -197,24 +283,24 @@ Feature: Streaming the agent's reply
       | a shell command ending in a backslash             |
       | a Python snippet                                  |
 
-  @backlog @desktop
+  @desktop
   Scenario: A reply that finished with no text says so
     Given the agent's turn ended with a reply that has no text
     Then the reply reads "(empty response)"
 
-  @backlog @mobile
+  @mobile
   Scenario: A thread with no conversation yet suggests what to ask
     Given a thread has no messages and no work has started
     When the user opens it
     Then it says there is no conversation yet
     And it suggests asking the agent to inspect the repository, run a command or continue the thread
 
-  @backlog @desktop
+  @desktop
   Scenario: A reply still being written is not called empty
     Given the agent has started a reply and written nothing yet
     Then the reply shows no text and no "(empty response)"
 
-  @shared @backlog-mobile @backlog-tui
+  @shared
   Scenario: Only a turn's last reply carries its time and actions
     Given the agent commented, ran a tool call and then answered
     Then neither message shows its time and actions while the agent works
@@ -222,7 +308,7 @@ Feature: Streaming the agent's reply
     And the user opens the folded work
     Then only the answer shows its time and actions
 
-  @shared @backlog-mobile @backlog-tui
+  @shared
   Scenario Outline: A message says when it was sent, in the time format the user chose
     Given this device's "timestampFormat" is set to "<format>"
     When the user sent a message today at 9:05 in the morning
@@ -234,7 +320,7 @@ Feature: Streaming the agent's reply
       | 12-hour | 9:05 AM |
       | 24-hour | 09:05   |
 
-  @shared @backlog-mobile @backlog-tui
+  @shared
   Scenario Outline: A message from an earlier day also says which day it was sent
     When the user sent a message <when> at 9:05 in the morning
     Then the message is stamped "<stamp>"
@@ -246,7 +332,7 @@ Feature: Streaming the agent's reply
       | on September 20      | 9/20 9:05 AM         | 9:05 AM, 20th September 2026      |
       | on December 30, 2025 | 12/30/2025 9:05 AM   | 9:05 AM, 30th December 2025       |
 
-  @shared @backlog-mobile @backlog-tui
+  @shared
   Scenario: A reply that finishes while the connection is down is caught up
     Given the agent is writing a reply
     And the MC drops the connection
@@ -256,7 +342,7 @@ Feature: Streaming the agent's reply
     And the rows shown before are kept
     And the MC sends only what the client lacks
 
-  @shared @backlog-mobile @backlog-tui
+  @shared
   Scenario: A catch-up cut off part-way is not applied twice
     Given the agent is writing a reply
     And the agent finishes the reply while the MC cannot be reached
@@ -265,7 +351,7 @@ Feature: Streaming the agent's reply
     And the rows shown before are kept
     And the client asked again from where it was
 
-  @shared @backlog-mobile @backlog-tui
+  @shared
   Scenario: A thread that falls behind is caught up from the MC
     Given the agent is writing a reply
     When the agent writes more than the shell has read
@@ -273,7 +359,7 @@ Feature: Streaming the agent's reply
     Then the whole reply is shown
     And the rows shown before are kept
 
-  @shared @backlog-mobile @backlog-tui
+  @shared
   Scenario: A thread whose MC leaves the cluster says so until the MC returns
     Given the user is looking at a thread on another MC of the cluster
     And the agent has answered "Use the tax table."
@@ -296,6 +382,30 @@ Feature: Streaming the agent's reply
     Then the thread follows its MC again
     And the answer "Deploy when green." is still shown
 
+  # A running thread always has events to catch up on when it opens, so its sync is set for a few
+  # frames even when nothing is missing. Showing that for every open is the flicker to avoid.
+  @shared @backlog
+  Scenario: A catch-up that ends within 400 milliseconds shows no sync status
+    Given the user opens a thread that is running
+    When the thread catches up within 400 milliseconds
+    Then no sync status is shown
+    And the tasks row stays visible
+
+  @shared @backlog @priority-low
+  Scenario: A sync status that has appeared stays for at least 400 milliseconds
+    Given the thread's sync status has just appeared
+    When the catch-up ends 100 milliseconds later
+    Then the sync status is still shown
+    And it goes away once 400 milliseconds have passed since it appeared
+
+  # Upstream #13554: the desktop keeps running threads subscribed in the background, so
+  # opening one is already caught up and shows no sync status.
+  @desktop @backlog @priority-high
+  Scenario: A running thread the desktop has been following is already caught up when opened
+    Given the desktop has been following a running thread in the background
+    When the user opens that thread
+    Then no sync status is shown
+
   @desktop
   Scenario: Retrying follows the thread again once its MC sends it
     Given the agent has answered "The cart has tax."
@@ -309,7 +419,7 @@ Feature: Streaming the agent's reply
     And the answer "The cart has tax." is still shown
 
   # The phone folds a settled turn behind how long it took, but not every turn and not everything in it.
-  @backlog @mobile
+  @mobile
   Scenario: A turn that failed is not folded
     Given the agent ran three tool calls and the turn then failed
     When the turn settles
@@ -317,7 +427,15 @@ Feature: Streaming the agent's reply
     And the failure is shown after them
     And no "Worked for" row hides them
 
-  @backlog @mobile
+  @backlog @shared
+  Scenario: A subagent resumed by a later turn leaves each turn its own fold
+    Given the first turn started a subagent and answered
+    When the second turn resumes that subagent and answers
+    Then the thread reads the first prompt, its "Worked for" row and its answer
+    And then the second prompt, its own "Worked for" row and its answer
+    And the subagent's card stays in the first turn's fold
+
+  @mobile
   Scenario: A fold keeps the first and last replies and any notice in view
     Given a turn in which the agent wrote a first reply, ran tool calls, wrote a reply in the middle and wrote a final reply
     And a notice from an automation arrived during the turn
@@ -325,14 +443,14 @@ Feature: Streaming the agent's reply
     Then the tool calls and the reply in the middle fold behind "Worked for"
     And the first reply, the final reply and the notice stay shown
 
-  @backlog @mobile
+  @mobile
   Scenario: A turn that only compacted the context has nothing to fold
     Given the only work in a finished turn is a context compaction
     When the turn settles
     Then the compaction is shown on its own
     And no "Worked for" row is added
 
-  @backlog @mobile
+  @mobile
   Scenario: A turn that is still streaming a reply is not folded
     Given the run has ended but its last reply is still arriving
     Then the turn's work is shown

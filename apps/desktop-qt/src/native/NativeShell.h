@@ -95,7 +95,8 @@ public:
   ~NativeShell() override;
 
   // Connects to the MC at `origin`; every window's bridge learns where it is.
-  void open(const QUrl& origin, const QString& token);
+  // `environment`, when known, is the one the MC must serve (McClient::open).
+  void open(const QUrl& origin, const QString& token, const QString& environment = {});
   // Leaves the MC for good: the connection closes, and the rows of its
   // machines, what the cache kept of them and every draft go. The controllers
   // stay, for whichever MC open() names next. Not for reconnecting
@@ -105,6 +106,8 @@ public:
 
   McClient* client() { return &m_client; }
   ShellStore* store() { return &m_store; }
+  // Where this install keeps its windows' state (setStoreDirs' `state`).
+  QString stateDir() const { return m_stateDir; }
   // What the client keeps of the MC between runs (setStoreDirs' `cache`).
   LocalCache* cache() { return &m_cache; }
   // The main window's.

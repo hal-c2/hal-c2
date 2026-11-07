@@ -1,4 +1,15 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18085
+#   https://github.com/pingdotgg/t3code/pull/18758
+#   https://github.com/pingdotgg/t3code/pull/16026
+#   https://github.com/pingdotgg/t3code/pull/18563
+#   https://github.com/pingdotgg/t3code/pull/21057
+#   https://github.com/pingdotgg/t3code/pull/15840
+#   https://github.com/pingdotgg/t3code/pull/21396
+#   https://github.com/pingdotgg/t3code/pull/17370
+#   https://github.com/pingdotgg/t3code/pull/19354
+#   https://github.com/pingdotgg/t3code/pull/20432
+#   https://github.com/pingdotgg/t3code/pull/22900
 #   apps/web/src/components/settings/ConnectionsSettings.tsx
 #   apps/desktop/src/backend/DesktopServerExposure.ts, tailscaleEndpointProvider.ts (network access, advertised addresses, Tailscale Serve)
 #   apps/desktop-qt/src/native/ConnectionsController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ConnectionsSettings.qml
@@ -45,14 +56,14 @@ Feature: Connections settings
       When the user turns on network access
       Then the user is asked to confirm restarting and enabling network access
 
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: Confirming network access restarts the server on the network
       Given the user is asked to confirm enabling network access
       When the user confirms
       Then the server restarts listening on the local network
       And an address other devices can use is listed
 
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: Turning off network access restarts the server on this machine only
       Given network access is on
       When the user turns off network access and confirms
@@ -88,7 +99,7 @@ Feature: Connections settings
       Then the server listens only on this machine
       And the choice is kept for when an address is back
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: The address advertised for the local network skips addresses nobody else can use
       Given this machine has <addresses>
       When the user opens the Connections settings with network access on
@@ -99,6 +110,12 @@ Feature: Connections settings
         | a wired address and a Tailscale address                                       | the wired address                 |
         | only a loopback address and a link-local address starting 169.254             | none                              |
         | a wired address, and the operator named the host "desk.local" at launch       | "desk.local"                      |
+
+      # Upstream #18085: local network pairing links skip idle bridges, tunnels and VM adapters.
+      Examples:
+        | addresses                                                                       | offered                      |
+        | a Wi-Fi address and others on a container bridge, a VPN tunnel and a VM adapter | the Wi-Fi address            |
+        | only an address on a container bridge                                           | the container bridge address |
 
     @backlog @desktop
     Scenario: HTTPS addresses an operator configured are listed as custom addresses
@@ -113,6 +130,14 @@ Feature: Connections settings
       And Tailscale HTTPS is off
       When the user opens the Connections settings
       Then HAL-C2 does not query the Tailscale app for this machine's tailnet name
+
+    # Upstream #22900: a timed-out Tailscale probe left Tailscale running, and on macOS it opened
+    # the menu-bar app.
+    @backlog @mc @priority-low
+    Scenario: A Tailscale check that times out leaves nothing running
+      Given asking Tailscale for this machine's status does not answer in time
+      When the check gives up
+      Then no Tailscale process it started is left running, even one that ignores being asked to stop
 
     @backlog @desktop
     Scenario: A tailnet HTTPS name is available only while Tailscale Serve actually answers on it
@@ -139,7 +164,7 @@ Feature: Connections settings
         | 192.168.1.20    | not offered |
 
     # Legacy: packages/tailscale/src/tailscale.ts (normalizeMagicDnsName)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The tailnet name is shown the way a person writes it
       Given Tailscale reports this machine's name as "laptop.tail1234.ts.net."
       When the user opens the Connections settings
@@ -154,7 +179,7 @@ Feature: Connections settings
       And the other addresses are offered as usual
 
     # Legacy: packages/tailscale/src/tailscale.ts (ensureTailscaleServe servePort, DEFAULT_TAILSCALE_SERVE_PORT)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: The tailnet HTTPS address carries its port only when it is not the usual one
       Given Tailscale HTTPS is set up on port <port>
       When the user opens the Connections settings
@@ -201,7 +226,7 @@ Feature: Connections settings
       When the user sets up Tailscale HTTPS
       Then the user is told Tailscale HTTPS could not be set up
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: The WSL backend chooses where agents run on Windows
       Given the machine runs Windows with WSL installed
       When the user chooses to run <choice>
@@ -260,6 +285,15 @@ Feature: Connections settings
         | listening only on this machine                                     | Limited to this machine.                                            |
         | still reading its network state                                    | Loading…                                                            |
 
+    # Upstream #16026: reopening Connections reads this machine's addresses again once they are stale.
+    # Upstream #15840: a changed set of network addresses is looked up again instead of cached.
+    @backlog @desktop @priority-low
+    Scenario: Reopening Connections shows the addresses this machine has now
+      Given the user opened the Connections settings with network access on
+      And this machine then joined a tailnet
+      When the user opens the Connections settings again
+      Then this machine's Tailscale address and tailnet name are listed
+
     @backlog @desktop
     Scenario: Several reachable addresses are folded behind the default one
       Given this machine is reachable at three addresses
@@ -315,6 +349,25 @@ Feature: Connections settings
         | Tailscale is running and HTTPS is on     | https://desk.tail5e3a.ts.net                                                   | on                       |
         | Tailscale is not running                 | Start Tailscale to set up HTTPS access through MagicDNS.                       | not offered              |
 
+    # Upstream #18758: with network access off the desktop does not ask Tailscale, and the row
+    # said to start a Tailscale that was running.
+    @backlog @desktop
+    Scenario: The Tailscale HTTPS row says detection is off while network access is off
+      Given network access is off and Tailscale HTTPS is off
+      When the user opens the Connections settings
+      Then the Tailscale HTTPS row says "Turn on Network access to detect Tailscale."
+      And it does not tell the user to start Tailscale
+
+    # Upstream #21057: Tailscale's status is given 3.5 seconds before it counts as not running
+    # (was 1.5); pairing and MagicDNS lookups wait as long.
+    @backlog @desktop @priority-low
+    Scenario: A slow Tailscale is still found running
+      Given Tailscale is running and HTTPS is off
+      And Tailscale takes two and a half seconds to report its status
+      When the user opens the Connections settings
+      Then the Tailscale HTTPS row says "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL."
+      And its switch is off
+
     @backlog @desktop
     Scenario: Setting up Tailscale HTTPS shows where it will be served
       Given the user is setting up Tailscale HTTPS
@@ -347,13 +400,13 @@ Feature: Connections settings
       Then the button reads "Restarting…"
       And cancelling and the switch cannot be used
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: WSL cannot be read
       Given the machine runs Windows and its WSL state cannot be read
       When the user opens the Connections settings
       Then the WSL row says "Couldn't load the WSL backend state."
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: The WSL row appears only where WSL is in play
       Given the machine <state>
       When the user opens the Connections settings
@@ -366,14 +419,14 @@ Feature: Connections settings
         | has only WSL chosen although it is unavailable | shown      |
         | has WSL neither available nor in use           | not shown  |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Turning WSL on stages the choices before restarting once
       Given WSL is off
       When the user chooses the distribution "Debian" and "Use only WSL"
       Then only WSL and the distribution "Debian" are saved before WSL is turned on
       And HAL-C2 restarts once, on that selection
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The WSL choices are Off and each distribution
       Given the machine runs Windows with the WSL distributions "Ubuntu" (the default) and "Debian"
       When the user opens the WSL choice
@@ -385,14 +438,14 @@ Feature: Connections settings
       When the user opens the WSL choice
       Then the choices are "Off" and "Default distro"
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: WSL only is offered once WSL is on
       Given the WSL backend is on
       Then a "WSL only" choice says it runs only the WSL backend and restarts HAL-C2 when it changes
       When the WSL backend is off
       Then no "WSL only" choice is shown
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: Each WSL change names what a restart does
       Given <state>
       When the user <action>
@@ -408,7 +461,7 @@ Feature: Connections settings
         | WSL runs beside Windows       | turns WSL only on               | Run only the WSL backend?                       | HAL-C2 will restart and start only the WSL backend. Your Windows-side projects won't be accessible until you turn this off again.                        | Restart and enable  |
         | only WSL runs                 | turns WSL only off              | Re-enable the Windows backend?                  | HAL-C2 will restart and bring the Windows backend back up alongside WSL.                                                                                | Restart and disable |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Turning WSL on asks whether Windows keeps running
       Given WSL is off
       When the user chooses a WSL distribution
@@ -416,19 +469,19 @@ Feature: Connections settings
       And told to run the WSL backend alongside the Windows one or only WSL, and that this can be changed later
       And the choices are "Run both backends" and "Use only WSL"
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A WSL change cannot be interrupted
       Given the user confirmed a WSL change
       When HAL-C2 is applying it
       Then the buttons read "Applying…" and nothing in the confirmation can be used
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A WSL change that fails is reported
       Given HAL-C2 cannot apply a WSL change
       When the user confirms it
       Then the user is told the WSL backend could not be changed, with the reason
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A WSL backend that could not start says why
       Given the WSL backend could not start because "the distro is not running"
       When the user opens the Connections settings
@@ -489,7 +542,7 @@ Feature: Connections settings
 
   Rule: Authorized clients
 
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario Outline: A pairing link starts from a preset of permissions
       When the user creates a pairing link and chooses the preset "<preset>"
       Then the permissions chosen are <permissions>
@@ -513,24 +566,32 @@ Feature: Connections settings
         | View access      | Inspect pairing links and authorized clients.         |
         | Manage access    | Issue and revoke credentials for other clients.       |
 
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: A pairing link that can manage access carries a warning
       When the user creates a pairing link that includes managing access
       Then the user is warned this client can create or revoke access for other devices
 
-    @backlog @desktop
+    # Upstream #20432; blocked with "An ordinary pairing grants access and relay management
+    # by default" in mc/platform/auth-and-scopes.feature.
+    @backlog @blocked @desktop
+    Scenario: The Standard preset includes managing access and carries its warning
+      When the user creates a pairing link and keeps the preset "Standard"
+      Then the permissions chosen include "View access" and "Manage access"
+      And the user is warned this client can create or revoke access for other devices
+
+    @backlog @desktop @priority-low
     Scenario: A pairing link's label is optional
       When the user creates a pairing link without a label
       Then the link is listed as "Pairing link"
       And the label field suggests a name such as "Living room iPad"
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A pairing link cannot be created twice at once
       Given the user asked to create a pairing link
       When the server has not answered yet
       Then the button reads "Creating…" and cannot be used again
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Closing the pairing link dialog forgets what was typed
       Given the user typed a label and changed the permissions
       When the user closes the dialog and opens it again
@@ -565,7 +626,7 @@ Feature: Connections settings
       Then the user is asked which address to reach this machine through
       And the link and its QR code follow the address chosen
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: The share panel opens on the address most likely to work
       Given this machine can be reached at <addresses>
       And <preference>
@@ -579,19 +640,19 @@ Feature: Connections settings
         | an address on this machine only                    | the user made no address the default   | that address, without a QR code |
         | one address that is currently unavailable          | the user made no address the default   | no QR code                   |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An address that is gone is replaced by a working one
       Given the user chose to share a pairing link through an address
       When that address stops being offered
       Then the panel moves to the default address, or to the first address that can be shared
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A machine reached one way offers no choice of address
       Given this machine can be reached only one way
       When the user chooses to share a pairing link
       Then no choice of address is shown
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A shared pairing link can be copied whole or as its code only
       Given the user is sharing a pairing link
       When the user copies the link
@@ -638,7 +699,7 @@ Feature: Connections settings
       When the user opens the authorized clients
       Then the order is this device, "Phone", "Tablet", "Old laptop"
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Revoking a client cannot be repeated while it is under way
       Given the user asked to revoke "Phone"
       When the server has not answered yet
@@ -649,7 +710,7 @@ Feature: Connections settings
       Given only this client is listed
       Then revoking the others is not available
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: Revoking the others says how many were revoked
       Given <count> other clients are listed
       When the user revokes the others
@@ -661,7 +722,7 @@ Feature: Connections settings
         | 1     | Revoked 1 other client |
         | 3     | Revoked 3 clients      |
 
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario Outline: A revoke that fails is reported
       Given the server refuses to <action>
       When the user does so
@@ -673,7 +734,7 @@ Feature: Connections settings
         | revoke a client                 | Could not revoke client access     |
         | revoke the other clients        | Could not revoke other clients     |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: The authorized clients are summarised while folded
       Given <clients> clients and <links> pairing links are listed
       When the authorized clients are folded
@@ -839,7 +900,7 @@ Feature: Connections settings
     # the MC answers the access list and client revocation only for the machine the session
     # is on (hal-c2.clients and hal-c2.revokeClient refuse with "session_on_another_mc").
     # Waits for the maintainers: whether a session on one member may manage another's clients.
-    @backlog @blocked @desktop
+    @backlog @blocked @desktop @priority-high
     Scenario: A device paired with another machine of the cluster is listed and revoked from here
       Given the cluster also has the machine "Studio"
       And the phone "Pixel" paired with "Studio" through a link created here
@@ -887,6 +948,15 @@ Feature: Connections settings
     Scenario: Other machines are added from the Cluster settings
       When the user goes on to this machine's cluster
       Then the window shows the settings section "/settings/cluster"
+
+    # Upstream #17370: a client could not see what its own session was allowed to do.
+    @backlog @desktop @mobile
+    Scenario: An environment shows what this device is allowed to do there
+      Given this device's session on "Build box" may read threads but not change settings
+      When the user opens "Build box" in the connections settings
+      Then the permissions this device has there are listed
+      And changing settings is listed as missing
+      And the list follows the route this device is using to reach "Build box"
 
     @dropped @desktop
     Scenario: Adding an environment from a pairing link
@@ -950,7 +1020,7 @@ Feature: Connections settings
         | over SSH as ada@devbox   | SSH ada@devbox     |
         | through WSL              | WSL                |
 
-    @backlog @desktop
+    @desktop
     Scenario: Switching an environment off keeps it saved
       Given "Build box" is connected
       When the user switches "Build box" off
@@ -984,26 +1054,26 @@ Feature: Connections settings
       When the user updates all environments
       Then both environments update
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A trace ID can be copied for support
       When the user copies the trace ID of "Build box"
       Then its trace ID is on the clipboard
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Choosing an icon for an environment
       When the user chooses a rocket icon for "Build box"
       Then "Build box" is shown with the rocket icon wherever environments are listed
       When the user clears the icon
       Then "Build box" is shown with its default icon
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: With no other environments the list says how to add one
       Given no other environment is saved
       When the user opens the environments
       Then the user is told there are no saved remote environments
       And told how to add one
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An environment this device has not reached yet says so
       Given "Build box" is saved and this device has not tried to connect to it
       Then its row reads "Not connected"
@@ -1019,24 +1089,41 @@ Feature: Connections settings
         | over SSH as ada@devbox   | connected                                     | SSH ada@devbox · Connected            |
         | through WSL              | switched off                                  | WSL · Off                             |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Hovering an environment's status gives the long form
       Given "Build box" is reconnecting after a timeout and behind this client
       When the user hovers its status
       Then the full connection sentence is shown
       And the version it would update from and to is shown
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An environment that is switched off says so on hover
       Given "Build box" is switched off
       When the user hovers its status
       Then it says "Switched off"
 
     @backlog @desktop
+    Scenario: Pairing a switched-off environment again switches it back on
+      Given "Build box" is switched off
+      When the user pairs with "Build box" again
+      Then "Build box" is switched on and connects
+      But renaming "Build box" or changing its address keeps it switched off
+
+    @backlog @desktop
     Scenario: An environment this client cannot talk to cannot be switched on
       Given "Build box" runs a version this client does not support
       Then its row reads "Client not supported"
       And its switch cannot be changed and says "Client not supported"
+
+    # Upstream #18563: Update on a blocked environment that was already updated some other way
+    # skips the update and switches it back on, instead of failing until the client restarts.
+    @backlog @desktop @mobile
+    Scenario: An environment updated by other means is switched back on by Update
+      Given "Build box" was switched off because its server was too old for this client
+      And "Build box" has since been updated by hand to a version this client supports
+      When the user updates "Build box"
+      Then no update is run on "Build box"
+      And "Build box" is switched on and connects
 
     @backlog @desktop
     Scenario: Only a connected, switched-on environment offers its update
@@ -1071,7 +1158,7 @@ Feature: Connections settings
       Given every environment is up to date
       Then no update-all action is offered
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A trace ID is offered only when there is one
       Given "Build box" failed to connect with the trace ID "ab12cd"
       When the user opens the actions of "Build box"
@@ -1081,13 +1168,13 @@ Feature: Connections settings
       Given "Studio" is connected
       Then copying a trace ID is not offered for "Studio"
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A trace ID that cannot be copied is reported
       Given the clipboard is unavailable
       When the user copies the trace ID of "Build box"
       Then the user is told the trace ID could not be copied, with the reason
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The WSL backend has no row of its own in the Connections settings
       Given the WSL backend is running beside Windows
       When the user looks at the environments in the Connections settings
@@ -1110,7 +1197,7 @@ Feature: Connections settings
       Then the user is told "SSH host or alias is required."
       And nothing is connected
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: An SSH address is read into host, user and port
       Given the user is adding an environment over SSH
       When the user enters "<host>" with the username field "<username>" and the port field "<port>"
@@ -1125,7 +1212,7 @@ Feature: Connections settings
         | ada@devbox        | root     |      | devbox    | root  | the default    |
         | devbox:2222       |          | 2200 | devbox    | none  | 2200           |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: An SSH port must be a real port
       Given the user is adding an environment over SSH
       When the user enters the port "<port>"
@@ -1151,7 +1238,7 @@ Feature: Connections settings
       And the user can correct the fields and try again
       And a failure with no reason reads "Failed to connect SSH host."
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Hosts from the user's SSH config are suggested
       Given the user's SSH config names the hosts "devbox" and "buildbox"
       When the user opens the SSH host field
@@ -1159,21 +1246,29 @@ Feature: Connections settings
       And the config is read again each time the dialog opens
 
     # Legacy: packages/ssh/src/config.ts (collectSshConfigAliasesFromFile, expandGlob)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Hosts from files the SSH config includes are suggested
       Given the user's SSH config includes another file that names the host "buildbox"
       When the user opens the SSH host field
       Then "buildbox" is suggested
 
+    # Upstream #21396: SSH host discovery follows quoted Include paths.
+    @backlog @desktop @priority-low
+    Scenario: Hosts from an included file whose path is quoted are suggested
+      Given the user's SSH config includes "~/.ssh/work hosts/config" by a quoted path
+      And that file names the host "buildbox"
+      When the user opens the SSH host field
+      Then "buildbox" is suggested
+
     # Legacy: packages/ssh/src/config.ts (hasSshPattern)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: SSH config patterns are not suggested as hosts
       Given the user's SSH config has a host entry "*.internal" and another that excludes "!staging"
       When the user opens the SSH host field
       Then neither "*.internal" nor "!staging" is suggested
 
     # Legacy: packages/ssh/src/config.ts (parseKnownHostsHostnames, normalizeKnownHostsHostname)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Hosts the user has connected to before are suggested
       Given the user's known hosts file lists "box.example,10.0.0.7" and "[gate.example]:2222"
       When the user opens the SSH host field
@@ -1181,7 +1276,7 @@ Feature: Connections settings
       And hosts whose names are hashed in the file are not suggested
       And host patterns in the file are not suggested
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Typing narrows the suggested SSH hosts
       Given the user's SSH config names the hosts "devbox" and "buildbox"
       When the user types "dev"
@@ -1190,26 +1285,26 @@ Feature: Connections settings
       Then the user is told no hosts match "zzz"
 
     # Legacy: apps/web/src/state/desktopSshHosts.ts (filterDiscoveredSshHosts)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: SSH hosts that start with what the user typed come before hosts that only contain it
       Given the user's SSH config names the hosts "web-dev", "devbox" and "old-dev"
       When the user types "dev"
       Then "devbox" is suggested first
       And "web-dev" and "old-dev" follow in the order of the SSH config
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Suggested SSH hosts are matched without regard to case or surrounding spaces
       Given the user's SSH config names the host "DevBox"
       When the user types " dev "
       Then "DevBox" is suggested
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An SSH host that is already an environment is not suggested again
       Given "devbox" is already an environment over SSH
       When the user opens the SSH host field
       Then "devbox" is not suggested
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Choosing a suggested SSH host connects it
       Given the user's SSH config names the host "devbox" with a user and a port
       When the user chooses "devbox" from the suggestions
@@ -1223,7 +1318,7 @@ Feature: Connections settings
       Then the button reads "Adding…"
       And the fields and the button cannot be used
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Enter adds the SSH host unless a suggestion is highlighted
       Given the user typed an SSH host
       When the user presses Enter with no suggestion highlighted

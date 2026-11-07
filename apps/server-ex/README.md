@@ -66,13 +66,15 @@ A file of a version not yet installed moves the MC to it.
 
 An MC carries the HAL-C2 version (`apps/server-ex/VERSION`, or `HAL_C2_MC_VERSION` for a
 build of its own), and clients offer to update it like any server. It moves to the
-new version in place when it can: the running code is replaced module by module and
-nothing reconnects. A version that changes only HAL-C2's own code takes nothing else
-from its bundle, so it keeps the Erlang runtime and dependencies the MC already runs
-and installs from a bundle built for any platform, and services new in the application
-start alongside the running ones. A new OTP release, dependency, configuration, or
-change to a supervisor or a running service's spec needs a restart instead, which
-`bin/hal-c2-service` provides from this platform's bundle (`HalC2.Upgrade` has the rules).
+new version in place when it can, with an OTP release upgrade generated from what
+differs between the two releases, and nothing reconnects: processes migrate their
+state, services the new version adds, drops or changes start, stop or restart, and
+the release is made permanent. A version that changes only HAL-C2's own code takes
+nothing else from its bundle, so it keeps the Erlang runtime and dependencies the MC
+already runs and installs from a bundle built for any platform. A new OTP release,
+emulator flags, OTP applications, or code that loads a NIF needs a restart instead,
+which `bin/hal-c2-service` provides from this platform's bundle (`HalC2.Upgrade` has
+the rules; `docs/internals/server-updates.md` what they ask of the code).
 
 MCs get a version's bundle from a cluster peer that has it, or else from the
 `mc-v<version>` GitHub release (`.github/workflows/release-mc.yml`; set
@@ -80,10 +82,10 @@ MCs get a version's bundle from a cluster peer that has it, or else from the
 
 ```sh
 HAL_C2_MC_VERSION=0.0.43-mine mix hal_c2.upgrade hal_c2@host     # build a release, send it, update
-mise run mc:reload                                  # compile, reload changes into `mise run mc`
+mise run mc:reload                                  # compile, upgrade `mise run mc` in place
 mise run mc:reload --release                        # build a release, update the installed MC on this machine
 mise run mc:update-cluster olafura@ai-beast         # the same commit and a reload on other machines, over SSH
-mix hal_c2.upgrade --dev hal_c2_a@my-mac hal_c2_b@my-mac        # MCs run with `mix run`: reload changes
+mix hal_c2.upgrade --dev hal_c2_a@my-mac hal_c2_b@my-mac        # MCs run with `mix run`: upgrade in place
 MIX_ENV=prod mix hal_c2.bundle                        # just pack _build/prod/rel/hal_c2 and its single file
 ```
 
@@ -106,8 +108,11 @@ MC's `cluster.*` RPCs. Every MC boots ready to
 cluster (`rel/env.sh.eex`, `mise run mc`): it has its own certificate, and members pin
 each other's and talk Erlang distribution over mutual TLS on port 4370
 ([cluster.feature](../../features/connections/cluster.feature)). The joining machine has to
-reach the inviting MC's HTTP address, so start that one with `HAL_C2_MC_HOST` set to
-its LAN or tailnet address, or invite with `--tailscale`.
+reach the inviting MC's HTTP or HTTPS address, so start that one with `HAL_C2_MC_HOST` set to
+its LAN or tailnet address, or invite with `--tailscale`. A join authenticates the inviter's
+signed challenge before sending an encrypted entry and a cluster-only invite proof. The invite
+secret never becomes a client session. MCs that still use bearer admission cannot join an MC
+with this protocol; update the joining machine first.
 
 Members find each other at the addresses they report, then at those a discovery strategy
 lists: the tailnet (`HalC2.Cluster.Tailscale`) and `HAL_C2_PEERS=host[:port],...`

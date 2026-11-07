@@ -1,4 +1,14 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22159
+#   https://github.com/pingdotgg/t3code/pull/15052
+#   https://github.com/pingdotgg/t3code/pull/18155
+#   https://github.com/pingdotgg/t3code/pull/18469
+#   https://github.com/pingdotgg/t3code/pull/14518
+#   https://github.com/pingdotgg/t3code/pull/20441
+#   https://github.com/pingdotgg/t3code/pull/16200
+#   https://github.com/pingdotgg/t3code/pull/13083
+#   https://github.com/pingdotgg/t3code/pull/13577
+#   https://github.com/pingdotgg/t3code/pull/13683 (a slow snapshot is given time before a second load)
 #   apps/web/src/hooks/useEnvironmentDisconnectDelay.ts (20 seconds before a thread offers to disconnect), apps/web/src/components/ChatView.tsx (disconnect, reconnect)
 #   docs/internals/connection-runtime.md (one retry owner, HTTP authorization, freshness)
 #   docs/internals/environment-auth.md
@@ -8,6 +18,7 @@
 #   packages/client-runtime/src/state/threads.ts (five idle minutes of thread cache)
 #   packages/client-runtime/src/connection/compatibility.ts (ConnectionBlockedError)
 #   packages/client-runtime/src/connection/errors.ts (blocked or transient by the environment's answer, identity mismatch)
+#   apps/desktop-qt/src/native/EnvironmentCatalog.cpp, SavedEnvironmentsController.cpp, McClient.cpp (saved environments, renewal)
 #   apps/web/src/versionSkew.ts (server older than the client, nightly comparison, dismissals)
 #   apps/web/src/connection/storage.ts (corrupt catalog quarantined, secure storage declining a write)
 #   apps/server-ex/lib/hal_c2/environment.ex (serverVersion in the descriptor)
@@ -23,10 +34,18 @@
 #     reachability held against its interfaces, hal-c2/hal-c2#69)
 #   apps/tui/src/features.backlog.test.ts (environment-connections)
 #   apps/desktop-qt/src/native/McClient.cpp, ThreadStore.cpp, ShellStore.cpp (each `sub` says where it resumes from)
+#   https://github.com/pingdotgg/t3code/pull/14897
+#   https://github.com/pingdotgg/t3code/pull/15034
 #   Shared domain: tui/reconnect.feature holds the terminal client's reconnects;
 #   mobile/offline-and-lifecycle.feature holds the phone's foreground and offline journeys;
 #   mc/platform/websocket-protocol.feature holds resuming streams on the MC;
 #   local-cache.feature holds what a client keeps between runs.
+#   https://github.com/pingdotgg/t3code/pull/15470
+#   https://github.com/pingdotgg/t3code/pull/15563
+#   https://github.com/pingdotgg/t3code/pull/22212
+#   https://github.com/pingdotgg/t3code/pull/22213
+#   https://github.com/pingdotgg/t3code/pull/25526
+#   https://github.com/pingdotgg/t3code/pull/25703
 
 Feature: Connection health
   Each environment has one connection owner in a client. It retries transport failures with
@@ -36,16 +55,14 @@ Feature: Connection health
   Background:
     Given a client paired with an environment
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A dropped connection retries with growing delays
     Given the environment stops answering
     When the connection drops
     Then the client retries with delays that grow up to a cap
     And reconnects when the environment answers again
 
-  # Proved by tst_ShellExamples.cpp (the notice's place) and tst_ThreadView.qml (the thread
-  # stays quiet), not yet by a step (hal-c2/hal-c2#213).
-  @desktop @backlog-desktop
+  @desktop
   Scenario: A dropped connection is reported once, with one way to retry
     Given the user is reading a thread
     When the connection drops
@@ -53,14 +70,13 @@ Feature: Connection health
     And the thread does not say its MC cannot be reached
     And the notice covers neither the window controls, the header nor the thread
 
-  # Proved by tst_ShellExamples.cpp, not yet by a step (hal-c2/hal-c2#213).
-  @desktop @backlog-desktop
+  @desktop
   Scenario: A shell of the user's that uses the built-in layout reports a dropped connection once
     Given the user's shell fills its window with the built-in layout
     When the connection drops
     Then one notice says the environment is being reconnected
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: An offline device waits instead of retrying
     Given the device has no network
     When the connection drops
@@ -70,7 +86,7 @@ Feature: Connection health
   # Android says disconnected when any one network is lost, the one a phone just left for
   # another included (hal-c2/hal-c2#69). Only an environment on another machine needs a
   # network, and which machine it is on is asked again whenever the client is opened.
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A device that lost one of its two networks keeps trying
     Given the environment is on another machine
     And the environment stops answering
@@ -79,7 +95,7 @@ Feature: Connection health
     Then the client keeps retrying
     And does not say the device is offline
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A device that lost every network waits and says it is offline
     Given the environment is on another machine
     When the device loses every network
@@ -87,35 +103,35 @@ Feature: Connection health
     Then the client waits for the network
     And says the device is offline
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A network that comes back is tried at once
     Given the environment is on another machine
     And the client is waiting for the network
     When a network comes back
     Then it tries again at once
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: An environment on this machine is reached without a network
     Given the environment is on another machine
     And the client is waiting for the network
     When the user pairs the client with an environment on this machine
     Then it connects at once
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A client opened without a network waits for it
     Given the device loses every network
     When the client is opened at an environment on another machine
     Then the client waits for the network
     And says the device is offline
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A refused credential waits for the user
     Given the environment refuses the client's credential
     When the client connects
     Then the client stops retrying
     And asks the user to pair again
 
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: Only the environment with the bad credential stops
     Given two paired environments
     And one of them revoked this client
@@ -123,7 +139,7 @@ Feature: Connection health
     Then the other environment stays connected
 
   # Legacy: packages/client-runtime/src/connection/errors.ts (mapRemoteEnvironmentError)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario Outline: What the environment answers decides whether the client keeps trying
     Given the client is connecting to an environment
     When <answer>
@@ -140,7 +156,7 @@ Feature: Connection health
       | the environment answers with something that is not a reply | keeps retrying     | Remote environment endpoint returned an invalid response.     |
 
   # Legacy: packages/client-runtime/src/connection/errors.ts (environmentMismatchError)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: An address that answers as a different environment is not used
     Given "studio" was saved at an address
     And a different environment now answers at that address
@@ -150,7 +166,7 @@ Feature: Connection health
     And the client does not keep retrying
 
   # Legacy: packages/client-runtime/src/connection/errors.ts (profileMissingError, credentialMissingError)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario Outline: A saved environment whose record or credential has gone is blocked, not retried
     Given "studio" is saved but <missing>
     When the client connects
@@ -162,13 +178,13 @@ Feature: Connection health
       | its connection record is gone | Connection profile studio is unavailable.     |
       | its credential is gone        | Connection credential studio is unavailable.  |
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Foregrounding wakes a waiting retry
     Given the client is waiting to retry
     When the app comes to the foreground
     Then it tries again at once
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Foregrounding probes a healthy connection instead of replacing it
     Given an established connection
     When the app comes to the foreground after a moment
@@ -176,7 +192,7 @@ Feature: Connection health
     And keeps it when it answers
 
   # Legacy: packages/client-runtime/src/connection/supervisor.ts (CONNECTION_PROBE_TIMEOUT, wakeProbeFailed)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: A connection that does not answer the check on foregrounding is replaced at once
     Given an established connection that has silently died
     When the app comes to the foreground
@@ -185,7 +201,7 @@ Feature: Connection health
     But a second failure in a row goes back to the growing delays
 
   # Legacy: packages/client-runtime/src/connection/supervisor.ts (MOBILE_CONNECTION_PROBE_TIMEOUT)
-  @backlog @mobile
+  @mobile
   Scenario: The phone gives the foreground check 3 seconds, not 15
     Given an established connection that has silently died
     When the phone's app comes to the foreground
@@ -193,15 +209,43 @@ Feature: Connection health
     And the status says the environment did not respond to a connection health check
 
   # Legacy: packages/client-runtime/src/connection/supervisor.ts (CONNECTION_ESTABLISHMENT_TIMEOUT)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: A connection that is not set up within 15 seconds counts as failed
     Given the environment accepts the connection but never finishes introducing itself
     When 15 seconds pass
     Then the attempt is abandoned and reported as a timeout
     And the client retries after the usual delay
 
-  # Legacy: packages/client-runtime/src/connection/supervisor.ts (BACKOFF_RESET_AFTER_MS)
+  # Upstream #14518: a cold MC slow to build its first snapshot was torn down and retried in a loop.
   @backlog @desktop @mobile
+  Scenario: A connection that is open but slow to send its first snapshot is kept
+    Given the environment's socket opened and its first snapshot takes 40 seconds to arrive
+    When the client connects
+    Then the connection is kept and is ready once the snapshot arrives
+    And the attempt is given up only after 75 seconds more than the setup time
+    And a route that fails while waiting for its snapshot leaves the next route its own time
+
+  # Upstream #25526: a slow answer to the session request read as no access, so settings were read-only.
+  @backlog @shared
+  Scenario: A host slow to describe the user's session does not make settings read-only
+    Given the environment takes 10 seconds to describe the user's session
+    When the user opens settings
+    Then the client asks again with a longer wait, up to 60 seconds
+    And settings stay changeable once the session arrives
+    And only a session that is still unanswered after 60 seconds, or refused, is reported as a failure
+
+  # Upstream #25703: a search or refresh waited on an environment that was retrying.
+  @backlog @shared
+  Scenario: A search does not wait on an environment that is retrying
+    Given "Office Mac" failed to connect and is retrying
+    When the user searches threads or pull requests, or refreshes the pull request list
+    Then the results of the other environments are shown and the search stops loading
+    And "Office Mac" is listed as unreachable for that search
+    And results "Office Mac" gave before, live or cached, stay shown
+    And the search runs again on "Office Mac" once it connects
+
+  # Legacy: packages/client-runtime/src/connection/supervisor.ts (BACKOFF_RESET_AFTER_MS)
+  @desktop @mobile
   Scenario Outline: The retry delays start over only after a connection has held for 30 seconds
     Given the client has already failed to connect several times
     And it connects
@@ -214,7 +258,7 @@ Feature: Connection health
       | 5 seconds  | the next longer delay than before      |
 
   # Legacy: packages/client-runtime/src/connection/supervisor.ts (blocked phase, waitForSignal)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: A blocked environment is tried again when the app returns to the foreground
     Given the environment refuses the client's credential
     And the client stopped retrying
@@ -222,36 +266,143 @@ Feature: Connection health
     Then the client tries to connect once more
     And stays blocked with the same reason if the environment still refuses
 
-  @backlog @mobile
+  @mobile
   Scenario: A long background suspension replaces the connection
     Given the app was suspended for a long time
     When it comes to the foreground
     Then the client opens a new connection without waiting for the old one to fail
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A connection is ready only after the environment describes itself
     When the socket opens
     Then the client reports connecting until the environment's configuration arrives
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A failed shell subscription is not shown as reconnecting
     Given a connected environment
     When its shell subscription fails
     Then the client reports the data problem
     And does not claim to be reconnecting
 
-  @desktop @mobile @backlog-mobile
-  Scenario: The environment's status names why it is reconnecting
+  # The client's own reason for a drop ("timeout", "HTTP 502", a socket error) goes to its
+  # log under the attempt's trace id; the user reads a sentence.
+  # Upstream #18469: losing a live session reads as reconnecting, not as a failed connection.
+  @desktop @mobile
+  Scenario: The environment's status says it is reconnecting, in plain words
     Given the connection dropped because of a timeout
-    Then the environment reads "Reconnecting: timeout"
+    Then the environment reads "Reconnecting"
+    And the notice says why: "It stopped answering. HAL-C2 keeps trying."
+    And no surface shows the client's own reason "timeout"
 
-  @desktop @mobile @backlog-mobile
+  # Upstream #22212: a connection that was open and went quiet names the environment and how
+  # long it was silent, and blames load, sleep or the network rather than DNS or a firewall.
+  # Replaces the scenario above once desktop and mobile carry it.
+  @backlog @desktop @mobile
+  Scenario: An environment that went quiet says for how long and what may be wrong
+    Given the client was connected to "leftbook"
+    When "leftbook" stops answering pings for 15 seconds
+    Then the notice says "leftbook stopped responding for 15s. It may be overloaded, asleep, or off the network."
+
+  # Upstream #22212: the DNS and firewall hint is kept for connections that never opened.
+  @backlog @desktop @mobile
+  Scenario: Only a connection that never opened suggests checking DNS or a firewall
+    When the client cannot open a connection to "leftbook" at all
+    Then the notice suggests the network's DNS or a firewall may be blocking it
+    But a connection to "leftbook" that opened and then went quiet does not suggest that
+
+  # Upstream #22213: only the host knows it froze, and it can say so once it answers again.
+  @backlog @mc @desktop @mobile
+  Scenario: A host that froze says why when the client reconnects
+    Given "leftbook" froze for 12 seconds while its load was 219 on 18 cores
+    When the client reconnects to "leftbook"
+    Then the user is told "leftbook froze for 12s" and "Its CPU is overloaded (load 219 on 18 cores)."
+    And the user is told once for that freeze
+
+  # Upstream #22213: a freeze with the load under the core count is a busy server, not the CPU.
+  @backlog @mc @desktop @mobile @priority-low
+  Scenario: A host that froze without a loaded CPU says it was too busy to answer
+    Given "leftbook" froze for 12 seconds while its load was 4 on 18 cores
+    When the client reconnects to "leftbook"
+    Then the user is told HAL-C2 on "leftbook" was too busy to answer
+
+  # Upstream #22213: only stalls of 5 seconds or more, and only for 5 minutes after them.
+  @backlog @mc
+  Scenario Outline: A host reports a freeze only when it was long and recent
+    Given "leftbook" froze for <length> seconds <ago> minutes ago
+    When a client reconnects to "leftbook"
+    Then the MC <reports> the freeze
+
+    Examples:
+      | length | ago | reports         |
+      | 3      | 1   | does not report |
+      | 7      | 1   | reports         |
+      | 7      | 6   | does not report |
+
+  # Upstream #22213: a freeze is never replayed from a saved copy after the app restarts.
+  @backlog @desktop @mobile @priority-low
+  Scenario: A freeze already reported is not reported again after the app restarts
+    Given the user was told "leftbook froze for 12s"
+    When the app restarts and reconnects to "leftbook" a minute later
+    Then the user is told about that freeze only if the MC still reports it
+
+  # Upstream #18469: losing a live session reads as reconnecting, not as a failed connection.
+  # The desktop and the phone pass the scenario above; this is the terminal client's half.
+  @backlog @tui
+  Scenario: The terminal client shows a session lost after connecting as reconnecting
+    Given the client was connected to the environment
+    When the connection drops
+    Then the environment's status says "Reconnecting"
+    And it does not say the connection failed
+
+  # The window shows its connection as an icon and a word; hovering it says what is going
+  # on, and clicking it opens a panel with the sentence and what the user can do.
+  @desktop @mobile
+  Scenario Outline: The connection's state is an icon with a word
+    Given the connection is <state>
+    Then the window shows the <icon> icon with "<word>"
+    And hovering it says what is going on
+
+    Examples:
+      | state                   | icon          | word           |
+      | connecting              | circle-dashed | Connecting     |
+      | retrying after a drop   | refresh-cw    | Reconnecting   |
+      | waiting for the network | cloud         | Offline        |
+      | refused its credential  | lock          | Needs pairing  |
+      | on another protocol     | octagon-alert | Update needed  |
+
+  # Shown only once a reconnect is a second and a half old; most are over by then. What
+  # needs the user (pairing, an update, no network) is shown at once.
+  # The terminal client holds back its "reconnecting" line the same way (tui/reconnect.feature).
+  @desktop @mobile
+  Scenario: A reconnect within a second and a half is not shown
+    Given a connected environment
+    When the connection drops and comes back at once
+    Then no surface said the connection was down
+
+  # The grace is a reconnect's. An app that has not connected since it started says so at
+  # once, in the window and in Connections settings, however long the environment takes.
+  @desktop @mobile
+  Scenario: An app that starts with its environment out of reach says so at once
+    Given the environment takes no connections
+    When the app starts and connects to it
+    Then within a second and a half the window shows it is not connected
+    And nothing said it was connected
+
+  # Upstream #18155: what a connecting environment is asked for stays loading, not failed.
+  @backlog @shared
+  Scenario: An environment that is still connecting is not shown as failing
+    Given the user opens Usage while an environment is connecting
+    When the connection is handed over to a new session
+    Then the environment's usage shows as loading
+    And it is never shown as unable to report
+
+  @desktop @mobile
   Scenario: The user copies a connection's trace id for a bug report
     Given a connection that failed
     When the user copies its trace id
     Then the trace id is on the clipboard
 
-  @backlog @desktop
+  @desktop
   Scenario: A request the MC has not answered within 15 seconds is listed in a warning
     Given the client is connected to the MC
     When a request to the MC is not answered for 15 seconds
@@ -259,14 +410,29 @@ Feature: Connection health
     When 5 minutes pass
     Then the warning is still shown until the request is answered
 
-  @backlog @desktop
+  @desktop
   Scenario: The slow-request warning lists each waiting request and when it started
     Given two requests to the MC have not been answered for 15 seconds
     When the user shows the requests in the warning
     Then the warning lists each request by its method and environment
     And says when each request started
 
+  # Upstream #22212: the slow-request warning named the environment by its id.
   @backlog @desktop
+  Scenario: The slow-request warning names the environment, not its id
+    Given a request to "leftbook" has not been answered for 15 seconds
+    When the user shows the requests in the warning
+    Then the request is listed with "leftbook"
+    And the environment's id is not shown
+
+  # Upstream #22212: the client's activity heartbeat, which nobody waits on, was the only
+  # request ever reported for a frozen host.
+  @backlog @desktop
+  Scenario: The client's activity report is never reported as slow
+    When the client's report of its own activity is not answered for 5 minutes
+    Then the user sees no warning
+
+  @desktop
   Scenario: Answered requests leave the slow-request warning, which closes when none are waiting
     Given two requests to the MC have not been answered for 15 seconds
     When one of them is answered
@@ -274,7 +440,7 @@ Feature: Connection health
     When the other is answered
     Then the warning is gone
 
-  @backlog @desktop
+  @desktop
   Scenario: Updating a provider or the server is reported as slow only after two minutes
     Given the user updates a provider
     When 1 minute and 59 seconds pass
@@ -282,27 +448,37 @@ Feature: Connection health
     When 1 more second passes
     Then the user sees a "warning" toast "Some requests are slow"
 
-  @backlog @desktop
+  # Upstream #22159: refreshing a repository's status often takes over 15 seconds while a
+  # background poll holds it, and kept tripping the warning.
+  @backlog @desktop @priority-low
+  Scenario: Refreshing a repository's status is reported as slow only after two minutes
+    Given the client asked the MC to refresh the status of "shop"
+    When 1 minute and 59 seconds pass
+    Then the user sees no warning
+    When 1 more second passes
+    Then the user sees a "warning" toast "Some requests are slow"
+
+  @desktop
   Scenario: Pull request lookups and live subscriptions are never reported as slow
     When a pull request lookup is not answered for 5 minutes
     And a live subscription is not answered for 5 minutes
     Then the user sees no warning
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Cached data stays readable offline without looking live
     Given threads were loaded before the connection dropped
     When the user opens one offline
     Then the thread shows its cached content
     And the client does not claim a live connection
 
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: Cached data never overwrites newer live data
     Given the client reconnects while cached data loads
     When live data arrives first
     Then the older cached data is not applied over it
 
   # Legacy: packages/client-runtime/src/platform/orchestrationCache.ts (decodeOrDiscardOrchestrationCache)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: A kept copy the client cannot read is dropped and never blocks live data
     Given the client kept a copy of "Fix checkout" that it can no longer read
     When the user opens "Fix checkout" while connected
@@ -310,7 +486,7 @@ Feature: Connection health
     And "Fix checkout" loads from the MC as if nothing had been kept
 
   # Legacy: packages/client-runtime/src/platform/persistence.ts (EnvironmentCacheStore.loadServerConfig)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: A new task offline still offers the models the environment last reported
     Given "studio" last reported the models "Claude Sonnet" and "GPT-5"
     And "studio" is not reachable
@@ -318,7 +494,7 @@ Feature: Connection health
     Then "Claude Sonnet" and "GPT-5" are offered
 
   # Legacy: packages/client-runtime/src/platform/persistence.ts (loadVcsRefs, clearVcsRefs)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: Only the whole branch list of a repository is kept
     Given the user searched the branches of "hal-c2" for "fix"
     When the client keeps the branches of "hal-c2" for later
@@ -326,19 +502,34 @@ Feature: Connection health
     And a branch picker opened offline never presents a partial list as the whole one
 
   # Legacy: packages/client-runtime/src/platform/persistence.ts (clearVcsRefs: refs are repository-wide)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: A change to a repository's branches drops every kept branch list for it
     Given the client kept the branch list of "hal-c2" and of a worktree of "hal-c2"
     When a branch of "hal-c2" is created
     Then neither kept list is offered again until it is read anew
 
-  @desktop @mobile @backlog-mobile
+  # Upstream #13683: a slow but alive MC finishes a load instead of being asked for it twice.
+  @shared
+  Scenario: A slow MC finishes the thread list instead of building it twice
+    Given the MC takes 12 seconds to build the thread list
+    When the client connects
+    Then the thread list shows once the MC answers
+    And the MC builds the thread list once
+
+  @shared
+  Scenario: A slow MC finishes opening a thread instead of loading it twice
+    Given the MC takes 12 seconds to load a thread
+    When the user opens the thread
+    Then the thread shows once the MC answers
+    And the MC loads the thread once
+
+  @desktop @mobile
   Scenario: A thread left for under five minutes resumes without a snapshot
     Given the user left a thread
     When the user returns within five minutes
     Then the client resumes the thread from where it stopped
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A thread left for longer comes back from what the client kept
     Given the user left a thread more than five minutes ago
     And the agent answered "Shipping is next." meanwhile
@@ -347,14 +538,14 @@ Feature: Connection health
     And the MC sends only what the client lacks
     And the thread shows "Shipping is next." after the conversation it kept
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Subscriptions follow a replaced connection
     Given a client subscribed to a thread
     When the connection is replaced
     Then the subscription continues on the new connection
 
   # Legacy: packages/client-runtime/src/rpc/client.ts (currentSession)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: An action for an environment that is not connected fails by its name
     Given "studio" is offline
     When the user asks "studio" to do something
@@ -362,47 +553,47 @@ Feature: Connection health
     And the request is not queued for later
 
   # Legacy: packages/client-runtime/src/v3/clusterSocket.ts (ping interval, calls rejected on close)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: A connection with nothing to say is kept alive every 25 seconds
     Given a connected client with nothing open that streams
     When 25 seconds pass
     Then the client has pinged the MC
 
   # Legacy: packages/client-runtime/src/v3/clusterSocket.ts (onClose rejects pending calls)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: An action waiting for its answer fails when the connection drops
     Given the user asked "studio" to do something and it has not answered
     When the connection to "studio" drops
     Then the action fails as disconnected
     And it is not sent again on the new connection
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Reconnecting does not repeat the user's actions
     Given the user sent a command just before the connection dropped
     When the client reconnects
     Then the command is not sent again automatically
 
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: An expiring credential does not close a healthy connection
     Given a connected client whose credential is about to expire
     When the client renews it for an HTTP request
     Then the connection stays open
 
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: A failed renewal affects only its request
     Given a connected client
     When renewing its credential fails for an HTTP request
     Then only that request fails
     And the connection stays open
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Removing an environment clears everything the client kept for it
     Given a saved environment with cached threads and drafts
     When the user removes it
     Then its credential, cached data and drafts are cleared
 
   # Legacy: apps/web/src/connection/storage.ts (corrupt catalog quarantined, empty catalog written back)
-  @backlog @desktop
+  @desktop
   Scenario: A damaged record of saved environments is set aside and the app starts with none
     Given the desktop app's record of saved environments is damaged
     When the app starts
@@ -411,7 +602,7 @@ Feature: Connection health
     And the user can pair again without clearing anything by hand
 
   # Legacy: apps/web/src/connection/storage.ts (makeCatalogBackend desktop secure storage declines the write)
-  @backlog @desktop
+  @desktop
   Scenario: Pairing fails when the system's secure storage refuses to keep the credential
     Given the system's secure storage is unavailable to the app
     When the user pairs a new environment
@@ -426,7 +617,7 @@ Feature: Connection health
     When the user signs out of HAL-C2 Connect
     Then the directly paired environment stays
 
-  @shared @backlog-mobile @backlog-tui
+  @shared
   Scenario Outline: A protocol mismatch blocks the connection with advice
     Given an environment whose MC speaks <protocol>
     When the client connects
@@ -438,6 +629,21 @@ Feature: Connection health
       | a newer protocol than the client | update HAL-C2 on this device          |
       | an older protocol than the client | update HAL-C2 on that environment    |
 
+  # Upstream #15052: an incompatible host is retried once it is compatible instead of being switched off for good
+  @backlog @shared
+  Scenario: A blocked environment connects by itself once it is compatible again
+    Given the connection to "server" was blocked because its MC speaks an older protocol
+    When "server" is updated to a protocol the client speaks
+    Then the client connects to "server" without the user switching it back on
+    And "server" was never saved as switched off
+
+  # Upstream #15052: only the user's own choice keeps an environment off
+  @backlog @shared
+  Scenario: An environment the user switched off stays off
+    Given the user switched "server" off
+    When "server" becomes reachable and compatible
+    Then the client does not connect to "server"
+
   # Legacy: packages/client-runtime/src/connection/layer.ts (watchDiscoveredCompatibility)
   # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
   @dropped @desktop @mobile
@@ -447,10 +653,18 @@ Feature: Connection health
     Then the environment is shown as blocked with the same advice
     And the client has not tried to connect to it
 
+  # Upstream #13577: a relay's health report describes the server behind the relay, so it must
+  # not disable a directly paired environment that shares its id. HAL-C2 Connect was removed.
+  @dropped @desktop @mobile
+  Scenario: A relay's protocol report does not disable a directly paired environment with the same id
+    Given HAL-C2 Connect lists an environment with the same id as a directly paired one, on another protocol
+    When the client refreshes the relay's environments
+    Then the directly paired environment stays connected
+
   # A different app version does not block the connection; only a server behind the client
   # warns. settings/updates.feature holds updating the server from that warning and keeping
   # a dismissed notice dismissed for its version.
-  @shared @backlog-mobile
+  @shared
   Scenario Outline: A server on another HAL-C2 version warns only when it is behind
     Given this client runs HAL-C2 <client>
     And the environment's MC runs HAL-C2 <server>
@@ -465,40 +679,40 @@ Feature: Connection health
       | 1.4.0                  | 1.4.0-nightly.20260901 | does not warn               |
       | 1.4.0-nightly.20260902 | 1.4.0-nightly.20260901 | warns of a version mismatch |
 
-  @shared @backlog-mobile @backlog-tui
+  @shared
   Scenario: One connection serves every MC of a cluster
     Given a client connected to a cluster of three MCs
     Then the client keeps one connection for the cluster
     And streams from every MC arrive over it
 
-  @shared @backlog-mobile @backlog-tui
+  @shared
   Scenario: A cluster connection resumes each stream from where it stopped
     Given a client following threads on two cluster members
     When the cluster connection drops and returns
     Then each thread stream resumes from its last offset
     And the thread list asks only for the rows changed since
 
-  @backlog @desktop
+  @desktop
   Scenario: A thread on a computer that stays unavailable offers to disconnect it after 20 seconds
     Given the user is looking at a thread on the saved computer "studio"
     And "studio" has been offline or reconnecting for 20 seconds
     Then the notice about "studio" offers to disconnect it
     And before 20 seconds it offers only to reconnect
 
-  @backlog @desktop
+  @desktop
   Scenario: The 20 seconds start again for another computer
     Given the user is looking at a thread on "studio" that has been unavailable for 15 seconds
     When the user opens a thread on "laptop" that is also unavailable
     Then disconnecting "laptop" is offered only 20 seconds after it became unavailable
 
-  @backlog @desktop
+  @desktop
   Scenario: A computer that comes back inside the 20 seconds is never offered for disconnecting
     Given a thread on "studio" which has been unavailable for 10 seconds
     When "studio" connects again
     Then no offer to disconnect "studio" is shown
     And if it drops again the 20 seconds start over
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The computer the app runs on cannot be disconnected from a thread
     Given the user is looking at a thread on <computer>
     And <computer> has been unavailable for more than 20 seconds
@@ -509,7 +723,7 @@ Feature: Connection health
       | the computer serving this client          |
       | a backend running on this same desktop    |
 
-  @backlog @desktop
+  @desktop
   Scenario: Disconnecting from a thread's notice hides that computer and goes home
     Given "studio" has been unavailable for 20 seconds
     When the user chooses to disconnect it from the thread's notice
@@ -517,7 +731,7 @@ Feature: Connection health
     And its threads are hidden
     And the user is taken to the home screen
 
-  @backlog @desktop
+  @desktop
   Scenario: A disconnect that fails says why
     Given "studio" has been unavailable for 20 seconds
     And switching "studio" off will fail
@@ -525,34 +739,42 @@ Feature: Connection health
     Then the user is told "Could not disconnect server" with the reason
     And the user stays on the thread
 
-  @backlog @desktop
+  @desktop
   Scenario: A reconnect that fails says why
     Given "studio" is offline
     And reconnecting will fail
     When the user chooses to reconnect it from the thread's notice
     Then the user is told "Could not reconnect environment" with the reason
 
-  @backlog @desktop
+  @desktop
   Scenario: A brief reconnect is not announced in the thread
     Given the user is looking at a thread on "studio"
     When "studio" drops and reconnects within two seconds
     Then the thread shows no notice about "studio"
 
-  @backlog @desktop
+  @desktop
   Scenario: A computer still reconnecting after two seconds is named in the thread
     Given the user is looking at a thread on "studio"
     When "studio" has been reconnecting for more than two seconds
     Then the thread says "studio is reconnecting"
     And reconnecting by hand is not offered while it is already trying
 
+  # Upstream #20441: the elapsed grace of an earlier reconnect does not carry over.
   @backlog @desktop
+  Scenario: Every reconnect gets its own two seconds before it is named in the thread
+    Given the user is looking at a thread on "studio"
+    And "studio" was named as reconnecting in the thread and then connected again
+    When "studio" drops again and reconnects within two seconds
+    Then the thread shows no notice about "studio"
+
+  @desktop
   Scenario: An offline computer is named in the thread with a way to reconnect
     Given the user is looking at a thread on "studio"
     When "studio" stops trying to connect
     Then the thread says "studio is offline"
     And the user can ask it to reconnect
 
-  @backlog @desktop
+  @desktop
   Scenario: A computer restarting for an update shows the update, not a reconnect warning
     Given the user is looking at a thread on "studio"
     And an update of "studio" is running
@@ -560,7 +782,7 @@ Feature: Connection health
     Then the thread shows the update's progress
     And no notice says "studio" is reconnecting
 
-  @backlog @desktop
+  @desktop
   Scenario: A computer that stops connecting during an update can still be reconnected
     Given the user is looking at a thread on "studio"
     And an update of "studio" is running
@@ -568,10 +790,49 @@ Feature: Connection health
     Then the thread says "studio is offline"
     And the user can ask it to reconnect
 
-  @backlog @desktop
-  Scenario: Reconnecting to a computer on another version reads as finishing an update
+  # Upstream #13083: a computer that is only offline is not taken for one mid-update.
+  @desktop
+  Scenario: Reconnecting to a computer on another version is not taken for an update
     Given the user is looking at a thread on "studio"
     And "studio" runs a different version than this client and no update is known to be running
-    When "studio" is reconnecting
-    Then the thread shows one notice "Reconnecting to studio" with "Finishing an update"
-    And no separate notice says the versions differ
+    When "studio" has been reconnecting for more than two seconds
+    Then the thread says "studio is reconnecting"
+    And no notice says "Finishing an update"
+
+  @backlog @shared @priority-high
+  Scenario: Reconnects back off with jitter
+    Given the connection to an environment drops
+    When the client retries
+    Then waits grow with random jitter so clients do not retry in lockstep
+    And an authorization or unsupported-version failure does not retry on the same session
+
+  @backlog @shared @priority-high
+  Scenario: A false offline report does not replace a healthy connection
+    Given the connection is working
+    When the device reports being offline then online
+    Then the existing connection is kept
+
+  @backlog @shared @priority-high
+  Scenario: Failed subscriptions retry with growing delay
+    Given a subscription keeps failing for an expected reason
+    Then its retries double up to 30 seconds
+    And the first value after a retry resets the delay
+
+  @backlog @shared
+  Scenario: A relay disconnect is a connection blip, not a thread error
+    Given the Connect relay drops
+    When the thread would show "<environment> disconnected." followed by a network hint
+    Then it is treated as a connection problem and not shown as an error on the thread
+
+  @backlog @shared
+  Scenario: Closing a busy stream does not drop the connection
+    Given the client is receiving a fast stream
+    When the user switches away and the stream is closed
+    Then the connection keeps reading replies and heartbeats and does not reconnect
+
+  @backlog @shared @priority-high
+  Scenario: A connection lost to silence says so
+    Given the client's ping to an MC went unanswered
+    When the connection is dropped
+    Then the trace says the MC stopped responding, not that it disconnected
+    And the interface still treats it as a transient drop

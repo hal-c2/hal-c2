@@ -1114,6 +1114,25 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     context
   end
 
+  step "the result names the selection for the next turn and the model of the turn in progress",
+       context do
+    assert {:ok, result} = context.mcp_result
+    {instance, model} = context.configured
+    assert %{"instanceId" => ^instance, "model" => ^model} = result["modelSelection"]
+    assert %{"status" => status, "modelSelection" => running} = result["activeRun"]
+    assert status in ~w(starting running waiting)
+    assert running["instanceId"] == "codex"
+    context
+  end
+
+  step "the configuration shows {string} for the next turn and {string} for the turn in progress",
+       %{args: [next, running]} = context do
+    assert {:ok, result} = context.mcp_result
+    assert result["modelSelection"]["instanceId"] == next
+    assert result["activeRun"]["modelSelection"]["instanceId"] == running
+    context
+  end
+
   step "the agent of {string} reads the configuration of {string}",
        %{args: [caller, thread]} = context do
     result =

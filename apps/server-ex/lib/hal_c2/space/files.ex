@@ -22,10 +22,16 @@ defmodule HalC2.Space.Files do
       when the file is somewhere else as it was, and once when the MC starts, for what
       changed while it was stopped.
 
-  One file is behind at most one page: opening goes through this server, which knows
-  every page that is a file. It learns them when it starts and as files are opened;
-  what it knows is checked against the Space each time, so a page unlinked or deleted
-  is simply passed over.
+  A file's page is the project's: it is in the project's own Space
+  (`HalC2.Space.project_space/2`), which no client lists as a Space, and the clients show
+  it under the project. One file is behind at most one page: opening goes through this
+  server, which knows every page that is a file. It learns them when it starts and as
+  files are opened; what it knows is checked against the Space each time, so a page
+  deleted is simply passed over.
+
+  Before that, a file was opened as a page of one of the user's Spaces. When it starts,
+  this server makes each such page an ordinary page where it is (`unlink/2`), so the
+  user's Spaces keep what they had, and the file opens afresh in the project's Space.
   """
   use GenServer
 
@@ -55,16 +61,17 @@ defmodule HalC2.Space.Files do
     do: GenServer.cast(__MODULE__, {:wrote, root, path, via_link})
 
   @doc """
-  The page of the project file `relative` in `space_id`, made when there is none, or the
-  page it already is wherever it is (brought back from the trash). Replies with the
-  Space, the page and whether it is new.
+  The page of the project file `relative`, made in the project's Space when there is
+  none, or the page it already is (brought back from the trash). Replies with the
+  project's Space, the page and whether it is new.
   """
-  def open(space_id, project_id, relative),
-    do: GenServer.call(__MODULE__, {:open, space_id, project_id, relative}, 30_000)
+  def open(project_id, relative),
+    do: GenServer.call(__MODULE__, {:open, project_id, relative}, 30_000)
 
   @doc """
   The project's Space files: which entries say so (`"default"`, `"project"` or
-  `"invalid"`, which counts none) and each file with its page, if it has one.
+  `"invalid"`, which counts none), each file with its page, if it has one, and the
+  project's Space (`spaceId`, nil before a file was opened).
   """
   def list(project_id), do: GenServer.call(__MODULE__, {:list, project_id}, 30_000)
 
@@ -135,7 +142,10 @@ defmodule HalC2.Space.Files do
     |> Pages.refused()
   end
 
-  @doc "Makes a file's page an ordinary page: the file stays as it is."
+  @doc """
+  Makes a file's page an ordinary page, the file as it is: what a file's page in a
+  user's Space, from before the project's Space, becomes.
+  """
   def unlink(state, page_id) do
     with %{} = page <- Pages.get(state, page_id) || no_page(page_id),
          {:ok, _} <- file(page) do
@@ -459,7 +469,7 @@ defmodule HalC2.Space.Files do
      if(kind == "subpage_link", do: block["linkedPageId"]), block["imageId"],
      if(kind == "heading", do: Markdown.level(block)), block["gap"],
      if(kind == "code", do: Map.take(block, ~w(language fence info))),
-     Map.take(block, ~w(depth indent marker start alert))}
+     Map.take(block, ~w(url depth indent marker start alert label))}
   end
 
   defp file(%{"file" => %{} = file}), do: {:ok, file}
@@ -546,11 +556,19 @@ defmodule HalC2.Space.Files do
       {:ok, %{pages: %{}, generations: %{}, waiters: [], linked: MapSet.new()},
        {:continue, :start}}
 
-  # Every page that is a file, and what its file did while the MC was stopped.
+  # Every page that is a file, and what its file did while the MC was stopped. A file's
+  # page in a user's Space, from before the project's Space, becomes an ordinary page.
   @impl true
   def handle_continue(:start, state) do
+    index = Streams.state(Space.index())
+
+    for space <- StreamState.list(index, "space"),
+        page <- StreamState.list(Streams.state(Space.stream_id(space["id"])), "page"),
+        match?(%{"projectId" => _}, page["file"]),
+        do: Space.transact(space["id"], &unlink(&1, page["id"]))
+
     pages =
-      for space <- StreamState.list(Streams.state(Space.index()), "space"),
+      for space <- StreamState.list(index, "projectSpace"),
           page <- StreamState.list(Streams.state(Space.stream_id(space["id"])), "page"),
           match?(%{"projectId" => _}, page["file"]),
           reduce: %{} do
@@ -592,8 +610,8 @@ defmodule HalC2.Space.Files do
   end
 
   @impl true
-  def handle_call({:open, space_id, project_id, relative}, _from, state) do
-    case opened(state, space_id, project_id, relative) do
+  def handle_call({:open, project_id, relative}, _from, state) do
+    case opened(state, project_id, relative) do
       {:ok, %{"spaceId" => s, "page" => page}} = reply ->
         linked =
           case root(project_id) do
@@ -635,7 +653,8 @@ defmodule HalC2.Space.Files do
               kind != nil,
               do: %{"relativePath" => path, "kind" => kind, "page" => pages[path]}
 
-        {:ok, %{"config" => config, "files" => files}}
+        {:ok,
+         %{"config" => config, "files" => files, "spaceId" => Space.project_space_id(project_id)}}
       end
 
     {:reply, reply, state}
@@ -760,7 +779,7 @@ defmodule HalC2.Space.Files do
     end
   end
 
-  defp opened(state, space_id, project_id, relative) do
+  defp opened(state, project_id, relative) do
     with {:ok, root} <- project(project_id),
          {:ok, relative} <- inside(root, relative),
          :ok <- space_file(root, relative) do
@@ -768,7 +787,7 @@ defmodule HalC2.Space.Files do
              page["file"]["path"] == relative
            end) do
         {s, _space, page} -> reopened(s, page)
-        nil -> create(space_id, project_id, root, relative)
+        nil -> create(project_id, root, relative)
       end
     end
   end
@@ -806,17 +825,25 @@ defmodule HalC2.Space.Files do
          do: {:ok, %{"spaceId" => space_id, "page" => page, "created" => false}}
   end
 
-  defp create(space_id, project_id, root, relative) do
-    case with({:ok, path} <- locate(root, relative), do: File.read(path)) do
-      {:ok, text} ->
-        Space.transact(space_id, &created(&1, space_id, project_id, relative, text))
-        |> case do
-          {:ok, page} -> {:ok, %{"spaceId" => space_id, "page" => page, "created" => true}}
-          refused -> refused
-        end
+  defp create(project_id, root, relative) do
+    with {:ok, text} <- read_new(root, relative),
+         {:ok, %{"id" => space_id}} <- Space.project_space(project_id, title(project_id)),
+         {:ok, page} <-
+           Space.transact(space_id, &created(&1, space_id, project_id, relative, text)),
+         do: {:ok, %{"spaceId" => space_id, "page" => page, "created" => true}}
+  end
 
-      {:error, _} ->
-        {:error, :not_found, "There is no file #{relative} in the project."}
+  defp read_new(root, relative) do
+    case with({:ok, path} <- locate(root, relative), do: File.read(path)) do
+      {:ok, text} -> {:ok, text}
+      {:error, _} -> {:error, :not_found, "There is no file #{relative} in the project."}
+    end
+  end
+
+  defp title(project_id) do
+    case HalC2.Shell.row(node(), project_id) do
+      {"project", %{"title" => title}} when is_binary(title) and title != "" -> title
+      _ -> project_id
     end
   end
 

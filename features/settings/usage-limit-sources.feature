@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19336
+#   https://github.com/pingdotgg/t3code/pull/18168
+#   https://github.com/pingdotgg/t3code/pull/11368
 #   docs/user/usage.md (CLIProxyAPI hub)
 #   apps/server-ex/lib/hal_c2/usage_limit_sources.ex (reading hubs, errors, refresh)
 #   apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex (accounts, reset credit redemption)
@@ -12,6 +15,7 @@
 #   apps/desktop-qt/tests/tst_ProvidersSettings.qml (the add and remove dialogs)
 #   apps/tui/src/host/sections/usageHubs.ts, apps/tui/src/host/sections/usageLimits.ts
 
+@priority-low
 Feature: Usage limit sources
   A CLIProxyAPI hub pools many provider accounts. Adding it as a usage source
   puts its accounts' limits next to the machine's own in Limits.
@@ -63,6 +67,20 @@ Feature: Usage limit sources
     When the user views limits
     Then usage says "Team hub: Hub unreachable."
 
+  # Upstream #18168: a hub failure is described by its kind, and an untrusted certificate
+  # says how to make the server trust the hub's certificate authority.
+  @backlog @mc
+  Scenario Outline: A hub that cannot be read says why
+    Given the hub "Team hub" <fails>
+    When the user views limits
+    Then usage names "Team hub" and says <reason>
+
+    Examples:
+      | fails                                           | reason                                                        |
+      | presents a certificate from a private authority | its certificate is not trusted and how to trust its authority |
+      | answers with HTTP 502                           | it answered with HTTP 502                                     |
+      | does not answer in time                         | it timed out                                                  |
+
   @shared @backlog-mobile
   Scenario: A reset credit a hub also reports is spent through the hub
     Given Codex has a reset credit banked
@@ -74,6 +92,21 @@ Feature: Usage limit sources
   Scenario: The user adds a hub
     When the user adds a hub with a URL and management key but no label
     Then the hub is listed under the hub's host name
+
+  @backlog @mc
+  Scenario: A hub whose URL names no host is still listed
+    Given the user added a hub with the URL "localhost:8317" and no label
+    When the user views limits
+    Then the hub is listed under its id, with its error
+    And its saved URL is left as it was
+
+  # Upstream #19336: a hub served under a path is read at that path.
+  @backlog @mc
+  Scenario: A hub served under a path is read at that path
+    Given the user adds the hub "https://tools.example/cliproxy"
+    When the MC reads the hub's accounts
+    Then it reads them from under "/cliproxy"
+    And the hub's accounts appear in limits
 
   @shared @backlog-mobile
   Scenario: A hub cannot be added without a URL and key

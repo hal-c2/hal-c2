@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22107
+#   https://github.com/pingdotgg/t3code/pull/18716
+#   https://github.com/pingdotgg/t3code/pull/17376
 #   docs/user/source-control.md
 #   packages/contracts/src/git.ts (GitRunStackedActionResult, GitActionToastCta)
 #   packages/contracts/src/rpc.ts (git.runStackedAction, vcs.pull)
@@ -36,7 +39,7 @@ Feature: Pushing, pulling and guarding the default branch
     Then the branch is pushed to "origin/feature/tax" and tracks it from now on
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (resolvePushRemoteName)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario Outline: The first push goes to the remote the repository's settings name
     Given "feature/tax" has never been pushed
     And <settings>
@@ -50,7 +53,7 @@ Feature: Pushing, pulling and guarding the default branch
       | no push remote or push default is set and "origin" and "upstream" exist               | origin/feature/tax      |
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (pushCurrentBranch: upstream is the branch's base)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A branch cut from another branch is pushed under its own name
     Given "feature/tax" was cut from "origin/dev" and tracks it
     And "feature/tax" is 1 commit ahead
@@ -68,7 +71,7 @@ Feature: Pushing, pulling and guarding the default branch
     Then "origin/effect-atom" has the new commit
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (pushCurrentBranch: remoteName option)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: Pushing to a chosen remote publishes the branch there and tracks it
     Given "feature/tax" tracks "origin/feature/tax" and is 1 commit ahead
     And the repository also has the remote "fork"
@@ -112,12 +115,37 @@ Feature: Pushing, pulling and guarding the default branch
     When the user pulls
     Then the branch has the 2 new commits
 
+  # Upstream #17376: git's diffstat for a large fast-forward ran past the output cap, so a
+  # pull that had applied was reported as failed.
+  @backlog @mc @priority-low
+  Scenario: A fast-forward that prints more than a megabyte is still a pull
+    Given "feature/tax" is 13,000 files behind its upstream and git prints 1.5 MB while pulling
+    When the user pulls, or the MC pulls it automatically
+    Then the pull is reported as done and the branch is at its upstream
+    And pulling again reports it is already up to date
+
   @desktop
   Scenario: A refused pull is reported
     Given "feature/tax" is 2 commits behind its upstream and has no local commits
     And the MC refuses to pull with "Cannot fast-forward."
     When the user pulls
     Then the user sees an "error" toast "Pull failed" saying "Cannot fast-forward."
+
+  # Upstream #22107: a pull recovers from a stale lock on an unrelated remote-tracking ref.
+  @backlog @mc
+  Scenario: A stale lock on another branch's remote ref does not fail the pull
+    Given the remote-tracking ref of another branch is locked by a git process that is gone
+    When the user pulls "feature/tax"
+    Then "feature/tax" is brought up to date with its upstream
+    And the pull is not reported as failed
+
+  # Upstream #22107: status waits at most 5 seconds for a shared fetch that is still running.
+  @backlog @mc
+  Scenario: The branch status does not wait long on a background fetch
+    Given a background fetch of the checkout is still running
+    When a client asks for the branch status
+    Then the status is answered within 5 seconds
+    And the fetch goes on
 
   @mc
   Scenario: Pulling a diverged branch is refused
@@ -173,7 +201,15 @@ Feature: Pushing, pulling and guarding the default branch
     When the user chooses to create a feature branch and continue
     Then the work is committed on a new branch and pushed there instead of "main"
 
-  @tui @mobile @backlog-mobile
+  # Upstream #18716: with nothing to commit, the default-branch confirmation offered a feature
+  # branch it could not create.
+  @backlog @desktop
+  Scenario: With nothing to commit the confirmation does not offer a new branch
+    Given the user was asked to confirm pushing to "main" with nothing to commit
+    Then moving the work onto a new branch is not offered
+    And the confirmation says there are no changes to move
+
+  @tui @mobile @backlog-mobile @priority-high
   Scenario: The default-branch confirmation on the terminal client and phone
     Given the checkout is on the default branch "main"
     When the user runs "Commit & push"
