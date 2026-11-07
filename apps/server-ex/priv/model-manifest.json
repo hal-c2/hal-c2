@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-22T21:40:00Z",
+  "updatedAt": "2026-11-07T12:00:00Z",
   "compatibility": [
     {
       "driver": "opencode",
@@ -20,7 +20,12 @@
     {
       "driver": "codex",
       "halC2Range": ">=0",
-      "ranges": [{ "range": "0.128.0", "status": "broken" }]
+      "recommendedRange": ">=0.156.0",
+      "ranges": [
+        { "range": "<0.149.0", "status": "broken" },
+        { "range": ">=0.149.0 <0.156.0", "status": "unsupported" },
+        { "range": ">=0.156.0", "status": "supported" }
+      ]
     }
   ],
   "currentModels": {

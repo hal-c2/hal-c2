@@ -88,6 +88,15 @@ defmodule HalC2.DevicesTest do
     end)
   end
 
+  test "turning devices on while settings.json cannot be read says why and changes nothing" do
+    File.write!(Path.join(HalC2.Paths.config_dir(), "settings.json"), "{ not json")
+
+    assert {:error, %{"_tag" => "ServerSettingsError", "message" => "Could not read" <> _}} =
+             HalC2.Devices.configure(%{"enabled" => true})
+
+    assert {:ok, %{"hostStatus" => "disabled"}} = HalC2.Devices.list(%{})
+  end
+
   test "devices list once enabled, and a thread opens and closes one" do
     assert {:ok, %{"hostStatus" => "disabled", "devices" => []}} = HalC2.Devices.list(%{})
 

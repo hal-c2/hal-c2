@@ -1,6 +1,7 @@
 #include "MacPlatform.h"
 #include "World.h"
 
+#include <QElapsedTimer>
 #include <QDateTime>
 #include <QCoreApplication>
 #include <QDir>
@@ -29,6 +30,7 @@
 #include "SavedEnvironmentsController.h"
 #include "ServerUpdateController.h"
 #include "ThisMachine.h"
+#include "ThreadNoticeController.h"
 #include "ThreadStore.h"
 #include "IdentityController.h"
 #include "ToastController.h"
@@ -176,10 +178,12 @@ void World::setTime(const QDateTime& time) {
   m_native->controller<IdentityController>()->setClock([now] { return now.toMSecsSinceEpoch(); });
   m_native->controller<SlowRequestController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ComputerNoticeController>()->setClock([now] { return now.toUTC(); });
+  m_native->controller<ThreadNoticeController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ToastController>()->expire();
   m_native->controller<SlowRequestController>()->expire();
   m_native->controller<ComputerNoticeController>()->expire();
   m_native->controller<ProviderUpdateNotice>()->expire();
+  m_native->controller<ThreadNoticeController>()->expire();
   // The favicon renewal timer runs on the real clock; time jumps here.
   m_native->controller<IdentityController>()->renewFavicons();
 }
@@ -218,9 +222,29 @@ void World::sync() {
   // kept copy is read, so that subscription goes out before the barrier.
   m_native->cache()->drain();
   bool done = false;
+  const qsizetype callsBefore = mc.calls.size();
+  const qsizetype connectionsBefore = mc.connections.size();
+  QElapsedTimer clock;
+  clock.start();
+  qint64 reachedAt = -1;
+  const auto reached = [&] {
+    for (qsizetype i = callsBefore; reachedAt < 0 && i < mc.calls.size(); ++i) {
+      if (mc.calls.at(i).method == QLatin1String("test.barrier")) reachedAt = clock.elapsed();
+    }
+  };
   m_native->client()->call(m_native.get(), mc.environmentId, QStringLiteral("test.barrier"), QJsonValue::Null,
                           [&done](const QJsonValue&, const std::optional<QString>&) { done = true; });
-  waitFor([&done] { return done; }, QStringLiteral("a round trip through the MC"));
+  // Says where a lost barrier stopped: before the fake, on a dropped
+  // connection, or after its answer, and when.
+  waitFor([&] { reached(); return done; }, [&] {
+    reached();
+    return QStringLiteral("a round trip through the MC (client ready %1, barrier reached the fake at %2 ms of %3, connections %4 -> %5)")
+        .arg(m_native->client()->isReady())
+        .arg(reachedAt)
+        .arg(clock.elapsed())
+        .arg(connectionsBefore)
+        .arg(mc.connections.size());
+  });
 }
 
 QList<BrickAction> World::actionsOf(const QString& type) const {

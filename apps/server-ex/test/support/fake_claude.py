@@ -230,8 +230,9 @@ for line in sys.stdin:
         send({"type": "control_request", "request_id": f"dialog-{turn}", "request": {"subtype": "request_user_dialog", "dialog_kind": "resume_return",
               "payload": {"sessionAgeMinutes": 135, "estimatedTokens": 182400}}})
         continue
-    # A handoff's earlier conversation is history, not a directive.
-    if "wait" in text.split("</conversation_history>")[-1]:
+    # A handoff's earlier conversation is history, not a directive, and so is a
+    # delegated task's worker preamble (it asks the worker to finish its own waiting).
+    if "wait" in text.split("</conversation_history>")[-1].split("\nTask:\n")[-1]:
         continue
     # "never start a turn": Claude finishes the prompt without running a turn for it, as
     # it does one whose uuid its transcript already holds; "never start a turn (STATE)"
@@ -313,20 +314,24 @@ for line in sys.stdin:
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}u", "role": "assistant", "content": [{"type": "text", "text": "The subagent started the dev server"}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
+    # "in the background": a background subagent (agent-N) and command (bash-N); "only
+    # the subagent" or "only the command" leaves the other out.
     if "in the background" in text:
         agent, bash = f"agent-{turn}", f"bash-{turn}"
-        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}g", "role": "assistant", "content": [{"type": "tool_use", "id": agent, "name": "Agent", "input": {
-            "description": "Survey the repo", "prompt": "List what is in the repo", "subagent_type": "general-purpose", "run_in_background": True}}]}})
-        send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{agent}", "tool_use_id": agent,
-              "description": "Survey the repo", "task_type": "local_agent", "prompt": "List what is in the repo", "is_backgrounded": True})
-        send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": agent,
-              "content": [{"type": "text", "text": f"Async agent launched successfully.\nagentId: task-{agent}"}]}]}})
-        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}h", "role": "assistant", "content": [{"type": "tool_use", "id": bash, "name": "Bash", "input": {
-            "command": "npm run build", "description": "Build", "run_in_background": True}}]}})
-        send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{bash}", "tool_use_id": bash,
-              "description": "Build", "task_type": "local_bash"})
-        send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": bash,
-              "content": f"Command running in background with ID: task-{bash}", "is_error": False}]}})
+        if "only the command" not in text:
+            send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}g", "role": "assistant", "content": [{"type": "tool_use", "id": agent, "name": "Agent", "input": {
+                "description": "Survey the repo", "prompt": "List what is in the repo", "subagent_type": "general-purpose", "run_in_background": True}}]}})
+            send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{agent}", "tool_use_id": agent,
+                  "description": "Survey the repo", "task_type": "local_agent", "prompt": "List what is in the repo", "is_backgrounded": True})
+            send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": agent,
+                  "content": [{"type": "text", "text": f"Async agent launched successfully.\nagentId: task-{agent}"}]}]}})
+        if "only the subagent" not in text:
+            send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}h", "role": "assistant", "content": [{"type": "tool_use", "id": bash, "name": "Bash", "input": {
+                "command": "npm run build", "description": "Build", "run_in_background": True}}]}})
+            send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{bash}", "tool_use_id": bash,
+                  "description": "Build", "task_type": "local_bash"})
+            send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": bash,
+                  "content": f"Command running in background with ID: task-{bash}", "is_error": False}]}})
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}i", "role": "assistant", "content": [{"type": "text", "text": "Both are running"}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "Both are running", "session_id": session})
         continue

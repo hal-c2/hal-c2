@@ -180,6 +180,49 @@ defmodule HalC2.Orchestration.DelegationTest do
     end
   end
 
+  describe "a check that runs as a restart's continuation is sent" do
+    # The check first reads the child quiet, with its run interrupted; the continuation's
+    # message and run then land and its effect's row goes before the check reads the
+    # child's continuations. Neither is in what it read first.
+    test "does not settle the task as the interrupted run" do
+      delegate("interrupted")
+      message = "message:restart-continuation:cr"
+      key = "effect:c:effect-continue"
+
+      :ok =
+        HalC2.Store.put_meta(
+          key,
+          JSON.encode!(%{
+            "id" => "effect-continue",
+            "threadId" => "c",
+            "type" => "provider-runtime.continue",
+            "status" => "running",
+            "createdAt" => @at,
+            "args" => %{"command" => %{"messageId" => message}}
+          })
+        )
+
+      hook_with(fn
+        :continuations, "c" ->
+          {:ok, _} =
+            HalC2.Streams.commit("c", :thread, [
+              {"message", message,
+               %{"s" => %{"id" => message, "runId" => "cr2", "role" => "user", "text" => "Go"}}},
+              run("cr2", 2, "running")
+            ])
+
+          :ok = HalC2.Store.delete_meta(key)
+
+        _stage, _id ->
+          :ok
+      end)
+
+      assert :ok = Delegation.settle_if_quiet("c")
+      assert task()["status"] == "running"
+      refute woken?()
+    end
+  end
+
   describe "a task whose child thread was never created" do
     test "fails at boot but is left alone once a launch may be under way" do
       {:ok, _} =
@@ -396,6 +439,128 @@ defmodule HalC2.Orchestration.DelegationTest do
 
       assert {:error, "task_not_cancellable", _} = Delegation.cancel("p", "task")
       assert task()["status"] == "completed"
+    end
+  end
+
+  describe "a task whose child has nothing left running (upstream #22581)" do
+    test "is cancelled, though nothing is interrupted, and wakes nobody" do
+      delegate("completed")
+      assert task()["status"] == "running"
+
+      assert {:ok, %{"status" => "cancelled"}} = Delegation.cancel("p", "task")
+      assert %{"status" => "cancelled", "completionDelivery" => %{"state" => "disposed"}} = task()
+      assert item()["status"] == "cancelled"
+      refute woken?()
+    end
+  end
+
+  describe "the user stopping a child that never started a run" do
+    test "cancels its task and wakes nobody" do
+      delegate("running", %{"childThreadId" => "c0"})
+
+      {:ok, _} =
+        HalC2.Streams.commit("c0", :thread, [
+          thread("c0", %{
+            "lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => "p"}
+          })
+        ])
+
+      assert :ok = Delegation.child_stopped("c0")
+      assert %{"status" => "cancelled", "completionDelivery" => %{"state" => "disposed"}} = task()
+      refute woken?()
+    end
+
+    test "leaves a task whose child has a run to settle the usual way" do
+      delegate("running")
+      assert :ok = Delegation.child_stopped("c")
+      assert task()["status"] == "running"
+    end
+  end
+
+  # A request the child's run `cr` stops on, or with `capability` "message" a question
+  # it asked as it works on.
+  defp request(kind, capability \\ "live") do
+    {:ok, _} =
+      HalC2.Streams.commit("c", :thread, [
+        {"node", "node:cr", %{"s" => %{"id" => "node:cr", "runId" => "cr"}}},
+        {"runtime-request", "req",
+         %{
+           "s" => %{
+             "id" => "req",
+             "kind" => kind,
+             "status" => "pending",
+             "nodeId" => "node:cr",
+             "responseCapability" => %{"type" => capability}
+           }
+         }}
+      ])
+
+    :ok
+  end
+
+  describe "a task's status" do
+    test "tells the caller to end its turn while the task works on and will wake it" do
+      delegate("running")
+      assert {:ok, %{"next" => next} = status} = Delegation.task_status("p", "task")
+      assert next =~ "end your turn"
+      refute Map.has_key?(status, "pendingRequest")
+      assert Delegation.working_task?("p", "c")
+    end
+
+    test "does not once the task ended, or when the caller waits on it" do
+      delegate("completed")
+      Delegation.finished("c", "cr", "completed")
+      assert {:ok, status} = Delegation.task_status("p", "task")
+      refute Map.has_key?(status, "next")
+      refute Delegation.working_task?("p", "c")
+
+      delegate("running", %{"completionWake" => "settled_only"})
+      assert {:ok, status} = Delegation.task_status("p", "task")
+      refute Map.has_key?(status, "next")
+    end
+
+    test "names the request its child's run stops on, and does not tell the caller to end its turn" do
+      delegate("running")
+      request("command")
+
+      assert {:ok, %{"pendingRequest" => pending} = status} = Delegation.task_status("p", "task")
+
+      assert Map.delete(pending, "next") == %{
+               "requestId" => "req",
+               "kind" => "command",
+               "runId" => "cr"
+             }
+
+      assert pending["next"] =~ "hal_c2_pending_request_respond"
+      assert pending["next"] =~ "requestId req"
+      refute Map.has_key?(status, "next")
+    end
+
+    test "is not blocked by a question the child asked as it works on" do
+      delegate("running")
+      request("user_input", "message")
+
+      assert {:ok, %{"next" => _} = status} = Delegation.task_status("p", "task")
+      refute Map.has_key?(status, "pendingRequest")
+    end
+  end
+
+  describe "a wait on a task whose child stops on an approval" do
+    test "returns with the request, and the task's end wakes the caller" do
+      delegate("running", %{"completionWake" => "settled_only"})
+      test = self()
+
+      waiter = Task.async(fn -> Delegation.wait("p", "task", 600_000) end)
+      # Before or after the wait first reads the task, it returns on the request.
+      hook_with(fn stage, _ -> send(test, stage) end)
+      request("command")
+
+      assert {:ok, %{"status" => "running", "pendingRequest" => %{"requestId" => "req"}} = answer} =
+               Task.await(waiter)
+
+      assert_received :expiring
+      refute answer["waitTimedOut"]
+      assert task()["completionWake"] == "always"
     end
   end
 

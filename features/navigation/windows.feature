@@ -1,5 +1,7 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/21200
+#   https://github.com/pingdotgg/t3code/pull/28223
+#   https://github.com/pingdotgg/t3code/pull/31794
 #   https://github.com/pingdotgg/t3code/pull/13713
 #   https://github.com/pingdotgg/t3code/pull/25860
 #   apps/web/src/contextMenuFallback.ts (dismissal, one menu at a time, clamping, submenus, disabled and destructive entries)
@@ -109,6 +111,15 @@ Feature: Windows, zoom and quitting
     Scenario: Dragging the header asks the window system to move the window
       When the user drags an empty part of the header
       Then the window asks the window system to move it
+
+    # Upstream #31794: where the model picker overlapped the header, the window's drag area took
+    # the pointer, so its items gave no hover and could not be clicked there.
+    @backlog @desktop @priority-low
+    Scenario: A popup over the header answers the pointer
+      Given the model picker is open and some of its items lie over the header
+      When the user points at and clicks one of those items
+      Then the item is highlighted, shows its tooltip and is chosen
+      And the window is not moved
 
     @desktop
     Scenario: Double-clicking the header toggles maximize
@@ -261,12 +272,38 @@ Feature: Windows, zoom and quitting
       Then its title is "HAL-C2"
       And it cannot be made smaller than 640 by 400
 
+    # Upstream #28223: windows could not shrink below 840 by 620, too large for a half or quarter
+    # screen tile; the minimum is now 400 by 360. The scenario above holds until the Qt app follows.
+    @backlog @desktop
+    Scenario: A window fits a quarter of the screen
+      Given a second window shows no thread yet
+      When the user tiles it into a quarter of a 1600 by 900 screen
+      Then it takes the tile's size
+      And it cannot be made smaller than 400 by 360
+
+    # Upstream #28223: the first window's minimum dropped from 840 by 620 to 400 by 360.
     @backlog @desktop
     Scenario: The first window opens at a comfortable size it cannot shrink below
       Given the user has never resized the window
       When the app starts
       Then the first window opens at 1100 by 780
-      And it cannot be made smaller than 840 by 620
+      And it cannot be made smaller than 400 by 360
+
+    # Upstream #28223: a narrow window came back at the old minimum width after a restart.
+    @backlog @desktop
+    Scenario: A narrow window keeps its size after a restart
+      Given the user resized the first window to 420 by 700
+      When the user restarts the app
+      Then the first window opens at 420 by 700
+
+    # Upstream #28223: at the smallest size settings and the command palette opened under the
+    # window's own buttons, and a short window pushed the new thread's composer off screen.
+    @backlog @desktop @priority-low
+    Scenario: A window at its smallest size stays usable
+      Given the first window is 400 by 360
+      When the user starts a new thread
+      Then the composer and its notices are on screen
+      And settings and the command palette open below the window controls
 
     @backlog @desktop
     Scenario: The first window remembers its size and position across restarts

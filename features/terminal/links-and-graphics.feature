@@ -24,6 +24,8 @@
 #   client itself; settings/integrations.feature owns the "Open links in" preference and
 #   navigation/appearance.feature owns terminal fonts.
 #   https://github.com/pingdotgg/t3code/pull/28189
+#   https://github.com/pingdotgg/t3code/pull/30603
+#   https://github.com/pingdotgg/t3code/pull/30526
 
 Feature: Links and rendering inside terminals
   A terminal shows the program's colours faithfully and turns web addresses and file paths in
@@ -160,6 +162,42 @@ Feature: Links and rendering inside terminals
       When the user follows that path
       Then "src/app.ts" opens in the user's editor at line 12, column 4
       And the path is resolved against the terminal's folder
+
+    # Upstream #30526: a branch name cut short in the output looked like a file path and opened a file that did not exist.
+    @backlog @desktop
+    Scenario Outline: A file path in the output is a link only when it exists where the thread works
+      Given the shell prints "<text>"
+      And "<text>" <exists> in the thread's environment
+      When the user follows "<text>" in the terminal
+      Then <result>
+
+      Examples:
+        | text           | exists               | result                 |
+        | src/app.ts     | is a file            | "src/app.ts" opens     |
+        | src            | is a folder          | the folder "src" opens |
+        | feature/checko | is no file or folder | nothing is opened      |
+
+    # Upstream #30603: a relative path broke at "@ + $ [ ] ( )" after its first slash, so route files
+    # and pnpm stack frames got no link at all.
+    @backlog @desktop @priority-low
+    Scenario Outline: A route or package path in the output is one link
+      Given the shell prints "<output>" and "<file>" exists
+      When the user follows that path
+      Then "<file>" opens in the user's editor
+
+      Examples:
+        | output                                                           | file                                                        |
+        | src/app/[id]/page.tsx:3:10                                       | src/app/[id]/page.tsx                                       |
+        | src/routes/(app)/+page.svelte:12:4                               | src/routes/(app)/+page.svelte                               |
+        | node_modules/.pnpm/react@18.3.1/node_modules/react/index.js:12:5 | node_modules/.pnpm/react@18.3.1/node_modules/react/index.js |
+        | app/routes/posts.$id.tsx:5                                       | app/routes/posts.$id.tsx                                    |
+
+    # Upstream #30603: the parentheses of a compiler's "(line,column)" still end the path.
+    @backlog @desktop @priority-low
+    Scenario: A compiler's line and column in parentheses are not part of the path
+      Given the shell prints "src/foo.ts(3,10): error"
+      When the user follows that path
+      Then "src/foo.ts" opens in the user's editor
 
     # Upstream #21199: relative backslash paths and quoted paths with spaces are file links,
     # keeping a line and column given inside or outside the quotes.

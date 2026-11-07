@@ -23,6 +23,7 @@
 #   https://github.com/pingdotgg/t3code/pull/14498
 #   https://github.com/pingdotgg/t3code/pull/25076
 #   https://github.com/pingdotgg/t3code/pull/23465
+#   https://github.com/pingdotgg/t3code/pull/23136
 
 Feature: Custom themes
   Users create, import, edit, share and remove their own themes, and can pick a color
@@ -173,6 +174,14 @@ Feature: Custom themes
       When the user drags the color chooser to another color
       Then the toolbar border keeps its transparency of 25%
       And the chooser shows the opaque color it is editing
+
+    # Upstream #23136: typing a hex value made a translucent color opaque, while dragging or typing
+    # RGB kept its transparency.
+    @backlog @desktop
+    Scenario: Typing a hex value keeps the transparency of the color it replaces
+      Given the toolbar border color is "#22ccff80"
+      When the user types "#ff0000" as its hex value in the color chooser
+      Then the toolbar border color is "#ff000080"
 
     # Legacy: apps/web/src/components/ui/color-picker.tsx (hue slider keys; the provider accent
     # chooser in settings uses the same picker)

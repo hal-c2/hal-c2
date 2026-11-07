@@ -7,7 +7,10 @@
 #   https://github.com/pingdotgg/t3code/pull/23783
 #   https://github.com/pingdotgg/t3code/pull/18163
 #   https://github.com/pingdotgg/t3code/pull/19423
+#   https://github.com/pingdotgg/t3code/pull/26435
+#   https://github.com/pingdotgg/t3code/pull/31266
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/28418
 #   packages/contracts/src/orchestrationV2.ts (thread.updated, thread.removed, project.updated,
 #     project.removed, shell and thread projection schemas)
 #   packages/contracts/src/rpc.ts (orchestration.getThreadProjection, orchestration.subscribeShell,
@@ -353,6 +356,22 @@ Feature: What the engine projects for clients
     Then the question and its answer panel are shown
     And once the question is answered the snapshot no longer carries it
 
+  # Upstream #26435: the window left no room for a large pending card, so it fell out.
+  @mc @backlog @priority-high
+  Scenario: A large open question fits a bounded snapshot beside the newest history
+    Given the agent in "t1" asked a question with a large card early in a very long history
+    When a client asks for a bounded snapshot of "t1"
+    Then the snapshot carries the whole question
+    And it still holds the newest turns of "t1"
+
+  # Upstream #31266: one stored Stop request counted as a pending card and turned the history
+  # floor off, so a thread full of runs and checkpoint file lists opened with one row.
+  @mc @backlog @priority-high
+  Scenario: A thread that was stopped once still opens with its newest turns
+    Given "t1" was stopped once and its runs and checkpoint file lists fill most of a snapshot
+    When a client asks for a bounded snapshot of "t1"
+    Then it receives at least half a snapshot's worth of its newest history, not a single row
+
   @mc
   Scenario: Finished plans and handoffs in a bounded snapshot carry only their status
     Given the newest turns of "t1" include a completed plan and a finished handoff
@@ -403,6 +422,15 @@ Feature: What the engine projects for clients
     When a client reads or follows "t1"
     Then the text is cut at 32,768 bytes without splitting a character
     And each cut text ends with "… output truncated for transport"
+
+  # Upstream #28418: the marker went on after the cap, so cut text was over it, and cutting it again
+  # added a line on each pass; a live update could differ from the same item in a snapshot.
+  @backlog @mc
+  Scenario: Cut subagent text fits the limit with its marker and reads the same live and in a snapshot
+    Given a subagent in "t1" has a prompt in Japanese longer than 32,768 bytes
+    When a client follows "t1" and another client reads "t1" afresh
+    Then both hold the same cut prompt
+    And the cut prompt with its "… output truncated for transport" is at most 32,768 bytes
 
   @mc
   Scenario: Subagent text that grows is cut to the same text a snapshot shows

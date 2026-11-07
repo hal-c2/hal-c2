@@ -2,6 +2,8 @@
 #   https://github.com/pingdotgg/t3code/pull/14859
 #   https://github.com/pingdotgg/t3code/pull/15515 (a failing handler fails only its own request)
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/16317
+#   https://github.com/pingdotgg/t3code/pull/23758
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (protocol 3 frames)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (subscriptions, buffering, resync, state migration)
 #   apps/server-ex/lib/hal_c2/web/router.ex (/ws upgrade)
@@ -78,6 +80,16 @@ Feature: The protocol 3 WebSocket
     Then it receives what it missed in several frames of whole entities
     And only the last of them moves its offset
 
+  # Upstream #23758: a big settings answer on a slow link took longer than the connection's
+  # liveness check, so the phone dropped and reconnected in a loop.
+  @backlog @mc @shared @priority-high
+  Scenario: A large answer on a slow link keeps the connection alive while it arrives
+    Given a client is connected over a link of 4,000 bytes a second
+    When the MC answers it with a server config larger than one frame
+    Then the answer arrives in parts and each part keeps the connection alive
+    And the client puts the answer together once the last part arrives
+    And a client that cannot take parts is answered in one frame
+
   @mc
   Scenario: A client that kept a thread between connections resumes it by its handle
     Given the client saw a thread up to some offset and disconnected
@@ -107,23 +119,21 @@ Feature: The protocol 3 WebSocket
 
   # Upstream #14859: a slow client was owed every state of a project or thread in its list, so
   # repeated updates used up its budget.
-  @mc @backlog
+  @mc
   Scenario: A slow client is sent only the latest state of each listed thread
     Given the client subscribed to the thread list and is slow to take updates
     When "Fix checkout" changes 50 times before the client takes any
     Then the client is sent the latest state of "Fix checkout" once
     And the other listed threads' updates arrive in the order they happened
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/web/socket.ex
-  @mc @backlog @priority-high
+  @mc
   Scenario: A client that falls more than 1,000 changes behind is told to resync
     Given the client subscribed to a busy thread
     When more than 1,000 small changes wait unsent for that subscription
     Then the MC sends a resync for that subscription
     And the client subscribes again from its last offset
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/web/socket.ex
-  @mc @backlog @priority-high
+  @mc
   Scenario: A long history replayed to a client that keeps up is not a resync
     Given the client subscribed from an offset far behind a thread with 5,000 changes since
     When the MC replays them and the client acknowledges each batch
@@ -136,7 +146,7 @@ Feature: The protocol 3 WebSocket
     When one message changes many times before the socket drains
     Then the client receives the merged change once
 
-  @mc @backlog @priority-high
+  @mc
   Scenario Outline: Rapid progress of one running tool call reaches a subscriber as its latest state
     Given the client subscribed to a thread where <tool> is running
     When that tool call reports progress many times within 50 milliseconds
@@ -151,20 +161,29 @@ Feature: The protocol 3 WebSocket
       | a web search             |
       | a provider-defined tool  |
 
-  @mc @backlog
+  @mc
   Scenario: Merging tool progress never reorders or drops what follows
     Given the client subscribed to a thread where a command is running
     When the command reports progress and then finishes, and a message arrives right after
     Then the client receives the latest progress, then the finished command, then the message
     And nothing waits for the 50 milliseconds to pass once the command has finished
 
-  @mc @backlog
+  @mc
   Scenario: Tool progress held for merging is bounded
     Given the client subscribed to a thread where many tool calls are running
     When 512 progress updates are waiting to be merged
     Then they are merged and sent at once, without waiting for the 50 milliseconds to pass
 
-  @backlog @mc
+  # Upstream #16317: superseded updates stayed charged to the 8 MiB buffer until the 50 ms window
+  # ended, so 150 updates of 64 KiB each overflowed it.
+  @mc @backlog @priority-high
+  Scenario: A burst of large tool progress does not overflow a subscription
+    Given the client subscribed to a thread where a command is running
+    When the command reports 150 updates of 64 KiB of output each within 50 milliseconds
+    Then the subscription stays live within its 8 MiB budget
+    And the client receives the command's latest output
+
+  @mc
   Scenario: Long-lived subscriptions do not keep what they already delivered in memory
     Given clients hold several subscriptions open
     When each has been sent its snapshot, its replay and its history
@@ -330,7 +349,7 @@ Feature: The protocol 3 WebSocket
     When it opens a socket
     Then the MC refuses with a message naming the MC to update
 
-  @backlog @mc @priority-high
+  @mc
   Scenario Outline: A client that does not name a compatible protocol is refused with an update message
     When a client opens a socket <naming>
     Then the MC refuses the upgrade as incompatible before checking its credential
@@ -375,9 +394,8 @@ Feature: The protocol 3 WebSocket
     Then the MC closes the socket
     And the client cannot reconnect with that session
 
-  # The MC already does this (call_mc answers each request on its own); @backlog only until its steps exist.
   # Upstream #15515: one failing RPC handler no longer ends the client's other requests
-  @backlog @mc @priority-high
+  @mc
   Scenario: A handler that crashes fails only its own request
     Given a client has a thread subscription, a terminal subscription and a pending request open
     When the MC handler for the pending request crashes

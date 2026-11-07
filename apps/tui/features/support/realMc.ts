@@ -75,7 +75,7 @@ export async function startRealMc(): Promise<RealMc> {
       let text = "";
       for await (const part of proc.stdout.pipeThrough(new TextDecoderStream())) {
         text += part;
-        const token = /\/ws\?token=(\S+)/.exec(text)?.[1];
+        const token = /\/ws\?(?:[^\s&]*&)*token=([^\s&]+)/.exec(text)?.[1];
         if (token) resolve(token);
       }
       resolve(null);

@@ -6,7 +6,7 @@ defmodule HalC2.Steps.Threads do
   alias HalC2.Orchestration.{LimitRecovery, Settlement}
   alias HalC2.Projection.JS
   alias HalC2.Test.Mc
-  alias HalC2.Test.Mc.World
+  alias HalC2.Test.Mc.{Terminal, World}
 
   # --- settle.feature ------------------------------------------------------------------
 
@@ -504,7 +504,211 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
+  # An automatic wake the thread has queued: the message the MC sent for the agent, and the
+  # queued run that carries it.
+  step ~r/^"(?<thread>[^"]+)" has (?<wake>a notification wake|the completion of a task it delegated) queued$/,
+       %{args: [thread, wake]} = context do
+    extra =
+      if wake == "a notification wake",
+        do: %{"notification" => %{"source" => "provider", "outcome" => "completed"}},
+        else: %{"delegatedCompletion" => %{"taskId" => "task-1"}}
+
+    message_id = "msg-wake-#{System.unique_integer([:positive])}"
+
+    context
+    |> World.add_message(
+      thread,
+      "user",
+      "The task finished",
+      nil,
+      Map.put(extra, "id", message_id)
+    )
+    |> World.add_run(thread, "queued", nil, %{"userMessageId" => message_id, "startedAt" => nil})
+    |> Map.put(:wake_message, message_id)
+  end
+
+  # The wake sends its message and the run it started, after the snooze, ends.
+  step ~r/^(?<wake>a background task finishing|a monitor the agent set|a pull request watch|the completion of a task it delegated) sends "(?<thread>[^"]+)" a message and its run finishes$/,
+       %{args: [wake, thread]} = context do
+    extra =
+      if wake == "the completion of a task it delegated",
+        do: %{"delegatedCompletion" => %{"taskId" => "task-1"}},
+        else: %{"notification" => %{"source" => "provider", "outcome" => "completed"}}
+
+    message_id = "msg-wake-#{System.unique_integer([:positive])}"
+    at = World.iso_from_now(1_000)
+
+    context
+    |> World.add_message(
+      thread,
+      "user",
+      "The task finished",
+      nil,
+      Map.put(extra, "id", message_id)
+    )
+    |> World.add_run(thread, "completed", at, %{"userMessageId" => message_id})
+  end
+
+  step ~r/^"(?<thread>[^"]+)" stays snoozed until tomorrow$/, %{args: [thread]} = context do
+    row = World.row(context, thread)
+    assert row["snoozedUntil"] == World.local_time(context, "tomorrow")
+    assert Settlement.blocker(row, System.os_time(:millisecond)) == "snoozed"
+    context
+  end
+
+  step "the user snoozes {string} until tomorrow", %{args: [thread]} = context do
+    until = World.local_time(context, "tomorrow")
+    id = World.thread_id(context, thread)
+
+    {reply, context} =
+      World.dispatch(context, %{
+        "type" => "thread.snooze",
+        "threadId" => id,
+        "snoozedUntil" => until
+      })
+
+    if match?({:ok, _}, reply), do: World.await_row(id, &(&1["snoozedUntil"] == until))
+    Map.put(context, :reply, reply)
+  end
+
+  step "the wake stays queued", context do
+    runs = World.runs(context, "Refactor cart")
+
+    assert Enum.any?(
+             runs,
+             &(&1["userMessageId"] == context.wake_message and &1["status"] == "queued")
+           )
+
+    context
+  end
+
+  # A run that began before the snooze ends after it: the earlier run's failure.
+  step "a run that started before the snooze reports a failure", context do
+    snoozed_at = World.thread(context, "Refactor cart")["snoozedAt"]
+    before = DateTime.add(DateTime.from_iso8601(snoozed_at) |> elem(1), -60, :second)
+    started = DateTime.to_iso8601(before)
+
+    context
+    |> World.add_run("Refactor cart", "failed", started, %{"completedAt" => World.iso_from_now(0)})
+    |> await_failed("Refactor cart")
+  end
+
+  step ~r/^"(?<thread>[^"]+)" stays snoozed$/, %{args: [thread]} = context do
+    row = World.row(context, thread)
+    assert row["snoozedUntil"] != nil
+    assert Settlement.blocker(row, System.os_time(:millisecond)) == "snoozed"
+    context
+  end
+
+  # The MC marks no wake; a thread is woke when settlement finds it awake, so not woke is
+  # the snooze left in force and settlement still seeing it parked.
+  step "it is not marked as woke", context do
+    row = World.row(context, "Refactor cart")
+    assert row["snoozedUntil"] != nil and row["snoozedAt"] != nil
+    assert Settlement.blocker(row, System.os_time(:millisecond)) == "snoozed"
+    context
+  end
+
+  step "the MC syncs the state of its pull request", context do
+    context =
+      snooze_command(context, "thread.pull-request.link", pr_key(), %{"source" => "manual"})
+
+    snooze_command(context, "thread.pull-request-link.sync", pr_key(), %{
+      "snapshot" => %{"state" => "merged", "title" => "PR", "syncedAt" => World.iso_from_now(0)},
+      "stack" => nil
+    })
+  end
+
+  step "a pull request is linked to it", context do
+    snooze_command(context, "thread.pull-request.link", pr_key(), %{"source" => "manual"})
+  end
+
+  step "the user renames it", context do
+    snooze_command(context, "thread.metadata.update", %{"title" => "Refactor the cart"})
+  end
+
+  step "the user reorders the threads", context do
+    snooze_command(context, "thread.active.reorder", %{"orderKey" => "a0"})
+  end
+
+  defp pr_key,
+    do: %{
+      "host" => "github.com",
+      "repository" => "acme/app",
+      "number" => 7,
+      "url" => "https://github.com/acme/app/pull/7"
+    }
+
+  defp snooze_command(context, type, fields, more \\ %{}) do
+    id = World.thread_id(context, "Refactor cart")
+
+    context =
+      World.command(
+        context,
+        Map.merge(%{"type" => type, "threadId" => id}, Map.merge(fields, more))
+      )
+
+    assert {:ok, _} = context.reply
+    :ok = HalC2.Streams.flush_shell(id)
+    context
+  end
+
+  defp await_failed(context, thread) do
+    World.await_row(World.thread_id(context, thread), &(&1["status"] == "failed"))
+    context
+  end
+
   # --- unread-and-status.feature ---------------------------------------------------
+
+  # The shell sits at its prompt after forking a subshell that waits, as a prompt theme's
+  # helper does: a child in the shell's own process group (job control is off for it).
+  step "{string} has one terminal waiting at an idle prompt", %{args: [thread]} = context do
+    {context, fifo} = open_terminal(context, thread)
+    {_, context} = Terminal.run(context, "default", "set +m; { (read _ < #{fifo}) & }")
+    Map.put(context, :idle_thread, World.thread_id(context, thread))
+  end
+
+  # A command of the user's that is a copy of the shell: the shell run through itself.
+  step "{string} has one terminal running a script through its own shell",
+       %{args: [thread]} = context do
+    {context, fifo} = open_terminal(context, thread)
+    n = System.unique_integer([:positive])
+
+    context =
+      Terminal.write(context, "default", "sh -c 'echo started''_#{n}; read _ < #{fifo}'\n")
+
+    {_, _, context} = Terminal.await_output(context, "default", "started_#{n}")
+    Map.put(context, :idle_thread, World.thread_id(context, thread))
+  end
+
+  defp open_terminal(context, thread) do
+    id = World.thread_id(context, thread)
+    {_, context} = Terminal.open!(context, %{"threadId" => id, "terminalId" => "term-1"})
+    {_, context} = Terminal.attach!(context, "default", Map.delete(context.terminal, "cwd"))
+    fifo = Terminal.folder(context, "/prompt-helper")
+    File.mkdir_p!(Path.dirname(fifo))
+    {_, 0} = System.cmd("mkfifo", [fifo])
+    {context, fifo}
+  end
+
+  step "{string} is not shown as busy", context do
+    assert %{"hasRunningSubprocess" => false} = terminal_after_look(context)
+    context
+  end
+
+  step "{string} is shown as busy", context do
+    assert %{"hasRunningSubprocess" => true} = terminal_after_look(context)
+    context
+  end
+
+  # The hub looks at the shell's children when asked; its answer is the receipt that it did.
+  defp terminal_after_look(context) do
+    :ok = HalC2.Terminal.Hub.refresh()
+    # The terminal tells the hub of what it found after the hub told it.
+    [{session, _}] = Registry.lookup(HalC2.Terminal.Registry, {context.idle_thread, "term-1"})
+    _ = :sys.get_state(session)
+    Enum.find(HalC2.Terminal.Hub.summaries(), &(&1["threadId"] == context.idle_thread))
+  end
 
   step "{string} finished work the user has not seen", %{args: [thread]} = context do
     context = World.add_run(context, thread, "completed")

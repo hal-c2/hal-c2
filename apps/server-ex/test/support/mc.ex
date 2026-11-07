@@ -1770,6 +1770,7 @@ defmodule HalC2.Test.Mc.World do
   defp fake_codex do
     Mc.ensure({Registry, keys: :unique, name: HalC2.Codex.Registry})
     Mc.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
+    Mc.ensure(HalC2.Orchestration.CommandTail)
 
     unless Application.get_env(:hal_c2, :codex_command) == ["python3", "-u", @fake_codex] do
       previous = Application.get_env(:hal_c2, :codex_command)
@@ -1997,6 +1998,7 @@ defmodule HalC2.Test.Mc.World do
         do: Mc.ensure(Supervisor.child_spec({Registry, keys: :unique, name: name}, id: name))
 
     Mc.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
+    Mc.ensure(HalC2.Orchestration.CommandTail)
     Map.put(context, :agents, true)
   end
 
@@ -2057,23 +2059,67 @@ defmodule HalC2.Test.Mc.World do
 
   @doc """
   Waits until `fun` holds for the thread's stream state and returns that state.
-  Wakes on the stream's own commits, never on a timer.
+  Wakes on the stream's own commits, never on a timer. `timeout` ms with no commit
+  fails it, unless the MC still has effects waiting or running (a checkpoint's git
+  fsyncs on a busy disk take seconds): those are waited out on the effect worker's
+  drain (each effect once, for at most six times `timeout`, 30s at most), and a
+  stalled one fails it, named.
   """
   def await_thread(context, title, fun, timeout \\ 5_000) do
     id = thread_id(context, title)
     state = stream(context, title)
-    if fun.(state), do: state, else: await_stream_next(id, fun, timeout, state)
+    if fun.(state), do: state, else: await_stream_next(id, fun, timeout, state, MapSet.new())
   end
 
-  defp await_stream_next(id, fun, timeout, last) do
+  defp await_stream_next(id, fun, timeout, last, drained) do
     receive do
       {:hal_c2_stream, ^id, _} ->
         state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
-        if fun.(state), do: state, else: await_stream_next(id, fun, timeout, state)
+        if fun.(state), do: state, else: await_stream_next(id, fun, timeout, state, drained)
     after
       timeout ->
-        runs = last |> HalC2.StreamState.list("run") |> Enum.map(& &1["status"])
-        flunk("#{id} never reached the expected state (runs: #{inspect(runs)})")
+        case Enum.reject(effects_in_flight(), &MapSet.member?(drained, &1["id"])) do
+          [] ->
+            flunk("#{id} never reached the expected state (runs: #{run_statuses(last)})")
+
+          effects ->
+            # Bounded well under ExUnit's 60s, so a stuck effect is named, not killed.
+            bound = min(6 * timeout, 30_000)
+
+            for thread <- Enum.uniq(Enum.map(effects, & &1["threadId"])),
+                HalC2.Orchestration.Effects.drain(thread, bound) != :ok do
+              stalled =
+                for effect <- effects_in_flight(),
+                    do: Map.take(effect, ~w(type threadId status))
+
+              flunk(
+                "#{id} never reached the expected state (runs: #{run_statuses(last)}): " <>
+                  "effects of #{thread} still in flight after #{bound}ms: #{inspect(stalled)}"
+              )
+            end
+
+            state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
+            drained = MapSet.union(drained, MapSet.new(effects, & &1["id"]))
+
+            if fun.(state),
+              do: state,
+              else: await_stream_next(id, fun, timeout, state, drained)
+        end
+    end
+  end
+
+  defp run_statuses(state),
+    do: state |> HalC2.StreamState.list("run") |> Enum.map(& &1["status"]) |> inspect()
+
+  # The effects this MC's worker has recorded and not finished.
+  defp effects_in_flight do
+    if Process.whereis(HalC2.Orchestration.Effects) && Process.whereis(HalC2.Store) do
+      for {_key, json} <- HalC2.Store.metas(HalC2.Store.path(), "effect:"),
+          %{"status" => status} = effect = JSON.decode!(json),
+          status in ~w(pending running),
+          do: effect
+    else
+      []
     end
   end
 
@@ -2594,6 +2640,7 @@ defmodule HalC2.Test.Mc.World do
           ),
           HalC2.Mcp,
           HalC2.Orchestration.TurnWatch,
+          HalC2.Orchestration.CommandTail,
           HalC2.Orchestration.Effects
         ],
         do: Mc.ensure(child)
@@ -2869,7 +2916,13 @@ defmodule HalC2.Test.Mc.World do
         do: Mc.ensure(Supervisor.child_spec(spec, id: name))
 
     Enum.each(
-      [HalC2.Settings, HalC2.Terminal.Hub, HalC2.Mcp, HalC2.Orchestration.TurnWatch],
+      [
+        HalC2.Settings,
+        HalC2.Terminal.Hub,
+        HalC2.Mcp,
+        HalC2.Orchestration.TurnWatch,
+        HalC2.Orchestration.CommandTail
+      ],
       &Mc.ensure/1
     )
   end
@@ -3468,6 +3521,7 @@ defmodule HalC2.Test.Mc.World do
     )
 
     Mc.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
+    Mc.ensure(HalC2.Orchestration.CommandTail)
 
     # The built-in ACP agents run the fake through their binary setting, unless the
     # scenario already pointed them elsewhere.
