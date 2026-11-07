@@ -61,9 +61,11 @@ Feature: Referencing files, skills, commands and context
   Background:
     Given a project with an open thread
 
-  @desktop @backlog-desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: A trigger character offers matching suggestions
-    When the user types "<typed>"
+    Given the project has the files "src/components/Button.tsx", "src/config.ts" and "README.md"
+    And the provider offers the skills "review" and "release-notes"
+    When the user types "<typed>" into the composer
     Then the user is offered <suggestions>
 
     Examples:
@@ -72,27 +74,29 @@ Feature: Referencing files, skills, commands and context
       | $rev      | skills matching "rev"                 |
       | /mo       | commands matching "mo"                |
 
-  @desktop @backlog-desktop @priority-high
+  @desktop @priority-high
   Scenario: Choosing a file suggestion puts the file into the draft
-    Given the user has typed "@read"
+    Given the project has the file "README.md"
+    And the user has typed "@read"
     When the user chooses "README.md" from the suggestions
     Then the draft references "README.md"
 
-  @desktop @backlog-desktop @priority-high
+  @desktop @priority-high
   Scenario: Dismissing suggestions does not send the message
     Given the user is offered suggestions
     When the user dismisses them with Escape
     Then no suggestion is inserted
     And nothing has been sent
 
-  @backlog @tui @priority-high
+  @tui @priority-high
   Scenario: The terminal client offers file, skill and command suggestions
     When the user types "@src" in the prompt
     Then the user is offered files and folders matching "src"
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: Provider commands only apply at the start of a message
-    When the user types "<typed>"
+    Given the provider offers the command "compact"
+    When the user types "<typed>" into the composer
     Then <outcome>
 
     Examples:
@@ -101,32 +105,72 @@ Feature: Referencing files, skills, commands and context
       | please /compact       | no provider command is offered             |
       | please /model         | the built-in model command is offered      |
 
-  @backlog @shared
+  @desktop
+  Scenario Outline: A slash typed after other text keeps its menu open while it heads for a name
+    Given the provider offers the command "compact"
+    And the provider offers the skill "review"
+    When the user types "<typed>" into the composer
+    Then no provider command is offered
+    And a built-in command or skill is offered
+
+    Examples:
+      | typed                |
+      | Please use /         |
+      | Please use /mo       |
+      | Please use /ski      |
+      | Please use /skill    |
+      | Please use /skill:re |
+
+  @shared @backlog-mobile @backlog-tui
   Scenario: A slash typed after other text searches skills
     Given the provider offers the skill "review"
-    When the user types "Please use /rev"
+    When the user types "Please use /rev" into the composer
     Then the skill "review" is offered
     When the user chooses it
     Then the draft reads "Please use " followed by the skill "review"
 
+  # Differs from the web on purpose: its composer opens the menu for "/thread" too, matching
+  # descriptions and fuzzily, so Enter takes /model or /plan there and the message is not sent.
+  @shared @backlog-mobile @backlog-tui
+  Scenario Outline: A slash typed after other text that starts no name is sent as typed
+    Given the Build and Plan toggle setting is on
+    And the provider offers the skill "template"
+    When the user types "<typed>" into the composer
+    Then no slash command or skill suggestions are offered
+    And pressing Enter sends the draft with "<typed>" as typed
+
+    Examples:
+      | typed               |
+      | summarise /thread   |
+      | fix /this           |
+      | look in /tmp        |
+      | that'll go great /s |
+
+  @desktop @priority-high
+  Scenario: A slash after leading spaces is still the start of the message
+    Given the provider offers the command "compact"
+    When the user types "  /compact" into the composer
+    Then the provider command "compact" is offered
+
   # Upstream #19671: a path typed in the composer offers no slash suggestions.
-  @backlog @shared
+  @shared @backlog-mobile
   Scenario: A path typed in the composer does not open the slash menu
-    When the user types "run /tmp/build.sh"
+    When the user types "run /tmp/build.sh" into the composer
     Then no slash command or skill suggestions are offered
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: Choosing a built-in command acts at once and leaves no text behind
     Given the Build and Plan toggle setting is on
+    And the thread is <mode>
     When the user chooses the built-in command "<command>"
     Then <outcome>
     And "<command>" is removed from the draft
 
     Examples:
-      | command  | outcome                                  |
-      | /plan    | the thread switches to planning          |
-      | /default | the thread switches back to building     |
-      | /model   | the user is asked to choose a model      |
+      | command  | mode     | outcome                                  |
+      | /plan    | building | the thread switches to planning          |
+      | /default | planning | the thread switches back to building     |
+      | /model   | building | the user is asked to choose a model      |
 
   @backlog @desktop
   Scenario: Pull requests are found by number or by title
@@ -526,7 +570,7 @@ Feature: Referencing files, skills, commands and context
     When the environment of the open thread is reachable again
     Then the suggestion list says "No matching files or folders."
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A suggestion list with nothing to offer says why
     When the user types "<typed>" and <situation>
     Then the suggestion list says "<message>"
@@ -536,31 +580,42 @@ Feature: Referencing files, skills, commands and context
       | $zzz  | no skill matches                             | No skills found. Try / to browse provider commands. |
       | @zzz  | no file or folder matches                    | No matching files or folders.                       |
       | /zzz  | no command matches                           | No matching command.                                |
+
+    # The desktop has no pull request suggestions yet.
+    @backlog
+    Examples: Pull requests
+      | typed | situation                                    | message                                             |
       | #zzz  | no pull request matches                      | No pull request matches zzz.                        |
       | #     | the repository has no pull requests          | No pull requests found in this repository.          |
       | #     | the project has no repository on a code host | Pull requests are not available for this project.   |
       | #     | the code host cannot be read                 | Pull requests could not be read for this project.   |
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A suggestion list that is still looking says what it is looking for
     When the user types "<typed>" and the <items> have not come back yet
     Then the suggestion list says "<message>"
 
     Examples:
       | typed  | items         | message                       |
-      | $rev   | skills        | Searching workspace skills... |
       | @cart  | files         | Searching workspace files...  |
+
+    # The desktop's skills come with the provider, so there is no skill search to wait on,
+    # and it has no pull request suggestions yet.
+    @backlog
+    Examples: Skills and pull requests
+      | typed  | items         | message                       |
+      | $rev   | skills        | Searching workspace skills... |
       | #login | pull requests | Finding pull request...       |
 
-  @backlog @desktop
+  @desktop
   Scenario: The suggestion list is walked with the arrow keys and wraps at its ends
-    Given the user typed "@" and three files are offered
+    Given the user typed "@s" and three files are offered
     When the user presses Up on the first suggestion
     Then the last suggestion is highlighted
     When the user presses Down
     Then the first suggestion is highlighted
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: Enter or Tab takes the highlighted suggestion
     Given the user typed "@read" and "README.md" is highlighted
     When the user presses <key>
@@ -596,40 +651,40 @@ Feature: Referencing files, skills, commands and context
       | Enter |
       | Tab   |
 
-  @backlog @desktop
+  @desktop
   Scenario: Suggestions are ordered by how closely their name matches
     Given the provider offers the commands "review", "review-pr" and "code-review" and the skill "pre-review"
-    When the user types "/review"
+    When the user types "/review" into the composer
     Then "review" is offered first, then "review-pr", then "code-review" and "pre-review"
 
-  @backlog @desktop
+  @desktop
   Scenario: Equally good matches list built-in commands, then provider commands, then skills
     Given the provider offers a command and a skill that both match "/mo" as well as "/model" does
-    When the user types "/mo"
+    When the user types "/mo" into the composer
     Then "/model" is offered before the provider command, and the skill last
 
-  @backlog @desktop
+  @desktop
   Scenario: A skill offered among the slash commands is named as a skill
     Given skills are shown in the slash menu
     And the provider offers the skill "review"
-    When the user types "/skill"
-    Then "/skill:review" is offered
+    When the user types "/skill" into the composer
+    Then the suggestion "/skill:review" is offered
     When the user chooses it
     Then the draft references the skill "review"
 
-  @backlog @desktop
+  @desktop
   Scenario: Each skill is offered once, and only if the user may run it
     Given the provider reports the skill "review" from two places and a skill "internal" the user may not run
-    When the user types "$"
-    Then "review" is offered once
-    And "internal" is not offered
+    When the user types "$" into the composer
+    Then the skill "review" is offered once
+    And the skill "internal" is not offered
 
   # Legacy: packages/client-runtime/src/providerSkills.ts (getProviderSlashCommandsForSlashMenu)
-  @backlog @desktop
+  @desktop
   Scenario: A provider command named like a skill that is offered is not listed twice
     Given skills are shown in the slash menu
     And the provider offers the skill "review" and also a command "review"
-    When the user types "/review"
+    When the user types "/review" into the composer
     Then "review" is offered once, as the skill
 
   # Legacy: packages/client-runtime/src/providerSkills.ts (resolveProviderSkillsForCwd, resolveProviderSlashCommandsForCwd)
@@ -648,10 +703,10 @@ Feature: Referencing files, skills, commands and context
     Then the skill "deploy" is still offered
 
   # Legacy: packages/client-runtime/src/providerSkills.ts (formatProviderSkillDisplayName)
-  @backlog @desktop
+  @desktop
   Scenario Outline: A skill without a display name is named from its id
     Given the provider offers the skill "<id>" with no display name
-    When the user types "$"
+    When the user types "$" into the composer
     Then the skill is shown as "<shown>"
 
     Examples:
@@ -675,16 +730,16 @@ Feature: Referencing files, skills, commands and context
       | the system            | System   |
       | anywhere else         | Provider |
 
-  @backlog @desktop
+  @desktop
   Scenario: A skill is found by its description as well as its name
     Given the provider offers the skill "lint-fix" described as "Tidy the changed files"
-    When the user types "$tidy"
-    Then "lint-fix" is offered
+    When the user types "$tidy" into the composer
+    Then the skill "lint-fix" is offered
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: Any currency sign opens the skills
     Given the provider offers the skill "review"
-    When the user types "<typed>"
+    When the user types "<typed>" into the composer
     Then the skill "review" is offered
 
     Examples:
@@ -695,10 +750,10 @@ Feature: Referencing files, skills, commands and context
 
   # Upstream #21519: a price after a currency sign opened the skill menu, and Enter could
   # replace it with a skill whose description matched the digits.
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario Outline: Typing a price does not open the skill menu
     Given the provider offers a skill described as "Release 5 notes"
-    When the user types "<typed>"
+    When the user types "<typed>" into the composer
     Then no skill menu opens
     And pressing Enter sends the draft with "<typed>" as typed
 
@@ -711,10 +766,10 @@ Feature: Referencing files, skills, commands and context
       | £1,000 a month   |
 
   # Upstream #21519: a skill whose name starts with a digit is still found once a letter follows.
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario Outline: A bare currency sign or a skill name starting with a digit opens the skill menu
     Given the provider offers the skills "1password" and "2fa"
-    When the user types "<typed>"
+    When the user types "<typed>" into the composer
     Then the skill menu opens
 
     Examples:
@@ -784,13 +839,13 @@ Feature: Referencing files, skills, commands and context
     When the user pastes "[cart](src/cart.ts)" into the draft
     Then the draft references "src/cart.ts"
 
-  @backlog @desktop
+  @desktop
   Scenario: Closing the suggestions leaves the caret where the user was typing
     Given the user typed "fix @rea" and suggestions are offered
     When the user dismisses the suggestions
     Then the next letter the user types follows "@rea"
 
-  @backlog @desktop
+  @desktop
   Scenario: A provider command is put into the draft ready for its arguments
     Given the provider offers the command "review"
     When the user types "/rev" and chooses "review"
