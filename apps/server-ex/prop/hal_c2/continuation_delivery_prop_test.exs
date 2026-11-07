@@ -258,6 +258,9 @@ defmodule HalC2.ContinuationDeliveryPropTest do
   # --- helpers --------------------------------------------------------------------
 
   defp setup do
+    # An update's own ask to continue (`HalC2.Upgrade.continue_threads?/0`) is global, and
+    # a property that ran an update before this one may have left it on.
+    :persistent_term.erase({HalC2.Upgrade, :continue_threads})
     setting(true)
 
     {:ok, _} =
