@@ -700,12 +700,17 @@ defmodule HalC2.Steps.Platform.Diagnostics do
 
   step "tracing is enabled on the MC", context do
     put_env(:trace, true)
+    Mc.ensure({Registry, keys: :duplicate, name: HalC2.Traces.Registry})
     context
   end
 
   step "a turn runs", context do
+    :ok = HalC2.Traces.subscribe("provider.turn")
     context = send_message(context, "hello")
     run = await_run(context, &(&1["status"] == "completed"))
+    # The run completes before its span is written; the span's receipt says it is in the file.
+    run_id = run["id"]
+    assert_receive {:hal_c2_span, "provider.turn", %{"run.id" => ^run_id}}, 5_000
     Map.put(context, :run, run)
   end
 

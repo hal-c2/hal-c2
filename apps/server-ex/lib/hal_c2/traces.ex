@@ -57,6 +57,23 @@ defmodule HalC2.Traces do
     end
   end
 
+  @doc """
+  The receipt for a span: the caller is sent `{:hal_c2_span, name, attributes}` once a span named
+  `name` is in the trace file. A no-op where the registry is not running.
+  """
+  def subscribe(name) do
+    {:ok, _} = Registry.register(HalC2.Traces.Registry, name, nil)
+    :ok
+  end
+
+  defp notify(name, attributes) do
+    if Process.whereis(HalC2.Traces.Registry),
+      do:
+        Registry.dispatch(HalC2.Traces.Registry, name, fn entries ->
+          for {pid, _} <- entries, do: send(pid, {:hal_c2_span, name, attributes})
+        end)
+  end
+
   @doc "Records a span that already happened, from `started_ms` until now."
   def finished(name, attributes, started_ms, exit \\ %{"_tag" => "Success"}) do
     if enabled?(),
@@ -73,6 +90,11 @@ defmodule HalC2.Traces do
   end
 
   defp record_span(name, attributes, started, ended, exit) do
+    append_span(name, attributes, started, ended, exit)
+    notify(name, attributes)
+  end
+
+  defp append_span(name, attributes, started, ended, exit) do
     append(%{
       "type" => "effect-span",
       "name" => name,
