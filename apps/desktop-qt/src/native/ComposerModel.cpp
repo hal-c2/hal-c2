@@ -711,6 +711,12 @@ std::optional<Trigger> trigger(const QString& text, int cursor) {
     return Trigger{QStringLiteral("skill"), token.mid(1), tokenStart, cursor};
   }
   if (token.startsWith(u'@')) return Trigger{QStringLiteral("path"), token.mid(1), tokenStart, cursor};
+  // A slash after other text searches the composer's commands and skills
+  // (slashItems leaves the provider's out there); a path has a second slash.
+  static const QRegularExpression midCommand(QStringLiteral("^/([^\\s/]*)$"));
+  if (const QRegularExpressionMatch match = midCommand.match(token); match.hasMatch()) {
+    return Trigger{QStringLiteral("slash-command"), match.captured(1), tokenStart, cursor};
+  }
   return std::nullopt;
 }
 
@@ -847,6 +853,19 @@ QString emptyText(const QString& kind) {
   if (kind == QLatin1String("path")) return QStringLiteral("No matching files or folders.");
   if (kind == QLatin1String("slash-command")) return QStringLiteral("No matching command.");
   return {};
+}
+
+QString pathSearchingText() {
+  return QStringLiteral("Searching workspace files...");
+}
+
+bool opensSkillMenu(const Instance* instance, const QString& query) {
+  if (query.isEmpty() || !query.at(0).isDigit()) return true;
+  if (!instance) return false;
+  const QList<QJsonObject> skills = invocableSkills(instance->skills);
+  return std::any_of(skills.cbegin(), skills.cend(), [&](const QJsonObject& skill) {
+    return str(skill, QLatin1String("name")).startsWith(query, Qt::CaseInsensitive);
+  });
 }
 
 QString pathSearchUnavailableText() {

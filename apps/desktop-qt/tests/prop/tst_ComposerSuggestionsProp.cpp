@@ -45,6 +45,7 @@ const QStringList kTexts{QString(),
                          QStringLiteral("hello@s")};
 const QString kNothing = QStringLiteral("No matching files or folders.");
 const QString kUnavailable = QStringLiteral("Can't search files right now.");
+const QString kSearching = QStringLiteral("Searching workspace files...");
 
 // What the workspace's search finds for a query: the folder src and the file
 // src/main.cpp, each when its last segment contains the query.
@@ -168,7 +169,7 @@ struct Sut {
 };
 
 // Whether the menu is as the model says. A search the MC will answer (not held)
-// is waited for; one held shows nothing yet, at once.
+// is waited for; one held says it is searching, at once.
 bool menuIs(const Model& m, const Sut& sut) {
   const QVariantMap shown = sut.shown();
   if (shown.value(QStringLiteral("text")).toString() != m.text) return false;
@@ -179,7 +180,7 @@ bool menuIs(const Model& m, const Sut& sut) {
   if (!path) return count == 0 && empty.isNull();
   if (m.query().isEmpty()) return count == 0 && empty.toString() == kNothing;
   if (m.searched != m.query() || !m.answered) {
-    return count == 0 && (m.online ? empty.isNull() : empty.toString() == kUnavailable);
+    return count == 0 && empty.toString() == (m.online ? kSearching : kUnavailable);
   }
   const int found = matchesOf(m.query());
   return count == found && (found > 0 ? empty.isNull() : empty.toString() == kNothing);

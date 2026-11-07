@@ -133,6 +133,11 @@ QString pathLink(const QString& path);
 QString emptyText(const QString& kind);
 // What the @ menu says when its search could not run, which is not "no match".
 QString pathSearchUnavailableText();
+// What the @ menu says while its search has not answered.
+QString pathSearchingText();
+// Whether a currency sign followed by `query` is a skill rather than a price:
+// a query led by a digit only when one of the instance's skills starts so.
+bool opensSkillMenu(const Instance* instance, const QString& query);
 
 // How well a value matches a query: lower is better, nothing is no match.
 std::optional<int> scoreQueryMatch(const QString& value, const QString& query, int exactBase, int prefixBase,

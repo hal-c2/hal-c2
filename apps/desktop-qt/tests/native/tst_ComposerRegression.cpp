@@ -189,8 +189,8 @@ private slots:
   }
 
   // A bare `@` opened no menu. It is never searched, so the menu opens at
-  // once and says nothing matches, as the web's did; a word after it waits for
-  // its search to answer before saying so.
+  // once and says nothing matches, as the web's did; a word after it says it
+  // is searching until its search answers.
   void aBareAtOpensTheMenuSayingNothingMatches() {
     QTemporaryDir home;
     Shell shell(home.path());
@@ -209,7 +209,7 @@ private slots:
     shell.type(QStringLiteral("@src"));
     QTRY_COMPARE(shown().value(QStringLiteral("text")).toString(), QStringLiteral("@src"));
     QCOMPARE(shown().value(QStringLiteral("triggerKind")).toString(), QStringLiteral("path"));
-    QVERIFY(shown().value(QStringLiteral("suggestionsEmptyText")).isNull());
+    QCOMPARE(shown().value(QStringLiteral("suggestionsEmptyText")).toString(), QStringLiteral("Searching workspace files..."));
     shell.mc.answerHeld();
     QTRY_COMPARE(shown().value(QStringLiteral("suggestionsEmptyText")).toString(), QStringLiteral("No matching files or folders."));
   }
