@@ -1676,7 +1676,7 @@ defmodule HalC2.Steps.Connections.DeviceHub do
 
   # --- boots that fail -----------------------------------------------------------------
 
-  step ~r/^a shut-down (?<platform>iOS|Android) device and (?<situation>the disk is full|the boot takes longer than three minutes|the simulator fails to launch)$/,
+  step ~r/^a shut-down (?<platform>iOS|Android) device and (?<situation>the disk is full|the boot takes longer than three minutes|its stream takes longer than three minutes to start|the simulator fails to launch)$/,
        %{args: [platform, situation]} = context do
     # The MC's three minutes are shortened; the hub never answers the boot.
     if situation =~ "three minutes",
@@ -1684,15 +1684,24 @@ defmodule HalC2.Steps.Connections.DeviceHub do
 
     case platform do
       "iOS" ->
-        error =
+        failure =
           case situation do
-            "the disk is full" -> "Unable to boot device: Not enough disk space available"
-            "the boot takes longer than three minutes" -> "hang"
-            "the simulator fails to launch" -> "Unable to boot device: launchd failed to respond"
+            "the disk is full" ->
+              %{"bootError" => "Unable to boot device: Not enough disk space available"}
+
+            "the boot takes longer than three minutes" ->
+              %{"bootError" => "hang"}
+
+            # The boot answers; serve-sim's stream helper never does.
+            "its stream takes longer than three minutes to start" ->
+              %{"startError" => "hang"}
+
+            "the simulator fails to launch" ->
+              %{"bootError" => "Unable to boot device: launchd failed to respond"}
           end
 
         context
-        |> mac([Map.merge(@simulator, %{"booted" => false, "bootError" => error})])
+        |> mac([Map.merge(@simulator, Map.put(failure, "booted", false))])
         |> Map.put(:target, {"SIM-1", "ios"})
 
       "Android" ->

@@ -5,7 +5,9 @@
 // URL in `x-fake-hub-url`, so tests can see what reached the hub, and the stream
 // socket echoes what it gets.
 //
-// FAKE_HUB_SIMULATORS and FAKE_HUB_EMULATORS (JSON arrays) seed the device lists.
+// FAKE_HUB_SIMULATORS and FAKE_HUB_EMULATORS (JSON arrays) seed the device lists; a
+// simulator whose `startError` is "hang" never answers serve-sim's grid start. With
+// FAKE_HUB_EXIT_AT_START set the hub exits before it listens, as a broken install would.
 // A simulator's MJPEG stream sends frames until the client goes away, and
 // `/fake/streams-closed` answers once no stream is open. `?fake=drop` drops the
 // connection and `?fake=hang` never answers.
@@ -24,6 +26,8 @@
 // A socket closes from the hub's side when it gets the text frame {"fake":"close"}.
 import * as Crypto from "node:crypto";
 import * as Http from "node:http";
+
+if (process.env.FAKE_HUB_EXIT_AT_START) process.exit(1);
 
 const args = process.argv.slice(2);
 const port = Number(args[args.indexOf("--port") + 1]);
@@ -128,6 +132,7 @@ const server = Http.createServer(async (request, response) => {
     const body = await readBody(request);
     const simulator = simulators.find((device) => device.id === body.udid);
     if (!simulator) return json({ ok: false, error: "Unknown simulator" });
+    if (url.pathname.endsWith("/start") && simulator.startError === "hang") return;
     if (url.pathname.endsWith("/shutdown")) {
       if (fake.rejectShutdown) {
         if (fake.rejectShutdown === "off") simulator.booted = false;

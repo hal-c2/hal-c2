@@ -157,6 +157,38 @@ defmodule HalC2.DevicesTest do
     refute_received {:DOWN, ^down, :process, _, _}
   end
 
+  # A hub that exits before it is ready is restarted too, each wait longer than the last,
+  # and the first that comes up is the hub.
+  test "a hub that keeps exiting while it starts is restarted with longer waits" do
+    Application.put_env(:hal_c2, :device_hub_restart_base, 20)
+    System.put_env("FAKE_HUB_EXIT_AT_START", "1")
+
+    on_exit(fn ->
+      Application.delete_env(:hal_c2, :device_hub_restart_base)
+      System.delete_env("FAKE_HUB_EXIT_AT_START")
+    end)
+
+    stop_supervised!(HalC2.Devices)
+    start_supervised!(HalC2.Devices)
+    {:ok, _} = HalC2.Devices.subscribe(self())
+
+    assert {:ok, %{"hostStatus" => "failed", "hostStatusDetail" => detail}} =
+             HalC2.Devices.configure(%{"enabled" => true})
+
+    assert detail == "The device hub stopped. Restarting it in 20 ms."
+    detail = &get_in(&1, ["hostStatuses", "local", "detail"])
+    # The broadcasts so far end with the state the reply showed; the restart starts a hub
+    # that exits too.
+    next_state(&(detail.(&1) == "The device hub stopped. Restarting it in 20 ms."))
+    next_state(&(&1["hostStatus"] == "starting"))
+    second = next_state(&(&1["hostStatus"] == "failed"))
+    assert detail.(second) == "The device hub stopped. Restarting it in 40 ms."
+
+    System.delete_env("FAKE_HUB_EXIT_AT_START")
+    next_state(&(&1["hostStatus"] == "ready"))
+    assert HalC2.Devices.hub_origin()
+  end
+
   test "SSH hosts are unavailable, with the reason" do
     {settings, version} = HalC2.Settings.get()
 

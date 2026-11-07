@@ -2,8 +2,9 @@ defmodule HalC2.DevicesPropTest do
   @moduledoc """
   `HalC2.Devices`, the device hub's lifecycle, against a model of whether support is on,
   whether a hub runs, and how long the last restart waited. Commands turn support on and
-  off, refresh devices (which starts the hub), make the hub exit as a crash would, refresh
-  while a restart waits, and turn support off under an open whose boot never answers. The
+  off, refresh devices (which starts the hub), make the hub exit as a crash would, make it
+  keep exiting before it is ready for a while, refresh while a restart waits, and turn
+  support off under an open whose boot never answers. The
   hub is `test/support/fake_device_hub.mjs` behind a fake npm, with an Android SDK whose
   only AVD's boot hangs.
 
@@ -104,7 +105,8 @@ defmodule HalC2.DevicesPropTest do
             {"ANDROID_HOME", sdk},
             {"ANDROID_SDK_ROOT", nil},
             {"FAKE_HUB_SIMULATORS", nil},
-            {"FAKE_HUB_EMULATORS", nil}
+            {"FAKE_HUB_EMULATORS", nil},
+            {"FAKE_HUB_EXIT_AT_START", nil}
           ] do
         previous = System.get_env(name)
         put_env(name, value)
@@ -159,6 +161,7 @@ defmodule HalC2.DevicesPropTest do
         if state.hub do
           [
             {8, {:call, __MODULE__, :crash, []}},
+            {3, {:call, __MODULE__, :crash_while_starting, []}},
             {4, {:call, __MODULE__, :crash_then_refresh, []}},
             {2, {:call, __MODULE__, :disable_while_opening, []}}
           ]
@@ -169,7 +172,7 @@ defmodule HalC2.DevicesPropTest do
   end
 
   def precondition(state, {:call, _, command, _})
-      when command in [:crash, :crash_then_refresh, :disable_while_opening],
+      when command in [:crash, :crash_while_starting, :crash_then_refresh, :disable_while_opening],
       do: state.hub != nil
 
   def precondition(_state, _call), do: true
@@ -180,6 +183,13 @@ defmodule HalC2.DevicesPropTest do
       state
       | hub: {:call, __MODULE__, :origin, [result]},
         delay: {:call, __MODULE__, :wait_of, [result]}
+    }
+
+  def next_state(state, result, {:call, _, :crash_while_starting, _}),
+    do: %{
+      state
+      | hub: {:call, __MODULE__, :origin, [result]},
+        delay: {:call, __MODULE__, :last_wait, [result]}
     }
 
   def next_state(state, result, {:call, _, :crash_then_refresh, _}),
@@ -211,6 +221,17 @@ defmodule HalC2.DevicesPropTest do
   def postcondition(state, {:call, _, :crash, _}, {delay, origin}),
     do: allowed?(state, delay) and origin not in [nil, state.hub]
 
+  # Every exit, the ones before the hub was ready too, is followed by a restart whose wait
+  # follows from the one before.
+  def postcondition(state, {:call, _, :crash_while_starting, _}, {waits, origin}) do
+    {ok, _} =
+      Enum.reduce(waits, {true, state}, fn wait, {ok, state} ->
+        {ok and allowed?(state, wait), %{state | delay: wait}}
+      end)
+
+    ok and length(waits) >= 2 and origin not in [nil, state.hub]
+  end
+
   def postcondition(state, {:call, _, :crash_then_refresh, _}, {delay, reply, origin}),
     do:
       allowed?(state, delay) and origin not in [nil, state.hub] and
@@ -232,6 +253,7 @@ defmodule HalC2.DevicesPropTest do
   # The hub origin a command's result ends with, and the wait a crash's begins with.
   def origin(result), do: elem(result, tuple_size(result) - 1)
   def wait_of(result), do: elem(result, 0)
+  def last_wait({waits, _origin}), do: List.last(waits)
 
   def enable, do: write(true)
 
@@ -250,6 +272,17 @@ defmodule HalC2.DevicesPropTest do
     delay = exit_hub()
     await(&(&1["hostStatus"] == "ready"))
     {delay, Devices.hub_origin()}
+  end
+
+  # The hub exits, and its restarts exit before they are ready until one has; then the
+  # hub comes back.
+  def crash_while_starting do
+    System.put_env("FAKE_HUB_EXIT_AT_START", "1")
+    first = exit_hub()
+    second = next_wait()
+    System.delete_env("FAKE_HUB_EXIT_AT_START")
+    waits = [first, second | waits_until_ready()]
+    {waits, Devices.hub_origin()}
   end
 
   # A refresh while the restart waits starts the hub at once; the restart then finds it
@@ -280,9 +313,25 @@ defmodule HalC2.DevicesPropTest do
     request = {String.to_charlist(origin <> "/fake/exit"), [], ~c"text/plain", ""}
     {:ok, {{_, 200, _}, _, _}} = :httpc.request(:post, request, [timeout: 5_000], [])
 
+    next_wait()
+  end
+
+  defp next_wait do
     view = await(&(&1["hostStatus"] == "failed"))
-    [_, ms] = Regex.run(~r/Restarting it in (\d+) ms\.$/, view["hostStatuses"]["local"]["detail"])
-    String.to_integer(ms)
+    wait(view) || raise "the hub failed without a restart: #{inspect(view["hostStatuses"])}"
+  end
+
+  # The waits of restarts that still exited, until a hub is ready.
+  defp waits_until_ready do
+    view = await(&(&1["hostStatus"] in ["failed", "ready"]))
+    if view["hostStatus"] == "ready", do: [], else: [wait(view) | waits_until_ready()]
+  end
+
+  defp wait(view) do
+    case Regex.run(~r/Restarting it in (\d+) ms\.$/, view["hostStatuses"]["local"]["detail"]) do
+      [_, ms] -> String.to_integer(ms)
+      nil -> nil
+    end
   end
 
   defp write(enabled) do

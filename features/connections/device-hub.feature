@@ -162,12 +162,13 @@ Feature: Device hub on an MC
     And the user is told <reason>
 
     Examples:
-      | platform | situation                                | reason                             |
-      | iOS      | the disk is full                         | the device ran out of disk space   |
-      | Android  | the disk is full                         | the device ran out of disk space   |
-      | iOS      | the boot takes longer than three minutes | the boot timed out                 |
-      | Android  | the boot takes longer than three minutes | the boot timed out                 |
-      | iOS      | the simulator fails to launch            | the device failed to launch        |
+      | platform | situation                                           | reason                           |
+      | iOS      | the disk is full                                    | the device ran out of disk space |
+      | Android  | the disk is full                                    | the device ran out of disk space |
+      | iOS      | the boot takes longer than three minutes            | the boot timed out               |
+      | Android  | the boot takes longer than three minutes            | the boot timed out               |
+      | iOS      | its stream takes longer than three minutes to start | the boot timed out               |
+      | iOS      | the simulator fails to launch                       | the device failed to launch      |
 
   @mc
   Scenario: Turning device support off while a device boots fails the open

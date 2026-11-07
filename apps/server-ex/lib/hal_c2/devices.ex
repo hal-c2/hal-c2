@@ -30,6 +30,7 @@ defmodule HalC2.Devices do
     "agent" => %{name: "agent-device", version: "0.21.12", entry: ~w(bin agent-device.mjs)}
   }
   @hub_ready_timeout 30_000
+  @hub_exited "The device hub exited while starting."
   @daemon_ready_timeout 30_000
   @screenshot_timeout 20_000
   @install_timeout 600_000
@@ -313,18 +314,20 @@ defmodule HalC2.Devices do
     end
   end
 
-  # The grid start boots serve-sim's helper for the simulator; it is idempotent.
+  # The grid start boots serve-sim's helper for the simulator; it is idempotent. It waits
+  # as long as a boot does, and running out of that is a boot that timed out.
   defp attach_ios(hub, udid, operation) do
-    case hub_json(
-           hub,
-           :post,
-           "/vendor/serve-sim/grid/api/start",
-           %{"udid" => udid},
-           operation,
-           boot_timeout()
-         ) do
-      {:ok, _} -> :ok
-      error -> error
+    response =
+      http(
+        :post,
+        hub["origin"] <> "/vendor/serve-sim/grid/api/start",
+        JSON.encode!(%{"udid" => udid}),
+        boot_timeout()
+      )
+
+    case response do
+      {:error, :timeout} -> {:error, boot_error(udid, %{"error" => "Boot timed out."})}
+      response -> with {:ok, _} <- decode_hub(response, operation), do: :ok
     end
   end
 
@@ -845,22 +848,33 @@ defmodule HalC2.Devices do
            }
          }}
       else
-        _ -> host_unavailable(@local, "Device support failed while starting the device hub.")
+        # The server restarts a hub that exited; one that never answered stays down.
+        :exited ->
+          {:error, :exited}
+
+        _ ->
+          host_unavailable(@local, "Device support failed while starting the device hub.")
       end
     end
   end
 
+  # Only this job starts a hub, so a hub process gone while it waits is the one it started.
   defp await_hub(origin, deadline) do
     case http(:get, origin <> "/readyz", nil, 1_000) do
       {:ok, 200, _} ->
         :ok
 
       _ ->
-        if System.monotonic_time(:millisecond) > deadline do
-          :timeout
-        else
-          Process.sleep(100)
-          await_hub(origin, deadline)
+        cond do
+          not GenServer.call(__MODULE__, :hub_running?) ->
+            :exited
+
+          System.monotonic_time(:millisecond) > deadline ->
+            :timeout
+
+          true ->
+            Process.sleep(100)
+            await_hub(origin, deadline)
         end
     end
   end
@@ -1212,6 +1226,8 @@ defmodule HalC2.Devices do
     end
   end
 
+  def handle_call(:hub_running?, _from, state), do: {:reply, state.hub_process != nil, state}
+
   def handle_call({:spawn_hub, node, entry}, _from, state) do
     port = free_port()
 
@@ -1231,9 +1247,10 @@ defmodule HalC2.Devices do
          ) do
       {:ok, sub} ->
         stop_hub(state)
+        restarts = HubRestarts.started(state.restarts, monotonic())
 
         {:reply, {:ok, "http://127.0.0.1:#{port}"},
-         %{state | hub_process: sub, hub_exited: false}}
+         %{state | hub_process: sub, hub_exited: false, restarts: restarts}}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -1344,24 +1361,12 @@ defmodule HalC2.Devices do
 
   # A hub that exits on its own is restarted after a wait that grows while it keeps exiting
   # soon after starting (`HalC2.Devices.HubRestarts`); a refresh in the meantime starts it
-  # at once.
+  # at once. A hub still starting is the hub job's to report, which it does once it sees
+  # the hub gone.
   def handle_info({:subprocess_eof, reader}, %{hub_process: %{reader: reader}} = state) do
     stop_hub(state)
     state = %{state | hub: nil, hub_process: nil, hub_exited: false}
-
-    state =
-      if state.settings.enabled do
-        {delay, restarts} = HubRestarts.exited(state.restarts, monotonic())
-        timer = Process.send_after(self(), :restart_hub, delay)
-        detail = "The device hub stopped. Restarting it in #{seconds(delay)}."
-
-        %{state | restarts: restarts, restart_timer: timer}
-        |> publish(&put_status(&1, "failed", detail))
-      else
-        state
-      end
-
-    {:noreply, state}
+    {:noreply, if(state.jobs[:hub], do: state, else: elem(restart_later(state), 0))}
   end
 
   def handle_info(:restart_hub, state) do
@@ -1432,17 +1437,16 @@ defmodule HalC2.Devices do
                host_unavailable(@local, "Device support was turned off while it was starting.")}
 
             {:hub, {:ok, hub}, _} ->
-              state = %{
-                state
-                | hub: hub,
-                  restarts: HubRestarts.started(state.restarts, monotonic())
-              }
-
+              state = %{state | hub: hub}
               {publish(state, &put_status(&1, "ready", nil)), result}
 
             {:agent, {:ok, agent}, _} ->
               state = %{state | agent: agent}
               {publish(state, &(&1 |> with_hosts(state) |> put_status("ready", nil))), result}
+
+            {:hub, {:error, :exited}, _} ->
+              {state, detail} = restart_later(state)
+              {state, host_unavailable(@local, detail || @hub_exited)}
 
             {:hub, {:error, error}, _} ->
               stop_hub(state)
@@ -1501,6 +1505,19 @@ defmodule HalC2.Devices do
     stop_hub(state)
     if state.restart_timer, do: Process.cancel_timer(state.restart_timer)
     %{stop_agent(state) | hub: nil, hub_process: nil, hub_exited: false, restart_timer: nil}
+  end
+
+  # Schedules the restart of a hub that exited, with what clients are told; nothing while
+  # device support is off. It replaces any restart still waiting, so each exit's wait counts.
+  defp restart_later(%{settings: %{enabled: false}} = state), do: {state, nil}
+
+  defp restart_later(state) do
+    if state.restart_timer, do: Process.cancel_timer(state.restart_timer)
+    {delay, restarts} = HubRestarts.exited(state.restarts, monotonic())
+    timer = Process.send_after(self(), :restart_hub, delay)
+    detail = "The device hub stopped. Restarting it in #{seconds(delay)}."
+    state = %{state | restarts: restarts, restart_timer: timer}
+    {publish(state, &put_status(&1, "failed", detail)), detail}
   end
 
   defp monotonic, do: System.monotonic_time(:millisecond)
