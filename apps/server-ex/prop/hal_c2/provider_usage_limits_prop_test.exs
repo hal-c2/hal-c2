@@ -99,7 +99,8 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
   # A reading then a failed check still shows the reading, and repeating an unchanged
   # reading under the marker publishes the very same limits (nothing to push).
   property "readings under a failed-check marker survive failed checks and repeat silently" do
-    forall {used, repeats} <- {integer(0, 100), integer(1, 4)} do
+    forall {used, repeats, message} <-
+             {integer(0, 100), integer(1, 4), oneof([nil, "Codex exited.", "Codex timed out."])} do
       failed = Limits.unavailable("t0", "probeFailed")
       window = %{"id" => "primary", "kind" => "session", "usedPercent" => used}
       shown = Limits.merge(Limits.after_probe(nil, failed), [window], "t1")
@@ -107,9 +108,12 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
       repeated =
         Enum.reduce(1..repeats, shown, fn n, acc -> Limits.merge(acc, [window], "t#{n + 1}") end)
 
-      after_failed = Limits.after_probe(repeated, Limits.unavailable("t9", "probeFailed"))
+      later = Limits.unavailable("t9", "probeFailed", message)
+      after_failed = Limits.after_probe(repeated, later)
 
-      repeated == shown and after_failed == shown and
+      # The windows stay, and the marker is the newer check's own.
+      repeated == shown and
+        after_failed == Map.put(shown, "unavailable", later["unavailable"]) and
         [%{"usedPercent" => used}] == Enum.map(shown["windows"], &Map.take(&1, ["usedPercent"]))
     end
   end

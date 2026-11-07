@@ -336,12 +336,13 @@ defmodule HalC2.ProviderUsageLimits do
       when not is_map_key(published, "unavailable"),
       do: published
 
-  # Readings a turn reported under a failed-check marker survive the next failed check.
+  # Readings a turn reported under a failed-check marker survive the next failed check,
+  # which names its own reason.
   def after_probe(
         %{"windows" => [_ | _], "unavailable" => %{"reason" => "probeFailed"}} = published,
-        %{"unavailable" => %{"reason" => "probeFailed"}}
+        %{"unavailable" => %{"reason" => "probeFailed"} = marker}
       ),
-      do: published
+      do: Map.put(published, "unavailable", marker)
 
   def after_probe(_published, probed), do: probed
 
