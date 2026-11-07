@@ -1,6 +1,6 @@
 // The saved environments (EnvironmentCatalog) as the user and the system change
 // them: environments saved and forgotten, a keyring that refuses and comes
-// back or loses a credential, the record file damaged as a crash leaves it,
+// back, cannot be read, or loses a credential, the record file damaged as a crash leaves it,
 // a disk that stops taking writes, and the app starting again. It lists what
 // was saved and nothing a refusing keyring or disk kept from it, and one not
 // saved keeps the credential it had; a damaged file is set aside and the app starts with
@@ -40,6 +40,8 @@ struct Model {
   // What the keyring holds, whatever the record file says.
   std::map<std::string, std::string> keyring;
   bool refusing = false;
+  // The keyring takes writes but gives nothing back.
+  bool unreadable = false;
   // The record file's directory takes no writes.
   bool locked = false;
   // The record file was damaged since the catalog last wrote it.
@@ -124,7 +126,19 @@ struct Save : Step<Save> {
 
   explicit Save(const Model&) {}
   void apply(Model& model) const override {
-    if (model.refusing || model.locked) return;
+    if (model.refusing) return;
+    if (model.locked) {
+      // Not saved: the keyring is put back as the catalog read it, and a
+      // credential the record names stays when there was nothing to put back.
+      const auto had = model.keyring.find(id);
+      if (!model.unreadable && had != model.keyring.end()) return;
+      if (model.find(id)) {
+        model.keyring[id] = credential;
+      } else {
+        model.keyring.erase(id);
+      }
+      return;
+    }
     model.keyring[id] = credential;
     std::erase_if(model.listed, [&](const auto& entry) { return entry.first == id; });
     model.listed.emplace_back(id, Saved{label, located, credential});
@@ -162,6 +176,16 @@ struct Refuse : Step<Refuse> {
   void apply(Model& model) const override { model.refusing = refusing; }
   void act(const Model&, Sut& sut) const { sut.keys->refusing = refusing; }
   void show(std::ostream& os) const override { os << "Refuse(" << (refusing ? "on" : "off") << ")"; }
+};
+
+// The keyring stops, or starts again, giving back what it holds.
+struct Unreadable : Step<Unreadable> {
+  bool unreadable = *rc::gen::arbitrary<bool>();
+
+  explicit Unreadable(const Model&) {}
+  void apply(Model& model) const override { model.unreadable = unreadable; }
+  void act(const Model&, Sut& sut) const { sut.keys->unreadable = unreadable; }
+  void show(std::ostream& os) const override { os << "Unreadable(" << (unreadable ? "on" : "off") << ")"; }
 };
 
 // The keyring loses one credential (the user deleted it, or another app did).
@@ -239,7 +263,7 @@ struct Connect : Step<Connect> {
     if (!saved || !saved->located) {
       RC_ASSERT(connection.blocked == EnvironmentCatalog::profileMissing(q(id)));
       RC_ASSERT(connection.credential.isEmpty());
-    } else if (model.refusing || kept == model.keyring.end()) {
+    } else if (model.refusing || model.unreadable || kept == model.keyring.end()) {
       RC_ASSERT(connection.blocked == EnvironmentCatalog::credentialMissing(q(id)));
       RC_ASSERT(connection.credential.isEmpty());
     } else {
@@ -261,7 +285,7 @@ private slots:
     QVERIFY(rc::check("the catalog lists what was saved, sets a damaged file aside, and never writes a credential to disk", [] {
       Sut sut;
       rc::state::check(Model{}, sut,
-                       rc::state::gen::execOneOfWithArgs<Save, Save, Save, Forget, Refuse, Lock, LoseCredential, Damage, Reload, Reload,
+                       rc::state::gen::execOneOfWithArgs<Save, Save, Save, Forget, Refuse, Unreadable, Lock, LoseCredential, Damage, Reload, Reload,
                                                          Connect, Connect>());
     }));
   }

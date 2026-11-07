@@ -506,6 +506,30 @@ private slots:
     QVERIFY(phone.waitForThreads({office.threadTitle()}));
   }
 
+  // Forgetting the first when the one beside it cannot be kept in its place
+  // leaves that one listed: closing the first emptied its rows too.
+  void forgettingTheFirstWhenTheOtherCannotTakeItsPlaceKeepsItListed() {
+    QTemporaryDir home;
+    PairableMc macbook(QStringLiteral("a"), QStringLiteral("My MacBook"));
+    PairableMc office(QStringLiteral("b"), QStringLiteral("Office Mac"));
+    Phone phone(home.path());
+    QVERIFY(phone.pair(macbook.link()));
+    QVERIFY(phone.waitForConnection(QStringLiteral("connected")));
+    phone.dispatch(QStringLiteral("pairing.add"));
+    QVERIFY(phone.pair(office.link()));
+    QVERIFY(phone.waitForThreads({macbook.threadTitle(), office.threadTitle()}));
+    const QString data = QFileInfo(phone.file).absolutePath();
+    // The session is deleted, and then the device takes no more writes.
+    QObject::connect(phone.pairing.get(), &Pairing::forgetting, phone.pairing.get(),
+                     [&] { QFile::setPermissions(data, QFile::ReadOwner | QFile::ExeOwner); });
+
+    phone.dispatch(QStringLiteral("pairing.forget"));
+    QVERIFY(QFile::setPermissions(data, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    QCOMPARE(phone.phase(), QStringLiteral("unpaired"));
+    QVERIFY(!QFile::exists(phone.file));
+    QVERIFY(phone.waitForThreads({office.threadTitle()}));
+  }
+
   void aLinkFromOutsideLeavesThePairedEnvironment() {
     QTemporaryDir home;
     PairableMc macbook(QStringLiteral("a"), QStringLiteral("My MacBook"));

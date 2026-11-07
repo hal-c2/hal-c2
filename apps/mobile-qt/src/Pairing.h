@@ -122,8 +122,8 @@ private:
   // The saved environments, when `id` is one of them and not the shell's own.
   SavedEnvironmentsController* beside(const QString& id) const;
   // With no environment of its own, the shell connects to the first one
-  // paired beside it that it can, which then is its own.
-  void promote();
+  // paired beside it that it can, which then is its own; false when none is.
+  bool promote();
   // The shell connected with this credential: it is the one to remember.
   void remember(const QUrl& origin, const QString& token);
   // The connected MC described itself: its label and environment may be news.
