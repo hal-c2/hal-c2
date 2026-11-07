@@ -653,7 +653,7 @@ Feature: Delegating tasks to subagents
       | completed its checkpoint       | accepts         | completed |
 
   # Upstream #25662: a wake-policy change planned from a stale read put a checkpointed run back to running.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Changing a task's wake policy leaves a settled run settled
     Given the agent in "parent" delegated a task and is waiting
     And the run of "parent" completed its checkpoint just before the wake policy is changed to always
@@ -662,7 +662,7 @@ Feature: Delegating tasks to subagents
 
   # Upstream #23456: settling a finished Codex parent unloaded a subagent a client had open, so
   # the subagent's next reply never showed and its run never ended.
-  @backlog @mc @plugin-codex @priority-high
+  @mc @plugin-codex @priority-high
   Scenario: A subagent open in a client keeps its replies after its parent settles
     Given a delegated Codex subagent of "parent" is open in a client
     When the user settles "parent"
@@ -928,12 +928,12 @@ Feature: Delegating tasks to subagents
 
   # Upstream #22579: a completion that waited in the queue started on the model the thread had
   # when it was queued, and put the thread back on it.
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A queued completion starts on the model the thread has now
     Given the completion of "one" is queued for "parent" while it works on "gpt-5.4"
     When the user switches "parent" to "gpt-5.5" before the completion is delivered
     Then the wake for "one" runs on "gpt-5.5"
-    And "parent" stays on "gpt-5.5"
+    And the thread "parent" stays on "gpt-5.5"
     But a message the user queued keeps the model it was queued with
 
   @mc
@@ -1227,7 +1227,7 @@ Feature: Delegating tasks to subagents
   # Upstream #30390: an untitled subagent's title cut from its prompt could keep half of an
   # emoji, shown where its workflow group has no name of its own.
   # Upstream #29906: a subagent's title cut from a long task title or prompt kept half of an emoji.
-  @backlog @mc @shared @priority-low
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
   Scenario: A subagent titled from its prompt does not end in a broken character
     When the provider of "parent" starts a subagent with no title and a prompt with an emoji where the cut falls
     Then the subagent's title is cut before the emoji, not through it, and followed by "..."

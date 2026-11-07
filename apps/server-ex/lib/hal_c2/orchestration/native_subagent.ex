@@ -529,16 +529,32 @@ defmodule HalC2.Orchestration.NativeSubagent do
   end
 
   # The child's title (upstream `subagentThreadTitle`): its given title, else its
-  # prompt, cut to 72 characters; with neither, it is named after its parent.
+  # prompt, cut to 72 characters; with neither, it is named after its parent. The
+  # cut counts UTF-16 units as upstream's did, and never falls through a character
+  # (an emoji's surrogate pair), which clients would show as a replacement glyph.
   defp title(parent_title, given, prompt, ordinal) do
     case trimmed(given) || trimmed(prompt) do
-      nil ->
-        "#{parent_title} subagent #{ordinal}"
+      nil -> "#{parent_title} subagent #{ordinal}"
+      detail -> cut(detail, 72, 69)
+    end
+  end
 
-      detail ->
-        if String.length(detail) > 72,
-          do: String.slice(detail, 0, 69) <> "...",
-          else: detail
+  defp cut(text, limit, keep) do
+    utf16 = :unicode.characters_to_binary(text, :utf8, :utf16)
+
+    if byte_size(utf16) > limit * 2,
+      do: utf16_prefix(utf16, keep * 2) <> "...",
+      else: text
+  end
+
+  # The first `bytes` of a UTF-16 binary as UTF-8, dropping a lone surrogate the
+  # cut would leave at the end.
+  defp utf16_prefix(utf16, bytes) do
+    part = binary_part(utf16, 0, bytes)
+
+    case :unicode.characters_to_binary(part, :utf16, :utf8) do
+      text when is_binary(text) -> text
+      _ -> utf16_prefix(utf16, bytes - 2)
     end
   end
 

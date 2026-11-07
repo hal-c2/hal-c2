@@ -2273,6 +2273,130 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
+  # The caller's run settles (its checkpoint taken), and the wake policy is answered
+  # with the run read before: the settled run must stay settled.
+  step "the run of {string} completed its checkpoint just before the wake policy is changed to always",
+       %{args: [parent]} = context do
+    [seen | _] = World.runs(context, parent)
+    World.send_turn(context, parent, "say Carrying on")
+
+    World.await_state(context, parent, fn state ->
+      run = StreamState.get(state, "run")[seen["id"]]
+      run["status"] == "completed" and run["checkpointId"] != nil
+    end)
+
+    {reply, context} = World.dispatch(context, wake_command(context, "always"))
+    assert {:ok, _} = reply
+    Map.put(context, :seen_run, seen["id"])
+  end
+
+  # The task "one" ends while the caller still works, so its wake waits in the queue;
+  # a message of the user's waits behind it, queued on the model the thread has now.
+  step "the completion of {string} is queued for {string} while it works on {string}",
+       %{args: [name, parent, model]} = context do
+    assert World.thread(context, parent)["modelSelection"]["model"] == model
+
+    context =
+      delegate(context, parent, %{"mode" => "async", "title" => "where are we with #{name}"})
+
+    context =
+      context
+      |> put_in([:threads, name], context.threads["subagent"])
+      |> put_in([Access.key(:named_tasks, %{}), name], context.task_id)
+
+    World.send_turn(context, parent, "say user later", %{
+      "dispatchMode" => %{"type" => "queue_after_active"}
+    })
+
+    context = complete_named(context, name)
+
+    World.await_state(context, parent, fn state ->
+      messages = StreamState.get(state, "message")
+
+      Enum.any?(StreamState.list(state, "run"), fn run ->
+        run["status"] == "queued" and
+          get_in(messages, [run["userMessageId"], "delegatedCompletion"]) != nil
+      end)
+    end)
+
+    context
+  end
+
+  step "the user switches {string} to {string} before the completion is delivered",
+       %{args: [parent, model]} = context do
+    assert {:ok, _} =
+             HalC2.Orchestration.dispatch(%{
+               "type" => "thread.model-selection.set",
+               "threadId" => World.thread_id(context, parent),
+               "modelSelection" => %{"instanceId" => "codex", "model" => model}
+             })
+
+    context
+  end
+
+  # The caller's turn ends, and the queued wake runs next.
+  step "the wake for {string} runs on {string}", %{args: [name, model]} = context do
+    parent = context.task_parent
+    World.send_turn(context, parent, "say wrapping up")
+
+    state =
+      World.await_state(context, parent, fn state ->
+        messages = StreamState.get(state, "message")
+
+        Enum.any?(StreamState.list(state, "run"), fn run ->
+          run["status"] == "completed" and
+            context.named_tasks[name] in (get_in(messages, [
+                                            run["userMessageId"],
+                                            "delegatedCompletion",
+                                            "taskIds"
+                                          ]) || [])
+        end)
+      end)
+
+    messages = StreamState.get(state, "message")
+
+    wake =
+      Enum.find(StreamState.list(state, "run"), fn run ->
+        context.named_tasks[name] in (get_in(messages, [
+                                        run["userMessageId"],
+                                        "delegatedCompletion",
+                                        "taskIds"
+                                      ]) || [])
+      end)
+
+    assert wake["modelSelection"]["model"] == model
+    context
+  end
+
+  step "the thread {string} stays on {string}", %{args: [parent, model]} = context do
+    assert World.thread(context, parent)["modelSelection"]["model"] == model
+    context
+  end
+
+  step "a message the user queued keeps the model it was queued with", context do
+    parent = context.task_parent
+
+    state =
+      World.await_state(context, parent, fn state ->
+        messages = StreamState.get(state, "message")
+
+        Enum.any?(StreamState.list(state, "run"), fn run ->
+          run["status"] == "completed" and
+            get_in(messages, [run["userMessageId"], "text"]) == "say user later"
+        end)
+      end)
+
+    messages = StreamState.get(state, "message")
+
+    run =
+      Enum.find(StreamState.list(state, "run"), fn run ->
+        get_in(messages, [run["userMessageId"], "text"]) == "say user later"
+      end)
+
+    assert run["modelSelection"]["model"] == "gpt-5.4"
+    context
+  end
+
   # The caller's turn has ended in its provider, and its checkpoint is held while it is
   # being taken.
   step "the run of {string} is finishing and taking its checkpoint",
@@ -3802,6 +3926,76 @@ defmodule HalC2.Steps.Orchestration.Delegation do
        %{args: [suffix]} = context do
     row = World.await_row(context.native["childThreadId"], & &1)
     assert row["title"] == String.slice(context.long_prompt, 0, 69) <> suffix
+    context
+  end
+
+  # The prompt's 69th and 70th UTF-16 units are the emoji's surrogate pair, so a cut
+  # at 69 units would fall through it.
+  step "the provider of {string} starts a subagent with no title and a prompt with an emoji where the cut falls",
+       %{args: [_parent]} = context do
+    prompt = String.duplicate("a", 68) <> "🔥" <> String.duplicate("b", 30)
+    context = claude_parent(context)
+    start_native(context, "emoji", %{"prompt" => prompt}, %{"prompt" => prompt})
+  end
+
+  step "the subagent's title is cut before the emoji, not through it, and followed by {string}",
+       %{args: [suffix]} = context do
+    row = World.await_row(context.native["childThreadId"], & &1)
+    assert row["title"] == String.duplicate("a", 68) <> suffix
+    context
+  end
+
+  step "the agents list shows that title without a replacement character", context do
+    row = World.await_row(context.native["childThreadId"], & &1)
+    refute row["title"] =~ "�"
+    assert String.valid?(row["title"])
+    context
+  end
+
+  # The child is visited (a client has it open) and its caller's turn has finished,
+  # as a parent the user can settle is.
+  step "a delegated Codex subagent of {string} is open in a client",
+       %{args: [parent]} = context do
+    context = delegate(context, parent, %{"mode" => "async"})
+    World.await_runs(context, "subagent", ["running"])
+    child = World.thread_id(context, "subagent")
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.visit",
+        "threadId" => child,
+        "visitedAt" => HalC2.Orchestration.Entities.now()
+      })
+
+    World.send_turn(context, parent, "say Carrying on")
+    World.await_runs(context, parent, ["completed"])
+    context
+  end
+
+  step "the user settles {string}", %{args: [parent]} = context do
+    assert {:ok, _} =
+             HalC2.Orchestration.dispatch(%{
+               "type" => "thread.settle",
+               "threadId" => World.thread_id(context, parent)
+             })
+
+    context
+  end
+
+  step "the user sends the subagent another message", context do
+    World.send_turn(context, "subagent", "say Still here")
+    context
+  end
+
+  step "the subagent's reply is shown and its run completes", context do
+    World.await_state(context, "subagent", fn state ->
+      Enum.any?(
+        StreamState.list(state, "message"),
+        &(&1["role"] == "assistant" and &1["text"] =~ "Still here")
+      ) and
+        Enum.any?(StreamState.list(state, "run"), &(&1["status"] == "completed"))
+    end)
+
     context
   end
 
