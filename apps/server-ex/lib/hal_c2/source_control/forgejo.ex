@@ -672,7 +672,8 @@ defmodule HalC2.SourceControl.Forgejo do
            Enum.find(logins, &(String.trim_trailing(&1["url"], "/") == base_url)) ||
              {:error, {:unauthenticated, "fj has no credentials for this server."}},
          {:ok, token} <- authenticate(cwd, login),
-         {:ok, text, _} <- request(cwd, base_url, token, "user", "GET", nil) do
+         api_base = System.get_env("HAL_C2_FORGEJO_API_BASE_URL") || base_url,
+         {:ok, text, _} <- request(cwd, api_base, token, "user", "GET", nil) do
       case JSON.decode(text) do
         {:ok, %{"login" => account}} when is_binary(account) and account != "" ->
           {:ok, account}
