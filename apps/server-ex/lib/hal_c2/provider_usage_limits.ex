@@ -314,7 +314,9 @@ defmodule HalC2.ProviderUsageLimits do
         if existing == next, do: {acc, changed}, else: {Map.put(acc, next["id"], next), true}
       end)
 
-    if not changed and previous != nil and previous["unavailable"] == nil do
+    # A kept failed-check marker does not make an unchanged reading a change: that
+    # would republish (and push to every client) on each event of a turn.
+    if not changed and previous != nil and failed_marker(previous) == previous["unavailable"] do
       previous
     else
       checked_at
@@ -332,6 +334,13 @@ defmodule HalC2.ProviderUsageLimits do
   @doc "What to publish after a probe: a failed probe keeps the last good windows."
   def after_probe(%{} = published, %{"unavailable" => %{"reason" => "probeFailed"}})
       when not is_map_key(published, "unavailable"),
+      do: published
+
+  # Readings a turn reported under a failed-check marker survive the next failed check.
+  def after_probe(
+        %{"windows" => [_ | _], "unavailable" => %{"reason" => "probeFailed"}} = published,
+        %{"unavailable" => %{"reason" => "probeFailed"}}
+      ),
       do: published
 
   def after_probe(_published, probed), do: probed
