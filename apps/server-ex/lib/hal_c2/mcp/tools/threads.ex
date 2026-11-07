@@ -80,7 +80,9 @@ defmodule HalC2.Mcp.Tools.Threads do
               "attachments" => attachments
             })
 
-      with {:ok, _} <- launch_once(input, args["clientRequestId"]) do
+      # A retry with the same key finds the thread and resumes the launch: the first message
+      # is a command of its own, answered once, so a retry delivers it only if it was not.
+      with {:ok, _} <- orchestration(Orchestration.launch_thread(input)) do
         thread = thread(id)
         run = Enum.find(StreamState.list(stream(id), "run"), &(&1["userMessageId"] == id))
 
@@ -660,13 +662,6 @@ defmodule HalC2.Mcp.Tools.Threads do
       |> StreamState.all("message")
       |> Enum.find_value(&(&1["role"] == "user" and (&1["text"] || "") != "" and &1["text"]))
     end)
-  end
-
-  # A repeated launch with the same request key answers with the thread the first one made.
-  defp launch_once(%{"threadId" => id} = input, key) do
-    if key != nil and thread(id) != nil,
-      do: {:ok, :replayed},
-      else: orchestration(Orchestration.launch_thread(input))
   end
 
   defp pending?(%{"id" => "pending-" <> _}), do: true

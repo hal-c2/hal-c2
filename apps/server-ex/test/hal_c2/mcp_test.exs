@@ -334,6 +334,38 @@ defmodule HalC2.McpTest do
 
   # --- helpers ----------------------------------------------------------------------------
 
+  test "a launch retried after its thread was created without the first message delivers it" do
+    {caller, tool} = caller("wait for it")
+    id = "thread:mcp:#{caller}:launch:retry-1"
+
+    # The thread was committed, then the first message's dispatch never happened.
+    {:ok, _} =
+      Orchestration.launch_thread(%{
+        "commandId" => id,
+        "threadId" => id,
+        "projectId" => @project,
+        "title" => "Retry",
+        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+        "runtimeMode" => "full-access",
+        "interactionMode" => "default",
+        "workspaceStrategy" => %{"type" => "root"},
+        "createdBy" => "agent",
+        "creationSource" => "mcp"
+      })
+
+    args = %{"title" => "Retry", "message" => "hello again", "clientRequestId" => "retry-1"}
+    assert {:ok, %{"threadId" => ^id, "runId" => run_id}} = tool.("hal_c2_thread_launch", args)
+    assert is_binary(run_id)
+
+    # A second retry answers with the same thread and sends nothing more.
+    assert {:ok, %{"threadId" => ^id}} = tool.("hal_c2_thread_launch", args)
+
+    messages =
+      id |> current() |> StreamState.list("message") |> Enum.filter(&(&1["role"] == "user"))
+
+    assert [%{"text" => "hello again"}] = messages
+  end
+
   # A running thread of the project and a function calling tools as its agent.
   defp caller(text) do
     thread_id = launch(text)
