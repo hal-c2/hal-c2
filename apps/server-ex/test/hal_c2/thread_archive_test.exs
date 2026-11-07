@@ -94,10 +94,11 @@ defmodule HalC2.ThreadArchiveTest do
   end
 
   test "a failed import takes back the worktree branch it made", %{context: context, root: root} do
-    bundle = feature_bundle(context, root)
+    {bundle, carried} = feature_bundle(context, root)
     branches = World.git!(root, ~w(for-each-ref refs/heads))
-    refuse_worktree(root, bundle)
+    placed = refuse_worktree(root, bundle)
 
+    assert placed =~ "#{carried} commit\trefs/heads/feature"
     assert World.git!(root, ~w(for-each-ref refs/heads)) == branches
 
     assert World.git!(root, ~w(worktree list --porcelain)) =~
@@ -108,10 +109,12 @@ defmodule HalC2.ThreadArchiveTest do
        %{context: context, root: root} do
     # Here the branch is a commit behind the carried one: the fetch moves it on.
     World.git!(root, ~w(branch feature))
-    bundle = feature_bundle(context, root)
+    {bundle, carried} = feature_bundle(context, root)
     branches = World.git!(root, ~w(for-each-ref refs/heads))
-    refuse_worktree(root, bundle)
+    refute branches =~ carried
+    placed = refuse_worktree(root, bundle)
 
+    assert placed =~ "#{carried} commit\trefs/heads/feature"
     assert World.git!(root, ~w(for-each-ref refs/heads)) == branches
 
     assert World.git!(root, ~w(worktree list --porcelain)) =~
@@ -146,7 +149,8 @@ defmodule HalC2.ThreadArchiveTest do
     assert ThreadArchive.local_thread("th-legacy") == nil
   end
 
-  # A bundle of the branch `feature` of a laptop's clone of `root`, a commit ahead of it.
+  # A bundle of the branch `feature` of a laptop's clone of `root`, a commit ahead of it,
+  # and that commit.
   defp feature_bundle(context, root) do
     source = Path.join(context.mc.home, "laptop-shop")
     World.git!(context.mc.home, ["clone", "-q", root, source])
@@ -159,8 +163,11 @@ defmodule HalC2.ThreadArchiveTest do
 
     bundle = Path.join(context.mc.home, "worktree.bundle")
     World.git!(source, ["bundle", "create", "-q", bundle, "refs/heads/feature"])
-    bundle
+    {bundle, World.git!(source, ~w(rev-parse HEAD))}
   end
+
+  # Imports a thread with its worktree that the store refuses. Returns the branches `root`
+  # had when the store refused it: what the import placed before it failed.
 
   defp refuse_worktree(root, bundle) do
     archive =
@@ -181,11 +188,27 @@ defmodule HalC2.ThreadArchiveTest do
         }
       })
 
-    Application.put_env(:hal_c2, :store_hook, {Machines, :refuse_change, ["th-cart"]})
+    Application.put_env(:hal_c2, :store_hook, {__MODULE__, :refuse_seeing, [self(), root]})
 
     assert ThreadArchive.import_archive(archive, project: "shop") ==
              {:error, "The import of Cart failed: the disk is full. Nothing was imported."}
+
+    assert_received {:placed, branches}
+    branches
   end
+
+  # As `Machines.refuse_change/3` for th-cart, telling `test` the branches `root` has then.
+  @doc false
+  def refuse_seeing(test, root, :append_change, "th-cart") do
+    if self() == Process.whereis(HalC2.Store) do
+      send(test, {:placed, World.git!(root, ~w(for-each-ref refs/heads))})
+      raise "the disk is full"
+    end
+
+    :ok
+  end
+
+  def refuse_seeing(_test, _root, _stage, _stream_id), do: :ok
 
   @doc false
   def room(room, id, :append_change, id) do
