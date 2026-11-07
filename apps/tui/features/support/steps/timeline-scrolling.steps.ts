@@ -41,13 +41,13 @@ const fromEnd = (ctx: ScrollWorld) => {
 };
 const atEnd = (ctx: ScrollWorld) => fromEnd(ctx) <= 1;
 
-const replies = (count: number, prefix = "Reply") =>
+const replies = (count: number, prefix = "Reply", from = 0) =>
   Array.from({ length: count }, (_, i) =>
     message(
       `${prefix}-${i}`,
       "assistant",
       `${prefix} ${i}\n\nSecond paragraph of ${prefix} ${i}.`,
-      i,
+      from + i,
     ),
   );
 
@@ -351,7 +351,7 @@ step("the agent streams more rows into the thread", async (ctx: ScrollWorld) => 
       // Taller than the rows they push out of the window, so the content grows.
       messages: [
         ...detail.messages,
-        ...replies(batch, `Streamed${batch}`).map((entry) => ({
+        ...replies(batch, `Streamed${batch}`, 1000 * batch).map((entry) => ({
           ...entry,
           text: `${entry.text}\n\nA third paragraph.\n\nA fourth paragraph.\n\nA fifth paragraph.\n\nA sixth paragraph.`,
         })),

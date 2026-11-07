@@ -31,11 +31,13 @@ ScrollView {
     onTimelineChanged: if (opening && timeline.items.length > 0) settleOpening()
 
     // Rows mount over a few frames: every height change while opening goes to the
-    // bottom again, and the opening ends one loop turn after the last of them.
+    // bottom again. endOpening is one named function, so callLater merges the
+    // calls: the opening ends one loop turn after the last height change.
+    function endOpening() { opening = false }
     function settleOpening() {
         heightBefore = -1
         scrollToBottom()
-        Qt.callLater(function () { scroller.opening = false })
+        Qt.callLater(endOpening)
     }
 
     // Earlier turns that land above the row being read push it down; the view
@@ -49,12 +51,27 @@ ScrollView {
         }
         return ""
     }
+    function rowTop(key) {
+        const rows = column.children
+        for (let i = 0; i < rows.length; i++) {
+            if (rows[i].objectName === "timelineItem-" + key) return rows[i].y
+        }
+        return 0
+    }
     onHeadKeyChanged: {
         // Earlier rows arrived only if the old head is still in the list: when the
         // window slides along a growing thread the old head has left it.
         heightBefore = -1 // a pending offset belongs to the previous head
-        const prepended = firstKey !== "" && headKey !== "" && headKey !== firstKey && !opening
-            && timeline.items.some(item => item.key === firstKey)
+        const changed = firstKey !== "" && headKey !== "" && headKey !== firstKey && !opening
+        const prepended = changed && timeline.items.some(item => item.key === firstKey)
+        const awayNow = contentHeight - layoutHeight - contentY > 1
+        // A window that slid dropped rows above the reader. The delegates still hold
+        // the old layout here, so the height they took is the gap between the old
+        // head and the row that is now first.
+        if (changed && !prepended && awayNow) {
+            const dropped = rowTop(headKey) - rowTop(firstKey)
+            if (dropped > 0) scrollBy(-dropped)
+        }
         firstKey = headKey
         if (prepended && contentHeight - layoutHeight - contentY > 1) {
             heightBefore = contentHeight
