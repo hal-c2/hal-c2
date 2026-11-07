@@ -101,6 +101,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("space/markdown.feature"),
     QStringLiteral("space/project-files.feature"),
     QStringLiteral("timeline/streaming.feature"),
+    QStringLiteral("timeline/runs-and-queue.feature"),
     QStringLiteral("threads/sidebar-list.feature:Very long settled*"),
     QStringLiteral("threads/sidebar-list.feature:*plugin*"),
     QStringLiteral("threads/settle.feature"),
