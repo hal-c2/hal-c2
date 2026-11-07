@@ -4712,7 +4712,10 @@ defmodule HalC2.Orchestration do
       # confine a run (Claude's `--tools`) honour.
       read_only: command["readOnly"] == true,
       native_thread_id: get_in(provider_thread || %{}, ["nativeThreadRef", "nativeId"]),
-      head: get_in(provider_thread || %{}, ["nativeConversationHeadRef", "nativeId"])
+      head: get_in(provider_thread || %{}, ["nativeConversationHeadRef", "nativeId"]),
+      # The last run the provider thread saw before this one, which a run the provider
+      # never got the prompt of puts back (`HalC2.Claude.ThreadRuntime`).
+      seen_run_ordinal: (provider_thread || %{})["lastRunOrdinal"]
     }
 
     {changes ++ handoff.changes, {:ok, turn}}

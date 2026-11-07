@@ -4066,6 +4066,48 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- a turn that failed before its prompt was sent ------------------------------------------
+
+  step "a Claude thread another agent worked on since Claude last ran", context do
+    context = World.fake_providers(context)
+    context = World.launch_on(context, @thread, "claudeAgent", "first question")
+    World.await_runs(context, @thread, ["completed"])
+    context = switch_provider(context, "codex", "gpt-5.4")
+    context = World.post_message(context, @thread, "Carry on")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context = switch_provider(context, "claudeAgent", "claude-opus-4-6")
+    Map.put(context, :claude_session, claude_session(context))
+  end
+
+  # Claude cannot be started, so neither prompt reaches it.
+  step "two Claude turns failed before Claude got their prompts", context do
+    release_claude(context)
+    claude = Application.get_env(:hal_c2, :claude_command)
+    Application.put_env(:hal_c2, :claude_command, [Path.join(context.mc.home, "no-claude")])
+
+    for text <- ["try once", "try twice"] do
+      World.post_message(context, @thread, text)
+      World.await_latest_run(context, @thread, "failed")
+    end
+
+    Application.put_env(:hal_c2, :claude_command, claude)
+    context
+  end
+
+  step "Claude resumes its original session", context do
+    argv = last_argv(context)
+    assert flag_value(argv, "--resume") == context.claude_session, inspect(argv)
+    assert claude_session(context) == context.claude_session
+    context
+  end
+
+  step "the context the failed turns did not send is sent with the new message", context do
+    prompt = last_prompt(context)
+    assert prompt =~ "User: Carry on", prompt
+    assert String.ends_with?(prompt, "where are we"), prompt
+    context
+  end
+
   # Stops the running turn, then lets go of the thread's Claude as the idle sweep does
   # (`ThreadRuntime`'s `:release`), so the next message starts Claude again from the
   # recorded session instead of the process that ran the stopped turn.
@@ -4141,6 +4183,50 @@ defmodule HalC2.Steps.Providers.Claude do
       _ -> []
     end)
     |> List.last()
+  end
+
+  defp switch_provider(context, instance, model) do
+    context =
+      World.command(context, %{
+        "type" => "provider.switch",
+        "threadId" => World.thread_id(context, @thread),
+        "modelSelection" => %{"instanceId" => instance, "model" => model}
+      })
+
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  # The native session of the thread's Claude provider thread.
+  defp claude_session(context) do
+    World.stream(context, @thread)
+    |> StreamState.list("provider-thread")
+    |> Enum.find_value(
+      &(&1["providerInstanceId"] == "claudeAgent" and get_in(&1, ["nativeThreadRef", "nativeId"]))
+    )
+  end
+
+  # The last user message Claude was sent.
+  defp last_prompt(context) do
+    for(
+      %{"in" => %{"type" => "user", "message" => %{"content" => text}}} <-
+        World.provider_log(context, "claude"),
+      do: if(is_binary(text), do: text, else: Enum.map_join(text, &(&1["text"] || "")))
+    )
+    |> List.last()
+  end
+
+  # Lets go of the thread's Claude process, if it has one, as the idle sweep does.
+  defp release_claude(context) do
+    case Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread)) do
+      [{runtime, _}] ->
+        ref = Process.monitor(runtime)
+        assert :ok = GenServer.call(runtime, :release)
+        assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
+
+      [] ->
+        :ok
+    end
   end
 
   defp flag_value(argv, flag) do

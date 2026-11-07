@@ -400,6 +400,7 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     case opened do
       {:error, {:refused, message}} ->
+        unsent(state, turn)
         finish(state, "failed", message)
         {:reply, :ok, %{state | turn: nil, last_ids: last_ids}}
 
@@ -424,6 +425,7 @@ defmodule HalC2.Claude.ThreadRuntime do
 
       {:error, reason} ->
         Logger.warning("claude turn failed to start: #{inspect(reason)}")
+        unsent(state, turn)
         finish(state, "failed", start_failure("Claude", reason))
         {:reply, :ok, %{state | turn: nil, last_ids: last_ids}}
     end
@@ -2766,6 +2768,35 @@ defmodule HalC2.Claude.ThreadRuntime do
       )
 
   defp kept_head(_turn, _status, _stream), do: nil
+
+  # A run whose prompt never reached Claude (refused, or Claude did not start) leaves the
+  # provider thread as the run found it: what other agents did since Claude last ran is
+  # still to be handed over, and a rollback's head is still where Claude resumes
+  # (Upstream #25660). The run's start had moved both on (`HalC2.Orchestration`).
+  defp unsent(state, turn) do
+    commit(state, fn stream ->
+      [
+        Orchestration.upsert(stream, "provider-thread", turn.ids.provider_thread, fn
+          nil ->
+            nil
+
+          thread ->
+            thread
+            |> Map.put("lastRunOrdinal", turn[:seen_run_ordinal])
+            |> then(fn thread ->
+              if head = turn[:head],
+                do:
+                  Map.put(
+                    thread,
+                    "nativeConversationHeadRef",
+                    Entities.provider_ref(head, "claudeAgent")
+                  ),
+                else: thread
+            end)
+        end)
+      ]
+    end)
+  end
 
   defp end_turn(state, status, failure, opts \\ []) do
     state = flush(state)

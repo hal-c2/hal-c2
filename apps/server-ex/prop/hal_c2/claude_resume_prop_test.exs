@@ -4,7 +4,7 @@ defmodule HalC2.ClaudeResumePropTest do
   its conversation, on the fake CLI in `test/support/fake_claude.py`: turns Claude
   answers ("where are we", which says the message its process resumed at), turns the
   user stops after Claude wrote part of its answer ("answer halfway") or before it
-  wrote anything ("wait"), rewinds to a message an earlier turn ended at (or to the
+  wrote anything ("wait"), turns Claude cannot be started for, rewinds to a message an earlier turn ended at (or to the
   thread's start, or to a message Claude cannot resume at, which ends its process at
   startup as a subagent's message does), and the idle sweep letting go of the thread's
   Claude process.
@@ -116,6 +116,7 @@ defmodule HalC2.ClaudeResumePropTest do
         {4, {:call, __MODULE__, :answered, [n]}},
         {if(pending, do: 6, else: 2),
          {:call, __MODULE__, :stopped, [n, frequency([{1, :halfway}, {2, :silent}])]}},
+        {if(pending, do: 3, else: 1), {:call, __MODULE__, :unstarted, [n]}},
         # Mostly when it matters: a live process with a message a new one would resume at.
         {if(state.session and state.pinned != nil, do: 8, else: 1),
          {:call, __MODULE__, :release, []}}
@@ -138,6 +139,8 @@ defmodule HalC2.ClaudeResumePropTest do
   def precondition(state, {:call, _, :rewind, _}), do: state.n > 1
   # A new process fails at startup on @broken, before the user could stop it.
   def precondition(state, {:call, _, :stopped, _}), do: not broken?(state)
+  # A live process takes the message whatever its command is now.
+  def precondition(state, {:call, _, :unstarted, _}), do: not state.session
   def precondition(_state, _call), do: true
 
   # The process exits at startup; no turn of Claude's resumed anywhere.
@@ -154,6 +157,9 @@ defmodule HalC2.ClaudeResumePropTest do
     do: %{message(state) | pinned: nil}
 
   def next_state(state, _result, {:call, _, :stopped, [_n, :silent]}), do: message(state)
+
+  # Claude never got the message: nothing about the conversation changed.
+  def next_state(state, _result, {:call, _, :unstarted, [_n]}), do: %{state | n: state.n + 1}
 
   # Back at the thread's start, no earlier turn is left to go back to.
   def next_state(state, _result, {:call, _, :rewind, [nil]}),
@@ -183,6 +189,7 @@ defmodule HalC2.ClaudeResumePropTest do
   end
 
   def postcondition(_state, {:call, _, :stopped, _}, seen), do: seen.status == "interrupted"
+  def postcondition(_state, {:call, _, :unstarted, _}, seen), do: seen.status == "failed"
   def postcondition(_state, {:call, _, :rewind, _}, seen), do: seen == :ok
   def postcondition(_state, {:call, _, :release, []}, seen), do: seen == :ok
 
@@ -224,6 +231,20 @@ defmodule HalC2.ClaudeResumePropTest do
     {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => @tid})
     run = await_run(run, &(&1["status"] in ["completed", "failed", "interrupted"]))
     %{status: run["status"]}
+  end
+
+  # A turn whose Claude cannot be started, so it fails before Claude gets the message.
+  def unstarted(n) do
+    command = Application.get_env(:hal_c2, :claude_command)
+    Application.put_env(:hal_c2, :claude_command, ["/nonexistent/claude"])
+
+    try do
+      run = send_message(n, "where are we")
+      run = await_run(run, &(&1["status"] in ["completed", "failed", "interrupted"]))
+      %{status: run["status"]}
+    after
+      Application.put_env(:hal_c2, :claude_command, command)
+    end
   end
 
   # Rewinds to `head` (nil: the thread's start) as the orchestration does.

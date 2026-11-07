@@ -1689,9 +1689,10 @@ Feature: Claude
     Then Claude answers the message after it from the whole conversation
 
   # Upstream #25660: an MCP registration timeout before the prompt was sent dropped the native session.
-  @backlog @priority-high
+  @mc @plugin-claude @priority-high
   Scenario: A turn that failed before its prompt was sent keeps the Claude session
-    Given two Claude turns failed because HAL-C2's tools did not register in time
+    Given a Claude thread another agent worked on since Claude last ran
+    And two Claude turns failed before Claude got their prompts
     When the user sends a new message
     Then Claude resumes its original session
     And the context the failed turns did not send is sent with the new message
