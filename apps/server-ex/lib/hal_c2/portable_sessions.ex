@@ -85,6 +85,27 @@ defmodule HalC2.PortableSessions do
 
   def place(_session, _root, _archive), do: {nil, []}
 
+  @doc """
+  Takes back what `place/3` wrote (its first element): the files it made and the
+  folders it made for them. A file the machine already had is left as it was, and so
+  is a copy a provider's own import or a plugin stored.
+  """
+  # The paths are only those `place/3` wrote, each checked by `safe?/1` under the
+  # provider's own session folder.
+  # sobelow_skip ["Traversal.FileModule"]
+  def unplace(%{"placed" => %{"files" => files, "dirs" => dirs}}) do
+    Enum.each(files, &File.rm/1)
+    # Deepest first, and only while empty.
+    dirs |> Enum.sort_by(&String.length/1, :desc) |> Enum.each(&File.rmdir/1)
+  end
+
+  def unplace(_placed), do: :ok
+
+  # The folders `File.mkdir_p!(dir)` would make, outermost last.
+  defp missing_dirs(dir) do
+    if File.exists?(dir), do: [], else: [dir | missing_dirs(Path.dirname(dir))]
+  end
+
   # A session's file is where the provider keeps it, or was handed over by the
   # provider's own export.
   defp held?({:data, data}), do: is_binary(data)
@@ -292,6 +313,7 @@ defmodule HalC2.PortableSessions do
          false <- File.exists?(path),
          {:ok, data} <- bytes(file),
          {:ok, %{} = chat} <- JSON.decode(data) do
+      dirs = missing_dirs(Path.dirname(path))
       File.mkdir_p!(Path.dirname(path))
       File.write!(path, JSON.encode!(Map.put(chat, "projectHash", project_hash(root))))
       File.chmod(path, 0o600)
@@ -304,7 +326,8 @@ defmodule HalC2.PortableSessions do
            "nativeId" => session["nativeId"],
            "path" => path,
            "from" => get_in(archive, ["thread", "machine"])
-         }
+         },
+         "placed" => %{"files" => [path], "dirs" => dirs}
        }, []}
     else
       _ -> {nil, []}
@@ -316,21 +339,9 @@ defmodule HalC2.PortableSessions do
     from = session["cwd"]
     {base, main_name} = target(driver, instance, root, session)
 
-    written =
-      for %{"fileName" => name} = file <- files, safe?(name) do
-        path = Path.join(base, name)
+    {written, placed} = write_own(files, base, driver, from, root)
 
-        # The machine keeps a copy it already has: moving back never overwrites it.
-        unless File.exists?(path) do
-          File.mkdir_p!(Path.dirname(path))
-          copy(file, path, driver, from, root)
-          File.chmod(path, 0o600)
-        end
-
-        {name, path}
-      end
-
-    case List.keyfind(written, main_name, 0) do
+    case written && List.keyfind(written, main_name, 0) do
       {_, path} ->
         native_id = if driver == "pi", do: path, else: session["nativeId"]
 
@@ -342,12 +353,52 @@ defmodule HalC2.PortableSessions do
              "nativeId" => native_id,
              "path" => path,
              "from" => get_in(archive, ["thread", "machine"])
-           }
+           },
+           "placed" => placed
          }, []}
 
       nil ->
+        unplace(%{"placed" => placed})
         {nil, []}
     end
+  end
+
+  # Writes the session's files under `base`: `{[{name, path}], placed}` for `unplace/1`.
+  # One that cannot be written takes back the rest, `{nil, placed}`, and the thread
+  # moves with the handoff.
+  defp write_own(files, base, driver, from, root) do
+    Enum.reduce_while(files, {[], %{"files" => [], "dirs" => []}}, fn
+      %{"fileName" => name} = file, {written, placed} ->
+        path = Path.join(base, name)
+
+        cond do
+          not safe?(name) ->
+            {:cont, {written, placed}}
+
+          # The machine keeps a copy it already has: moving back never overwrites it.
+          File.exists?(path) ->
+            {:cont, {[{name, path} | written], placed}}
+
+          true ->
+            dirs = missing_dirs(Path.dirname(path))
+            placed = %{"files" => [path | placed["files"]], "dirs" => dirs ++ placed["dirs"]}
+
+            try do
+              File.mkdir_p!(Path.dirname(path))
+              copy(file, path, driver, from, root)
+              File.chmod(path, 0o600)
+              {:cont, {[{name, path} | written], placed}}
+            rescue
+              error ->
+                Logger.warning(
+                  "a carried session could not be written: #{Exception.message(error)}"
+                )
+
+                {:halt, {nil, placed}}
+            end
+        end
+    end)
+    |> then(fn {written, placed} -> {written && Enum.reverse(written), placed} end)
   end
 
   # The plugin places the copy itself; the next run continues from the id it answers.

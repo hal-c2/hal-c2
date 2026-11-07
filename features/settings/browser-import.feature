@@ -1,5 +1,5 @@
 # Sources:
-#   https://github.com/pingdotgg/t3code/pull/19377
+#   https://github.com/pingdotgg/t3code/pull/22970
 #   apps/web/src/components/settings/BrowserImportWizard.tsx
 #   apps/web/src/components/settings/browserImportWizard.logic.ts
 #   apps/web/src/components/settings/browserImportWizard.logic.test.ts
@@ -60,6 +60,21 @@ Feature: Importing cookies from another browser
       Given Chrome's list of profiles is missing but its folder "Profile 1" holds cookies
       When the user chooses to import cookies from Chrome
       Then "Profile 1" is offered as a profile
+
+    # Upstream #22970: Zen keeps Firefox-style profiles, in ~/.config/zen or the older ~/.zen on Linux.
+    @backlog @desktop
+    Scenario: Cookies can be imported from Zen Browser
+      Given Zen Browser is installed with a profile that holds cookies
+      When the user chooses to import cookies
+      Then Zen Browser is offered with its profile
+
+    # Upstream #22970
+    @backlog @desktop
+    Scenario: A Zen profile found under both of its Linux folders is offered once
+      Given the user is on Linux
+      And the same Zen profile is listed under both ~/.config/zen and ~/.zen
+      When the user chooses to import cookies from Zen Browser
+      Then the profile is offered once
 
     @backlog @desktop
     Scenario: Firefox profiles that were never opened are not offered
@@ -212,14 +227,6 @@ Feature: Importing cookies from another browser
       When the user imports cookies from Safari
       Then the user is told the browser's cookie database could not be read
       And no cookie is imported
-
-    # Upstream #19377: Chromium cookies whose stored value is text instead of bytes still import.
-    @backlog @desktop
-    Scenario: A Chromium cookie stored as text does not stop the import
-      Given a Chromium profile with a cookie whose value was stored as text
-      When the user imports from that profile
-      Then the import finishes
-      And that cookie is imported with the others
 
   Rule: Recovering from what blocks an import
 

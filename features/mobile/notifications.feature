@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24769
+#   https://github.com/pingdotgg/t3code/pull/21307
 #   https://github.com/pingdotgg/t3code/pull/11943
 #   https://github.com/pingdotgg/t3code/pull/18604
 #   https://github.com/pingdotgg/t3code/pull/13340
@@ -10,6 +12,7 @@
 #   apps/mobile/src/Stack.tsx (notification navigation)
 #   https://github.com/pingdotgg/t3code/pull/12048
 #   https://github.com/pingdotgg/t3code/pull/12052
+#   https://github.com/pingdotgg/t3code/pull/21405
 # The @dropped scenarios were HAL-C2 Connect's relay push (and connections/agent-activity-publishing.feature);
 # the MC now pushes through the user's UnifiedPush distributor. This file covers what the phone does with it.
 
@@ -92,6 +95,27 @@ Feature: Push notifications and live agent activity
       | fails                    |
       | needs the user's input   |
 
+  # Upstream #24769: a run that ended and was continued a moment later pushed "completed", and
+  # pushed it again when the work really finished.
+  @backlog @mc @mobile @priority-high
+  Scenario Outline: A finished turn is pushed only once the thread has stayed done
+    Given device notifications are on and the app is in the background
+    When an agent in "Fix checkout" finishes its turn and <then> within 5 seconds
+    Then <pushed>
+
+    Examples:
+      | then                         | pushed                                              |
+      | the next run starts          | no alert says "Fix checkout" completed              |
+      | nothing more happens         | one alert says "Fix checkout" completed             |
+      | the thread settles           | one alert says "Fix checkout" completed             |
+
+  # Upstream #24769
+  @backlog @mc @mobile
+  Scenario: A failed run is pushed at once
+    Given device notifications are on and the app is in the background
+    When an agent in "Fix checkout" fails
+    Then the alert is pushed without waiting
+
   # The MC pushes on its own, so a restart must not replay work it already reported.
   # Upstream #13340: stopped the server replaying old agent alerts on restart
   @mc @mobile
@@ -168,6 +192,23 @@ Feature: Push notifications and live agent activity
     When the agent finishes its turn
     Then the lock screen shows that the agent work completed
     And the result stays visible for up to 15 minutes
+
+  # Upstream #21405: updates to the live activity are held back to one every 15 seconds, so it
+  # could say "Connecting" for a whole turn; a change of what the work is doing is not held.
+  @backlog @mc @mobile
+  Scenario: The live activity shows a change of phase at once
+    Given the lock screen shows "Fix checkout" connecting
+    When the agent in "Fix checkout" starts working a second later
+    Then the lock screen shows it working without waiting for the next update
+    But a change of only its elapsed time waits for the next update
+
+  # Upstream #21307: ended Live Activities stayed on the lock screen after opening the app or signing out.
+  @backlog @mobile @priority-low
+  Scenario: An ended live activity is cleared when the user opens the app or signs out
+    Given the lock screen still shows a live activity whose agent work completed
+    When the user opens the app or signs out
+    Then that live activity is removed
+    And a live activity for agent work still running stays
 
   # Upstream #18604: a settled thread kept its Done row; settling now removes it, and
   # unsettling does not send another Done alert.

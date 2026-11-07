@@ -3,7 +3,9 @@ defmodule HalC2.SubprocessDurablePropTest do
   `HalC2.Subprocess.Durable` against its lifecycle promises: whichever order lines
   are sent, read, and the MC leaves and comes back in, the program stays the same one
   and every line it wrote reaches the MC once, in order, from the last checkpoint.
-  Files made in its launch directory survive those same restarts and go with its final stop.
+  Files made in its launch directory survive those same restarts and go with its final
+  stop, or with the uninstall that stops what a leaving MC kept in the service's home.
+  A program another MC keeps in another home outlives both.
   """
 
   use ExUnit.Case, async: false
@@ -11,17 +13,23 @@ defmodule HalC2.SubprocessDurablePropTest do
 
   alias HalC2.Orchestration.Recovery
   alias HalC2.Subprocess
+  alias HalC2.Subprocess.Durable
+  alias HalC2.Subprocess.Orphans
 
   @moduletag timeout: :infinity
   @moduletag capture_log: true
   @echo ["sh", "-c", ~s(while read l; do echo "$l"; done)]
 
-  property "lines and launch files survive restarts, and final stop removes them",
+  property "lines and launch files survive restarts, and final stop or uninstall removes them",
     numtests: HalC2.Prop.numtests(15) do
-    forall ops <- list(oneof([:send, :drain, :restart])) do
-      HalC2.Prop.scratch_home("durable")
+    forall {ops, ending} <- {list(oneof([:send, :drain, :restart])), oneof([:stop, :uninstall])} do
+      home = HalC2.Prop.scratch_home("durable")
       flush()
       Application.put_env(:hal_c2, :durable_programs, true)
+      # An MC in the foreground on another home, the one the uninstall runs from.
+      foreground = Path.join(home, "foreground")
+      {other_dir, other_pid} = kept(foreground)
+      Application.put_env(:hal_c2, :home, home)
 
       launch = fn dir ->
         path = Path.join(dir, "launch-config")
@@ -38,15 +46,18 @@ defmodule HalC2.SubprocessDurablePropTest do
       world = Enum.reduce(ops ++ [:drain], world, &step/2)
       same = Subprocess.os_pid(world.sub) == pid
       kept = File.read!(config) == "secret"
-      Subprocess.stop(world.sub)
-      removed = not File.exists?(dir)
+      finish(ending, world.sub, home, foreground)
+      removed = not File.exists?(dir) and Orphans.gone?(pid)
+      other = Durable.attachable?(other_dir) and not Orphans.gone?(other_pid)
+      Durable.stop(other_dir)
       Application.put_env(:hal_c2, :durable_programs, false)
       expected = Enum.map(1..world.n//1, &"#{&1}")
 
-      (same and kept and removed and world.read == expected)
+      (same and kept and removed and other and world.read == expected)
       |> when_fail(
         IO.puts(
-          "same program: #{same}, config kept: #{kept}, removed: #{removed}, " <>
+          "ending: #{ending}, same program: #{same}, config kept: #{kept}, removed: #{removed}, " <>
+            "other home's kept: #{other}, " <>
             "read #{inspect(world.read)}, sent #{world.n}"
         )
       )
@@ -84,8 +95,35 @@ defmodule HalC2.SubprocessDurablePropTest do
     :detached = Subprocess.stop(world.sub)
     Recovery.leaving(false)
     flush()
+    true = Durable.attachable?(world.sub.durable.dir)
     {:ok, sub} = Subprocess.adopt(world.sub.durable.dir, world.offset)
     %{world | sub: sub}
+  end
+
+  defp finish(:stop, sub, _home, _foreground), do: Subprocess.stop(sub)
+
+  # The MC leaves the program running, then its service is removed for good, from a
+  # command that runs on the foreground MC's home and stops the service's.
+  defp finish(:uninstall, sub, home, foreground) do
+    detach(sub)
+    Application.put_env(:hal_c2, :home, foreground)
+    Durable.stop_all(Path.join(home, "durable"))
+    Application.put_env(:hal_c2, :home, home)
+  end
+
+  # A program an MC on `home` started and left running.
+  defp kept(home) do
+    Application.put_env(:hal_c2, :home, home)
+    {:ok, sub} = Subprocess.start(@echo, durable: "t2")
+    detach(sub)
+    {sub.durable.dir, Subprocess.os_pid(sub)}
+  end
+
+  defp detach(sub) do
+    Recovery.leaving(true)
+    :detached = Subprocess.stop(sub)
+    Recovery.leaving(false)
+    flush()
   end
 
   defp settle(%{sub: %{reader: reader}} = world) do

@@ -2,6 +2,7 @@
 #   https://github.com/pingdotgg/t3code/pull/18063
 #   https://github.com/pingdotgg/t3code/pull/20284
 #   https://github.com/pingdotgg/t3code/pull/20051
+#   https://github.com/pingdotgg/t3code/pull/21398
 #   apps/mobile/src/features/terminal/ (sessions, status, text size, accessory keys, context)
 #   apps/mobile/modules/hal-c2-terminal
 #   apps/mobile/src/features/threads/ThreadGitControls.tsx (terminal menu: scripts, sessions, new terminal)
@@ -151,6 +152,14 @@ Feature: Using a terminal on a phone
       | ~      | a tilde                |
       | \|     | a pipe                 |
       | paste  | the clipboard contents |
+
+  # Upstream #21398: the arrow keys started off the screen, after six other keys, which made
+  # prompts such as Claude Code's trust prompt hard to answer.
+  @backlog @mobile @priority-low
+  Scenario: The arrow keys lead the accessory row
+    Given the user is typing in the terminal on a phone
+    When the user opens the accessory row
+    Then the up, down, left and right arrows are the first keys shown
 
   @mobile
   Scenario: Touching the terminal brings up the keyboard

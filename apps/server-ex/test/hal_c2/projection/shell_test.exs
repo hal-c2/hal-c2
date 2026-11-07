@@ -284,6 +284,29 @@ defmodule HalC2.Projection.ShellTest do
       recovered = entities ++ [{"run", run("run-2", 2, "completed")}]
       assert %{"lastError" => nil, "status" => "completed"} = Shell.thread_shell(state(recovered))
     end
+
+    # The failed run left its error on the provider session, which keeps it.
+    test "a run that completes after a failed one clears the thread's error" do
+      session = %{
+        "id" => "session-1",
+        "providerInstanceId" => "codex",
+        "updatedAt" => "2026-09-01T10:06:00.000Z",
+        "lastError" => "boom"
+      }
+
+      failed = [
+        {"thread", @thread},
+        {"run", run("run-1", 1, "failed")},
+        {"turn-item",
+         error_item("e1", "2026-09-01T10:05:00.000Z", failure("provider_error", "boom"))},
+        {"provider-session", session}
+      ]
+
+      assert %{"lastError" => "boom"} = Shell.thread_shell(state(failed))
+
+      assert %{"lastError" => nil, "lastErrorClass" => nil, "usageLimitResetAt" => nil} =
+               Shell.thread_shell(state(failed ++ [{"run", run("run-2", 2, "completed")}]))
+    end
   end
 
   test "provider instance history lists root provider threads' instances, oldest first" do

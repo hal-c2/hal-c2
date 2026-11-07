@@ -3,7 +3,8 @@ defmodule HalC2.Projection.ThreadError do
   The error a thread shows.
 
   Only a failed root turn of the latest run owns the thread's failure; a provider
-  session error that says something different supersedes its classification.
+  session error that says something different supersedes its classification while
+  that run is the failed one.
   """
 
   import HalC2.Projection.JS, only: [get: 2, json: 1, epoch_ms: 1]
@@ -30,9 +31,15 @@ defmodule HalC2.Projection.ThreadError do
       {epoch_ms(get(latest, "updatedAt")), get(latest, "ordinal"), get(latest, "id")}
   end
 
-  @doc "The shell's `usageLimitResetAt`, `lastError` and `lastErrorClass`."
-  @spec summary(map | nil, String.t() | nil) :: map
-  def summary(failure, session_error) do
+  @doc """
+  The shell's `usageLimitResetAt`, `lastError` and `lastErrorClass` for the thread's
+  latest `run`. The provider session keeps its last error after later runs, so it
+  counts only while that run failed (or before the thread has a run).
+  """
+  @spec summary(map | nil, map | nil, String.t() | nil) :: map
+  def summary(run, failure, session_error) do
+    session_error = if run == nil or get(run, "status") == "failed", do: session_error
+
     current =
       if session_error != nil and session_error != get(failure, "message"), do: nil, else: failure
 

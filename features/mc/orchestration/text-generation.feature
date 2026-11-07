@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21882
+#   https://github.com/pingdotgg/t3code/pull/18291
+#   https://github.com/pingdotgg/t3code/pull/24857
+#   https://github.com/pingdotgg/t3code/pull/19813
 #   https://github.com/pingdotgg/t3code/pull/15615
 #   https://github.com/pingdotgg/t3code/pull/17058
 #   https://github.com/pingdotgg/t3code/pull/18781
@@ -43,6 +47,20 @@ Feature: Generated titles, branch names and source control text
   Scenario: The default text generation model
     Given no text generation model is chosen
     Then titles are written by "gpt-6-luna" on "codex" with low reasoning effort
+
+  # Upstream #21882: settings name the title model but cannot say how titles are written.
+  @backlog @mc
+  Scenario: Thread title instructions are given to the title writer
+    Given the project "demo" has the thread title instructions "Start with the ticket number"
+    When a title is generated for "Fix ABC-12 login redirect loop"
+    Then the title writer is asked to follow "Start with the ticket number"
+    And with no instructions set the title request is unchanged
+
+  @backlog @desktop @tui
+  Scenario: Thread title instructions are set under text generation
+    When the user sets thread title instructions in the text generation settings
+    Then new and regenerated titles follow them
+    And a project can override them, and restoring defaults clears them
 
   @mc
   Scenario: Branch names use the source control writer when it is usable
@@ -422,6 +440,20 @@ Feature: Generated titles, branch names and source control text
     Then the writer is given at most 8,000 characters of messages
     And each message is cut to 2,000 characters
 
+  # Upstream #24857: a fork's first title came from its one follow-up, with no context.
+  @backlog @mc
+  Scenario: A forked thread's title is written from the history it inherits
+    Given "Sidebar re-renders" was forked, and the fork's first message is "ok now do the same for mobile"
+    When a title is generated for the fork
+    Then the writer is given the source's title and its messages up to the fork point, across forks of forks
+    And it is asked for the inherited subject together with the fork's new direction
+
+  @backlog @mc
+  Scenario: A fork whose source is gone is titled from its own messages
+    Given a forked thread whose source thread was deleted
+    When a title is generated for the fork
+    Then the writer is given only the fork's own messages
+
   # Legacy: apps/server/src/textGeneration/ThreadTitleContext.ts (formatThreadTitleContext), ThreadTitleContext.test.ts
   @mc @priority-high
   Scenario: Long assistant output cannot push out what the user asked
@@ -604,6 +636,31 @@ Feature: Generated titles, branch names and source control text
   Scenario: Templates are followed only on a host that has them
     Given the project follows pull request templates
     And the base branch has ".github/pull_request_template.md"
-    And the project's remote is on GitLab, Forgejo, Azure DevOps or Bitbucket
+    And the project's remote is on Forgejo, Azure DevOps or Bitbucket
     When pull request text is generated
     Then the writer is given no template
+
+  # Upstream #19813: GitLab merge requests follow the repository's default merge request template.
+  @mc @backlog
+  Scenario: A GitLab merge request follows the repository's default template
+    Given the project follows pull request templates
+    And the project's remote is on GitLab
+    And the base branch has ".gitlab/merge_request_templates/default.md"
+    When pull request text is generated
+    Then the writer is given that template for the body
+    And no other template in ".gitlab/merge_request_templates" is used in its place
+
+  # Upstream #18291: generated pull requests said tests were not run because the writer saw only the diff.
+  @mc @backlog
+  Scenario: Pull request text generated from a thread knows what the thread checked
+    Given a thread ran "mix test" and it passed
+    When pull request text is generated for that thread's branch
+    Then the writer is given a short account of the thread's visible history with the check and its result
+    And turns that were rolled back are left out of it
+
+  @mc @backlog
+  Scenario: Pull request text from a thread needs permission to read the thread
+    Given a client that may write to source control but may not read threads
+    When it asks for pull request text for a thread
+    Then the request is refused
+    But committing and pushing for that thread are still allowed
