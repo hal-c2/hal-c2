@@ -4094,6 +4094,36 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # The run ends while the thread's Claude is starting for it, as when the user stops it
+  # during a slow start or the start gives up waiting: the runtime is held until then.
+  step "a Claude turn ended while Claude started for it", context do
+    [{runtime, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    :ok = :sys.suspend(runtime)
+    before = MapSet.new(World.runs(context, @thread), & &1["id"])
+
+    # The message's dispatch starts the turn itself, so it waits on the runtime.
+    sent = Task.async(fn -> World.post_message(context, @thread, "try again") end)
+
+    try do
+      held(runtime)
+      [run] = for %{"id" => id} <- World.runs(context, @thread), id not in before, do: id
+
+      :ok =
+        HalC2.Orchestration.TurnWriter.abandon(
+          World.thread_id(context, @thread),
+          run,
+          "interrupted",
+          nil
+        )
+    after
+      :sys.resume(runtime)
+    end
+
+    Task.await(sent)
+    World.await_latest_run(context, @thread, "interrupted")
+    context
+  end
+
   step "Claude resumes its original session", context do
     argv = last_argv(context)
     assert flag_value(argv, "--resume") == context.claude_session, inspect(argv)
@@ -4217,6 +4247,26 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   # Lets go of the thread's Claude process, if it has one, as the idle sweep does.
+  # Until the held runtime has a turn to start. The call is in its mailbox, not on the
+  # stream, so there is nothing to wake on.
+  defp held(pid, deadline \\ System.monotonic_time(:millisecond) + 5_000) do
+    {:messages, messages} = Process.info(pid, :messages)
+
+    cond do
+      Enum.any?(messages, &match?({:"$gen_call", _, {:start_turn, _}}, &1)) ->
+        :ok
+
+      System.monotonic_time(:millisecond) > deadline ->
+        flunk("the turn never reached Claude's runtime")
+
+      true ->
+        receive do
+        after
+          10 -> held(pid, deadline)
+        end
+    end
+  end
+
   defp release_claude(context) do
     case Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread)) do
       [{runtime, _}] ->

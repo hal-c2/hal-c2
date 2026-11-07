@@ -420,6 +420,7 @@ defmodule HalC2.Claude.ThreadRuntime do
             {:reply, :ok, state}
 
           :ended ->
+            unsent(state, turn)
             {:reply, :ok, %{state | turn: nil, last_ids: last_ids}}
         end
 
@@ -2769,10 +2770,11 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   defp kept_head(_turn, _status, _stream), do: nil
 
-  # A run whose prompt never reached Claude (refused, or Claude did not start) leaves the
-  # provider thread as the run found it: what other agents did since Claude last ran is
-  # still to be handed over, and a rollback's head is still where Claude resumes
-  # (Upstream #25660). The run's start had moved both on (`HalC2.Orchestration`).
+  # A run whose prompt never reached Claude (refused, Claude did not start, or the run
+  # ended while Claude started) leaves the provider thread as the run found it: what
+  # other agents did since Claude last ran is still to be handed over, and a rollback's
+  # head is still where Claude resumes (Upstream #25660). The run's start had moved both
+  # on (`HalC2.Orchestration`).
   defp unsent(state, turn) do
     commit(state, fn stream ->
       [

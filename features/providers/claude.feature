@@ -1693,6 +1693,7 @@ Feature: Claude
   Scenario: A turn that failed before its prompt was sent keeps the Claude session
     Given a Claude thread another agent worked on since Claude last ran
     And two Claude turns failed before Claude got their prompts
+    And a Claude turn ended while Claude started for it
     When the user sends a new message
     Then Claude resumes its original session
     And the context the failed turns did not send is sent with the new message
