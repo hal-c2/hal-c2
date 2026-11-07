@@ -112,7 +112,7 @@ Feature: Writing to an agent from a phone
 
   # Upstream #30139: on iOS, typing after in-app dictation showed in the composer but never reached
   # the draft, so sending stayed unavailable until the user left the thread.
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: Typing after dictation reaches the draft
     Given the user dictated into the draft and dictation has finished
     When the user types " and the tests"
@@ -657,7 +657,7 @@ Feature: Writing to an agent from a phone
 
   # Upstream #17492: with FUTO or HeliBoard, or a saved draft reopened, the editor stopped
   # following the caret after three lines.
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario Outline: The composer keeps the caret in view as a prompt wraps past its height
     Given an Android phone using <keyboard>
     And <draft>
