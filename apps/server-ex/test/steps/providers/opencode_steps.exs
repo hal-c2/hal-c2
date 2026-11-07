@@ -1245,6 +1245,50 @@ defmodule HalC2.Steps.Providers.Opencode do
     context
   end
 
+  # --- binary path ---
+
+  # The scenario's `$HOME` is a folder with a space in its name, and the setting keeps the
+  # `~` the user typed.
+  step ~r/^OpenCode's binary path is set to "(?<path>~[^"]*)", a wrapper in a home folder with spaces in its name$/,
+       %{args: [path]} = context do
+    home = HalC2.Test.Mc.Host.path(context, "/home/sam smith")
+    File.mkdir_p!(home)
+    previous = System.get_env("HOME")
+    System.put_env("HOME", home)
+    ExUnit.Callbacks.on_exit(fn -> System.put_env("HOME", previous) end)
+
+    "~" <> rest = path
+
+    context =
+      FakeAcp.install(context, "opencode", models(@connected),
+        enabled: true,
+        path: home <> rest
+      )
+
+    FakeAcp.settings(&put_in(&1, ["providers", "opencode", "binaryPath"], path))
+    context
+  end
+
+  step "the MC checks OpenCode", context do
+    Map.put(context, :entry, FakeAcp.probe("opencode"))
+  end
+
+  step "OpenCode is ready, with its version and models", context do
+    assert %{"status" => "ready", "version" => "1.14.19", "models" => models} = context.entry
+    assert Enum.map(models, & &1["slug"]) == Enum.map(@connected, &elem(&1, 0))
+    context
+  end
+
+  step "its turns run that wrapper", context do
+    context = context |> FakeAcp.thread(@thread) |> FakeAcp.send_message("hello")
+    FakeAcp.await_run(context, "completed")
+    bin = FakeAcp.fake(context).bin
+
+    assert [_ | _] = starts = for(s <- FakeAcp.starts(context), "acp" in s["argv"], do: s)
+    assert Enum.all?(starts, &(&1["env"]["FAKE_BIN"] == bin))
+    context
+  end
+
   # --- subagents ---
 
   step "an OpenCode session is started", context do

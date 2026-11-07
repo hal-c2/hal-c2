@@ -1227,7 +1227,7 @@ Feature: OpenCode
 
   # Upstream #29326: OpenCode's binary path was used as written, so "~/.local/bin/opencode" failed
   # to start; Codex and Claude already expanded it.
-  @backlog @priority-low
+  @priority-low
   Scenario: An OpenCode binary path starting with "~" is found in the user's home
     Given OpenCode's binary path is set to "~/.local/bin/opencode", a wrapper in a home folder with spaces in its name
     When the MC checks OpenCode
