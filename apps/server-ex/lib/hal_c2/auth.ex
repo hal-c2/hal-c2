@@ -466,7 +466,12 @@ defmodule HalC2.Auth do
   over-long versions are left out, as upstream's server does.
   """
   def client_report(params) do
-    version = String.trim(params["clientAppVersion"] || "")
+    # A query like `clientAppVersion[]=x` parses to a list; only a string is a version.
+    version =
+      case params["clientAppVersion"] do
+        v when is_binary(v) -> String.trim(v)
+        _ -> ""
+      end
 
     %{
       surface: if(params["clientSurface"] in @surfaces, do: params["clientSurface"]),
