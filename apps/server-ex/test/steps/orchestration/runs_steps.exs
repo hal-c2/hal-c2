@@ -670,31 +670,31 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
-  step ~r/^the turn is ended as (?<status>interrupted|failed|cancelled)$/,
-       %{args: [status]} = context do
-    context =
-      case status do
-        "interrupted" ->
-          World.command(context, %{
-            "type" => "run.interrupt",
-            "threadId" => World.thread_id(context, context.thread),
-            "runId" => context.running
-          })
+  step ~r/^the turn ends because (?<cause>the user interrupts it|its provider process exits|its thread is deleted)$/,
+       %{args: [cause]} = context do
+    {context, status} =
+      case cause do
+        "the user interrupts it" ->
+          {World.command(context, %{
+             "type" => "run.interrupt",
+             "threadId" => World.thread_id(context, context.thread),
+             "runId" => context.running
+           }), "interrupted"}
 
         # The app-server goes, and its event stream with it, so nothing can report the
         # subagent again. A failure Codex itself reports leaves the subagent to carry on
         # in its own thread (`codex_turn_end_test.exs`).
-        "failed" ->
+        "its provider process exits" ->
           {_, runtime} = World.codex_runtime(context, context.thread)
           os_pid = HalC2.Subprocess.os_pid(:sys.get_state(runtime.conn).sub)
           {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
-          context
+          {context, "failed"}
 
-        "cancelled" ->
-          World.command(context, %{
-            "type" => "thread.delete",
-            "threadId" => World.thread_id(context, context.thread)
-          })
+        "its thread is deleted" ->
+          {World.command(context, %{
+             "type" => "thread.delete",
+             "threadId" => World.thread_id(context, context.thread)
+           }), "cancelled"}
       end
 
     await_status(context, context.running, status)
