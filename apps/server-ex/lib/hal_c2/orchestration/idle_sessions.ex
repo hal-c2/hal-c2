@@ -140,7 +140,9 @@ defmodule HalC2.Orchestration.IdleSessions do
 
   defp idle?({"thread", row}, now, idle_ms, pinned_ms) do
     quiet = now - last_activity(row)
-    background = (row["pendingBackgroundTasks"] || []) != []
+    # Work the agent left running in the process, held or not (a dev server, say); a
+    # row stored before `runningBackgroundTasks` listed all of it as pending.
+    background = (row["runningBackgroundTasks"] || row["pendingBackgroundTasks"] || []) != []
 
     row["activeRunId"] == nil and row["pendingRuntimeRequest"] == nil and
       quiet >= if(background, do: pinned_ms, else: idle_ms)

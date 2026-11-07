@@ -645,8 +645,10 @@ defmodule HalC2.Steps.Providers.PortableSessions do
     assert %{"alreadyImported" => true, "projectId" => ^project} =
              Enum.find(context.scan["candidates"], &(&1["path"] == root))
 
-    # Importing the project's history leaves the moved thread's session to the thread.
-    assert {:ok, %{"importedCount" => 1}} =
+    # Importing the project's history leaves the moved thread's session to the thread,
+    # counted as neither imported nor skipped (agent-session-import.feature, "A session
+    # a thread already runs is not imported again").
+    assert {:ok, %{"importedCount" => 0, "skippedCount" => 0}} =
              Machines.on(context, machine, HalC2.AgentSessions, :import_project, [
                %{"projectId" => project}
              ])

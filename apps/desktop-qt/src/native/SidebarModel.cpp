@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <functional>
 #include <limits>
 #include <utility>
 #include <vector>
@@ -154,6 +155,39 @@ bool latestRunCompletedAfterSnooze(const Thread& thread) {
   return completedAt && *completedAt > *snoozedAt;
 }
 
+// The inbox while the Working section is on: newest return first, a return
+// being a new thread, an un-settle, a run asked for or ended, or this device
+// seeing the thread leave the section.
+void sortByReturn(QList<Thread>& threads, const WorkingTracker& tracker) {
+  const auto returned = [&tracker](const Thread& thread) {
+    qint64 at = std::max(sortableMs(thread.createdAt), sortableMs(thread.unsettledAt));
+    if (thread.latestRun) {
+      at = std::max({at, sortableMs(thread.latestRun->requestedAt), sortableMs(thread.latestRun->completedAt)});
+    }
+    return std::max(at, tracker.returnedAt(thread.key()).value_or(0));
+  };
+  sortByMs(threads, returned, [](qint64 leftMs, qint64 rightMs, const Thread& left, const Thread& right) {
+    if (leftMs != rightMs) return leftMs > rightMs;
+    return compareIdentity(left, right) < 0;
+  });
+}
+
+// The Working section: the thread the user last sent work to first. A wake or
+// an agent's message is not the user's, so it moves no row; an MC that does
+// not say which messages the user typed leaves the latest run's request.
+void sortBySend(QList<Thread>& threads) {
+  const auto sent = [](const Thread& thread) {
+    const Nullable at = thread.latestUserAuthoredMessageAt ? *thread.latestUserAuthoredMessageAt
+                        : thread.latestRun                 ? thread.latestRun->requestedAt
+                                                           : std::nullopt;
+    return std::max(sortableMs(thread.createdAt), sortableMs(at));
+  };
+  sortByMs(threads, sent, [](qint64 leftMs, qint64 rightMs, const Thread& left, const Thread& right) {
+    if (leftMs != rightMs) return leftMs > rightMs;
+    return compareIdentity(left, right) < 0;
+  });
+}
+
 QDateTime localAt(const QDate& date, int hour) {
   return QDateTime(date, QTime(hour, 0));
 }
@@ -181,6 +215,9 @@ Thread threadFromRow(const QString& environmentId, const QJsonObject& row) {
   thread.createdAt = row.value(QLatin1String("createdAt")).toString();
   thread.updatedAt = row.value(QLatin1String("updatedAt")).toString();
   thread.latestUserMessageAt = stringField(row, "latestUserMessageAt");
+  if (row.contains(QLatin1String("latestUserAuthoredMessageAt"))) {
+    thread.latestUserAuthoredMessageAt = stringField(row, "latestUserAuthoredMessageAt");
+  }
   thread.archivedAt = stringField(row, "archivedAt");
   thread.subagent = row.value(QLatin1String("lineage")).toObject().value(QLatin1String("relationshipToParent")).toString() ==
                     QLatin1String("subagent");
@@ -388,6 +425,74 @@ Nullable visibleWokeAt(const Thread& thread, qint64 nowMs) {
   return std::nullopt;
 }
 
+bool working(const Thread& thread) {
+  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
+  const bool busy = (thread.runtime && activeRunStatus(thread.runtime->status)) || thread.pendingBackgroundTasks > 0;
+  if (!busy) return false;
+  return !(thread.interactionMode == QLatin1String("plan") && thread.hasActionableProposedPlan && latestRunSettled(thread));
+}
+
+void WorkingTracker::observe(const QList<Thread>& threads, qint64 nowMs) {
+  QSet<QString> present;
+  for (const Thread& thread : threads) {
+    const QString key = thread.key();
+    present.insert(key);
+    const auto found = m_states.constFind(key);
+    const std::optional<State> previous = found == m_states.constEnd() ? std::nullopt : std::optional<State>(*found);
+    const bool wasWorking = previous && previous->working;
+    const bool actual = working(thread);
+    std::optional<QString> placement;
+    if (actual || wasWorking) {
+      QStringList fields;
+      for (const Nullable& field : {thread.archivedAt, thread.pinnedAt, thread.settledOverride, thread.settledAt,
+                                    thread.snoozedAt, thread.snoozedUntil, thread.activeOrderKey}) {
+        fields.append(field ? QLatin1Char('=') + *field : QStringLiteral("-"));
+      }
+      placement = fields.join(QLatin1Char('\x1f'));
+    }
+    // Asking for something or failing is news: it is never held back.
+    const bool actionable = thread.hasPendingApprovals || thread.hasPendingUserInput ||
+                            (thread.interactionMode == QLatin1String("plan") && thread.hasActionableProposedPlan) ||
+                            (thread.runtime && thread.runtime->lastErrorClass) ||
+                            (thread.latestRun && thread.latestRun->status == QLatin1String("failed"));
+    const bool moved = previous && previous->placement != placement;
+    const bool excluded = thread.archivedAt || thread.pinnedAt || thread.settledOverride == QLatin1String("settled") ||
+                          effectiveSnoozed(thread, nowMs);
+    std::optional<qint64> deadline;
+    if (!actual && wasWorking && !actionable && !moved && !excluded) {
+      deadline = previous->deadline.value_or(nowMs + kWorkingExitGraceMs);
+    }
+    const bool stillWorking = actual || (deadline && *deadline > nowMs);
+    if (wasWorking && !stillWorking) m_returns.insert(key, nowMs);
+    m_states.insert(key, State{stillWorking, stillWorking ? deadline : std::nullopt, placement});
+  }
+  m_states.removeIf([&present](const auto& entry) { return !present.contains(entry.key()); });
+  m_returns.removeIf([&present](const auto& entry) { return !present.contains(entry.key()); });
+}
+
+void WorkingTracker::clear() {
+  m_states.clear();
+  m_returns.clear();
+}
+
+bool WorkingTracker::isWorking(const Thread& thread) const {
+  const auto found = m_states.constFind(thread.key());
+  return found != m_states.constEnd() ? found->working : working(thread);
+}
+
+std::optional<qint64> WorkingTracker::returnedAt(const QString& key) const {
+  const auto found = m_returns.constFind(key);
+  return found != m_returns.constEnd() ? std::optional<qint64>(*found) : std::nullopt;
+}
+
+std::optional<qint64> WorkingTracker::nextDeadline() const {
+  std::optional<qint64> next;
+  for (const State& state : m_states) {
+    if (state.deadline && (!next || *state.deadline < *next)) next = state.deadline;
+  }
+  return next;
+}
+
 Partition partition(const QList<Thread>& threads, const std::optional<QSet<QString>>& scopedProjectKeys,
                     const CapabilitiesFor& capabilitiesFor, qint64 nowMs) {
   Partition result;
@@ -547,6 +652,71 @@ double threadSortTimestamp(const Thread& thread, const QString& sortOrder) {
   return firstTimestamp(thread.updatedAt, thread.createdAt);
 }
 
+// The legacy tree's projects (Tree), each {key, displayName, environmentId,
+// projectId, workspaceRoot, memberKeys, threadCount, status, expanded,
+// threads, more ("more", "less", or null when every thread shows)}. `row`
+// makes a thread's row, adding it to the view's order.
+QVariantList buildTree(const Input& input, const Tree& tree, const Partition& sections, const ProjectGroup* scoped,
+                       const QHash<QString, QString>& logicalKeyByPhysicalKey, const QHash<QString, int>& threadCounts,
+                       const QHash<QString, QStringList>& threadStatuses,
+                       const std::function<QVariant(const Thread&, bool snoozed, bool parked)>& row) {
+  QHash<QString, QList<const Thread*>> byProject;
+  QSet<const Thread*> snoozed;
+  QSet<const Thread*> parked;
+  for (const QList<Thread>* section : {&sections.pinned, &sections.active, &sections.snoozed, &sections.settled}) {
+    for (const Thread& thread : *section) {
+      const QString physical = thread.environmentId + QLatin1Char(':') + thread.projectId;
+      const auto logical = logicalKeyByPhysicalKey.constFind(physical);
+      if (logical == logicalKeyByPhysicalKey.constEnd()) continue;
+      byProject[*logical].append(&thread);
+      if (section == &sections.snoozed) snoozed.insert(&thread);
+      if (section == &sections.snoozed || section == &sections.settled) parked.insert(&thread);
+    }
+  }
+  const QString open = input.activeThreadKey.value_or(QString());
+  const int limit = clampThreadPreviewCount(tree.previewCount);
+  QVariantList projects;
+  for (const ProjectGroup& group : input.projects) {
+    if (scoped && group.key != scoped->key) continue;
+    QList<const Thread*> listed = byProject.value(group.key);
+    QHash<const Thread*, double> at;
+    for (const Thread* thread : std::as_const(listed)) at.insert(thread, threadSortTimestamp(*thread, tree.threadSortOrder));
+    // Newest first; ties go to the greater id, as the web's sortThreads.
+    std::stable_sort(listed.begin(), listed.end(), [&at](const Thread* left, const Thread* right) {
+      if (at.value(left) != at.value(right)) return at.value(left) > at.value(right);
+      return left->id > right->id;
+    });
+    const bool expanded = !tree.folded.contains(group.key);
+    const bool all = tree.showingAll.contains(group.key);
+    const bool overflowing = listed.size() > limit;
+    QVariantList rows;
+    for (qsizetype i = 0; i < listed.size(); ++i) {
+      const Thread* thread = listed.at(i);
+      // Folded, the open thread still shows under its project.
+      const bool shown = expanded ? (all || i < limit) : thread->key() == open;
+      if (!shown) continue;
+      QVariantMap made = row(*thread, snoozed.contains(thread), parked.contains(thread)).toMap();
+      // The section it would sit in, for the row's actions.
+      made.insert(QStringLiteral("section"), snoozed.contains(thread)  ? QStringLiteral("snoozed")
+                                             : parked.contains(thread) ? QStringLiteral("settled")
+                                             : thread->pinnedAt        ? QStringLiteral("pinned")
+                                                                       : QStringLiteral("active"));
+      rows.append(made);
+    }
+    QVariantMap project = group.summary;
+    project.insert(QStringLiteral("memberKeys"), group.memberKeys);
+    project.insert(QStringLiteral("threadCount"), threadCounts.value(group.key));
+    project.insert(QStringLiteral("status"), mostUrgentStatus(threadStatuses.value(group.key)));
+    project.insert(QStringLiteral("expanded"), expanded);
+    project.insert(QStringLiteral("draggable"), tree.manual);
+    project.insert(QStringLiteral("threads"), rows);
+    project.insert(QStringLiteral("more"), !expanded || !overflowing ? QVariant::fromValue(nullptr)
+                                                                     : QVariant(all ? QStringLiteral("less") : QStringLiteral("more")));
+    projects.append(project);
+  }
+  return projects;
+}
+
 }  // namespace
 
 QString normalizePath(const QString& path) {
@@ -561,8 +731,19 @@ QString physicalKey(const Project& project) {
   return project.environmentId + QLatin1Char(':') + normalizePath(project.workspaceRoot);
 }
 
-QList<ProjectGroup> groupProjects(const QList<Project>& projects, const GroupingSettings& settings,
+QList<ProjectGroup> groupProjects(const QList<Project>& given, const GroupingSettings& settings,
                                   const QString& preferredEnvironmentId, const QList<Thread>& threads) {
+  // By hand, the folders the user arranged lead in that order; the rest keep theirs.
+  QList<Project> arranged;
+  const bool byHand = settings.sortOrder == QLatin1String("manual") && !settings.manualOrder.isEmpty();
+  if (byHand) {
+    arranged = given;
+    QHash<QString, qsizetype> place;
+    for (qsizetype i = 0; i < settings.manualOrder.size(); ++i) place.insert(settings.manualOrder.at(i), i);
+    const auto rank = [&place](const Project& project) { return place.value(physicalKey(project), place.size()); };
+    std::stable_sort(arranged.begin(), arranged.end(), [&rank](const Project& left, const Project& right) { return rank(left) < rank(right); });
+  }
+  const QList<Project>& projects = byHand ? arranged : given;
   // Folders in first-seen order, each with every project row claiming it.
   QStringList folderOrder;
   QHash<QString, QList<Project>> byFolder;
@@ -719,6 +900,37 @@ std::optional<QString> fallbackAfterDelete(const QList<Thread>& threads, const Q
   return best ? std::optional<QString>(best->key()) : std::nullopt;
 }
 
+int clampThreadPreviewCount(int count) {
+  return std::clamp(count, kMinThreadPreviewCount, kMaxThreadPreviewCount);
+}
+
+QStringList reorderProjects(const QStringList& order, const QStringList& dragged, const QStringList& target) {
+  // As the web's uiStateStore reorderProjects, which dnd-kit's drop over a
+  // project feeds.
+  const QSet<QString> draggedSet(dragged.cbegin(), dragged.cend());
+  const QSet<QString> targetSet(target.cbegin(), target.cend());
+  if (dragged.isEmpty() || targetSet.contains(draggedSet)) return order;
+  const auto found = std::find_if(order.cbegin(), order.cend(), [&targetSet](const QString& key) { return targetSet.contains(key); });
+  if (found == order.cend()) return order;
+  const qsizetype targetIndex = found - order.cbegin();
+  QStringList next;
+  QStringList removed;
+  qsizetype draggedBeforeTarget = 0;
+  for (qsizetype i = 0; i < order.size(); ++i) {
+    if (!draggedSet.contains(order.at(i))) {
+      next.append(order.at(i));
+      continue;
+    }
+    removed.append(order.at(i));
+    if (i < targetIndex) ++draggedBeforeTarget;
+  }
+  if (removed.isEmpty()) return order;
+  // Past the end appends, as the web's splice: a dragged folder can be the target's first.
+  const qsizetype insertAt = std::min(next.size(), targetIndex - std::max<qsizetype>(0, draggedBeforeTarget - 1));
+  for (qsizetype i = 0; i < removed.size(); ++i) next.insert(insertAt + i, removed.at(i));
+  return next;
+}
+
 const ProjectGroup* Input::group(const QString& key) const {
   for (const ProjectGroup& group : projects) {
     if (group.key == key) return &group;
@@ -750,6 +962,16 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
   if (!input.showSettledPluginThreads) {
     const QString open = input.activeThreadKey.value_or(QString());
     sections.settled.removeIf([&open](const Thread& thread) { return !thread.pluginId.isEmpty() && thread.key() != open; });
+  }
+  // The tree lists every thread under its project, so it has no Working section.
+  const WorkingTracker* const workingShelf = input.tree ? nullptr : input.working;
+  QList<Thread> working;
+  if (workingShelf) {
+    QList<Thread> inbox;
+    for (Thread& thread : sections.active) (workingShelf->isWorking(thread) ? working : inbox).append(std::move(thread));
+    sections.active = std::move(inbox);
+    sortByReturn(sections.active, *workingShelf);
+    sortBySend(working);
   }
 
   QHash<QString, QString> projectNames;
@@ -814,6 +1036,8 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
                                                                         : QStringLiteral("Active ") + ago(thread.updatedAt)}}},
           {QStringLiteral("wokeAt"), nullable(visibleWokeAt(thread, nowMs))},
           {QStringLiteral("offline"), offline},
+          {QStringLiteral("unsentDraft"), input.unsentDraftKeys.contains(thread.key()) &&
+                                              thread.key() != input.activeThreadKey.value_or(QString())},
           {QStringLiteral("movingTo"), nullable(thread.movingTo)},
           {QStringLiteral("canSettle"), !offline && capabilities.settlement},
           {QStringLiteral("canSnooze"), !offline && capabilities.snooze && canSnooze(thread, nowMs)},
@@ -825,10 +1049,18 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
     return rows;
   };
   const qsizetype unlimited = std::numeric_limits<qsizetype>::max();
-  const QVariantList pinned = convert(sections.pinned, false, false, unlimited);
-  const QVariantList active = convert(sections.active, false, false, unlimited);
-  const QVariantList snoozed = convert(sections.snoozed, true, true, unlimited);
-  const QVariantList settled = convert(sections.settled, false, true, input.settledLimit);
+  QVariantList pinned, active, workingRows, snoozed, settled, tree;
+  if (input.tree) {
+    tree = buildTree(input, *input.tree, sections, scoped, logicalKeyByPhysicalKey, threadCounts, threadStatuses,
+                     [&](const Thread& thread, bool isSnoozed, bool parked) { return convert({thread}, isSnoozed, parked, unlimited).value(0); });
+    sections = {};
+  } else {
+    pinned = convert(sections.pinned, false, false, unlimited);
+    active = convert(sections.active, false, false, unlimited);
+    workingRows = convert(working, false, false, unlimited);
+    snoozed = convert(sections.snoozed, true, true, unlimited);
+    settled = convert(sections.settled, false, true, input.settledLimit);
+  }
 
   QVariantList projects;
   for (const ProjectGroup& group : input.projects) {
@@ -866,6 +1098,9 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
       {QStringLiteral("scopeProjectKey"), nullable(scopeProjectKey)},
       {QStringLiteral("pinned"), pinned},
       {QStringLiteral("active"), active},
+      {QStringLiteral("working"), workingRows},
+      // While the Working section is on the inbox keeps its own order: no arranging.
+      {QStringLiteral("workingShelf"), workingShelf != nullptr},
       {QStringLiteral("snoozed"), snoozed},
       {QStringLiteral("settled"), settled},
       {QStringLiteral("settledTotal"), sections.settled.size()},
@@ -873,6 +1108,8 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
       {QStringLiteral("drafts"), drafts},
       {QStringLiteral("activeThreadKey"), nullable(input.activeThreadKey)},
       {QStringLiteral("activeDraftId"), input.activeDraftId},
+      {QStringLiteral("mode"), input.tree ? QStringLiteral("tree") : QStringLiteral("attention")},
+      {QStringLiteral("tree"), tree},
   };
   // In the order the rows render.
   QStringList selected;
@@ -967,6 +1204,32 @@ QList<OrderAssignment> planReorder(const QStringList& orderedKeys, const QHash<Q
   QList<OrderAssignment> assignments;
   for (qsizetype index = 0; index < orderedKeys.size(); ++index) {
     if (orderKeys.value(orderedKeys.at(index)) != fresh.at(index)) assignments.append({orderedKeys.at(index), fresh.at(index)});
+  }
+  return assignments;
+}
+
+std::optional<QList<OrderAssignment>> planWritableReorder(const QStringList& orderedKeys, const QHash<QString, Nullable>& orderKeys,
+                                                          const QString& movedKey, const QSet<QString>& writable, bool keylessFirst) {
+  if (!writable.contains(movedKey)) return std::nullopt;
+  const auto frozenKeyless = [&](const QString& key) { return !writable.contains(key) && !orderKeys.value(key); };
+  QStringList planned = orderedKeys;
+  planned.removeIf(frozenKeyless);
+  const QList<OrderAssignment> assignments = planReorder(planned, orderKeys, movedKey);
+  QSet<QString> assigned;
+  for (const OrderAssignment& assignment : assignments) {
+    if (!writable.contains(assignment.key)) return std::nullopt;
+    assigned.insert(assignment.key);
+  }
+  // Keyless rows sort before keyed ones in Active and after them in Pinned, so
+  // a key written on the wrong side of a frozen keyless row cannot hold.
+  bool frozenBefore = false;
+  bool assignedBefore = false;
+  for (const QString& key : orderedKeys) {
+    const bool frozen = frozenKeyless(key);
+    const bool written = assigned.contains(key);
+    if (keylessFirst ? frozen && assignedBefore : written && frozenBefore) return std::nullopt;
+    frozenBefore = frozenBefore || frozen;
+    assignedBefore = assignedBefore || written;
   }
   return assignments;
 }
