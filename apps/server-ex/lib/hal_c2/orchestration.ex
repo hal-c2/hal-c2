@@ -1507,14 +1507,23 @@ defmodule HalC2.Orchestration do
   # starts, not where it stood when its message was decided: a rewind in
   # between (an earlier effect on this thread's lane, so it has settled by
   # now) moved it, and resuming the decided native thread would put the
-  # rewound history back.
+  # rewound history back. The head is the exception: deciding the run
+  # consumed it (and cleared it on the provider thread), so a head that is
+  # only missing again is the decide's own doing, while one a settled rewind
+  # wrote since — or a native thread that changed under the turn — replaces
+  # the decided one.
   defp refresh_provider_thread(thread_id, turn) do
     with id when is_binary(id) <- Map.get(turn.ids, :provider_thread),
          %{} = provider_thread <-
            thread_id |> HalC2.Streams.state() |> StreamState.get("provider-thread") |> Map.get(id) do
-      turn
-      |> Map.put(:native_thread_id, get_in(provider_thread, ["nativeThreadRef", "nativeId"]))
-      |> Map.put(:head, get_in(provider_thread, ["nativeConversationHeadRef", "nativeId"]))
+      native = get_in(provider_thread, ["nativeThreadRef", "nativeId"])
+      head = get_in(provider_thread, ["nativeConversationHeadRef", "nativeId"])
+      decided_native = turn[:native_thread_id]
+      turn = Map.put(turn, :native_thread_id, native)
+
+      if head != nil or native != decided_native,
+        do: Map.put(turn, :head, head),
+        else: turn
     else
       _ -> turn
     end

@@ -333,10 +333,18 @@ defmodule HalC2.Checkpoint do
     with :ok <- clean_once(cwd),
          :ok <- File.mkdir_p(cwd),
          {:ok, dry} <- git(cwd, @restore_config ++ ~w(clean -nd -- .)) do
+      # An emptied workspace folder inside a repository is itself untracked, so
+      # the dry run also answers "Would refuse to remove current working
+      # directory": that refusal is the folder staying, not a file left behind.
+      left =
+        dry
+        |> String.split("\n", trim: true)
+        |> Enum.reject(&(&1 == "Would refuse to remove current working directory"))
+
       cond do
-        String.trim(dry) == "" -> :ok
+        left == [] -> :ok
         pass < @clean_passes -> clean(cwd, pass + 1)
-        true -> {:error, {1, "git clean could not remove: #{String.trim(dry)}"}}
+        true -> {:error, {1, "git clean could not remove: #{Enum.join(left, "\n")}"}}
       end
     end
   end

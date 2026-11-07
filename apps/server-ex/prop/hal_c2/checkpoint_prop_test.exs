@@ -21,6 +21,51 @@ defmodule HalC2.CheckpointPropTest do
     end
   end
 
+  # The same law for a workspace that is a folder inside a repository: the
+  # folder itself stays (even restored empty) and files outside it are left
+  # as they were.
+  property "restoring a checkpoint in a subfolder keeps the folder and the rest of the repository",
+    numtests: HalC2.Prop.numtests(25) do
+    forall {first, second} <- {sub_snapshot(), sub_snapshot()} do
+      sub_round_trip(first, second)
+    end
+  end
+
+  defp sub_snapshot, do: oneof([exactly(%{}), snapshot()])
+
+  defp sub_round_trip(first, second) do
+    dir =
+      Path.join(
+        System.tmp_dir!(),
+        "hal-c2-checkpoint-prop-#{System.unique_integer([:positive])}"
+      )
+
+    sub = Path.join(dir, "packages/app")
+    File.mkdir_p!(sub)
+
+    try do
+      git!(dir, ~w(init -q -b main))
+      File.write!(Path.join(dir, "root.txt"), "root\n")
+      git!(dir, ~w(add root.txt))
+      git!(dir, ~w(-c user.name=t -c user.email=t@t commit -q -m init))
+
+      write_snapshot(sub, first)
+      :ok = Checkpoint.capture(sub, "refs/hal-c2/test/sub-first")
+      write_snapshot(sub, second)
+      :ok = Checkpoint.capture(sub, "refs/hal-c2/test/sub-second")
+
+      :ok = Checkpoint.restore(sub, "refs/hal-c2/test/sub-first")
+      first_back = File.dir?(sub) and read_snapshot(sub) == first
+      :ok = Checkpoint.restore(sub, "refs/hal-c2/test/sub-second")
+      second_back = File.dir?(sub) and read_snapshot(sub) == second
+      root_kept = File.read!(Path.join(dir, "root.txt")) == "root\n"
+
+      first_back and second_back and root_kept
+    after
+      File.rm_rf!(dir)
+    end
+  end
+
   # A workspace: each pooled path is absent or holds one of a few contents.
   defp snapshot do
     let contents <- vector(length(@paths), content()) do

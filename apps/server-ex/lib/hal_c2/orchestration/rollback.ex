@@ -289,7 +289,7 @@ defmodule HalC2.Orchestration.Rollback do
         |> Map.merge(patch)
         |> then(&if(plan.fork && patch != %{}, do: Map.delete(&1, "carriedSession"), else: &1))
         |> Map.merge(%{
-          "lastRunOrdinal" => if(plan.target > 0, do: plan.target),
+          "lastRunOrdinal" => settled_last_run_ordinal(state, plan),
           "status" => "idle",
           "updatedAt" => at
         })
@@ -333,6 +333,26 @@ defmodule HalC2.Orchestration.Rollback do
 
     # An upsert that changes nothing is nil.
     Enum.reject([provider_thread | stale ++ turns ++ runs ++ forks], &is_nil/1)
+  end
+
+  # Where the provider thread's latest run stands once settled: the rewind's
+  # target, unless a message decided while the rewind ran already named a
+  # later run as its latest. That run resumes the rewound conversation, so
+  # settling must not move the marker back under it.
+  defp settled_last_run_ordinal(state, plan) do
+    rolled = MapSet.new(plan.runs, & &1["id"])
+
+    decided =
+      for run <- StreamState.list(state, "run"),
+          run["ordinal"] > plan.target,
+          not MapSet.member?(rolled, run["id"]),
+          run["status"] != "rolled_back",
+          do: run["ordinal"]
+
+    case Enum.max([plan.target | decided]) do
+      0 -> nil
+      latest -> latest
+    end
   end
 
   @doc """

@@ -328,6 +328,24 @@ defmodule HalC2.CheckpointTest do
     assert {:error, _} = Checkpoint.restore(dir, first["ref"])
   end
 
+  test "restoring an empty checkpoint keeps a workspace folder inside a repository",
+       %{dir: dir} do
+    sub = Path.join(dir, "packages/app")
+    File.mkdir_p!(sub)
+    File.write!(Path.join(sub, "new.txt"), "x\n")
+
+    empty = Path.join(dir, "empty-tree")
+    File.write!(empty, "")
+    tree = String.trim(git!(dir, ["hash-object", "-t", "tree", empty]))
+    commit = String.trim(git!(dir, ["commit-tree", tree, "-m", "empty"]))
+    ref = "refs/hal-c2/test/empty-subfolder"
+    git!(dir, ["update-ref", ref, commit])
+
+    assert :ok = Checkpoint.restore(sub, ref)
+    assert File.ls!(sub) == []
+    assert File.read!(Path.join(dir, "a.txt")) == "one\n"
+  end
+
   test "restoring in a repository with no commits leaves nothing staged", %{tmp_dir: dir} do
     fresh = Path.join(dir, "fresh")
     File.mkdir_p!(fresh)
