@@ -7,9 +7,12 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Steps.SourceControl.Shared
+  alias HalC2.Test.FakeHttp
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
+  alias HalC2.SourceControl.Forgejo
+  alias HalC2.Steps.SourceControl.FakeBitbucket
+  alias HalC2.Steps.SourceControl.Shared
 
   # tool => {label, version line, auth rule (nil for version control), account host}
   @tools %{
@@ -141,6 +144,69 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
     context
   end
 
+  # The MC reads Bitbucket's environment: a closed port stands for an unreachable
+  # Bitbucket, and "names the account" starts the fake one.
+  step ~r/^the MC was started with (?<credentials>an access token|an email address and an API token|an email address without an API token|nothing)$/,
+       %{args: [credentials]} = context do
+    for name <-
+          ~w(HAL_C2_BITBUCKET_ACCESS_TOKEN HAL_C2_BITBUCKET_EMAIL HAL_C2_BITBUCKET_API_TOKEN HAL_C2_BITBUCKET_API_BASE_URL),
+        do: unset_env(name)
+
+    Shared.put_env("HAL_C2_BITBUCKET_API_BASE_URL", "http://127.0.0.1:1/2.0")
+
+    case credentials do
+      "an access token" ->
+        Shared.put_env("HAL_C2_BITBUCKET_ACCESS_TOKEN", FakeBitbucket.token())
+
+      "an email address and an API token" ->
+        Shared.put_env("HAL_C2_BITBUCKET_EMAIL", FakeBitbucket.email())
+        Shared.put_env("HAL_C2_BITBUCKET_API_TOKEN", FakeBitbucket.api_token())
+
+      "an email address without an API token" ->
+        Shared.put_env("HAL_C2_BITBUCKET_EMAIL", FakeBitbucket.email())
+
+      "nothing" ->
+        :ok
+    end
+
+    context
+  end
+
+  step ~r/^Bitbucket (?<answer>names the account|cannot be reached|is not asked) when asked who the account is$/,
+       %{args: [answer]} = context do
+    if answer == "names the account", do: start_fake_bitbucket_api(context), else: context
+  end
+
+  step "Bitbucket is reported signed in as that account", context do
+    item = discovered(context, "Bitbucket")
+    assert item["auth"]["status"] == "authenticated"
+    assert item["auth"]["account"] == %{"_tag" => "Some", "value" => "octocat"}
+    context
+  end
+
+  step ~r/^Bitbucket is reported configured, with "(?<detail>[^"]+)" and no account$/,
+       %{args: [detail]} = context do
+    item = assert_bitbucket_unknown(context, detail)
+    refute match?(%{"_tag" => "Some"}, item["auth"]["account"])
+    context
+  end
+
+  step ~r/^Bitbucket is reported configured as the email address, with "(?<detail>[^"]+)"$/,
+       %{args: [detail]} = context do
+    item = assert_bitbucket_unknown(context, detail)
+    assert item["auth"]["account"] == %{"_tag" => "Some", "value" => FakeBitbucket.email()}
+    context
+  end
+
+  step "Bitbucket is reported not authenticated and told which variables to set", context do
+    item = discovered(context, "Bitbucket")
+    assert item["auth"]["status"] == "unauthenticated"
+    assert %{"_tag" => "Some", "value" => detail} = item["auth"]["detail"]
+    assert detail =~ "HAL_C2_BITBUCKET_EMAIL"
+    assert detail =~ "HAL_C2_BITBUCKET_ACCESS_TOKEN"
+    context
+  end
+
   # fj's keys.json names the server without a scheme; a server under a subpath keeps
   # its path, which fj 0.6 cannot serve. The account lookup after `whoami` finds
   # nothing listening, which leaves fj reported with an unknown account.
@@ -175,6 +241,244 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
     item = discovered(context, "Forgejo / Gitea")
     assert item["executable"] == cli
     assert item["status"] == "available"
+    context
+  end
+
+  # --- Forgejo logins and reads ------------------------------------------------------
+  # fj is the Forgejo CLI, tea the Gitea CLI. A scenario that does not use fj has it
+  # uninstalled and its storage pointed at a file that does not exist.
+
+  step ~r/^the Forgejo CLIs hold (?<logins>.+)$/, %{args: [logins]} = context do
+    hold_logins(context, logins)
+  end
+
+  step ~r/^the MC reads a Forgejo repository whose remote is (?<remote>.+)$/,
+       %{args: [remote]} = context do
+    cwd = Mc.tmp_dir(context.mc, "forgejo-remote")
+    Map.put(context, :reply, Forgejo.resolve(cwd, remote_url: remote_address(remote)))
+  end
+
+  step ~r/^(?:that login|the default login) is used$/, context do
+    assert {:ok, %{login: login}} = context.reply
+    assert login == context.expected_login
+    context
+  end
+
+  step ~r/^the user is told (?<what>to choose a default login|no matching login was found)$/,
+       %{args: [what]} = context do
+    fragment =
+      if what == "to choose a default login",
+        do: "choose a default",
+        else: "No matching Forgejo login"
+
+    assert {:error, {:unauthenticated, message}} = context.reply
+    assert message =~ fragment, "#{inspect(message)} does not say #{inspect(fragment)}"
+    context
+  end
+
+  step ~r/^the Forgejo CLI is signed in to "(?<server>[^"]+)" and stores its tokens in its data folder$/,
+       %{args: [server]} = context do
+    data = Mc.tmp_dir(context.mc, "xdg-data")
+    File.mkdir_p!(Path.join(data, "forgejo-cli"))
+    keys = keys_map(%{server => fj_host("data-token")})
+    File.write!(Path.join([data, "forgejo-cli", "keys.json"]), JSON.encode!(keys))
+    Shared.put_env("XDG_DATA_HOME", data)
+    # config/test.exs empties the keys path list; this scenario reads fj's default location.
+    World.put_app_env(:fj_keys_paths, nil)
+
+    context
+    |> Map.put(:keys_map, keys)
+    |> with_forgejo_api(%{"/api/v1/repos/acme/notes" => {200, repo_json("acme/notes", server)}})
+    |> fj_installed([whoami_rule("octocat")])
+  end
+
+  step "the MC reads a repository on {string}", %{args: [_server]} = context do
+    {reply, context} = lookup_forgejo(context, "acme/notes")
+    assert {:ok, _} = reply, "the read failed: #{inspect(reply)}"
+    Map.put(context, :reply, reply)
+  end
+
+  step ~r/^the stored token of "[^"]+" is used for the request$/, context do
+    requests = FakeHttp.requests(context.forgejo)
+    assert requests != []
+    assert Enum.all?(requests, &(&1["authorization"] == "token data-token"))
+    context
+  end
+
+  step "the server is reached over https unless the checkout's remote is an explicit http address of that server",
+       context do
+    assert [%{"url" => "https://codeberg.org"}] = Forgejo.logins_from_keys(context.keys_map)
+
+    assert [%{"url" => "http://codeberg.org"}] =
+             Forgejo.logins_from_keys(context.keys_map, "http://codeberg.org/acme/notes.git")
+
+    context
+  end
+
+  step "the Forgejo CLI's stored credentials cannot be read", context do
+    dir = Mc.tmp_dir(context.mc, "forgejo-unreadable")
+    context |> with_fj_storage(dir) |> fj_installed()
+  end
+
+  step "the Forgejo CLI's stored credentials are damaged", context do
+    context |> fj_storage_file("{not json") |> fj_installed()
+  end
+
+  step "stored credentials remain from an uninstalled Forgejo CLI and the Gitea CLI has a login",
+       context do
+    context
+    |> fj_storage_file(JSON.encode!(keys_map(%{"codeberg.org" => fj_host("stale-token")})))
+    |> fj_missing()
+    |> tea_logins([tea_login("codeberg", "https://codeberg.org", "true")], [
+      tea_api_rule("codeberg", "https://codeberg.org", "acme/notes", "codeberg.org", "200 OK")
+    ])
+  end
+
+  step "the Gitea CLI's login is used", context do
+    assert {:ok, _} = context.reply
+    assert World.cli_calls(context, "api") != []
+    context
+  end
+
+  step "the Forgejo CLI has no credentials for the server after it renewed them", context do
+    path = Path.join(Mc.tmp_dir(context.mc, "forgejo-renewed"), "keys.json")
+
+    context =
+      fj_storage_file(
+        context,
+        JSON.encode!(keys_map(%{"codeberg.org" => fj_host("gone-token")})),
+        path
+      )
+
+    fj_installed(context, [
+      whoami_rule("octocat", "printf '%s' '#{JSON.encode!(keys_map(%{}))}' > #{path}")
+    ])
+  end
+
+  step "the Forgejo CLI holds an expired token for {string}", %{args: [server]} = context do
+    path = Path.join(Mc.tmp_dir(context.mc, "forgejo-expired"), "keys.json")
+    renewed = JSON.encode!(keys_map(%{server => fj_host("renewed-token")}))
+
+    context =
+      context
+      |> fj_storage_file(JSON.encode!(keys_map(%{server => fj_host("expired-token")})), path)
+      |> with_forgejo_api(%{
+        "/api/v1/repos/acme/notes" => {200, repo_json("acme/notes", server)},
+        "/api/v1/repos/acme/other" => {200, repo_json("acme/other", server)}
+      })
+
+    fj_installed(context, [whoami_rule("octocat", "printf '%s' '#{renewed}' > #{path}")])
+  end
+
+  step "the MC reads two repositories there within half a minute", context do
+    {first, context} = lookup_forgejo(context, "acme/notes")
+    {second, context} = lookup_forgejo(context, "acme/other")
+    Map.put(context, :replies, [first, second])
+  end
+
+  step "the Forgejo CLI is asked to renew its token once", context do
+    assert [_] = World.cli_calls(context, "whoami")
+    context
+  end
+
+  step "both reads use the renewed token", context do
+    assert Enum.all?(context.replies, &match?({:ok, _}, &1))
+    requests = FakeHttp.requests(context.forgejo)
+    assert length(requests) == 2
+    assert Enum.all?(requests, &(&1["authorization"] == "token renewed-token"))
+    context
+  end
+
+  step ~r/^the Forgejo CLI is signed in to "(?<server>[^"]+)" as "(?<login>[^"]+)"$/,
+       %{args: [server, login]} = context do
+    context
+    |> with_forgejo_api(%{
+      "/api/v1/user" => {200, %{"login" => login}},
+      "/api/v1/repos/ada/notes" => {200, repo_json("ada/notes", server)},
+      "/api/v1/repos/acme/notes" => {200, repo_json("acme/notes", server)}
+    })
+    |> fj_storage_file(JSON.encode!(keys_map(%{server => fj_host("ada-token")})))
+    |> fj_installed([whoami_rule(login)])
+  end
+
+  step ~r/^the repository read is "(?<read>[^"]+)"$/, %{args: [read]} = context do
+    if String.starts_with?(read, "nothing") do
+      assert {:error, _, _} = context.reply
+
+      assert World.failure(context) =~
+               "Specify a Forgejo repository as owner/repository or its full server URL."
+
+      assert FakeHttp.requests(context.forgejo) == []
+    else
+      assert {:ok, %{"nameWithOwner" => ^read}} = context.reply
+      path = "/api/v1/repos/#{read}"
+      assert Enum.any?(FakeHttp.requests(context.forgejo), &(&1["path"] == path))
+    end
+
+    context
+  end
+
+  # A server mounted under a path: fj cannot serve it, so the login is tea's.
+  step ~r/^the Forgejo CLI is signed in to "(?<server>[^"]+\/[^"]+)"$/,
+       %{args: [server]} = context do
+    context
+    |> no_fj()
+    |> tea_logins([tea_login("forgejo", "https://#{server}", "true")], [
+      tea_api_rule("forgejo", "https://#{server}", "acme/notes", server, "200 OK")
+    ])
+  end
+
+  step ~r/^the MC reads the repository "(?<repository>[^"]+)" there$/,
+       %{args: [repository]} = context do
+    {reply, context} = lookup_forgejo(context, repository)
+    Map.put(context, :reply, reply)
+  end
+
+  step ~r/^the request goes to the server's api below "(?<server>[^"]+)"$/,
+       %{args: [server]} = context do
+    assert [_ | _] = World.cli_calls(context, "https://#{server}/api/v1/repos/acme/notes")
+    context
+  end
+
+  step ~r/^the repository is named "(?<name>[^"]+)" without the prefix$/,
+       %{args: [name]} = context do
+    assert {:ok, %{"nameWithOwner" => ^name}} = context.reply
+    context
+  end
+
+  step ~r/^the repository is read through (?<cli>any tool|tea)$/, context do
+    no_fj(context)
+  end
+
+  step ~r/^the Forgejo server answers with (?<answer>"[^"]+"(?: or "[^"]+")?)$/,
+       %{args: [answer]} = context do
+    status =
+      case answer do
+        "\"not found\"" -> "404 Not Found"
+        "\"unauthorized\" or \"forbidden\"" -> "403 Forbidden"
+        "\"too many requests\"" -> "429 Too Many Requests"
+      end
+
+    tea_logins(context, [tea_login("codeberg", "https://codeberg.org", "true")], [
+      tea_api_rule("codeberg", "https://codeberg.org", "acme/notes", "codeberg.org", status)
+    ])
+  end
+
+  step "the MC reads a Forgejo repository", context do
+    {reply, context} = lookup_forgejo(context, "acme/notes")
+    Map.put(context, :reply, reply)
+  end
+
+  step "neither the Forgejo CLI nor the Gitea CLI is installed", context do
+    World.put_app_env(:tea_command, "hal-c2-test-no-tea")
+    no_fj(context)
+  end
+
+  step "the user is told to install the Forgejo CLI 0.6 or later or the Gitea CLI 0.16 or later",
+       context do
+    assert World.failure(context) =~
+             "Install Forgejo CLI (`fj` 0.6 or later) or Gitea CLI (`tea` 0.16 or later)"
+
     context
   end
 
@@ -380,39 +684,21 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
 
   step ~r/^the user publishes "(?<title>[^"]+)" to (?<host>GitHub|GitLab)(?: as a (?<visibility>private|public) repository)?$/,
        %{args: [title, host | rest]} = context do
-    visibility = List.first(rest) || "private"
-    provider = Shared.provider(host)
-    repository = "acme/" <> World.slug(title)
-    bare = Path.join(Mc.tmp_dir(context.mc, "published"), "#{World.slug(title)}.git")
-    exe = if provider == "github", do: "gh", else: "glab"
+    publish(context, title, host, List.first(rest) || "private", "https")
+  end
 
-    context =
-      context
-      |> World.fake_cli(["gh", "glab"])
-      |> World.cli_rules([
-        # The host's new, empty repository.
-        %{
-          "cmd" => exe,
-          "args" => ["repo create #{repository}"],
-          "run" => "git init -q --bare #{bare}",
-          "stdout" => "https://#{host_name(provider)}/#{repository}\n"
-        }
-      ])
-      |> Shared.answer_lookup(provider, repository, %{"url" => bare, "sshUrl" => bare})
+  # Both addresses of the new repository are local bare repositories, so each protocol
+  # can be checked against the address it was given.
+  step ~r/^the user publishes "(?<title>[^"]+)" to GitHub choosing (?<protocol>https|ssh)$/,
+       %{args: [title, protocol]} = context do
+    publish(context, title, "GitHub", "private", protocol)
+  end
 
-    {reply, context} =
-      World.call(context, "sourceControl.publishRepository", %{
-        "cwd" => World.project(context, title).root,
-        "provider" => provider,
-        "repository" => repository,
-        "visibility" => visibility,
-        "protocol" => "https"
-      })
-
-    Map.merge(context, %{
-      reply: reply,
-      published: %{exe: exe, repository: repository, bare: bare}
-    })
+  step ~r/^the remote added to "(?<title>[^"]+)" uses the (?<protocol>https|ssh) address of the new repository$/,
+       %{args: [_title, protocol]} = context do
+    expected = if protocol == "ssh", do: context.published.ssh_bare, else: context.published.bare
+    assert World.git!(context.cwd, ~w(remote get-url origin)) == expected
+    context
   end
 
   step ~r/^the repository is created on (?:GitHub|GitLab) as (?<visibility>private|public)$/,
@@ -458,6 +744,209 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
 
   defp host_name("github"), do: "github.com"
   defp host_name("gitlab"), do: "gitlab.com"
+
+  defp publish(context, title, host, visibility, protocol) do
+    provider = Shared.provider(host)
+    repository = "acme/" <> World.slug(title)
+    dir = Mc.tmp_dir(context.mc, "published")
+    bare = Path.join(dir, "#{World.slug(title)}.git")
+    ssh_bare = Path.join(dir, "#{World.slug(title)}-ssh.git")
+    exe = if provider == "github", do: "gh", else: "glab"
+
+    context =
+      context
+      |> World.fake_cli(["gh", "glab"])
+      |> World.cli_rules([
+        # The host's new, empty repository.
+        %{
+          "cmd" => exe,
+          "args" => ["repo create #{repository}"],
+          "run" => "git init -q --bare #{bare} && git init -q --bare #{ssh_bare}",
+          "stdout" => "https://#{host_name(provider)}/#{repository}\n"
+        }
+      ])
+      |> Shared.answer_lookup(provider, repository, %{"url" => bare, "sshUrl" => ssh_bare})
+
+    {reply, context} =
+      World.call(context, "sourceControl.publishRepository", %{
+        "cwd" => World.project(context, title).root,
+        "provider" => provider,
+        "repository" => repository,
+        "visibility" => visibility,
+        "protocol" => protocol
+      })
+
+    Map.merge(context, %{
+      reply: reply,
+      published: %{exe: exe, repository: repository, bare: bare, ssh_bare: ssh_bare}
+    })
+  end
+
+  # Bitbucket: the environment is cleared, and restored when the scenario ends.
+  defp unset_env(name) do
+    previous = System.get_env(name)
+    System.delete_env(name)
+    ExUnit.Callbacks.on_exit(fn -> if previous, do: System.put_env(name, previous) end)
+  end
+
+  defp start_fake_bitbucket_api(context) do
+    server = Mc.ensure({Bandit, plug: FakeBitbucket, port: 0, ip: :loopback})
+    {:ok, {_, port}} = ThousandIsland.listener_info(server)
+    Shared.put_env("HAL_C2_BITBUCKET_API_BASE_URL", "http://127.0.0.1:#{port}/2.0")
+    context
+  end
+
+  defp assert_bitbucket_unknown(context, detail) do
+    item = discovered(context, "Bitbucket")
+    assert item["auth"]["status"] == "unknown"
+    assert item["auth"]["detail"] == %{"_tag" => "Some", "value" => detail}
+    item
+  end
+
+  # Forgejo logins. fj's logins come from its keys (`keys_map/2`); tea's from its list.
+  defp hold_logins(context, phrase) do
+    git = "https://git.example.com"
+
+    case phrase do
+      "one login for \"git.example.com\"" ->
+        context
+        |> no_fj()
+        |> tea_logins([tea_login("git", git, "false")])
+        |> Map.put(:expected_login, "git")
+
+      "one login for \"git.example.com\" with the SSH alias \"ssh.example\"" ->
+        keys =
+          keys_map(%{"git.example.com" => fj_host("alias-token")}, %{
+            "ssh.example" => "git.example.com"
+          })
+
+        context
+        |> fj_storage_file(JSON.encode!(keys))
+        |> fj_installed([whoami_rule("octocat")])
+        |> tea_logins([])
+        |> Map.put(:expected_login, "git.example.com")
+
+      "two logins for \"git.example.com\", one of them the default" ->
+        context
+        |> no_fj()
+        |> tea_logins([tea_login("work", git, "false"), tea_login("home", git, "true")])
+        |> Map.put(:expected_login, "home")
+
+      "two logins for \"git.example.com\", neither the default" ->
+        no_fj(context)
+        |> tea_logins([tea_login("work", git, "false"), tea_login("home", git, "false")])
+
+      "logins for two servers" ->
+        no_fj(context)
+        |> tea_logins([
+          tea_login("one", git, "false"),
+          tea_login("two", "https://other.example.com", "false")
+        ])
+
+      "a login for \"git.example.com/forgejo\"" ->
+        no_fj(context)
+        |> tea_logins([tea_login("forgejo", git <> "/forgejo", "false")])
+    end
+  end
+
+  defp remote_address(remote) do
+    case remote do
+      "an https address on \"git.example.com\"" -> "https://git.example.com/acme/notes.git"
+      "an SSH address on \"ssh.example\"" -> "git@ssh.example:acme/notes.git"
+      "an https address on a third server" -> "https://third.example.com/acme/notes.git"
+      "an address on \"git.example.com/other\"" -> "https://git.example.com/other/acme/notes.git"
+    end
+  end
+
+  # fj uninstalled, and its storage a file that does not exist.
+  defp no_fj(context) do
+    context
+    |> with_fj_storage(Path.join(Mc.tmp_dir(context.mc, "forgejo-none"), "keys.json"))
+    |> fj_missing()
+  end
+
+  defp fj_missing(context) do
+    World.put_app_env(:fj_command, "hal-c2-test-no-fj")
+    context
+  end
+
+  defp with_fj_storage(context, path) do
+    World.put_app_env(:fj_keys_paths, [path])
+    context
+  end
+
+  # fj's storage holds `json` (or, given a path, is written there).
+  defp fj_storage_file(context, json, path \\ nil) do
+    path = path || Path.join(Mc.tmp_dir(context.mc, "forgejo-keys"), "keys.json")
+    File.write!(path, json)
+
+    context
+    |> with_fj_storage(path)
+    |> Map.put(:keys_path, path)
+  end
+
+  defp fj_installed(context, rules \\ []) do
+    context
+    |> World.fake_cli(["fj"])
+    |> World.cli_rules([
+      %{"cmd" => "fj", "args" => ["version"], "stdout" => "fj v0.6.0\n"} | rules
+    ])
+  end
+
+  defp whoami_rule(account, run \\ nil) do
+    rule = %{"cmd" => "fj", "args" => ["whoami"], "stdout" => "#{account}\n"}
+    if run, do: Map.put(rule, "run", run), else: rule
+  end
+
+  defp tea_logins(context, logins, extra \\ []) do
+    context
+    |> World.fake_cli(["tea"])
+    |> World.cli_rules([
+      %{"cmd" => "tea", "args" => ["--version"], "stdout" => "Version: 0.10.1\n"},
+      %{"cmd" => "tea", "args" => ["login list"], "stdout" => logins} | extra
+    ])
+  end
+
+  defp tea_login(name, url, default) do
+    %{"name" => name, "url" => url, "user" => "octocat", "default" => default, "valid" => "true"}
+  end
+
+  defp tea_api_rule(login, base, repository, host, status) do
+    %{
+      "cmd" => "tea",
+      "args" => ["api", "--login #{login}", "#{base}/api/v1/repos/#{repository}"],
+      "stderr" => "HTTP/2.0 #{status}\n",
+      "stdout" =>
+        if(String.starts_with?(status, "200"), do: repo_json(repository, host), else: %{})
+    }
+  end
+
+  defp keys_map(hosts, aliases \\ %{}), do: %{"hosts" => hosts, "aliases" => aliases}
+
+  defp fj_host(token), do: %{"type" => "Application", "token" => token}
+
+  defp repo_json(repository, host) do
+    %{
+      "full_name" => repository,
+      "clone_url" => "https://#{host}/#{repository}.git",
+      "ssh_url" => "git@#{host}:#{repository}.git"
+    }
+  end
+
+  # The server the Forgejo API calls reach (`HAL_C2_FORGEJO_API_BASE_URL`); `:forgejo`
+  # is the log of its requests.
+  defp with_forgejo_api(context, routes) do
+    {base, log} = FakeHttp.start(routes)
+    Shared.put_env("HAL_C2_FORGEJO_API_BASE_URL", base)
+    Map.put(context, :forgejo, log)
+  end
+
+  defp lookup_forgejo(context, repository) do
+    World.call(context, "sourceControl.lookupRepository", %{
+      "provider" => "forgejo",
+      "repository" => repository
+    })
+  end
 
   defp assert_created(context, visibility) do
     %{exe: exe, repository: repository} = context.published

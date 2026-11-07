@@ -73,8 +73,7 @@ Feature: Finding hosting tools, cloning and publishing repositories
       | git.example.com/forgejo | tea |
 
   # Legacy: apps/server/src/sourceControl/ForgejoCli.ts (matchForgejoLogin, resolveTarget)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/source_control/forgejo.ex (match_login)
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario Outline: A Forgejo login is chosen by the address of the checkout's remote
     Given the Forgejo CLIs hold <logins>
     When the MC reads a Forgejo repository whose remote is <remote>
@@ -90,8 +89,7 @@ Feature: Finding hosting tools, cloning and publishing repositories
       | a login for "git.example.com/forgejo"                            | an address on "git.example.com/other"       | the user is told no matching login was found    |
 
   # Legacy: apps/server/src/sourceControl/ForgejoCli.ts (listLogins, publicLogins)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/source_control/forgejo.ex (logins_from_keys)
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: The Forgejo CLI is read for its servers and tokens from its own storage
     Given the Forgejo CLI is signed in to "codeberg.org" and stores its tokens in its data folder
     When the MC reads a repository on "codeberg.org"
@@ -99,8 +97,7 @@ Feature: Finding hosting tools, cloning and publishing repositories
     And the server is reached over https unless the checkout's remote is an explicit http address of that server
 
   # Legacy: apps/server/src/sourceControl/ForgejoCli.ts (readKeys, listLogins: missing-cli)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/source_control/forgejo.ex (keys, fj_logins)
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario Outline: Credentials of a Forgejo CLI that is unusable are reported or ignored
     Given <state>
     When the MC reads a Forgejo repository
@@ -151,8 +148,7 @@ Feature: Finding hosting tools, cloning and publishing repositories
     Then the read fails with the server's error
 
   # Legacy: apps/server/src/sourceControl/ForgejoCli.ts (authenticateFj)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/source_control/forgejo.ex (whoami_ttl)
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: An expired Forgejo token is renewed by the Forgejo CLI and not asked for again for half a minute
     Given the Forgejo CLI holds an expired token for "codeberg.org"
     When the MC reads two repositories there within half a minute
@@ -160,8 +156,7 @@ Feature: Finding hosting tools, cloning and publishing repositories
     And both reads use the renewed token
 
   # Legacy: apps/server/src/sourceControl/ForgejoCli.ts (resolveTarget: owner of a bare repository name)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/source_control/forgejo.ex
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario Outline: A Forgejo repository named without its owner belongs to the signed-in account
     Given the Forgejo CLI is signed in to "codeberg.org" as "ada"
     When the user looks up <repository> on Forgejo
@@ -174,8 +169,7 @@ Feature: Finding hosting tools, cloning and publishing repositories
       | "a/b/c"         | nothing, the user is told to specify owner/repository or the full server URL |
 
   # Legacy: apps/server/src/sourceControl/ForgejoCli.ts (requestFj, api: server mounted under a path)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/source_control/forgejo.ex
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A Forgejo server under a path prefix is read through its own prefix
     Given the Forgejo CLI is signed in to "git.example.com/forgejo"
     When the MC reads the repository "acme/notes" there
@@ -183,8 +177,7 @@ Feature: Finding hosting tools, cloning and publishing repositories
     And the repository is named "acme/notes" without the prefix
 
   # Legacy: apps/server/src/sourceControl/ForgejoCli.ts (requestFj: errors, limits)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/source_control/forgejo.ex
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario Outline: A Forgejo server's refusal is reported in the user's words
     Given the repository is read through <cli>
     And the Forgejo server answers with <answer>
@@ -198,7 +191,6 @@ Feature: Finding hosting tools, cloning and publishing repositories
       | tea      | "too many requests"         | Forgejo API rate limit exceeded.                                                    |
 
   # Legacy: apps/server/src/sourceControl/ForgejoCli.ts (requestFj: manual redirects, 8 MiB cap, 30 s timeout)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/source_control/forgejo.ex
   @mc @backlog @priority-high
   Scenario Outline: A Forgejo server's odd answer is not trusted when the MC calls its API itself
     Given the repository is read through fj
@@ -214,8 +206,7 @@ Feature: Finding hosting tools, cloning and publishing repositories
       | does not answer within 30 seconds  | the user is told "Forgejo API request failed or timed out."                        |
 
   # Legacy: apps/server/src/sourceControl/ForgejoCli.ts (execute: missing-cli)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/source_control/forgejo.ex (@missing)
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: Forgejo without either command line tool says what to install
     Given neither the Forgejo CLI nor the Gitea CLI is installed
     When the MC reads a Forgejo repository
@@ -462,8 +453,7 @@ Feature: Finding hosting tools, cloning and publishing repositories
     And the result says the remote was added without pushing
 
   # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (publishRepository: selectRemoteUrl)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/source_control.ex
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario Outline: A published repository is added as a remote over the protocol the user chose
     Given the project "notes" is a git repository with commits and no remote
     When the user publishes "notes" to GitHub choosing <protocol>
@@ -544,7 +534,6 @@ Feature: Finding hosting tools, cloning and publishing repositories
       | public     | acme/notes  | in the organization "acme"         |
 
   # Legacy: apps/server/src/sourceControl/BitbucketApi.ts (createRepository, parseBitbucketRepositorySlug)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/source_control.ex
   @mc @backlog @priority-high
   Scenario Outline: A Bitbucket repository is published as workspace and repository
     Given the project "notes" is a git repository with commits and no remote
@@ -558,8 +547,7 @@ Feature: Finding hosting tools, cloning and publishing repositories
       | private    | notes        | the user is told "Bitbucket repositories must be specified as workspace/repository." and nothing is created |
 
   # Legacy: apps/server/src/sourceControl/BitbucketApi.ts (authFromConfig, probeAuth)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/source_control.ex (bitbucket)
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario Outline: Bitbucket's sign-in state follows what the MC was started with
     Given the MC was started with <credentials>
     And Bitbucket <answer> when asked who the account is
