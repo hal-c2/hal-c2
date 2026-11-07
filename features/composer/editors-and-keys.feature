@@ -189,7 +189,7 @@ Feature: Editing the draft
     Then the draft reads "second"
 
   # Upstream #21510: prompt recall skips messages sent by automations, agents and the app.
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Recalling earlier prompts skips messages the user did not type
     Given the user sent "first" in this thread
     And a scheduled task then sent "Run the nightly check"
@@ -316,7 +316,7 @@ Feature: Editing the draft
       | an approval is waiting for an answer         |
       | a question from the agent is waiting         |
 
-  @backlog @desktop
+  @desktop
   Scenario: Editing a recalled prompt makes it an ordinary draft
     Given the user sent "first" and then "second" in this thread
     And the user recalled "second"
@@ -324,14 +324,14 @@ Feature: Editing the draft
     And the user presses Up on the first line of the composer
     Then the draft reads "second, revised"
 
-  @backlog @desktop
+  @desktop
   Scenario: Moving forward past the newest prompt empties the composer
     Given the user sent "first" and then "second" in this thread
     And the user recalled "second"
     When the user moves forward again
     Then the composer is empty
 
-  @backlog @desktop
+  @desktop
   Scenario: Up at the oldest prompt moves the caret instead
     Given the user sent "first" in this thread
     And the user recalled "first"
@@ -339,14 +339,14 @@ Feature: Editing the draft
     Then the draft reads "first"
     And the caret moves to the start of the draft
 
-  @backlog @desktop
+  @desktop
   Scenario: Down in a draft the user typed recalls nothing
     Given the user sent "first" in this thread
     And the user has typed "new idea"
     When the user presses Down on the last line of the composer
     Then the draft reads "new idea"
 
-  @backlog @desktop
+  @desktop
   Scenario: Up and Down only recall from the first and last line as shown
     Given the user recalled a prompt long enough to wrap onto three lines
     And the caret is on the last line
@@ -354,7 +354,7 @@ Feature: Editing the draft
     Then the caret moves up one line
     And the draft still reads that prompt
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A modifier held with Up or Down recalls nothing
     Given the user sent "first" in this thread
     And the composer is empty
@@ -368,20 +368,20 @@ Feature: Editing the draft
       | Ctrl+Up  |
       | Cmd+Up   |
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: Each thread recalls only its own prompts
     Given the user sent "about tax" in thread A and "about search" in thread B
     And the user recalled "about tax" in thread A
     When the user opens thread B and recalls the previous prompt
     Then the draft reads "about search"
 
-  @backlog @desktop
+  @desktop
   Scenario: The same prompt sent twice in a row is recalled once
     Given the user sent "first", then "again" and then "again" in this thread
     When the user recalls the previous prompt twice
     Then the draft reads "first"
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A recalled prompt is the words the user typed and nothing else
     Given the user sent "fix the build" with <extra>
     When the user recalls the previous prompt
@@ -394,7 +394,7 @@ Feature: Editing the draft
       | a terminal excerpt added at the end  |
       | a preview annotation                 |
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: Messages the user did not type are not recalled
     Given the user sent "first" and then <message>
     When the user recalls the previous prompt
@@ -404,8 +404,9 @@ Feature: Editing the draft
       | message                                   |
       | an image with no text                     |
       | the request to implement a proposed plan  |
+      | a scheduled task's message an older MC marked by its id |
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: Enter does not send while it is doing something else
     Given the draft reads "konnichiwa"
     When the user presses Enter <while>
@@ -415,10 +416,14 @@ Feature: Editing the draft
       | while                                              |
       | to accept a word from their input method           |
       | and holds it so the key repeats                    |
+
+    @backlog
+    Examples: Rich text's task checkboxes
+      | while                                              |
       | with the keyboard focus on a task's checkbox       |
 
   # Upstream #21763: a narrow or zoomed window disabled the composer's send keys.
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: Enter sends in a narrow window
     Given the window is narrowed to the width of a phone
     And the draft reads "fix the tax line"
@@ -439,7 +444,7 @@ Feature: Editing the draft
       | the on-screen keyboard   | a new line starts and nothing is sent    |
       | an attached keyboard     | "fix the tax line" is sent               |
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: Enter in a list starts the next item
     Given the draft's last line reads "<line>" with the caret at its end
     When the user adds a new line
@@ -454,20 +459,20 @@ Feature: Editing the draft
       | 3) milk          | 4)     |
       | - [x] milk       | - [ ]  |
 
-  @backlog @desktop
+  @desktop
   Scenario: A nested list item keeps its indentation on the next line
     Given the draft's last line is a bullet indented by two spaces
     When the user adds a new line
     Then the new line is a bullet indented by two spaces
 
-  @backlog @desktop
+  @desktop
   Scenario: Enter on an empty list item leaves the list
     Given the draft's last line is a bullet with nothing after it
     When the user adds a new line
     Then that line is no longer a bullet
     And no new bullet is started
 
-  @backlog @desktop
+  @desktop
   Scenario: Enter in the middle of a list item splits it in two
     Given the draft reads "- milk and eggs" with the caret before "and"
     When the user adds a new line
@@ -481,13 +486,20 @@ Feature: Editing the draft
     Then the draft numbers its items 1, 2, 3 and 4
     And the caret is in the new item "2."
 
-  @backlog @desktop
+  @desktop
   Scenario: A reference in a list item is never split
     Given a list item holds a file reference
-    When the user adds a new line with the caret beside the reference
+    When the user adds a new line with the caret inside the reference label
     Then the file reference is whole on one of the two lines
+    And the draft reads "- read [cart.ts](src/cart.ts)" and then "- first" on the next line
 
-  @backlog @desktop
+  @desktop
+  Scenario: A new line in a list item drops the spaces after the caret
+    Given the draft reads "- milk and eggs" with the caret before " and eggs"
+    When the user adds a new line
+    Then the draft reads "- milk" and then "- and eggs" on the next line
+
+  @desktop
   Scenario: Tab indents the list item the caret is in
     Given the draft's last line reads "- milk"
     And no suggestion list is open
@@ -749,11 +761,11 @@ Feature: Editing the draft
     When the user ticks the task
     Then the message is sent as "- [x] milk"
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: Typing an opening mark over a selection wraps it
     Given the draft reads "hello world" with "world" selected
     When the user types <mark>
-    Then the draft reads "hello <wrapped>"
+    Then the draft reads hello <wrapped>
     And "world" is still selected
 
     Examples:
@@ -770,13 +782,13 @@ Feature: Editing the draft
 
   # Upstream #20350: text the input method is still composing is not a selection, so a
   # Compose or dead-key sequence leaves only the composed letter.
-  @backlog @desktop
+  @desktop
   Scenario: Composing an accented letter adds no quotes
     Given the draft reads "sch"
     When the user types Compose, then ", then o
     Then the draft reads "schö"
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: Typing an opening mark over a reference or styled text replaces it
     Given the draft's selection covers <selection>
     When the user types (
@@ -833,7 +845,7 @@ Feature: Editing the draft
     Then the draft reads "half-finished idea"
     And the thread still runs on Claude
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: Stashed prompts are still there after a restart
     Given the user stashed "half-finished idea" with an image
     When the app is restarted
@@ -880,7 +892,7 @@ Feature: Editing the draft
     Then the user sees an "info" toast "Still bringing a pasted attachment into this message." saying "Stash again once its chip resolves."
     And the draft is unchanged
 
-  @backlog @desktop
+  @desktop
   Scenario: Stashing an empty draft opens the stash when several prompts are stashed
     Given the user stashed "first idea" and "second idea"
     And the composer is empty
@@ -918,7 +930,7 @@ Feature: Editing the draft
     And choosing that count opens the stash
     But no count is shown when nothing is stashed or while an approval is waiting
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A stashed prompt is listed by what it holds
     Given the user stashed <prompt>
     When the user opens the stash
@@ -988,7 +1000,7 @@ Feature: Editing the draft
     Then the user sees a "warning" toast "Stashed images did not attach"
     And the user is told to attach the 2 images again if they are still needed
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: A prompt that cannot be kept in the stash stays in the composer
     Given the draft reads "half-finished idea"
     When the user stashes the prompt and the stash cannot be written
@@ -1053,7 +1065,7 @@ Feature: Editing the draft
       | a question with only fixed choices is waiting      |
       | the user's answer to a question is being submitted |
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: Turning rich text on or off keeps the draft
     Given the draft reads "fix **this** and - [ ] that" with a file reference
     When the user turns rich text editing on and then off again
@@ -1093,7 +1105,7 @@ Feature: Editing the draft
     And loading and empty results are announced
     And closing the menu leaves nothing dangling for the reader
 
-  @backlog @shared @priority-high
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: One undo undoes one action
     Given the user typed, pasted, then typed more
     When the user undoes once
@@ -1123,14 +1135,15 @@ Feature: Editing the draft
     And the arrow keys step between typing plain and typing bold before moving on
 
   # Upstream #19186: typed underscores stay literal; only asterisks italicise.
-  @backlog @desktop
+  @desktop
   Scenario: Typed underscores stay as they are
+    Given rich text editing is on
     When the user types "rename _old_name_ to new_name"
     Then the draft reads "rename _old_name_ to new_name"
     And nothing in it is italic
 
   # Upstream #18786: a bare marker without a space was taken for an empty list item and deleted.
-  @backlog @shared @priority-low
+  @shared @backlog-mobile @backlog-tui @priority-low
   Scenario: Enter after a number with no space keeps it
     Given the draft's last line is "2."
     When the user starts a new line

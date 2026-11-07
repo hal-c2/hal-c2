@@ -58,7 +58,8 @@ void ComposerHighlighter::highlightBlock(const QString& text) {
       {QRegularExpression(QStringLiteral("`[^`\\n]+`")), 1, nullptr},
       {QRegularExpression(QStringLiteral("(\\*\\*|__)(?=\\S)(.+?)(?<=\\S)\\1")), 2, [](QTextCharFormat& format) { format.setFontWeight(QFont::Bold); }},
       {QRegularExpression(QStringLiteral("~~(?=\\S)(.+?)(?<=\\S)~~")), 2, [](QTextCharFormat& format) { format.setFontStrikeOut(true); }},
-      {QRegularExpression(QStringLiteral("(?<![\\*\\w])\\*(?=[^\\s\\*])([^\\*\\n]+?)(?<=[^\\s\\*])\\*(?![\\*\\w])|(?<![_\\w])_(?=[^\\s_])([^_\\n]+?)(?<=[^\\s_])_(?![_\\w])")), 1,
+      // Only asterisks italicise: typed underscores (snake_case, _private_) stay as they are.
+      {QRegularExpression(QStringLiteral("(?<![\\*\\w])\\*(?=[^\\s\\*])([^\\*\\n]+?)(?<=[^\\s\\*])\\*(?![\\*\\w])")), 1,
        [](QTextCharFormat& format) { format.setFontItalic(true); }},
   };
   for (const Rule& rule : rules) {

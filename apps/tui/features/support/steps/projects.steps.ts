@@ -268,6 +268,17 @@ step("{string} is not offered", async (ctx: World, name: string) => {
   ).not.toContain(name);
   expect(frame).not.toContain(name);
 });
+// While adding a project: a path the folder browser leaves out of its rows.
+step("{string} is not listed", async (ctx: World, name: string) => {
+  const frame = await settle(ctx);
+  expect(flow(ctx).open).toBe(true);
+  expect(
+    flow(ctx)
+      .rows.map((row) => row.title)
+      .join("\n"),
+  ).not.toContain(name);
+  expect(frame).not.toContain(name);
+});
 
 // --- Cloning -----------------------------------------------------------------------
 

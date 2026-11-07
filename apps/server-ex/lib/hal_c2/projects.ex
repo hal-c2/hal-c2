@@ -344,28 +344,66 @@ defmodule HalC2.Projects do
   """
   @spec browse(map) :: {:ok, map} | {:error, String.t()}
   def browse(%{"partialPath" => partial} = input) do
-    resolved = partial |> expand() |> Path.expand(input["cwd"] || home())
-    whole_dir? = String.ends_with?(partial, "/") or partial == "~"
-    parent = if whole_dir?, do: resolved, else: Path.dirname(resolved)
-    prefix = if whole_dir?, do: "", else: Path.basename(resolved)
-    show_hidden = whole_dir? or String.starts_with?(prefix, ".")
+    with {:ok, resolved} <- browse_target(partial, input["cwd"]) do
+      whole_dir? = String.ends_with?(partial, "/") or partial in ["~", "./", "../", ".", ".."]
+      parent = if whole_dir?, do: resolved, else: Path.dirname(resolved)
+      prefix = if whole_dir?, do: "", else: Path.basename(resolved)
+      show_hidden = whole_dir? or String.starts_with?(prefix, ".")
 
-    case File.ls(parent) do
-      {:ok, names} ->
-        entries =
-          for name <- Enum.sort(names),
-              String.starts_with?(String.downcase(name), String.downcase(prefix)),
-              show_hidden or not String.starts_with?(name, "."),
-              File.dir?(Path.join(parent, name)),
-              do: %{"name" => name, "fullPath" => Path.join(parent, name)}
+      case File.ls(parent) do
+        {:ok, names} ->
+          entries =
+            for name <- Enum.sort(names),
+                String.starts_with?(String.downcase(name), String.downcase(prefix)),
+                show_hidden or not String.starts_with?(name, "."),
+                File.dir?(Path.join(parent, name)),
+                do: %{"name" => name, "fullPath" => Path.join(parent, name)}
 
-        {:ok, %{"parentPath" => parent, "entries" => entries}}
+          {:ok, %{"parentPath" => parent, "entries" => entries}}
 
-      {:error, reason} when reason in [:eacces, :eperm] ->
-        {:ok, %{"parentPath" => parent, "entries" => []}}
+        {:error, reason} when reason in [:eacces, :eperm] ->
+          {:ok, %{"parentPath" => parent, "entries" => []}}
 
-      {:error, reason} ->
-        {:error, "cannot read #{parent}: #{:file.format_error(reason)}"}
+        {:error, reason} ->
+          {:error, "The folder '#{parent}' could not be read: #{:file.format_error(reason)}"}
+      end
+    end
+  end
+
+  # Where a typed path points. `~` is the home folder; `./` and `../` paths start
+  # from the current project's folder, so they need one; a Windows drive or UNC
+  # path is refused on a host that is not Windows.
+  defp browse_target(partial, cwd) do
+    os = browse_os()
+
+    cond do
+      os != :windows and Regex.match?(~r{^([a-zA-Z]:[\\/]|\\\\)}, partial) ->
+        {:error, "Windows-style workspace path '#{partial}' is not supported on '#{os_name()}'."}
+
+      relative?(partial) and cwd in [nil, ""] ->
+        {:error, "A current project is required to browse relative workspace path '#{partial}'."}
+
+      relative?(partial) ->
+        {:ok, Path.expand(partial, cwd)}
+
+      true ->
+        {:ok, partial |> expand() |> Path.expand(cwd || home())}
+    end
+  end
+
+  defp relative?(path), do: path in [".", ".."] or String.starts_with?(path, ["./", "../"])
+
+  defp browse_os do
+    case Application.get_env(:hal_c2, :os_type, :os.type()) do
+      {:win32, _} -> :windows
+      _ -> :posix
+    end
+  end
+
+  defp os_name do
+    case Application.get_env(:hal_c2, :os_type, :os.type()) do
+      {_, name} -> to_string(name)
+      _ -> "unix"
     end
   end
 

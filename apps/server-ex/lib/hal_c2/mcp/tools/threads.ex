@@ -9,6 +9,7 @@ defmodule HalC2.Mcp.Tools.Threads do
   # Threads one create_threads call may hold.
   @max_batch_threads 20
   @capability_models 25
+  @runtime_modes ~w(approval-required auto-accept-edits auto full-access)
 
   import HalC2.Mcp.Tools,
     only: [
@@ -364,6 +365,8 @@ defmodule HalC2.Mcp.Tools.Threads do
          "parentThreadId" => me["id"],
          "inheritedProviderInstanceId" => get_in(parent, ["modelSelection", "instanceId"]),
          "inheritedModel" => get_in(parent, ["modelSelection", "model"]),
+         "inheritedOptions" =>
+           HalC2.Orchestration.Delegation.model_options(providers, parent["modelSelection"]),
          "runtimeMode" => parent["runtimeMode"],
          "interactionMode" => parent["interactionMode"],
          "maxWaitMs" => HalC2.Mcp.max_wait_ms(caller.instance),
@@ -579,6 +582,12 @@ defmodule HalC2.Mcp.Tools.Threads do
 
           %{"id" => model["slug"], "label" => model["name"]}
           |> then(&if(options? and options, do: Map.put(&1, "options", options), else: &1))
+        end,
+      # As `Delegation` checks a requested mode: an empty list offers every mode.
+      "runtimeModes" =>
+        case provider["supportedRuntimeModes"] do
+          [_ | _] = modes -> modes
+          _ -> @runtime_modes
         end,
       "canRunChildTask" => constraints == [],
       "canRunCrossProviderChildTask" => constraints == [],
