@@ -60,6 +60,8 @@ defmodule HalC2.Upgrade.InstallFailureTest do
 
     Mc.ensure(HalC2.Settings)
     Mc.ensure(HalC2.Upgrade)
+    # Its first boot removes old versions off the server; the scenario starts after.
+    :ok = HalC2.Upgrade.await_pruned()
     %{dir: dir, root: root, from: from, target: from <> "-1", shaped: pid}
   end
 
@@ -181,8 +183,8 @@ defmodule HalC2.Upgrade.InstallFailureTest do
     :ok = stop_supervised(HalC2.Upgrade)
     :persistent_term.erase({Upgrade, :outcome})
     Mc.ensure(HalC2.Upgrade)
-    # Past `handle_continue/2`.
-    _ = :sys.get_state(HalC2.Upgrade)
+    # Past `handle_continue/2` and the removal of old versions it starts.
+    :ok = HalC2.Upgrade.await_pruned()
   end
 
   defp start_version(root) do

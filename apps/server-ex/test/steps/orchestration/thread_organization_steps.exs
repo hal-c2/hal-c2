@@ -8,7 +8,12 @@ defmodule HalC2.Steps.Orchestration.ThreadOrganization do
   defp organize(context, thread, type, fields \\ %{}) do
     context
     |> Map.put(:thread, thread)
-    |> World.command(Map.merge(%{"type" => type, "threadId" => thread}, fields))
+    |> World.command(
+      Map.merge(
+        %{"type" => type, "threadId" => (context[:threads] || %{})[thread] || thread},
+        fields
+      )
+    )
   end
 
   defp ok!(context) do

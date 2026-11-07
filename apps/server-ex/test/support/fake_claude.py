@@ -186,7 +186,19 @@ for line in sys.stdin:
         send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": reply}})
         # FAKE_CLAUDE_HOLD_INTERRUPT: an interrupt the CLI never answers, so the
         # host has to settle the turn itself.
-        if sub == "interrupt" and not os.environ.get("FAKE_CLAUDE_HOLD_INTERRUPT"):
+        # FAKE_CLAUDE_STOP_LIMIT_FILE names a file holding an epoch: once it exists, the limit
+        # resetting then lands as an interrupt ends the run. A terminal reason after the epoch
+        # ("EPOCH aborted_streaming") is the one the interrupt's result carries.
+        limit_file = os.environ.get("FAKE_CLAUDE_STOP_LIMIT_FILE")
+        stop_spec = open(limit_file).read().split() if limit_file and os.path.exists(limit_file) else []
+        stop_limit = int(stop_spec[0]) if stop_spec else None
+        if sub == "interrupt" and stop_limit and not os.environ.get("FAKE_CLAUDE_HOLD_INTERRUPT"):
+            send({"type": "rate_limit_event", "session_id": session, "rate_limit_info": {"status": "rejected", "rateLimitType": "five_hour", "resetsAt": stop_limit}})
+            stopped = {"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": session}
+            if len(stop_spec) > 1:
+                stopped["terminal_reason"] = stop_spec[1]
+            send(stopped)
+        elif sub == "interrupt" and not os.environ.get("FAKE_CLAUDE_HOLD_INTERRUPT"):
             send({"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": session})
         continue
     if msg.get("type") != "user":
@@ -236,6 +248,11 @@ for line in sys.stdin:
         orphaned = None
     send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku", "permissionMode": mode})
     record("user", text)
+    # FAKE_CLAUDE_REJECT_RESUME_FILE: once that file exists the provider refuses the server's
+    # automatic resume with a 429 naming no reset.
+    if os.path.exists(os.environ.get("FAKE_CLAUDE_REJECT_RESUME_FILE", "")) and text == "Continue where you left off.":
+        send({"type": "result", "subtype": "success", "is_error": True, "api_error_status": 429, "result": "Rate limited", "session_id": session})
+        continue
     # "/compact": Claude summarises the conversation (compact_boundary) and answers with
     # a result that echoes the message's uuid, as Claude Code 2.1.285 does.
     if text == "/compact":

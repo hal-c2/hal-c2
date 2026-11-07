@@ -514,6 +514,11 @@ for line in sys.stdin:
             send({"id": "input-1", "method": "item/tool/requestUserInput", "params": {**ctx, "itemId": "ask-1", "questions": [
                 {"id": "color", "header": "Color", "question": text.split("ask: ", 1)[1] if "ask: " in text else "Which color?", "options": [{"label": "Red", "description": "Warm"}]}]}})
             continue
+        # "capped" stops the turn on a rate limit Codex names no reset for.
+        if "capped" in text:
+            send({"method": "error", "params": {**ctx, "willRetry": False, "error": {"message": "Rate limited.", "codexErrorInfo": "rateLimitExceeded"}}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "failed", "error": {"message": "Rate limited."}}}})
+            continue
         if "rate limit" in text:
             send({"method": "account/rateLimits/updated", "params": {"rateLimits": {"limitId": "codex", "primary": {"usedPercent": 77, "windowDurationMins": 300}}}})
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
