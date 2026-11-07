@@ -133,6 +133,12 @@ for entry in "${commits[@]}"; do
     continue
   fi
 
+  # A (#N) GitHub cannot find (a deleted pull request, or one from another repository)
+  # is ledgered like a direct commit, by its commit URL.
+  if [[ -n $pr ]] && ! gh api "repos/$repo/pulls/$pr" --silent 2>/dev/null; then
+    gh api "repos/$repo" --silent || exit 1
+    subject="${subject% (#$pr)} (#$pr not found upstream)" pr=""
+  fi
   echo
   if [[ -z $pr ]]; then
     echo "## ${sha:0:9} $subject (no pull request)"
