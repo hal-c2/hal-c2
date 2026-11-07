@@ -461,6 +461,23 @@ defmodule HalC2.Orchestration.NativeSubagent do
     sub
   end
 
+  @doc """
+  Ends the still-running work in the child threads of `thread_id`'s provider
+  subagents as `status`, from the thread's record alone: for an end no runtime
+  reports (the thread was deleted), where no handle survives to `finish/3`.
+  """
+  def settle_children(thread_id, status) do
+    at = Entities.now()
+
+    for subagent <- StreamState.list(stream(thread_id), "subagent"),
+        subagent["origin"] == "provider_native",
+        is_binary(subagent["childThreadId"]) do
+      settle_child(%{child: subagent["childThreadId"]}, status, at)
+    end
+
+    :ok
+  end
+
   # Work still open in the child thread (a tool call, the progress) ends with it.
   defp settle_child(sub, status, at) do
     HalC2.Streams.transact(sub.child, :thread, fn state ->

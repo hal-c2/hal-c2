@@ -195,7 +195,7 @@ Feature: Runs and turns
     Then the whole reply is written at once, whatever was held back
 
   # Upstream #19023: a held-back reply written at turn end stays where it was said.
-  @backlog @mc
+  @mc
   Scenario: A held-back reply cut off by a steer keeps its place
     Given the agent's reply is partly held back
     And the user steers the turn before the reply finishes
@@ -585,10 +585,10 @@ Feature: Runs and turns
     When the user interrupts that run
     Then the command fails saying the run is not interruptible
 
-  @backlog @mc
+  @mc
   Scenario Outline: A turn that does not complete ends the provider subagents it left open
     Given "t1" has a running turn with a provider subagent still at work
-    When the turn ends as <status>
+    When the turn is ended as <status>
     Then the subagent, its item on the turn and the work in its own thread end as <status>
     And nothing of the subagent is left streaming
 
@@ -687,7 +687,7 @@ Feature: Runs and turns
       | only idle threads            | the process is released and the idle threads reopen it on their next turn        |
 
   # Upstream #27252: killing processes stays a user decision.
-  @backlog @mc
+  @mc
   Scenario: Agents cannot force stop a thread
     When an agent looks for a way to force stop a thread through HAL-C2's tools
     Then none is offered

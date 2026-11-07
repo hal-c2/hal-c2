@@ -1656,6 +1656,77 @@ defmodule HalC2.Codex.ThreadRuntime do
             entry
           end
 
+        # The subagent's own work, in its child thread, as on the turn itself.
+        {"item/started", %{"item" => %{"type" => "commandExecution", "id" => native} = item}} ->
+          %{
+            entry
+            | sub:
+                HalC2.Orchestration.NativeSubagent.item(
+                  entry.sub,
+                  native,
+                  "command_execution",
+                  "running",
+                  %{"input" => item["command"] || "", "output" => ""}
+                )
+          }
+
+        {"item/completed", %{"item" => %{"type" => "commandExecution", "id" => native} = item}} ->
+          %{
+            entry
+            | sub:
+                HalC2.Orchestration.NativeSubagent.item(
+                  entry.sub,
+                  native,
+                  "command_execution",
+                  command_status(item),
+                  %{
+                    "input" => item["command"] || "",
+                    "output" => item["aggregatedOutput"] || ""
+                  }
+                )
+          }
+
+        {"item/completed",
+         %{"item" => %{"type" => "fileChange", "id" => native, "changes" => [change | _]}}} ->
+          %{
+            entry
+            | sub:
+                HalC2.Orchestration.NativeSubagent.item(
+                  entry.sub,
+                  native,
+                  "file_change",
+                  "completed",
+                  %{"fileName" => change["path"] || "file", "diffStr" => change["diff"] || ""}
+                )
+          }
+
+        {"item/completed", %{"item" => %{"type" => "webSearch", "id" => native} = item}} ->
+          %{
+            entry
+            | sub:
+                HalC2.Orchestration.NativeSubagent.item(
+                  entry.sub,
+                  native,
+                  "web_search",
+                  "completed",
+                  %{"patterns" => web_patterns(item)}
+                )
+          }
+
+        {"item/completed", %{"item" => %{"type" => type, "id" => native} = item}}
+        when type in ["mcpToolCall", "dynamicToolCall"] ->
+          %{
+            entry
+            | sub:
+                HalC2.Orchestration.NativeSubagent.item(
+                  entry.sub,
+                  native,
+                  "dynamic_tool",
+                  if(item["status"] == "failed", do: "failed", else: "completed"),
+                  tool_fields(item)
+                )
+          }
+
         _ ->
           entry
       end

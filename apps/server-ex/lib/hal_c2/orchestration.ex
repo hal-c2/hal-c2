@@ -691,6 +691,7 @@ defmodule HalC2.Orchestration do
       if type == "thread.delete" do
         HalC2.WorktreeSetup.superseded(thread_id)
         stop_runtimes(thread_id)
+        HalC2.Orchestration.NativeSubagent.settle_children(thread_id, "cancelled")
         # Work the thread still had waiting dies with it; cleaning up its
         # terminals and attached files is recorded work that outlives a
         # restart (`HalC2.Orchestration.Effects`).
@@ -3998,7 +3999,33 @@ defmodule HalC2.Orchestration do
               &Map.merge(&1, %{"status" => "cancelled", "resolvedAt" => at})
             )
 
-    runs ++ attempts ++ requests
+    # The active runs' work ends with them: their running items, and the provider
+    # subagents they left open (their child threads' work is settled after this,
+    # `NativeSubagent.settle_children/2`).
+    items =
+      for item <- StreamState.list(state, "turn-item"),
+          item["runId"] in active and item["status"] == "running",
+          do:
+            upsert(state, "turn-item", item["id"], fn item ->
+              item
+              |> done.()
+              |> then(
+                &if(Map.has_key?(&1, "streaming"), do: Map.put(&1, "streaming", false), else: &1)
+              )
+            end)
+
+    subagents =
+      for subagent <- StreamState.list(state, "subagent"),
+          subagent["origin"] == "provider_native" and
+            subagent["status"] not in ~w(completed failed interrupted cancelled),
+          change <- [
+            upsert(state, "subagent", subagent["id"], done),
+            upsert(state, "node", subagent["id"], done),
+            upsert(state, "turn-item", "turn-item:subagent:#{subagent["id"]}", done)
+          ],
+          do: change
+
+    runs ++ attempts ++ requests ++ items ++ subagents
   end
 
   # Settling also dismisses the questions the agent asked in the background, unanswered

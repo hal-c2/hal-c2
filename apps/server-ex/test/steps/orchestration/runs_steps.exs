@@ -452,6 +452,79 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
+  # --- a held-back reply cut off by a steer ------------------------------------------
+
+  step "the agent's reply is partly held back", context do
+    context = World.running_turn(context, context.thread)
+    context = notify(context, "item/started", item("agentMessage", "msg-t"))
+
+    context
+    |> stream_witnessed("msg-t", "item/agentMessage/delta", "One.\n\nTw")
+    |> tap(fn context -> assert text(context, "msg-t") == "One.\n\n" end)
+  end
+
+  step "the user steers the turn before the reply finishes", context do
+    context =
+      World.dispatch_message(context, context.thread, "Focus on the tests", %{
+        "deliveryIntent" => "steer"
+      })
+
+    assert {:ok, _} = context.reply
+
+    World.await_state(context, context.thread, fn state ->
+      Enum.any?(
+        HalC2.StreamState.list(state, "turn-item"),
+        &(&1["type"] == "user_message" and &1["text"] == "Focus on the tests")
+      )
+    end)
+
+    # What followed the steer: the provider's answer to it, under the same turn.
+    World.await_state(context, context.thread, fn state ->
+      Enum.any?(
+        HalC2.StreamState.list(state, "turn-item"),
+        &(&1["text"] == "steered: Focus on the tests")
+      )
+    end)
+
+    context
+  end
+
+  step "the turn ends and the held-back reply is written", context do
+    await_status(context, context.running, "completed")
+    context
+  end
+
+  step "the reply appears before the steer and what followed it, where the agent said it",
+       context do
+    items =
+      context
+      |> World.entities(context.thread, "turn-item")
+      |> Enum.sort_by(& &1["ordinal"])
+
+    held = Enum.find(items, &(&1["id"] == "turn-item:codex:msg-t"))
+
+    steer =
+      Enum.find(items, &(&1["type"] == "user_message" and &1["text"] == "Focus on the tests"))
+
+    after_steer = Enum.find(items, &(&1["text"] == "steered: Focus on the tests"))
+
+    assert held["text"] == "One.\n\nTw"
+    assert held["ordinal"] < steer["ordinal"]
+    assert steer["ordinal"] < after_steer["ordinal"]
+    context
+  end
+
+  # --- force stop is the user's alone -------------------------------------------------
+
+  step "an agent looks for a way to force stop a thread through HAL-C2's tools", context do
+    Map.put(context, :tool_names, Enum.map(HalC2.Mcp.Tools.list(), & &1["name"]))
+  end
+
+  step "none is offered", context do
+    refute Enum.any?(context.tool_names, &String.contains?(&1, "force"))
+    context
+  end
+
   step "a command the agent runs prints output", context do
     context
     |> notify("item/started", item("commandExecution", "cmd-o", %{"command" => "make"}))
@@ -597,7 +670,7 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
-  step ~r/^the turn ends as (?<status>interrupted|failed|cancelled)$/,
+  step ~r/^the turn is ended as (?<status>interrupted|failed|cancelled)$/,
        %{args: [status]} = context do
     context =
       case status do
@@ -636,10 +709,17 @@ defmodule HalC2.Steps.Orchestration.Runs do
           [%{"status" => ^status}],
           HalC2.StreamState.list(state, "subagent")
         ) and
-          state.entities["turn-item"]["turn-item:codex:collab-1"]["status"] == status
+          Enum.any?(
+            HalC2.StreamState.list(state, "turn-item"),
+            &(&1["type"] == "subagent" and &1["status"] == status)
+          )
       end)
 
-    assert state.entities["turn-item"]["turn-item:codex:collab-1"]["status"] == status
+    assert Enum.any?(
+             HalC2.StreamState.list(state, "turn-item"),
+             &(&1["type"] == "subagent" and &1["status"] == status)
+           )
+
     await_child_item(context, status)
     context
   end
@@ -648,7 +728,10 @@ defmodule HalC2.Steps.Orchestration.Runs do
     child = HalC2.Streams.Server.state(HalC2.Streams.ensure(context.subagent_child))
 
     items =
-      [World.state(context, context.thread).entities["turn-item"]["turn-item:codex:collab-1"]] ++
+      Enum.filter(
+        World.entities(context, context.thread, "turn-item"),
+        &(&1["type"] == "subagent")
+      ) ++
         HalC2.StreamState.list(child, "turn-item")
 
     for item <- items do
