@@ -1560,6 +1560,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** True when the latest run was an automatic wake (the agent resuming on its own); omitted otherwise. */
+  latestRunAutomatic: Schema.optional(Schema.Boolean),
   activeRunId: Schema.NullOr(RunId),
   /** Start of the activity-owning run; request time while it is preparing. */
   activityRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),

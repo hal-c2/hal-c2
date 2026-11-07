@@ -467,6 +467,7 @@ Feature: Updating the server, the desktop app and providers
       Then the user is shown each machine the switch will move and each it skips, with the reason
       And confirming moves "server" and "studio" to the newest Nightly, and this app last
 
+    # Upstream #26288: a track switch moves each machine only to a release that can read its database, and says which it skipped.
     @backlog @desktop @mc @priority-high
     Scenario Outline: A track switch never moves a machine onto a release that cannot read its data
       Given "server"'s database holds changes up to <held>
@@ -480,6 +481,7 @@ Feature: Updating the server, the desktop app and providers
         | 72         | 69         | skipped, because its data is newer than Stable reads |
         | 72         | not stated | skipped, because the switch cannot confirm it is safe |
 
+    # Upstream #26288: a track switch is the only way a machine moves between Stable and Nightly or to an older release.
     @backlog @desktop @mc @priority-high
     Scenario: Outside a track switch nothing moves to the other track or to an older release
       Given the update track is Nightly
@@ -487,6 +489,7 @@ Feature: Updating the server, the desktop app and providers
       When the user checks for updates
       Then no Stable release and no older Nightly release is offered
 
+    # Upstream #26288: a track switch that stopped partway keeps the new track and can be reviewed again.
     @backlog @desktop @mc
     Scenario: A track switch that did not finish keeps the new track and can be reviewed again
       Given a switch to Stable stopped after moving "server" but not "studio"
@@ -494,6 +497,7 @@ Feature: Updating the server, the desktop app and providers
       When the user chooses "Review"
       Then the machines are checked again and "studio" is offered the switch
 
+    # Upstream #26288: a machine on the other track is pointed to the track switch instead of an update button.
     @backlog @desktop @priority-low
     Scenario: A machine on the other track points to the track switch instead of an update button
       Given "server" is on the Stable track and this app is on Nightly

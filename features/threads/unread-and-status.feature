@@ -384,10 +384,18 @@ Feature: Unread and status in the thread list
     And the preview says "2 terminal processes running"
 
   # Upstream #13673: zsh prompt helpers made idle shells look busy.
-  @mc @desktop @tui @backlog @priority-high
+  @mc @desktop @tui @backlog-desktop @backlog-tui @priority-high
   Scenario: An idle shell does not make its thread look busy
     Given "Build search" has one terminal waiting at an idle prompt
     Then "Build search" is not shown as busy
+
+  # Review of #1206: telling prompt helpers apart by the shell's name hid real work, such as
+  # `bash ./deploy.sh` run in bash; a helper stays in the shell's process group, a command
+  # runs in a group of its own.
+  @mc @priority-high
+  Scenario: A script the shell runs through itself makes its thread look busy
+    Given "Build search" has one terminal running a script through its own shell
+    Then "Build search" is shown as busy
 
   @backlog @desktop @priority-low
   Scenario: The preview lists the thread's pull requests
