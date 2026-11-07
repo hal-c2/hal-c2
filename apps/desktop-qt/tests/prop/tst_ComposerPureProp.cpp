@@ -185,6 +185,20 @@ private slots:
       }
     }));
   }
+  void underscoresNeverItalicise() {
+    QVERIFY(rc::check("with rich text on, no run of letters, spaces and underscores is drawn italic", [] {
+      const std::string typed = *rc::gen::container<std::string>(rc::gen::elementOf(std::vector<char>{'_', '_', 'a', 'b', ' ', '\n'}));
+      QTextDocument document;
+      document.setPlainText(QString::fromStdString(typed));
+      ComposerHighlighter highlighter;
+      highlighter.setRich(true);
+      highlighter.setDocument(&document);
+      highlighter.rehighlight();
+      for (QTextBlock block = document.begin(); block.isValid(); block = block.next()) {
+        for (const QTextLayout::FormatRange& range : block.layout()->formats()) RC_ASSERT(!range.format.fontItalic());
+      }
+    }));
+  }
   void usageLimitsCountEachAccountOnce() {
     QVERIFY(rc::check("/usage-limits lists each account of the driver once, and its summary names the one or counts them", [] {
       const std::vector<QString> emails{QString(), QStringLiteral("sam@example.com"), QStringLiteral("ada@example.com")};

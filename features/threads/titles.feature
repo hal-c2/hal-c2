@@ -2,6 +2,8 @@
 #   https://github.com/pingdotgg/t3code/pull/23171
 #   https://github.com/pingdotgg/t3code/pull/19822
 #   https://github.com/pingdotgg/t3code/pull/26835
+#   https://github.com/pingdotgg/t3code/pull/27483
+#   https://github.com/pingdotgg/t3code/pull/29606
 #   docs/user/thread-sidebar.md (Rename, Regenerate title, agent-managed metadata)
 #   apps/web/src/hooks/useRenameThread.ts
 #   apps/mobile/src/features/threads/thread-title-rename.ts (empty refused, unchanged title sends nothing)
@@ -116,6 +118,13 @@ Feature: Thread titles
     When the user sends the first message of a new thread
     Then the thread keeps its previous title
 
+  # Upstream #27483: a generated title longer than 120 characters was cut through an emoji.
+  @backlog @mc @priority-low
+  Scenario: A long generated title is cut before an emoji, not through it
+    Given the title generator answers a title longer than 120 characters with an emoji where it is cut
+    When the user sends the first message of a new thread
+    Then the thread's title is cut before the emoji and ends in "..."
+
   @mc
   Scenario: Regenerating a title from the conversation
     Given "Fix login" has a conversation about rate limiting
@@ -135,6 +144,15 @@ Feature: Thread titles
     When the user asks for a new title
     Then the thread keeps its title
     And the thread is no longer marked as regenerating
+
+  # Upstream #29606: the title writer was started in the removed worktree and failed as if
+  # Codex were not installed, so the title never changed.
+  @backlog @mc
+  Scenario: Regenerating the title of a thread whose worktree was cleaned up
+    Given "Fix login" has a conversation about rate limiting
+    And its worktree was removed by storage cleanup
+    When the user asks for a new title
+    Then the thread gets a title describing rate limiting
 
   @desktop @mobile @backlog-mobile
   Scenario: The title cannot be regenerated twice at once

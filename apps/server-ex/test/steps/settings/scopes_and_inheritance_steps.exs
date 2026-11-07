@@ -162,6 +162,221 @@ defmodule HalC2.Steps.Settings.ScopesAndInheritance do
     context
   end
 
+  # --- the settings file --------------------------------------------------------------
+
+  step "the settings file holds a project override written by a newer MC", context do
+    World.update_settings(context, %{})
+    id = World.project(context, "hal-c2").id
+
+    document =
+      Map.put(HalC2.Settings.settings(), "projectSettingsOverrides", %{
+        id => %{"defaultAutoPull" => false, "someFutureSetting" => "kept"}
+      })
+
+    File.write!(settings_path(), JSON.encode!(document))
+    Map.put(context, :project_id, id)
+  end
+
+  step "an older MC loads it and the user edits that project", context do
+    mc = Mc.restart(context.mc)
+    context = %{context | mc: mc, clients: %{}}
+    context = read(context, "default")
+    %{"settings" => settings, "version" => version} = context.read["default"]
+
+    edited =
+      put_in(settings, ["projectSettingsOverrides", context.project_id, "defaultAutoPull"], true)
+
+    {reply, context} =
+      World.call(context, "hal-c2.writeSettings", %{"settings" => edited, "version" => version})
+
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "the newer override is still in the settings file", context do
+    entry = saved()["projectSettingsOverrides"][context.project_id]
+    assert entry == %{"defaultAutoPull" => true, "someFutureSetting" => "kept"}
+    context
+  end
+
+  step "a client is connected to the MC", context do
+    Mc.ensure(HalC2.Settings)
+    World.put_client(context, "subscriber", Mc.config(World.client(context, "subscriber")))
+  end
+
+  step "the user changes a setting in settings.json with a text editor", context do
+    edit_file(%{"timestampFormat" => "24-hour"})
+    check()
+    context
+  end
+
+  step "the client receives the changed settings without the MC restarting", context do
+    {frame, _client} =
+      Mc.await(
+        World.client(context, "subscriber"),
+        &(&1["t"] == "config.settings" and &1["settings"]["timestampFormat"] == "24-hour")
+      )
+
+    assert frame["settings"]["timestampFormat"] == "24-hour"
+    context
+  end
+
+  step "the MC is running with its settings", context do
+    context = World.update_settings(context, %{"timestampFormat" => "24-hour"})
+    :ok = HalC2.Settings.watch(self())
+    context
+  end
+
+  step "the user saves a settings.json that is not valid JSON", context do
+    File.write!(settings_path(), "{not json")
+    check()
+    context
+  end
+
+  step "the MC keeps using the settings it had", context do
+    assert HalC2.Settings.settings()["timestampFormat"] == "24-hour"
+    context
+  end
+
+  step "connected clients are not sent broken settings", context do
+    refute_received {:hal_c2_settings, _, _}
+    context
+  end
+
+  step "the user edited settings.json by hand a moment ago", context do
+    context = World.update_settings(context, %{"timestampFormat" => "24-hour"})
+    context = read(context, "default")
+
+    File.write!(
+      settings_path(),
+      JSON.encode!(Map.put(saved(), "defaultThreadEnvMode", "worktree"))
+    )
+
+    context
+  end
+
+  step "a client saves a different setting before the MC has read the edit", context do
+    write(context, "default", "12-hour")
+  end
+
+  step "settings.json holds both the hand edit and the client's change", context do
+    assert {:ok, _} = context.reply
+    assert %{"defaultThreadEnvMode" => "worktree", "timestampFormat" => "12-hour"} = saved()
+    context
+  end
+
+  step "the user edited one provider's settings in settings.json by hand a moment ago",
+       context do
+    providers = %{"codex" => %{"enabled" => true}, "claudeAgent" => %{"enabled" => true}}
+    context = World.update_settings(context, %{"providers" => providers})
+    context = read(context, "default")
+
+    File.write!(
+      settings_path(),
+      JSON.encode!(put_in(saved(), ["providers", "codex", "binaryPath"], "/opt/codex"))
+    )
+
+    context
+  end
+
+  step "a client saves another provider's setting before the MC has read the edit", context do
+    %{"settings" => settings, "version" => version} = context.read["default"]
+    document = put_in(settings, ["providers", "claudeAgent", "binaryPath"], "/opt/claude")
+
+    {reply, context} =
+      World.call(context, "hal-c2.writeSettings", %{"settings" => document, "version" => version})
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "settings.json holds both providers' changes", context do
+    assert {:ok, _} = context.reply
+
+    assert %{
+             "codex" => %{"enabled" => true, "binaryPath" => "/opt/codex"},
+             "claudeAgent" => %{"enabled" => true, "binaryPath" => "/opt/claude"}
+           } = saved()["providers"]
+
+    context
+  end
+
+  step "settings.json holds a hand edit that is not valid JSON", context do
+    context = World.update_settings(context, %{"timestampFormat" => "24-hour"})
+    context = read(context, "default")
+    File.write!(settings_path(), "{not json")
+    check()
+    context
+  end
+
+  step "a client saves a setting", context do
+    context = if context[:read], do: context, else: read(context, "default")
+    write(context, "default", "12-hour")
+  end
+
+  step "the save is refused", context do
+    assert {:error, _, %{"_tag" => "ServerSettingsError"}} = context.reply
+    context
+  end
+
+  step "settings.json still holds the user's text for them to fix", context do
+    assert File.read!(settings_path()) == "{not json"
+    context
+  end
+
+  # The MC is stopped and started again by "the MC starts".
+  step "settings.json is not valid JSON", context do
+    context = World.update_settings(context, %{"timestampFormat" => "24-hour"})
+    File.write!(settings_path(), "{not json")
+    context
+  end
+
+  step "the MC runs with the default settings", context do
+    assert HalC2.Settings.settings() == %{}
+    context
+  end
+
+  step "settings.json is left on disk unchanged", context do
+    assert File.read!(settings_path()) == "{not json"
+    context
+  end
+
+  step "later settings changes do not overwrite it until it is repaired", context do
+    assert {:error, _} = HalC2.Settings.update(&Map.put(&1, "timestampFormat", "24-hour"))
+    assert File.read!(settings_path()) == "{not json"
+    context
+  end
+
+  step "settings.json is readable only by the user the MC runs as", context do
+    assert File.stat!(settings_path()).mode |> Bitwise.band(0o777) == 0o600
+    context
+  end
+
+  step "it is replaced in one step so a crash never leaves half a file", context do
+    # Written beside itself and renamed over: no temporary file is left behind.
+    refute File.exists?(settings_path() <> ".tmp")
+    assert {:ok, %{}} = JSON.decode(File.read!(settings_path()))
+    context
+  end
+
+  defp settings_path, do: Path.join(HalC2.Paths.config_dir(), "settings.json")
+
+  defp saved do
+    case File.read(settings_path()) do
+      {:ok, text} -> JSON.decode!(text)
+      {:error, :enoent} -> %{}
+    end
+  end
+
+  defp edit_file(changes),
+    do: File.write!(settings_path(), JSON.encode!(Map.merge(saved(), changes)))
+
+  # The file check, run now and waited for.
+  defp check do
+    send(HalC2.Settings, :check)
+    :sys.get_state(HalC2.Settings)
+    :ok
+  end
+
   defp read(context, client) do
     {{:ok, read}, context} = World.call(context, "hal-c2.readSettings", %{}, client)
     Map.update(context, :read, %{client => read}, &Map.put(&1, client, read))

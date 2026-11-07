@@ -302,7 +302,7 @@ Feature: Launching and leaving the terminal client
     Given an MC is running on this machine
     When the user starts the terminal client
     Then the client buys a socket ticket from the MC over HTTP
-    And the socket URL carries only that ticket
+    And the socket URL carries that ticket and the protocol version, and no token
 
   # Client-runtime's authorization requests give up after 10 seconds, and the
   # client waits 2 more before it asks again, so this one takes about 12 seconds.

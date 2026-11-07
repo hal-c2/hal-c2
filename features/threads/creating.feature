@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26495
 #   https://github.com/pingdotgg/t3code/pull/27722
 #   https://github.com/pingdotgg/t3code/pull/23967
 #   https://github.com/pingdotgg/t3code/pull/19724
@@ -56,6 +57,7 @@ Feature: Creating threads
     When the user starts a new thread
     Then a draft thread opens in "docs"
 
+  # Upstream #26495: in the list grouped by project, the header's button asks too.
   @desktop @priority-high
   Scenario: The new thread button asks which project when there are several
     Given the environment also has the project "docs"
@@ -74,6 +76,18 @@ Feature: Creating threads
     When the user presses the new thread button in the thread list with Shift held
     Then a draft thread opens in "shop" without asking
     And the button's hint says Shift starts the thread in the current project
+
+  # Upstream #26495: with the thread list grouped by project, the header's new thread button and
+  # the new-thread shortcut started in the current project instead of asking; the shortcut for a
+  # new thread in the current project, and a single project, still start without asking.
+  @backlog @desktop
+  Scenario: The new-thread shortcut asks which project when there are several
+    Given the environment also has the project "docs"
+    And the thread list is grouped by project
+    When the user presses the new-thread shortcut
+    Then the user is asked which project to start the thread in
+    When the user presses the shortcut for a new thread in the current project
+    Then a draft thread opens in "shop" without asking
 
   @backlog @desktop
   Scenario: The new thread button without a project starts a thread without one

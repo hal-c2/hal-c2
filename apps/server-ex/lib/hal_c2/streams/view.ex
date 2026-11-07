@@ -28,6 +28,7 @@ defmodule HalC2.Streams.View do
   alias HalC2.Web.Wire
 
   @windowed ~w(turn-item message node)
+  @tools ~w(command_execution file_change file_search web_search dynamic_tool)
 
   @type kinds :: %{String.t() => %{String.t() => term}} | nil
   @type window :: %{floor: integer | nil} | nil
@@ -142,7 +143,8 @@ defmodule HalC2.Streams.View do
 
   @doc """
   A commit's events as they go to the view's client, trimmed. `before` is the
-  stream as it was before them, which says what the client held until now.
+  stream as it was before them, which says what the client held until now. An
+  event that only reports a running tool call's progress is marked `progress: true`.
   """
   @spec events(t, StreamState.t(), StreamState.t(), [HalC2.Store.event()]) ::
           [HalC2.Store.event()]
@@ -164,8 +166,11 @@ defmodule HalC2.Streams.View do
             {at, running} = running_at(running, kind, id, was, now, patch)
 
             case Wire.patch(kind, patch, now["type"], at) do
-              nil -> {[], {settled, running}}
-              patch -> {[%{event | patch: patch}], {settled, running}}
+              nil ->
+                {[], {settled, running}}
+
+              patch ->
+                {[mark_progress(%{event | patch: patch}, kind, was, now)], {settled, running}}
             end
 
           holds? ->
@@ -182,6 +187,17 @@ defmodule HalC2.Streams.View do
 
     sent ++ rolled(view, stream, before, events, settled)
   end
+
+  # A running tool call that is still running after the commit only reports
+  # progress: the socket may hold it a moment and send its latest state.
+  defp mark_progress(event, "turn-item", %{"status" => "running"}, %{
+         "status" => "running",
+         "type" => type
+       })
+       when type in @tools,
+       do: Map.put(event, :progress, true)
+
+  defp mark_progress(event, _kind, _was, _now), do: event
 
   # What a subagent item was just before an event of the commit, for the wire to tell
   # how much of its text the client holds. Only that kind of item needs the commit's

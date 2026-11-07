@@ -11,6 +11,8 @@
 #   apps/tui/src/features.backlog.test.ts (provider maintenance and server diagnostics)
 #   apps/tui/src/host/sections/diagnostics.ts (bounded lists, the force kill that asks first)
 #   https://github.com/pingdotgg/t3code/pull/23438
+#   https://github.com/pingdotgg/t3code/pull/28300
+#   https://github.com/pingdotgg/t3code/pull/30528
 
 @priority-low
 Feature: Diagnostics
@@ -87,29 +89,31 @@ Feature: Diagnostics
     Then the failure and the interruption are counted with the MC's own
     And the successful span is not counted as either
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/traces.ex (diagnostics/0)
-  @backlog @mc @priority-high
+  @mc
   Scenario: Trace diagnostics list the latest warnings and errors
     Given the MC recorded warning and error logs inside its spans
     When the user asks for trace diagnostics
     Then the latest warnings and errors are listed with the span they happened in
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/traces.ex (diagnostics/0)
-  @backlog @mc @priority-high
+  @mc
+  Scenario: A warning with no time of its own is listed at its span's end
+    Given the MC recorded a warning with no time inside a span that ended before a later error
+    When the user asks for trace diagnostics
+    Then the warning is listed after the later error, at its span's end
+
+  @mc
   Scenario: Trace diagnostics count spans that take a second or more
     Given the MC recorded spans that took under a second and spans that took a second or more
     When the user asks for trace diagnostics
     Then the slow span count includes only the spans that took a second or more
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/traces.ex (diagnostics/0)
-  @backlog @mc @priority-high
+  @mc
   Scenario: Trace diagnostics skip lines they cannot read and say how many
     Given the trace file has lines that are not trace records
     When the user asks for trace diagnostics
     Then the unreadable lines are left out and their count is reported
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/traces.ex (diagnostics/0)
-  @backlog @mc @priority-high
+  @mc
   Scenario: Trace diagnostics with no trace file yet say so
     Given tracing is on but the MC has not written a trace file
     When the user asks for trace diagnostics
@@ -146,6 +150,13 @@ Feature: Diagnostics
     And their total CPU and total memory
     And the MC's own process id
     And the totals leave out the desktop app and other parent processes
+
+  # Upstream #28300: memory just under 1 GiB read "1024.0 MB" on the diagnostics page.
+  @backlog @desktop @priority-low
+  Scenario: Memory just under a gigabyte reads as a gigabyte
+    Given a provider process uses 1,073,700,000 bytes of memory
+    When the user opens diagnostics
+    Then its memory reads "1.0 GB"
 
   @backlog @desktop
   Scenario Outline: The diagnostics process list labels a process by what it is
@@ -204,6 +215,15 @@ Feature: Diagnostics
     When the user opens diagnostics
     Then the resource history covers the last 15 minutes
     And the user can choose 5 minutes, 15 minutes, 30 minutes or 1 hour
+
+  # Upstream #30528: the history was read once, so on a fresh monitor it stayed empty while the live
+  # counters moved, until the user refreshed it.
+  @backlog @desktop
+  Scenario: Resource history keeps filling in while diagnostics is open
+    Given the MC has just started collecting resource samples
+    When the user opens diagnostics and waits
+    Then new samples appear in the resource history every five seconds without a refresh
+    And the history stops asking the MC once diagnostics is closed
 
   @backlog @desktop
   Scenario: Resource history totals and per-process figures

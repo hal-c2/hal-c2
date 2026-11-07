@@ -20,6 +20,8 @@
 #   apps/desktop-qt/tests/native/features/OnboardingSteps.cpp (the @desktop steps)
 #   apps/server-ex/lib/hal_c2/terminal.ex (the setup terminal as the provider instance)
 #   https://github.com/pingdotgg/t3code/pull/24719
+#   https://github.com/pingdotgg/t3code/pull/27500
+#   https://github.com/pingdotgg/t3code/pull/30743
 
 Feature: Welcome wizard
   A new installation, or a first visit to the hosted app, walks the user through connecting
@@ -508,6 +510,29 @@ Feature: Welcome wizard
       When the wizard lists projects
       Then that worktree is offered as a project of its own
       And a worktree HAL-C2 made for a thread is still not offered
+
+    # Upstream #27500: a numeric core.bare such as 2 or -1, which git reads as true, was not taken for bare.
+    @backlog @mc @priority-low
+    Scenario Outline: A repository is bare when git reads its config as bare
+      Given an agent used a linked worktree of a repository whose config sets "bare = <value>"
+      When the wizard lists projects
+      Then that worktree is <offered>
+
+      Examples:
+        | value | offered                           |
+        | true  | offered as a project of its own   |
+        | 2     | offered as a project of its own   |
+        | -1    | offered as a project of its own   |
+        | 0x1   | offered as a project of its own   |
+        | 0     | not offered                       |
+        | 9999g | not offered                       |
+
+    # Upstream #30743: a config ending in an unfinished quoted value, which git refuses, was read as bare.
+    @backlog @mc @priority-low
+    Scenario: A config whose bare value never closes its quote is not bare
+      Given an agent used a linked worktree of a repository whose config ends with an unclosed quoted "bare" value
+      When the wizard lists projects
+      Then that worktree is not offered
 
     @mc
     Scenario: A scan that hits its limit keeps what it found and warns

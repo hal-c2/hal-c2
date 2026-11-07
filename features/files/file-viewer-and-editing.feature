@@ -93,6 +93,9 @@
 #   https://github.com/pingdotgg/t3code/pull/25496
 #   https://github.com/pingdotgg/t3code/pull/26432
 #   https://github.com/pingdotgg/t3code/pull/23732
+#   https://github.com/pingdotgg/t3code/pull/30601
+#   https://github.com/pingdotgg/t3code/pull/30706
+#   https://github.com/pingdotgg/t3code/pull/29360
 
 Feature: Viewing and editing files
   The user can read any text file in a project, preview media, and make small edits that
@@ -246,6 +249,14 @@ Feature: Viewing and editing files
       Then the files panel shows "/home/sam/study" with "data" expanded and chosen
       And "data" and "raw.csv" stay in the path, dimmed, and lead back down
       And "raw.csv" keeps its tab
+
+    # Upstream #30706: a folder tab closed and reopened came back without the dimmed trail back down,
+    # and at the project's top without its path at all.
+    @backlog @desktop @priority-low
+    Scenario: A reopened folder tab keeps the trail back down
+      Given the user moved from "src/cli" up to "src" in the files panel
+      When the user closes that tab and reopens it
+      Then the files panel shows "src" with "cli" still in the path, dimmed, leading back down
 
     # Upstream #15045: the project crumb goes to the Files explorer
     @shared @backlog
@@ -604,6 +615,19 @@ Feature: Viewing and editing files
         | data/a.csv    | text/plain                | the file is shown as a comma table       |
         | data/a.txt    | text/plain                | the file is not shown as a table         |
 
+    # Upstream #30601: a CSV or TSV labelled with a generic type other than application/octet-stream
+    # opened as raw text.
+    @backlog @desktop @mobile @priority-low
+    Scenario Outline: A CSV or TSV under a generic file type is shown as a table
+      When the user opens "<path>" of type "<type>" rendered
+      Then <outcome>
+
+      Examples:
+        | path       | type                     | outcome                            |
+        | data/a.csv | binary/octet-stream      | the file is shown as a comma table |
+        | data/a.tsv | application/unknown      | the file is shown as a tab table   |
+        | data/a.csv | application/octet-stream | the file is shown as a comma table |
+
     # Upstream #27497: a cell cut where an emoji's two halves met ended in a broken character.
     @backlog @desktop @mobile @priority-low
     Scenario: A table cell cut at its limit keeps every character whole
@@ -623,6 +647,7 @@ Feature: Viewing and editing files
         | data/budget.xlsx | its sheets are shown as tabs, and a selection of cells copies with its format |
         | docs/pitch.pptx  | its slides are shown with their notes, and previous and next step through them |
 
+    # Upstream #21362: a slide deck's Next stops at its last slide.
     @backlog @desktop @priority-low
     Scenario: Next stops at a deck's last slide
       Given "docs/pitch.pptx" is open rendered
@@ -630,6 +655,7 @@ Feature: Viewing and editing files
       Then the last slide is the one shown as current
       And next can no longer be chosen
 
+    # Upstream #21362: Refresh reloads an office file that was overwritten.
     @backlog @desktop @priority-low
     Scenario: Refreshing reloads an office file that was overwritten
       Given "docs/plan.docx" is open rendered
@@ -644,18 +670,21 @@ Feature: Viewing and editing files
       Then the number of lines and the file's size are shown
       And each line shows its number
 
+    # Upstream #21466: a line far down a large file is revealed when it is linked to.
     @backlog @desktop @priority-low
     Scenario: A line far down a large file is revealed when it is asked for
       Given an agent's reply links to line 500,000 of "logs/build.log"
       When the user opens the link
       Then line 500,000 is shown and marked
 
+    # Upstream #21466: End reaches the last line of a large file with word wrap on.
     @backlog @desktop @priority-low
     Scenario: End reaches the last line of a large wrapped file
       Given "logs/build.log" is open with word wrap on
       When the user presses End
       Then the last line of the file is shown in full
 
+    # Upstream #21466: a large file whose access was refused can be tried again.
     @backlog @desktop @priority-low
     Scenario: A large file whose access was refused can be tried again
       Given "logs/build.log" is open
@@ -677,6 +706,7 @@ Feature: Viewing and editing files
       When the user opens "/home/sam/screens/bug.png" in the file panel
       Then the image is shown
 
+    # Upstream #21467: a SQLite database is previewed as its tables.
     @backlog @desktop @priority-low
     Scenario: A SQLite database shows its tables
       When the user opens "data/shop.sqlite"
@@ -684,12 +714,14 @@ Feature: Viewing and editing files
       And the number of rows and columns and the file's size are shown
       And the user can switch to another table
 
+    # Upstream #21467: an archive is previewed as the folders and files in it.
     @backlog @desktop @priority-low
     Scenario: An archive lists what is in it
       When the user opens "data/export.zip"
       Then its folders and files are listed and can be opened like folders
       And the number of entries and the archive's size are shown
 
+    # Upstream #21467: a file that is not the database or archive it claims to be says so.
     @backlog @desktop @priority-low
     Scenario: A file that is not the database or archive it claims to be says so
       When the user opens "data/shop.sqlite" that is not a SQLite database
@@ -709,6 +741,7 @@ Feature: Viewing and editing files
         | docs/letter.rtf       | its text and tables are shown                                 |
         | notebooks/study.ipynb | its cells and their saved output are shown as they come into view |
 
+    # Upstream #21469: an e-book keeps its reading size from chapter to chapter.
     @backlog @desktop @priority-low
     Scenario: An e-book keeps its reading size from chapter to chapter
       Given "books/handbook.epub" is open rendered
@@ -1456,6 +1489,21 @@ Feature: Viewing and editing files
         | file      | shown                  |
         | cart.ts   | coloured as TypeScript |
         | notes.txt | plain                  |
+
+    # Upstream #29360: an Office file, archive or SQLite database labelled "binary/octet-stream" or
+    # "application/unknown" said "No preview for this file"; only "application/octet-stream" fell back
+    # to the file's name.
+    @backlog @desktop @priority-low
+    Scenario Outline: An attachment of a generic file type is previewed by its name
+      Given the user has attached "<file>" of type "<type>" to a draft
+      When the user opens the attachment from the draft
+      Then it is previewed as the kind its name says
+
+      Examples:
+        | file       | type                |
+        | plan.docx  | binary/octet-stream |
+        | export.zip | application/unknown |
+        | shop.sqlite | binary/octet-stream |
 
     @desktop @mobile
     Scenario: An attachment in a sent message opens in the same viewer

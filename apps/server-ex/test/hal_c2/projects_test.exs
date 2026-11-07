@@ -151,4 +151,25 @@ defmodule HalC2.ProjectsTest do
 
     assert expanded == home
   end
+
+  test "browse refuses Windows paths and relative paths without a project, and names unreadable folders",
+       %{tmp_dir: dir} do
+    assert {:error, "Windows-style workspace path 'C:\\code' is not supported on" <> _} =
+             Projects.browse(%{"partialPath" => "C:\\code"})
+
+    assert {:error, "A current project is required to browse relative workspace path './x'."} =
+             Projects.browse(%{"partialPath" => "./x"})
+
+    File.mkdir_p!(Path.join(dir, "proj/shop-api"))
+
+    assert {:ok, %{"entries" => [%{"name" => "shop-api"}]}} =
+             Projects.browse(%{"partialPath" => "./sh", "cwd" => Path.join(dir, "proj")})
+
+    missing = Path.join(dir, "nowhere")
+
+    assert {:error, "The folder '" <> _ = message} =
+             Projects.browse(%{"partialPath" => missing <> "/"})
+
+    assert message =~ missing
+  end
 end
