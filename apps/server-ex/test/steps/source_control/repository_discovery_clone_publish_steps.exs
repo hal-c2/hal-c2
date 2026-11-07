@@ -453,7 +453,7 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
         context
         |> fj_storage_file(JSON.encode!(keys_map(%{"codeberg.org" => fj_host("ada-token")})))
         |> fj_installed()
-        |> Map.put(:cli, :fj)
+        |> Map.put(:forgejo_cli, :fj)
 
       "tea" ->
         no_fj(context)
@@ -469,7 +469,7 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
         "\"too many requests\"" -> "429 Too Many Requests"
       end
 
-    if Map.get(context, :cli) == :fj do
+    if Map.get(context, :forgejo_cli) == :fj do
       {code, _} = Integer.parse(status)
       with_forgejo_api(context, %{"/api/v1/repos/acme/notes" => {code, %{"message" => status}}})
     else
@@ -483,7 +483,7 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
     {reply, context} = lookup_forgejo(context, "acme/notes")
 
     # Only fj's own HTTP path leaves a request in the Forgejo API log.
-    if Map.get(context, :cli) == :fj,
+    if Map.get(context, :forgejo_cli) == :fj,
       do:
         assert(
           Enum.any?(
