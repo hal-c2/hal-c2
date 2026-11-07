@@ -15,10 +15,24 @@ defmodule HalC2.Preview do
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
-  def open(input), do: GenServer.call(__MODULE__, {:open, input})
-  def navigate(input), do: GenServer.call(__MODULE__, {:navigate, input})
+  def open(input) do
+    with :ok <- validate_url(input["url"]),
+         :ok <- validate_viewport(input["viewport"]),
+         do: GenServer.call(__MODULE__, {:open, input})
+  end
+
+  def navigate(input) do
+    with :ok <- validate_title(input["resolvedTitle"]),
+         do: GenServer.call(__MODULE__, {:navigate, input})
+  end
+
   def report_status(input), do: GenServer.call(__MODULE__, {:report_status, input})
-  def resize(input), do: GenServer.call(__MODULE__, {:resize, input})
+
+  def resize(input) do
+    with :ok <- validate_viewport(input["viewport"]),
+         do: GenServer.call(__MODULE__, {:resize, input})
+  end
+
   def refresh(input), do: GenServer.call(__MODULE__, {:refresh, input})
   def close(input), do: GenServer.call(__MODULE__, {:close, input})
   def list(input), do: GenServer.call(__MODULE__, {:list, input})
@@ -143,6 +157,76 @@ defmodule HalC2.Preview do
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, _}, state),
     do: {:noreply, %{state | watchers: Map.delete(state.watchers, pid)}}
+
+  # The limits of `packages/contracts/src/preview.ts`. Errors describe the input
+  # (its length, what was wrong) and never repeat it: an address can carry credentials.
+  @url_max 2_048
+  @title_max 512
+  @dimension_min 240
+  @dimension_max 3_840
+  @area_max 3_840 * 2_160
+
+  defp validate_url(nil), do: :ok
+
+  defp validate_url(url) when is_binary(url) do
+    cond do
+      String.trim(url) == "" -> invalid_url(url, "empty")
+      String.length(url) > @url_max -> invalid_url(url, "too-long")
+      true -> validate_scheme(url)
+    end
+  end
+
+  defp validate_scheme(url) do
+    case URI.new(url) do
+      {:ok, %URI{scheme: scheme, host: host}}
+      when scheme in ["http", "https"] and is_binary(host) and host != "" ->
+        :ok
+
+      {:ok, %URI{scheme: scheme}} when is_binary(scheme) and scheme not in ["http", "https"] ->
+        invalid_url(url, "unsupported-protocol", scheme <> ":")
+
+      _ ->
+        invalid_url(url, "parse")
+    end
+  end
+
+  defp invalid_url(url, reason, protocol \\ nil) do
+    error = %{
+      "_tag" => "PreviewInvalidUrlError",
+      "inputLength" => String.length(url),
+      "reason" => reason,
+      "cause" => nil
+    }
+
+    {:error, if(protocol, do: Map.put(error, "protocol", protocol), else: error)}
+  end
+
+  defp validate_title(title) when is_binary(title) and byte_size(title) > 0 do
+    if String.length(title) > @title_max,
+      do: {:error, invalid_input("title", "longer than #{@title_max} characters")},
+      else: :ok
+  end
+
+  defp validate_title(_), do: :ok
+
+  defp validate_viewport(%{"width" => w, "height" => h}) when is_integer(w) and is_integer(h) do
+    cond do
+      Enum.any?([w, h], &(&1 < @dimension_min or &1 > @dimension_max)) ->
+        {:error,
+         invalid_input("viewport", "each side must be #{@dimension_min} to #{@dimension_max}")}
+
+      w * h > @area_max ->
+        {:error, invalid_input("viewport", "area must not exceed #{@area_max} pixels")}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp validate_viewport(_), do: :ok
+
+  defp invalid_input(field, reason),
+    do: %{"_tag" => "PreviewInvalidInputError", "field" => field, "reason" => reason}
 
   # Applies `fun` to the tab's snapshot: `{next, event | nil, reply}`.
   defp with_session(state, %{"threadId" => thread, "tabId" => tab}, fun) do

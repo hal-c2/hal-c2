@@ -54,4 +54,37 @@ defmodule HalC2.PreviewTest do
     assert {:error, %{"_tag" => "PreviewSessionLookupError"}} =
              HalC2.Preview.refresh(%{"threadId" => "t1", "tabId" => "nope"})
   end
+
+  test "an address or viewport outside the limits is refused without opening a tab" do
+    secret = "https://user:password@example.com:bad/path?access_token=secret#fragment"
+
+    assert {:error, %{"_tag" => "PreviewInvalidUrlError", "reason" => "parse"} = error} =
+             HalC2.Preview.open(%{"threadId" => "t1", "url" => secret})
+
+    refute inspect(error) =~ "password"
+    assert error["inputLength"] == String.length(secret)
+
+    for {url, reason} <- [
+          {"   ", "empty"},
+          {"ftp://example.com/file", "unsupported-protocol"},
+          {"http://localhost/" <> String.duplicate("a", 2_048), "too-long"}
+        ] do
+      assert {:error, %{"reason" => ^reason}} =
+               HalC2.Preview.open(%{"threadId" => "t1", "url" => url})
+    end
+
+    for {w, h} <- [{239, 800}, {800, 239}, {3_841, 800}, {3_840, 2_161}] do
+      viewport = %{"_tag" => "freeform", "width" => w, "height" => h}
+
+      assert {:error, %{"_tag" => "PreviewInvalidInputError", "field" => "viewport"}} =
+               HalC2.Preview.open(%{"threadId" => "t1", "viewport" => viewport})
+    end
+
+    assert {:ok, %{"sessions" => []}} = HalC2.Preview.list(%{"threadId" => "t1"})
+
+    edge = %{"_tag" => "freeform", "width" => 3_840, "height" => 2_160}
+
+    assert {:ok, %{"viewport" => ^edge}} =
+             HalC2.Preview.open(%{"threadId" => "t1", "viewport" => edge})
+  end
 end

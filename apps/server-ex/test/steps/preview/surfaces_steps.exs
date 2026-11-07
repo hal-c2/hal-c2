@@ -306,6 +306,204 @@ defmodule HalC2.Steps.Preview.Surfaces do
     context
   end
 
+  step "a client opens a browser tab for the thread at the {string} preset",
+       %{args: [preset]} = context do
+    viewport = preset(preset)
+    context = open(context, %{"viewport" => viewport})
+    Map.put(context, :requested, viewport)
+  end
+
+  step "the tab's viewport is the {string} preset from the start", %{args: [preset]} = context do
+    assert listed(context, context.tab)["viewport"] == preset(preset)
+    assert context.requested == preset(preset)
+
+    # Nothing resized it: the only change on record is the tab opening.
+    {events, context} = event(context, fn _ -> true end, :all)
+    assert [%{"type" => "opened", "snapshot" => %{"viewport" => viewport}}] = events
+    assert viewport == preset(preset)
+    context
+  end
+
+  step "a browser tab under the profile {string} resized to {int} by {int}",
+       %{args: [profile, width, height]} = context do
+    context = open(context, %{"profileId" => profile})
+
+    {reply, context} =
+      rpc(context, "preview.resize", %{
+        "tabId" => context.tab,
+        "viewport" => freeform(width, height)
+      })
+
+    assert {:ok, _} = reply
+    drain(context)
+  end
+
+  step "the desktop reports it navigated to {string}", %{args: [url]} = context do
+    navigate(context, %{"url" => url})
+  end
+
+  step "the desktop reports its status as loaded", context do
+    snapshot = listed(context, context.tab)
+
+    report(context, %{
+      "navStatus" => %{
+        "_tag" => "Success",
+        "url" => snapshot["navStatus"]["url"],
+        "title" => "Resized"
+      },
+      "canGoBack" => true,
+      "canGoForward" => false
+    })
+  end
+
+  step "the tab still has the profile {string}", %{args: [profile]} = context do
+    assert listed(context, context.tab)["profileId"] == profile
+    context
+  end
+
+  step "the tab still has the viewport {int} by {int}", %{args: [width, height]} = context do
+    assert listed(context, context.tab)["viewport"] == freeform(width, height)
+    context
+  end
+
+  step "a client closes a tab the thread does not have", context do
+    context = open(context, %{"url" => "http://localhost:5173/"}) |> drain()
+    context = Map.put(context, :others, sessions(context))
+    {reply, context} = rpc(context, "preview.close", %{"tabId" => "tab-missing"})
+    Map.put(context, :reply, reply)
+  end
+
+  step "a client closes the tabs of a thread that has none", context do
+    context = open(context, %{"url" => "http://localhost:5173/"}) |> drain()
+    context = Map.put(context, :others, sessions(context))
+    {reply, context} = World.call(context, "preview.close", %{"threadId" => "th-no-tabs"})
+    Map.put(context, :reply, reply)
+  end
+
+  step "no watching client is told anything", context do
+    watcher = Mc.refute_frame(World.client(context, "watcher"), &(&1["t"] == "preview"))
+    World.put_client(context, "watcher", watcher)
+  end
+
+  step "the thread's other tabs are unchanged", context do
+    assert sessions(context) == context.others
+    context
+  end
+
+  step "the client is told each tab closed", context do
+    {events, context} = event(context, &(&1["type"] == "closed"), :all)
+
+    assert Enum.sort(Enum.map(events, & &1["tabId"])) ==
+             Enum.sort([context.first, context.second])
+
+    Map.put(context, :closed, events)
+  end
+
+  step "the second event's change number is higher than the first's", context do
+    assert [first, second] = context.closed
+    assert second["revision"] > first["revision"]
+    context
+  end
+
+  step "the list's change number is the second event's", context do
+    {{:ok, list}, context} = rpc(context, "preview.list", %{})
+    assert list["revision"] == List.last(context.closed)["revision"]
+    context
+  end
+
+  step "a client resizes the tab to {int} by {int}", %{args: [width, height]} = context do
+    {reply, context} =
+      rpc(context, "preview.resize", %{
+        "tabId" => context.tab,
+        "viewport" => freeform(width, height)
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "the MC refuses the resize", context do
+    assert {:error, "PreviewInvalidInputError", %{"field" => "viewport"}} = context.reply
+    context
+  end
+
+  step "the tab keeps its viewport", context do
+    assert listed(context, context.tab)["viewport"] == %{"_tag" => "fill"}
+    context
+  end
+
+  step "the tab's viewport is {int} by {int}", %{args: [width, height]} = context do
+    assert {:ok, _} = context.reply
+    assert listed(context, context.tab)["viewport"] == freeform(width, height)
+    context
+  end
+
+  step "a client opens a browser tab at an address of {int} characters",
+       %{args: [length]} = context do
+    prefix = "http://localhost:5173/"
+    open_refused(context, prefix <> String.duplicate("a", length - String.length(prefix)))
+  end
+
+  step "a client opens a browser tab at {string}", %{args: [address]} = context do
+    open_refused(context, address)
+  end
+
+  step "no tab opens", context do
+    assert {:error, _, _} = context.reply
+    assert sessions(context) == []
+    context
+  end
+
+  step "the client is told the address is too long", context do
+    assert {:error, "PreviewInvalidUrlError", %{"reason" => "too-long"}} = context.reply
+    context
+  end
+
+  step "the client is told the address cannot be opened", context do
+    assert {:error, "PreviewInvalidUrlError", %{"reason" => "unsupported-protocol"}} =
+             context.reply
+
+    context
+  end
+
+  step "the error says why the address was refused and how long it was", context do
+    assert {:error, "PreviewInvalidUrlError", detail} = context.reply
+    assert detail["reason"] in ~w(empty parse)
+    assert detail["inputLength"] == String.length(context.address)
+    context
+  end
+
+  step "the error does not contain the address, its credentials, query or fragment", context do
+    {:error, error, detail} = context.reply
+    text = inspect({error, detail})
+
+    for secret <- ~w(password access_token secret fragment user),
+        String.contains?(context.address, secret) do
+      refute text =~ secret
+    end
+
+    context
+  end
+
+  step "the desktop reports a navigation titled with {int} characters",
+       %{args: [length]} = context do
+    before = listed(context, context.tab)
+
+    {reply, context} =
+      rpc(context, "preview.navigate", %{
+        "tabId" => context.tab,
+        "url" => "http://localhost:5173/next",
+        "resolvedTitle" => String.duplicate("t", length)
+      })
+
+    assert {:error, "PreviewInvalidInputError", %{"field" => "title"}} = reply
+    Map.put(context, :before, before)
+  end
+
+  step "the tab keeps its previous page and title", context do
+    assert listed(context, context.tab) == context.before
+    context
+  end
+
   # --- local servers -------------------------------------------------------------------
 
   step "a dev server is serving HTML on port {int} of the MC's machine",
@@ -329,8 +527,40 @@ defmodule HalC2.Steps.Preview.Surfaces do
     serve(context, port, kind)
   end
 
+  step "a program listening on port {int} that redirects to {string}",
+       %{args: [port, location]} = context do
+    serve(context, port, {:redirect, location})
+  end
+
+  step "a program listening on port {int} that accepts connections and never answers",
+       %{args: [port]} = context do
+    serve(context, port, :silent)
+  end
+
   step "a client watches for local servers", context do
-    watch_servers(context)
+    started = System.monotonic_time(:millisecond)
+    context = watch_servers(context)
+    Map.put(context, :scan_ms, System.monotonic_time(:millisecond) - started)
+  end
+
+  step "the MC never asks {string} for anything", %{args: [host]} = context do
+    # Following the redirect would be another request; the listener is asked only
+    # for its own root, by its own address.
+    requests = served()
+    assert requests != []
+
+    for request <- requests do
+      assert request =~ ~r/^GET \/ HTTP/
+      refute request =~ host
+    end
+
+    context
+  end
+
+  step "the other suggestions are not held up for longer than the probe takes", context do
+    # The probe gives up after a second; the scan is bounded by twice that.
+    assert context.scan_ms < 2_000
+    context
   end
 
   step "a client is watching for local servers", context do
@@ -476,6 +706,10 @@ defmodule HalC2.Steps.Preview.Surfaces do
     watcher = World.client(context, "watcher")
 
     case mode do
+      :all ->
+        {events, watcher} = ping(watcher, :collect)
+        {events, World.put_client(context, "watcher", watcher)}
+
       :first ->
         {frame, watcher} = Mc.await(watcher, &(&1["t"] == "preview" and fun.(&1["event"])))
         {frame["event"], World.put_client(context, "watcher", watcher)}
@@ -538,6 +772,25 @@ defmodule HalC2.Steps.Preview.Surfaces do
     Map.put(context, :reply, reply)
   end
 
+  defp preset("iphone-se"),
+    do: %{"_tag" => "preset", "presetId" => "iphone-se", "width" => 375, "height" => 667}
+
+  defp freeform(width, height), do: %{"_tag" => "freeform", "width" => width, "height" => height}
+
+  defp open_refused(context, address) do
+    {reply, context} = rpc(context, "preview.open", %{"url" => address})
+    context |> Map.put(:reply, reply) |> Map.put(:address, address)
+  end
+
+  # The requests listeners have received since the last call.
+  defp served(acc \\ []) do
+    receive do
+      {:served, request} -> served([request | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
   defp watch_servers(context) do
     Mc.ensure(HalC2.LocalServers)
 
@@ -560,20 +813,36 @@ defmodule HalC2.Steps.Preview.Surfaces do
 
     {:ok, actual} = :inet.port(listen)
 
-    pid = spawn(fn -> receive(do: (:go -> accept(listen, kind))) end)
+    parent = self()
+    pid = spawn(fn -> receive(do: (:go -> accept(listen, kind, parent))) end)
     :ok = :gen_tcp.controlling_process(listen, pid)
     send(pid, :go)
     ExUnit.Callbacks.on_exit(fn -> Process.exit(pid, :kill) end)
     Map.update(context, :ports, %{port => actual}, &Map.put(&1, port, actual))
   end
 
-  defp accept(listen, kind) do
+  defp accept(listen, kind, parent) do
     {:ok, socket} = :gen_tcp.accept(listen)
-    _ = :gen_tcp.recv(socket, 0, 1_000)
-    :gen_tcp.send(socket, response(kind))
-    :gen_tcp.close(socket)
-    accept(listen, kind)
+
+    case :gen_tcp.recv(socket, 0, 1_000) do
+      {:ok, request} -> send(parent, {:served, request})
+      _ -> :ok
+    end
+
+    if kind == :silent do
+      # Holds the connection open and says nothing.
+      spawn(fn -> Process.sleep(:infinity) end)
+    else
+      :gen_tcp.send(socket, response(kind))
+      :gen_tcp.close(socket)
+    end
+
+    accept(listen, kind, parent)
   end
+
+  defp response({:redirect, location}),
+    do:
+      "HTTP/1.1 302 Found\r\nlocation: #{location}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
 
   defp response(:html),
     do:
