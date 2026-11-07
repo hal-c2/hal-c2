@@ -103,6 +103,7 @@ Feature: The desktop shell decides where the window is
       Then the window shows "env-a:t1"
       And forward is available
 
+    # Upstream #27430: back and forward buttons, and a two-finger trackpad swipe that navigates the history, cancelled by a swipe that stops short.
     @backlog @desktop @priority-low
     Scenario: A two-finger trackpad swipe moves through the history
       Given the user opened "env-a:t1" and then "env-a:t2" from the sidebar
@@ -110,6 +111,7 @@ Feature: The desktop shell decides where the window is
       Then a circle peeks in from that edge as the swipe goes, with a solid arrow once it is far enough
       And the window shows "env-a:t1"
 
+    # Upstream #27430: a swipe that is cancelled, or never commits, does not move through the history.
     @backlog @desktop @priority-low
     Scenario Outline: A trackpad swipe that is not meant as navigation leaves the history alone
       Given the user opened "env-a:t1" and then "env-a:t2" from the sidebar

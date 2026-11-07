@@ -701,12 +701,14 @@ Feature: Writing to an agent from a phone
     Then the picture is attached to the draft once
     And the text already in the draft is kept
 
+  # Upstream #25573: a drop of mixed or unreadable image clips is refused, and images dropped into the Android composer attach.
   @backlog @mobile @priority-low
   Scenario: A dropped clip holding something besides pictures, or a picture that cannot be read, is refused
     Given the user drags pictures and other files together from another app onto the composer
     When the user drops them
     Then nothing is attached and no address is inserted into the text
 
+  # Upstream #25573: ordinary text dropped into the composer is inserted as text.
   @backlog @mobile @priority-low
   Scenario: Text dropped onto the composer is inserted as text
     When the user drags text from another app onto the composer and drops it

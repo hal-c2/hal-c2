@@ -161,6 +161,7 @@ Feature: Importing native agent sessions
       | only PI_CODING_AGENT_DIR to "~/pi"      | "~/pi/sessions"        |
       | neither                                 | "~/.pi/agent/sessions" |
 
+  # Upstream #27515: importing a Pi session uses only its active branch (the last entry back to the root) as the thread.
   @backlog @plugin-pi
   Scenario: An imported Pi session with branches becomes the thread of its active branch
     Given a Pi session whose history branched after a rewind
