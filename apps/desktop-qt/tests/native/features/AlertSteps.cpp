@@ -17,6 +17,7 @@
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "Stream.h"
+#include "Turn.h"
 #include "World.h"
 
 namespace {
@@ -363,6 +364,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("%1 is shown").arg(q), [](World& world, const Captures& c, const Table&) {
     if (world.onSettingsPage.contains(QStringLiteral("isShown"))) return world.onSettingsPage.value(QStringLiteral("isShown"))(c);
+    if (questionShown(world, c[0])) return;
     const QString key = keyOf(world, tracked(world, c[0]));
     const QString shown = world.native().controller<NavigationController>()->threadKey();
     expect(shown == key, QStringLiteral("the window shows \"%1\", not \"%2\"").arg(shown, key));
