@@ -307,13 +307,17 @@ defmodule HalC2.Mcp.Tools do
       timeout = wait_limit(args["timeoutMs"], caller)
       {run, timed_out} = wait(row["id"], args["runId"], timeout)
 
-      {:ok,
-       %{
-         "threadId" => row["id"],
-         "runId" => run && run["id"],
-         "status" => (run && run["status"]) || "idle",
-         "timedOut" => timed_out
-       }}
+      result = %{
+        "threadId" => row["id"],
+        "runId" => run && run["id"],
+        "status" => (run && run["status"]) || "idle",
+        "timedOut" => timed_out
+      }
+
+      # Waiting on a task of the caller's that works on: its completion wakes the caller.
+      if timed_out and HalC2.Orchestration.Delegation.working_task?(me["id"], row["id"]),
+        do: {:ok, Map.put(result, "next", HalC2.Orchestration.Delegation.running_next())},
+        else: {:ok, result}
     end
   end
 

@@ -24,6 +24,10 @@ defmodule HalC2.DelegationProofTest do
       "HalC2.Orchestration.Delegation.settle_if_quiet/1" => ~w(finished check sweep),
       "HalC2.Orchestration.Delegation.report/5" => "report-fail",
       "HalC2.Orchestration.Delegation.cancel/2" => ~w(cancel cancel-refused),
+      # Stop on the caller cancels each task it has not ended; Stop on a child that
+      # never ran cancels its task. Both are cancel/2, whatever the child is doing.
+      "HalC2.Orchestration.Delegation.stop_delegated/1" => ~w(cancel cancel-refused),
+      "HalC2.Orchestration.Delegation.child_stopped/1" => "cancel",
       "HalC2.Orchestration.Delegation.reconcile/2" => ~w(reconcile-boot reconcile-after),
       "HalC2.Orchestration.Recovery.run/0" => ~w(reconcile-boot recover-settle),
       "HalC2.Orchestration.Recovery.settle/2" => "recover-settle",
@@ -38,6 +42,10 @@ defmodule HalC2.DelegationProofTest do
     abstracts: %{
       "HalC2.Orchestration.Delegation.request/1" => @tool,
       "HalC2.Orchestration.Delegation.task_status/2" => "reads a task; changes nothing",
+      "HalC2.Orchestration.Delegation.running_next/0" =>
+        "the hint a result of a task still working carries; changes nothing",
+      "HalC2.Orchestration.Delegation.working_task?/2" =>
+        "reads whether a thread works on a task of the caller; changes nothing",
       "HalC2.Orchestration.Delegation.settled?/1" =>
         "reads whether a thread is quiet, for a page asking after its agent; changes nothing",
       "HalC2.Orchestration.Delegation.wait_budget/1" =>

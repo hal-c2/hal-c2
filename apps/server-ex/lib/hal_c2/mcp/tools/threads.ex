@@ -9,6 +9,7 @@ defmodule HalC2.Mcp.Tools.Threads do
   # Threads one create_threads call may hold.
   @max_batch_threads 20
   @capability_models 25
+  @runtime_modes ~w(approval-required auto-accept-edits auto full-access)
 
   import HalC2.Mcp.Tools,
     only: [
@@ -580,6 +581,7 @@ defmodule HalC2.Mcp.Tools.Threads do
           %{"id" => model["slug"], "label" => model["name"]}
           |> then(&if(options? and options, do: Map.put(&1, "options", options), else: &1))
         end,
+      "runtimeModes" => provider["supportedRuntimeModes"] || @runtime_modes,
       "canRunChildTask" => constraints == [],
       "canRunCrossProviderChildTask" => constraints == [],
       "constraints" => constraints

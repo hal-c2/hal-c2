@@ -366,11 +366,15 @@ defmodule HalC2.Orchestration do
   def dispatch(%{"type" => "run.interrupt", "threadId" => thread_id} = command) do
     with :ok <- interrupt_policy(thread_id, command["runId"]) do
       HalC2.Streams.transact(thread_id, :thread, &{interrupt_request(&1, command), :ok})
-      # Stopping a turn also stops its delegated tasks from waking it later.
+      # Stopping a turn also stops its delegated tasks from waking it later, and stops
+      # the subagents still working on what the thread delegated, from any turn, even when
+      # nothing on the thread itself is left to stop.
       HalC2.Orchestration.Delegation.stop_wakes(thread_id, command["runId"])
+      HalC2.Orchestration.Delegation.stop_delegated(thread_id)
+      interrupted = interrupt_any(thread_id, command["runId"])
+      HalC2.Orchestration.Delegation.child_stopped(thread_id)
 
-      with :ok <- interrupt_any(thread_id, command["runId"]),
-           do: {:ok, %{"sequence" => sequence(thread_id)}}
+      with :ok <- interrupted, do: {:ok, %{"sequence" => sequence(thread_id)}}
     end
   end
 
@@ -1003,6 +1007,23 @@ defmodule HalC2.Orchestration do
   # (`node:provider:...`).
   defp question_item(request),
     do: String.replace_prefix(request["nodeId"] || "", "node:", "turn-item:")
+
+  @doc """
+  Dismisses the questions of `thread_id` still open for a message (asked without
+  stopping the turn); the questions a turn waits on end with the turn.
+  """
+  def dismiss_questions(thread_id) do
+    HalC2.Streams.transact(thread_id, :thread, fn state ->
+      changes =
+        for request <- StreamState.list(state, "runtime-request"),
+            request["status"] == "pending",
+            HalC2.Orchestration.TurnWriter.message_request?(request),
+            change <- resolve_message_request(state, request, "cancelled", nil),
+            do: change
+
+      {changes, :ok}
+    end)
+  end
 
   defp resolve_message_request(state, request, status, answer) do
     at = Entities.now()
