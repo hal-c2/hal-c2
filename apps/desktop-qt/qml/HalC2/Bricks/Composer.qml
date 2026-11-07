@@ -336,19 +336,22 @@ Rectangle {
         const next = "\n" + item[1] + marker + " " + (item[5] ? "[ ] " : "");
         // Split in the middle of an item, the first half keeps no trailing space.
         let cut = at;
+        let end = at;
         while (cut > lineStart + item[0].length && /[ \t]/.test(input.text[cut - 1])) --cut;
         // Never inside a reference "[label](target)" the caret sits in: the new
-        // line starts after it.
+        // line starts after it, and the spaces after it go with the split.
         const refs = /\[[^\]\n]*\]\([^)\n]*\)/g;
         for (let ref = refs.exec(line); ref; ref = refs.exec(line)) {
             const from = lineStart + ref.index;
             const to = from + ref[0].length;
             if (at > from && at < to) {
                 cut = to;
+                end = to;
+                while (end < lineEnd && /[ \t]/.test(input.text[end])) ++end;
                 break;
             }
         }
-        input.remove(cut, Math.max(cut, at));
+        input.remove(cut, end);
         input.insert(cut, next);
         input.cursorPosition = cut + next.length;
         return true;

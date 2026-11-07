@@ -489,6 +489,7 @@ Feature: Editing the draft
     Given a list item holds a file reference
     When the user adds a new line with the caret inside the reference label
     Then the file reference is whole on one of the two lines
+    And the draft reads "- read [cart.ts](src/cart.ts)" and then "- first" on the next line
 
   @desktop
   Scenario: Tab indents the list item the caret is in
