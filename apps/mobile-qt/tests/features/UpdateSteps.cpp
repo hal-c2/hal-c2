@@ -305,8 +305,10 @@ const Steps steps([] {
   });
   step(S("the user is told %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     // What a viewer open over everything says (FilesSteps.cpp), how an update
-    // went, or a toast drawn on screen (SubagentSteps.cpp: a plan that could
-    // not be handed on; connection-health: an environment not connected).
+    // went, a toast drawn on screen (SubagentSteps.cpp: a plan that could
+    // not be handed on; connection-health: an environment not connected), or
+    // why an approval cannot be answered (ApprovalSteps.cpp).
+    if (QQuickItem* problem = world.find(S("approvalProblem")); problem && problem->property("text").toString() == c[0]) return;
     if (world.state(S("attachmentViewer")).toMap().isEmpty()) {
       const QString outcome = S("maintenanceOutcome-") + kOwn;
       const auto toasted = [&] {
