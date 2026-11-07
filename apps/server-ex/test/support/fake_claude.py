@@ -87,6 +87,11 @@ asked_before_plan = False  # a "question first" turn waiting on its answer
 asking_subagent = None  # (Agent tool id, command) of a subagent waiting on its permission answer
 dialogs = []  # the dialog kinds the host said it can show (initialize)
 resume_at = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--resume-session-at=")), None)
+# A subagent's messages are in a transcript of their own: Claude Code cannot resume the
+# conversation at one and ends the process.
+if resume_at and resume_at.startswith("sub-uuid-"):
+    sys.stderr.write(f"No message found with message.uuid of: {resume_at}\n")
+    sys.exit(1)
 # The permission mode, from argv and then set_permission_mode; in auto Claude's own
 # classifier approves the command "approve" would otherwise ask about.
 mode = sys.argv[sys.argv.index("--permission-mode") + 1] if "--permission-mode" in sys.argv else "default"
@@ -219,6 +224,11 @@ for line in sys.stdin:
         send({"type": "control_request", "request_id": f"dialog-{turn}", "request": {"subtype": "request_user_dialog", "dialog_kind": "resume_return",
               "payload": {"sessionAgeMinutes": 135, "estimatedTokens": 182400}}})
         continue
+    # "answer halfway": Claude writes part of its answer (message half-uuid-N) and stays open,
+    # as a turn the user stops mid-answer.
+    if "answer halfway" in text.split("</conversation_history>")[-1]:
+        send({"type": "assistant", "session_id": session, "uuid": f"half-uuid-{turn}", "message": {"id": f"m{turn}h", "role": "assistant", "content": [{"type": "text", "text": "Half an answer"}]}})
+        continue
     # A handoff's earlier conversation is history, not a directive.
     if "wait" in text.split("</conversation_history>")[-1]:
         continue
@@ -251,6 +261,21 @@ for line in sys.stdin:
               "content": f"Monitor started (task task-{mon})", "is_error": False}]}})
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}i", "role": "assistant", "content": [{"type": "text", "text": "Watching the log"}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "Watching the log", "session_id": session})
+        continue
+    # "subagent has the last word": Claude starts a background subagent (agent-N) and
+    # answers, and the subagent's message (sub-uuid-N) comes after Claude's (uuid-N)
+    # before the turn ends.
+    if text == "subagent has the last word":
+        agent = f"agent-{turn}"
+        send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "uuid": f"uuid-{turn}s", "message": {"id": f"m{turn}s", "role": "assistant", "content": [{"type": "tool_use", "id": agent, "name": "Agent", "input": {
+            "description": "Helper", "prompt": "look around", "subagent_type": "general-purpose", "run_in_background": True}}]}})
+        send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{agent}", "tool_use_id": agent,
+              "description": "Helper", "task_type": "local_agent", "prompt": "look around", "is_backgrounded": True})
+        send({"type": "user", "session_id": session, "parent_tool_use_id": None, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": agent,
+              "content": [{"type": "text", "text": "Async agent launched"}]}]}})
+        send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}u", "role": "assistant", "content": [{"type": "text", "text": "A helper is looking around"}]}})
+        send({"type": "assistant", "session_id": session, "parent_tool_use_id": agent, "uuid": f"sub-uuid-{turn}", "message": {"id": f"s{turn}", "role": "assistant", "content": [{"type": "text", "text": "Looking around"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
     # "subagent works on: TASK": a subagent (tool use agent-N) runs TASK in the turn,
     # its own messages under its tool call: partial text, then text, a Bash call and a

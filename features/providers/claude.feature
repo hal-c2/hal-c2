@@ -1215,7 +1215,7 @@ Feature: Claude
     Then Claude starts a new session that remembers none of the turns
 
   # Upstream #21151: reverting to a turn that ended in a subagent's message keeps the thread working.
-  @backlog @priority-high
+  @priority-high
   Scenario: Reverting a Claude thread to a turn that ended in a subagent keeps it working
     Given a Claude turn whose last message came from one of its subagents
     When the user reverts the thread to that turn
@@ -1223,7 +1223,7 @@ Feature: Claude
     Then Claude answers from the conversation as it stood at that turn
 
   # Upstream #25695: an interrupted run after a revert kept the old conversation head pinned.
-  @backlog @priority-high
+  @priority-high
   Scenario: A run stopped after a revert keeps what Claude already wrote
     Given the user reverted a Claude thread to an earlier turn
     And a later run was stopped after Claude wrote part of its reply
@@ -1232,7 +1232,6 @@ Feature: Claude
     And reverting again and sending still works
 
   # Upstream #25695: a run stopped before Claude wrote anything leaves the conversation as it was.
-  @backlog
   Scenario: A run stopped before Claude wrote anything after a revert continues from the revert
     Given the user reverted a Claude thread to an earlier turn
     And a later run was stopped before Claude wrote anything

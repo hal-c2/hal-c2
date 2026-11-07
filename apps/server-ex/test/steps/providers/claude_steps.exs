@@ -3928,6 +3928,126 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- reverting to a turn a subagent ended ------------------------------------------------
+
+  # The fake's first turn ends with a background subagent's message; it cannot resume at
+  # a subagent's message, as Claude Code cannot.
+  step "a Claude turn whose last message came from one of its subagents", context do
+    context = World.fake_providers(context)
+    context = World.launch_on(context, @thread, "claudeAgent", "subagent has the last word")
+    World.await_runs(context, @thread, ["completed"])
+    context = World.post_message(context, @thread, "second question")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  step "the user reverts the thread to that turn", context do
+    context = World.rollback(context, @thread, 1, %{"restoreFiles" => false})
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  step "sends a new message", context do
+    context = World.post_message(context, @thread, "where are we")
+    World.await_latest_run(context, @thread, "completed")
+    context
+  end
+
+  step "Claude answers from the conversation as it stood at that turn", context do
+    assert "resumed at uuid-1 fork False history False" in World.replies(context, @thread),
+           inspect(World.replies(context, @thread))
+
+    context
+  end
+
+  # --- a run stopped after a revert ---------------------------------------------------------
+
+  step "the user reverted a Claude thread to an earlier turn", context do
+    context = World.fake_providers(context)
+    context = World.launch_on(context, @thread, "claudeAgent", "first question")
+    World.await_runs(context, @thread, ["completed"])
+    context = World.post_message(context, @thread, "second question")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context = World.rollback(context, @thread, 1, %{"restoreFiles" => false})
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  step "a later run was stopped after Claude wrote part of its reply", context do
+    context = World.post_message(context, @thread, "answer halfway")
+
+    World.await_value(context, @thread, fn state ->
+      Enum.any?(StreamState.list(state, "message"), &(&1["text"] =~ "Half an answer"))
+    end)
+
+    stop_and_release(context)
+  end
+
+  step "a later run was stopped before Claude wrote anything", context do
+    context = World.post_message(context, @thread, "wait for me")
+    World.await_running(context, @thread)
+
+    World.await_provider_log(
+      context,
+      "claude",
+      &(get_in(&1, ["in", "message", "content"]) == "wait for me")
+    )
+
+    stop_and_release(context)
+  end
+
+  step "the user sends a new message", context do
+    context = World.post_message(context, @thread, "where are we")
+    World.await_latest_run(context, @thread, "completed")
+    context
+  end
+
+  # Resumed in full: Claude's transcript ends with the stopped run's partial answer.
+  step "Claude answers with the stopped run's reply in its context", context do
+    assert "resumed at None fork False history False" in World.replies(context, @thread),
+           inspect(World.replies(context, @thread))
+
+    assert "--resume" in last_argv(context)
+    context
+  end
+
+  step "reverting again and sending still works", context do
+    context = World.rollback(context, @thread, 1, %{"restoreFiles" => false})
+    assert {:ok, _} = context.reply
+    context = World.post_message(context, @thread, "where are we")
+    World.await_latest_run(context, @thread, "completed")
+
+    assert "resumed at uuid-1 fork False history False" in World.replies(context, @thread),
+           inspect(World.replies(context, @thread))
+
+    context
+  end
+
+  step "Claude continues from the turn the thread was reverted to", context do
+    assert "resumed at uuid-1 fork False history False" in World.replies(context, @thread),
+           inspect(World.replies(context, @thread))
+
+    context
+  end
+
+  # Stops the running turn, then lets go of the thread's Claude as the idle sweep does
+  # (`ThreadRuntime`'s `:release`), so the next message starts Claude again from the
+  # recorded session instead of the process that ran the stopped turn.
+  defp stop_and_release(context) do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, @thread)
+      })
+
+    World.await_latest_run(context, @thread, "interrupted")
+    [{runtime, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    ref = Process.monitor(runtime)
+    assert :ok = GenServer.call(runtime, :release)
+    assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
+    context
+  end
+
   # --- auto on a model without it -----------------------------------------------------
 
   # The fake runs such a model in its default mode and refuses a switch to auto, as
