@@ -97,7 +97,7 @@ defmodule HalC2.Web.Socket do
   def init(opts) do
     # A socket opened with a ticket belongs to that client's session.
     session = opts[:session]
-    if session, do: HalC2.Auth.connected(session)
+    if session, do: HalC2.Auth.connected(session, opts[:client] || %{})
     trace = opts[:trace]
     if trace, do: Logger.metadata(trace_id: trace)
 
