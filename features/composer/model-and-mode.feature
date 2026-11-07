@@ -157,8 +157,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the agent receives "Ultrathink: design the cache"
 
   # Legacy: packages/shared/src/model.ts (applyClaudePromptEffortPrefix)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/claude/provider.ex (prompt/2)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: Ultrathink is left off a message it would break
     Given the thread runs on Claude with Ultrathink turned on
     When the user sends "<message>"
