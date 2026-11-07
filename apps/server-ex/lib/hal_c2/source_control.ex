@@ -359,19 +359,37 @@ defmodule HalC2.SourceControl do
     dest = Path.expand(dest)
     timeout = Application.get_env(:hal_c2, :clone_timeout, @clone_timeout)
 
+    existed? = File.exists?(dest)
+
     with {:ok, url, repository} <- remote(input),
          {:ok, _} <-
            HalC2.Git.ok(Path.dirname(dest), ["clone", "--", url, dest], timeout: timeout) do
       {:ok, %{"cwd" => dest, "remoteUrl" => url, "repository" => repository}}
     else
       {:error, {_status, detail}} ->
+        unless existed?, do: discard_clone(dest, input)
         repository_error(input["provider"] || "unknown", "cloneRepository", {:error, detail})
 
       {:error, detail} when is_binary(detail) ->
+        unless existed?, do: discard_clone(dest, input)
         repository_error(input["provider"] || "unknown", "cloneRepository", {:error, detail})
 
       error ->
         error
+    end
+  end
+
+  # A clone that failed or timed out may leave the folder it made; clean it the
+  # way a cancelled tracked clone is (`HalC2.ProjectClones.remove_checkout/1`).
+  defp discard_clone(dest, input) do
+    with {:ok, url, _} <- remote(input) do
+      HalC2.ProjectClones.remove_checkout(%{
+        dest: dest,
+        real: HalC2.ProjectClones.canonical(dest),
+        url: url
+      })
+
+      File.rmdir(dest)
     end
   end
 

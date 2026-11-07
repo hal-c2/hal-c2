@@ -94,7 +94,7 @@ Feature: Adding projects
       Given "/home/sam" holds the folders "shop" and "Shared" and the file "notes.txt"
       When the user types "/home/sam/sh" while adding a local folder
       Then the folders "Shared" and "shop" are offered
-      And "notes.txt" is not offered
+      And "notes.txt" is not listed
 
     @mc
     Scenario Outline: Browsing shows hidden folders only when asked for
@@ -142,7 +142,7 @@ Feature: Adding projects
       Given "/home/sam" holds the folders "shop", "Shared" and "Sketches" and the file "sheet.txt"
       When a client browses "/home/sam/S"
       Then "Shared", "Sketches" and "shop" are offered in that order
-      And "sheet.txt" is not offered
+      And "sheet.txt" is not listed
 
     # Legacy: apps/server/src/workspace/WorkspaceEntries.ts (WorkspaceEntriesReadDirectoryError)
     @mc

@@ -105,11 +105,6 @@ defmodule HalC2.Steps.Files.AddingProjects do
     context
   end
 
-  step "{string} is not offered", %{args: [name]} = context do
-    refute name in context.listing
-    context
-  end
-
   step "{string} cannot be read by the MC", %{args: [dir]} = context do
     real = Host.path(context, dir)
     File.mkdir_p!(Path.join(real, "secret"))
@@ -403,6 +398,7 @@ defmodule HalC2.Steps.Files.AddingProjects do
   step "a clone that waits for its answer fails as timed out", context do
     assert {:error, message, _} = context.one_shot
     assert message =~ "timed out"
+    refute File.exists?(Host.path(context, "/home/sam/slow"))
     context
   end
 
