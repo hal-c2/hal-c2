@@ -680,6 +680,10 @@ const Steps steps([] {
 
   // Alerts on the phone.
 
+  step(S("the first thread on %1 finishes its turn").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    awayEvent(world, S("First on ") + c[0], S("finishes its turn"));
+  });
+
   step(S("the phone shows an alert for %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     if (!world.checking) {
       if (world.isOpen()) turnOn(world);

@@ -31,6 +31,64 @@ defmodule HalC2.Orchestration.UserFacingErrors do
     strong_terminal_status: "cannot confirm when its runs finish reliably enough for this."
   }
 
+  @max_failure 4_096
+
+  @url ~r{[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s"'<>]+}
+
+  # An `Authorization` header's value, with its scheme kept.
+  @authorization ~r/((?i:authorization)["']?\s*[:=]\s*["']?(?:(?i:bearer|basic|token)\s+)?)[^\s"',\}\[]+/
+
+  # A bearer or basic credential outside a header: eight or more token characters that
+  # are not, as a whole, plain words ("auth", "Authentication.", "authorization/token"),
+  # so "basic auth failed" reads as written while `sk-proj-…` and dotted tokens are caught.
+  @scheme_token ~r/\b((?i:bearer|basic)\s+)(?!(?:[A-Z]?[a-z]+|[A-Z]+)(?:\/(?:[A-Z]?[a-z]+|[A-Z]+))*[.\/]*(?![A-Za-z0-9._~+\/=-]))[A-Za-z0-9._~+\/=-]{8,}/
+
+  # `name=value` or `"name": "value"` for a secret-looking name, also under a prefix
+  # (`OPENAI_API_KEY`, `x-auth`).
+  @assignment ~r/((?<![A-Za-z0-9])(?:[A-Za-z0-9]+[_-])*(?i:api[-_ ]?key|api[-_ ]?token|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|token|password|passwd|secret|auth)["']?\s*[:=]\s*["']?)[^\s"',\}&]+/
+
+  @doc """
+  A provider's failure text as a thread may record it: credentials in URLs, authorization
+  values and secret-looking assignments are replaced, and the text is cut to
+  #{@max_failure} characters ending with "…". A structured failure is cleaned in its
+  `"message"`.
+  """
+  @spec sanitize_failure(String.t() | map | nil) :: String.t() | map | nil
+  def sanitize_failure(%{"message" => message} = failure) when is_binary(message),
+    do: %{failure | "message" => sanitize_failure(message)}
+
+  def sanitize_failure(message) when is_binary(message) do
+    message
+    |> then(&Regex.replace(@url, &1, fn url -> redact_url(url) end))
+    |> then(&Regex.replace(@authorization, &1, "\\1[REDACTED]"))
+    |> then(&Regex.replace(@scheme_token, &1, "\\1[REDACTED]"))
+    |> then(&Regex.replace(@assignment, &1, "\\1[REDACTED]"))
+    |> truncate_failure()
+  end
+
+  def sanitize_failure(failure), do: failure
+
+  # Local paths stay readable; other URLs keep their host and path, without the
+  # user name, password, query or fragment, and one that cannot be parsed is dropped.
+  defp redact_url(url) do
+    case URI.new(url) do
+      {:ok, %URI{scheme: scheme}} when scheme in ["file", "FILE"] ->
+        url
+
+      {:ok, %URI{host: host} = uri} when is_binary(host) and host != "" ->
+        URI.to_string(%URI{uri | userinfo: nil, query: nil, fragment: nil})
+
+      _ ->
+        "[REDACTED_URL]"
+    end
+  end
+
+  defp truncate_failure(message) do
+    if String.length(message) > @max_failure,
+      do: String.slice(message, 0, @max_failure - 1) <> "…",
+      else: message
+  end
+
   @doc "The refusal for `capability`, in the provider instance's name."
   @spec capability_message(String.t(), atom) :: String.t()
   def capability_message(instance, capability),
