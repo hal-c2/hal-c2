@@ -135,7 +135,7 @@ Feature: The thread list
 
   # Upstream #24723: a first connect sent every settled thread, 93% of the snapshot, though
   # they sit in a collapsed shelf; older ones now come on demand.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A first connect brings only the newest settled threads
     Given "shop" has 900 settled threads, one of them pinned and one snoozed
     When a client connects for the first time

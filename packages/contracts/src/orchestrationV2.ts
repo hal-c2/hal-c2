@@ -2844,6 +2844,16 @@ export const OrchestrationV2SubscribeShellInput = Schema.Struct({
   afterSequence: Schema.optionalKey(NonNegativeInt),
   /** Requests a marker between initial catch-up and live delivery. */
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Sent as `settledLimit` on the MC's shell `sub` frame: whenever an MC's rows come
+   * whole (the first subscribe, or a `reset`), they hold only the `settledLimit` newest
+   * settled threads of each of its projects (by `settledAt`) and the older ones that
+   * are pinned or snoozed. That MC's entry in the `shell` frame, or the `shell.rows`
+   * reset, then carries `settledLeftOut`: `{ [projectId]: count }` of the settled
+   * threads it did not send. Later changes come as usual, a left-out thread's included.
+   * Without it every row is sent.
+   */
+  settledLimit: Schema.optionalKey(PositiveInt),
 });
 export type OrchestrationV2SubscribeShellInput = typeof OrchestrationV2SubscribeShellInput.Type;
 
