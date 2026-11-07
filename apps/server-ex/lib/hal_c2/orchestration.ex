@@ -3879,12 +3879,19 @@ defmodule HalC2.Orchestration do
       # while the first send is still in flight. A message the thread already has
       # (started, queued, prepared or steered) was sent: nothing more to decide. A steer
       # the provider can still refuse has not been sent yet. That answer holds only for
-      # now, so it is a map, which `dispatch_once/1` keeps no receipt of.
+      # now, so it is a map, which `dispatch_once/1` keeps no receipt of, and its code
+      # tells a client's outbox to ask again rather than give the prompt back.
       sent =
           is_binary(command["messageId"]) &&
             StreamState.fetch(state, "message", command["messageId"]) ->
         if sent["steer"] == "pending",
-          do: {[], {:error, %{"message" => "This message is still being sent. Try again."}}},
+          do:
+            {[],
+             {:error,
+              %{
+                "code" => "message_still_sending",
+                "message" => "This message is still being sent. Try again."
+              }}},
           else: {[], {:ok, :sent}}
 
       thread["deletedAt"] != nil ->

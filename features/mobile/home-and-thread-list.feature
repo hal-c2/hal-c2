@@ -26,12 +26,12 @@ Feature: Home screen and thread list on a phone
   project, with a status line that tells the user whether what they see is current.
 
   Rule: With several environments paired
-    # Pairing the phone with more than one environment is not built yet: hal-c2/hal-c2#1092.
+    # Narrowing by environment and naming it on a row are not built yet: hal-c2/hal-c2#1131.
 
     Background:
       Given the phone is paired with "My MacBook" and "Office Mac"
 
-    @backlog @mobile @priority-high
+    @mobile @priority-high
     Scenario: Home lists threads from every paired environment
       When the user opens the app
       Then threads from "My MacBook" and "Office Mac" are listed together

@@ -34,6 +34,44 @@ private slots:
       QVERIFY(aside.readAll().endsWith("\"r" + QByteArray::number(round)));
     }
   }
+
+  // Saving one it had again, on a disk that took no writes, said it was not
+  // saved but kept the new credential in place of the one its record used
+  // (found by apps/mobile-qt/tests/prop/tst_PairingProp.cpp).
+  void oneNotSavedAgainKeepsItsCredential() {
+    QTemporaryDir dir;
+    const QString records = dir.filePath(QStringLiteral("records"));
+    QVERIFY(QDir().mkpath(records));
+    MemorySecretStore store(std::make_shared<MemorySecretStore::Keys>());
+    EnvironmentCatalog catalog(QDir(records).filePath(QStringLiteral("saved-environments.json")), &store);
+    const SavedEnvironment studio{QStringLiteral("studio"), QStringLiteral("Studio"), QUrl(QStringLiteral("http://studio.local:3773")), {}};
+    QVERIFY(!catalog.save(studio, QStringLiteral("first")));
+    QVERIFY(QFile::setPermissions(records, QFile::ReadOwner | QFile::ExeOwner));
+    const std::optional<QString> refused = catalog.save(studio, QStringLiteral("second"));
+    QVERIFY(QFile::setPermissions(records, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    QVERIFY(refused.has_value());
+    QCOMPARE(catalog.connect(QStringLiteral("studio")).credential, QStringLiteral("first"));
+  }
+
+  // The same, with a keyring that took the new credential but could not give
+  // back the old one: putting it back removed the only credential left.
+  void oneNotSavedAgainOnAnUnreadableKeyringKeepsACredential() {
+    QTemporaryDir dir;
+    const QString records = dir.filePath(QStringLiteral("records"));
+    QVERIFY(QDir().mkpath(records));
+    const auto keys = std::make_shared<MemorySecretStore::Keys>();
+    MemorySecretStore store(keys);
+    EnvironmentCatalog catalog(QDir(records).filePath(QStringLiteral("saved-environments.json")), &store);
+    const SavedEnvironment studio{QStringLiteral("studio"), QStringLiteral("Studio"), QUrl(QStringLiteral("http://studio.local:3773")), {}};
+    QVERIFY(!catalog.save(studio, QStringLiteral("first")));
+    QVERIFY(QFile::setPermissions(records, QFile::ReadOwner | QFile::ExeOwner));
+    keys->unreadable = true;
+    const std::optional<QString> refused = catalog.save(studio, QStringLiteral("second"));
+    keys->unreadable = false;
+    QVERIFY(QFile::setPermissions(records, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    QVERIFY(refused.has_value());
+    QCOMPARE(catalog.connect(QStringLiteral("studio")).credential, QStringLiteral("second"));
+  }
 };
 
 QTEST_GUILESS_MAIN(EnvironmentCatalogRegression)
