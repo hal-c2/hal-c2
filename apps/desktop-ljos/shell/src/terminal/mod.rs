@@ -145,7 +145,7 @@ pub struct Terminal {
     #[qml(notify, readonly)]
     pub at_bottom: bool,
     /// Whether the cursor may blink (qml-ghostty's). The cursor is drawn
-    /// steady for now, so this is kept and read back.
+    /// steady for now (hal-c2/hal-c2#1193), so this is kept and read back.
     #[qml(notify)]
     pub cursor_blink: bool,
     /// The toolkit's macOS keys (Cmd reported as Control, Control as Meta)

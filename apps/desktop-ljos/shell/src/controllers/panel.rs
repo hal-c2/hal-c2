@@ -1664,7 +1664,7 @@ pub struct PanelObject {
     #[qml(readonly)]
     device: Value,
     /// The hover cards and clicks of pull request links (desktop-qt's
-    /// PullRequestLinkPreviews). Null until the port has them: Markdown then
+    /// PullRequestLinkPreviews). Null until the port has them (#1194): Markdown then
     /// shows a link's address on hover.
     #[qml(notify, readonly)]
     link_previews: Value,

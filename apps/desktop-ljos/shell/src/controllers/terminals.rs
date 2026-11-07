@@ -1097,7 +1097,9 @@ fn reduce_motion(engine: &Engine) -> bool {
             .unwrap_or(false)
 }
 
-/// [`TerminalsObject::terminal_font`].
+/// [`TerminalsObject::terminal_font`]. desktop-qt falls back to "Symbols
+/// Nerd Font Mono" for prompt glyphs; a Ljós `Font` has one family
+/// (hal-c2/ljos-ui#211).
 fn terminal_font(family: &str, pixel_size: i32, point_size: f64) -> Font {
     let mut font = Font {
         family: Atom::from(if family.is_empty() {

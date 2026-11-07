@@ -709,7 +709,7 @@ impl Derived {
 
 /// Whether the interface family is a monospace one (desktop-qt asks
 /// `QFontInfo::fixedPitch`). By its name, as Ljós has no fixed-pitch query
-/// yet: the families such a face goes by.
+/// yet (hal-c2/ljos-ui#210): the families such a face goes by.
 fn is_monospace(family: &str) -> bool {
     const NAMES: [&str; 9] = [
         "mono",
