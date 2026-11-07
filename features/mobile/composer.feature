@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26739
+#   https://github.com/pingdotgg/t3code/pull/25573
 #   https://github.com/pingdotgg/t3code/pull/21352
 #   https://github.com/pingdotgg/t3code/pull/23096
 #   https://github.com/pingdotgg/t3code/pull/24363
@@ -608,6 +610,25 @@ Feature: Writing to an agent from a phone
     Then the pictures are attached to the draft
     And nothing is inserted into the text
 
+  # Upstream #25573: on Android 11 and older an image dragged from Files focused the composer and attached nothing.
+  @backlog @mobile
+  Scenario: A picture dragged from another app in split screen on Android is attached
+    Given the user has Files and HAL-C2 side by side on an Android phone or tablet
+    When the user drags a picture from Files onto the composer and drops it
+    Then the picture is attached to the draft once
+    And the text already in the draft is kept
+
+  @backlog @mobile @priority-low
+  Scenario: A dropped clip holding something besides pictures, or a picture that cannot be read, is refused
+    Given the user drags pictures and other files together from another app onto the composer
+    When the user drops them
+    Then nothing is attached and no address is inserted into the text
+
+  @backlog @mobile @priority-low
+  Scenario: Text dropped onto the composer is inserted as text
+    When the user drags text from another app onto the composer and drops it
+    Then the text is inserted where it was dropped
+
   @backlog @mobile @priority-low
   Scenario: Nothing is dropped onto a composer that is read only
     Given the composer is read only
@@ -860,6 +881,15 @@ Feature: Writing to an agent from a phone
     Then the message is shown as waiting to send
     When "My MacBook" becomes reachable
     Then the message is sent
+  # Upstream #26739: a delivered message left the loaded history of a long thread and came back
+  # at the bottom as waiting to send; the phone now knows by the thread's position in its history.
+  @backlog @mobile @priority-high
+  Scenario: A delivered message does not come back at the bottom of a long thread
+    Given the user sent "add a test" from the phone in a thread longer than the history the phone loads
+    And the MC has received it
+    When the thread goes on until "add a test" is no longer in the loaded history
+    Then "add a test" is not shown again at the bottom of the thread as waiting to send
+
 
   @backlog @mobile @priority-high
   Scenario: A usage limit is explained above the composer

@@ -1,9 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27393
 #   https://github.com/pingdotgg/t3code/pull/24748
+#   https://github.com/pingdotgg/t3code/pull/27184
 #   https://github.com/pingdotgg/t3code/pull/19818
 #   https://github.com/pingdotgg/t3code/pull/16693
 #   https://github.com/pingdotgg/t3code/pull/17368
 #   https://github.com/pingdotgg/t3code/pull/21388
+#   https://github.com/pingdotgg/t3code/pull/22151
 #   apps/mobile/src/features/home/ (thread list options, empty states, search, connection status)
 #   apps/mobile/src/features/threads/thread-list-v2-items.tsx (status labels, shelves)
 #   apps/mobile/src/features/threads/thread-provider-instance.ts (provider account badge on a row)
@@ -214,6 +217,22 @@ Feature: Home screen and thread list on a phone
       When the user opens a result and goes back
       Then the search still reads "checkout" and the list is still filtered by it
       And the keyboard opens only if the search had it when the user left
+
+    # Upstream #27184: on iOS 27 a search closed with nothing typed opened again on every return.
+    @backlog @mobile
+    Scenario: A search closed with nothing typed stays closed after going back
+      Given the user opened the thread search and closed it without typing
+      When the user opens a thread and goes back
+      Then the thread search is still closed
+
+    # Upstream #27393: going to the pull requests tab and back jumped the list to where an
+    # earlier search had left it, often the top.
+    @backlog @mobile
+    Scenario: The thread list keeps its place across a visit to another tab
+      Given the user scrolled the thread list down to "Fix cart"
+      When the user visits the pull requests tab and comes back
+      Then the list is still at "Fix cart"
+      And closing a search still returns the list to where it was before the search
 
     @backlog @mobile
     Scenario: A search with no matches says so
@@ -563,6 +582,20 @@ Feature: Home screen and thread list on a phone
       Given the user was told not every archive could be loaded
       When the user chooses to try again
       Then the phone asks the environments for their archived threads again
+
+    # Upstream #22151: ages on these screens froze at the value they had when the screen opened.
+    @backlog @mobile @priority-low
+    Scenario Outline: Ages on <screen> keep counting while it stays open
+      Given <screen> shows something as "4m ago"
+      When the user keeps it open for two more minutes
+      Then it shows "6m ago"
+
+      Examples:
+        | screen                          |
+        | the archived threads            |
+        | the pull request list           |
+        | a thread's linked pull requests |
+        | a pull request's overview       |
 
     @backlog @mobile
     Scenario Outline: The user adds a project from the phone

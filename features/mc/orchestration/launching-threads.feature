@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23802
 #   packages/contracts/src/rpc.ts (orchestration.launchThread)
 #   packages/contracts/src/orchestrationV2.ts (thread.create, message.dispatch, prepared-run.release,
 #     prepared-run.progress, prepared-run.fail, run.created, run.updated)
@@ -112,6 +113,16 @@ Feature: Launching a thread with its first message
     When adding the worktree fails
     Then the run is failed
     And the thread can take its next message
+
+  # Upstream #23802: a checkout past a fixed five-minute deadline was killed, leaving its branch
+  # behind so Retry failed with "branch already exists".
+  @backlog @mc @priority-low
+  Scenario: A slow worktree checkout is left to finish
+    Given a launched thread's first run is preparing its worktree
+    And the project's post-checkout hook takes six minutes
+    When the hook finishes
+    Then the worktree is ready and the run starts
+    And cancelling the setup before then still stops git and its hook
 
   @mc
   Scenario: Cancelling worktree preparation cancels the waiting run

@@ -20,6 +20,7 @@
 #   apps/server/src/orchestration-v2/ProjectionMaintenance.ts, ProjectionStore.ts (checking and
 #     rebuilding projections, compacting the log)
 #   docs/internals/overview.md (event sourcing)
+#   https://github.com/pingdotgg/t3code/pull/27629
 
 Feature: The MC's event store and projections
   Every change to a project or thread is an entity patch appended to one SQLite log.
@@ -328,6 +329,7 @@ Feature: The MC's event store and projections
   # Upstream #20948 lets t3 doctor delete, by opt-in, the database T3 Code kept for rolling
   # back to before 0.1.0. The MC keeps no second database: what HAL-C2 moved in from lives in
   # the old home, which HAL-C2 never changes.
+  # Upstream #27629: on Windows deleting that database failed while doctor held it open.
   @dropped @mc
   Scenario: The doctor command offers to delete the database kept for rolling back
     Given a store kept beside the current one only for rolling back to an older version

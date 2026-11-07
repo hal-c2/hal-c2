@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23626
+#   https://github.com/pingdotgg/t3code/pull/24331
 #   https://github.com/pingdotgg/t3code/pull/19483
 #   https://github.com/pingdotgg/t3code/pull/22072
 #   https://github.com/pingdotgg/t3code/pull/20391
@@ -228,6 +230,17 @@ Feature: Answering the agent's questions from the composer
     When the user answers both questions
     Then the user can go back to the previous question to change its answer
     And submitting sends both answers to the agent together
+  # Upstream #23626: Enter moved past an unanswered question, and the last question could then
+  # never be submitted.
+  @backlog @shared @priority-high
+  Scenario: Enter does not move past an unanswered question
+    Given the agent asked "Which database?" and "Which cache?" in one request
+    And the composer is empty
+    When the user presses Enter before answering "Which database?"
+    Then "Which database?" is still shown and Next stays unavailable
+    When the user picks "Postgres" and then "Redis"
+    Then both answers are sent to the agent
+
 
   @backlog @desktop @priority-high
   Scenario: The first question still unanswered is the one shown
@@ -243,6 +256,18 @@ Feature: Answering the agent's questions from the composer
     When the user picks "Postgres"
     Then the answer is "Postgres"
     And the thread's draft reads "unrelated" followed by "MySQL"
+
+  # Upstream #24331: the typed text vanished from the answer box with no word of where it went.
+  @backlog @desktop @priority-low
+  Scenario Outline: The user is told when a pick sets typed text aside
+    Given <typed>
+    When the user picks "Postgres"
+    Then the user is <told> "Your typed text was set aside. It will be back in the composer once the question is answered."
+
+    Examples:
+      | typed                                  | told     |
+      | the user typed "MySQL" as the answer   | told     |
+      | the user typed nothing as the answer   | not told |
 
   @backlog @desktop @priority-low
   Scenario: A file alone answers a question that allows a typed answer

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22624
 #   https://github.com/pingdotgg/t3code/pull/15538
 #   https://github.com/pingdotgg/t3code/pull/11325
 #   https://github.com/pingdotgg/t3code/pull/11037
@@ -16,6 +17,7 @@
 # and a binding in its config, or the KDE and Hyprland capture helpers, without app
 # text or capture effects, and directly on macOS, where captures can carry the
 # app's text.
+#   https://github.com/pingdotgg/t3code/pull/28240
 
 @desktop @priority-low
 Feature: Snap Shot captures another app's window into the draft
@@ -86,6 +88,39 @@ Feature: Snap Shot captures another app's window into the draft
       | platform         | failure                                                    |
       | Linux on GNOME   | the window in front is minimized or no window has focus    |
       | Linux on Wayland | the desktop returns an empty or unreadable screenshot      |
+
+  # Upstream #28240: after an app update every Hyprland capture failed because the helper the
+  # user installed earlier no longer matched the bundled one.
+  @backlog @desktop
+  Scenario: A Hyprland capture helper made stale by an app update is updated before capturing
+    Given the desktop app runs on Linux on Hyprland
+    And the user installed the capture helper before HAL-C2 was updated
+    When the user presses the Snap Shot shortcut
+    Then the capture helper is updated to the bundled one
+    And the window in front is attached to the draft
+
+  # Upstream #28240: a first install stays an explicit step in setup.
+  @backlog @desktop
+  Scenario: A capture never installs a Hyprland capture helper the user did not install
+    Given the desktop app runs on Linux on Hyprland
+    And the capture helper was never installed
+    When the user presses the Snap Shot shortcut
+    Then no capture helper is installed
+    And the user is told "Finish SnapShot setup in Settings → SnapShots."
+
+  # Upstream #28240: capture setup that is not ready, or a helper update that failed, named the
+  # setup step only in the trace log.
+  @backlog @desktop
+  Scenario Outline: A capture refused for unfinished setup points to the setup
+    Given the desktop app runs on Linux on <desktop>
+    And <setup>
+    When the user presses the Snap Shot shortcut
+    Then the user is told "Finish SnapShot setup in Settings → SnapShots."
+
+    Examples:
+      | desktop    | setup                                                 |
+      | Hyprland   | updating the stale capture helper fails               |
+      | KDE Plasma | the capture helper is out of date                     |
 
   @desktop
   Scenario Outline: A slow platform step ends the capture instead of hanging
@@ -263,6 +298,21 @@ Feature: Snap Shot captures another app's window into the draft
     When the user presses the Snap Shot shortcut
     Then the page's app text is attached with the image
     And no other Chrome process's window gives its text
+
+  # Upstream #22624: Chrome, Brave, Zed and Electron apps on macOS list thin untitled strips ahead
+  # of their content window, and the Snap Shot captured the strip.
+  @backlog
+  Scenario Outline: A Snap Shot on macOS passes over an app's helper strips
+    Given the desktop app runs on macOS
+    And Brave is in front with <ahead> ahead of its "Example Domain" window
+    When the user presses the Snap Shot shortcut
+    Then <captured> is captured
+
+    Examples:
+      | ahead                                               | captured                    |
+      | an untitled strip as wide as the window behind it   | the "Example Domain" window |
+      | a transparent window                                | the "Example Domain" window |
+      | a titled dialog                                     | the dialog                  |
 
   @backlog @desktop
   Scenario: Very long app text is cut at its limit and marked incomplete

@@ -1,7 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23274
+#   https://github.com/pingdotgg/t3code/pull/24556
 #   https://github.com/pingdotgg/t3code/pull/19789
 #   https://github.com/pingdotgg/t3code/pull/13697
 #   https://github.com/pingdotgg/t3code/pull/13355
+#   https://github.com/pingdotgg/t3code/pull/22753
+#   https://github.com/pingdotgg/t3code/pull/27904
+#   https://github.com/pingdotgg/t3code/pull/27986
 #   apps/server-ex/lib/hal_c2/diagnostics.ex (ps sampler, process list, telemetry, signalProcess, traces)
 #   apps/server-ex/lib/hal_c2/environment.ex (server config observability, logs directory)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (resourceTelemetry shape)
@@ -111,6 +116,29 @@ Feature: MC diagnostics
     Given tracing is enabled on the MC
     When a turn runs
     Then trace diagnostics list the turn's spans
+
+  # Upstream #27904: traces and logged failures kept the connection ticket and proof in request URLs,
+  # and the state folder was readable by everyone.
+  # Upstream #27986: pairing tokens and OAuth codes, states and challenges are redacted the same way.
+  @backlog @mc @priority-high
+  Scenario Outline: Credentials in a request's address never reach a trace or a log
+    Given tracing is enabled on the MC
+    When a request arrives whose address carries <credential>
+    Then its traces, exported spans and logged failures show the value replaced by a redaction marker
+    And the rest of the request is still traced
+
+    Examples:
+      | credential                                  |
+      | the ticket that opens a connection          |
+      | the proof that binds a request to a device  |
+      | a pairing token or pairing link             |
+      | an OAuth code, state or challenge           |
+
+  # Upstream #27904: the state folder was readable by everyone.
+  @backlog @mc @priority-low
+  Scenario: The MC's state folder is readable only by its owner
+    When the MC starts
+    Then its state folder can be read only by the user the MC runs as
 
   # Upstream #13697 times Node's event loop. The MC runs on the BEAM, which has no single loop
   # to time, so a stall recorder is not carried.
@@ -382,6 +410,15 @@ Feature: MC diagnostics
     And the oldest files are removed until the logs fit in 512 MiB
     And the file a thread is still writing to is kept
 
+  # Upstream #23274: a running server held every finished thread's current log as in use, so neither limit reclaimed it.
+  @backlog @mc @priority-low
+  Scenario: A finished thread's provider log falls under the limits while the MC keeps running
+    Given provider event logging is on
+    And a thread wrote its provider log and has written nothing since the last check
+    When the MC checks the provider logs again without restarting
+    Then that thread's log is removed like any other once it is older than 14 days
+    And it counts as removable when the logs pass 512 MiB
+
   @backlog @mc @priority-low
   Scenario: Provider events outside any thread share one log
     Given provider event logging is on
@@ -446,6 +483,19 @@ Feature: MC diagnostics
     Then the logged options name the model, mode and working folder
     And they hold no environment values and no credential for the "hal-c2" server
 
+  # Upstream #24556: signed asset and upload URLs carry their token in the path, so they get no HTTP span.
+  @backlog @mc @priority-high
+  Scenario Outline: Traces never record a signed URL's token
+    Given tracing is enabled on the MC
+    When a client uses <url>
+    Then no recorded trace holds that URL's token
+
+    Examples:
+      | url                      |
+      | a signed asset URL       |
+      | an attachment upload URL |
+      | a webhook URL            |
+
   # The triage command is run by an operator next to an installed HAL-C2, with or without an
   # MC running.
   @backlog @mc @priority-low
@@ -488,6 +538,29 @@ Feature: MC diagnostics
     Given Codex is not installed
     When the operator runs "hal-c2 triage --agent codex"
     Then the command fails saying "codex" is not installed or was not found on the path
+
+  # Upstream #22753: triage ran only from a terminal, out of reach from the apps.
+  @backlog @mc @desktop @mobile
+  Scenario: The user starts triage from the command palette
+    When the user chooses "Triage an issue" in the command palette
+    Then a thread under "No project" opens on the machine on screen, asking "What went wrong?"
+    And its draft links the triage playbook
+    And the user can pick any provider, describe the problem and send it
+
+  # Upstream #22753: the source of the running version is fetched while the user writes.
+  @backlog @mc @priority-low
+  Scenario: Triage from the app fetches the source of the version the MC runs
+    When a client asks the MC to prepare triage
+    Then the context file and the prompt are written as "hal-c2 triage" writes them
+    And the source of the MC's version is fetched into the triage source checkouts in the background
+    And the context tells the agent it runs inside the MC it checks, so it gives restart steps instead of restarting
+
+  # Upstream #22753
+  @backlog @desktop @mobile @priority-low
+  Scenario: Triage that cannot start points to the command
+    Given the machine on screen cannot start threads under "No project"
+    When the user chooses "Triage an issue"
+    Then the user is told triage could not start and to run "hal-c2 triage" instead
 
   @backlog @mc @priority-low
   Scenario: With no agent installed the triage files are left to paste into any agent

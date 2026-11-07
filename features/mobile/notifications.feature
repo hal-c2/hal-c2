@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22084
 #   https://github.com/pingdotgg/t3code/pull/24769
 #   https://github.com/pingdotgg/t3code/pull/21307
 #   https://github.com/pingdotgg/t3code/pull/11943
@@ -149,6 +150,15 @@ Feature: Push notifications and live agent activity
     When the user taps the alert
     Then "Fix checkout" is shown
     And going back returns to the home screen
+
+  # Upstream #22084: a tapped alert was marked handled before the app moved to the thread, so a
+  # move that failed was never retried and the alert was cleared unopened.
+  @backlog @mobile
+  Scenario: A tapped alert the app could not open yet still opens its thread
+    Given the user tapped an alert for "Fix checkout" before the app could show threads
+    When the app is ready to show threads
+    Then "Fix checkout" is shown
+    And the alert is cleared only once it has been opened
 
   @mobile
   Scenario: No alert is shown while the app is open

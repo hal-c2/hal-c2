@@ -3,6 +3,8 @@
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/23899
 #   https://github.com/pingdotgg/t3code/pull/22850
+#   https://github.com/pingdotgg/t3code/pull/27994
+#   https://github.com/pingdotgg/t3code/pull/27925
 #   apps/server-ex/lib/hal_c2/mcp/tools/queue.ex (hal_c2_queue_list, hal_c2_queue_read, hal_c2_queue_edit,
 #     hal_c2_queue_cancel, hal_c2_queue_reorder, hal_c2_queue_promote_to_steer, hal_c2_pending_request_list,
 #     hal_c2_pending_request_read, hal_c2_pending_request_respond)
@@ -17,6 +19,7 @@
 #     thread.metadata.update, message.dispatch (queue_after_active),
 #     thread.pull-request.link, thread.pull-request.unlink
 #   apps/server/src/mcp/toolkits/orchestrator, project, worktree, pullRequests
+#   https://github.com/pingdotgg/t3code/pull/25561
 Feature: Agents managing queues, projects, worktrees and pull requests through MCP
   Beyond threads themselves, an agent can manage queued messages, answer
   questions, register projects, move its own thread into a worktree and link
@@ -239,6 +242,31 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
   Scenario: Unlinking reports whether the pull request was linked
     When the agent of "caller" unlinks pull request 99 that is not linked
     Then the answer says it was not linked
+
+  # Upstream #25561: unlinking a pull request dismissed from a stack answered that it had been linked.
+  @backlog @mc
+  Scenario: Unlinking a pull request dismissed from a stack says it was not linked
+    Given pull request 12 was dismissed from the stack of "caller"
+    When the agent of "caller" unlinks pull request 12
+    Then the answer says it was not linked
+    And the thread is not changed
+
+  # Upstream #27994: one call links several pull requests to a thread.
+  @backlog @mc
+  Scenario: An agent links several pull requests in one call
+    Given "caller" already links pull request 12
+    When the agent of "caller" links pull requests 12, 13 and 14 and one address that is not a pull request in one call
+    Then 13 and 14 are reported as linked, 12 as already linked and the address as invalid
+    And the work log of "caller" says 2 pull requests were linked
+
+  # Upstream #27925: one call unlinks every linked pull request in the given states.
+  @backlog @mc
+  Scenario: An agent unlinks every pull request in the given states in one call
+    Given "caller" links merged pull request 10, closed pull request 11, open pull request 12 and pull request 13 that has never been synced
+    When the agent of "caller" unlinks its pull requests that are merged or closed
+    Then 10 and 11 are unlinked and 12 and 13 stay linked
+    And the answer groups the unlinked pull requests by repository and state with their count
+    And the work log of "caller" says 2 pull requests were unlinked
 
   @mc
   Scenario Outline: Pull request references that cannot be used

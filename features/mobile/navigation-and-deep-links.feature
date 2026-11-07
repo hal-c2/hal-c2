@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27089
 #   https://github.com/pingdotgg/t3code/pull/24262
 #   https://github.com/pingdotgg/t3code/pull/24750
 #   https://github.com/pingdotgg/t3code/pull/24742
@@ -376,13 +377,23 @@ Feature: Navigating the phone app and opening links into it
     Then "Fix checkout" is shown
     And going back again returns to the home screen
 
-  # Upstream #23841 and #24524: Usage was reached only through Settings, and Settings opened as
+  # Upstream #23841: Usage was reached only through Settings, and Settings opened as
+  # Upstream #24524: same change as #23841.
   # a separate card outside the workspace's columns.
   @backlog @mobile
   Scenario: The workspace's navigation reaches chats, pull requests, usage and settings
     When the user looks at the phone's workspace navigation
     Then it offers Chats, Pull requests, Usage and Settings
     And the section that is open is marked
+
+  # Upstream #27089: before iOS 26 the floating navigation bar, built for Liquid Glass, drew as a
+  # grey block short of the screen edge with the new-task button floating beside it.
+  @backlog @mobile @priority-low
+  Scenario: Without a floating glass bar the navigation spans the screen
+    Given the phone's system draws no floating glass navigation bar
+    When the user looks at the phone's workspace navigation
+    Then the navigation spans the full width of the screen
+    And new task is offered in the header beside search, not beside the navigation
 
   @backlog @mobile
   Scenario: Settings on a split layout keeps its list beside the page

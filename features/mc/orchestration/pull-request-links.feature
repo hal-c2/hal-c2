@@ -331,7 +331,8 @@ Feature: Pull requests linked to a thread
     And the sync sweep runs
     Then the host is asked about "acme/app#12"
 
-  # Upstream #16761 and #17148: a read anywhere that sees the state change syncs the link at
+  # Upstream #16761: a read anywhere that sees the state change syncs the link at
+  # Upstream #17148: same change as #16761.
   # once; the minute sweep is only the fallback.
   @backlog @mc
   Scenario Outline: A pull request state seen by any read syncs the thread's link at once

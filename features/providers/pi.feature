@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27539
+#   https://github.com/pingdotgg/t3code/pull/27521
+#   https://github.com/pingdotgg/t3code/pull/27514
+#   https://github.com/pingdotgg/t3code/pull/27513
+#   https://github.com/pingdotgg/t3code/pull/22463
+#   https://github.com/pingdotgg/t3code/pull/23741
 #   https://github.com/pingdotgg/t3code/pull/23235
 #   https://github.com/pingdotgg/t3code/pull/20521
 #   https://github.com/pingdotgg/t3code/pull/21356
@@ -80,6 +86,15 @@ Feature: Pi
     Given Pi reports no models
     When the user refreshes provider status
     Then Pi says to sign in with Pi in a terminal or configure an API key
+
+  # Upstream #27513: Pi showed as ready while its launch arguments pinned a model with no
+  # credentials, so every turn on "Pi default" failed without saying why.
+  @backlog
+  Scenario: Pi whose default model has no credentials says so
+    Given Pi's launch arguments pin "openai/gpt-5" and Pi holds only an Anthropic key
+    When the user refreshes provider status
+    Then Pi stays ready, with its other models still offered
+    And Pi's provider details name "openai/gpt-5" and say its provider has no credentials
 
   # Health states of PiProvider.ts checkPiProviderStatus.
   @backlog
@@ -330,6 +345,15 @@ Feature: Pi
     When a Pi thread starts
     Then Pi loads all of them as it does in its own terminal app
 
+  # Upstream #27539: in a folder Pi has not trusted, Pi quietly skipped the project's own settings,
+  # extensions and skills.
+  @backlog
+  Scenario: A Pi session in a folder Pi does not trust says what Pi skipped
+    Given Pi has not trusted the project's folder
+    When a Pi thread runs its first turn, new or resumed
+    Then the thread shows one notice naming the folder and what Pi skipped
+    And the notice says how to trust the folder with "/trust" in Pi's terminal app
+
   @backlog
   Scenario: Pi writing titles and commit messages runs without tools, extensions or a saved session
     Given Pi's launch arguments name an extension and a tool list
@@ -344,6 +368,13 @@ Feature: Pi
     When Pi is asked for a thread title
     Then the failure names that model
     And says extensions are not loaded when Pi writes titles and commit messages
+
+  # Upstream #23741: an empty Pi reply that came with a turn error reported a generic failure; it now names the error.
+  @backlog
+  Scenario: Pi failing to write a title shows the provider's error
+    Given Pi ends a title request with no text and the error "model overloaded"
+    When Pi is asked for a thread title
+    Then the failure reads "Pi could not generate text: model overloaded"
 
   @backlog @priority-high
   Scenario: Pi never inherits another session's HAL-C2 credential
@@ -549,6 +580,25 @@ Feature: Pi
     Then the user is asked "What should I do?"
     And the turn keeps running until the answer goes back to the extension
 
+  # Upstream #22463: a Pi select, editor or placeholder-less input dialog showed its whole title
+  # twice, as the header and again as the question, and a long title ran past the card.
+  @backlog
+  Scenario Outline: A Pi extension dialog with only a title shows it once
+    When a Pi extension <asks> titled "Merge target" with nothing else to say
+    Then the question reads "Merge target" once, under the header "Question"
+
+    Examples:
+      | asks                                      |
+      | asks the user to pick from a list         |
+      | asks the user to edit a text              |
+      | asks for a line of text with no placeholder |
+
+  # Upstream #22463: an input dialog with a placeholder keeps its title as the header.
+  @backlog
+  Scenario: A Pi text question with a placeholder keeps its title as the header
+    When a Pi extension asks for a line of text titled "Branch" with the placeholder "feature/…"
+    Then the question's header is "Branch"
+
   # Upstream #17206: Pi editor dialogs prefill the answer composer
   @backlog
   Scenario: A Pi extension's text edit starts the answer from what is there now
@@ -712,6 +762,17 @@ Feature: Pi
     When the user steers the thread with a message Pi declines after the turn is stopped
     Then the stopped turn ends with the message in it and no new turn starts
 
+  # Upstream #27514: Pi started a message waiting in its own queue as soon as Stop aborted the turn,
+  # and the next turn sent it to the model again.
+  @backlog
+  Scenario: Stopping a Pi turn drops what waits in Pi's own queue
+    Given Pi 0.84.4 or newer holds a steer in its own queue
+    When the user stops the turn
+    Then Pi's queue is cleared before the turn is aborted
+    And the stopped turn shows a notice listing the message Pi never read
+    And the next turn does not send that message
+    And messages HAL-C2 queued for the thread stay queued
+
   @backlog
   Scenario: Steering a Pi thread with /compact compacts instead of prompting
     Given a Pi turn is running
@@ -730,6 +791,14 @@ Feature: Pi
     When Pi hands three tasks to its own subagents
     Then the thread shows one entry per task with its progress and result
     And no child thread is created for them
+
+  # Upstream #27521: a tool Pi ran through another tool, such as a script's calls, showed as unrelated work.
+  @backlog
+  Scenario: A tool Pi calls through another tool shows under its caller
+    Given Pi runs a script that calls two tools
+    When the tools start, update and finish
+    Then both tools show inside the script's entry in the work log
+    And a tool Pi calls on its own shows at the top of the turn
 
   @backlog
   Scenario: A tool Pi was running when the user stopped shows as stopped

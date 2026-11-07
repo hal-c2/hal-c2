@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27593
+#   https://github.com/pingdotgg/t3code/pull/28090
+#   https://github.com/pingdotgg/t3code/pull/26234
+#   https://github.com/pingdotgg/t3code/pull/26164
+#   https://github.com/pingdotgg/t3code/pull/23435
+#   https://github.com/pingdotgg/t3code/pull/23767
 #   https://github.com/pingdotgg/t3code/pull/18723
 #   https://github.com/pingdotgg/t3code/pull/17061
 #   https://github.com/pingdotgg/t3code/pull/20081
@@ -18,6 +24,8 @@
 #   https://github.com/pingdotgg/t3code/pull/13363 (a refused Codex reset credit is not reported as unconfirmed)
 #   https://github.com/pingdotgg/t3code/pull/12799 (a Grok account with no metered usage yet stays in Limits)
 #   https://github.com/pingdotgg/t3code/pull/12588 (Grok reports the account's email so one account merges)
+#   https://github.com/pingdotgg/t3code/pull/26331
+#   https://github.com/pingdotgg/t3code/pull/23558
 #   docs/user/usage.md (Track subscription limits, Connect a CLIProxyAPI hub, Subscription usage widget)
 #   apps/server-ex/lib/hal_c2/provider_usage_limits.ex, apps/server-ex/lib/hal_c2/provider_usage_limits/codex.ex,
 #   apps/server-ex/lib/hal_c2/provider_usage_limits/claude.ex (probes, probeFailed, unsupported, provider.consumeResetCredit)
@@ -58,6 +66,15 @@ Feature: Subscription limits
     Given Codex reported its windows a minute ago
     When the next check of Codex fails
     Then the windows from a minute ago are still shown
+
+  # Upstream #23558: Antigravity gives an untouched quota a reset one full window away, so limits
+  # showed a countdown beside 100% left that restarted on every check.
+  @backlog @mc @plugin-antigravity @priority-low
+  Scenario: An untouched Antigravity quota shows no reset countdown
+    Given Antigravity is signed in and one of its quotas has not been used
+    When the user opens the limits
+    Then that quota shows 100% left with its window and no reset time
+    And a quota that has been used still shows when it resets
 
   # Upstream #15116: a window reported mid-turn cleared the failed-check marker; the failure now
   # stays until a full check succeeds.
@@ -227,6 +244,14 @@ Feature: Subscription limits
     When the user renames the hub and saves
     Then the hub still reads with its saved key
 
+  # Upstream #23767: two hubs on one host and port got the same settings key, so the second replaced the first.
+  @backlog @shared @mc @priority-low
+  Scenario: Two hubs on the same host are both kept
+    Given a hub at "http://proxy.test:8318/hub-a" with its own management key
+    When the user adds a hub at "http://proxy.test:8318/hub-b"
+    Then both hubs are listed, each with its own address, label and key
+    But adding "http://proxy.test:8318/hub-a" again updates that hub
+
   @mc
   Scenario: Removing a hub forgets its key
     Given a hub with a saved management key
@@ -289,6 +314,15 @@ Feature: Subscription limits
     Given a hub Claude account that reports a weekly limit scoped to one model
     When the MC reads the hub
     Then the account shows its session and weekly windows and the model's own weekly window
+
+  # Upstream #23435: reading Claude usage through CLIProxyAPI dropped the account's monthly spending
+  # limit before it was mapped.
+  @mc @backlog @plugin-claude
+  Scenario: A hub's Claude account keeps its monthly spending limit
+    Given a hub Claude account with a monthly spending limit, 40 percent used
+    When the MC reads the hub
+    Then the account shows a monthly spending window 40 percent used
+    But a hub Claude account whose spending limit is turned off shows no monthly spending window
 
   # Upstream #21413: a hub Codex account keeps its plan when the usage response leaves it out
   @mc @backlog @priority-high
@@ -469,6 +503,16 @@ Feature: Subscription limits
     When the next check of Codex fails
     Then the limits of "Personal" are not shown for "Business"
 
+  # Upstream #26331: a Codex session kept reporting the readings it had cached, which
+  # replaced a newer account check and made the usage jump back and forth.
+  @backlog @mc @plugin-codex
+  Scenario: A Codex session repeating old usage readings does not replace a newer check
+    Given a Codex session reported its session limit 40% used
+    And an account check since reads it 10% used
+    When the session reports the same 40% again
+    Then Codex's session limit still reads 10% used on every client
+    And a session reading that changed replaces it
+
   @desktop @mobile @backlog-mobile @priority-low
   Scenario: Automatic checks wait at least five minutes per environment
     Given the user opened Limits two minutes ago
@@ -572,3 +616,98 @@ Feature: Subscription limits
     When the user opens the usage limits
     Then Antigravity shows both the Gemini limits and the Claude and GPT limits
     And a limit both services report shows the more used reading
+
+  # Upstream #28090: the quota read named an old client version, so Google left the Gemini
+  # limits out; a Gemini Argon limit keeps its own group name.
+  @backlog @mc @plugin-antigravity @priority-low
+  Scenario: Antigravity's Gemini limits are read for a personal account
+    Given a personal Google account signed in to Antigravity has used Gemini
+    When the user opens the usage limits
+    Then Antigravity shows the Gemini 5-hour and weekly limits
+    And a Gemini Argon weekly limit is named "Gemini 4 Argon · Weekly", apart from "Gemini · Weekly"
+
+  # Upstream #26164: new threads fall back when the default model's usage pool is exhausted
+  @backlog
+  Rule: A fallback model for new threads when the default is out of usage
+
+    Background:
+      Given the environment's default model is Codex "GPT-6.1 Sol"
+      And the fallback model in Settings > Threads is Claude "Haiku"
+
+    @mc @shared
+    Scenario: A new thread opens on the fallback while the default is out of usage
+      Given Codex reports its session limit 100% used
+      When the user starts a new thread without choosing a model
+      Then the composer has Claude "Haiku" selected
+      And a notice says the default is out of usage and the fallback is used instead
+
+    @shared
+    Scenario: Using the default from the notice switches back and removes it
+      Given a new thread fell back to Claude "Haiku"
+      When the user chooses to use "GPT-6.1 Sol" from the notice
+      Then the composer has Codex "GPT-6.1 Sol" selected
+      And the notice is gone
+
+    @shared
+    Scenario: A dismissed fallback notice stays hidden until the usage window resets
+      Given the user dismissed the fallback notice
+      When the user starts another new thread, or the client restarts
+      Then the fallback model is still selected and the notice stays hidden
+      And the notice returns once the window resets and the default is out of usage again
+
+    @mc @shared
+    Scenario Outline: The fallback applies only when nothing else chose the model
+      Given Codex reports its session limit 100% used
+      When <case>
+      Then the thread keeps <model> and no fallback notice is shown
+
+      Examples:
+        | case                                                        | model                     |
+        | the user picked "GPT-6.1 Sol" in the composer               | Codex "GPT-6.1 Sol"       |
+        | the new thread carries its model over from the thread it came from | the carried model   |
+        | a thread is already running on Codex                        | Codex                     |
+        | a scheduled task runs with its stored model                 | the stored model          |
+        | the user sends to several models at once                    | every chosen model        |
+
+    @mc
+    Scenario Outline: A fallback that cannot run is not used
+      Given Codex reports its session limit 100% used
+      And Claude <state>
+      When a new thread starts from a client or an agent's tool call
+      Then the thread opens on Codex "GPT-6.1 Sol"
+
+      Examples:
+        | state                         |
+        | is disabled                   |
+        | is not signed in              |
+        | reports its own limit 100% used |
+
+    @mc @shared @priority-low
+    Scenario: A fallback of none turns the fallback off
+      Given the fallback model is set to none
+      And Codex reports its session limit 100% used
+      When the user starts a new thread
+      Then the thread opens on Codex "GPT-6.1 Sol" and no fallback notice is shown
+
+    # Upstream #27593: the fallback model row had a model picker but no way to choose its effort.
+    @backlog @shared
+    Scenario: The fallback model's effort is set beside it
+      When the user sets the fallback model's effort to high in Settings > Threads
+      And Codex reports its session limit 100% used
+      And the user starts a new thread
+      Then the composer has Claude "Haiku" at high effort
+      And no effort control is offered while the fallback model is none
+
+    @mc
+    Scenario: Text generation skips a provider that is out of usage
+      Given Codex reports its session limit 100% used
+      When the MC writes a thread title with Codex selected for text generation
+      Then the title is written by the next enabled, signed-in provider that has usage left
+
+    # Upstream #26234: a turn that hit a usage limit left the usage snapshot stale
+    @mc
+    Scenario: A turn stopped at its usage limit checks that provider's usage at once
+      Given Codex's last reading shows its session limit 20% used
+      When a Codex turn fails at its usage limit
+      Then Codex's limits are checked again right away and read 100% used
+      And the next new thread opens on the fallback model

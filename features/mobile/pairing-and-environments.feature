@@ -5,6 +5,9 @@
 #   https://github.com/pingdotgg/t3code/pull/16019
 #   https://github.com/pingdotgg/t3code/pull/19331
 #   https://github.com/pingdotgg/t3code/pull/19354
+#   https://github.com/pingdotgg/t3code/pull/25859
+#   https://github.com/pingdotgg/t3code/pull/26052
+#   https://github.com/pingdotgg/t3code/pull/25730
 #   apps/mobile/src/features/connection/pairing.ts (host + token, QR payload, scheme defaults)
 #   apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx (Scan QR Code, pairing code)
 #   apps/mobile/src/features/connection/ConnectionsRouteScreen.tsx
@@ -232,6 +235,15 @@ Feature: Pairing a phone with environments
     When the user edits the pairing code
     Then the failure is no longer shown
 
+  # Upstream #25859: an error another feature reported (a failed send, a failed branch refresh)
+  # showed under the Address and Code fields as if pairing had failed.
+  @backlog @mobile
+  Scenario: The pairing form shows only its own pairing failures
+    Given a message failed to send in a thread
+    When the user opens the screen to add an environment
+    Then the pairing form shows no failure
+    And closing the form leaves the failed message's error where it was
+
   @backlog @mobile @priority-low
   Scenario: Adding an environment asks for the camera only when the user chooses to scan
     Given the app has not been granted camera access
@@ -251,6 +263,15 @@ Feature: Pairing a phone with environments
     When the user tries to pair with an environment on the local network
     Then the user is told to allow local network access for HAL-C2 in the system settings
     And no environment is added
+
+  # Upstream #25730: Android refused an environment whose certificate came from a CA the user
+  # installed on the phone, though the phone's browser trusted it.
+  @backlog @mobile @priority-high
+  Scenario: An Android phone trusts a certificate authority the user installed
+    Given the environment serves HTTPS with a certificate from a CA the user installed on their Android phone
+    When the user pairs the phone with it
+    Then the environment is added and connects
+    And environments on plain HTTP still connect as before
 
   # New behaviour, the next two: the session a link buys is saved on the phone before the phone
   # pairs with it. The link is spent by then, so the user is told to ask for a fresh one.
@@ -321,6 +342,14 @@ Feature: Pairing a phone with environments
     Then the camera is off
     And the pairing form holds the link
     And no environment is added
+
+  # Upstream #26052: a link opened with the Settings form open stacked a second form on top.
+  @backlog @mobile
+  Scenario: A pairing link opened while the pairing form is open fills that form
+    Given the user has the screen to add an environment open from Settings
+    When the user follows a pairing link from outside the app
+    Then the open pairing form holds the link
+    And no second pairing form is opened
 
   @mobile
   Scenario: A pairing link opened from outside a paired app names the environment it would replace

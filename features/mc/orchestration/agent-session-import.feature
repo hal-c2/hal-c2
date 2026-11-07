@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27743
+#   https://github.com/pingdotgg/t3code/pull/24982
+#   https://github.com/pingdotgg/t3code/pull/23747
 #   https://github.com/pingdotgg/t3code/pull/12292
 #   https://github.com/pingdotgg/t3code/pull/21464
 #   https://github.com/pingdotgg/t3code/pull/16662
@@ -55,6 +58,13 @@ Feature: Importing history from agents already used on this machine
     Given "~/code/app" is a git repository cloned from a remote
     When a client scans for agent sessions
     Then candidate "app" carries a key for that remote shared by every clone
+
+  # Upstream #23747: an origin URL written on the remote's section header line was missed, or the next remote's was used.
+  @mc @backlog
+  Scenario: A remote URL on its section's header line is the repository identity
+    Given "~/code/app" has the git config line '[remote "origin"] url = git@github.com:a/b.git' followed by an "upstream" remote
+    When a client scans for agent sessions
+    Then candidate "app" carries the key for "git@github.com:a/b.git"
 
   @mc
   Scenario: A very large number of transcripts is capped
@@ -115,6 +125,18 @@ Feature: Importing history from agents already used on this machine
     When it is imported
     Then its thread holds the first user prompt followed by the latest messages, 200 in all
 
+  # Upstream #27743: long imports dropped their older messages without saying so.
+  @mc @backlog
+  Scenario Outline: An imported thread says how many older messages it left out
+    Given a session has <count> visible messages
+    When it is imported
+    Then its thread <notice>
+
+    Examples:
+      | count | notice                                                                   |
+      | 205   | starts with a notice that 5 messages were left out, before the first prompt |
+      | 200   | starts with no notice                                                     |
+
   # Neither server keeps a blank prompt (both skip it), so its title comes from the next one.
   @mc
   Scenario Outline: Imported titles
@@ -166,6 +188,14 @@ Feature: Importing history from agents already used on this machine
     Given a Codex session whose first message holds only injected setup instructions
     When the session is imported
     Then the thread's title comes from the next message the user wrote
+
+  # Upstream #24982: imports ignored the name a user saved for a Codex conversation.
+  @backlog @mc @plugin-codex
+  Scenario: An imported Codex thread keeps the name the user saved in Codex
+    Given a Codex conversation the user renamed "Renamed chat", then "Cart totals", then to a blank name
+    When it is imported
+    Then its thread title is "Cart totals"
+    And a Codex conversation with no saved name is titled from its messages as before
 
   @mc
   Scenario Outline: Sessions that cannot be resumed are skipped

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22579
 #   https://github.com/pingdotgg/t3code/pull/22117
 #   https://github.com/pingdotgg/t3code/pull/20037
 #   https://github.com/pingdotgg/t3code/pull/16595
@@ -42,9 +43,13 @@
 #   https://github.com/pingdotgg/t3code/pull/15115
 #   https://github.com/pingdotgg/t3code/pull/25359
 #   https://github.com/pingdotgg/t3code/pull/25672
+#   https://github.com/pingdotgg/t3code/pull/25666
+#   https://github.com/pingdotgg/t3code/pull/25675
 #   https://github.com/pingdotgg/t3code/pull/22581
 #   https://github.com/pingdotgg/t3code/pull/22653
 #   https://github.com/pingdotgg/t3code/pull/22709
+#   https://github.com/pingdotgg/t3code/pull/28133
+#   https://github.com/pingdotgg/t3code/pull/26682
 Feature: Delegating tasks to subagents
   A running agent can hand a task to a subagent. The engine starts a child thread
   marked as a subagent of the caller, records the task in the caller's timeline,
@@ -199,6 +204,20 @@ Feature: Delegating tasks to subagents
     Given "parent" is in auto-accept edits
     When the agent in "parent" delegates a task to Muse Code without naming an access mode
     Then the subagent runs in the broadest mode Muse Code offers that does not exceed "parent"'s
+
+  # Upstream #26682: thread launch, and delegation to a linked environment that launches through
+  # it, stored a mode the provider lacked, and the thread ran supervised.
+  @backlog @mc @priority-high
+  Scenario Outline: A thread launched with an access mode its provider lacks steps down too
+    Given "parent" is in auto
+    When <how> on Pi without naming an access mode
+    Then the new thread runs in auto-accept edits, the broadest mode Pi offers that does not exceed auto
+    And asking for auto by name is refused with the modes Pi offers
+
+    Examples:
+      | how                                                    |
+      | the agent in "parent" launches a thread                |
+      | the agent in "parent" delegates a task to another MC   |
 
   @backlog @mc
   Scenario: The orchestrator's capabilities list each provider's access modes
@@ -580,6 +599,7 @@ Feature: Delegating tasks to subagents
     And disposing a delivery stops it from being delivered again
 
   # Upstream #25672: an acknowledgement written from a stale read put a settled run back to running.
+  # Upstream #25666: accepting a delivery from a stale read put a checkpointed run back to waiting.
   @backlog @mc @priority-high
   Scenario Outline: Acknowledging a task's delivery leaves a settled run settled
     Given a delegated task of "parent" finished with a delivered result
@@ -592,6 +612,7 @@ Feature: Delegating tasks to subagents
       | failed in the provider         | acknowledges    | failed    |
       | completed its checkpoint       | acknowledges    | completed |
       | completed its checkpoint       | disposes        | completed |
+      | completed its checkpoint       | accepts         | completed |
 
   @mc
   Scenario: The provider confirms it accepted a mailbox delivery
@@ -695,7 +716,8 @@ Feature: Delegating tasks to subagents
     Then the tool reports the task "cancelled"
     And the task, its node and its turn item are "cancelled"
 
-  # Upstream #22581, #22653: Stop on a subagent that was never given a run clears its task on
+  # Upstream #22581: Stop on a subagent that was never given a run clears its task on
+  # Upstream #22653: same change as #22581.
   # the caller even while the caller is idle, whatever else the subagent is doing.
   @backlog @mc @shared @priority-high
   Scenario: Stopping a stuck subagent clears its task even when the caller is idle
@@ -704,6 +726,25 @@ Feature: Delegating tasks to subagents
     When the user stops the subagent
     Then the task, its node and its turn item are "cancelled"
     And "parent" is not woken with a result
+
+  # Upstream #25675: a delegated stop that never returned held its thread's work, even after a
+  # restart; each attempt is now bounded at 30 seconds and retried, then fails.
+  @backlog @mc @priority-high
+  Scenario: A delegated task's stop that hangs gives up so later runs can start
+    Given the agent in "parent" delegated a task whose subagent does not answer a stop
+    When the task is stopped
+    Then each attempt to stop it gives up after 30 seconds and is retried
+    And once the retries run out the stop fails
+    And the next run of "parent" can start
+
+  # Upstream #25675: the same holds for a stop replayed when the MC starts.
+  @backlog @mc
+  Scenario: A hung delegated stop replayed after a restart does not block later runs
+    Given a delegated task's stop was still running when the MC stopped
+    And its subagent does not answer a stop
+    When the MC starts and replays the stop
+    Then the stop fails once its retries run out
+    And later runs of that thread can start
 
   # Upstream #22653: a subagent whose run is bound to the task keeps its normal settlement.
   @backlog @mc
@@ -829,6 +870,16 @@ Feature: Delegating tasks to subagents
     When "three" and "four" complete afterwards, while "parent" works on another turn
     Then "parent" is woken again for them
     And completions that arrive together share one wake turn
+
+  # Upstream #22579: a completion that waited in the queue started on the model the thread had
+  # when it was queued, and put the thread back on it.
+  @mc @backlog @priority-high
+  Scenario: A queued completion starts on the model the thread has now
+    Given the completion of "one" is queued for "parent" while it works on "gpt-5.4"
+    When the user switches "parent" to "gpt-5.5" before the completion is delivered
+    Then the wake for "one" runs on "gpt-5.5"
+    And "parent" stays on "gpt-5.5"
+    But a message the user queued keeps the model it was queued with
 
   @mc
   Scenario: Each delegated result reaches its caller exactly once
@@ -1159,3 +1210,13 @@ Feature: Delegating tasks to subagents
     Given "parent" runs with fast mode on
     When "parent" delegates a task on another model
     Then the subagent runs without fast mode
+
+  # Upstream #28133: capabilities reported a stored option the model lacks as inherited, and
+  # delegate_task then refused that same option when the agent passed it back.
+  @backlog @mc
+  Scenario: Options the caller's model does not have are neither reported nor inherited
+    Given "parent" was launched on a model without fast mode, with fast mode stored off
+    When the agent in "parent" asks for the orchestrator's capabilities
+    Then the inherited options do not include fast mode
+    When it delegates a task giving those inherited options
+    Then the subagent starts with only the options its model has

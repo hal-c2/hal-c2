@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26958
 #   https://github.com/pingdotgg/t3code/pull/24847
 #   https://github.com/pingdotgg/t3code/pull/19065
 #   https://github.com/pingdotgg/t3code/pull/15686
@@ -70,6 +71,20 @@ Feature: The desktop shell draws the thread in the window's centre
       When the user starts a new thread in "shop" on a new worktree from "main"
       Then the centre reads "What should we build in shop?"
       And the centre says the thread runs in a new worktree from "main"
+    # Upstream #26958: the reconnecting notice pushed the new thread's headline and composer up.
+    @backlog @desktop @mobile @priority-low
+    Scenario Outline: A notice in a new thread's draft does not move its composer
+      Given the user is in a new thread's draft
+      When <notice> appears
+      Then it shows as its own card under the composer's branch row
+      And the headline and the composer do not move
+
+      Examples:
+        | notice                                  |
+        | the notice that the MC is reconnecting  |
+        | the notice that a fallback model is used |
+        | a usage limit notice                    |
+
 
     @desktop
     Scenario: A thread whose MC cannot be reached offers a retry
