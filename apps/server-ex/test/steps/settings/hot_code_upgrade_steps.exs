@@ -302,6 +302,8 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
   end
 
   step "{string} is asked to continue where it left off", %{args: [title]} = context do
+    # Dispatched off the boot (`Recovery.continue/0`): the message is the receipt.
+    World.await_state(context, title, fn _ -> continuations(context, title) != [] end)
     assert [%{"createdBy" => "agent"}] = continuations(context, title)
     context
   end

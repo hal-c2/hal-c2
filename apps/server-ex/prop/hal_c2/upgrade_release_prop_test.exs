@@ -34,6 +34,7 @@ defmodule HalC2.UpgradeReleasePropTest do
   alias HalC2.Upgrade.Tree
 
   @ids [:a, :b, :c]
+  @continue "continueRunningThreads"
 
   property "an update installs in place, or restarts only when it must",
     numtests: HalC2.Prop.numtests(15) do
@@ -74,9 +75,9 @@ defmodule HalC2.UpgradeReleasePropTest do
         else: {:call, __MODULE__, :let_go, []}
 
     frequency([
-      {6, {:call, __MODULE__, :update, [boolean(), children()]}},
-      {1, {:call, __MODULE__, :update_native, []}},
-      {1, {:call, __MODULE__, :update_crash, []}},
+      {6, {:call, __MODULE__, :update, [boolean(), children(), boolean()]}},
+      {1, {:call, __MODULE__, :update_native, [boolean()]}},
+      {1, {:call, __MODULE__, :update_crash, [boolean()]}},
       {2, hold}
     ])
   end
@@ -89,13 +90,13 @@ defmodule HalC2.UpgradeReleasePropTest do
   def precondition(%{holder: holder}, {:call, _, :hold, []}), do: holder == :none
   def precondition(%{holder: holder}, {:call, _, :let_go, []}), do: holder != :none
   # Old code still running is refused before the point of no return, so never crashes.
-  def precondition(%{holder: holder}, {:call, _, :update_crash, []}), do: holder != :old
+  def precondition(%{holder: holder}, {:call, _, :update_crash, _}), do: holder != :old
   def precondition(_state, _call), do: true
 
   def next_state(%{holder: :old} = state, _result, {:call, _, :update, _}),
     do: %{state | done: true}
 
-  def next_state(state, _result, {:call, _, :update, [reshape, children]}) do
+  def next_state(state, _result, {:call, _, :update, [reshape, children, _continue]}) do
     shape = if reshape, do: state.shape + 1, else: state.shape
     history = if reshape, do: state.history ++ [state.shape], else: state.history
     holder = if state.holder == :current, do: :old, else: state.holder
@@ -110,16 +111,17 @@ defmodule HalC2.UpgradeReleasePropTest do
     }
   end
 
-  def next_state(state, _result, {:call, _, :update_native, []}), do: %{state | done: true}
-  def next_state(state, _result, {:call, _, :update_crash, []}), do: %{state | done: true}
+  def next_state(state, _result, {:call, _, :update_native, _}), do: %{state | done: true}
+  def next_state(state, _result, {:call, _, :update_crash, _}), do: %{state | done: true}
   def next_state(state, _result, {:call, _, :version, []}), do: state
   def next_state(state, _result, {:call, _, :hold, []}), do: %{state | holder: :current}
   def next_state(state, _result, {:call, _, :let_go, []}), do: %{state | holder: :none}
 
-  def postcondition(%{holder: :old} = state, {:call, _, :update, _}, result) do
+  def postcondition(%{holder: :old} = state, {:call, _, :update, [_, _, continue]}, result) do
     # The install stops before anything changes and rolls back, and the MC restarts
     # into the new version instead.
     match?(%{reply: {:ok, _}, restarted: true, version_moved: false}, result) and
+      continued?(result, continue) and
       result.outcome["status"] == "rolled-back" and
       result.counter_vsn == state.vsn and
       result.counter_same_pid and
@@ -129,7 +131,7 @@ defmodule HalC2.UpgradeReleasePropTest do
       result.old_code == [result.holder]
   end
 
-  def postcondition(state, {:call, _, :update, [reshape, children]}, result) do
+  def postcondition(state, {:call, _, :update, [reshape, children, _continue]}, result) do
     shape = if reshape, do: state.shape + 1, else: state.shape
     history = if reshape, do: state.history ++ [state.shape], else: state.history
 
@@ -146,6 +148,7 @@ defmodule HalC2.UpgradeReleasePropTest do
     holders_of_old = if state.holder == :current, do: [result.holder], else: []
 
     match?(%{reply: {:ok, _}, restarted: false, version_moved: true}, result) and
+      not continued?(result) and
       result.counter_vsn == state.vsn + 1 and
       result.counter_same_pid and
       result.counter_state == {shape, history} and
@@ -154,12 +157,14 @@ defmodule HalC2.UpgradeReleasePropTest do
       Enum.sort(result.old_code) == Enum.sort(holders_of_old)
   end
 
-  def postcondition(_state, {:call, _, :update_native, []}, result),
+  def postcondition(_state, {:call, _, :update_native, [continue]}, result),
     do:
-      match?(%{reply: {:ok, _}, restarted: true, version_moved: false, nif_loaded: false}, result)
+      match?(%{reply: {:ok, _}, restarted: true, version_moved: false, nif_loaded: false}, result) and
+        continued?(result, continue)
 
-  def postcondition(_state, {:call, _, :update_crash, []}, result) do
+  def postcondition(_state, {:call, _, :update_crash, _}, result) do
     match?(%{reply: {:error, _}, marked: true, version_moved: false, restarted: false}, result) and
+      not continued?(result) and not result.rebooted_continue and
       result.start == result.from and not result.previous? and
       result.outcome["status"] == "rolled-back" and
       result.rebooted["status"] == "rolled-back" and result.start_after_boot == result.from
@@ -171,9 +176,19 @@ defmodule HalC2.UpgradeReleasePropTest do
   def postcondition(_state, {:call, _, :hold, []}, result), do: result == :lingering
   def postcondition(_state, {:call, _, :let_go, []}, result), do: result == :ok
 
+  # A restart carries `continueRunningThreads` as asked to the boot it is for, which
+  # takes it off the outcome; nothing else ever records it.
+  defp continued?(result, continue),
+    do:
+      result.restarting[@continue] == continue and result.booted.continue == continue and
+        not Map.has_key?(result.booted.outcome, @continue)
+
+  defp continued?(result),
+    do: Map.has_key?(result.outcome || %{}, @continue) or Upgrade.continue_threads?()
+
   # --- commands ---------------------------------------------------------------------
 
-  def update(reshape, children) do
+  def update(reshape, children, continue) do
     %{vsn: vsn, shape: shape} = Process.get(:versions)
     shape = if reshape, do: shape + 1, else: shape
     vsn = vsn + 1
@@ -182,10 +197,14 @@ defmodule HalC2.UpgradeReleasePropTest do
     counter_vsn_before = apply(Services.counter(), :vsn, [])
 
     result =
-      install(vsn, [
-        {Services.counter(), Services.counter(vsn, shape)},
-        {Services.sup(), Services.sup(vsn, children)}
-      ])
+      install(
+        vsn,
+        [
+          {Services.counter(), Services.counter(vsn, shape)},
+          {Services.sup(), Services.sup(vsn, children)}
+        ],
+        continue
+      )
 
     if result.version_moved, do: Process.put(:versions, %{vsn: vsn, shape: shape})
 
@@ -201,20 +220,24 @@ defmodule HalC2.UpgradeReleasePropTest do
     })
   end
 
-  def update_native do
+  def update_native(continue) do
     %{vsn: vsn, shape: shape} = Process.get(:versions)
     {nif, _} = native = Mc.nif_module(%{home: Process.get(:home)})
 
     result =
-      install(vsn + 1, [
-        {Services.counter(), Services.counter(vsn + 1, shape)},
-        native
-      ])
+      install(
+        vsn + 1,
+        [
+          {Services.counter(), Services.counter(vsn + 1, shape)},
+          native
+        ],
+        continue
+      )
 
     Map.put(result, :nif_loaded, :code.is_loaded(nif) != false)
   end
 
-  def update_crash do
+  def update_crash(continue) do
     %{vsn: vsn, shape: shape} = Process.get(:versions)
     test = self()
     counter = Process.whereis(Services.counter())
@@ -222,7 +245,11 @@ defmodule HalC2.UpgradeReleasePropTest do
 
     result =
       try do
-        install(vsn + 1, [{Services.counter(), Services.counter(vsn + 1, shape, true)}])
+        install(
+          vsn + 1,
+          [{Services.counter(), Services.counter(vsn + 1, shape, true)}],
+          continue
+        )
       after
         Application.delete_env(:hal_c2, :install_release)
       end
@@ -244,6 +271,7 @@ defmodule HalC2.UpgradeReleasePropTest do
       start: start,
       previous?: previous?,
       rebooted: Upgrade.outcome(),
+      rebooted_continue: Upgrade.continue_threads?(),
       start_after_boot: start_version()
     })
   end
@@ -290,7 +318,7 @@ defmodule HalC2.UpgradeReleasePropTest do
 
   # Builds a bundle of the next version holding `modules` (`{module, beam}`) over the
   # running ones, puts it in the cache and asks the MC to update to it.
-  defp install(vsn, modules) do
+  defp install(vsn, modules, continue) do
     from = Upgrade.version()
     target = "#{Process.get(:base)}-#{vsn}"
     running = Process.get(:running)
@@ -304,7 +332,7 @@ defmodule HalC2.UpgradeReleasePropTest do
 
     archive = Mc.bundle(%{home: Process.get(:home)}, target, %{}, entries)
     :ok = Source.put(target, Upgrade.platform(), archive)
-    reply = Upgrade.update(%{"targetVersion" => target})
+    reply = Upgrade.update(%{"targetVersion" => target, @continue => continue})
 
     moved = Upgrade.version() == target
     # A restart leaves this VM where it was, with the service set to start `target`,
@@ -322,6 +350,29 @@ defmodule HalC2.UpgradeReleasePropTest do
       from: from,
       outcome: Upgrade.outcome()
     }
+    |> Map.merge(if restarted, do: boot_into(target), else: %{})
+  end
+
+  # The restart's boot into `target`, as far as the update's outcome goes: what it was
+  # left with and what the boot made of it. This VM stays on the version it ran.
+  defp boot_into(target) do
+    restarting =
+      JSON.decode!(File.read!(Path.join([HalC2.Paths.data_dir(), "upgrades", "outcome.json"])))
+
+    ran = :persistent_term.get({Upgrade, :version}, nil)
+    :persistent_term.put({Upgrade, :version}, target)
+
+    try do
+      HalC2.Prop.restart_service(HalC2.Upgrade)
+      # Once the boot has read the outcome (`handle_continue/2`).
+      _ = :sys.get_state(Upgrade)
+      booted = %{continue: Upgrade.continue_threads?(), outcome: Upgrade.outcome()}
+      %{restarting: restarting, booted: booted}
+    after
+      if ran,
+        do: :persistent_term.put({Upgrade, :version}, ran),
+        else: :persistent_term.erase({Upgrade, :version})
+    end
   end
 
   defp start_version do

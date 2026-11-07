@@ -183,7 +183,7 @@ Feature: MC self-update and release upgrades
     Then the update fails with the preflight's reason
     And the running MC keeps serving without interruption
 
-  @backlog @mc
+  @mc
   Scenario: An update can ask running turns to carry on after the restart
     Given turns are running on the MC
     When a client asks the MC to update and to continue running threads
@@ -430,12 +430,16 @@ Feature: MC self-update and release upgrades
     Then it offers in-place self-update
     And an MC running from a checkout does not
 
+  # Needs a release feed per channel that an MC can poll; the MC only learns of a version a
+  # client hands it today.
   @backlog @mc
   Scenario: An MC tells clients a newer version is available on its channel
     Given a newer MC release is published on the MC's channel
     When a client follows the MC's config
     Then it learns which version is available
 
+  # Needs a `hal-c2-mc update` command that reaches the running MC and asks before
+  # interrupting its turns.
   @backlog @mc
   Scenario: An operator updates the MC from its command line
     When an operator asks the MC's command line to update to the newest release
@@ -455,19 +459,27 @@ Feature: MC self-update and release upgrades
     Given a restart into a new version fails before it is ready
     Then the database is restored to its state before the trial
 
-  @backlog @mc
+  @mc
   Scenario: A restart the service deferred is forgotten once it runs the version it names
     Given an update asked the service to restart later
     When the service starts and runs the version it was asked for
     Then the deferred restart is cleared
     And a service that is still on an older version keeps waiting for a newer one
 
+  # Upstream's launcher kept the active version in a state file it parsed. The MC's is
+  # releases/start_erl.data, written only by HalC2.Upgrade from a target it already checked
+  # is exact ("An update names one exact version"), and the start script reads it as a
+  # directory name, so there is nothing to guess; proposed for @dropped.
   @backlog @mc
   Scenario: Only exact versions are accepted as the service's active version
     Given the service's state names a version that is not an exact version
     When the service starts
     Then it refuses the state rather than guessing a version
 
+  # This scenario and the two after it test upstream's Node service launcher, which handed
+  # the server startup context and an IPC channel and answered its update requests. The MC
+  # runs under bin/hal-c2-service and the OS service manager, with no launcher IPC: it
+  # updates itself through release_handler and restarts by exiting; proposed for @dropped.
   @backlog @mc
   Scenario Outline: An MC refuses to start under a launcher it cannot trust
     Given the service launcher started the MC and <problem>

@@ -38,6 +38,7 @@ defmodule HalC2.Upgrade do
 
   # `bin/hal-c2-service` starts the MC again when it exits with this status. The exit
   # itself is `:restart_exit` in the app env (`System.stop/1` unless a test swaps it).
+  @continue "continueRunningThreads"
   @restart_status 75
   @members_timeout :timer.minutes(5)
 
@@ -313,14 +314,28 @@ defmodule HalC2.Upgrade do
     # Before the services after this one: the agents, terminals and pulls they start
     # reach GitHub through gh too. It asks SSH off this process, so they do not wait.
     _ = HalC2.Git.use_gh_for_github()
+    # Before Recovery and its continuations start, which read it without a call.
+    :persistent_term.put({__MODULE__, :continue_threads}, pending_continue?())
     {:ok, nil, {:continue, :outcome}}
+  end
+
+  # Whether the update this boot comes from asked the turns it cut off to continue.
+  # The outcome file under the MC's own data directory.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp pending_continue? do
+    with {:ok, text} <- File.read(outcome_path()),
+         {:ok, %{"status" => "restarting"} = pending} <- JSON.decode(text) do
+      pending[@continue] == true
+    else
+      _ -> false
+    end
   end
 
   # A restart for an update ends here: the version that booted says how it went.
   @impl true
   def handle_continue(:outcome, state) do
     # A version installed while the service ran (`hal-c2 update`, answered no) runs now.
-    if System.get_env("HAL_C2_SERVICE") == "1", do: HalC2.Service.clear_restart_pending()
+    if System.get_env("HAL_C2_SERVICE") == "1", do: HalC2.Service.started(version())
 
     with {:ok, text} <- File.read(outcome_path()),
          {:ok, %{"status" => "restarting"} = pending} <- JSON.decode(text) do
@@ -335,6 +350,8 @@ defmodule HalC2.Upgrade do
               "reason" => "The MC started #{booted} instead of #{pending["targetVersion"]}."
             })
 
+      # `init/1` kept whether the turns the restart cut off continue this boot; the
+      # recorded outcome drops it.
       record(outcome)
       if root = release_root(), do: settle_start(root, booted)
     else
@@ -356,6 +373,13 @@ defmodule HalC2.Upgrade do
   rescue
     error -> Logger.warning("removing old versions failed: #{Exception.message(error)}")
   end
+
+  @doc """
+  Whether the update this MC restarted for asked for the turns it cut off to continue
+  (`continueRunningThreads`), whatever their projects' `continueThreadsAfterServerUpdate`.
+  Set as this server starts, before Recovery does.
+  """
+  def continue_threads?, do: :persistent_term.get({__MODULE__, :continue_threads}, false)
 
   # One update at a time: it runs off this process, and a request while it does is
   # refused rather than queued behind it.
@@ -382,7 +406,7 @@ defmodule HalC2.Upgrade do
 
   def handle_info(_message, state), do: {:noreply, state}
 
-  defp run(%{"targetVersion" => target}, progress) do
+  defp run(%{"targetVersion" => target} = input, progress) do
     from = version()
     root = release_root()
     id = "hot-upgrade-" <> Base.url_encode64(:crypto.strong_rand_bytes(9), padding: false)
@@ -402,7 +426,11 @@ defmodule HalC2.Upgrade do
 
         with {:ok, bundle} <- HalC2.Upgrade.Source.fetch(target, platform()) do
           notify(progress, "installing")
-          outcome = %{"id" => id, "fromVersion" => from, "targetVersion" => target}
+
+          outcome =
+            %{"id" => id, "fromVersion" => from, "targetVersion" => target}
+            |> Map.merge(Map.take(input, [@continue]))
+
           result = %{"targetVersion" => target, "method" => "hot-upgrade", "updateId" => id}
           plan = plan(bundle)
 
@@ -710,7 +738,12 @@ defmodule HalC2.Upgrade do
 
   # --- outcome -----------------------------------------------------------------------
 
+  # Only a restart still to happen carries `continueRunningThreads`: one that does not
+  # happen, or has, leaves no marks behind.
   defp record(outcome) do
+    outcome =
+      if outcome["status"] == "restarting", do: outcome, else: Map.delete(outcome, @continue)
+
     File.mkdir_p!(Path.dirname(outcome_path()))
     File.write!(outcome_path(), JSON.encode!(outcome))
 

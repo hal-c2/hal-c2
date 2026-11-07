@@ -35,7 +35,8 @@ defmodule HalC2.Upgrade.Preflight do
           env: env ++ [{~c"RELEASE_VSN", String.to_charlist(version)}]
         ])
 
-      {:os_pid, os_pid} = Port.info(port, :os_pid)
+      # A launcher that already exited has closed its port, and has nothing to kill.
+      os_pid = with {:os_pid, pid} <- Port.info(port, :os_pid), do: pid
       collect(port, os_pid, System.monotonic_time(:millisecond) + timeout, timeout, [])
     else
       :ok
@@ -56,7 +57,10 @@ defmodule HalC2.Upgrade.Preflight do
     after
       max(deadline - System.monotonic_time(:millisecond), 0) ->
         Port.close(port)
-        System.cmd("kill", ["-KILL", Integer.to_string(os_pid)], stderr_to_stdout: true)
+
+        if os_pid,
+          do: System.cmd("kill", ["-KILL", Integer.to_string(os_pid)], stderr_to_stdout: true)
+
         {:error, "it did not answer within #{timeout} ms"}
     end
   end

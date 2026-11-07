@@ -1281,7 +1281,115 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
+  # --- continuing running turns -----------------------------------------------------
+
+  # A project that does not continue threads after restarts, a turn mid-way in it, and a
+  # version that needs a restart. The continuation's turn starts no real Codex.
+  step "turns are running on the MC", context do
+    World.put_app_env(:codex_command, ["hal-c2-test-no-codex"])
+    Mc.ensure({Registry, keys: :unique, name: HalC2.Codex.Registry})
+    Mc.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
+
+    context
+    |> World.create_project("shop")
+    |> mid_turn("Busy")
+    |> bundle(%{"otpRelease" => "30"})
+  end
+
+  step "a client asks the MC to update and to continue running threads", context do
+    input = %{"targetVersion" => context.target, "continueRunningThreads" => true}
+    {reply, context} = World.call(context, "server.updateServer", input)
+    assert {:ok, %{"targetVersion" => _}} = reply
+    assert_receive {:hal_c2_restart, 75}, 3_000
+    context
+  end
+
+  step "those threads are marked to continue once the new version is up", context do
+    :persistent_term.put({Upgrade, :version}, context.target)
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    project = World.project(context, "shop").id
+    refute HalC2.Settings.for_project(project)["continueThreadsAfterServerUpdate"]
+    # The continuation is dispatched off the boot; its message is the receipt.
+    World.await_state(context, "Busy", &(continuations(&1) != []))
+    assert [%{"createdBy" => "agent"}] = continuations(context, "Busy")
+    context
+  end
+
+  # The update asking again is refused before its restart; the MC restarting later
+  # for another reason continues nothing.
+  step "a restart that does not happen clears those marks", context do
+    context = mid_turn(context, "Refused")
+    {native, _} = nif = Mc.nif_module(context.mc)
+    context = preflight_bundle(context, [nif])
+    input = %{"targetVersion" => context.target, "continueRunningThreads" => true}
+    {reply, context} = World.call(context, "server.updateServer", input)
+    assert {:error, _, %{"reason" => reason}} = reply
+    assert reason =~ "cannot run on this machine"
+    refute :code.is_loaded(native)
+
+    # `Recovery.continue/0` decides before it returns; only the dispatch runs after.
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    assert continuations(context, "Refused") == []
+    context
+  end
+
+  # --- deferred restarts -------------------------------------------------------------
+
+  step "an update asked the service to restart later", context do
+    Mc.release(context.mc)
+    HalC2.Service.mark_restart_pending("1.2.0")
+    context
+  end
+
+  step "the service starts and runs the version it was asked for", context do
+    boot("1.2.0")
+    context
+  end
+
+  step "the deferred restart is cleared", context do
+    refute File.exists?(restart_pending())
+    context
+  end
+
+  step "a service that is still on an older version keeps waiting for a newer one",
+       context do
+    HalC2.Service.mark_restart_pending("1.3.0")
+    boot("1.2.0")
+    assert File.read!(restart_pending()) == "1.3.0\n"
+    context
+  end
+
   # --- helpers ---------------------------------------------------------------------------
+
+  # A turn mid-way in thread `title` of "shop", on a Codex provider thread.
+  defp mid_turn(context, title) do
+    context = World.create_thread(context, title, "shop")
+    provider_thread = "pt-#{World.slug(title)}"
+
+    {:ok, _} =
+      HalC2.Streams.commit(World.thread_id(context, title), :thread, [
+        {"provider-thread", provider_thread,
+         %{
+           "s" => %{
+             "id" => provider_thread,
+             "status" => "active",
+             "nativeThreadRef" => %{"type" => "codex", "threadId" => "native-#{provider_thread}"}
+           }
+         }}
+      ])
+
+    World.add_run(context, title, "running", nil, %{"providerThreadId" => provider_thread})
+  end
+
+  defp continuations(context, title), do: continuations(World.state(context, title))
+
+  defp continuations(state) do
+    state
+    |> HalC2.StreamState.list("message")
+    |> Enum.filter(&(&1["text"] == "Continue where you left off."))
+  end
+
+  defp restart_pending, do: Path.join(HalC2.Paths.state_dir(), ".restart-pending")
 
   # --- helpers for preflight and removal ---------------------------------------------------
 

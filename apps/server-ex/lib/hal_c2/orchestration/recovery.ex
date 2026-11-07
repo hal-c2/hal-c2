@@ -419,7 +419,8 @@ defmodule HalC2.Orchestration.Recovery do
 
   @doc """
   Asks each thread whose turn the restart cut off to continue, when its project's
-  `continueThreadsAfterServerUpdate` is on and nothing newer was sent. Runs once the MC
+  `continueThreadsAfterServerUpdate` is on or the update the MC restarted for asked
+  for it (`HalC2.Upgrade.continue_threads?/0`), and nothing newer was sent. Runs once the MC
   can start turns; an MC without automatic actions (`HAL_C2_MC_NO_AUTO_ACTIONS`) only
   ends the tasks of interrupted children.
   """
@@ -511,8 +512,9 @@ defmodule HalC2.Orchestration.Recovery do
     run = StreamState.fetch(state, "run", run["id"]) || run
 
     thread["archivedAt"] == nil and thread["deletedAt"] == nil and not resting?(thread) and
-      HalC2.Settings.for_project(thread["projectId"])["continueThreadsAfterServerUpdate"] ==
-        true and same_provider?(thread, run) and latest?(state, run) and
+      (HalC2.Settings.for_project(thread["projectId"])["continueThreadsAfterServerUpdate"] ==
+         true or HalC2.Upgrade.continue_threads?()) and same_provider?(thread, run) and
+      latest?(state, run) and
       not waiting_on_user?(state, run) and not answered?(state, run) and
       not looping?(state, run) and not HalC2.Space.PageAgent.stopping?(thread_id)
   end

@@ -90,7 +90,9 @@ ends every run still active on the MC's threads as interrupted before the MC tak
 Otherwise a thread would stay "running" and refuse its next message. A run the MC accepted but
 never handed to its provider goes back to the front of the queue instead.
 
-Continuing a cut-off thread is a project setting (`continueThreadsAfterServerUpdate`), and
-`continue/0` runs only after the MC can start turns. A slow provider must not
+Continuing a cut-off thread is a project setting (`continueThreadsAfterServerUpdate`), or asked
+of one restart by the update itself (`continueRunningThreads`). That request travels in the
+`restarting` outcome and `HalC2.Upgrade` reads it as it starts, before Recovery, so it covers that
+boot alone. `continue/0` runs only after the MC can start turns. A slow provider must not
 delay readiness. Work a provider left running in the background after its turn dies with the
 process and is ended the same way.

@@ -684,6 +684,7 @@ defmodule HalC2.Test.Mc do
         Application.delete_env(:hal_c2, :restart_exit)
         :persistent_term.erase({HalC2.Upgrade, :version})
         :persistent_term.erase({HalC2.Upgrade, :outcome})
+        :persistent_term.erase({HalC2.Upgrade, :continue_threads})
         :persistent_term.erase({__MODULE__, :release})
         :code.set_path(paths)
         restore_modules()
