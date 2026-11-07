@@ -275,6 +275,8 @@ Feature: Keyboard focus and keyboard-only use
       When the user presses Tab past thread "B"'s own buttons
       Then keyboard focus is on the next row of the thread list
 
+    # Upstream #26690: in browse mode a thread row reads as a button named by its title and
+    # project, without entering focus mode.
     @backlog @desktop @priority-low
     Scenario: A screen reader browses the thread list without entering focus mode
       Given a screen reader is in browse mode
