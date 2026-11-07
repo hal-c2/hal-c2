@@ -24,6 +24,8 @@ defmodule HalC2.Steps.Platform.Upgrades do
     root = Mc.release(context.mc)
     Mc.ensure(HalC2.Settings)
     Mc.ensure(HalC2.Upgrade)
+    # Its first boot removes old versions off the server; the scenario starts after.
+    :ok = HalC2.Upgrade.await_pruned()
     assert Upgrade.capability() == "hot-upgrade"
     Map.put(context, :root, root)
   end
@@ -1645,8 +1647,8 @@ defmodule HalC2.Steps.Platform.Upgrades do
     if version, do: :persistent_term.put({Upgrade, :version}, version)
     :ok = ExUnit.Callbacks.stop_supervised(HalC2.Upgrade)
     Mc.ensure(HalC2.Upgrade)
-    # The outcome is read in handle_continue; a call returns after it ran.
-    _ = :sys.get_state(HalC2.Upgrade)
+    # The outcome is read in handle_continue, which starts removing old versions.
+    :ok = HalC2.Upgrade.await_pruned()
   end
 
   defp config_shape, do: %{"type" => "config", "mc" => Atom.to_string(node())}

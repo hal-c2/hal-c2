@@ -97,10 +97,14 @@ defmodule HalC2.Upgrade do
       else: hot_update(input, progress)
   end
 
+  # No deadline of its own: every stage of an update has one (a download that stops
+  # receiving, a peer that stops answering, a preflight), and a slow download that
+  # keeps receiving goes on as long as it needs.
   defp hot_update(input, progress \\ nil) do
-    GenServer.call(__MODULE__, {:update, input, progress}, :timer.minutes(15))
+    GenServer.call(__MODULE__, {:update, input, progress}, :infinity)
   catch
     :exit, {:noproc, _} -> failure("This MC cannot update itself.")
+    :exit, reason -> failure("The update stopped: #{inspect(reason)}")
   end
 
   @doc """
@@ -359,12 +363,37 @@ defmodule HalC2.Upgrade do
       _ -> :ok
     end
 
-    if root = release_root(), do: prune(root)
+    if root = release_root(), do: start_prune(root)
     {:noreply, state}
   end
 
   # Every start from a release, however it was started (the service, an SSH host
   # running the installed version directly, by hand), removes what no version uses.
+  # Off this server, so removing gigabytes of old versions holds up no update request;
+  # one at a time, under `HalC2.Upgrade.Prune`'s name, which `await_pruned/0` waits on.
+  defp start_prune(root) do
+    {:ok, pid} = Task.start(fn -> receive(do: (:go -> prune(root))) end)
+
+    try do
+      Process.register(pid, HalC2.Upgrade.Prune)
+      send(pid, :go)
+    rescue
+      ArgumentError -> Process.exit(pid, :kill)
+    end
+  end
+
+  @doc "Returns once this boot has read its outcome and removed the versions nothing uses."
+  def await_pruned do
+    _ = :sys.get_state(__MODULE__)
+
+    with pid when is_pid(pid) <- Process.whereis(HalC2.Upgrade.Prune) do
+      ref = Process.monitor(pid)
+      receive(do: ({:DOWN, ^ref, _, _, _} -> :ok))
+    end
+
+    :ok
+  end
+
   defp prune(root) do
     case HalC2.Upgrade.Prune.run(root, version()) do
       {:ok, _removed} -> :ok

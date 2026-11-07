@@ -259,7 +259,7 @@ defmodule HalC2.UpgradeReleasePropTest do
     # The node comes back on the release it ran, and reads how the update went.
     :persistent_term.erase({Upgrade, :outcome})
     HalC2.Prop.restart_service(HalC2.Upgrade)
-    _ = :sys.get_state(HalC2.Upgrade)
+    :ok = Upgrade.await_pruned()
 
     Map.merge(result, %{
       marked:
@@ -364,8 +364,8 @@ defmodule HalC2.UpgradeReleasePropTest do
 
     try do
       HalC2.Prop.restart_service(HalC2.Upgrade)
-      # Once the boot has read the outcome (`handle_continue/2`).
-      _ = :sys.get_state(Upgrade)
+      # Once the boot has read the outcome and removed old versions.
+      :ok = Upgrade.await_pruned()
       booted = %{continue: Upgrade.continue_threads?(), outcome: Upgrade.outcome()}
       %{restarting: restarting, booted: booted}
     after

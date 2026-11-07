@@ -77,6 +77,33 @@ defmodule HalC2.UpgradeTest do
     assert Upgrade.capability() == nil
   end
 
+  # A caller waits for the update however long it takes (each stage bounds itself), and
+  # still hears how it ended when the updater goes away under it.
+  test "a caller waiting on an update is told when the updater goes away", %{tmp_dir: dir} do
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false])
+    {:ok, port} = :inet.port(listen)
+    System.put_env("RELEASE_ROOT", dir)
+    Application.put_env(:hal_c2, :upgrade_url, "http://127.0.0.1:#{port}/{version}.tar.gz")
+    Application.put_env(:hal_c2, :upgrade_download_idle_ms, 500)
+
+    on_exit(fn ->
+      System.delete_env("RELEASE_ROOT")
+      Application.delete_env(:hal_c2, :upgrade_url)
+      Application.delete_env(:hal_c2, :upgrade_download_idle_ms)
+    end)
+
+    start_supervised!(Upgrade)
+    :ok = Upgrade.await_pruned()
+    me = self()
+    caller = Task.async(fn -> Upgrade.update(%{"targetVersion" => "9.9.9"}, me) end)
+    assert_receive {:hal_c2_server_update, _, %{"stage" => "downloading"}}
+
+    :ok = stop_supervised(Upgrade)
+
+    assert {:error, %{"reason" => "The update stopped: " <> _}} = Task.await(caller)
+    :gen_tcp.close(listen)
+  end
+
   test "a bundle arrives in pieces, is checked, and is offered to peers once", %{tmp_dir: dir} do
     archive = Path.join(dir, "b.tar.gz")
     File.write!(archive, :crypto.strong_rand_bytes(600_000))

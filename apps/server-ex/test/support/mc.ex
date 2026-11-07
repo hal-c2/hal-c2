@@ -679,6 +679,12 @@ defmodule HalC2.Test.Mc do
       {:ok, spec} = :application.get_all_key(:hal_c2)
 
       ExUnit.Callbacks.on_exit(fn ->
+        # A removal of old versions a boot started ends in this scenario's home.
+        with pid when is_pid(pid) <- Process.whereis(HalC2.Upgrade.Prune) do
+          ref = Process.monitor(pid)
+          receive(do: ({:DOWN, ^ref, _, _, _} -> :ok))
+        end
+
         System.delete_env("RELEASE_ROOT")
         System.delete_env("HAL_C2_SERVICE")
         Application.delete_env(:hal_c2, :restart_exit)

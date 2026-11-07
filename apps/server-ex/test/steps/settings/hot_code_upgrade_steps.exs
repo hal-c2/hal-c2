@@ -75,6 +75,8 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
 
     Mc.ensure(HalC2.Settings)
     Mc.ensure(HalC2.Upgrade)
+    # Its first boot removes old versions off the server; the scenario starts after.
+    :ok = HalC2.Upgrade.await_pruned()
     Map.put(context, :release, %{root: root, version: version})
   end
 
@@ -155,7 +157,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     mc = Mc.restart(context.mc)
     Mc.ensure(HalC2.Upgrade)
     # The outcome is settled once the updater has started.
-    :sys.get_state(HalC2.Upgrade)
+    :ok = HalC2.Upgrade.await_pruned()
     %{context | mc: mc, clients: %{}}
   end
 
