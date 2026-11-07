@@ -1,5 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19649
+#   https://github.com/pingdotgg/t3code/pull/23113
 #   https://github.com/pingdotgg/t3code/pull/19311 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/22253
 #   apps/server-ex/lib/hal_c2/upgrade.ex (plan, release upgrade, restart with exit 75, outcome)
 #   apps/server-ex/lib/hal_c2/upgrade/release.ex (release_handler: unpack, relup, install, permanent, rollback, NIFs)
 #   apps/server-ex/lib/hal_c2/upgrade/appup.ex (appups from the release diff: code_change, soft purge)
@@ -227,6 +230,14 @@ Feature: MC self-update and release upgrades
     Then nothing is left that could be mistaken for an installed version
     And the running version is unchanged
 
+  # Upstream #19649: a slow download still receiving bytes failed at a ten-minute cap.
+  @backlog @mc
+  Scenario: A slow download finishes while a stalled one fails
+    Given the MC is downloading a version to install
+    When the download is still receiving data after ten minutes
+    Then it carries on until it finishes
+    But a download that receives nothing for a minute fails and leaves nothing half-installed
+
   @backlog @mc
   Scenario: A version that is only partly installed is installed again
     Given an earlier install of a version stopped before it finished
@@ -244,6 +255,49 @@ Feature: MC self-update and release upgrades
     Given two requests install the same version at once
     Then they take turns
     And the version ends up whole
+
+  # Upstream #22253: every update left its old runtime on disk; nightly users had 8 to 22 GB
+  # of dead versions and one server ran out of disk.
+  @backlog @mc
+  Scenario: Updating removes installed versions nothing can use any more
+    Given the MC has installed versions "1.1.0", "1.2.0" and "1.3.0" and runs "1.3.0"
+    And "1.2.0" is the version an update would roll back to
+    When the MC starts after an update
+    Then "1.1.0" is removed
+    And "1.2.0" and "1.3.0" are kept
+
+  # Upstream #23113: a host added over SSH starts its installed version directly rather than as a
+  # service, and it kept every old runtime.
+  @backlog @mc @priority-low
+  Scenario: An MC started over SSH from its installed version removes old versions too
+    Given an SSH host whose MC was started from its installed version "1.3.0"
+    And the host still has "1.1.0" installed, which nothing uses
+    When that MC starts
+    Then "1.1.0" is removed
+
+  # Upstream #22253: a version some process still runs, or one installed within the last hour
+  # that nothing points at yet, is kept; when the MC cannot tell, nothing is removed.
+  @backlog @mc
+  Scenario Outline: An installed version that may still be in use is kept
+    Given the MC has the old installed version "1.1.0"
+    And <use>
+    When the MC removes versions nothing can use
+    Then "1.1.0" is kept
+
+    Examples:
+      | use                                                   |
+      | a running process executes "1.1.0"                    |
+      | "1.1.0" finished installing less than an hour ago     |
+      | the MC cannot read which versions are running         |
+      | the MC cannot read which version it would roll back to |
+
+  # Upstream #22253: a removal that is cut off never leaves a partial version that looks whole.
+  @backlog @mc @priority-low
+  Scenario: A removal cut off midway leaves nothing that looks installed
+    Given the MC is removing the old installed version "1.1.0"
+    When the removal is interrupted
+    Then "1.1.0" is not taken for an installed version
+    And the next removal clears what was left
 
   @mc
   Scenario: The bundle location can be overridden

@@ -1,6 +1,8 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/18143
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/23899
+#   https://github.com/pingdotgg/t3code/pull/22850
 #   apps/server-ex/lib/hal_c2/mcp/tools/queue.ex (hal_c2_queue_list, hal_c2_queue_read, hal_c2_queue_edit,
 #     hal_c2_queue_cancel, hal_c2_queue_reorder, hal_c2_queue_promote_to_steer, hal_c2_pending_request_list,
 #     hal_c2_pending_request_read, hal_c2_pending_request_respond)
@@ -72,6 +74,20 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
     Given the agent of "t2" asked for approval to run a command
     When the agent of "caller" responds to that request
     Then it fails with code "invalid_request" and "The pending user-input request was not found."
+
+  # Upstream #22850: every request no longer pending was reported as not found.
+  @backlog @mc
+  Scenario Outline: Answering a question that is no longer pending says why
+    Given the agent of "t2" asked the user a question
+    And <state>
+    When the agent of "caller" answers it
+    Then it fails saying "<message>"
+
+    Examples:
+      | state                                | message                                                  |
+      | the user already answered it          | The user-input request was already answered.             |
+      | it expired                            | The user-input request is no longer pending (expired).   |
+      | it was cancelled                      | The user-input request is no longer pending (cancelled). |
 
   @mc
   Scenario: Listing and reading projects
@@ -192,6 +208,20 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
       | its URL                                         |
       | repository and number on the project's host     |
       | host, repository and number                     |
+
+  # Upstream #23899: GitCafe's own address for a pull request is /pull/<n> (/pulls/<n> redirects
+  # to it), and the link, unlink and watch tools refused the address a user copies.
+  @backlog @mc @priority-low
+  Scenario Outline: An agent links a GitCafe pull request by either of its addresses
+    When the agent of "caller" links the pull request "<url>"
+    Then pull request 42 of "team/shop" on "git.cafe" is linked to "caller"
+    And the same address can be unlinked and watched
+
+    Examples:
+      | url                                       |
+      | https://git.cafe/team/shop/pull/42        |
+      | https://git.cafe/team/shop/pulls/42       |
+      | https://staging.git.cafe/team/shop/pull/42/files |
 
   @mc
   Scenario: Linking a pull request that is already linked changes nothing

@@ -72,6 +72,43 @@ Feature: Reattaching to provider programs after a restart
         | muse        |
         | acpRegistry |
 
+    Scenario Outline: Background work goes on through a restart
+      Given thread "t1" left a command running in the background on "<provider>"
+      When the MC dies
+      And the MC restarts
+      Then the command is still running
+      And "t1" lists the command as background work
+      And no continuation message is sent to "t1"
+
+      Examples:
+        | provider    |
+        | codex       |
+        | claudeAgent |
+        | grok        |
+
+      # The MC does not list Antigravity's background commands yet
+      # (features/providers/antigravity.feature, "Stop ends a command Antigravity left running").
+      @backlog @priority-high
+      Examples:
+        | provider    |
+        | antigravity |
+
+    Scenario: A Claude background subagent goes on through a restart
+      Given thread "t1" left a Claude subagent running in the background
+      When the MC dies
+      And the MC restarts
+      Then "t1" lists the subagent as background work
+      When Claude reports the subagent completed with "3 files"
+      Then the subagent of "t1" is completed with "3 files"
+
+    # A service manager that kills a unit's processes when it stops (systemd's
+    # KillMode=mixed) would end them before the next MC starts, so the units say otherwise.
+    Scenario: A restart by the service manager keeps the programs
+      Given the MC runs as a service
+      And thread "t1" has a running turn on "codex"
+      When the service restarts
+      Then the provider process of "t1" is the one that was running
+
   Rule: A program that cannot be reattached falls back to the kill
 
     Scenario Outline: A program with no usable checkpoint is killed before anything resumes
@@ -162,11 +199,6 @@ Feature: Reattaching to provider programs after a restart
         | grok        |
         | opencode    |
         | acpRegistry |
-
-      # Their fakes ask only when a scenario scripts it; the runtime path is the same.
-      @backlog @priority-high
-      Examples:
-        | provider    |
         | claudeAgent |
         | antigravity |
         | pi          |
@@ -197,6 +229,30 @@ Feature: Reattaching to provider programs after a restart
       And the machine reboots
       And the MC restarts
       Then the run of "t1" is interrupted
+
+    Scenario Outline: A program that cannot be reattached is killed before anything resumes
+      Given thread "t1" has a running turn on "claudeAgent"
+      And project "demo" continues threads after a server update
+      When the MC dies
+      And <reason>
+      And the MC restarts
+      Then that provider process has been killed
+      And the run of "t1" is interrupted
+      And "t1" receives "Continue where you left off." from the server on the same model
+
+      Examples:
+        | reason                                      |
+        | the program's pipes are gone                |
+        | the program does not answer on reattaching  |
+        | the new MC cannot read the program's format |
+
+    Scenario: A pid reused by another program is left alone
+      Given thread "t1" has a running turn on "codex"
+      When the MC dies
+      And the program ends and another program takes its pid
+      And the MC restarts
+      Then the other program is still running
+      And the run of "t1" is interrupted
 
   Rule: What a restart must not repeat or forget
 
@@ -259,73 +315,6 @@ Feature: Reattaching to provider programs after a restart
       And the user signs out of Antigravity
       Then the provider process of "t1" has stopped
 
-  Rule: Still to come
-
-    @backlog @priority-high
-    Scenario Outline: What a provider wrote while the MC was down reaches the thread once, in order
-      Given thread "t1" has a running turn on "<provider>"
-      When the MC dies partway through reading a line from the provider
-      And the provider writes three more updates
-      And the MC restarts
-      Then "t1" shows every update once, in the order the provider wrote them
-
-      Examples:
-        | provider    |
-        | codex       |
-        | claudeAgent |
-        | cursor      |
-        | grok        |
-        | opencode    |
-        | antigravity |
-        | pi          |
-        | muse        |
-        | acpRegistry |
-
-    @backlog @priority-high
-    Scenario Outline: A HAL-C2 tool call the restart cut off does not end the turn
-      Given thread "t1" has a turn on "<provider>" calling a HAL-C2 tool
-      When the MC dies before answering the call
-      And the MC restarts
-      Then the provider hears that the call failed or receives its answer
-      And the run of "t1" is still running
-
-      Examples:
-        | provider    |
-        | codex       |
-        | claudeAgent |
-        | cursor      |
-        | grok        |
-        | opencode    |
-        | antigravity |
-        | pi          |
-        | muse        |
-        | acpRegistry |
-
-    @backlog @priority-high
-    Scenario Outline: Background work goes on through a restart
-      Given thread "t1" left a command running in the background on "<provider>"
-      When the MC dies
-      And the MC restarts
-      Then the command is still running
-      And "t1" lists the command as background work
-      And no continuation message is sent to "t1"
-
-      Examples:
-        | provider    |
-        | codex       |
-        | claudeAgent |
-        | antigravity |
-
-    @backlog
-    Scenario: A Claude background subagent goes on through a restart
-      Given thread "t1" left a Claude subagent running in the background
-      When the MC dies
-      And the MC restarts
-      Then "t1" lists the subagent as background work
-      When Claude reports the subagent completed with "3 files"
-      Then the subagent of "t1" is completed with "3 files"
-
-    @backlog @priority-high
     Scenario Outline: A reattached idle session is still released
       Given thread "t1" finished a turn on "<provider>" and its provider process is live
       When the MC dies
@@ -347,31 +336,58 @@ Feature: Reattaching to provider programs after a restart
         | muse        |
         | acpRegistry |
 
-    @backlog @priority-high
-    Scenario Outline: A program that cannot be reattached is killed before anything resumes
-      Given thread "t1" has a running turn on "claudeAgent"
-      And project "demo" continues threads after a server update
-      When the MC dies
-      And <reason>
+    Scenario: Stopping the MC for good stops its programs
+      Given the MC runs as a service
+      And thread "t1" has a running turn on "codex"
+      When the user stops the MC without restarting it
+      Then no program of "t1" is left running
+
+    Scenario: Removing a service that is not installed leaves a running MC's programs alone
+      Given thread "t1" has a running turn on "codex"
+      When the user removes the background service while none is installed
+      Then the provider process of "t1" is the one that was running
+      And the run of "t1" is still running
+
+    Scenario Outline: What a provider wrote while the MC was down reaches the thread once, in order
+      Given thread "t1" has a running turn on "<provider>"
+      When the MC dies partway through reading a line from the provider
+      And the provider writes three more updates
       And the MC restarts
-      Then that provider process has been killed
-      And the run of "t1" is interrupted
-      And "t1" receives "Continue where you left off." from the server on the same model
+      Then "t1" shows every update once, in the order the provider wrote them
 
       Examples:
-        | reason                                      |
-        | the program's pipes are gone                |
-        | the program does not answer on reattaching  |
-        | the new MC cannot read the program's format |
+        | provider    |
+        | codex       |
+        | claudeAgent |
+        | cursor      |
+        | grok        |
+        | opencode    |
+        | antigravity |
+        | pi          |
+        | muse        |
+        | acpRegistry |
+
+  Rule: Still to come
 
     @backlog @priority-high
-    Scenario: A pid reused by another program is left alone
-      Given thread "t1" has a running turn on "codex"
-      When the MC dies
-      And the program ends and another program takes its pid
+    Scenario Outline: A HAL-C2 tool call the restart cut off does not end the turn
+      Given thread "t1" has a turn on "<provider>" calling a HAL-C2 tool
+      When the MC dies before answering the call
       And the MC restarts
-      Then the other program is still running
-      And the run of "t1" is interrupted
+      Then the provider hears that the call failed or receives its answer
+      And the run of "t1" is still running
+
+      Examples:
+        | provider    |
+        | codex       |
+        | claudeAgent |
+        | cursor      |
+        | grok        |
+        | opencode    |
+        | antigravity |
+        | pi          |
+        | muse        |
+        | acpRegistry |
 
     # Windows has no named pipe that outlives its owner this way, and tracks no programs.
     @backlog @priority-low
@@ -380,21 +396,6 @@ Feature: Reattaching to provider programs after a restart
       And thread "t1" has a running turn on "codex"
       When the MC restarts
       Then the run of "t1" is interrupted
-
-    @backlog @priority-high
-    Scenario: Stopping the MC for good stops its programs
-      Given thread "t1" has a running turn on "codex"
-      When the user stops the MC without restarting it
-      Then no program of "t1" is left running
-
-    # A service manager that kills a unit's processes when it stops (systemd's
-    # KillMode=mixed) would end them before the next MC starts, so the units say otherwise.
-    @backlog
-    Scenario: A restart by the service manager keeps the programs
-      Given the MC runs as a service
-      And thread "t1" has a running turn on "codex"
-      When the service restarts
-      Then the provider process of "t1" is the one that was running
 
     # The shim gives an MC ten minutes (HalC2.Subprocess.Durable). What runs here is the
     # program going on in the meantime; waiting that out is not a test worth its time.

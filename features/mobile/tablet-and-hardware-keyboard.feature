@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24985
 #   https://github.com/pingdotgg/t3code/pull/21071
 #   https://github.com/pingdotgg/t3code/pull/18574
 #   https://github.com/pingdotgg/t3code/pull/15083
@@ -8,6 +9,7 @@
 #   https://github.com/pingdotgg/t3code/pull/18157
 #   https://github.com/pingdotgg/t3code/pull/13085
 #   https://github.com/pingdotgg/t3code/pull/13310
+#   https://github.com/pingdotgg/t3code/pull/24298
 #   apps/mobile/src/lib/layout.ts (split view thresholds, pane widths)
 #   apps/mobile/src/features/layout/ (sidebar, inspector pane, maximize content)
 #   apps/mobile/src/lib/useHoverGesture.ts, components/RowPressable.tsx (hover highlight for mouse and stylus)
@@ -108,6 +110,16 @@ Feature: Tablet layout and hardware keyboards
     And no thread is selected
     Then the user is told to choose a thread from the sidebar or start a new task
 
+  # Upstream #24298: Settings on a wide Android screen was one wide page.
+  @backlog @mobile
+  Scenario: Settings on a wide screen keeps its sections beside the chosen page
+    Given the layout is split on an Android tablet or an unfolded phone
+    When the user opens Settings
+    Then the settings sections are listed beside the Environments page
+    When the user chooses another section and opens one of its pages
+    Then the sections stay beside it
+    And on a narrow screen Settings opens one page at a time, with Back
+
   @mobile
   Scenario: The user hides and shows the thread sidebar
     Given the layout is split
@@ -197,6 +209,30 @@ Feature: Tablet layout and hardware keyboards
     And the user made the thread's files pane wider
     When the thread's other side pane is shown
     Then it has the width it had before the files pane was widened
+
+  # Upstream #24985: on a tablet, opening a subagent or a device took over the thread.
+  @backlog @mobile @priority-low
+  Scenario Outline: A <item> opens in the inspector beside its thread
+    Given the layout is split and the user is in "Fix checkout"
+    When the user opens <what>
+    Then it opens in the inspector pane with "Fix checkout" still shown
+    When the user maximizes it
+    Then it fills the screen
+    When the user returns from it
+    Then it is in the inspector beside "Fix checkout" again
+
+    Examples:
+      | item     | what                                     |
+      | subagent | a subagent's card in "Fix checkout"      |
+      | device   | a device preview from "Fix checkout"     |
+
+  # Upstream #24985
+  @backlog @mobile @priority-low
+  Scenario: The inspector opens at 40% of the screen and resizes between limits
+    Given the layout is split
+    When the inspector pane opens for the first time
+    Then it takes 40% of the screen's width
+    And dragging its divider sizes it between 260 points and 60% of the screen
 
   @backlog @mobile
   Scenario: A screen reader can widen and narrow the side pane

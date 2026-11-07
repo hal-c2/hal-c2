@@ -5,6 +5,7 @@
 #   https://github.com/pingdotgg/t3code/pull/18784
 #   https://github.com/pingdotgg/t3code/pull/18159
 #   https://github.com/pingdotgg/t3code/pull/12402
+#   https://github.com/pingdotgg/t3code/pull/24912
 #   apps/server-ex/lib/hal_c2/devices.ex (device.list, device.open, device.close, device.shutdown,
 #     device.detail, device.action, device.testHost, devices shape, platform reasons)
 #   apps/server-ex/lib/hal_c2/devices/actions.ex (per-platform actions, DeviceActionUnavailableError)
@@ -544,6 +545,21 @@ Feature: Device hub on an MC
     Given an agent has opened a device in its thread
     When the agent asks for a device screenshot
     Then it receives the screen as an image with its width and height
+
+  # Upstream #24912: on a two-screen simulator such as the iPhone Duo the capture picked a
+  # display without looking at the fold, giving a black picture or a failed capture.
+  @backlog @mc @desktop @priority-low
+  Scenario Outline: A screenshot of a foldable simulator captures the screen that is on
+    Given the thread has a foldable iOS Simulator open that booted <booted>
+    And the simulator is now <now>
+    When a screenshot of the device is taken
+    Then it shows the screen that is on, not a black picture or an error
+
+    Examples:
+      | booted   | now      |
+      | folded   | folded   |
+      | folded   | unfolded |
+      | unfolded | folded   |
 
   @mc
   Scenario: A screenshot with no open device asks the agent to open one

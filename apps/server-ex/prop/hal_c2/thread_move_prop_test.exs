@@ -19,10 +19,10 @@ defmodule HalC2.ThreadMovePropTest do
   The promises checked after every step: once a move settles, a thread lives on exactly
   one machine (the model's) with all its history and its attachment intact, the machines
   it left keep only a forwarding record, and no machine keeps a partial copy. A move
-  refused or cut off before the destination took the thread leaves it where it was, and
-  one cut off after that completes. A plugin's thread is refused while its plugin runs
-  on the machine it lives on, and once moved it is an ordinary thread, its plugin's
-  mark left behind.
+  refused, failing in the destination's store, or cut off before the destination took
+  the thread leaves it where it was, and one cut off after that completes. A plugin's
+  thread is refused while its plugin runs on the machine it lives on, and once moved it
+  is an ordinary thread, its plugin's mark left behind.
 
   The machines are peers started once for the property (`HalC2.Prop.ThreadMoveCluster`);
   each case uses threads of its own.
@@ -126,6 +126,16 @@ defmodule HalC2.ThreadMovePropTest do
           ],
           else: []
         ) ++
+        if(holdable != [],
+          do: [
+            {2,
+             let t <- oneof(holdable) do
+               {:call, __MODULE__, :move_refused,
+                [t, state.threads[t].at, oneof(@mcs -- [state.threads[t].at])]}
+             end}
+          ],
+          else: []
+        ) ++
         if(holdable != [] and state.held == nil,
           do: [
             {4,
@@ -166,7 +176,7 @@ defmodule HalC2.ThreadMovePropTest do
                 do: [
                   {4,
                    {:call, __MODULE__, :move, [state.held.t, state.held.at, onward(state.held)]}},
-                  {4, {:call, __MODULE__, :settle, [state.held]}}
+                  {4, {:call, __MODULE__, :settle, [state.held, oneof([:back, :removed])]}}
                 ],
                 else: []
               ),
@@ -206,6 +216,10 @@ defmodule HalC2.ThreadMovePropTest do
     do: is_map_key(state.threads, t) and state.threads[t].at == at
 
   def precondition(state, {:call, _, :move, [t, _from, _to]}), do: is_map_key(state.threads, t)
+
+  def precondition(state, {:call, _, :move_refused, [t, from, to]}),
+    do: is_map_key(state.threads, t) and moves?(state, t, from, to)
+
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :create, [t, mc]}),
@@ -259,7 +273,7 @@ defmodule HalC2.ThreadMovePropTest do
     do: update_in(state.held, &%{&1 | killed: true, let_go: let_go?(&1)})
 
   # Not while the mover lets go: one lets go at a time, and the mover is.
-  def next_state(state, _result, {:call, _, :settle, [_]}),
+  def next_state(state, _result, {:call, _, :settle, [_, _]}),
     do: update_in(state.held, &%{&1 | let_go: let_go?(&1)})
 
   def next_state(%{held: %{from: mc}} = state, _result, {:call, _, :restart, [mc, :thread_move]}),
@@ -338,6 +352,11 @@ defmodule HalC2.ThreadMovePropTest do
     told? and settled?(next_state(state, nil, call), world, held(state))
   end
 
+  # The destination's import fails part way: the thread stays where it was, whole, and
+  # the destination keeps nothing of it.
+  def postcondition(state, {:call, _, :move_refused, _}, {result, world}),
+    do: match?({:error, %{"code" => _}}, result) and settled?(state, world, held(state))
+
   def postcondition(state, {:call, _, :rename, [t, at, _]} = call, {result, world}) do
     # A moving thread is read-only: renaming it is refused, not lost when it leaves.
     match?({:ok, _}, result) == writable?(state, t, at) and
@@ -371,7 +390,9 @@ defmodule HalC2.ThreadMovePropTest do
     do: settled?(next_state(state, nil, call), world, held(state))
 
   # The destination has the move: nothing is left to settle again, unless the mover is
-  # letting go.
+  # letting go. Told its destination was removed from the cluster, a source that still
+  # reaches it settles as when it comes back: the move is called off only when the
+  # destination cannot say it arrived.
   def postcondition(state, {:call, _, :settle, _} = call, {result, world}) do
     again = if state.held.stage == :letting_go, do: [id(state.held.t)], else: []
     result == again and settled?(next_state(state, nil, call), world, held(state))
@@ -456,6 +477,17 @@ defmodule HalC2.ThreadMovePropTest do
     {result, world()}
   end
 
+  # Moves `t` to `to`, whose store refuses the thread's changes.
+  def move_refused(t, from, to) do
+    :ok = Cluster.on(mcs()[to], :refuse, [id(t)])
+
+    try do
+      move(t, from, to)
+    after
+      Cluster.on(mcs()[to], :refuse, [nil])
+    end
+  end
+
   def rename(t, at, title) do
     result = Cluster.on(mcs()[at], :rename, [id(t), title])
     {result, world()}
@@ -531,9 +563,16 @@ defmodule HalC2.ThreadMovePropTest do
     {:ok, world()}
   end
 
-  # The source settles the held move, as it does when the destination comes back.
-  def settle(held) do
-    result = :erpc.call(mcs()[held.from], HalC2.ThreadMove, :settle, [id(held.t)], 60_000)
+  # The source settles the held move, as it does when the destination comes back
+  # (`:back`) or when it hears the destination was removed from the cluster (`:removed`).
+  def settle(held, why) do
+    which =
+      case why do
+        :back -> id(held.t)
+        :removed -> {:removed, :erpc.call(mcs()[held.to], HalC2.Environment, :id, [])}
+      end
+
+    result = :erpc.call(mcs()[held.from], HalC2.ThreadMove, :settle, [which], 60_000)
     {result, world()}
   end
 

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17458
 #   https://github.com/pingdotgg/t3code/pull/22070
 #   https://github.com/pingdotgg/t3code/pull/17451
 #   https://github.com/pingdotgg/t3code/pull/18467
@@ -149,6 +150,21 @@ Feature: Scheduled tasks
   Scenario: Running now answers with the finished task
     When a client runs task "a" now
     Then the answer is task "a" after the run, with its outcome
+
+  # Upstream #17458: run_scheduled_task_now answered with the task's binding, so a run that
+  # started a new thread answered with none.
+  @backlog @mc
+  Scenario Outline: An agent running a task now is told the thread the run went to
+    Given task "a" <binding>
+    When an agent runs task "a" now and <result>
+    Then the answer names <thread>
+    And task "a" keeps <binding>
+
+    Examples:
+      | binding                        | result                     | thread                    |
+      | starts a new thread each time  | the run starts "Run 4"     | "Run 4"                   |
+      | is bound to the thread "Daily" | the run is queued there    | "Daily"                   |
+      | starts a new thread each time  | the run fails to start     | no thread                 |
 
   # Scheduled runs aim the next run afresh; a manual run leaves the schedule alone.
   @mc
