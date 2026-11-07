@@ -566,11 +566,18 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
 
   # --- access management ---------------------------------------------------------
 
+  # A scope the standard grant holds is left out of the session, so a refusal for it can be shown.
   step ~r/^a client whose session lacks (?<scope>\S+)$/, %{args: [scope]} = context do
-    access = standard!(context)
+    {:ok, link} =
+      HalC2.Auth.create_pairing_link(%{"scopes" => @standard -- [scope], "label" => "Narrow"})
+
+    access = pair!(context, link["credential"])
     {:ok, session} = HalC2.Auth.session(access)
     refute scope in session.scopes
-    Map.put(context, :access, access)
+
+    context
+    |> World.put_client("device", socket!(context, access))
+    |> Map.put(:access, access)
   end
 
   step ~r/^it tries to (?<action>write to a terminal|create a pairing link|list pairing links|revoke a pairing link|list authorized clients|revoke a client|revoke every other client)$/,
@@ -594,6 +601,22 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
       _ ->
         Map.put(context, :response, access_request(context, action, context.access))
     end
+  end
+
+  @rpc_for_action %{
+    "reports the host's power state" => "server.reportHostPowerState",
+    "reports that the client is in the foreground" => "server.reportClientActivity",
+    "submits a review on a pull request" => "pullRequests.submitReview",
+    "previews a pull request" => "pullRequests.preview",
+    "reads a review diff" => "review.getDiffPreview",
+    "opens a preview" => "preview.open",
+    "lists previews" => "preview.list"
+  }
+
+  step ~r/^it (?<action>reports the host's power state|reports that the client is in the foreground|submits a review on a pull request|previews a pull request|reads a review diff|opens a preview|lists previews)$/,
+       %{args: [action]} = context do
+    {reply, context} = World.call(context, @rpc_for_action[action], %{}, "device")
+    Map.put(context, :refusal, reply)
   end
 
   step ~r/^the MC refuses saying (?<scope>\S+) is required$/, %{args: [scope]} = context do
@@ -1378,6 +1401,138 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
 
     listed = mix_output(Mix.Tasks.HalC2.Auth, ["session", "list"])
     refute Enum.any?(listed, &String.starts_with?(&1, id))
+    context
+  end
+
+  # --- credentials in answers, racing, narrowing -----------------------------------
+
+  step "a pairing token that has not been exchanged", context do
+    Map.put(context, :token, HalC2.Auth.create_pairing_token(context.mc.store))
+  end
+
+  step "two clients exchange it at the same moment", context do
+    tasks = for _ <- 1..2, do: Task.async(fn -> Mc.exchange(context.mc, context.token) end)
+    Map.put(context, :grants, Task.await_many(tasks, 30_000))
+  end
+
+  step "exactly one of them receives a session", context do
+    assert [{200, %{"access_token" => _}}] = Enum.filter(context.grants, &(elem(&1, 0) == 200))
+    assert length(HalC2.Auth.clients()) == 1
+    context
+  end
+
+  step "the other is refused as an invalid grant", context do
+    assert [{400, %{"error" => "invalid_grant"}}] =
+             Enum.reject(context.grants, &(elem(&1, 0) == 200))
+
+    context
+  end
+
+  step "a client exchanges a pairing token or asks for a socket ticket", context do
+    token = HalC2.Auth.create_pairing_token(context.mc.store)
+
+    form = %{
+      "grant_type" => "urn:ietf:params:oauth:grant-type:token-exchange",
+      "subject_token" => token,
+      "subject_token_type" => "urn:hal-c2:params:oauth:token-type:environment-bootstrap"
+    }
+
+    {200, exchange_headers, %{"access_token" => access}} =
+      Mc.request(context.mc, :post, "/oauth/token", form: form)
+
+    {200, ticket_headers, _} =
+      Mc.request(context.mc, :post, "/api/auth/websocket-ticket", bearer: access)
+
+    {400, refused_headers, _} =
+      Mc.request(context.mc, :post, "/oauth/token", form: %{form | "subject_token" => token})
+
+    Map.put(context, :credential_headers, [exchange_headers, ticket_headers, refused_headers])
+  end
+
+  step "the answer is marked as not storable by browsers or proxies", context do
+    for headers <- context.credential_headers,
+        do: assert({"cache-control", "no-store"} in headers)
+
+    context
+  end
+
+  step "a pairing link granting only some scopes", context do
+    {:ok, link} =
+      HalC2.Auth.create_pairing_link(%{"scopes" => ["orchestration:read", "terminal:operate"]})
+
+    Map.put(context, :token, link["credential"])
+  end
+
+  step "a client exchanges it asking for those scopes", context do
+    grant =
+      Mc.exchange(context.mc, context.token, %{"scope" => "orchestration:read terminal:operate"})
+
+    Map.put(context, :grant, grant)
+  end
+
+  step "the session holds exactly those scopes", context do
+    assert {200, %{"access_token" => access, "scope" => "orchestration:read terminal:operate"}} =
+             context.grant
+
+    assert {:ok, %{scopes: ["orchestration:read", "terminal:operate"]}} =
+             HalC2.Auth.session(access)
+
+    context
+  end
+
+  step "a request the link cannot grant is refused before the link is used up", context do
+    {:ok, link} = HalC2.Auth.create_pairing_link(%{"scopes" => ["orchestration:read"]})
+
+    assert {400, %{"error" => "invalid_scope"}} =
+             Mc.exchange(context.mc, link["credential"], %{"scope" => "access:write"})
+
+    assert {200, %{"scope" => "orchestration:read"}} = Mc.exchange(context.mc, link["credential"])
+    context
+  end
+
+  # --- sessions that end -------------------------------------------------------------
+
+  step ~r/^the client's session expires$/, context do
+    sql(context, "UPDATE auth_sessions SET expires_at = ?1 WHERE id = ?2", [
+      now() - 1,
+      context.device
+    ])
+
+    HalC2.Auth.prune()
+    context
+  end
+
+  step "the client's session is replaced by a new one", context do
+    # The desktop's session is the one a new bootstrap exchange replaces.
+    :sys.replace_state(HalC2.Auth, fn state ->
+      %{state | desktop: %{hash: sha("next-desktop-token"), expires_at: now() + 60_000}}
+    end)
+
+    sql(context, "UPDATE auth_sessions SET subject = 'desktop-bootstrap' WHERE id = ?1", [
+      context.device
+    ])
+
+    assert {200, _} = Mc.exchange(context.mc, "next-desktop-token")
+    context
+  end
+
+  step "an administrator revokes the client while its socket opens", context do
+    context = Map.put(context, :admin_access, admin!(context))
+
+    assert {200, _, %{"revoked" => true}} =
+             Mc.request(context.mc, :post, "/api/auth/clients/revoke",
+               bearer: context.admin_access,
+               json: %{"sessionId" => context.device}
+             )
+
+    # A socket that was still opening when the revoke ran is told to close all the same.
+    GenServer.cast(HalC2.Auth, {:connected, context.device, self()})
+    assert_receive {:hal_c2_session_revoked, _}, 5_000
+    context
+  end
+
+  step "the client's socket is closed", context do
+    assert {:close, _, _} = Mc.await_close(World.client(context, "device"))
     context
   end
 end

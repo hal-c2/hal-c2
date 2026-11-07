@@ -66,7 +66,7 @@ Feature: MC authentication and scopes
     Then it is 12 characters long
     And it uses no characters that look alike, such as 0 and O or 1 and I
 
-  @backlog @mc @priority-high
+  @mc
   Scenario: Two clients racing for one pairing token leave exactly one session
     Given a pairing token that has not been exchanged
     When two clients exchange it at the same moment
@@ -332,12 +332,12 @@ Feature: MC authentication and scopes
       | the same scope twice                            | refuses the link as an invalid scope       |
       | the default scopes without holding all of them  | refuses the link as an invalid scope       |
 
-  @backlog @mc @priority-high
+  @mc
   Scenario: Responses that carry credentials are never cached
     When a client exchanges a pairing token or asks for a socket ticket
     Then the answer is marked as not storable by browsers or proxies
 
-  @backlog @mc @priority-high
+  @mc
   Scenario Outline: A call is refused when the session lacks the scope that matches what it changes
     Given a client whose session lacks <scope>
     When it <action>
@@ -345,8 +345,6 @@ Feature: MC authentication and scopes
 
     Examples:
       | scope                  | action                                         |
-      | relay:write            | installs the relay client                      |
-      | relay:read             | asks for the relay client's status             |
       | orchestration:operate  | reports the host's power state                 |
       | orchestration:read     | reports that the client is in the foreground   |
       | orchestration:operate  | submits a review on a pull request             |
@@ -354,6 +352,18 @@ Feature: MC authentication and scopes
       | review:write           | reads a review diff                            |
       | orchestration:operate  | opens a preview                                |
       | orchestration:read     | lists previews                                 |
+
+  # The MC has no relay client to install or ask about yet, so nothing exercises these two scopes.
+  @backlog @mc
+  Scenario Outline: A relay call is refused when the session lacks the scope that matches what it changes
+    Given a client whose session lacks <scope>
+    When it <action>
+    Then the MC refuses saying <scope> is required
+
+    Examples:
+      | scope       | action                             |
+      | relay:write | installs the relay client          |
+      | relay:read  | asks for the relay client's status |
 
   @mc
   Scenario: A client's device type is read from its user agent
@@ -437,7 +447,7 @@ Feature: MC authentication and scopes
     Then the client's socket is closed as revoked
     And it cannot reconnect with its old session
 
-  @backlog @mc @priority-high
+  @mc
   Scenario Outline: A session that ends closes the sockets it has open
     Given a paired client has an open socket
     When <ending>
@@ -615,7 +625,7 @@ Feature: MC authentication and scopes
     Then both commands work against the MC's stored access records
     And the minted link works once the MC starts
 
-  @backlog @mc @priority-high
+  @mc
   Scenario: A pairing link with limited scopes pairs with exactly those
     Given a pairing link granting only some scopes
     When a client exchanges it asking for those scopes

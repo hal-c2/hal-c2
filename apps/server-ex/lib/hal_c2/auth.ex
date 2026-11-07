@@ -696,11 +696,20 @@ defmodule HalC2.Auth do
   defp prune_expired(path) do
     now = now()
 
-    {pairing, sessions} =
+    {pairing, expired} =
       with_db(path, fn db ->
         {length(query(db, "DELETE FROM auth_pairing WHERE expires_at <= ?1 RETURNING 1", [now])),
-         length(query(db, "DELETE FROM auth_sessions WHERE expires_at <= ?1 RETURNING 1", [now]))}
+         for(
+           [id] <-
+             query(db, "DELETE FROM auth_sessions WHERE expires_at <= ?1 RETURNING id", [now]),
+           do: id
+         )}
       end)
+
+    # A session that ran out takes the sockets it opened with it.
+    drop_tickets(expired)
+    close_sockets(nil, expired)
+    sessions = length(expired)
 
     tickets = :ets.select_delete(@tickets, [{{:_, :"$1", :_}, [{:"=<", :"$1", now}], [true]}])
     %{pairing: pairing, sessions: sessions, tickets: tickets, proofs: HalC2.Auth.Dpop.prune()}
