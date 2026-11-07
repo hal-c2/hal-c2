@@ -495,6 +495,9 @@ Rectangle {
             return;
         }
         textDebounce.stop();
+        // What the keyboard is still composing (dictation, a correction it
+        // is about to make) is part of the message: settle it first.
+        Qt.inputMethod.commit();
         const text = input.text;
         // The controller clears its published prompt only after accepting the send.
         // Until then this remains the user's recoverable draft.
@@ -927,10 +930,23 @@ Rectangle {
                     }
 
                     // Attached images, terminal selections and quoted replies living on the draft.
-                    Flow {
+                    // A draft can carry a hundred: the chips scroll in a strip
+                    // a few rows tall instead of pushing the prompt off screen.
+                    ScrollView {
+                        id: attachmentsScroll
+
                         Layout.fillWidth: true
-                        visible: composer.ready && (composer.attachments.length > 0 || composer.model.terminalContexts.length > 0 || (composer.model.reviewComments ?? []).length > 0 || composer.citations.length > 0)
-                        spacing: Theme.space.sm
+                        Layout.preferredHeight: Math.min(attachmentsFlow.implicitHeight, Theme.control.md * 3)
+                        visible: composer.ready && (composer.attachments.length > 0 || composer.model.terminalContexts.length > 0 || (composer.model.reviewComments ?? []).length > 0 || (composer.model.threadContexts ?? []).length > 0 || composer.citations.length > 0)
+                        clip: true
+                        contentWidth: availableWidth
+                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                        Flow {
+                            id: attachmentsFlow
+
+                            width: attachmentsScroll.availableWidth
+                            spacing: Theme.space.sm
 
                         Repeater {
                             model: composer.attachments
@@ -989,6 +1005,25 @@ Rectangle {
                                 text: modelData.lineStart === modelData.lineEnd ? qsTr("%1 line %2").arg(modelData.label).arg(modelData.lineStart) : qsTr("%1 lines %2-%3").arg(modelData.label).arg(modelData.lineStart).arg(modelData.lineEnd)
                                 font.pixelSize: Theme.type.meta.size
                                 Accessible.name: qsTr("Remove terminal selection %1").arg(text)
+                                onClicked: Shell.dispatch("composer.terminalContext.remove", {
+                                    id: modelData.id
+                                })
+                            }
+                        }
+
+                        // Threads carried as context; a click takes one off.
+                        Repeater {
+                            model: composer.ready ? composer.model.threadContexts ?? [] : []
+
+                            delegate: ShellButton {
+                                required property var modelData
+
+                                objectName: "threadContext-" + modelData.id
+                                implicitHeight: Theme.control.sm
+                                iconName: "message-square"
+                                text: modelData.label
+                                font.pixelSize: Theme.type.meta.size
+                                Accessible.name: qsTr("Remove the thread %1").arg(text)
                                 onClicked: Shell.dispatch("composer.terminalContext.remove", {
                                     id: modelData.id
                                 })
@@ -1101,10 +1136,26 @@ Rectangle {
                                 }
                             }
                         }
+                        }
                     }
 
                     ScrollView {
                         id: promptScroll
+
+                        // The caret's line stays in view as the prompt wraps
+                        // past the lines shown, whatever keyboard is typing.
+                        function keepCaretInView() {
+                            const flick = promptScroll.contentItem;
+                            if (!flick || flick.contentY === undefined)
+                                return;
+                            const caret = input.cursorRectangle;
+                            const y = input.y + caret.y;
+                            if (y < flick.contentY)
+                                flick.contentY = y;
+                            else if (y + caret.height > flick.contentY + flick.height)
+                                flick.contentY = y + caret.height - flick.height;
+                        }
+
                         objectName: "promptScroll"
                         Layout.fillWidth: true
                         // Two lines at rest, one while scrolled away, and up to
@@ -1136,6 +1187,7 @@ Rectangle {
                             // A resting composer comes back when the user turns to it.
                             onActiveFocusChanged: if (activeFocus) composer.scrollCollapsed = false
                             onPressed: composer.scrollCollapsed = false
+                            onCursorRectangleChanged: promptScroll.keepCaretInView()
 
                             padding: 0
                             enabled: composer.ready && !composer.model.editorDisabled
@@ -1537,7 +1589,59 @@ Rectangle {
                             ToolTip.text: followUp === "steer"
                                 ? qsTr("Steer the running turn (%1+Enter to queue)").arg(Qt.platform.os === "osx" ? "⌘" : "Ctrl")
                                 : qsTr("Queue after the running turn (%1+Enter to steer)").arg(Qt.platform.os === "osx" ? "⌘" : "Ctrl")
-                            onClicked: stopMode ? Shell.dispatch("composer.interrupt") : composer.submit("foreground")
+                            // The other ways to send during a turn, on a long press
+                            // (a finger's) or the secondary button: the opposite of
+                            // the follow-up setting, and restarting the turn with
+                            // the message. A provider that cannot steer offers none.
+                            readonly property bool sendModesOffered: followUp.length > 0 && sendable && composer.model?.canSteer !== false
+                            property bool holdOpened: false
+                            onPressed: holdOpened = false
+                            onPressAndHold: {
+                                if (!sendModesOffered)
+                                    return;
+                                holdOpened = true;
+                                sendModes.popup();
+                            }
+                            TapHandler {
+                                acceptedButtons: Qt.RightButton
+                                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                enabled: primaryAction.sendModesOffered
+                                onTapped: sendModes.popup()
+                            }
+                            ShellMenu {
+                                id: sendModes
+
+                                objectName: "sendModes"
+
+                                ShellMenuItem {
+                                    objectName: "sendModeQueue"
+                                    text: qsTr("Queue after this turn")
+                                    iconName: "list-plus"
+                                    visible: primaryAction.followUp !== "queue"
+                                    onTriggered: composer.submit("queue")
+                                }
+                                ShellMenuItem {
+                                    objectName: "sendModeSteer"
+                                    text: qsTr("Steer this turn")
+                                    iconName: "corner-down-right"
+                                    visible: primaryAction.followUp !== "steer"
+                                    onTriggered: composer.submit("steer")
+                                }
+                                ShellMenuItem {
+                                    objectName: "sendModeRestart"
+                                    text: qsTr("Restart the turn with this")
+                                    iconName: "rotate-ccw"
+                                    onTriggered: composer.submit("restart")
+                                }
+                            }
+                            onClicked: {
+                                if (holdOpened)
+                                    return;
+                                if (stopMode)
+                                    Shell.dispatch("composer.interrupt");
+                                else
+                                    composer.submit("foreground");
+                            }
 
                             Behavior on scale {
                                 NumberAnimation {
