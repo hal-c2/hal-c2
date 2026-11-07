@@ -81,6 +81,8 @@ private:
   };
 
   void openFolder(const QString& path, bool newThread = false);
+  // Adds the folder at `path` on the MC's machine, whichever machine this is.
+  void addOnEnvironment(const QString& path);
   // Opens the project's latest thread still in play, else its draft.
   void openProject(const QString& environmentId, const QString& projectId);
   // Moves a scoped sidebar to the project, so what was added is where the user is.

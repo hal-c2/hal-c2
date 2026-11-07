@@ -24,7 +24,7 @@ defmodule HalC2.Rpc do
   def handle("orchestration." <> _ = method, payload),
     do: HalC2.Orchestration.handle(method, payload)
 
-  def handle("projects.mutate", mutation), do: HalC2.Projects.mutate(mutation)
+  def handle("projects.mutate", mutation), do: HalC2.Projects.mutate_for_client(mutation)
   def handle("server.getSettings", _input), do: {:ok, HalC2.Settings.settings()}
 
   # A client applies settings patches itself and writes the whole document back

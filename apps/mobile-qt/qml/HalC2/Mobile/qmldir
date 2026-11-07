@@ -1,4 +1,5 @@
 module HalC2.Mobile
+AddProjectDialog 1.0 AddProjectDialog.qml
 HomeScreen 1.0 HomeScreen.qml
 MobileBar 1.0 MobileBar.qml
 MobileButton 1.0 MobileButton.qml
