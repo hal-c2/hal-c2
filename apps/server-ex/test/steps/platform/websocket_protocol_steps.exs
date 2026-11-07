@@ -7,6 +7,15 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   alias HalC2.Test.Mc.World
   alias HalC2.Test.WsClient
 
+  @tool_types %{
+    "a command" => "command_execution",
+    "a file change" => "file_change",
+    "a file search" => "file_search",
+    "a web search" => "web_search",
+    "a provider-defined tool" => "dynamic_tool"
+  }
+  @max_held_progress 512
+
   # --- greeting and credentials ---------------------------------------------------------
 
   step "the client opens a socket with a valid credential", context do
@@ -255,6 +264,57 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     World.put_client(context, client)
   end
 
+  step "the client subscribed to the thread list and is slow to take updates", context do
+    context =
+      Enum.reduce(["Alpha", "Fix checkout", "Beta"], context, &World.create_thread(&2, &1))
+
+    # The steps wait for the sidebar to have each change.
+    if :ets.lookup(HalC2.Shell.Subscribers, self()) == [], do: HalC2.Shell.subscribe(self())
+    before = shell_clients()
+    client = World.client(context) |> Mc.sub(1, %{"type" => "shell"})
+    {%{"t" => "shell"}, client} = Mc.await(client, &(&1["t"] == "shell"))
+    [socket] = shell_clients() -- before
+    :ok = :sys.suspend(socket)
+    ExUnit.Callbacks.on_exit(fn -> resume(socket) end)
+    context |> Map.put(:socket, socket) |> World.put_client(client)
+  end
+
+  # Between a change to the first listed thread and one to the last, so the order
+  # they happened in is not the order of their ids.
+  step ~r/^"(?<title>[^"]+)" changes 50 times before the client takes any$/,
+       %{args: [title]} = context do
+    rename(context, "Alpha", "Alpha 1")
+    for n <- 1..50, do: rename(context, title, "#{title} #{n}")
+    rename(context, "Beta", "Beta 1")
+    :ok = :sys.resume(context.socket)
+    context
+  end
+
+  step ~r/^the client is sent the latest state of "(?<title>[^"]+)" once$/,
+       %{args: [title]} = context do
+    beta = World.thread_id(context, "Beta")
+
+    {last, frames, client} =
+      WsClient.recv_until(World.client(context), fn frame ->
+        frame["t"] == "shell.rows" and Enum.any?(frame["rows"], &match?([^beta | _], &1))
+      end)
+
+    listed =
+      for %{"t" => "shell.rows", "rows" => rows} <- frames ++ [last],
+          [sid, "thread", row] <- rows,
+          do: {sid, row["title"]}
+
+    id = World.thread_id(context, title)
+    assert for({^id, title} <- listed, do: title) == ["#{title} 50"]
+    context |> Map.put(:listed, listed) |> World.put_client(client)
+  end
+
+  step "the other listed threads' updates arrive in the order they happened", context do
+    ids = for title <- ["Alpha", "Fix checkout", "Beta"], do: World.thread_id(context, title)
+    assert for({sid, _} <- context.listed, sid in ids, do: sid) == ids
+    context
+  end
+
   step "the client subscribed to a busy thread", context do
     follow_thread(context)
   end
@@ -275,6 +335,59 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
 
     :ok = :sys.resume(context.socket)
     Map.put(context, :missed, seqs)
+  end
+
+  step "more than 1,000 small changes wait unsent for that subscription", context do
+    :ok = :sys.suspend(context.socket)
+
+    # Eleven commits of 91 notes: 1,001 events, each a few bytes.
+    seqs =
+      for _ <- 1..11, reduce: [] do
+        seqs ->
+          {:ok, last} =
+            HalC2.Streams.commit(context.stream, :thread, for(_ <- 1..91, do: note("small")))
+
+          seqs ++ Enum.to_list((last - 90)..last)
+      end
+
+    :ok = :sys.resume(context.socket)
+    Map.put(context, :missed, seqs)
+  end
+
+  step "the client subscribed from an offset far behind a thread with 5,000 changes since",
+       context do
+    stream = stream_id()
+    {:ok, offset} = HalC2.Streams.commit(stream, :thread, [note("first")])
+
+    {:ok, _last} =
+      Enum.reduce(1..10, {:ok, offset}, fn _, {:ok, _} ->
+        HalC2.Streams.commit(stream, :thread, for(_ <- 1..500, do: note("since")))
+      end)
+
+    client = World.client(context) |> sub(1, stream, offset)
+    context |> Map.merge(%{stream: stream, offset: offset}) |> World.put_client(client)
+  end
+
+  step "the MC replays them and the client acknowledges each batch", context do
+    {live, frames, client} =
+      WsClient.recv_until(World.client(context), &(&1["t"] == "live" and &1["id"] == 1), 30_000)
+
+    context |> Map.merge(%{live: live, frames: frames}) |> World.put_client(client)
+  end
+
+  step "the client receives every change", context do
+    since = Enum.to_list((context.offset + 1)..(context.offset + 5_000))
+    assert Enum.sort(event_seqs(context.frames, 1)) == since
+    assert context.live["offset"] == List.last(since)
+    context
+  end
+
+  step "the MC does not send a resync for that subscription", context do
+    refute Enum.any?(context.frames, &(&1["t"] == "resync"))
+    {:ok, seq} = HalC2.Streams.commit(context.stream, :thread, [note("after")])
+    {frame, client} = Mc.await(World.client(context), &(&1["t"] in ["events", "resync"]))
+    assert %{"t" => "events", "id" => 1, "events" => [[^seq | _]]} = frame
+    World.put_client(context, client)
   end
 
   step "the MC sends a resync for that subscription", context do
@@ -322,6 +435,200 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     seq = context.seq
     assert [[^seq, "message", "m1", %{"a" => %{"text" => ^text}}, _]] = frame["events"]
     World.put_client(context, client)
+  end
+
+  # Progress is held longer here than the MC's 50 ms, so what a step commits in a row
+  # lands in one hold however busy the machine is.
+  step ~r/^the client subscribed to a thread where (?<tool>a command|a file change|a file search|a web search|a provider-defined tool) is running$/,
+       %{args: [tool]} = context do
+    type = Map.fetch!(@tool_types, tool)
+    hold_progress(1_000)
+    follow_tools(context, for(id <- ~w(t1 t2), do: {id, type}))
+  end
+
+  step "the client subscribed to a thread where many tool calls are running", context do
+    hold_progress(60_000)
+    follow_tools(context, for(n <- 1..@max_held_progress, do: {"t#{n}", "dynamic_tool"}))
+  end
+
+  step "that tool call reports progress many times within 50 milliseconds", context do
+    seq = for i <- 1..10, do: report(context, [{"t1", i}])
+
+    # Sent each on its own, nothing has gone out while the socket waits for more.
+    {_pong, frames, client} =
+      World.client(context)
+      |> WsClient.send_json(%{"t" => "ping"})
+      |> WsClient.recv_until(&(&1["t"] == "pong"))
+
+    assert event_seqs(frames, 1) == []
+    context |> Map.put(:seq, List.last(seq)) |> World.put_client(client)
+  end
+
+  step "the client receives one update holding its latest state", context do
+    {frame, client} = Mc.await(World.client(context), &(&1["t"] == "events"))
+    seq = context.seq
+    assert [[^seq, "turn-item", "t1", %{"s" => %{"detail" => "step 10"}}, _]] = frame["events"]
+    World.put_client(context, client)
+  end
+
+  step "two tool calls running side by side each keep their own update", context do
+    seqs = for i <- 11..14, do: report(context, [{"t1", i}, {"t2", i}])
+    {frame, client} = Mc.await(World.client(context), &(&1["t"] == "events"))
+
+    assert [
+             [_, "turn-item", "t1", %{"s" => %{"detail" => "step 14"}}, _],
+             [seq, "turn-item", "t2", %{"s" => %{"detail" => "step 14"}}, _]
+           ] = frame["events"]
+
+    assert seq == List.last(seqs)
+    World.put_client(context, client)
+  end
+
+  # The hold is far longer than the client waits, so it must not be waited for.
+  step "the command reports progress and then finishes, and a message arrives right after",
+       context do
+    hold_progress(60_000)
+    report(context, [{"t1", 1}])
+    report(context, [{"t1", 2}])
+
+    {:ok, _} =
+      HalC2.Streams.commit(context.stream, :thread, [
+        {"turn-item", "t1", %{"s" => %{"status" => "completed"}}}
+      ])
+
+    {:ok, _} =
+      HalC2.Streams.commit(context.stream, :thread, [
+        {"message", "m1", %{"a" => %{"text" => "done"}}}
+      ])
+
+    context
+  end
+
+  step "the client receives the latest progress, then the finished command, then the message",
+       context do
+    {last, frames, client} =
+      WsClient.recv_until(World.client(context), fn frame ->
+        frame["t"] == "events" and Enum.any?(frame["events"], &match?([_, "message" | _], &1))
+      end)
+
+    events =
+      for(%{"t" => "events", "events" => events} <- frames ++ [last], do: events)
+      |> Enum.concat()
+      |> Enum.map(fn [_seq, kind, id, patch, _at] -> {kind, id, patch} end)
+
+    assert [
+             {"turn-item", "t1", %{"s" => %{"detail" => "step 2"}}},
+             {"turn-item", "t1", %{"s" => %{"status" => "completed"}}},
+             {"message", "m1", %{"a" => %{"text" => "done"}}}
+           ] = events
+
+    World.put_client(context, client)
+  end
+
+  step "nothing waits for the 50 milliseconds to pass once the command has finished", context do
+    # The message came well within `Mc.await/3`'s limit, and the hold is twice that.
+    context
+  end
+
+  step "512 progress updates are waiting to be merged", context do
+    ids = for n <- 1..@max_held_progress, do: "t#{n}"
+    {last, rest} = List.pop_at(ids, -1)
+
+    for chunk <- Enum.chunk_every(rest, 64), do: report(context, Enum.map(chunk, &{&1, 1}))
+
+    {_pong, frames, client} =
+      World.client(context)
+      |> WsClient.send_json(%{"t" => "ping"})
+      |> WsClient.recv_until(&(&1["t"] == "pong"))
+
+    assert event_seqs(frames, 1) == []
+    seq = report(context, [{last, 1}])
+    context |> Map.put(:seq, seq) |> World.put_client(client)
+  end
+
+  step "they are merged and sent at once, without waiting for the 50 milliseconds to pass",
+       context do
+    # The hold is a minute, twice what `Mc.await/3` waits.
+    {frame, client} = Mc.await(World.client(context), &(&1["t"] == "events"))
+    assert frame["offset"] == context.seq
+    assert length(frame["events"]) == @max_held_progress
+    World.put_client(context, client)
+  end
+
+  step "clients hold several subscriptions open", context do
+    # Two threads of 2 MB each: what a socket kept of them would show in its memory.
+    big = String.duplicate("x", 100_000)
+    streams = for _ <- 1..2, do: stream_id()
+
+    offsets =
+      for stream <- streams do
+        {:ok, offset} = HalC2.Streams.commit(stream, :thread, [note("first")])
+        {:ok, _} = HalC2.Streams.commit(stream, :thread, for(_ <- 1..10, do: note(big)))
+        {:ok, _} = HalC2.Streams.commit(stream, :thread, for(_ <- 1..10, do: note(big)))
+        offset
+      end
+
+    # Each client also follows the shell, which is how the MC lists its socket.
+    before = shell_clients()
+    fresh = Mc.connect(context.mc) |> Mc.sub(9, %{"type" => "shell"})
+    behind = Mc.connect(context.mc) |> Mc.sub(9, %{"type" => "shell"})
+    {_, fresh} = Mc.await(fresh, &(&1["t"] == "shell"))
+    {_, behind} = Mc.await(behind, &(&1["t"] == "shell"))
+    sockets = shell_clients() -- before
+    assert length(sockets) == 2
+    held = for stream <- streams, do: held_bytes(stream_pid(stream))
+
+    Map.merge(context, %{
+      streams: streams,
+      offsets: offsets,
+      clients: [fresh, behind],
+      sockets: sockets,
+      held: held
+    })
+  end
+
+  step "each has been sent its snapshot, its replay and its history", context do
+    [fresh, behind] = context.clients
+    pairs = Enum.zip(context.streams, context.offsets) |> Enum.with_index(1)
+
+    # One takes each thread whole, the other replays it from its first offset;
+    # both then read its rows in one call.
+    fresh = Enum.reduce(pairs, fresh, fn {{s, _}, id}, c -> sub(c, id, s) end)
+    behind = Enum.reduce(pairs, behind, fn {{s, o}, id}, c -> sub(c, id, s, o) end)
+
+    clients =
+      for client <- [fresh, behind] do
+        {_, client} =
+          Mc.await_all(client, for({_, id} <- pairs, do: &(&1["t"] == "live" and &1["id"] == id)))
+
+        Enum.reduce(context.streams, client, fn stream, client ->
+          {{:ok, %{"rows" => rows}}, client} =
+            Mc.call(client, context.mc.environment, "hal-c2.threadRows", %{"threadId" => stream})
+
+          assert length(rows) == 21
+          client
+        end)
+      end
+
+    Map.put(context, :clients, clients)
+  end
+
+  step "the MC holds none of that delivered history while the subscriptions stay open",
+       context do
+    # The 4 MB went out over each socket; neither keeps more than one note's worth.
+    for socket <- context.sockets, do: assert(held_bytes(socket) < 100_000)
+
+    # A thread's stream holds its rows, as it did before anyone followed it, and
+    # nothing more for having sent them.
+    for {stream, before} <- Enum.zip(context.streams, context.held),
+        do: assert(held_bytes(stream_pid(stream)) <= before + 100_000)
+
+    # And the subscriptions stay open: each socket still answers.
+    for client <- context.clients do
+      {_, _} = Mc.await(WsClient.send_json(client, %{"t" => "ping"}), &(&1["t"] == "pong"))
+    end
+
+    context
   end
 
   step "it subscribes to the same thread again on that socket", context do
@@ -722,6 +1029,66 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     World.put_client(context, client)
   end
 
+  # Two scheduled task lists wait on their suspended server; the handler of one is
+  # killed under it.
+  step "a client has a thread subscription, a terminal subscription and a pending request open",
+       context do
+    context = follow_thread(context)
+    {_snapshot, context} = Mc.Terminal.open!(context)
+    {_snapshot, context} = Mc.Terminal.attach!(context, "default")
+
+    tasks = Mc.ensure(HalC2.ScheduledTasks)
+    :ok = :sys.suspend(tasks)
+    ExUnit.Callbacks.on_exit(fn -> resume(tasks) end)
+
+    client =
+      World.client(context)
+      |> Mc.rpc(context.mc.environment, 98, "scheduledTasks.list", %{})
+      |> Mc.rpc(context.mc.environment, 99, "scheduledTasks.list", %{})
+
+    :ok = WsClient.await_mailbox(tasks, 2)
+    HalC2.Test.LogTap.attach()
+    context |> Map.put(:tasks_pid, tasks) |> World.put_client(client)
+  end
+
+  step "the MC handler for the pending request crashes", context do
+    {:messages, [{:"$gen_call", {handler, _}, _} | _]} =
+      Process.info(context.tasks_pid, :messages)
+
+    Process.exit(handler, :kill)
+    context
+  end
+
+  step "that request fails with an error", context do
+    {reply, client} =
+      Mc.await(World.client(context), &(&1["t"] in ["rpc.result", "rpc.error"]), 5_000)
+
+    assert %{"t" => "rpc.error", "id" => failed} = reply
+    assert failed in [98, 99]
+    context |> Map.put(:failed, failed) |> World.put_client(client)
+  end
+
+  step "the client's other subscriptions and requests carry on", context do
+    :ok = :sys.resume(context.tasks_pid)
+    other = if context.failed == 98, do: 99, else: 98
+    {reply, client} = Mc.await(World.client(context), Mc.reply?(other), 5_000)
+    assert %{"t" => "rpc.result", "result" => %{"tasks" => _}} = reply
+
+    {:ok, seq} = HalC2.Streams.commit(context.stream, :thread, [note("after the crash")])
+    {events, client} = Mc.await(client, &(&1["t"] == "events" and &1["id"] == 1), 5_000)
+    assert [[^seq | _]] = events["events"]
+
+    context = World.put_client(context, client)
+    context = Mc.Terminal.write(context, "default", "echo still''-here\n")
+    {_output, _events, context} = Mc.Terminal.await_output(context, "default", "still-here")
+    context
+  end
+
+  step "the crash is logged by the MC", context do
+    assert_receive {:logged, :error, "scheduledTasks.list failed: " <> _}, 5_000
+    context
+  end
+
   # --- stream lifetime and upgrades --------------------------------------------------------
 
   step "nobody follows a thread for five minutes", context do
@@ -989,6 +1356,41 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     context
   end
 
+  step ~r/^a client opens a socket (?<naming>without any protocol version|naming an older protocol)$/,
+       %{args: [naming]} = context do
+    # No credential either: the protocol is checked first.
+    path =
+      if naming == "naming an older protocol",
+        do: "/ws?protocol=#{HalC2.Web.Protocol.version() - 1}",
+        else: "/ws"
+
+    Map.merge(context, %{
+      upgrade: WsClient.upgrade(context.mc.port, path),
+      response: Mc.request(context.mc, :get, path)
+    })
+  end
+
+  step "the MC refuses the upgrade as incompatible before checking its credential", context do
+    assert context.upgrade == {:error, 426}
+    assert {426, _headers, %{"code" => "protocol_incompatible"}} = context.response
+    context
+  end
+
+  step "the message says to update the client to one that supports the MC's protocol",
+       context do
+    {426, _, %{"message" => message}} = context.response
+    assert message =~ "Update this client to one that supports protocol"
+    context
+  end
+
+  step "it names the protocol version the MC speaks", context do
+    version = HalC2.Web.Protocol.version()
+    {426, _, %{"message" => message} = body} = context.response
+    assert body["protocolVersion"] == version
+    assert message =~ "protocol #{version}"
+    context
+  end
+
   step "a client session has an open socket", context do
     {:ok, %{id: session}} = HalC2.Auth.session(context.access_token)
     Map.put(context, :session, session)
@@ -1007,7 +1409,8 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   step "the client cannot reconnect with that session", context do
     assert HalC2.Auth.issue_ticket(context.access_token) == :error
 
-    assert {401, _, _} = Mc.request(context.mc, :get, "/ws?token=#{context.access_token}")
+    path = "/ws?protocol=3&token=#{context.access_token}"
+    assert {401, _, _} = Mc.request(context.mc, :get, path)
 
     context
   end
@@ -1074,6 +1477,74 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     {_, client} = Mc.await(client, &(&1["t"] == "live" and &1["id"] == 1))
     [socket] = Map.keys(:sys.get_state(HalC2.Streams.ensure(stream)).subscribers)
     context |> Map.merge(%{stream: stream, socket: socket}) |> World.put_client(client)
+  end
+
+  # A thread where each `{id, type}` tool call is running, followed as id 1.
+  defp follow_tools(context, tools) do
+    stream = stream_id()
+
+    {:ok, _} =
+      HalC2.Streams.commit(
+        stream,
+        :thread,
+        [
+          {"run", "r1", %{"s" => %{"id" => "r1", "ordinal" => 1, "status" => "running"}}},
+          {"message", "m1",
+           %{"s" => %{"id" => "m1", "role" => "assistant", "text" => "", "streaming" => true}}}
+        ] ++
+          for {id, type} <- tools do
+            {"turn-item", id,
+             %{"s" => %{"id" => id, "runId" => "r1", "type" => type, "status" => "running"}}}
+          end
+      )
+
+    client = World.client(context) |> sub(1, stream)
+    {_, client} = Mc.await(client, &(&1["t"] == "live" and &1["id"] == 1))
+    [socket] = Map.keys(:sys.get_state(HalC2.Streams.ensure(stream)).subscribers)
+    context |> Map.merge(%{stream: stream, socket: socket}) |> World.put_client(client)
+  end
+
+  # One commit of progress, `{id, step}` for each tool call; its seq.
+  defp report(context, steps) do
+    {:ok, seq} =
+      HalC2.Streams.commit(
+        context.stream,
+        :thread,
+        for({id, step} <- steps, do: {"turn-item", id, %{"s" => %{"detail" => "step #{step}"}}})
+      )
+
+    seq
+  end
+
+  defp hold_progress(ms) do
+    previous = Application.fetch_env(:hal_c2, :progress_hold_ms)
+    Application.put_env(:hal_c2, :progress_hold_ms, ms)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      case previous do
+        {:ok, value} -> Application.put_env(:hal_c2, :progress_hold_ms, value)
+        :error -> Application.delete_env(:hal_c2, :progress_hold_ms)
+      end
+    end)
+  end
+
+  # The bytes a process holds after a collection: its heap and the binaries it refers to.
+  defp held_bytes(pid) do
+    :erlang.garbage_collect(pid)
+    [memory: memory, binary: binaries] = Process.info(pid, [:memory, :binary])
+    memory + (binaries |> Enum.map(&elem(&1, 1)) |> Enum.sum())
+  end
+
+  defp stream_pid(stream), do: HalC2.Streams.ensure(stream)
+
+  defp shell_clients,
+    do: for({pid, :client} <- :ets.tab2list(HalC2.Shell.Subscribers), do: pid)
+
+  # Renames a listed thread and waits until the sidebar has it.
+  defp rename(context, title, to) do
+    id = World.thread_id(context, title)
+    {:ok, _} = HalC2.Streams.commit(id, :thread, [{"thread", id, %{"s" => %{"title" => to}}}])
+    World.await_row(id, &(&1["title"] == to))
   end
 
   defp keybinding(context, method, rule) do

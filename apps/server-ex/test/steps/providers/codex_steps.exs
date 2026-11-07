@@ -970,14 +970,7 @@ Red"} <- StreamState.get(state, "message")[message],
     start =
       World.await_provider_log(context, "codex", &(get_in(&1, ["in", "method"]) == "turn/start"))
 
-    assert get_in(start, [
-             "in",
-             "params",
-             "collaborationMode",
-             "settings",
-             "developer_instructions"
-           ]) =~
-             "Delegate child work with `#{tool}`"
+    assert instructions(start["in"]["params"]) =~ "Delegate child work with `#{tool}`"
 
     context
   end
@@ -998,19 +991,21 @@ Red"} <- StreamState.get(state, "message")[message],
     assert length(starts) == 2
 
     for start <- starts,
-        do:
-          assert(
-            get_in(start, [
-              "in",
-              "params",
-              "collaborationMode",
-              "settings",
-              "developer_instructions"
-            ]) =~
-              "Delegate child work with `#{tool}`"
-          )
+        do: assert(instructions(start["in"]["params"]) =~ "Delegate child work with `#{tool}`")
 
     context
+  end
+
+  # What HAL-C2 told Codex with a `turn/start`: its `additionalContext` entries in
+  # the order Codex sends them, or nil for none.
+  defp instructions(params) do
+    case params["additionalContext"] do
+      %{} = entries ->
+        entries |> Enum.sort() |> Enum.map_join("\n\n", fn {_key, entry} -> entry["value"] end)
+
+      nil ->
+        nil
+    end
   end
 
   defp codex_thread_config(context) do
@@ -1667,7 +1662,7 @@ Red"} <- StreamState.get(state, "message")[message],
   defp turn_instructions(context) do
     for %{"in" => %{"method" => "turn/start", "params" => params}} <-
           World.provider_log(context, "codex"),
-        do: get_in(params, ["collaborationMode", "settings", "developer_instructions"])
+        do: instructions(params)
   end
 
   step "Codex receives HAL-C2's orchestration instructions with the second message only",
@@ -1684,6 +1679,174 @@ Red"} <- StreamState.get(state, "message")[message],
     refute instructions =~ "device_"
     refute instructions =~ "HAL-C2 devices"
     refute instructions =~ "collaborative browser"
+    context
+  end
+
+  defp turn_starts(context) do
+    for %{"in" => %{"method" => "turn/start", "params" => params}} <-
+          World.provider_log(context, "codex"),
+        do: params
+  end
+
+  step "the {string} server is attached to a Codex thread on a model whose catalog replaces default mode",
+       _args = context do
+    context = World.fake_providers(context)
+    Mc.ensure(HalC2.Mcp)
+    # The model list names the model; what Codex's catalog says for the mode is
+    # Codex's own, and nothing HAL-C2 sends depends on it.
+    HalC2.Codex.Provider.load()
+    context = World.launch_on(context, "Work", "codex", "hello", %{"model" => "gpt-6-luna"})
+    World.await_runs(context, "Work", ["completed"])
+    World.await_row(World.thread_id(context, "Work"), & &1)
+    context
+  end
+
+  step "Codex is told the runtime, the model's name and slug, and the PR linking rules",
+       context do
+    params = List.last(turn_starts(context))
+    assert params["collaborationMode"]["mode"] == "default"
+    # Nothing rides the collaboration mode, which a model's catalog overrides.
+    assert params["collaborationMode"]["settings"] == %{"model" => "gpt-6-luna"}
+
+    assert %{"kind" => "application", "value" => runtime} =
+             params["additionalContext"]["hal_c2_runtime"]
+
+    assert runtime =~ "through the Codex harness, as GPT-6 Luna (model slug: gpt-6-luna)"
+    assert runtime =~ "link_pull_request"
+    context
+  end
+
+  step "the user sends a message in plan mode on a Codex thread", context do
+    context = World.fake_providers(context)
+    Mc.ensure(HalC2.Mcp)
+
+    context =
+      World.launch_on(context, "Work", "codex", "make a plan", %{"interactionMode" => "plan"})
+
+    World.await_runs(context, "Work", ["completed"])
+    context
+  end
+
+  step "the turn names Codex's {word} collaboration mode", %{args: [mode]} = context do
+    params = List.last(turn_starts(context))
+    assert params["collaborationMode"]["mode"] == mode
+    context
+  end
+
+  step "HAL-C2 sends no copy of Codex's mode instructions of its own", context do
+    params = List.last(turn_starts(context))
+    # Codex fills in its own text for the mode when the client sends none.
+    assert params["collaborationMode"]["settings"] == %{"model" => params["model"]}
+    refute instructions(params)
+    context
+  end
+
+  step "a Codex thread without the {string} server whose last turn was in plan mode",
+       _args = context do
+    context = World.fake_providers(context)
+    Mc.ensure(HalC2.Mcp)
+    id = World.project(context).id
+
+    context =
+      World.update_settings(context, %{
+        "projectSettingsOverrides" => %{id => %{"enableAgentBrowserAccess" => false}}
+      })
+
+    context =
+      World.launch_on(context, "Work", "codex", "make a plan", %{"interactionMode" => "plan"})
+
+    World.await_runs(context, "Work", ["completed"])
+    World.await_row(World.thread_id(context, "Work"), & &1)
+    context
+  end
+
+  step "Codex may edit files again", context do
+    [plan, default] = turn_starts(context)
+    # The same native thread, which would keep plan mode had the turn not named
+    # default, and with nothing of HAL-C2's in place of Codex's own default text.
+    assert plan["threadId"] == default["threadId"]
+    assert default["collaborationMode"]["settings"] == %{"model" => default["model"]}
+    refute instructions(default)
+    assert default["sandboxPolicy"] == %{"type" => "dangerFullAccess"}
+    context
+  end
+
+  step "Codex compacts the thread's context", context do
+    context = World.launch_on(context, @thread, "codex", "hello")
+    World.await_runs(context, @thread, ["completed"])
+    context = World.post_message(context, @thread, "compact the context")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  step "the next message carries HAL-C2's runtime and tool instructions again", context do
+    context = World.post_message(context, @thread, "hello again")
+    World.await_runs(context, @thread, ["completed", "completed", "completed"])
+    log = Enum.map(World.provider_log(context, "codex"), &get_in(&1, ["in"]))
+    sent = for %{"method" => "turn/start", "params" => params} <- log, do: params
+
+    restored =
+      Enum.find_index(log, &match?(%{"method" => "thread/inject_items"}, &1)) ||
+        flunk("nothing was put back after the compaction")
+
+    next =
+      log
+      |> Enum.with_index()
+      |> Enum.filter(&match?({%{"method" => "turn/start"}, _}, &1))
+      |> List.last()
+      |> elem(1)
+
+    # Back before the next message, as the developer messages Codex had.
+    assert restored < next
+
+    texts =
+      for %{"content" => [%{"type" => "input_text", "text" => text}], "role" => "developer"} <-
+            Enum.at(log, restored)["params"]["items"],
+          do: text
+
+    entries = sent |> Enum.at(1) |> Map.fetch!("additionalContext")
+
+    assert texts ==
+             for(
+               {key, %{"value" => value}} <- Enum.sort(entries),
+               do: "<#{key}>#{value}</#{key}>"
+             )
+
+    assert Enum.any?(texts, &String.starts_with?(&1, "<hal_c2_runtime>"))
+    assert Enum.any?(texts, &String.starts_with?(&1, "<hal_c2_tools>"))
+    context
+  end
+
+  step "a Codex thread in default mode", context do
+    context = World.fake_providers(context)
+    Mc.ensure(HalC2.Mcp)
+    context
+  end
+
+  step "the turn starts", context do
+    context = World.launch_on(context, @thread, "codex", "hello")
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "Codex is given every part of HAL-C2's orchestration instructions", context do
+    entries = List.last(turn_starts(context))["additionalContext"]
+
+    orchestration =
+      for {"hal_c2_orchestration_" <> _, %{"value" => value}} <- Enum.sort(entries),
+          do: value
+
+    assert length(orchestration) > 1
+    assert Enum.join(orchestration) == HalC2.Mcp.Instructions.orchestration()
+    Map.put(context, :codex_context, entries)
+  end
+
+  step "none is cut away by Codex's limit on the length of one instruction", context do
+    for {key, %{"value" => value}} <- context.codex_context do
+      assert byte_size(value) <= HalC2.Mcp.Instructions.codex_entry_bytes(),
+             "#{key} is #{byte_size(value)} bytes"
+    end
+
     context
   end
 
@@ -3733,7 +3896,8 @@ Red"} <- StreamState.get(state, "message")[message],
   step "Codex's status is reported from the manifest the MC already has", context do
     entry = codex(context.providers)
     assert entry["status"] == "ready"
-    assert entry["compatibilityAdvisory"]["status"] == "unknown"
+    # The bundled policy's: the fake Codex is older than its floor.
+    assert entry["compatibilityAdvisory"]["status"] == "broken"
     context
   end
 

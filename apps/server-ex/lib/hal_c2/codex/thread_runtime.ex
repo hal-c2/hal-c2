@@ -228,6 +228,9 @@ defmodule HalC2.Codex.ThreadRuntime do
        # Whether the native thread was started kept to HAL-C2's workers
        # (`HalC2.Mcp.workers_only?/1`): its features and every turn's instructions follow it.
        workers_only: false,
+       # The `additionalContext` Codex's history holds (`context/2`): put back
+       # after Codex compacts the thread.
+       context: nil,
        turn: nil,
        # The instance the latest turn runs as: a turn's quota belongs to it.
        instance: nil,
@@ -796,6 +799,7 @@ defmodule HalC2.Codex.ThreadRuntime do
      |> Map.put_new(:background, %{})
      |> Map.put_new(:last_run, nil)
      |> Map.put_new(:workers_only, false)
+     |> Map.put_new(:context, nil)
      |> Map.put_new(:memory_threads, %{})
      |> Map.put_new(:final_first, nil)
      |> Map.put_new(:finals, %{})
@@ -866,7 +870,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp begin_turn(state, turn) do
     with {:ok, state} <- connect(state, turn),
          {:ok, state, turn} <- open_thread(state, turn),
-         {:ok, native_turn} <- start_native_turn(state, turn) do
+         {:ok, native_turn, state} <- start_native_turn(state, turn) do
       at = Entities.now()
       ids = Map.put(turn.ids, :provider_turn, "provider-turn:codex:#{native_turn}")
       turn = %{turn | ids: ids} |> Map.put(:native_turn_id, native_turn)
@@ -1398,6 +1402,9 @@ defmodule HalC2.Codex.ThreadRuntime do
     {approval, reviewer, sandbox} =
       Map.get(@runtime_policies, turn.runtime_mode, @runtime_policies["full-access"])
 
+    plan? = Map.get(turn, :interaction_mode) == "plan"
+    context = if not plan?, do: context(state, turn)
+
     params = %{
       "threadId" => state.native_thread_id,
       "input" => codex_input(turn),
@@ -1408,44 +1415,84 @@ defmodule HalC2.Codex.ThreadRuntime do
       "sandboxPolicy" => %{"type" => sandbox},
       "summary" => "detailed",
       # Always explicit: Codex keeps the last collaboration mode on a resumed thread.
+      # No `developer_instructions`: Codex brings its own text for the mode (a model
+      # catalog's over its bundled one), so a default turn always leaves plan mode.
       "collaborationMode" => %{
-        "mode" => if(Map.get(turn, :interaction_mode) == "plan", do: "plan", else: "default"),
-        # A read, never a preparation: rotating here would strand the
-        # header this thread's config already carries. HAL-C2's orchestration
-        # instructions steer the agent to work, so a plan turn — which must not
-        # do the work — does not get them.
-        "settings" =>
-          if(
-            HalC2.Mcp.current(state.thread_id, Entities.instance(turn.ids)) &&
-              Map.get(turn, :interaction_mode) != "plan",
-            do: %{
-              "model" => turn.model,
-              "developer_instructions" =>
-                HalC2.Mcp.Instructions.for_session(
-                  # The sections follow what this thread's credential may
-                  # reach, as an ACP session's do, never tools it lacks.
-                  capabilities:
-                    HalC2.Mcp.capabilities(state.thread_id, Entities.instance(turn.ids)) ||
-                      HalC2.Mcp.agent_access(state.thread_id),
-                  runtime: %{
-                    harness: "Codex",
-                    model: turn.model,
-                    effort: Map.get(turn, :options, %{})["reasoningEffort"]
-                  }
-                ) <> if(state.workers_only, do: HalC2.Mcp.workers_only_note(), else: "")
-            },
-            else: %{"model" => turn.model}
-          )
+        "mode" => if(plan?, do: "plan", else: "default"),
+        "settings" => %{"model" => turn.model}
       }
     }
+
+    params = if context, do: Map.put(params, "additionalContext", context), else: params
 
     params = Map.merge(params, selected_options(Map.get(turn, :options, %{})))
 
     case Connection.call(state.conn, "turn/start", params) do
-      {:ok, %{"turn" => %{"id" => id}}} -> {:ok, id}
+      {:ok, %{"turn" => %{"id" => id}}} -> {:ok, id, remember_context(state, plan?, context)}
       {:error, reason} -> {:error, reason, state}
     end
   end
+
+  # HAL-C2's instructions for a default turn with the `hal-c2` server
+  # (`HalC2.Mcp.Instructions.codex_context/1`), or nil. A read, never a
+  # preparation: rotating here would strand the header this thread's config
+  # already carries. They steer the agent to work, so a plan turn, which must
+  # not do the work, gets none.
+  defp context(state, turn) do
+    instance = Entities.instance(turn.ids)
+
+    if HalC2.Mcp.current(state.thread_id, instance) do
+      HalC2.Mcp.Instructions.codex_context(
+        # The sections follow what this thread's credential may reach, as an
+        # ACP session's do, never tools it lacks.
+        capabilities:
+          HalC2.Mcp.capabilities(state.thread_id, instance) ||
+            HalC2.Mcp.agent_access(state.thread_id),
+        runtime: %{
+          harness: "Codex",
+          model: turn.model,
+          model_name: HalC2.Codex.Provider.model_name(turn.model),
+          effort: Map.get(turn, :options, %{})["reasoningEffort"]
+        },
+        extra: if(state.workers_only, do: HalC2.Mcp.workers_only_note(), else: "")
+      )
+    end
+  end
+
+  # The context Codex's history holds, to put back after a compaction: a plan
+  # turn sends none and leaves the earlier one in place.
+  defp remember_context(state, true, _context), do: state
+  defp remember_context(state, false, context), do: %{state | context: context}
+
+  # Compaction rebuilds Codex's history from the user's messages and its own
+  # context, which drops HAL-C2's `additionalContext`, and Codex sends an entry
+  # again only once its value changes: the entries go back in as developer
+  # messages. Awaited, so they are back before the turn goes on.
+  defp restore_context(%{context: context} = state) when is_map(context) do
+    items =
+      for {key, %{"value" => value}} <- Enum.sort(context) do
+        %{
+          "type" => "message",
+          "role" => "developer",
+          "content" => [%{"type" => "input_text", "text" => "<#{key}>#{value}</#{key}>"}]
+        }
+      end
+
+    params = %{"threadId" => state.native_thread_id, "items" => items}
+
+    case Connection.call(state.conn, "thread/inject_items", params, 10_000) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("codex context not restored after compaction: #{inspect(reason)}")
+    end
+  catch
+    :exit, reason ->
+      Logger.warning("codex context not restored after compaction: #{inspect(reason)}")
+  end
+
+  defp restore_context(_state), do: :ok
 
   # --- notifications ----------------------------------------------------------
 
@@ -1760,6 +1807,15 @@ defmodule HalC2.Codex.ThreadRuntime do
 
     {state, _request_id} = open_async_question(flush(state), "async:#{item["id"]}", questions)
     state
+  end
+
+  defp notification(
+         "item/completed",
+         %{"threadId" => thread, "item" => %{"type" => "contextCompaction"} = item},
+         %{native_thread_id: thread} = state
+       ) do
+    restore_context(state)
+    complete_item(flush(state), item)
   end
 
   defp notification("item/completed", %{"item" => item}, state),
