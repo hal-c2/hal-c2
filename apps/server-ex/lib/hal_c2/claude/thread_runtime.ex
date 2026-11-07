@@ -2816,14 +2816,18 @@ defmodule HalC2.Claude.ThreadRuntime do
   # other agents did since Claude last ran is still to be handed over, and a rollback's
   # head is still where Claude resumes (Upstream #25660). The run's start had moved both
   # on (`HalC2.Orchestration`).
+  #
+  # A start that outlived its caller's timeout can end after the next run started and
+  # moved them on for itself. That run resumed Claude where it is now, so the head stays
+  # its own; it counted what to hand over from this run, so what this one did not send
+  # is still owed, unless it was handed another agent's work since this one.
   defp unsent(state, turn) do
+    own = turn.run_ordinal
+
     commit(state, fn stream ->
       [
         Orchestration.upsert(stream, "provider-thread", turn.ids.provider_thread, fn
-          nil ->
-            nil
-
-          thread ->
+          %{"lastRunOrdinal" => ^own} = thread ->
             thread
             |> Map.put("lastRunOrdinal", turn[:seen_run_ordinal])
             |> then(fn thread ->
@@ -2836,9 +2840,29 @@ defmodule HalC2.Claude.ThreadRuntime do
                   ),
                 else: thread
             end)
+
+          %{"lastRunOrdinal" => later} = thread when is_integer(later) and later > own ->
+            if handed_since?(stream, thread["id"], own, later),
+              do: nil,
+              else: Map.put(thread, "lastRunOrdinal", turn[:seen_run_ordinal])
+
+          _ ->
+            nil
         end)
       ]
     end)
+  end
+
+  # Whether the run at ordinal `later` was handed another agent's work done after the run
+  # at `ordinal` (`HalC2.Orchestration.Handoff`'s delta).
+  defp handed_since?(stream, own, ordinal, later) do
+    stream
+    |> StreamState.list("run")
+    |> Enum.any?(
+      &(&1["ordinal"] > ordinal and &1["ordinal"] < later and
+          &1["status"] in ~w(completed interrupted failed) and
+          &1["providerThreadId"] not in [nil, own])
+    )
   end
 
   defp end_turn(state, status, failure, opts \\ []) do

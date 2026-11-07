@@ -1698,6 +1698,22 @@ Feature: Claude
     Then Claude resumes its original session
     And the context the failed turns did not send is sent with the new message
 
+  # A start that outlived its caller's timeout can end after the next run started. The next
+  # run resumed Claude where it is now, and counted what to hand over from the ended one.
+  @mc @plugin-claude
+  Scenario: A Claude turn that ended while Claude started leaves the next turn's resume point alone
+    Given the user reverted a Claude thread to an earlier turn
+    And a Claude turn ended while Claude started for it, after the next one started
+    When Claude's process is let go and the user sends a new message
+    Then Claude answers from the whole conversation, the next turn's exchange included
+
+  @mc @plugin-claude
+  Scenario: A Claude turn that ended while Claude started still owes what it did not send
+    Given a Claude thread another agent worked on since Claude last ran
+    And a Claude turn ended while Claude started for it, after the next one started
+    When the user sends a new message
+    Then the context the failed turns did not send is sent with the new message
+
   # Upstream #25372: a stalled registration failed a resumed turn outright, and the old Claude
   # process could still be running when its replacement started.
   # Dropped: the MC registers nothing for a turn to wait on. HAL-C2's tools reach Claude

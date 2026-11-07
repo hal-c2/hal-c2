@@ -4150,30 +4150,77 @@ defmodule HalC2.Steps.Providers.Claude do
   # The run ends while the thread's Claude is starting for it, as when the user stops it
   # during a slow start or the start gives up waiting: the runtime is held until then.
   step "a Claude turn ended while Claude started for it", context do
-    [{runtime, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    abandon_starting(context, false)
+    World.await_latest_run(context, @thread, "interrupted")
+    context
+  end
+
+  # As above, and the next message's turn starts before the runtime gets to it, as after a
+  # start that outlived its caller's timeout; Claude answers that one.
+  step "a Claude turn ended while Claude started for it, after the next one started",
+       context do
+    abandon_starting(context, true)
+    World.await_latest_run(context, @thread, "completed")
+    context
+  end
+
+  step "Claude's process is let go and the user sends a new message", context do
+    release_claude(context)
+    context = World.post_message(context, @thread, "where are we")
+    World.await_latest_run(context, @thread, "completed")
+    context
+  end
+
+  step "Claude answers from the whole conversation, the next turn's exchange included",
+       context do
+    replies = World.replies(context, @thread)
+    # The next turn ran on the process started at the revert; a new one resumes it all.
+    assert List.last(replies) == "resumed at None fork False history False", inspect(replies)
+    context
+  end
+
+  # Holds the thread's Claude runtime while a message's run starts, ends that run, and
+  # with `overtaken` starts the next message's run too, then lets the runtime go.
+  defp abandon_starting(context, overtaken) do
+    runtime =
+      case DynamicSupervisor.start_child(
+             HalC2.Plugins.sessions("claudeAgent"),
+             {HalC2.Claude.ThreadRuntime, World.thread_id(context, @thread)}
+           ) do
+        {:ok, pid} -> pid
+        {:error, {:already_started, pid}} -> pid
+      end
+
     :ok = :sys.suspend(runtime)
     before = MapSet.new(World.runs(context, @thread), & &1["id"])
 
     # The message's dispatch starts the turn itself, so it waits on the runtime.
     sent = Task.async(fn -> World.post_message(context, @thread, "try again") end)
 
-    try do
-      held(runtime)
-      [run] = for %{"id" => id} <- World.runs(context, @thread), id not in before, do: id
+    next =
+      try do
+        held(runtime, 1)
+        [run] = for %{"id" => id} <- World.runs(context, @thread), id not in before, do: id
 
-      :ok =
-        HalC2.Orchestration.TurnWriter.abandon(
-          World.thread_id(context, @thread),
-          run,
-          "interrupted",
-          nil
-        )
-    after
-      :sys.resume(runtime)
-    end
+        :ok =
+          HalC2.Orchestration.TurnWriter.abandon(
+            World.thread_id(context, @thread),
+            run,
+            "interrupted",
+            nil
+          )
+
+        if overtaken do
+          next = Task.async(fn -> World.post_message(context, @thread, "and again") end)
+          held(runtime, 2)
+          next
+        end
+      after
+        :sys.resume(runtime)
+      end
 
     Task.await(sent)
-    World.await_latest_run(context, @thread, "interrupted")
+    if next, do: Task.await(next)
     context
   end
 
@@ -4299,14 +4346,13 @@ defmodule HalC2.Steps.Providers.Claude do
     |> List.last()
   end
 
-  # Lets go of the thread's Claude process, if it has one, as the idle sweep does.
-  # Until the held runtime has a turn to start. The call is in its mailbox, not on the
-  # stream, so there is nothing to wake on.
-  defp held(pid, deadline \\ System.monotonic_time(:millisecond) + 5_000) do
+  # Until the held runtime has `count` turns to start. The calls are in its mailbox, not
+  # on the stream, so there is nothing to wake on.
+  defp held(pid, count, deadline \\ System.monotonic_time(:millisecond) + 5_000) do
     {:messages, messages} = Process.info(pid, :messages)
 
     cond do
-      Enum.any?(messages, &match?({:"$gen_call", _, {:start_turn, _}}, &1)) ->
+      Enum.count(messages, &match?({:"$gen_call", _, {:start_turn, _}}, &1)) >= count ->
         :ok
 
       System.monotonic_time(:millisecond) > deadline ->
@@ -4315,11 +4361,12 @@ defmodule HalC2.Steps.Providers.Claude do
       true ->
         receive do
         after
-          10 -> held(pid, deadline)
+          10 -> held(pid, count, deadline)
         end
     end
   end
 
+  # Lets go of the thread's Claude process, if it has one, as the idle sweep does.
   defp release_claude(context) do
     case Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread)) do
       [{runtime, _}] ->

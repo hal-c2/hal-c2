@@ -5,7 +5,7 @@ defmodule HalC2.ClaudeResumePropTest do
   answers ("where are we", which says the message its process resumed at), turns the
   user stops after Claude wrote part of its answer ("answer halfway") or before it
   wrote anything ("wait"), turns Claude cannot be started for, turns whose run ended
-  while Claude started for them, rewinds to a message an earlier turn ended at (or to
+  while Claude started for them (and the next turn that started meanwhile), rewinds to a message an earlier turn ended at (or to
   the thread's start, or to a message Claude cannot resume at, which ends its process
   at startup as a subagent's message does), and the idle sweep letting go of the
   thread's Claude process.
@@ -17,7 +17,8 @@ defmodule HalC2.ClaudeResumePropTest do
   to, as long as no turn since had Claude write anything; once one did, it resumes
   the whole conversation. A live process keeps the conversation it has. A turn that
   fails because Claude cannot resume at the message lets the next one resume the whole
-  conversation, so the thread recovers by itself.
+  conversation, so the thread recovers by itself. A turn whose run ended before Claude
+  got it leaves where to resume as it found it, unless a later turn started meanwhile.
   """
 
   use ExUnit.Case, async: false
@@ -118,9 +119,11 @@ defmodule HalC2.ClaudeResumePropTest do
         {if(pending, do: 6, else: 2),
          {:call, __MODULE__, :stopped, [n, frequency([{1, :halfway}, {2, :silent}])]}},
         {if(pending, do: 3, else: 1), {:call, __MODULE__, :unstarted, [n]}},
-        {if(pending, do: 3, else: 1), {:call, __MODULE__, :abandoned, [n]}},
-        # Mostly when it matters: a live process with a message a new one would resume at.
-        {if(state.session and state.pinned != nil, do: 8, else: 1),
+        {if(pending, do: 3, else: 1),
+         {:call, __MODULE__, :abandoned, [n, frequency([{1, false}, {2, true}])]}},
+        # Mostly when it matters: a live process with a message a new one would resume
+        # at, or one that resumed at a message a new one must not resume at any more.
+        {if(state.session and (state.pinned != nil or state.resumed != nil), do: 8, else: 1),
          {:call, __MODULE__, :release, []}}
       ] ++
         if(state.n > 1,
@@ -165,12 +168,13 @@ defmodule HalC2.ClaudeResumePropTest do
   def next_state(state, _result, {:call, _, :unstarted, [_n]}), do: %{state | n: state.n + 1}
 
   # Nor here, but the runtime had a process started for the turn, at the pinned
-  # message, unless it had one.
-  def next_state(state, _result, {:call, _, :abandoned, [_n]}) when state.session,
-    do: %{state | n: state.n + 1}
+  # message, unless it had one. A turn that started meanwhile is answered on it.
+  def next_state(state, _result, {:call, _, :abandoned, [_n, false]}), do: opened(state)
 
-  def next_state(state, _result, {:call, _, :abandoned, [_n]}),
-    do: %{state | session: true, resumed: state.pinned, turns: 0, n: state.n + 1}
+  def next_state(state, _result, {:call, _, :abandoned, [_n, true]}) do
+    state = message(opened(state))
+    %{state | pinned: nil, heads: Enum.uniq(["uuid-#{state.turns}" | state.heads])}
+  end
 
   # Back at the thread's start, no earlier turn is left to go back to.
   def next_state(state, _result, {:call, _, :rewind, [nil]}),
@@ -180,6 +184,11 @@ defmodule HalC2.ClaudeResumePropTest do
     do: %{state | session: false, pinned: head}
 
   def next_state(state, _result, {:call, _, :release, []}), do: %{state | session: false}
+
+  defp opened(%{session: true} = state), do: %{state | n: state.n + 1}
+
+  defp opened(state),
+    do: %{state | session: true, resumed: state.pinned, turns: 0, n: state.n + 1}
 
   # A message reaches the live process, or a new one resuming at the pinned message.
   defp message(%{session: true} = state), do: %{state | turns: state.turns + 1, n: state.n + 1}
@@ -191,7 +200,23 @@ defmodule HalC2.ClaudeResumePropTest do
       when not state.session and state.pinned == @broken,
       do: seen.status == "failed"
 
-  def postcondition(state, {:call, _, :answered, [_n]}, seen) do
+  def postcondition(state, {:call, _, :answered, [_n]}, seen), do: answered?(state, seen)
+
+  def postcondition(_state, {:call, _, :stopped, _}, seen), do: seen.status == "interrupted"
+  def postcondition(_state, {:call, _, :unstarted, _}, seen), do: seen.status == "failed"
+
+  def postcondition(_state, {:call, _, :abandoned, [_n, false]}, seen),
+    do: seen.status == "interrupted"
+
+  def postcondition(state, {:call, _, :abandoned, [_n, true]}, seen),
+    do: seen.status == "interrupted" and answered?(opened(state), seen.next)
+
+  def postcondition(_state, {:call, _, :rewind, _}, seen), do: seen == :ok
+  def postcondition(_state, {:call, _, :release, []}, seen), do: seen == :ok
+
+  defp broken?(state), do: not state.session and state.pinned == @broken
+
+  defp answered?(state, seen) do
     resumed = message(state).resumed
     # A rewind here leaves the turns it went back past in place, so a new conversation
     # takes them as history: what it carries is not this model's to say.
@@ -199,19 +224,14 @@ defmodule HalC2.ClaudeResumePropTest do
       String.starts_with?(seen.reply, "resumed at #{resumed || "None"} fork False ")
   end
 
-  def postcondition(_state, {:call, _, :stopped, _}, seen), do: seen.status == "interrupted"
-  def postcondition(_state, {:call, _, :unstarted, _}, seen), do: seen.status == "failed"
-  def postcondition(_state, {:call, _, :abandoned, _}, seen), do: seen.status == "interrupted"
-  def postcondition(_state, {:call, _, :rewind, _}, seen), do: seen == :ok
-  def postcondition(_state, {:call, _, :release, []}, seen), do: seen == :ok
-
-  defp broken?(state), do: not state.session and state.pinned == @broken
-
   # --- commands -------------------------------------------------------------------
 
   # A turn Claude answers with the message its process resumed at.
   def answered(n) do
-    run = send_message(n, "where are we")
+    n |> send_message("where are we") |> reply()
+  end
+
+  defp reply(run) do
     run = await_run(run, &(&1["status"] in ["completed", "failed", "interrupted"]))
 
     reply =
@@ -261,8 +281,9 @@ defmodule HalC2.ClaudeResumePropTest do
 
   # A turn whose run ended while Claude started for it, before Claude got the message:
   # the user stopped it, or the start gave up waiting. The runtime is held until the run
-  # has ended, so it takes the turn only after.
-  def abandoned(n) do
+  # has ended, so it takes the turn only after. `overtaken`: the next turn started
+  # meanwhile, so its start waits behind this one's; Claude answers that one.
+  def abandoned(n, overtaken) do
     pid =
       case DynamicSupervisor.start_child(
              HalC2.Plugins.sessions("claudeAgent"),
@@ -277,30 +298,40 @@ defmodule HalC2.ClaudeResumePropTest do
     # Here the message's dispatch starts the turn itself, so it waits on the runtime.
     sent = Task.async(fn -> send_message(n, "where are we") end)
 
-    run =
+    {run, next} =
       try do
-        held(pid)
+        held(pid, 1)
         [run] = for %{"id" => id} <- StreamState.list(current(), "run"), id not in runs, do: id
         :ok = HalC2.Orchestration.TurnWriter.abandon(@tid, run, "interrupted", nil)
-        run
+
+        next =
+          if overtaken do
+            next = Task.async(fn -> send_message("#{n}b", "where are we") end)
+            held(pid, 2)
+            next
+          end
+
+        {run, next}
       after
         :sys.resume(pid)
       end
 
     ^run = Task.await(sent, @wait_ms)
+    next = next && Task.await(next, @wait_ms)
     # The runtime took the turn before it answers this.
     _ = :sys.get_state(pid)
     run = await_run(run, &(&1["status"] in ["completed", "failed", "interrupted"]))
-    %{status: run["status"]}
+    seen = %{status: run["status"]}
+    if next, do: Map.put(seen, :next, reply(next)), else: seen
   end
 
-  # Until the held runtime has the turn to start waiting for it. The call is in its
-  # mailbox, not on the stream, so there is nothing to wake on.
-  defp held(pid, deadline \\ System.monotonic_time(:millisecond) + @wait_ms) do
+  # Until the held runtime has `count` turns to start waiting for it. The calls are in
+  # its mailbox, not on the stream, so there is nothing to wake on.
+  defp held(pid, count, deadline \\ System.monotonic_time(:millisecond) + @wait_ms) do
     {:messages, messages} = Process.info(pid, :messages)
 
     cond do
-      Enum.any?(messages, &match?({:"$gen_call", _, {:start_turn, _}}, &1)) ->
+      Enum.count(messages, &match?({:"$gen_call", _, {:start_turn, _}}, &1)) >= count ->
         :ok
 
       System.monotonic_time(:millisecond) > deadline ->
@@ -309,7 +340,7 @@ defmodule HalC2.ClaudeResumePropTest do
       true ->
         receive do
         after
-          10 -> held(pid, deadline)
+          10 -> held(pid, count, deadline)
         end
     end
   end
