@@ -712,6 +712,14 @@ defmodule HalC2.Orchestration do
       agent_message?(message) ->
         users_run(state, queued["id"], "promoted to Steer")
 
+      # Steered in or started next, it would run on a provider the project turned off.
+      reason =
+          HalC2.Settings.provider_off(
+            thread["projectId"],
+            queued["providerInstanceId"] || "codex"
+          ) ->
+        {:error, reason}
+
       reason =
           target && target["status"] in @active_statuses && steer_refusal(state, target, message) ->
         {:error, reason}
@@ -846,9 +854,15 @@ defmodule HalC2.Orchestration do
         "fail" ->
           fail_prepared(thread_id, run_id, "failed", command["failure"])
 
+        # A run that was released but could not start says why (its provider is off).
         "release" ->
-          with {:error, _} <- release_prepared(thread_id, run_id),
-               do: {:error, not_preparing(run_id)}
+          case release_prepared(thread_id, run_id) do
+            {:error, "the run is not waiting for its workspace"} ->
+              {:error, not_preparing(run_id)}
+
+            released ->
+              released
+          end
 
         _ ->
           {:error, "prepared-run.#{action} is not supported by this MC yet"}
@@ -1113,6 +1127,10 @@ defmodule HalC2.Orchestration do
       replies == [] ->
         {:error, "Enter an answer before sending."}
 
+      # Refused before the question is resolved, so it still waits for an answer.
+      reason = answer_refusal(state, thread_id) ->
+        {:error, reason}
+
       true ->
         answer = %{"requestId" => request["id"], "answers" => answers}
 
@@ -1145,6 +1163,12 @@ defmodule HalC2.Orchestration do
             )
         })
     end
+  end
+
+  # The answer goes to the thread's own provider, as its message names none.
+  defp answer_refusal(state, thread_id) do
+    thread = StreamState.get(state, "thread")[thread_id] || %{}
+    provider_refusal(thread, %{})
   end
 
   # The question and its answer, as the agent reads it; nil for a required question
@@ -1450,7 +1474,28 @@ defmodule HalC2.Orchestration do
     :ok
   end
 
+  # Every turn starts here, whatever set it going (a message, the queue, a prepared
+  # workspace, a restart), so a provider turned off after its message was accepted
+  # starts no turn: the run fails and says why.
   defp begin_turn_now(thread_id, turn) do
+    case HalC2.Settings.provider_off(Map.get(turn, :project_id), turn.ids.instance) do
+      nil ->
+        start_turn_now(thread_id, turn)
+
+      reason ->
+        HalC2.Orchestration.TurnWriter.abandon(thread_id, turn.ids.run, "failed", off(reason))
+    end
+  end
+
+  defp off(reason),
+    do: %{
+      "class" => "provider_error",
+      "code" => "provider_turned_off",
+      "message" => reason,
+      "retryable" => false
+    }
+
+  defp start_turn_now(thread_id, turn) do
     case restore_worktree(thread_id) do
       :ok ->
         :ok = HalC2.Checkpoint.baseline(turn.cwd, turn.scope_id, turn.run_ordinal - 1)
@@ -1779,11 +1824,18 @@ defmodule HalC2.Orchestration do
       if command && strategy["type"] == "worktree",
         do: in_worktree(thread_id, thread, command)
 
+    # A new thread whose first message no turn could take is not made: it would sit
+    # empty. A launch repeated after its thread was made is answered as it was.
+    off = command && provider_refusal(thread, command)
+
     transacted =
       HalC2.Streams.transact(thread_id, :thread, fn state ->
         case StreamState.get(state, "thread")[thread_id] do
           nil when reuse? ->
             {[], {:error, "Thread #{thread_id} does not exist."}}
+
+          nil when is_binary(off) ->
+            {[], {:error, off}}
 
           nil ->
             change = {"thread", thread_id, Patch.diff(nil, thread)}
@@ -2025,23 +2077,31 @@ defmodule HalC2.Orchestration do
     case HalC2.Streams.transact(thread_id, :thread, decide) do
       {:ok, turn} ->
         begin_turn(thread_id, turn)
-        started(thread_id, run_id)
+
+        started(
+          thread_id,
+          run_id,
+          HalC2.Settings.provider_off(Map.get(turn, :project_id), turn.ids.instance)
+        )
 
       {:error, _} = error ->
         error
     end
   end
 
-  # An agent that cannot start fails its run before `start_turn` returns.
-  defp started(thread_id, run_id) do
+  # An agent that cannot start fails its run before `start_turn` returns. A provider
+  # turned off refused it (`begin_turn_now/2`) and `off` is why; otherwise the session
+  # says.
+  defp started(thread_id, run_id, off) do
     state = HalC2.Streams.state(thread_id)
 
     case StreamState.get(state, "run")[run_id] do
       %{"status" => "failed"} ->
         error =
-          state
-          |> StreamState.list("provider-session")
-          |> Enum.find_value(& &1["lastError"])
+          off ||
+            state
+            |> StreamState.list("provider-session")
+            |> Enum.find_value(& &1["lastError"])
 
         {:error, error || "the run failed"}
 
@@ -2203,15 +2263,24 @@ defmodule HalC2.Orchestration do
   """
   def retry_prepared(thread_id, run_id) do
     HalC2.Streams.transact(thread_id, :thread, fn state ->
+      project_id = (StreamState.get(state, "thread")[thread_id] || %{})["projectId"]
       runs = StreamState.get(state, "run")
       {retried, others} = Map.pop(runs, run_id)
       others = Map.values(others)
 
       case retried do
         %{"status" => "failed"} = run ->
-          if Enum.all?(others, &never_started?/1),
-            do: retry_run(state, run, Enum.filter(others, &(&1["status"] == "queued"))),
-            else: {[], {:error, "Run #{run_id} cannot be retried."}}
+          cond do
+            not Enum.all?(others, &never_started?/1) ->
+              {[], {:error, "Run #{run_id} cannot be retried."}}
+
+            # A run whose provider was turned off meanwhile would only fail once ready.
+            reason = HalC2.Settings.provider_off(project_id, run["providerInstanceId"] || "codex") ->
+              {[], {:error, reason}}
+
+            true ->
+              retry_run(state, run, Enum.filter(others, &(&1["status"] == "queued")))
+          end
 
         _ ->
           {[], {:error, "Run #{run_id} cannot be retried."}}
@@ -3748,7 +3817,7 @@ defmodule HalC2.Orchestration do
 
   # Switching a thread with a conversation to another provider hands the
   # conversation over as context; a provider that cannot receive one refuses
-  # the switch in its name.
+  # the switch in its name, and one turned off for the project refuses any switch.
   defp refusal(type, command, thread, state)
        when type in ["provider.switch", "thread.model-selection.set"] do
     target = get_in(command, ["modelSelection", "instanceId"])
@@ -3765,8 +3834,13 @@ defmodule HalC2.Orchestration do
       target == current ->
         model_switch_refusal(state, thread, command, target)
 
-      not HalC2.Settings.instance_enabled?(target, driver_for(target)) ->
-        {:error, "The target provider instance is unavailable."}
+      # No turn of the thread's could run on a provider off for its project: the
+      # project's switch wins in either direction, and one the MC turned off that the
+      # project leaves alone is simply unavailable.
+      reason = HalC2.Settings.provider_off(thread["projectId"], target) ->
+        if reason == HalC2.Settings.provider_off(nil, target),
+          do: {:error, "The target provider instance is unavailable."},
+          else: {:error, reason}
 
       conversation? ->
         case HalC2.Orchestration.CommandPolicy.ensure(target, :context_handoff) do
@@ -4243,6 +4317,9 @@ defmodule HalC2.Orchestration do
       error = instance_refusal(thread, command) ->
         {[], {:error, error}}
 
+      reason = provider_refusal(thread, command) ->
+        {[], {:error, reason}}
+
       reason = model_locked(thread, command) ->
         {[], {:error, reason}}
 
@@ -4390,6 +4467,15 @@ defmodule HalC2.Orchestration do
 
       HalC2.Orchestration.UserFacingErrors.unsupported_delivery_message(instance)
     end
+  end
+
+  # A provider turned off for the thread's project, or on this MC when the project has
+  # no switch of its own, takes no new message (`HalC2.Settings.provider_off/2`). The
+  # MC's own delivery of a delegated result is recorded anyway, so the result reaches
+  # the thread; its run then does not start, for the same reason (`begin_turn_now/2`).
+  defp provider_refusal(thread, command) do
+    if command["delegatedCompletion"] == nil,
+      do: HalC2.Settings.provider_off(thread["projectId"], message_instance(thread, command))
   end
 
   # A message naming another provider instance hands the conversation over as

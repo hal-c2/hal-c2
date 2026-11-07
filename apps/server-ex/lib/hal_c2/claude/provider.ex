@@ -73,6 +73,8 @@ defmodule HalC2.Claude.Provider do
 
       path ->
         enabled = HalC2.Settings.instance_enabled?(id, "claudeAgent")
+        # Off on this MC but on for some project, it is checked as an enabled one is.
+        checked? = enabled or HalC2.Settings.provider_on_in_a_project?(id)
 
         base = %{
           "instanceId" => id,
@@ -106,7 +108,7 @@ defmodule HalC2.Claude.Provider do
             snapshots -> Map.put(entry, "workspaceSnapshots", snapshots)
           end
         end)
-        |> with_health(id, path, enabled)
+        |> with_health(id, path, checked?)
     end
   end
 
