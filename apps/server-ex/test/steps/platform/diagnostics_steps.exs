@@ -897,4 +897,82 @@ defmodule HalC2.Steps.Platform.Diagnostics do
     assert Enum.count(context.handled, &String.ends_with?(&1, ["delta", "Delta"])) == 6
     context
   end
+
+  # --- credentials -----------------------------------------------------------------
+
+  @codex_contents %{
+    "a value that starts with \"Bearer \"" => ~s({"note": "Bearer sk-live-1"}),
+    "a field whose name ends in authorization, apikey, token, password or secret" =>
+      ~s({"Authorization": "sk-live-1", "api_key": "sk-live-1", "accessToken": "sk-live-1", "dbPassword": "sk-live-1", "clientSecret": "sk-live-1", "inputTokens": 12}),
+    "either of those inside JSON carried as text" =>
+      ~s({"text": "{\\"auth\\": \\"Bearer sk-live-1\\", \\"password\\": \\"sk-live-1\\"}"})
+  }
+
+  step ~r/^a Codex protocol message carries (?<content>.+)$/, %{args: [content]} = context do
+    params = Map.fetch!(@codex_contents, content)
+
+    context =
+      scripted_provider(context, """
+      import json, sys
+      for line in sys.stdin:
+          msg = json.loads(line)
+          print(json.dumps({"method": "account/updated", "params": json.loads(#{inspect(params)})}), flush=True)
+          print(json.dumps({"id": msg["id"], "result": {}}), flush=True)
+      """)
+
+    {:ok, _} = HalC2.JsonRpc.Connection.call(context.conn, "go", %{})
+    Map.put(context, :secret_content, content)
+  end
+
+  step ~s(the log shows "[REDACTED]" in its place), context do
+    raw = "thread-logged" |> HalC2.ProviderLog.path() |> File.read!()
+    refute raw =~ "sk-live-1"
+    assert raw =~ "[REDACTED]"
+    [{_, notification}, _] = log_records()
+    assert notification["method"] == "account/updated"
+
+    if context.secret_content =~ "field whose name" do
+      # Only credentials: a token counter stays a number.
+      assert notification["params"]["inputTokens"] == 12
+      assert notification["params"]["Authorization"] == "[REDACTED]"
+    end
+
+    context
+  end
+
+  step "a Claude session starts with the \"hal-c2\" server attached", context do
+    script = Path.join(Mc.tmp_dir(context.mc, "claude"), "claude.py")
+    File.write!(script, "import sys\nfor line in sys.stdin:\n    pass\n")
+
+    {:ok, session} =
+      HalC2.Claude.Session.start_link(
+        command: ["python3", "-u", script],
+        handler: self(),
+        log: "thread-logged",
+        model: "claude-sonnet-4-5",
+        permission_mode: "acceptEdits",
+        cd: context.mc.home,
+        env: [{"ANTHROPIC_API_KEY", "sk-live-1"}],
+        mcp: %{url: "http://127.0.0.1:1/mcp", authorization: "Bearer sk-live-1"}
+      )
+
+    Map.put(context, :session, session)
+  end
+
+  step "the logged options name the model, mode and working folder", context do
+    assert [{_, options}] = log_records()
+    assert options["model"] == "claude-sonnet-4-5"
+    assert options["permissionMode"] == "acceptEdits"
+    assert options["cwd"] == context.mc.home
+    assert options["mcpServers"] == ["hal-c2"]
+    context
+  end
+
+  step "they hold no environment values and no credential for the \"hal-c2\" server", context do
+    raw = "thread-logged" |> HalC2.ProviderLog.path() |> File.read!()
+    refute raw =~ "sk-live-1"
+    refute raw =~ "ANTHROPIC_API_KEY"
+    refute raw =~ "Authorization"
+    context
+  end
 end

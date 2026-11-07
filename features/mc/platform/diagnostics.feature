@@ -421,7 +421,7 @@ Feature: MC diagnostics
 
   # CodexAdapterV2.ts redactCodexProtocolValue, ClaudeAdapterV2.ts (query options logged
   # without env, MCP server headers or callbacks).
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario Outline: Codex protocol logs never hold credentials
     Given provider event logging is on
     When a Codex protocol message carries <content>
@@ -433,7 +433,7 @@ Feature: MC diagnostics
       | a field whose name ends in authorization, apikey, token, password or secret |
       | either of those inside JSON carried as text                                 |
 
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: Claude's logged start-up options leave out its environment and credentials
     Given provider event logging is on
     When a Claude session starts with the "hal-c2" server attached

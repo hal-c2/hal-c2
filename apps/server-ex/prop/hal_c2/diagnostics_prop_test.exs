@@ -39,4 +39,17 @@ defmodule HalC2.DiagnosticsPropTest do
         Diagnostics.cpu_share(first, first) == nil
     end
   end
+
+  property "a provider log keeps no credential, and redacting twice changes nothing" do
+    forall {key, secret} <-
+             {oneof(~w(authorization apiKey api_key accessToken password clientSecret)),
+              non_empty(list(range(?a, ?z)))} do
+      secret = "sk-" <> to_string(secret)
+      event = %{"params" => %{key => secret, "list" => [%{"note" => "Bearer " <> secret}]}}
+      redacted = HalC2.ProviderLog.redact(event)
+
+      not String.contains?(JSON.encode!(redacted), secret) and
+        HalC2.ProviderLog.redact(redacted) == redacted
+    end
+  end
 end
