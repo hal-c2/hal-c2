@@ -1306,6 +1306,50 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
+  # A Monitor tool item still running in the subagent's turn, as Claude leaves
+  # one (it runs on after the turn); the subagent never marked it as work it
+  # waits on, so it stays out of `pendingBackgroundTasks` (what holds a thread
+  # Working). Written to the stream as a provider reports it, the way the
+  # delegation property's monitor command does.
+  step "the subagent answered {string} with a monitor running that it marked as not waited on",
+       %{args: [answer]} = context do
+    World.await_runs(context, "subagent", ["running"])
+    [%{"id" => run_id}] = World.runs(context, "subagent")
+    child = World.thread_id(context, "subagent")
+    item = "turn-item:monitor-1"
+
+    {:ok, _} =
+      HalC2.Streams.commit(child, :thread, [
+        {"turn-item", item,
+         %{
+           "s" => %{
+             "id" => item,
+             "nodeId" => item,
+             "ordinal" => 1_000,
+             "type" => "dynamic_tool",
+             "toolName" => "Monitor",
+             "runId" => run_id,
+             "input" => %{"command" => "tail -f log/dev.log"},
+             "status" => "running",
+             "nativeItemRef" => %{"driver" => "claudeAgent", "nativeId" => "mon-1"}
+           }
+         }}
+      ])
+
+    Map.put(context, :monitor_answer, answer)
+  end
+
+  step "the subagent's turn ends", context do
+    end_turn(context, context[:monitor_answer] || "Done")
+
+    World.await_row(
+      World.thread_id(context, "subagent"),
+      &(&1["runningBackgroundTasks"] != [] and &1["pendingBackgroundTasks"] == [])
+    )
+
+    context
+  end
+
   step "that turn ends without a word", context do
     await_task(context, &(&1["status"] == "completed"))
     context
@@ -1602,6 +1646,47 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     modes = Map.new(providers, &{&1["providerInstanceId"], &1["runtimeModes"]})
     assert modes["muse"] == ~w(approval-required full-access)
     assert modes["codex"] == ~w(approval-required auto-accept-edits auto full-access)
+    context
+  end
+
+  # The provider is on for the MC and in another project, and off only in the
+  # caller's project (its `providerInstances` switch there).
+  step "{string} is turned off for the project of {string} and on in another project",
+       %{args: [instance, caller]} = context do
+    HalC2.Test.FakeAcp.services()
+    context = HalC2.Test.FakeAcp.install(context, instance, %{}, enabled: true)
+
+    {_, context} =
+      HalC2.Test.FakeAcp.await_providers(
+        context,
+        &match?(%{}, HalC2.Test.FakeAcp.find(&1, instance))
+      )
+
+    context = World.create_project(context, "other")
+    mine = World.thread(context, caller)["projectId"]
+    other = World.project(context, "other").id
+    {settings, version} = HalC2.Settings.get()
+    overrides = Map.get(settings, "projectSettingsOverrides", %{})
+
+    settings =
+      Map.put(
+        settings,
+        "projectSettingsOverrides",
+        Map.merge(overrides, %{
+          mine => %{"providerInstances" => %{instance => %{"enabled" => false}}},
+          other => %{"providerInstances" => %{instance => %{"enabled" => true}}}
+        })
+      )
+
+    {:ok, _} = HalC2.Settings.put(settings, version)
+    context
+  end
+
+  step "{string} is listed as unable to run a child task, saying it is off for this project",
+       %{args: [instance]} = context do
+    entry = Enum.find(context.capabilities["providers"], &(&1["providerInstanceId"] == instance))
+    assert entry["canRunChildTask"] == false
+    assert Enum.any?(entry["constraints"], &(&1 =~ "turned off for this project"))
     context
   end
 
@@ -2188,6 +2273,62 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     await_result_message(context, parent)
     assert [message] = result_messages(context, parent)
     assert message["text"] =~ "\n#{context.answer}\n"
+    context
+  end
+
+  # The subagent opened the pull request and linked it to its own thread, as its
+  # instructions say; the MC has synced its head and checks (still running).
+  step "the subagent of {string} opened pull request {int} and its checks are still running",
+       %{args: [caller, number]} = context do
+    context = delegate(context, caller, %{"mode" => "async"})
+    World.await_runs(context, "subagent", ["running"])
+    child = World.thread_id(context, "subagent")
+    key = %{"host" => "github.com", "repository" => "acme/app", "number" => number}
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(
+        Map.merge(key, %{
+          "type" => "thread.pull-request.link",
+          "commandId" => "command:link-pr:#{HalC2.Environment.uuid4()}",
+          "threadId" => child,
+          "url" => "https://github.com/acme/app/pull/#{number}",
+          "source" => "agent"
+        })
+      )
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(
+        Map.merge(key, %{
+          "type" => "thread.pull-request-link.sync",
+          "commandId" => "command:sync-pr:#{HalC2.Environment.uuid4()}",
+          "threadId" => child,
+          "snapshot" => %{
+            "state" => "open",
+            "title" => "PR",
+            "headSha" => "abc4242",
+            "checksState" => "pending",
+            "syncedAt" => World.iso_from_now(0)
+          },
+          "stack" => nil
+        })
+      )
+
+    context
+  end
+
+  step "the subagent finishes its task", context do
+    end_turn(context, "Done")
+    await_task(context, &(&1["status"] == "completed"))
+    context
+  end
+
+  step "the result delivered to {string} names pull request {int}, its head commit and that its checks are pending",
+       %{args: [parent, number]} = context do
+    await_result_message(context, parent)
+    assert [message] = result_messages(context, parent)
+    assert message["text"] =~ "acme/app##{number}"
+    assert message["text"] =~ "abc4242"
+    assert message["text"] =~ "checks pending"
     context
   end
 
@@ -3968,8 +4109,9 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
-  # 66 units of "a", then 👨 (2 units) and its joiner (1 unit) as the 69th: a cut
-  # at 69 units would leave the title ending in that joiner.
+  # 66 units of "a", then the joined emoji as one grapheme of 8 units: it does
+  # not fit the 69-unit budget, so the cut falls before it whole. (Before the
+  # grapheme cut this step expected the emoji's first member to survive.)
   step "the provider of {string} starts a subagent with no title and a prompt with a joined emoji where the cut falls",
        %{args: [_parent]} = context do
     prompt = String.duplicate("a", 66) <> "👨‍👩‍👧" <> String.duplicate("b", 30)
@@ -3977,10 +4119,27 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     start_native(context, "joined", %{"prompt" => prompt}, %{"prompt" => prompt})
   end
 
-  step "the subagent's title ends before the joiner, and is followed by {string}",
+  step "the subagent's title is cut before the joined emoji, and is followed by {string}",
        %{args: [suffix]} = context do
     row = World.await_row(context.native["childThreadId"], & &1)
-    assert row["title"] == String.duplicate("a", 66) <> "👨" <> suffix
+    assert row["title"] == String.duplicate("a", 66) <> suffix
+    context
+  end
+
+  # Each emoji of the outline is one grapheme: a flag is 4 UTF-16 units, ❤️ is
+  # 2, and the couple sequence is 8, against the title cut's budget of 69.
+  step "the provider of {string} starts a subagent with no title and a prompt of {int} letters and the emoji {string}",
+       %{args: [_parent, letters, emoji]} = context do
+    prompt = String.duplicate("a", letters) <> emoji <> String.duplicate("b", 30)
+    context = claude_parent(context)
+    start_native(context, "boundary", %{"prompt" => prompt}, %{"prompt" => prompt})
+  end
+
+  step "the subagent's title is {int} letters and the emoji {string} followed by {string}",
+       %{args: [kept, emoji, suffix]} = context do
+    emoji = if emoji == "none", do: "", else: emoji
+    row = World.await_row(context.native["childThreadId"], & &1)
+    assert row["title"] == String.duplicate("a", kept) <> emoji <> suffix
     context
   end
 

@@ -542,34 +542,29 @@ defmodule HalC2.Orchestration.NativeSubagent do
   end
 
   defp cut(text, limit, keep) do
-    utf16 = :unicode.characters_to_binary(text, :utf8, :utf16)
-
-    if byte_size(utf16) > limit * 2,
-      do: utf16_prefix(utf16, keep * 2) <> "...",
-      else: text
+    if utf16_length(text) > limit, do: grapheme_prefix(text, keep) <> "...", else: text
   end
 
-  # The first `bytes` of a UTF-16 binary as UTF-8, dropping a lone surrogate the
-  # cut would leave at the end, and a trailing joiner or variation selector the
-  # cut split from the character it joined or selected (a ZWJ sequence, a flag).
-  defp utf16_prefix(utf16, bytes) do
-    part = binary_part(utf16, 0, bytes)
+  # The longest prefix of `text` within `budget` UTF-16 units that ends on a
+  # grapheme boundary, so the cut never falls through a surrogate pair, a
+  # joined sequence, a flag, or a variation selector.
+  defp grapheme_prefix(text, budget) do
+    text
+    |> String.graphemes()
+    |> Enum.reduce_while({0, []}, fn grapheme, {used, kept} ->
+      length = utf16_length(grapheme)
 
-    case :unicode.characters_to_binary(part, :utf16, :utf8) do
-      text when is_binary(text) -> trim_trailing_joiners(text)
-      _ -> utf16_prefix(utf16, bytes - 2)
-    end
+      if used + length <= budget,
+        do: {:cont, {used + length, [grapheme | kept]}},
+        else: {:halt, {used, kept}}
+    end)
+    |> elem(1)
+    |> Enum.reverse()
+    |> Enum.join()
   end
 
-  # Each is three UTF-8 bytes; grapheme helpers would keep one joined to the
-  # character before it, so the drop is by bytes.
-  defp trim_trailing_joiners(text) do
-    if String.ends_with?(text, ["\u200D", "\uFE0E", "\uFE0F"]) do
-      text |> binary_part(0, byte_size(text) - 3) |> trim_trailing_joiners()
-    else
-      text
-    end
-  end
+  defp utf16_length(text),
+    do: text |> :unicode.characters_to_binary(:utf8, :utf16) |> byte_size() |> div(2)
 
   defp trimmed(value) when is_binary(value) do
     case String.trim(value) do

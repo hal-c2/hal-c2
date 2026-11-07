@@ -234,7 +234,7 @@ Feature: Delegating tasks to subagents
 
   # Upstream #29842: capabilities offered providers turned off for the caller's project, which
   # delegate_task then refused.
-  @backlog @mc
+  @mc
   Scenario: The orchestrator's capabilities mark a provider turned off for the caller's project
     Given "opencode" is turned off for the project of "parent" and on in another project
     When the agent in "parent" asks for the orchestrator's capabilities
@@ -1156,7 +1156,7 @@ Feature: Delegating tasks to subagents
 
   # Upstream #27468: a monitor the subagent left running, though it said it was not waiting on it,
   # kept the task from finishing until the user next spoke in the parent.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A task finishes while its subagent leaves running a monitor it does not wait on
     Given the agent in "parent" delegated a task
     And the subagent answered "Done" with a monitor running that it marked as not waited on
@@ -1236,7 +1236,18 @@ Feature: Delegating tasks to subagents
   @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
   Scenario: A subagent titled from its prompt does not end in a joiner
     When the provider of "parent" starts a subagent with no title and a prompt with a joined emoji where the cut falls
-    Then the subagent's title ends before the joiner, and is followed by "..."
+    Then the subagent's title is cut before the joined emoji, and is followed by "..."
+
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
+  Scenario Outline: A subagent titled from its prompt is cut on a character boundary
+    When the provider of "parent" starts a subagent with no title and a prompt of <letters> letters and the emoji "<emoji>"
+    Then the subagent's title is <kept> letters and the emoji "<kept_emoji>" followed by "..."
+
+    Examples:
+      | letters | emoji    | kept | kept_emoji |
+      | 67      | 🇮🇸      | 67   | none       |
+      | 67      | ❤️       | 67   | ❤️         |
+      | 64      | 👨‍❤️‍👨 | 64   | none       |
 
   @mc
   Scenario: A subagent starts awake whatever state its parent is in
@@ -1293,7 +1304,7 @@ Feature: Delegating tasks to subagents
 
   # Upstream #19801: delegated children no longer watch pull requests (refusing their watch is
   # source-control/pull-request-threads.feature); they hand the pull request back to the caller.
-  @backlog @mc
+  @mc
   Scenario: A subagent's result names the pull request for its caller to watch
     Given the subagent of "parent" opened pull request 42 and its checks are still running
     When the subagent finishes its task

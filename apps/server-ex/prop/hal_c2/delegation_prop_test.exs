@@ -19,7 +19,8 @@ defmodule HalC2.DelegationPropTest do
   - once settled the task never changes, and its result reaches the caller at most once;
   - it is never settled while its child has a run active or queued, a background
     command of a run not rolled back still running (hal-c2/hal-c2#508), or a restart's
-    continuation still to be sent (upstream #15323);
+    continuation still to be sent (upstream #15323); a monitor left running unmarked
+    never holds it (upstream #27468);
   - it ended as and when the child's last run not rolled back did, never when a report
     got through or the MC started, with the child's last answer in such a run; a run
     that ended to wait on background work a restart ended was interrupted (upstream
@@ -89,9 +90,10 @@ defmodule HalC2.DelegationPropTest do
 
   # runs: the child's runs in ordinal order, %{id, status, ended_as}, `ended_as` how
   # the run ended before any rollback; held: runs whose end is yet to be reported;
-  # commands: background commands, %{id, run, open}; continuing: the run a restart
-  # interrupted and asked the child to continue, while that continuation is unsent.
-  def initial_state, do: %{runs: [], held: [], commands: [], continuing: nil}
+  # commands: background commands, %{id, run, open}; monitors: monitors left running
+  # unmarked, which never owe; continuing: the run a restart interrupted and asked
+  # the child to continue, while that continuation is unsent.
+  def initial_state, do: %{runs: [], held: [], commands: [], monitors: [], continuing: nil}
 
   def command(state) do
     running = for %{status: "running"} = run <- state.runs, do: run.id
@@ -162,7 +164,8 @@ defmodule HalC2.DelegationPropTest do
                 frequency([{3, true}, {1, false}])
               ]}},
             {3,
-             {:call, __MODULE__, :background, ["bg-#{length(state.commands) + 1}", hd(running)]}}
+             {:call, __MODULE__, :background, ["bg-#{length(state.commands) + 1}", hd(running)]}},
+            {2, {:call, __MODULE__, :monitor, ["mon-#{length(state.monitors) + 1}", hd(running)]}}
           ]
         ) ++
         if(open == [],
@@ -231,6 +234,11 @@ defmodule HalC2.DelegationPropTest do
       Enum.any?(state.runs, &(&1.id == run and &1.status == "running")) and
         not Enum.any?(state.commands, &(&1.id == id))
 
+  def precondition(state, {:call, _, :monitor, [id, run]}),
+    do:
+      Enum.any?(state.runs, &(&1.id == run and &1.status == "running")) and
+        id not in state.monitors
+
   def precondition(state, {:call, _, :restart_continued, [id]}),
     do:
       state.continuing == nil and Enum.any?(state.runs, &(&1.id == id and &1.status == "running"))
@@ -289,6 +297,9 @@ defmodule HalC2.DelegationPropTest do
 
   def next_state(state, _result, {:call, _, :background, [id, run]}),
     do: %{state | commands: state.commands ++ [%{id: id, run: run, open: true}]}
+
+  def next_state(state, _result, {:call, _, :monitor, [id, _run]}),
+    do: %{state | monitors: state.monitors ++ [id]}
 
   def next_state(state, _result, {:call, _, :end_background, [id, _]}),
     do: %{
@@ -764,6 +775,26 @@ defmodule HalC2.DelegationPropTest do
            "type" => "command_execution",
            "runId" => run,
            "input" => "npm run dev",
+           "status" => "running"
+         }}
+      ])
+    end)
+  end
+
+  # A monitor left running that the child never marked as work it waits on: it
+  # runs until stopped, so it is never owed and the task still settles
+  # (upstream #27468). The model's `owing?/1` counts only commands, as here.
+  def monitor(id, run) do
+    observe(fn ->
+      commit(@child, [
+        {"turn-item", id,
+         %{
+           "id" => id,
+           "ordinal" => item_ordinal(),
+           "type" => "dynamic_tool",
+           "toolName" => "Monitor",
+           "runId" => run,
+           "input" => %{"command" => "tail -f log/dev.log"},
            "status" => "running"
          }}
       ])
