@@ -57,21 +57,21 @@ Feature: Moving through a thread and following links
     Given a connected environment with the project "shop"
     And the user is looking at a long thread in "shop"
 
-  # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
-  @shared @backlog-mobile @backlog-tui @priority-high
+  # TUI: apps/tui/qml/HalC2/Tui/Timeline.qml
+  @shared @backlog-mobile @priority-high
   Scenario: The view follows new output while the user is at the end
     Given the user is at the end of the thread
     When the agent writes more of its reply
     Then the new text stays in view
 
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: The end of the thread holds still while nothing new is written
     Given the user is at the end of the thread
     And a reply with a table sits just above the end
     When nothing new is written
     Then the view does not move
 
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: Scrolling away stops the view from following
     Given the agent is writing its reply
     When the user scrolls up to an earlier message
@@ -86,15 +86,34 @@ Feature: Moving through a thread and following links
     When the user scrolls up with the pointer over the page
     Then the view stays where the user scrolled while the reply grows
 
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: The user returns to the end of the thread
     Given the user has scrolled away from the end while the agent writes
     When the user scrolls to the end
     Then the latest output is shown
     And the view follows new output again
 
+  # The terminal windows a long thread to its newest 80 rows; the window slides as rows stream in.
+  @tui @priority-high
+  Scenario: A long thread streaming new rows does not move the row being read
+    Given the user is reading a row in a thread of more than 80 rows
+    When the agent streams more rows into the thread
+    Then the row being read stays where it was
+
+  @tui @priority-high
+  Scenario: Scroll to end returns from an older window of a long thread
+    Given the user has paged back to an older window of a long thread
+    When the user presses Ctrl+End
+    Then the newest rows are shown at the end
+    And "Scroll to end" is no longer offered
+
+  @tui @priority-high
+  Scenario: A thread whose rows mount over several turns still opens at its end
+    When the user opens another thread whose rows arrive in two turns
+    Then the other thread shows its latest output
+
   # Upstream #19663: a long thread opened from an empty or loading pane stopped well above its end.
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: Another thread opens at its end however far the last was scrolled
     Given the user has scrolled away from the end of the thread
     When the user opens another thread
@@ -115,14 +134,14 @@ Feature: Moving through a thread and following links
       | the user presses "Scroll to end" in "Fix checkout"   |
 
   # Upstream #13530: a running thread's placeholder row used to count as content, so its list opened at the start.
-  @shared @backlog @priority-high
+  @shared @backlog-desktop @backlog-mobile @priority-high
   Scenario: A running thread opens at its latest output while its messages are still loading
     Given the user opens a thread whose agent is still working
     When the thread's messages arrive
     Then the view shows the latest output at the end, not the start of the thread
 
   # Upstream #21560: switching threads never shows the previous thread's messages.
-  @shared @backlog @priority-high
+  @shared @backlog-desktop @backlog-mobile @priority-high
   Scenario: Switching threads shows only the chosen thread's messages
     Given the user is reading "Tax fix"
     When the user switches to "Docs" while its messages are still loading
@@ -184,15 +203,15 @@ Feature: Moving through a thread and following links
     Then the client asks its MC for the newest turns only
     And only those turns are sent and shown
 
-  # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
-  @shared @backlog-mobile @backlog-tui @priority-high
+  # TUI: apps/tui/qml/HalC2/Tui/Timeline.qml
+  @shared @backlog-mobile @priority-high
   Scenario: Earlier turns load when the user reaches the top
     Given the thread has more turns than are loaded
     When the user loads earlier turns
     Then the user sees that earlier turns are loading
     And the earlier turns appear above without moving the message being read
 
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: A thread that does not fill the view loads earlier turns by itself
     Given the thread has more turns than are loaded
     When what is loaded leaves room in the view
@@ -344,7 +363,7 @@ Feature: Moving through a thread and following links
     Then the thread scrolls instead
 
   # TUI: implemented in apps/tui/src/timelineLinks.ts
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A bare web address in a message can be opened
     When the agent writes "see https://example.com/docs"
     Then "https://example.com/docs" can be opened as a link
