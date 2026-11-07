@@ -182,6 +182,8 @@ Feature: What the engine projects for clients
       | waits on a request or has background work    | contains         |
       | has a subagent of its own                    | contains         |
 
+  # Upstream #24648: cold connects skip idle subagent threads, so the client reads a subagent family
+  # when a thread is opened.
   @backlog @mc @priority-high
   Scenario: Opening a thread reads its subagent family
     Given the shell snapshot left out the idle subagents of "t1"
@@ -189,6 +191,8 @@ Feature: What the engine projects for clients
     Then the client reads the subagent tree of "t1" once
     And its lineage, subagent rows and their diffs show as before
 
+  # Upstream #24648: cold connects skip idle subagent threads, so a thread missing from the shell
+  # is not taken for deleted.
   @backlog @shared @mobile
   Scenario Outline: A thread missing from the shell is not taken for deleted
     Given the shell snapshot left out the idle subagent "t1-child"
@@ -265,6 +269,7 @@ Feature: What the engine projects for clients
     Then the page holds the whole turn, from the user's message to its last item
     And the steering messages do not count as turns of their own
 
+  # Upstream #24589: a turn longer than 500 rows is paged, so opening a thread starts at its newest rows.
   @mc @backlog @priority-high
   Scenario: Opening a thread whose turn is longer than 500 rows starts at its newest rows
     Given the last turn of "t1" holds 900 rows

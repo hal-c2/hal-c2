@@ -100,6 +100,7 @@ Feature: Threads stopped by a usage limit
     And the thread no longer shows a scheduled resume
     And a snooze the thread had is kept
 
+  # Upstream #21114: a stopped usage-limit thread no longer auto-resumes, so resuming it is an explicit choice.
   @shared @mc @backlog
   Scenario: A stopped limited thread can be set to resume at the reset again
     Given the user stopped "Port tests" after it stopped on a usage limit that resets at 14:00
