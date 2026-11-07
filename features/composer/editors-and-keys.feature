@@ -492,6 +492,12 @@ Feature: Editing the draft
     And the draft reads "- read [cart.ts](src/cart.ts)" and then "- first" on the next line
 
   @desktop
+  Scenario: A new line in a list item drops the spaces after the caret
+    Given the draft reads "- milk and eggs" with the caret before " and eggs"
+    When the user adds a new line
+    Then the draft reads "- milk" and then "- and eggs" on the next line
+
+  @desktop
   Scenario: Tab indents the list item the caret is in
     Given the draft's last line reads "- milk"
     And no suggestion list is open
