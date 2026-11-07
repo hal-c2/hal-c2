@@ -250,6 +250,7 @@ Feature: RPC parity with the TypeScript server
       | hal-c2.writeSettings      | the new version, or a stale-settings error for an old version |
       | hal-c2.threadRows         | one thread's stream rows with their offset and time           |
       | hal-c2.threadHistory      | a bounded page of a thread, newest user turns first, with a cursor |
+      | hal-c2.threadFamily       | a thread's family as shell rows, its lineage and subagent tree     |
       | hal-c2.upsertKeybinding   | the keybindings after the change                              |
       | hal-c2.removeKeybinding   | the keybindings after the removal                             |
 

@@ -29,6 +29,15 @@ defmodule HalC2.Web.WireTest do
     client
   end
 
+  test "cut text fits the limit with its marker, and cutting it again changes nothing" do
+    long = item(String.duplicate("あ", 20_000))
+    cut = Wire.entity("turn-item", long)["progress"]
+    assert String.valid?(cut)
+    assert byte_size(cut) <= @limit
+    assert String.ends_with?(cut, "… output truncated for transport")
+    assert Wire.entity("turn-item", item(cut))["progress"] == cut
+  end
+
   test "progress that grows past the limit by appends is the cut a snapshot shows" do
     chunk = String.duplicate("é", 5_000)
     suffixes = List.duplicate(chunk, 6)

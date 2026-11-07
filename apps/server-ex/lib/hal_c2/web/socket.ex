@@ -589,7 +589,10 @@ defmodule HalC2.Web.Socket do
 
   defp subscribe(state, id, :shell, %{have: have} = resume) do
     %{mcs: mcs, rows: rows} =
-      HalC2.Shell.subscribe(self(), have, settled_limit: resume[:settled_limit])
+      HalC2.Shell.subscribe(self(), have,
+        settled_limit: resume[:settled_limit],
+        omit_idle_subagents: Map.get(resume, :omit_idle_subagents, false)
+      )
 
     offline = HalC2.Cluster.Discovery.offline()
 

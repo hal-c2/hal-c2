@@ -98,6 +98,16 @@ defmodule HalC2.Rpc do
     end)
   end
 
+  # A thread's family as shell rows (`HalC2.Shell.family/1`): what a client whose
+  # shell snapshot left out idle subagents reads when the thread is opened.
+  def handle("hal-c2.threadFamily", %{"threadId" => thread_id}) do
+    rows =
+      for {mc, id, kind, row} <- HalC2.Shell.family(thread_id),
+          do: [Atom.to_string(mc), id, kind, row]
+
+    {:ok, %{"rows" => rows}}
+  end
+
   # Moving a thread to another machine of the cluster (`HalC2.ThreadMove`), and finding
   # one that moved.
   def handle("hal-c2.moveThread", %{"threadId" => id, "machine" => machine} = input),
@@ -419,7 +429,7 @@ defmodule HalC2.Rpc do
     orchestration.getCommandOutput
     orchestration.searchThreads orchestration.getArchivedShellSnapshot
     orchestration.getThreadProjection server.getSettings hal-c2.readSettings hal-c2.threadRows
-    hal-c2.threadHistory
+    hal-c2.threadHistory hal-c2.threadFamily
     hal-c2.placeThread hal-c2.registerPush hal-c2.unregisterPush
     server.getConfig server.probe server.discoverSourceControl server.getTraceDiagnostics
     server.getProcessDiagnostics server.getHostResources server.getProcessResourceHistory
