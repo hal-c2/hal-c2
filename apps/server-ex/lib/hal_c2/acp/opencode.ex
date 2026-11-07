@@ -2,8 +2,9 @@ defmodule HalC2.Acp.OpenCode do
   @moduledoc """
   The HTTP API of the server `opencode acp --port` runs beside its ACP stdio, for what
   ACP has no call for (`OpenCodeAdapterV2`): forking a session at a user message, which
-  is how a thread rewinds and how a forked thread starts, and reading the session's
-  messages, whose ids name those cut points. The server listens on loopback and takes
+  is how a thread rewinds and how a forked thread starts, reading the session's
+  messages, whose ids name those cut points, and titling the session with the thread's
+  name. The server listens on loopback and takes
   the `opencode` user with a password made for the process.
 
   OpenCode's fork keeps the messages before the one it is given (exclusive) and gives
@@ -95,6 +96,15 @@ defmodule HalC2.Acp.OpenCode do
     end
   end
 
+  @doc "Titles `session`, so OpenCode does not name it itself."
+  @spec retitle(server, String.t(), String.t()) :: :ok | {:error, String.t()}
+  def retitle(server, session, title) do
+    case request(server, :patch, "/session/#{session}", %{"title" => title}) do
+      {:ok, 200, _} -> :ok
+      other -> {:error, failure("title the session", other)}
+    end
+  end
+
   defp kept(source, nil), do: {:ok, source}
 
   defp kept(source, before) do
@@ -138,7 +148,7 @@ defmodule HalC2.Acp.OpenCode do
     request =
       case method do
         :get -> {url, [auth]}
-        :post -> {url, [auth], ~c"application/json", JSON.encode!(body || %{})}
+        _ -> {url, [auth], ~c"application/json", JSON.encode!(body || %{})}
       end
 
     case :httpc.request(method, request, [timeout: @timeout, connect_timeout: 5_000],

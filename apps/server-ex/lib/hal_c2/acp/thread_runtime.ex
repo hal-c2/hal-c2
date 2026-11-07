@@ -39,7 +39,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Acp.Kimi
   alias HalC2.Acp.OpenCode
 
-  @state_version 16
+  @state_version 17
   @registry HalC2.Acp.Registry
 
   # Grok's background task notifications.
@@ -216,6 +216,8 @@ defmodule HalC2.Acp.ThreadRuntime do
        # message when the turn began: `{:ok, id | nil}`, or `:unknown`.
        server: nil,
        leaf: :unknown,
+       # The OpenCode session and the thread title it was last given: `{session, title}`.
+       titled: nil,
        # An Antigravity process's runtime temp directory, removed with it.
        temp_dir: nil
      }}
@@ -971,6 +973,9 @@ defmodule HalC2.Acp.ThreadRuntime do
       |> Map.put_new(:mcp_bridge, nil)
       |> Map.put_new(:announced, nil)
       |> Map.put_new(:temp_dir, nil)
+      |> migrate()
+
+  defp migrate(%{v: 16} = state), do: state |> Map.merge(%{v: 17, titled: nil}) |> migrate()
 
   # --- session -------------------------------------------------------------------
 
@@ -1575,6 +1580,33 @@ defmodule HalC2.Acp.ThreadRuntime do
         )
       ]
     end)
+  end
+
+  # OpenCode names a session still untitled at its first prompt with a title model of
+  # its own; the session takes the thread's name before any prompt it has changed for.
+  defp titled(%{server: nil} = state), do: state
+
+  defp titled(%{thread_id: thread_id, session_id: session} = state) do
+    title =
+      HalC2.Streams.read(
+        thread_id,
+        &get_in(HalC2.StreamState.get(&1, "thread"), [thread_id, "title"])
+      )
+
+    cond do
+      not is_binary(title) or String.trim(title) == "" or state.titled == {session, title} ->
+        state
+
+      true ->
+        case OpenCode.retitle(state.server, session, title) do
+          :ok ->
+            %{state | titled: {session, title}}
+
+          {:error, reason} ->
+            Logger.warning("could not name the OpenCode session: #{reason}")
+            state
+        end
+    end
   end
 
   # Where an OpenCode session stood when the turn began.
@@ -3158,7 +3190,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   # connection's mailbox before this returns, and a steer or a cancel this process sends
   # the same connection later lands behind it, so the agent reads the prompt first.
   defp prompt(state, turn) do
-    state = %{state | leaf: leaf(state)} |> watch_wire()
+    state = %{titled(state) | leaf: leaf(state)} |> watch_wire()
     current = instruction_state(state, turn)
     slash? = String.starts_with?(String.trim_leading(turn.text || ""), "/")
 

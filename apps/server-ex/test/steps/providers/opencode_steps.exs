@@ -1451,6 +1451,213 @@ defmodule HalC2.Steps.Providers.Opencode do
   end
 
   step "an OpenCode thread with three turns", context do
+    three_turns(context)
+  end
+
+  # OpenCode compacted the session between the second turn and the third: a user
+  # message whose only part is the compaction, and the summary it answered with. Each
+  # version's compaction lacks fields a newer client requires (2.1 the part's `auto`,
+  # 2.2 its `overflow`), so the MC must read them as they come.
+  step ~r/^an OpenCode (?<version>2\.[12]) thread with three turns whose session OpenCode compacted$/,
+       %{args: [version]} = context do
+    context = three_turns(context)
+    {source, turns} = context.opencode
+
+    part =
+      if version == "2.1",
+        do: %{"type" => "compaction"},
+        else: %{"type" => "compaction", "auto" => true}
+
+    file = Path.join([context.fakes.dir, "opencode-sessions", "#{source}.json"])
+    messages = file |> File.read!() |> JSON.decode!()
+    {before, rest} = Enum.split_while(messages, &(&1["info"]["id"] != turns[3]))
+
+    compaction = [
+      %{
+        "info" => %{"id" => "msg_compaction", "role" => "user", "sessionID" => source},
+        "parts" => [part]
+      },
+      %{
+        "info" => %{
+          "id" => "msg_summary",
+          "role" => "assistant",
+          "sessionID" => source,
+          "summary" => true
+        },
+        "parts" => [%{"type" => "text", "text" => "The story so far."}]
+      }
+    ]
+
+    File.write!(file, JSON.encode!(before ++ compaction ++ rest))
+    context
+  end
+
+  # The session file of the thread's OpenCode session, rewritten by `fun`.
+  defp edit_session(context, fun) do
+    {source, turns} = context.opencode
+    file = Path.join([context.fakes.dir, "opencode-sessions", "#{source}.json"])
+
+    file
+    |> File.read!()
+    |> JSON.decode!()
+    |> fun.(turns)
+    |> JSON.encode!()
+    |> then(&File.write!(file, &1))
+
+    context
+  end
+
+  step "OpenCode no longer has the message to return to", context do
+    context
+    |> three_turns()
+    |> edit_session(fn messages, turns ->
+      Enum.reject(messages, &(&1["info"]["id"] == turns[2]))
+    end)
+  end
+
+  step "OpenCode's rewound session kept the wrong turns", context do
+    context
+    |> three_turns()
+    |> edit_session(fn [first | rest], _turns ->
+      [put_in(first, ["info", "lostOnFork"], true) | rest]
+    end)
+  end
+
+  step ~r/^the user reverts (?:an earlier turn|to that turn)$/, context do
+    World.rollback(context, @thread, 1, %{"restoreFiles" => false})
+  end
+
+  @refusals %{
+    "the thread cannot be rolled back while a turn is active" =>
+      "Interrupt the current turn before rewinding.",
+    "the OpenCode rewind boundary is no longer available" =>
+      "The OpenCode rewind boundary is no longer available.",
+    "OpenCode did not preserve the requested rewind boundary" =>
+      "OpenCode did not preserve the requested rewind boundary."
+  }
+
+  step ~r/^it is refused with a message that (?<says>.+)$/, %{args: [says]} = context do
+    # The MC names the provider thread it could not roll back ahead of OpenCode's reason.
+    assert {:error, message} = context.reply
+    assert String.ends_with?(message, Map.fetch!(@refusals, says))
+    context
+  end
+
+  step "an OpenCode thread that was reverted to its first turn", context do
+    context = context |> three_turns() |> World.rollback(@thread, 1, %{"restoreFiles" => false})
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  # The MC keeps the thread's history itself; OpenCode's session is read again when the
+  # thread's next turn opens it.
+  step "the MC restarts and reads the thread back from OpenCode", context do
+    context = %{context | mc: HalC2.Test.Mc.restart(context.mc), clients: %{}}
+    send_turn(context, @thread, "where are we")
+  end
+
+  step "the turns after the first are not shown again", context do
+    {source, turns} = context.opencode
+    shown = for run <- World.runs(context, @thread), run["status"] != "rolled_back", do: run
+
+    assert length(shown) == 2
+    {fork, kept} = native(context, @thread)
+    assert fork != source and kept[1] != turns[1]
+    assert %{"sessionId" => ^fork} = last_prompt(context)
+    assert {_, ["first", "where are we"]} = session(context, fork)
+    context
+  end
+
+  # --- session titles ---
+
+  step ~r/^the thread "(?<title>[^"]+)" (?:starts|runs) on OpenCode$/,
+       %{args: [title]} = context do
+    context
+    |> World.fake_providers()
+    |> World.run_turns(title, "opencode", ["hello"])
+    |> Map.put(:thread, title)
+  end
+
+  step "the thread is renamed {string} and the user sends a message",
+       %{args: [title]} = context do
+    context |> rename(%{"title" => title}) |> send_turn(context.thread, "and now")
+  end
+
+  defp rename(context, %{"title" => title}) do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.metadata.update",
+        "commandId" => "cmd-rename-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, context.thread),
+        "title" => title
+      })
+
+    context
+  end
+
+  defp session_title(context) do
+    {session, _} = native(context, context.thread)
+    File.read!(Path.join([context.fakes.dir, "opencode-sessions", "#{session}.title"]))
+  end
+
+  # The trace, in order: each title OpenCode's server was given and each prompt sent.
+  defp titles_and_prompts(context) do
+    for entry <- World.provider_log(context, "acp"),
+        item = title_or_prompt(entry),
+        do: item
+  end
+
+  defp title_or_prompt(%{"http" => %{"method" => "PATCH", "body" => %{"title" => title}}}),
+    do: {:title, title}
+
+  defp title_or_prompt(%{"in" => %{"method" => "session/prompt"}}), do: :prompt
+  defp title_or_prompt(_entry), do: nil
+
+  step ~r/^its OpenCode session is titled "(?<title>[^"]+)"$/, %{args: [title]} = context do
+    assert session_title(context) == title
+    context
+  end
+
+  # The fake writes a title of its own at a prompt to a session still untitled.
+  step "OpenCode does not write a title of its own", context do
+    assert [{:title, title}, :prompt] = titles_and_prompts(context)
+    assert session_title(context) == title
+    context
+  end
+
+  step ~r/^its OpenCode session is titled "(?<title>[^"]+)" before the message reaches OpenCode$/,
+       %{args: [title]} = context do
+    assert session_title(context) == title
+    assert [{:title, _first}, :prompt, {:title, ^title}, :prompt] = titles_and_prompts(context)
+    context
+  end
+
+  step "a turn under an unchanged name does not retitle the session", context do
+    before = titles_and_prompts(context)
+    context = send_turn(context, context.thread, "still here")
+    assert titles_and_prompts(context) == before ++ [:prompt]
+    context
+  end
+
+  step "a title that cannot be written does not fail the turn", context do
+    kept = session_title(context)
+
+    context =
+      context
+      |> rename(%{"title" => "an unwritable name"})
+      |> send_turn(context.thread, "go on")
+
+    assert List.last(World.runs(context, context.thread))["status"] == "completed"
+    assert session_title(context) == kept
+    context
+  end
+
+  step "the user forks from the second turn and sends a message", context do
+    # The fork's first message is what opens OpenCode's fork; the outcome sends it.
+    World.fork(context, World.current_thread(context), 2, "fork")
+  end
+
+  defp three_turns(context) do
     context =
       context
       |> World.fake_providers()

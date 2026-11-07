@@ -468,7 +468,7 @@ Feature: OpenCode
 
   # Upstream #29221: OpenCode 2.2.5 compactions lack a field the bundled client required, so every
   # send of a fork from a compacted thread failed with an empty error.
-  @backlog @priority-high
+  @priority-high
   Scenario: Forking an OpenCode thread whose session was compacted forks OpenCode's session
     Given an OpenCode 2.2 thread with three turns whose session OpenCode compacted
     When the user forks from the second turn and sends a message
@@ -476,7 +476,7 @@ Feature: OpenCode
 
   # Upstream #22661: OpenCode 2.1 compactions lack a field the bundled client required, so reading
   # the session's history failed before the revert was asked for.
-  @backlog @priority-high
+  @priority-high
   Scenario: Reverting an OpenCode 2.1 thread whose session was compacted rewinds OpenCode's session
     Given an OpenCode 2.1 thread with three turns whose session OpenCode compacted
     When the user reverts to the end of the first turn
@@ -965,8 +965,7 @@ Feature: OpenCode
     Then the subagents are stopped eight at a time
     And the stop gives up after 15 seconds and reports the first one that could not be stopped
 
-  @backlog
-  Scenario Outline: OpenCode refuses a revert or fork it cannot carry out
+  Scenario Outline: OpenCode refuses a revert it cannot carry out
     Given <situation>
     When the user <action>
     Then it is refused with a message that <says>
@@ -976,10 +975,20 @@ Feature: OpenCode
       | an OpenCode turn is running                      | reverts an earlier turn | the thread cannot be rolled back while a turn is active   |
       | OpenCode no longer has the message to return to  | reverts to that turn    | the OpenCode rewind boundary is no longer available       |
       | OpenCode's rewound session kept the wrong turns  | reverts to that turn    | OpenCode did not preserve the requested rewind boundary   |
+
+  # The MC forks a running thread from its last finished turn, and a fork names an MC
+  # run, not an OpenCode turn: both rows contradict how it forks.
+  @backlog
+  Scenario Outline: OpenCode refuses a fork it cannot carry out
+    Given <situation>
+    When the user <action>
+    Then it is refused with a message that <says>
+
+    Examples:
+      | situation                                        | action                  | says                                                      |
       | an OpenCode turn is running                      | forks the thread        | the thread cannot be forked while a turn is active        |
       | the turn to fork from is unknown to OpenCode     | forks from that turn    | the fork boundary turn was not found                      |
 
-  @backlog
   Scenario: A reverted OpenCode thread stays reverted after a restart
     Given an OpenCode thread that was reverted to its first turn
     When the MC restarts and reads the thread back from OpenCode
@@ -987,13 +996,12 @@ Feature: OpenCode
 
   # Upstream #17414: an untitled session made OpenCode run its own title model, and the
   # session list showed OpenCode's title rather than the thread's.
-  @backlog
   Scenario: OpenCode's session carries the thread's name
     When the thread "Fix login" starts on OpenCode
     Then its OpenCode session is titled "Fix login"
     And OpenCode does not write a title of its own
 
-  @backlog @priority-low
+  @priority-low
   Scenario: A renamed thread renames its OpenCode session at its next turn
     Given the thread "Fix login" runs on OpenCode
     When the thread is renamed "Fix the login redirect" and the user sends a message
