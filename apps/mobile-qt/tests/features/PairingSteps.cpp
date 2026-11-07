@@ -454,6 +454,16 @@ const Steps steps([] {
     expect(shownText(world, S("environmentName")) == c[0], S("the settings do not name %1; the screen says: %2").arg(c[0], screenTexts(world)));
   });
 
+  // One thread list, with a thread of each environment's in it.
+  step(S("threads from %1 and %1 are listed together").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* list = threadList(world);
+    for (const QString& label : {c[0], c[1]}) {
+      QQuickItem* row = threadRow(world, threadOf(world, label));
+      while (row && row != list) row = row->parentItem();
+      expect(row == list, S("the thread of %1 is not in the thread list").arg(label));
+    }
+  });
+
   step(S("%1 and %1 are both listed").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     PairableMc& other = world.another(c[1]);
     // Settings names the first, at its address, and lists the second beside it.

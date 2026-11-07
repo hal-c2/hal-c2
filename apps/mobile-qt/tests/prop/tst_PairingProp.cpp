@@ -583,7 +583,11 @@ struct Forget : Command {
   std::optional<int> mc = which < 0 ? std::nullopt : std::optional<int>(which);
   explicit Forget(const Model&) {}
   // A record the device cannot write keeps one beside it on disk (#1096).
-  void checkPreconditions(const Model& m) const override { RC_PRE(!mc || !m.beside.contains(*mc) || m.writable); }
+  // RC_PRE captures its expression, which evaluates every operand of `||`.
+  void checkPreconditions(const Model& m) const override {
+    const bool kept = mc && m.beside.contains(*mc) && !m.writable;
+    RC_PRE(!kept);
+  }
   void apply(Model& m) const override {
     if (mc && m.beside.contains(*mc)) {
       m.beside.erase(*mc);
