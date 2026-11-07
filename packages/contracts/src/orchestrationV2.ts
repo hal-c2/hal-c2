@@ -496,6 +496,8 @@ export const OrchestrationV2Run = Schema.Struct({
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
+  /** A run a restart cut off: when it was last seen working, before the MC went down. */
+  lastActivityAt: Schema.optional(Schema.DateTimeUtc),
   checkpointId: Schema.NullOr(CheckpointId),
   contextHandoffId: Schema.NullOr(ContextHandoffId),
   /** Links server-generated restart continuations to the interrupted run. */
@@ -939,6 +941,8 @@ export const OrchestrationV2PlanArtifact = Schema.Union([
     ...OrchestrationV2PlanArtifactBaseFields,
     kind: Schema.Literal("proposed_plan"),
     markdown: Schema.String,
+    // The message that implemented the plan, once one has.
+    implementedByMessageId: Schema.optional(MessageId),
   }),
   Schema.Struct({
     ...OrchestrationV2PlanArtifactBaseFields,

@@ -62,6 +62,7 @@ defmodule HalC2.Application do
       # Wakes threads for work their provider finished in the background.
       HalC2.Orchestration.Wake,
       Supervisor.child_spec({Task, &HalC2.Search.backfill/0}, id: :search_backfill),
+      {Registry, keys: :duplicate, name: HalC2.Traces.Registry},
       {Registry, keys: :unique, name: HalC2.Codex.Registry},
       {Registry, keys: :unique, name: HalC2.Claude.Registry},
       {DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one},
@@ -111,6 +112,7 @@ defmodule HalC2.Application do
       HalC2.ProviderUsageLimits,
       HalC2.UsageLimitSources,
       HalC2.StorageCleanup,
+      HalC2.Store.Compactor,
       HalC2.Orchestration.IdleSessions,
       {Registry, keys: :unique, name: HalC2.ProviderAuth.Registry},
       {DynamicSupervisor, name: HalC2.ProviderAuth.Supervisor, strategy: :one_for_one},

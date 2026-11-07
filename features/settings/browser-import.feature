@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27148
+#   https://github.com/pingdotgg/t3code/pull/23157
 #   https://github.com/pingdotgg/t3code/pull/22970
 #   apps/web/src/components/settings/BrowserImportWizard.tsx
 #   apps/web/src/components/settings/browserImportWizard.logic.ts
@@ -221,6 +223,15 @@ Feature: Importing cookies from another browser
       When the user imports cookies from Chrome
       Then the user is told the system keyring could not be accessed
 
+    # Upstream #27148: Vivaldi keeps its key in the keyring under Chrome's name, so every import said the key was missing.
+    @backlog @desktop @priority-low
+    Scenario: Vivaldi's cookies on Linux are unlocked with the key it keeps under Chrome's name
+      Given the user is on Linux
+      And Vivaldi holds cookies that need the system keyring
+      When the user imports cookies from Vivaldi
+      Then the cookies are imported
+      And the user is not told there is no encryption key
+
     @backlog @desktop
     Scenario: A cookie file that does not add up is refused whole
       Given Safari's cookie file is damaged or its contents do not match its header
@@ -268,6 +279,15 @@ Feature: Importing cookies from another browser
         | the browser's key is missing               | offered     |
         | the cookie store could not be read         | offered     |
         | the browser is not supported               | not offered |
+
+    # Upstream #23157: the keychain read for Chrome's cookie key held the app's main thread, so
+    # every window froze until both macOS prompts were answered.
+    @backlog @desktop @priority-low
+    Scenario: The app keeps responding while macOS asks for a browser's keychain item
+      Given the desktop app runs on macOS
+      When the user imports cookies from Chrome for the first time
+      And macOS asks for the login keychain password for "Chrome Safe Storage"
+      Then every HAL-C2 window keeps drawing and answering while the prompt is open
 
     @backlog @desktop
     Scenario: A browser that crashed is not treated as running

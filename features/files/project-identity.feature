@@ -17,6 +17,7 @@
 #   apps/mobile/src/components/ProjectFavicon.tsx
 #   packages/contracts/src/project.ts (ProjectIconOverride, icon colours)
 #   packages/contracts/src/rpc.ts (assets.createUrl)
+#   https://github.com/pingdotgg/t3code/pull/23569
 
 Feature: Project and environment identity
   Projects and environments are easy to tell apart at a glance. A project shows its own
@@ -204,6 +205,14 @@ Feature: Project and environment identity
       Given the user set the icon of "shop" to the emoji "🛒"
       When the user resets the icon of "shop"
       Then "shop" shows its automatic icon
+
+    # Upstream #23569: a project with its own monogram, emoji or symbol still fetched its favicon.
+    @backlog @desktop @mobile @priority-low
+    Scenario: A project with a chosen icon never fetches its automatic one
+      Given the user set the icon of "shop" to the emoji "🛒"
+      When the user opens a client that has kept no icons
+      Then no automatic icon of "shop" is fetched, downloaded or kept
+      But once the user resets the icon of "shop" its automatic icon is fetched again
 
     # The MC signs an icon's link for half an hour or more and refuses it once it runs out.
     @desktop

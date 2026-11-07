@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27722
 #   https://github.com/pingdotgg/t3code/pull/23967
 #   https://github.com/pingdotgg/t3code/pull/19724
 #   https://github.com/pingdotgg/t3code/pull/14538
@@ -8,6 +9,7 @@
 #   https://github.com/pingdotgg/t3code/pull/20442
 #   https://github.com/pingdotgg/t3code/pull/20519
 #   https://github.com/pingdotgg/t3code/pull/16628
+#   https://github.com/pingdotgg/t3code/pull/25839
 #   docs/user/thread-sidebar.md (New threads, background start, multi-model fan-out)
 #   apps/web/src/hooks/useHandleNewThread.ts
 #   apps/web/src/components/ChatView.tsx (several models: started count, failed model, uncertain start, send gates)
@@ -32,6 +34,7 @@
 #   https://github.com/pingdotgg/t3code/pull/15060
 #   https://github.com/pingdotgg/t3code/pull/15356
 #   https://github.com/pingdotgg/t3code/pull/15391
+#   https://github.com/pingdotgg/t3code/pull/26301
 
 Feature: Creating threads
   A thread is the durable conversation for a project. Starting one keeps the user's
@@ -200,6 +203,16 @@ Feature: Creating threads
     Then "Fix checkout" opens with its history
     But a link to a deleted or archived thread still returns to the start page
 
+  # Upstream #27722: a new thread read before its creation landed was taken for deleted, and that
+  # was remembered, so its conversation stayed blank.
+  @backlog @shared @priority-high
+  Scenario: A new thread read too early is asked for again
+    Given the client asked for the new thread "Fix checkout" before the MC had created it
+    And the MC answered that it does not exist
+    When the user opens "Fix checkout" once it is created
+    Then the client asks the MC again and shows its conversation
+    But a thread the MC said was deleted stays deleted
+
   @desktop @mobile @backlog-mobile @priority-high
   Scenario: Starting a thread in the background opens a fresh draft
     Given the user has written a first message in a draft
@@ -365,6 +378,22 @@ Feature: Creating threads
     Then the draft opens at once with the usual defaults
     And the user can pick the machine that is online from the draft
 
+  # Upstream #25839: picking a project on two machines often started the thread on the offline one,
+  # whose draft turned into "Queue task".
+  @backlog @mobile
+  Scenario Outline: Picking a project on two machines starts on the connected one
+    Given "shop" lives on "My MacBook" and "Office Mac"
+    And <connected>
+    And "My MacBook" is the machine selected for new threads
+    When the user picks "shop" for a new thread
+    Then the draft is on <machine>
+
+    Examples:
+      | connected                       | machine      |
+      | only "Office Mac" is connected  | "Office Mac" |
+      | both are connected              | "My MacBook" |
+      | neither is connected            | "My MacBook" |
+
   @backlog @desktop
   Scenario: Opening a folder that is already a project starts a thread in it
     Given the desktop app is running and "shop" lives at "~/code/shop"
@@ -460,10 +489,13 @@ Feature: Creating threads
     Then threads without a project are offered
     And a turn in such a thread runs without checkpoints
 
+  # Upstream #26301: a thread without a project starts on the primary (local) machine, not on
+  # whichever machine is on screen.
   @backlog @shared @priority-high
   Scenario Outline: No project is reachable from every new-thread entry point
+    Given the user is viewing a thread on the remote machine "work"
     When the user uses "<entry>"
-    Then a thread without a project is started on the machine in use
+    Then a thread without a project is started on the primary machine
 
     Examples:
       | entry                                          |
@@ -479,6 +511,26 @@ Feature: Creating threads
     When the user opens the project menu
     Then No project is not listed
     And the thread is never silently started on another machine
+
+  # Upstream #26301: without a scratch folder on the primary machine, the machine on screen is
+  # used, then the only machine that offers one. The phone has no primary machine.
+  @backlog @desktop @tui
+  Scenario Outline: A thread without a project falls back to a machine that offers one
+    Given <machines>
+    When the user starts a thread with No project
+    Then the thread is started on <machine>
+
+    Examples:
+      | machines                                                                       | machine |
+      | the primary machine offers no scratch folder and the user is viewing "work"    | "work"  |
+      | only "lab" offers a scratch folder and the user is viewing the primary machine | "lab"   |
+
+  # Upstream #26301: a scratch draft on a remote machine is still a draft without a project.
+  @backlog @shared @priority-low
+  Scenario: A draft without a project on another machine still says it has no project
+    Given the user moved a new thread without a project to the machine "work"
+    When the user looks at the draft
+    Then it reads as having no project
 
   @backlog @shared @priority-low
   Scenario: Starting a thread in the background has a plain-Enter binding

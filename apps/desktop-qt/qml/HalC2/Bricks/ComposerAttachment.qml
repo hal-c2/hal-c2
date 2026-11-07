@@ -15,6 +15,8 @@ Row {
     readonly property bool failed: attachment.status === "failed"
     readonly property string label: source !== null ? (source.windowTitle.length > 0 ? qsTr("%1 · %2").arg(source.appName).arg(source.windowTitle) : source.appName) : attachment.name
 
+    // Whether the user may take it away; an answer on its way keeps its files.
+    property bool removable: true
     signal removeRequested
     signal retryRequested
     // The attachment opened to look at.
@@ -65,6 +67,7 @@ Row {
             anchors.margins: Theme.space.xxs
             implicitWidth: Theme.icon.lg
             implicitHeight: Theme.icon.lg
+            visible: chip.removable
             iconName: "x"
             iconSize: Theme.icon.sm
             Accessible.name: qsTr("Remove %1").arg(chip.label)
@@ -85,10 +88,10 @@ Row {
         text: chip.failed ? qsTr("%1 (upload failed)").arg(chip.label) : chip.attachment.status === "uploading" ? qsTr("%1 (uploading…)").arg(chip.label) : chip.label
         tint: chip.failed ? Theme.palette.color("errorForeground", "#f87171") : Theme.palette.color("text", "#e4e4e7")
         font.pixelSize: Theme.type.meta.size
-        Accessible.name: qsTr("Remove %1").arg(chip.label)
+        Accessible.name: chip.removable ? qsTr("Remove %1").arg(chip.label) : chip.label
         ToolTip.visible: hovered && chip.failed && ToolTip.text.length > 0
         ToolTip.text: chip.attachment.error ?? ""
-        onClicked: chip.removeRequested()
+        onClicked: if (chip.removable) chip.removeRequested()
     }
 
     ShellButton {

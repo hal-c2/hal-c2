@@ -2,6 +2,7 @@
 #   https://github.com/pingdotgg/t3code/pull/15477
 #   https://github.com/pingdotgg/t3code/pull/22902
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/25610
 #   packages/contracts/src/orchestrationV2.ts (thread.model-selection.set, thread.model-selection-updated,
 #     provider.switch, thread.provider-switched, context-handoff.updated, provider-thread.updated,
 #     provider-session.updated)
@@ -160,6 +161,35 @@ Feature: Changing model and provider mid-thread
     Given the provider thread of "t1" has no native conversation any more
     When the user sends "Where were we?" to "t1"
     Then the provider receives the earlier conversation before the message
+
+  # Upstream #25610: returning to a provider with no room for the incoming handoff failed and
+  # asked the user to compact by hand.
+  @backlog @mc @priority-high
+  Scenario: A handoff that does not fit the resumed conversation starts a fresh one
+    Given "t1" moved from "codex" to "claudeAgent" and ran long there
+    And the "codex" conversation of "t1" has no room left for what happened since
+    When the user switches "t1" back to "codex" and sends a message with an image
+    Then a new "codex" conversation starts with as much of the history as fits
+    And it receives the user's message and the image
+    And later runs of "t1" continue that new conversation
+
+  # Upstream #25610: background commands and native subagents are left running, and the user is
+  # told when they keep the conversation from being replaced.
+  @backlog @mc
+  Scenario: A handoff that does not fit waits for background work instead of cutting it off
+    Given the "codex" conversation of "t1" has no room left for the incoming handoff
+    And a background command started in that conversation is still running
+    When the user switches "t1" back to "codex" and sends a message
+    Then the background command keeps running
+    And the run says the conversation cannot be replaced while that work runs
+
+  # Upstream #25610: a handoff too big even for a fresh conversation still fails.
+  @backlog @mc
+  Scenario: A message that cannot fit even a fresh conversation fails the run
+    Given the user's message alone is larger than the context window of "codex"
+    When the user switches "t1" to "codex" and sends it
+    Then the run fails saying the message does not fit
+    And the "codex" conversation of "t1" is not replaced
 
   @mc
   Scenario: Switching back to the first provider resumes its own conversation

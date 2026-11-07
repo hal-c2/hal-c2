@@ -183,12 +183,15 @@ defmodule HalC2.UsageLimitSources.Cliproxy do
     with {:ok, body} <- api_call(config, key, account, @codex_base <> "/usage"),
          {:ok, %{} = usage} <- JSON.decode(body) do
       rate_limit = usage["rate_limit"] || %{}
+      # The usage report may leave the plan out; the sign-in details still name it, and
+      # a Free or Go plan's one allowance is a monthly window, not a session.
+      plan_type = usage["plan_type"] || get_in(account, ["id_token", "chatgpt_plan_type"])
 
       limits =
         Codex.limits(
           %{
             "rateLimits" => %{
-              "planType" => usage["plan_type"],
+              "planType" => plan_type,
               "primary" => codex_window(rate_limit["primary_window"]),
               "secondary" => codex_window(rate_limit["secondary_window"])
             }
@@ -198,8 +201,7 @@ defmodule HalC2.UsageLimitSources.Cliproxy do
         # A credits outage must not hide windows that were read.
         |> Limits.put_present("resetCredits", credits(config, key, account))
 
-      plan =
-        Codex.plan_label(usage["plan_type"] || get_in(account, ["id_token", "chatgpt_plan_type"]))
+      plan = Codex.plan_label(plan_type)
 
       {:ok, Limits.put_present(%{"usageLimits" => limits}, "plan", plan)}
     end

@@ -1,4 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27305
+#   https://github.com/pingdotgg/t3code/pull/27377
+#   https://github.com/pingdotgg/t3code/pull/27324
+#   https://github.com/pingdotgg/t3code/pull/27373
+#   https://github.com/pingdotgg/t3code/pull/27306
+#   https://github.com/pingdotgg/t3code/pull/27372
+#   https://github.com/pingdotgg/t3code/pull/26769
+#   https://github.com/pingdotgg/t3code/pull/23723
 #   https://github.com/pingdotgg/t3code/pull/20054
 #   https://github.com/pingdotgg/t3code/pull/23135
 #   https://github.com/pingdotgg/t3code/pull/23814
@@ -42,6 +50,8 @@
 #   apps/desktop-qt/src/native/TimelineModel.cpp (sent files listed by name, kind and size)
 #   apps/mobile/src/features/threads/ThreadFeed.tsx (sent file, video and unknown attachments)
 #   apps/mobile/src/features/threads/ThreadFeed.tsx (a message not yet acknowledged shows Pending)
+#   https://github.com/pingdotgg/t3code/pull/25002
+#   https://github.com/pingdotgg/t3code/pull/27383
 
 Feature: Runs, interruptions and the queue
   A turn runs until it finishes, fails or the user stops it. Messages sent meanwhile
@@ -182,6 +192,43 @@ Feature: Runs, interruptions and the queue
     When the user sent the image "cart.png" with a message
     Then the message shows the image "cart.png" from its MC
 
+  # Upstream #26769: a message of only images showed the prompt the agent receives for it
+  # ("[User attached one or more files without additional text. ...]") as if the user had typed it.
+  @backlog @shared @mobile @priority-high
+  Scenario Outline: A message of only images shows the images, not the agent's prompt
+    Given the user sent <images> with no text
+    Then the message shows <shown> without a text bubble behind them
+    And the prompt the agent received for them shows nowhere: not in the message, its queue preview or find in thread
+
+    Examples:
+      | images                                | shown                                   |
+      | "cart.png"                            | "cart.png" at a fixed height            |
+      | "cart.png" and "checkout.png"         | both images side by side in one collage |
+      | "cart.png" with the ultrathink effort | "cart.png" at a fixed height            |
+
+  # Upstream #27383: titles, search, the minimap, a queued edit and prompt links still used the
+  # prompt the agent receives for a message of only images.
+  @backlog @shared @mobile
+  Scenario Outline: The prompt for a message of only images is not taken for the user's words
+    Given the user sent "cart.png" with no text
+    Then <place> does not use the prompt the agent received for it
+
+    Examples:
+      | place                                 |
+      | the thread's generated title          |
+      | the thread's regenerated title        |
+      | a search across threads               |
+      | the timeline's overview               |
+      | a link copied to the message's prompt |
+
+  # Upstream #27383: editing a queued message of only images opened with the agent's prompt in it.
+  @backlog @shared @mobile
+  Scenario: Editing a queued message of only images starts with no text
+    Given the user queued "cart.png" with no text and the ultrathink effort
+    When the user edits the queued message
+    Then the editor holds only the ultrathink prefix and "cart.png"
+    And saving it with no words keeps it a message of only "cart.png" with the ultrathink effort
+
   @shared @priority-high
   Scenario: An image is still shown after its address stops working
     Given the user sent the image "cart.png" with a message
@@ -213,6 +260,84 @@ Feature: Runs, interruptions and the queue
     Then the message shows "demo.mp4" as a video
     When the user opens it
     Then the video plays
+
+  # Upstream #27372: macOS and Windows give ".ts" files a video type, so a TypeScript file showed as
+  # a black video player.
+  @backlog @shared @mobile
+  Scenario Outline: A TypeScript file is not taken for a video
+    When the user sent "clamp.ts" with the type "<type>"
+    Then the message shows "clamp.ts" as a code file with a text preview
+    And a sent "demo.mp4" still shows as a video
+
+    Examples:
+      | type                    |
+      | video/mp2t              |
+      | video/vnd.dlna.mpeg-tts |
+
+  # Upstream #27306: images and videos sent with words were squeezed into the text bubble
+  # as small thumbnails, unlike the same media sent alone.
+  # Upstream #27373: same change as #27306.
+  @backlog @shared @mobile
+  Scenario Outline: Images and videos sent with text sit above the text bubble
+    When the user sent <media> with the text "Here is the bug"
+    Then <shown> above the bubble holding "Here is the bug"
+    And files sent with the text stay inline in the bubble
+
+    Examples:
+      | media                         | shown                                                     |
+      | "cart.png"                    | "cart.png" shows at a fixed height in its own proportions |
+      | "cart.png" and "checkout.png" | both images show as one collage                           |
+      | "demo.mp4"                    | "demo.mp4" shows as a video of its own                    |
+
+  # Upstream #27324: a file sent without words was a bubble around a name chip.
+  # Upstream #27373: same change as #27324.
+  @backlog @shared @mobile
+  Scenario: A file sent without text shows as a file card
+    When the user sent "report.pdf" of 2 MB with no text
+    Then the message shows a card for "report.pdf" with its icon, name, type and size and no text bubble
+    And the card opens the file's preview and offers to download it
+    And a file sent with text still shows inline in its bubble
+
+  # Upstream #27377: a few attachments still showed as a bubble around a label or in confusing states.
+  @backlog @shared @mobile
+  Scenario Outline: An attachment sent on its own takes the shape of what it is
+    When the user sent <attachment> with no text
+    Then the message shows <shown>
+
+    Examples:
+      | attachment                             | shown                                                              |
+      | a long paste that became an attachment | it as "Pasted text", not its file name                             |
+      | a voice note                           | the voice note in a bubble of its own                              |
+      | a snapshot taken with the desktop      | the snapshot in its own proportions, rounded like other images     |
+      | "report.pdf" that is still uploading   | "Sending…" on the card where its type and size go, without buttons |
+
+  # Upstream #27377: images or videos sent without words could not be copied.
+  @backlog @shared @mobile
+  Scenario: Copying a message of only images attaches them again when pasted
+    Given the user sent "cart.png" with no text
+    When the user copies the message and pastes it into the composer
+    Then the composer attaches "cart.png"
+
+  # Upstream #27305: two steers in a row each repeated their label with a full message gap
+  # between them, so the follow-up did not read as part of the same thought.
+  # Upstream #27373: same change as #27305.
+  @backlog @shared @mobile
+  Scenario: Messages the user sends back to back sit together under one steer label
+    Given the user steered the running turn twice in a row
+    Then the two messages sit close together as one burst
+    And only the first carries the "Steer" label
+    And each message keeps its own time and actions
+
+  # Upstream #27305
+  @backlog @shared @mobile
+  Scenario Outline: A message from someone else breaks the user's burst
+    Given the user sent a message, then <other>, then another message
+    Then the user's two messages are spaced apart as separate messages
+
+    Examples:
+      | other                  |
+      | the agent replied      |
+      | an automation sent one |
 
   @shared @backlog-mobile @backlog-tui @priority-low
   Scenario: A sent attachment of a kind this client does not know is listed by name only
@@ -294,11 +419,15 @@ Feature: Runs, interruptions and the queue
     Then "npm test" shows as finished, also after the app is reopened
     And work that is still running stays shown as running
 
-  @desktop @priority-high
-  Scenario: Stopping background work can be asked again
+  # Upstream #25002: Stop came back as soon as the environment accepted, while the work still ran,
+  # so it looked as if the stop had failed. It now waits for the stopped work, for up to 10 seconds.
+  @backlog @desktop @mobile @priority-high
+  Scenario: Stopping background work stays pending until that work ends
     Given the turn has finished and left the task "watch tests" running
     When the user stops the background work and the environment accepts
-    And "watch tests" is still running
+    Then the stop shows "Stopping..." and cannot be pressed while "watch tests" is still running
+    And work that started after the stop does not keep it pending
+    When "watch tests" is still running 10 seconds later
     Then the user can ask to stop it again
 
   # Upstream #22052: a thread can be stopped without knowing which run is active.
@@ -386,6 +515,18 @@ Feature: Runs, interruptions and the queue
       | 999,499   | 999k used |
       | 999,500   | 1m used   |
       | 1,000,000 | 1m used   |
+  # Upstream #23723: the diff's compact counts had the same rollover and read "+1000k", and "1000m" below a billion.
+  @backlog @desktop @tui @priority-low
+  Scenario Outline: A diff count that rounds up to the next unit reads in that unit
+    Given a diff adds <lines> lines
+    Then its summary and file row read "<reading>"
+
+    Examples:
+      | lines         | reading |
+      | 999,499       | +999k   |
+      | 999,500       | +1m     |
+      | 999,950,000   | +1b     |
+
 
   @desktop
   Scenario: The context window reading is shown only when its setting is on

@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26706
+#   https://github.com/pingdotgg/t3code/pull/25259
 #   https://github.com/pingdotgg/t3code/pull/17440
 #   https://github.com/pingdotgg/t3code/pull/21842
 #   https://github.com/pingdotgg/t3code/pull/21843
@@ -232,3 +234,113 @@ Feature: Device hosts
       Given the environment "Old" runs an MC that does not know EAS Simulator hosts
       When the user opens the Integrations settings for "Old"
       Then no EAS Simulator section is shown
+
+  # Upstream #25259: a Simlock pool leases iOS simulators and Android emulators from a gateway the
+  # user runs; HAL-C2 never installs Simlock. It is an alpha behind Labs.
+  @priority-low
+  Rule: Simlock pool hosts
+
+    # Upstream #25259: the Simlock source is hidden until Labs turns it on.
+    @backlog @desktop @mobile
+    Scenario: A Simlock pool can be added only once Labs turns it on
+      Given Simlock is off in Labs
+      When the user adds a device source
+      Then a Simlock pool is not offered
+      And once the user turns Simlock on in Labs, it is offered
+
+    # Upstream #25259: the source holds a gateway URL, one agent token per environment, a device limit and a lease age limit.
+    @backlog @desktop @mobile
+    Scenario: A Simlock pool is added with a token per environment and its limits
+      When the user adds a Simlock pool at "https://pool.example/v1/agent-device" with at most 2 devices leased for at most 60 minutes
+      Then the pool is listed with those limits
+      And each environment holds its own agent token for it
+
+    # Upstream #26706: the editor saves with an environment's token left blank.
+    @backlog @desktop @mobile
+    Scenario: A Simlock pool saves with an environment's token left blank
+      Given the user leaves the agent token for "Build box" blank
+      When the user saves the Simlock pool
+      Then it is saved
+
+    # Upstream #26706: a blank token uses the machine's own agent-device token, only for the gateway it names.
+    @backlog @mc
+    Scenario Outline: A blank Simlock token uses the machine's own agent-device token only for its gateway
+      Given the machine's agent-device settings name the gateway "https://pool.example/v1/agent-device" with a token
+      And the Simlock pool on that environment has no token saved
+      When the pool's URL is "<url>"
+      Then the MC <outcome>
+
+      Examples:
+        | url                                   | outcome                                             |
+        | https://pool.example/v1/agent-device  | leases with the machine's token, which never leaves it |
+        | https://other.example/v1/agent-device | asks for a token for the pool                        |
+
+    # Upstream #26706: a saved token is only ever sent to the gateway it was saved for.
+    @backlog @mc @priority-high
+    Scenario: Changing a Simlock pool's URL never sends its token to the new gateway
+      Given a Simlock pool has a token saved for "https://pool.example"
+      When the user changes the pool's URL to "https://other.example"
+      Then the saved token is not sent to "https://other.example"
+
+    # Upstream #26706: each token is checked against the gateway as it is entered.
+    @backlog @mc @desktop @mobile
+    Scenario Outline: The Simlock editor checks each environment's token
+      When the user enters a token the gateway <answer>
+      Then the editor says <shown>
+
+      Examples:
+        | answer                                  | shown                                         |
+        | accepts as "cups"                       | "Accepted as cups"                            |
+        | does not get, so the machine's is used  | "Using this machine's agent-device token (cups)" |
+        | refuses                                 | the gateway refused the token                 |
+        | cannot be reached for                   | the gateway could not be reached              |
+        | knows as a token without the agent role | the token is not an agent token               |
+
+    # Upstream #26706: platform availability comes from the pool's catalog, not a fixed answer.
+    @backlog @mc @desktop @mobile
+    Scenario: A Simlock pool says which platforms it has devices for
+      Given the Simlock pool has iPhones but no Android devices
+      When the user looks at the pool's platforms
+      Then iOS reads as available
+      And Android reads "The pool has no Android devices."
+
+    # Upstream #26706: an incomplete catalog is not cached, so workers reconnecting do not hide devices for a minute.
+    @backlog @mc
+    Scenario: Devices of a pool whose workers are reconnecting are listed on the next look
+      Given the pool's Android workers were reconnecting when the MC last listed its devices
+      When an agent lists devices again once they are back
+      Then the pool's Android devices are listed
+
+    # Upstream #25259: an open device's lease is renewed while it is used and released at the age limit.
+    @backlog @mc
+    Scenario: A leased Simlock device is kept while open and released at the age limit
+      Given the user opened a device from the Simlock pool with a lease age limit of 60 minutes
+      When the device stays open
+      Then its lease is renewed while it is open
+      And the lease is returned to the pool after 60 minutes
+
+    # Upstream #25259: closing the device or removing the source returns the lease to the pool.
+    @backlog @mc
+    Scenario Outline: A Simlock lease returns to the pool when it is no longer used
+      Given a device is leased from the Simlock pool
+      When the user <action>
+      Then the lease is returned to the pool
+
+      Examples:
+        | action                  |
+        | closes the device       |
+        | removes the Simlock pool |
+
+    # Upstream #25259: a pool refuses a lease past its device limit.
+    @backlog @mc
+    Scenario: A Simlock pool refuses a device past its limit
+      Given the Simlock pool allows 2 devices and 2 are leased
+      When another thread opens a device from the pool
+      Then the user is told the pool's device limit is reached
+
+    # Upstream #25259: a Simlock device offers only the controls the pool serves.
+    @backlog @desktop @mobile
+    Scenario: A Simlock device offers only the controls the pool serves
+      Given the user opened an Android emulator from the Simlock pool
+      Then they can go Home, Back and to Recents
+      And rotation, appearance, text size and screenshots are not offered

@@ -3,6 +3,7 @@
 #   https://github.com/pingdotgg/t3code/pull/19692
 #   https://github.com/pingdotgg/t3code/pull/17729
 #   https://github.com/pingdotgg/t3code/pull/12537
+#   https://github.com/pingdotgg/t3code/pull/23695
 #   docs/user/source-control.md (GitHub sharing across environments)
 #   packages/contracts/src/pullRequest.ts (PullRequestRouting, PullRequestRoutingIdentity, expectedAccountId, allowStale)
 #   packages/contracts/src/rpc.ts (pullRequests.routing, pullRequests.routingIdentity)
@@ -239,6 +240,15 @@ Feature: Sharing GitHub access between environments
     When both accounts' reads run at the same moment
     Then each read runs with only its own account's credential
     And neither account's credential is overridden by one set in the environment
+
+  # Upstream #23695: hostless GitLab CLI commands read and merged the merge request on another remote's host.
+  @backlog @mc @priority-high
+  Scenario: A GitLab merge request is read and merged on the host it was found on
+    Given the project "shop" has "origin" on "gitlab.acme.dev" and "gitlab" on "gitlab.com"
+    And merge request 7 was found on "gitlab.acme.dev"
+    When the user merges merge request 7
+    Then the read and the merge go to "gitlab.acme.dev" with its own credential
+    And "gitlab.com" is asked nothing, even when the environment names it as the GitLab host
 
   @backlog @mc @priority-low
   Scenario: A list that cannot read the environment's projects says so

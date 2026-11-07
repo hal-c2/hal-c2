@@ -51,13 +51,15 @@ private:
 };
 
 // Keeps secrets in memory, for tests: one `Keys` shared between stores is the
-// same keyring across a restart, and `refusing` turns it into one that is not
-// available to the app.
+// same keyring across a restart, `refusing` turns it into one that is not
+// available to the app, and `unreadable` into one that takes writes but
+// gives nothing back.
 class MemorySecretStore : public SecretStore {
 public:
   struct Keys {
     QHash<QString, QString> secrets;
     bool refusing = false;
+    bool unreadable = false;
   };
   explicit MemorySecretStore(std::shared_ptr<Keys> keys = std::make_shared<Keys>()) : m_keys(std::move(keys)) {}
   bool write(const QString& key, const QString& secret, QString* error) override {
@@ -69,7 +71,7 @@ public:
     return true;
   }
   std::optional<QString> read(const QString& key) override {
-    if (m_keys->refusing) return std::nullopt;
+    if (m_keys->refusing || m_keys->unreadable) return std::nullopt;
     const auto it = m_keys->secrets.constFind(key);
     return it == m_keys->secrets.cend() ? std::nullopt : std::optional<QString>(*it);
   }
