@@ -29,6 +29,9 @@
 #   https://github.com/pingdotgg/t3code/pull/21325
 #   https://github.com/pingdotgg/t3code/pull/22246
 #   https://github.com/pingdotgg/t3code/pull/26176
+#   https://github.com/pingdotgg/t3code/pull/29688
+#   https://github.com/pingdotgg/t3code/pull/30142
+#   https://github.com/pingdotgg/t3code/pull/29457
 
 Feature: Finding hosting tools, cloning and publishing repositories
   The MC finds which version control and hosting tools it can use and whether they are
@@ -289,6 +292,14 @@ Feature: Finding hosting tools, cloning and publishing repositories
       | https://git.gitea.mycorp.example/acme/app.git   | Forgejo               |
       | https://git.example.test/acme/app.git          | git.example.test      |
 
+    # Upstream #29457: git reads "host:path" with no user as an SSH remote, taking the user from the
+    # SSH config, but no host was found in it, so its pull requests never listed.
+    @backlog
+    Examples:
+      | remote                           | host               |
+      | github.com:acme/app.git          | GitHub             |
+      | gitlab.mycorp.example:acme/app   | GitLab Self-Hosted |
+
     # Upstream #19362: "*.ghe.com" remotes are GitHub by their name; "ghe.com" itself is not.
     Examples:
       | remote                                          | host                  |
@@ -545,6 +556,29 @@ Feature: Finding hosting tools, cloning and publishing repositories
     Then the user is told the repository was created and the push was refused
     And they are told to push again rather than publish again
     And they are given the command that switches the remote to HTTPS
+
+  # Upstream #30142: a publish that chose SSH itself left an SSH remote the machine's key could not
+  # use, so every later fetch failed too.
+  @backlog @mc
+  Scenario Outline: A publish over SSH the host refuses falls back to HTTPS unless the user chose SSH
+    Given the user publishes "notes" to GitHub <choice>
+    And GitHub refuses the user's SSH key
+    When the repository is created and the first push is refused
+    Then <outcome>
+
+    Examples:
+      | choice                       | outcome                                                                  |
+      | without choosing a protocol  | the remote is switched to the HTTPS address and the push is tried again  |
+      | choosing SSH                 | the publish says the push was refused, as before                         |
+
+  # Upstream #29688: status refreshed only when the whole publish succeeded, so Git actions still
+  # offered Publish, which would create the repository again.
+  @backlog @mc @shared
+  Scenario: A publish whose first push fails still shows the new remote
+    Given the user publishes "notes" to GitHub over SSH
+    When the repository is created and added as "origin" but the first push fails
+    Then the project's Git actions offer to push to "origin" rather than to publish
+    And "notes" is grouped with other checkouts of its new repository
 
   # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (publishRepository: selectRemoteUrl)
   @mc @priority-high

@@ -9,6 +9,11 @@
 #   https://github.com/pingdotgg/t3code/pull/20440
 #   https://github.com/pingdotgg/t3code/pull/19315
 #   https://github.com/pingdotgg/t3code/pull/23436
+#   https://github.com/pingdotgg/t3code/pull/27434
+#   https://github.com/pingdotgg/t3code/pull/29908
+#   https://github.com/pingdotgg/t3code/pull/31599
+#   https://github.com/pingdotgg/t3code/pull/27438
+#   https://github.com/pingdotgg/t3code/pull/29161
 #   packages/contracts/src/vcs.ts (VcsListRefsInput, VcsListRefsResult, VcsSwitchRefInput, VcsCreateRefInput)
 #   packages/contracts/src/rpc.ts (vcs.listRefs, vcs.switchRef, vcs.createRef)
 #   apps/server-ex/lib/hal_c2/vcs.ex (list_refs, switch_ref, create_ref)
@@ -52,6 +57,33 @@ Feature: Picking, switching and creating branches
     Then "main" is marked current
     And the thread shows "main" with no ahead or behind counts or pull request left from "feature/tax"
 
+  # Upstream #27438: the MC answered from a two-minute snapshot of the branches, so a branch
+  # created or deleted in a terminal or by an agent was missing or still listed.
+  @backlog @mc @shared
+  Scenario: Opening the branch list shows branches created and deleted outside HAL-C2
+    Given the user opened the branch list of "shop" a moment ago
+    And the user ran "git branch round-1 && git branch -D feature/old" in a terminal
+    When the user opens the branch list again
+    Then "round-1" is listed
+    And "feature/old" is not
+
+  # Upstream #31599: after an agent or a terminal checked out another branch in a thread's
+  # worktree, the sidebar and the thread's details kept showing the generated branch.
+  @backlog @mc @shared @priority-high
+  Scenario: Every thread in a worktree follows a branch checked out there
+    Given the threads "Tax" and "Tax review" share a worktree on "hal-c2/bfc349ae"
+    When the agent in "Tax" runs "git switch union" in that worktree
+    Then the thread list and the details of both threads show "union"
+    And a slower status report of "hal-c2/bfc349ae" does not bring the old branch back
+    And a worktree reached through a symlinked path follows the switch too
+
+  # Upstream #31599: detached checkouts and the project folder keep what they showed.
+  @backlog @mc
+  Scenario: A detached checkout in a worktree leaves its threads' branch
+    Given the thread "Tax" is in a worktree on "hal-c2/bfc349ae"
+    When a commit is checked out detached in that worktree
+    Then "Tax" keeps "hal-c2/bfc349ae" as its branch
+
   # Upstream #23436: the mobile branch list marked the project folder's branch current for a worktree thread.
   @backlog @mobile @priority-high
   Scenario: A worktree thread's branch list marks the worktree's branch current
@@ -73,6 +105,19 @@ Feature: Picking, switching and creating branches
     Given "shop" has the branches "main", "feature/tax" and "feature/old"
     When the user searches the branch list for "old"
     Then only "feature/old" is listed
+
+  # Upstream #27434: typing a search highlighted nothing, so Enter closed the picker without
+  # choosing and the down arrow skipped the first result.
+  @backlog @shared
+  Scenario Outline: Enter picks the first result of a branch search
+    Given "shop" has the branches "main", "feature/tax" and "feature/old"
+    When the user searches the <list> for "feat" and presses Enter
+    Then the first branch listed for "feat" is chosen
+
+    Examples:
+      | list                         |
+      | branch list                  |
+      | base picker of a new worktree |
 
   @desktop
   Scenario: A long list says how much is hidden
@@ -114,6 +159,14 @@ Feature: Picking, switching and creating branches
       | switches to "feature/old"             |
       | removes a worktree and its branch     |
       | renames the temporary branch of a new worktree |
+
+  # Upstream #29161: checking out a pull request left the branch lists already open without its
+  # branch, with the old branch still current.
+  @backlog @shared
+  Scenario: Checking out a pull request refreshes the branch lists already open
+    Given the user has the branch list and the base list of a new worktree open in "shop"
+    When the user checks out pull request #42 on the branch "fix-tax" in a new worktree
+    Then both lists show "fix-tax" with its worktree
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (LIST_REFS_REFRESH_COALESCE_TTL, LIST_REFS_REFRESH_FAILURE_COOLDOWN)
   @mc @backlog @priority-low
@@ -264,6 +317,16 @@ Feature: Picking, switching and creating branches
     When the user lists the thread's branches
     Then "main" is shown as this thread's checkout and can be chosen
     And "feature/old" is shown as checked out elsewhere and cannot be chosen
+
+  # Upstream #29908: in a project that is a subfolder of its repository, picking the checkout's own
+  # branch moved the thread to the repository root as a worktree.
+  @backlog @shared @priority-high
+  Scenario: Picking a branch in a subfolder project keeps the thread in the project folder
+    Given the project "app" is the folder "packages/app" inside the repository "shop"
+    And a thread of "app" works in the project folder, which is on "main"
+    When the user picks "main" from the thread's branches
+    Then the thread still works in "packages/app" and not in a worktree
+    And its agent and terminal keep running there
 
   @desktop @mobile @backlog-mobile
   Scenario: The thread's branch follows the checkout

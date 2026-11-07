@@ -45,6 +45,9 @@
 #   https://github.com/pingdotgg/t3code/pull/15323
 #   https://github.com/pingdotgg/t3code/pull/15604
 #   https://github.com/pingdotgg/t3code/pull/19229
+#   https://github.com/pingdotgg/t3code/pull/28646
+#   https://github.com/pingdotgg/t3code/pull/29647
+#   https://github.com/pingdotgg/t3code/pull/30560
 Feature: Recovering from restarts and releasing idle sessions
   Provider processes that cannot go on through a restart (reattach-after-restart.feature)
   are killed at the next boot, before any thread goes on. At boot the engine ends
@@ -56,6 +59,7 @@ Feature: Recovering from restarts and releasing idle sessions
   Background:
     Given an MC with a project "demo"
 
+  # Upstream #28646: a cancelled answer, reasoning or plan cut by a restart stayed marked as streaming.
   @mc
   Scenario: A turn cut off by a restart is interrupted at boot
     Given thread "t1" had a running turn with a streaming answer and a running command
@@ -162,6 +166,16 @@ Feature: Recovering from restarts and releasing idle sessions
     When the MC restarts
     Then "t1" receives one continuation turn
     And the continuation names the background command the restart ended
+
+  # Upstream #29647: a long label cut inside an emoji left half of it, and Codex dropped the whole
+  # continuation it could not read.
+  @backlog @mc @priority-high
+  Scenario: A long background command label is shortened without splitting an emoji
+    Given project "demo" continues threads after a server update
+    And thread "t1" left running a background command whose long label has an emoji where it is shortened
+    When the MC restarts
+    Then the continuation names the command by a shortened label that ends on a whole character
+    And Codex receives the continuation
 
   # Upstream #19291: a run that ended to wait on a monitor or subagent never woke after an update,
   # and its delegating parent took the interim message as the result.
@@ -733,6 +747,16 @@ Feature: Recovering from restarts and releasing idle sessions
     Given "continue threads after restarts" is on and a thread has held queued work and a stopped run
     When the MC restarts
     Then the queued work waits for recovery and the stopped run is not continued
+
+  # Upstream #30560: a restart between saving a message and starting its run left the message
+  # sent and its run held, and resuming the queue marked the thread done.
+  @backlog @mc @priority-high
+  Scenario: A message whose run never started before a restart waits in the queue
+    Given the user sent "Next" in "t1" and the MC stopped before its provider started the run
+    When the MC restarts
+    Then "Next" waits in the held queue as not yet sent, in the order it was sent
+    When the user resumes the queue of "t1"
+    Then the run for "Next" starts and the agent answers it
 
   @backlog @mc @priority-high
   Scenario: A settled thread stays asleep after a restart

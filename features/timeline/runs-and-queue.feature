@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24861
 #   https://github.com/pingdotgg/t3code/pull/27305
 #   https://github.com/pingdotgg/t3code/pull/27377
 #   https://github.com/pingdotgg/t3code/pull/27324
@@ -52,6 +53,7 @@
 #   apps/mobile/src/features/threads/ThreadFeed.tsx (a message not yet acknowledged shows Pending)
 #   https://github.com/pingdotgg/t3code/pull/25002
 #   https://github.com/pingdotgg/t3code/pull/27383
+#   https://github.com/pingdotgg/t3code/pull/30369
 
 Feature: Runs, interruptions and the queue
   A turn runs until it finishes, fails or the user stops it. Messages sent meanwhile
@@ -403,6 +405,14 @@ Feature: Runs, interruptions and the queue
     And the link to the subagent's thread is still shown
     And Stop stays beside the notice's title
 
+  # Upstream #30369: a finished background command's notice cut its label at 79 characters and could
+  # keep half an emoji, in the timeline row, the phone's work log and a delegated task's question wake.
+  @backlog @mc @shared @priority-low
+  Scenario: A finished background work notice is cut before an emoji, not through it
+    Given a background command whose label is 100 characters with an emoji at the 79th
+    When the command finishes after its turn ended
+    Then the thread's notice quotes the label cut before the emoji and ending in "…"
+
   @backlog @desktop @priority-low
   Scenario: Background work is not announced while a turn is running
     Given a turn is running and has started background tasks
@@ -727,6 +737,16 @@ Feature: Runs, interruptions and the queue
     Given the thread shows that Codex is signed out
     When the user opens provider setup from the thread
     Then the setup for Codex opens
+
+  # Upstream #24861: the thread's provider notice had no way to check again, so the user had to
+  # leave the thread for Settings > Providers.
+  @desktop @backlog @priority-low
+  Scenario: The user checks the thread's provider again from its notice
+    Given the thread shows that Codex is unavailable
+    When the user chooses "Refresh" on the notice
+    Then the thread's environment checks Codex and its models again
+    And "Refresh" cannot be chosen again until that check ends
+    And a failed check is reported the way a refresh from Settings is
 
   @desktop @backlog
   Scenario: A dismissed provider notice stays away until the problem changes

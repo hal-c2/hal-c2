@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27778
+#   https://github.com/pingdotgg/t3code/pull/28373
 #   https://github.com/pingdotgg/t3code/pull/25212
 #   https://github.com/pingdotgg/t3code/pull/27815
 #   https://github.com/pingdotgg/t3code/pull/15833
@@ -37,6 +39,8 @@
 #   apps/server/src/vcs/GitVcsDriverCore.ts (createWorktree: checkout progress, timeouts, base ref, folder name)
 #   apps/server/src/project/ProjectSetupScriptRunner.ts, WorktreeSetupTracker.ts (output cleaning and caps)
 #   https://github.com/pingdotgg/t3code/pull/23576
+#   https://github.com/pingdotgg/t3code/pull/29645
+#   https://github.com/pingdotgg/t3code/pull/23241
 
 Feature: Worktrees and setup scripts
   A thread can start in its own worktree. The MC creates it from a base ref, runs the
@@ -66,6 +70,22 @@ Feature: Worktrees and setup scripts
   Scenario: Picking the base ref for a new worktree
     When the user starts a thread in a new worktree based on "release/2"
     Then the worktree starts from "release/2"
+
+  # Upstream #23241: a base picked before the branch had loaded stayed at "main" (or a stale
+  # branch); until the user edits it, the base now follows the branch the checkout is on.
+  @backlog @shared
+  Scenario: An untouched worktree base follows the branch once it loads
+    Given the user is choosing a new worktree before the checkout's branch has loaded
+    When the checkout's branch loads as "release/stable"
+    Then the new worktree's base is "release/stable"
+
+  # Upstream #23241: a base the user edited is kept, even cleared.
+  @backlog @shared @priority-low
+  Scenario: A worktree base the user edited is kept when the branch loads
+    Given the user is choosing a new worktree before the checkout's branch has loaded
+    And the user has cleared the base
+    When the checkout's branch loads as "release/stable"
+    Then the new worktree's base is still empty
 
   @mc
   Scenario: A new worktree is made under the HAL-C2 home by default
@@ -222,6 +242,26 @@ Feature: Worktrees and setup scripts
     Then the setup fails when the limit stops git
     And nothing is still writing where the worktree was
     And neither the worktree nor its new branch is left in "shop"
+
+  # Upstream #28373: a worktree that git could not add, as when its folder already existed, left
+  # its new branch behind, so a retry with the same name failed on the branch.
+  @backlog @mc
+  Scenario: A worktree git cannot add leaves no new branch behind
+    Given the folder for the new worktree of "shop" already exists
+    When the user sends the first message of a thread in a new worktree
+    Then the setup fails with git's own error
+    And the new branch is not left in "shop"
+    And trying again with the same branch name is not refused for the branch
+
+  # Upstream #27778: git commands whose errors the MC reads forced the C locale on the hooks they
+  # ran, so a hook that needs UTF-8 failed only inside HAL-C2.
+  @backlog @mc
+  Scenario: A worktree's checkout hook runs in the user's locale
+    Given "shop" has a post-checkout hook that fails unless the locale is UTF-8
+    And the user's locale is UTF-8
+    When the user sends the first message of a thread in a new worktree
+    Then the hook passes and the worktree is ready
+    And an existing branch of the same name is still reported as already existing
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (WORKTREE_ADD_TIMEOUT_MS, WORKTREE_REMOVE_TIMEOUT_MS)
   @mc
@@ -666,6 +706,20 @@ Feature: Worktrees and setup scripts
     Given the thread works in the worktree on "feature/tax"
     When the agent asks for its worktree status
     Then it learns it is attached, with the worktree path, branch and project root
+
+  # Upstream #29645: once storage cleanup removed a thread's worktree, listing its branches said
+  # the project had no repository and no branches.
+  @backlog @mc
+  Scenario Outline: The agent lists the branches of a thread whose worktree folder is out of reach
+    Given the thread "t2" in "shop" worked in a worktree on "feature/tax"
+    And its worktree folder <state>
+    When the agent lists the branches and worktrees of "t2"
+    Then <outcome>
+
+    Examples:
+      | state                                   | outcome                                                                 |
+      | was removed by storage cleanup          | the branches of "shop" are listed from the project root                 |
+      | cannot be looked at for lack of access  | the listing fails saying why, rather than listing from the project root |
 
   @desktop
   Scenario Outline: The workspace choice is named for what it is

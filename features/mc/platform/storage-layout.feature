@@ -24,6 +24,7 @@
 #   docs/operations/development.md (State and ports)
 #   docs/user/install.md (Coming from T3 Code)
 #   https://github.com/pingdotgg/t3code/pull/15009
+#   https://github.com/pingdotgg/t3code/pull/30689
 
 Feature: Where HAL-C2 keeps its files
   HAL-C2 follows the XDG Base Directory layout on every platform. Settings, data the
@@ -256,6 +257,15 @@ Feature: Where HAL-C2 keeps its files
       When a developer asks a checkout for the installed server's pairing link
       Then the developer is told the installed server is not running
       And no pairing token is made
+
+    # Upstream #30689: `t3 pair --base-dir` with no server running for that home said to start
+    # one with a command that used the default home, so following it failed the same way.
+    @backlog @mc @priority-low
+    Scenario: Pairing a home with no server running names the start command for that home
+      Given no server is running for the HAL-C2 home "/srv/sandbox"
+      When the user runs "hal-c2 pair" for the HAL-C2 home "/srv/sandbox"
+      Then it says no running server was found
+      And the command it suggests to start one names the HAL-C2 home "/srv/sandbox"
 
     @mc
     Scenario: The installed server's own pair command never pairs with a development server
