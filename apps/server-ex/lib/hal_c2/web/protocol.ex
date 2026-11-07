@@ -67,7 +67,9 @@ defmodule HalC2.Web.Protocol do
         (a stream also takes "handle": the one its offset came with, and "window":
         {"items": n} to start with the newest runs holding n turn items or
         {"floor": f} to keep the window it has; the shell takes "have":
-        {mc: [epoch, rev]}, each MC's rows as the client holds them; a terminal takes
+        {mc: [epoch, rev]}, each MC's rows as the client holds them, and its shape
+        "omitIdleSubagents": true to leave idle subagent threads out of the
+        snapshot (`HalC2.Shell.idle_subagent?/2`); a terminal takes
         "acks": true, to answer with "ack" and have its output held back when it falls
         behind)
       {"t": "more", "id": 1, "items": n}
@@ -190,7 +192,8 @@ defmodule HalC2.Web.Protocol do
           handle: String.t() | nil,
           window: {:items, pos_integer} | {:floor, integer | nil} | nil,
           kinds: %{String.t() => map} | nil,
-          have: %{String.t() => {String.t(), non_neg_integer}}
+          have: %{String.t() => {String.t(), non_neg_integer}},
+          omit_idle_subagents: boolean
         }
 
   # The shapes a client may name by environment. The rest are about the MC a client
@@ -405,6 +408,7 @@ defmodule HalC2.Web.Protocol do
       window: window(msg["window"]),
       kinds: kinds(shape["kinds"]),
       have: have(msg["have"]),
+      omit_idle_subagents: shape["omitIdleSubagents"] == true,
       acks: msg["acks"] == true
     }
   end

@@ -587,8 +587,9 @@ defmodule HalC2.Web.Socket do
 
   # --- subscriptions -------------------------------------------------------------
 
-  defp subscribe(state, id, :shell, %{have: have}) do
-    %{mcs: mcs, rows: rows} = HalC2.Shell.subscribe(self(), have)
+  defp subscribe(state, id, :shell, %{have: have} = resume) do
+    omit = [omit_idle_subagents: Map.get(resume, :omit_idle_subagents, false)]
+    %{mcs: mcs, rows: rows} = HalC2.Shell.subscribe(self(), have, omit)
     offline = HalC2.Cluster.Discovery.offline()
 
     frame = %{

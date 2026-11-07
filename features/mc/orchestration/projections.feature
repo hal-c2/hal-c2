@@ -183,7 +183,7 @@ Feature: What the engine projects for clients
 
   # Upstream #24648: idle subagent threads were a third of every cold connect's thread list,
   # for rows the sidebar never shows.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A shell snapshot can leave out idle subagent threads
     Given "t1" has a subagent thread "t1-child" that <state>
     When a client that asks to leave out idle subagents connects
@@ -198,7 +198,7 @@ Feature: What the engine projects for clients
 
   # Upstream #24648: cold connects skip idle subagent threads, so the client reads a subagent family
   # when a thread is opened.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Opening a thread reads its subagent family
     Given the shell snapshot left out the idle subagents of "t1"
     When the user opens "t1"
@@ -293,7 +293,7 @@ Feature: What the engine projects for clients
     And the steering messages do not count as turns of their own
 
   # Upstream #24589: a turn longer than 500 rows is paged, so opening a thread starts at its newest rows.
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: Opening a thread whose turn is longer than 500 rows starts at its newest rows
     Given the last turn of "t1" holds 900 rows
     When a client asks for a bounded snapshot of "t1"
@@ -308,10 +308,10 @@ Feature: What the engine projects for clients
     When a client asks for a bounded snapshot of "t1"
     Then the snapshot holds at most 150 turns of any kind
 
-  @mc @backlog
+  @mc
   Scenario: History that records no turn starts is paged by items and size
     Given "t1" holds imported history that records no turn starts
-    When a client asks for a bounded page of the history of "t1"
+    When a client asks for a bounded snapshot of "t1"
     Then the page holds at most 75 items and about one megabyte
     And it holds at least one item, however large that item is
 
@@ -349,7 +349,7 @@ Feature: What the engine projects for clients
 
   # Upstream #22291: a question an agent asked before working on fell out of the newest turns,
   # so the sidebar said the thread needed input but the opened thread showed nothing to answer.
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: An open question older than the newest turns still opens its answer panel
     Given the agent in "t1" asked a question and kept working long after
     When the user opens "t1"
@@ -357,7 +357,7 @@ Feature: What the engine projects for clients
     And once the question is answered the snapshot no longer carries it
 
   # Upstream #26435: the window left no room for a large pending card, so it fell out.
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A large open question fits a bounded snapshot beside the newest history
     Given the agent in "t1" asked a question with a large card early in a very long history
     When a client asks for a bounded snapshot of "t1"
@@ -366,7 +366,7 @@ Feature: What the engine projects for clients
 
   # Upstream #31266: one stored Stop request counted as a pending card and turned the history
   # floor off, so a thread full of runs and checkpoint file lists opened with one row.
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A thread that was stopped once still opens with its newest turns
     Given "t1" was stopped once and its runs and checkpoint file lists fill most of a snapshot
     When a client asks for a bounded snapshot of "t1"
@@ -425,7 +425,7 @@ Feature: What the engine projects for clients
 
   # Upstream #28418: the marker went on after the cap, so cut text was over it, and cutting it again
   # added a line on each pass; a live update could differ from the same item in a snapshot.
-  @backlog @mc
+  @mc
   Scenario: Cut subagent text fits the limit with its marker and reads the same live and in a snapshot
     Given a subagent in "t1" has a prompt in Japanese longer than 32,768 bytes
     When a client follows "t1" and another client reads "t1" afresh
