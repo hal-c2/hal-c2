@@ -1392,6 +1392,7 @@ defmodule HalC2.Test.Mc.World do
         ],
         do: Mc.ensure(Supervisor.child_spec({Registry, keys: :unique, name: name}, id: name))
 
+    Mc.ensure(HalC2.WorkspaceLease)
     Mc.ensure(HalC2.StorageCleanup)
     context
   end
@@ -1409,6 +1410,23 @@ defmodule HalC2.Test.Mc.World do
   scenario ends.
   """
   def open_terminal(thread_id, cwd, terminal_id \\ "term-1") do
+    start_terminals()
+
+    {:ok, %{"pid" => shell}} =
+      HalC2.Terminal.open(%{"threadId" => thread_id, "terminalId" => terminal_id, "cwd" => cwd})
+
+    ExUnit.Callbacks.on_exit(fn ->
+      System.cmd("kill", ["-9", "#{shell}"], stderr_to_stdout: true)
+    end)
+
+    shell
+  end
+
+  @doc """
+  Starts the terminal services (registry, supervisor, hub) and the workspace leases
+  terminals take while they start, if the scenario has not, with `/bin/sh` as the shell.
+  """
+  def start_terminals do
     put_env("SHELL", "/bin/sh")
 
     Mc.ensure(
@@ -1419,15 +1437,8 @@ defmodule HalC2.Test.Mc.World do
 
     Mc.ensure({DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one})
     Mc.ensure(HalC2.Terminal.Hub)
-
-    {:ok, %{"pid" => shell}} =
-      HalC2.Terminal.open(%{"threadId" => thread_id, "terminalId" => terminal_id, "cwd" => cwd})
-
-    ExUnit.Callbacks.on_exit(fn ->
-      System.cmd("kill", ["-9", "#{shell}"], stderr_to_stdout: true)
-    end)
-
-    shell
+    Mc.ensure(HalC2.WorkspaceLease)
+    :ok
   end
 
   @doc "The output tokens a usage summary counts for `provider` across its buckets."
@@ -4616,6 +4627,7 @@ defmodule HalC2.Test.Mc.Host do
         real = path(context, "/home/sam")
         File.mkdir_p!(real)
         previous = System.get_env("HOME")
+        keep_mise(previous)
         System.put_env("HOME", real)
         ExUnit.Callbacks.on_exit(fn -> System.put_env("HOME", previous) end)
         Process.put({__MODULE__, :home}, real)
@@ -4623,6 +4635,25 @@ defmodule HalC2.Test.Mc.Host do
 
       real ->
         real
+    end
+  end
+
+  # The fake tools a scenario runs start through `#!/usr/bin/env python3` and the like,
+  # which on a machine with mise shims is mise. Under the scenario's `$HOME` mise would
+  # look for its installs and trust records there, and refuse the real user's config it
+  # still finds above the working directory. Its own directories stay the real ones.
+  defp keep_mise(nil), do: :ok
+
+  defp keep_mise(home) do
+    for {name, xdg, default} <- [
+          {"MISE_CONFIG_DIR", "XDG_CONFIG_HOME", ".config"},
+          {"MISE_DATA_DIR", "XDG_DATA_HOME", ".local/share"},
+          {"MISE_STATE_DIR", "XDG_STATE_HOME", ".local/state"},
+          {"MISE_CACHE_DIR", "XDG_CACHE_HOME", ".cache"}
+        ],
+        System.get_env(name) == nil do
+      System.put_env(name, Path.join(System.get_env(xdg) || Path.join(home, default), "mise"))
+      ExUnit.Callbacks.on_exit(fn -> System.delete_env(name) end)
     end
   end
 end

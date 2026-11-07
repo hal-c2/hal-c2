@@ -214,9 +214,12 @@ defmodule HalC2.Acp do
     with {driver, instance} <- instance(id),
          {:ok, base} <- base_entry(id, driver, instance) do
       enabled = enabled?(id)
+      # Off on this MC but on for some project, it is read as an enabled one is, so
+      # that project's turns can run on it.
+      checked? = enabled or HalC2.Settings.provider_on_in_a_project?(id)
       models = :persistent_term.get({__MODULE__, id, :models}, nil)
       failure = :persistent_term.get({__MODULE__, id, :error}, nil)
-      if enabled and models == nil and failure == nil, do: load_once(id)
+      if checked? and models == nil and failure == nil, do: load_once(id)
 
       Map.merge(
         %{
@@ -228,7 +231,7 @@ defmodule HalC2.Acp do
           "version" => :persistent_term.get({__MODULE__, id, :version}, nil),
           "status" =>
             cond do
-              not enabled -> "disabled"
+              not checked? -> "disabled"
               failure -> "error"
               empty_catalog?(driver, models) -> "warning"
               true -> "ready"
@@ -1368,7 +1371,7 @@ defmodule HalC2.Acp do
     # Forgotten and started in one step, so no listing in between starts a read of
     # its own that would supersede this one (#459). A settings change that disables
     # the instance meanwhile forgets it after, which drops this read's generation.
-    enabled = enabled?(id)
+    enabled = enabled?(id) or HalC2.Settings.provider_on_in_a_project?(id)
 
     case locked(id, fn ->
            forget_now(id)

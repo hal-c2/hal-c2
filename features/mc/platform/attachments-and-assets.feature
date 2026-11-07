@@ -109,7 +109,7 @@ Feature: Attachments and assets served by the MC
     When the client sends a message naming all of them
     Then the message fails before any upload is claimed into the thread
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A message whose attachments cannot all be claimed claims none of them
     Given the client uploaded two images
     When the client sends a message naming both and the second cannot be claimed
@@ -117,7 +117,7 @@ Feature: Attachments and assets served by the MC
     And the first image does not belong to the thread
     And both uploads can still be sent again
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A message the MC refuses after claiming its uploads gives them back
     Given the client uploaded an image
     When the client sends a message naming that upload and the MC refuses the message
@@ -173,8 +173,7 @@ Feature: Attachments and assets served by the MC
   # Legacy: apps/server/src/assets/AttachmentUpload.ts (deletePendingAttachment),
   #   apps/server/src/assets/AttachmentUpload.test.ts (deletes pending uploads without deleting
   #   thread-owned copies)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/attachments.ex (delete)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Removing an upload never removes a thread's copy
     Given an upload that is still pending and the same image already stored with a thread
     When a client deletes the pending upload twice and then deletes the thread's attachment id
@@ -226,8 +225,7 @@ Feature: Attachments and assets served by the MC
     When the client sends a message with pasted images inline
     Then the MC stores them as thread attachments
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/attachments.ex (persist)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A pasted image that is not what it claims to be is refused
     When the client sends a message with a pasted image <problem>
     Then the message fails naming the image
@@ -247,8 +245,7 @@ Feature: Attachments and assets served by the MC
     Then the thread has the image once
     And the second send finds the stored image under the same attachment id
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/attachments.ex (id_suffix)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A file the MC cannot name safely is stored as a binary file
     Given the client uploads a file named <name>
     When the client sends a message naming that upload
@@ -274,8 +271,7 @@ Feature: Attachments and assets served by the MC
     Then the message fails saying the attachment must be a pending upload
     And the image still belongs to its first thread
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/attachments.ex (safe_id?)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: An attachment id that points outside the attachment store finds nothing
     When a client asks for the attachment <id>
     Then the MC answers that no such attachment exists
@@ -389,8 +385,7 @@ Feature: Attachments and assets served by the MC
 
   # Legacy: apps/server/src/assets/AssetAccess.ts (resolveAsset: signature, expiry),
   #   apps/server/src/assets/AssetAccess.test.ts (tampered tokens)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/attachments.ex (verify)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A signed URL that was altered is not served
     Given a signed URL for a media file on the host
     When the client reads the URL with <change>
@@ -403,8 +398,7 @@ Feature: Attachments and assets served by the MC
       | its payload swapped for another URL's    |
 
   # Legacy: apps/server/src/assets/AssetAccess.ts (SIGNING_SECRET_NAME, getOrCreateRandom)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/attachments.ex (secret)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A signed URL still works after the MC restarts
     Given a signed URL for a project file
     When the MC restarts
@@ -455,8 +449,7 @@ Feature: Attachments and assets served by the MC
   # Legacy: apps/server/src/assets/AssetAccess.ts (PROJECT_FAVICON_TOKEN_BUCKET_MS, content-hash file
   #   name), apps/server/src/assets/AssetAccess.test.ts (issues project favicon capabilities ...;
   #   buckets project favicon expiry after content hashing)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/attachments.ex (favicon_expiry, "v<sha256>-")
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A favicon's URL stays the same until the icon changes
     Given a signed URL for a project's favicon
     When a client asks for the project's favicon URL again within half an hour
@@ -486,8 +479,7 @@ Feature: Attachments and assets served by the MC
 
   # Legacy: apps/server/src/assets/AssetAccess.test.ts (rejects a resolved project favicon with a
   #   non-image extension)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/attachments.ex (@image_extensions)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A saved icon that is not an image is refused
     Given the user saved "secret.txt" as the project's icon
     When a client asks for the project's favicon URL
@@ -508,9 +500,7 @@ Feature: Attachments and assets served by the MC
 
   # Legacy: apps/server/src/assets/NativeAppIconResolver.ts (resolveApplicationPath,
   #   resolveNativeAppIconUncached; macOS only)
-  # Likely already implemented on Linux: apps/server-ex/lib/hal_c2/attachments/app_icon.ex (desktop
-  #   entries); the macOS lookup below is not
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: On macOS the MC finds an application's icon in its bundle
     Given the MC runs on macOS and Spotlight knows <apps>
     When a client asks for the icon of the application <reference>
@@ -551,8 +541,7 @@ Feature: Attachments and assets served by the MC
 
   # Legacy: apps/server/src/assets/NativeAppIconResolver.ts (containsControlCharacter,
   #   escapeSpotlightString)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/attachments/app_icon.ex (resolve)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: An application name that cannot be searched safely finds no icon
     When a client asks for the icon of the application named <name>
     Then the MC does not search the host with it as part of a query
@@ -577,8 +566,7 @@ Feature: Attachments and assets served by the MC
 
   # Legacy: apps/server/src/assets/AssetAccess.ts (github-media case), packages/shared/src/githubMedia.ts,
   #   apps/server/src/assets/AssetAccess.test.ts (serves GitHub-hosted pull request media ...)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/attachments/github_media.ex (fetch_url)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A GitHub media address is checked when its URL is issued
     When the client asks for an asset URL for the GitHub media address <address>
     Then <result>
@@ -597,16 +585,14 @@ Feature: Attachments and assets served by the MC
       | https://github.com/owner/repo/blob/main/                                 | the MC fails with AssetGitHubMediaUrlValidationError            |
 
   # Legacy: apps/server/src/assets/AssetAccess.test.ts (the error never carries the rejected URL)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/attachments.ex (asset_claims github-media)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A refused GitHub media address is not repeated in the error
     When the client asks for an asset URL for "https://example.com/shot.png?token=private-media-token"
     Then the failure does not contain the address or its token
 
   # Legacy: apps/server/src/assets/GitHubMediaFetch.ts (githubToken: no credential is not cached),
   #   apps/server/src/assets/AssetAccess.test.ts (loads private media immediately after login)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/attachments/github_media.ex (token)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Signing in to GitHub takes effect on the next media request
     Given the host's GitHub CLI is not signed in
     And a private repository image is signed for a client
@@ -618,8 +604,7 @@ Feature: Attachments and assets served by the MC
     And the next requests reuse the credential without asking the CLI again
 
   # Legacy: apps/server/src/assets/GitHubMediaFetch.ts (githubMediaResponse)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/attachments/github_media.ex (serve, fetch)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: GitHub's answer to a media request is passed on or refused
     Given GitHub answers a media request with <upstream>
     When a client reads the media URL
@@ -636,8 +621,7 @@ Feature: Attachments and assets served by the MC
 
   # Legacy: apps/server/src/assets/GitHubMediaFetch.ts (FORWARDED_REQUEST_HEADERS,
   #   FORWARDED_RESPONSE_HEADERS, cache-control from the URL's remaining life)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/attachments/github_media.ex (serve)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A seek in GitHub-hosted video costs one range request upstream
     Given a signed URL for a video hosted on GitHub
     When a player asks for "bytes=100-199"

@@ -1889,7 +1889,7 @@ Red"} <- StreamState.get(state, "message")[message],
     context
   end
 
-  step "the turn starts", context do
+  step "its first turn starts", context do
     context = World.launch_on(context, @thread, "codex", "hello")
     World.await_runs(context, @thread, ["completed"])
     context

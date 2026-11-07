@@ -1980,6 +1980,65 @@ private slots:
     }));
   }
 
+  // A finished run's row, as the MC's shell projection sends it: the run's
+  // own status, why it failed (`lastErrorClass`), the background work it
+  // still waits on (`pendingBackgroundTasks`, the holding subset) and
+  // everything still running beside it (`runningBackgroundTasks`, which
+  // keeps the provider process alive but does not hold the thread).
+  void aUsageLimitBeatsTheBackgroundWorkItLeft() {
+    QVERIFY(rc::check("a run stopped on a usage limit reads limited, not waiting on its background work", [] {
+      const std::string runStatus = *rc::gen::elementOf(std::vector<std::string>{"failed", "failed", "completed", "interrupted", "cancelled"});
+      const std::string errorClass =
+          *rc::gen::elementOf(std::vector<std::string>{"", "usage_limit", "usage_limit", "provider_error", "auth"});
+      const int pending = *rc::gen::inRange(0, 3);
+      const int running = *rc::gen::inRange(0, 3);
+      RC_TAG(runStatus + "/" + (errorClass.empty() ? "no-error" : errorClass));
+
+      QJsonArray holding, stillRunning;
+      for (int i = 0; i < pending; ++i) holding.append(QJsonObject{{QStringLiteral("taskId"), QStringLiteral("held-%1").arg(i)}});
+      for (int i = 0; i < running; ++i) stillRunning.append(QJsonObject{{QStringLiteral("taskId"), QStringLiteral("run-%1").arg(i)}});
+      QJsonObject row{{QStringLiteral("id"), QStringLiteral("t1")},
+                      {QStringLiteral("projectId"), QStringLiteral("p1")},
+                      {QStringLiteral("title"), QStringLiteral("Alpha")},
+                      {QStringLiteral("createdAt"), iso(0)},
+                      {QStringLiteral("updatedAt"), iso(1)},
+                      {QStringLiteral("latestRunId"), QStringLiteral("r1")},
+                      {QStringLiteral("latestRunRequestedAt"), iso(0)},
+                      {QStringLiteral("latestRunStartedAt"), iso(0)},
+                      {QStringLiteral("latestRunCompletedAt"), iso(1)},
+                      {QStringLiteral("status"), q(runStatus)},
+                      {QStringLiteral("pendingBackgroundTasks"), holding},
+                      {QStringLiteral("runningBackgroundTasks"), stillRunning}};
+      if (!errorClass.empty()) row.insert(QStringLiteral("lastErrorClass"), q(errorClass));
+
+      const sidebar::Thread thread = sidebar::threadFromRow(QStringLiteral("env-a"), row);
+      RC_ASSERT(bool(thread.runtime));
+      // Only the work the agent waits on counts, however much else runs.
+      RC_ASSERT(thread.pendingBackgroundTasks == pending);
+      const bool limited = runStatus == "failed" && errorClass == "usage_limit";
+      if (pending > 0 && limited) {
+        // The limit is what needs the user: its row says so, and it stays
+        // in the inbox with its recovery actions instead of Waiting in
+        // the Working section.
+        RC_ASSERT(thread.runtime->status == QLatin1String("failed"));
+        RC_ASSERT(sidebar::status(thread) == QLatin1String("limited"));
+        RC_ASSERT(sidebar::statusLabel(thread) != sidebar::Nullable(QStringLiteral("Waiting")));
+        RC_ASSERT(!sidebar::working(thread));
+      } else if (pending > 0) {
+        // Any other finished run with work it waits on parks at idle.
+        RC_ASSERT(thread.runtime->status == QLatin1String("idle"));
+        RC_ASSERT(sidebar::status(thread) == QLatin1String("waiting"));
+        RC_ASSERT(sidebar::statusLabel(thread) == sidebar::Nullable(QStringLiteral("Waiting")));
+        RC_ASSERT(sidebar::working(thread));
+      } else {
+        // Nothing it waits on: the run's own status stands, limited or not.
+        RC_ASSERT(thread.runtime->status == q(runStatus));
+        RC_ASSERT(sidebar::status(thread) != QLatin1String("waiting"));
+        if (limited) RC_ASSERT(sidebar::status(thread) == QLatin1String("limited"));
+      }
+    }));
+  }
+
   void reorderPutsTheRowWhereItWasDropped() {
     QVERIFY(rc::check("planReorder's keys sort the shown rows as ordered, past the hidden ones", [] {
       const bool pinned = *rc::gen::arbitrary<bool>();

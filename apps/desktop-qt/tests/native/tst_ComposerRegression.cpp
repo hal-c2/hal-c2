@@ -60,6 +60,9 @@ struct Shell {
       for (const QJsonObject& message : messages.value(shape.value(QLatin1String("stream")).toString())) {
         rows.append(QJsonArray{QStringLiteral("message"), message.value(QLatin1String("id")), message});
       }
+      for (const QJsonObject& session : sessions) {
+        rows.append(QJsonArray{QStringLiteral("provider-session"), session.value(QLatin1String("id")), session});
+      }
       mc.send({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), id}, {QStringLiteral("part"), 0},
                {QStringLiteral("rows"), rows}, {QStringLiteral("done"), true}, {QStringLiteral("offset"), 0},
                {QStringLiteral("floor"), QJsonValue::Null}, {QStringLiteral("handle"), QStringLiteral("log-1")}});
@@ -168,6 +171,8 @@ struct Shell {
   QString key = QStringLiteral("env-a:t1");
   int revision = 0;
   QHash<QString, QList<QJsonObject>> messages;
+  // The thread's provider sessions, as its stream sends them.
+  QList<QJsonObject> sessions;
   // While set, what the MC answers never reached it.
   bool losing = false;
 };
@@ -766,6 +771,142 @@ private slots:
     shell.bridge->dispatch(QStringLiteral("thread.new"), QVariantMap{});
     QTRY_COMPARE(draftOpen(), draftId);
     QTRY_VERIFY(shows(QStringLiteral("gpt-b"), QStringLiteral("plan")));
+  }
+
+  // Sessions are keyed per instance and a provider switch keeps the old
+  // one, so a thread that moved from a non-steering provider to Codex held
+  // both sessions and canSteerActive read them all: the old session alone
+  // forced Queue for good. Only the current instance's session matters.
+  void aSwitchedThreadsOldSessionDoesNotBlockSteering() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    const auto session = [](const QString& instance, bool steers) {
+      return QJsonObject{
+          {QStringLiteral("id"), QStringLiteral("provider-session:%1:t1").arg(instance)},
+          {QStringLiteral("providerInstanceId"), instance},
+          {QStringLiteral("status"), QStringLiteral("ready")},
+          {QStringLiteral("capabilities"),
+           QJsonObject{{QStringLiteral("turns"), QJsonObject{{QStringLiteral("supportsActiveSteering"), steers}}}}}};
+    };
+    shell.sessions = {session(QStringLiteral("antigravity"), false), session(QStringLiteral("codex"), true)};
+    const auto onInstance = [&](const QString& instance) {
+      QJsonObject row = shell.mc.threads.value(QStringLiteral("t1"));
+      row.insert(QStringLiteral("modelSelection"),
+                 QJsonObject{{QStringLiteral("instanceId"), instance}, {QStringLiteral("model"), QStringLiteral("gpt-a")}});
+      shell.mc.threads.insert(QStringLiteral("t1"), row);
+      shell.mc.sendRow(QStringLiteral("t1"), row);
+    };
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    onInstance(QStringLiteral("codex"));
+    QVERIFY(shell.open());
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("canSteer")).toBool(), true);
+
+    // On the non-steering instance the same two sessions refuse steering.
+    onInstance(QStringLiteral("antigravity"));
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("canSteer")).toBool(), false);
+  }
+
+  // Taking a carried thread's chip off dropped its record but left the
+  // [@title](hal-c2-context://v1/thread/...) link selectSuggestion put in
+  // the draft, so the send carried a link with no record behind it.
+  void removingAThreadChipStripsItsLinkFromTheDraft() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QJsonObject other = shell.mc.threads.value(QStringLiteral("t1"));
+    other.insert(QStringLiteral("id"), QStringLiteral("t2"));
+    other.insert(QStringLiteral("title"), QStringLiteral("Other thread"));
+    shell.mc.threads.insert(QStringLiteral("t2"), other);
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    shell.mc.sendRow(QStringLiteral("t2"), other);
+    QVERIFY(shell.open());
+    shell.type(QStringLiteral("look @"));
+    QTRY_VERIFY(std::any_of(shell.composerState().value(QStringLiteral("suggestions")).toList().cbegin(),
+                            shell.composerState().value(QStringLiteral("suggestions")).toList().cend(), [](const QVariant& entry) {
+                              return entry.toMap().value(QStringLiteral("id")).toString() == QLatin1String("thread:env-a:t2");
+                            }));
+    shell.bridge->dispatch(QStringLiteral("composer.suggest.select"),
+                           QVariantMap{{QStringLiteral("id"), QStringLiteral("thread:env-a:t2")}});
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("threadContexts")).toList().size(), 1);
+    QVERIFY(shell.composerState().value(QStringLiteral("text")).toString().contains(
+        QStringLiteral("[@Other thread](hal-c2-context://v1/thread/thread_")));
+    const auto chipId = [&shell] {
+      return shell.composerState()
+          .value(QStringLiteral("threadContexts"))
+          .toList()
+          .constFirst()
+          .toMap()
+          .value(QStringLiteral("id"))
+          .toString();
+    };
+    const auto place = [&shell](const QString& text, int cursor) {
+      shell.bridge->dispatch(QStringLiteral("composer.text.set"), QVariantMap{{QStringLiteral("target"), shell.key},
+                                                                               {QStringLiteral("edit"), shell.edit()},
+                                                                               {QStringLiteral("text"), text},
+                                                                               {QStringLiteral("cursor"), cursor}});
+    };
+    // More words after the link, the caret among them: stripping the link
+    // before the caret shifts it back by the link's length, not forward
+    // into the words after it.
+    const QString linked = shell.composerState().value(QStringLiteral("text")).toString();
+    place(linked + QStringLiteral("please and more"), int(linked.size()) + 6);
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("cursor")).toInt(), int(linked.size()) + 6);
+
+    // What the chip's click sends (Composer.qml).
+    shell.bridge->dispatch(QStringLiteral("composer.terminalContext.remove"), QVariantMap{{QStringLiteral("id"), chipId()}});
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("threadContexts")).toList().size(), 0);
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("text")).toString(), QStringLiteral("look please and more"));
+    QCOMPARE(shell.composerState().value(QStringLiteral("cursor")).toInt(), int(QStringLiteral("look please").size()));
+
+    // Again, with the caret inside the link: it lands where the link started.
+    place(QStringLiteral("look please @ and more"), 13);
+    QTRY_VERIFY(std::any_of(shell.composerState().value(QStringLiteral("suggestions")).toList().cbegin(),
+                            shell.composerState().value(QStringLiteral("suggestions")).toList().cend(), [](const QVariant& entry) {
+                              return entry.toMap().value(QStringLiteral("id")).toString() == QLatin1String("thread:env-a:t2");
+                            }));
+    shell.bridge->dispatch(QStringLiteral("composer.suggest.select"),
+                           QVariantMap{{QStringLiteral("id"), QStringLiteral("thread:env-a:t2")}});
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("threadContexts")).toList().size(), 1);
+    const QString relinked = shell.composerState().value(QStringLiteral("text")).toString();
+    place(relinked, int(relinked.indexOf(QStringLiteral("[@"))) + 3);
+    shell.bridge->dispatch(QStringLiteral("composer.terminalContext.remove"), QVariantMap{{QStringLiteral("id"), chipId()}});
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("text")).toString(), QStringLiteral("look please and more"));
+    QCOMPARE(shell.composerState().value(QStringLiteral("cursor")).toInt(), int(QStringLiteral("look please").size()));
+  }
+
+  // On an environment without file attachments, the refusal also caught a
+  // large paste: turned into pasted-text.txt it has no base64, so it was
+  // skipped with a toast and the pasted words were lost. They go inline.
+  void aLargePasteGoesInlineWhereFilesAreRefused() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    shell.mc.capabilities.remove(QStringLiteral("fileAttachments"));
+    shell.mc.announceEnvironment();
+    QTRY_VERIFY(!shell.native->store()->acceptsFileAttachments(QStringLiteral("env-a")));
+    QVERIFY(shell.open());
+    shell.type(QStringLiteral("before "));
+    const auto attach = [&shell](const QVariantMap& file) {
+      shell.bridge->dispatch(QStringLiteral("composer.attach"), QVariantMap{{QStringLiteral("files"), QVariantList{file}}});
+    };
+    const auto toastTitles = [&shell] {
+      QStringList titles;
+      for (const QVariant& toast : shell.bridge->state()->value(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList()) {
+        titles.append(toast.toMap().value(QStringLiteral("title")).toString());
+      }
+      return titles;
+    };
+    attach({{QStringLiteral("name"), QStringLiteral("pasted-text.txt")},
+            {QStringLiteral("mimeType"), QStringLiteral("text/plain")},
+            {QStringLiteral("text"), QStringLiteral("a very long paste")}});
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("text")).toString(), QStringLiteral("before a very long paste"));
+    QCOMPARE(shell.composerState().value(QStringLiteral("attachments")).toList().size(), 0);
+    QVERIFY(!toastTitles().contains(QStringLiteral("File not attached")));
+
+    // A chosen file is still refused, and the draft keeps its words.
+    attach({{QStringLiteral("name"), QStringLiteral("notes.bin")}, {QStringLiteral("path"), QStringLiteral("/work/shop/notes.bin")}});
+    QTRY_VERIFY(toastTitles().contains(QStringLiteral("File not attached")));
+    QCOMPARE(shell.composerState().value(QStringLiteral("text")).toString(), QStringLiteral("before a very long paste"));
+    QCOMPARE(shell.composerState().value(QStringLiteral("attachments")).toList().size(), 0);
   }
 };
 

@@ -109,7 +109,8 @@ Nullable visibleWokeAt(const Thread& thread, qint64 nowMs);
 
 // Whether the thread is busy for the Working section: its run is going or
 // connecting, or it waits on background work it resumes from. Not while it
-// asks for an approval or an answer, nor with a plan to review.
+// asks for an approval or an answer, nor with a plan to review, nor when its
+// run stopped on a usage limit.
 bool working(const Thread& thread);
 
 // How long a thread that stopped working stays in the Working section: a run
