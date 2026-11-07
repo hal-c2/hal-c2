@@ -111,6 +111,8 @@ export interface ComposerOptions {
   readonly mode: () => TuiMode;
   readonly setMode: (mode: TuiMode) => void;
   readonly chatWidth: () => number;
+  /** "Add project" in the new thread's project picker. */
+  readonly addProject?: () => void;
   /** `VISUAL` / `EDITOR` for Ctrl+G. */
   readonly env: { readonly VISUAL?: string | undefined; readonly EDITOR?: string | undefined };
   readonly homeDir: string;
@@ -313,6 +315,8 @@ export interface TuiSelectState {
   /** The picker has a search field; `query` is what was typed into it. */
   readonly searchable: boolean;
   readonly query: string;
+  /** What the list reads while it has no option to show. */
+  readonly emptyText: string;
   /**
    * The options in view, as SelectOverlay draws them: a window around the
    * highlighted one, each its marked name over its description (when that
@@ -394,12 +398,18 @@ export interface PickRequest {
   readonly returnMode?: TuiMode;
   /** A search field above the options: typing narrows them by label and description. */
   readonly searchable?: boolean;
+  /** What the list reads when a search leaves nothing ("nothing to choose" unless given). */
+  readonly noMatchText?: string;
+  /** Listed last while the search field is empty, and never found by a search. */
+  readonly trailing?: PickRequest["options"][number];
 }
 
 const EMPTY_DRAFT: Draft = { text: "", images: [] };
 // The project-scope picker's "All projects" value.
 const ALL_PROJECTS = "__all__";
 const NEW_TARGET = "new";
+// The new thread's project picker's last option.
+const ADD_PROJECT = "__add-project__";
 
 const threadTarget = (threadId: string) => `thread:${threadId}`;
 
@@ -1055,6 +1065,10 @@ export function createComposer(options: ComposerOptions): Composer {
           index: picker.index,
           searchable: picker.request?.searchable === true,
           query: picker.query ?? "",
+          emptyText:
+            picker.query && picker.request?.noMatchText
+              ? picker.request.noMatchText
+              : "nothing to choose",
           rows: selectRows(picker),
         }
       : {
@@ -1066,6 +1080,7 @@ export function createComposer(options: ComposerOptions): Composer {
           index: 0,
           searchable: false,
           query: "",
+          emptyText: "nothing to choose",
           rows: [],
         };
   const pickerRows = () =>
@@ -1082,6 +1097,7 @@ export function createComposer(options: ComposerOptions): Composer {
           option.label.toLowerCase().includes(needle) ||
           (option.description ?? "").toLowerCase().includes(needle),
       )
+      .concat(needle === "" && spec.trailing ? [spec.trailing] : [])
       .map(selectOption);
     picker = {
       ...picker,
@@ -1171,7 +1187,9 @@ export function createComposer(options: ComposerOptions): Composer {
     description: option.description ?? "",
   });
   const pick: Composer["pick"] = (request) => {
-    const list = request.options.map(selectOption);
+    const list = [...request.options, ...(request.trailing ? [request.trailing] : [])].map(
+      selectOption,
+    );
     openPicker({
       request,
       kind: "choice",
@@ -1325,6 +1343,60 @@ export function createComposer(options: ComposerOptions): Composer {
       ],
       index: newDraft.workspaceMode === "current" ? 0 : 1,
     });
+  };
+
+  /**
+   * The new thread's project picker: this machine's projects, searchable, and "Add
+   * project" last while nothing is typed. Moving the draft lets go of its branch and
+   * worktree (they were the old project's) and keeps how it will work.
+   */
+  const openProjectPicker = () => {
+    if (!newDraft || switchPending || toggles("choice")) return;
+    const list = projects();
+    pick({
+      title: "project",
+      searchable: true,
+      noMatchText: "No matching projects.",
+      options: list.map((project) => ({
+        label: project.title,
+        description: project.workspaceRoot,
+        value: project.id,
+      })),
+      ...(options.addProject
+        ? { trailing: { label: "Add project", description: "", value: ADD_PROJECT } }
+        : {}),
+      index: Math.max(
+        0,
+        list.findIndex((project) => project.id === newDraft?.projectId),
+      ),
+      onChoose: (value) => {
+        if (value === ADD_PROJECT) options.addProject?.();
+        else setDraftProject(value);
+      },
+    });
+  };
+
+  const setDraftProject = (projectId: string) => {
+    const draft = newDraft;
+    const project = projects().find((candidate) => candidate.id === projectId);
+    if (!draft || !project || switchPending) return;
+    if (draft.projectId !== projectId) {
+      newDraft = {
+        ...draft,
+        projectId,
+        branch: null,
+        worktreePath: null,
+        contextWorktreePath: null,
+        refs: [],
+        refsStatus: "loading",
+        workspaceChosen: false,
+      };
+      client.viewProject(projectId);
+      void loadRefs(draft.draftId, project.workspaceRoot);
+    }
+    store.setStatus(`Project → ${project.title}`, "success");
+    publish();
+    options.onDraftChange?.();
   };
 
   const branchOptions = (refs: ReadonlyArray<VcsRef>): SelectOption[] =>
@@ -2663,6 +2735,9 @@ export function createComposer(options: ComposerOptions): Composer {
         return true;
       case "composer.branchPicker.toggle":
         openBranchPicker();
+        return true;
+      case "composer.projectPicker.toggle":
+        openProjectPicker();
         return true;
       case "sidebar.scopePicker.toggle":
         openProjectScopePicker();
