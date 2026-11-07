@@ -13,6 +13,11 @@
 #   https://github.com/pingdotgg/t3code/pull/16719
 #   https://github.com/pingdotgg/t3code/pull/17129
 #   https://github.com/pingdotgg/t3code/pull/17130
+#   https://github.com/pingdotgg/t3code/pull/28491
+#   https://github.com/pingdotgg/t3code/pull/28387
+#   https://github.com/pingdotgg/t3code/pull/29914
+#   https://github.com/pingdotgg/t3code/pull/29847
+#   https://github.com/pingdotgg/t3code/pull/29779 (dropped)
 #
 # Dropped, every scenario: two MCs connect only by clustering (Erlang distribution over
 # mutual TLS, cluster.feature). A websocket is how a client talks to its MC, never how one
@@ -35,6 +40,14 @@ Feature: Linking an MC to environments outside its cluster
     When the user runs the link task with a pairing link from "beast"
     Then the MC lists "beast" as a linked environment that is online
     And the MC's clients see "beast" among its links
+
+  # Upstream #29779: a linked environment kept the other machine's name from when it was linked,
+  # even after that machine was renamed.
+  @dropped @mc
+  Scenario: A linked environment shows the other machine's name after it is renamed
+    Given the MC is linked to "beast"
+    When "beast" is renamed "forge" and restarts
+    Then the MC lists the link as "forge"
 
   @dropped @mc
   Scenario: A pairing link that was already used is refused
@@ -245,6 +258,15 @@ Feature: Linking an MC to environments outside its cluster
     When "beast" stops
     Then the MC lists "beast" as a linked environment that is unreachable
 
+  # Upstream #29914: a linked environment that refused one tool call was marked as failing;
+  # dropped with links, as machines in the cluster need none.
+  @dropped @mc
+  Scenario: A linked environment that refuses one call is still listed as answering
+    Given the MC is linked to "beast"
+    When an agent's call through the link is refused by "beast"
+    Then the agent gets the refusal with "beast"'s own code
+    And the MC still lists "beast" as a linked environment that answered
+
   @dropped @shared
   Scenario: The user links the MC from its connection settings
     Given the user has a pairing link from "beast"
@@ -354,6 +376,10 @@ Feature: Linking an MC to environments outside its cluster
     And the agent is woken by its result as for a local task
 
   # Upstream #17129: the agent set up a link itself, asking with a card for the machine and access.
+  # Upstream #28491: a link card nobody answered stops marking the thread as waiting for input once
+  # the user writes in it again; dropped with links, as machines in the cluster need none.
+  # Upstream #28387: asking again for a link that has since been made closes the waiting card.
+  # Upstream #29847: a link card the user moved past kept the thread from settling on its own.
   @dropped @mc @shared
   Scenario: An agent asks to link to another environment
     When the user asks the agent to delegate the work to "my box"

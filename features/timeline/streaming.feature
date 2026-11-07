@@ -36,6 +36,10 @@
 #   apps/desktop-qt/src/native/TimelineModel.cpp (the thread's cursor, a catch-up applied whole)
 #   apps/server-ex/lib/hal_c2/streams/server.ex (resuming from an offset, a catch-up in several parts)
 #   https://github.com/pingdotgg/t3code/pull/23679
+#   https://github.com/pingdotgg/t3code/pull/28285
+#   https://github.com/pingdotgg/t3code/pull/28610
+#   https://github.com/pingdotgg/t3code/pull/29166
+#   https://github.com/pingdotgg/t3code/pull/29680
 
 Feature: Streaming the agent's reply
   While a turn runs, the agent's text and reasoning arrive as they are written. When the
@@ -154,6 +158,15 @@ Feature: Streaming the agent's reply
     When the turn completes after 2 minutes
     Then the tool calls fold behind "Worked for 2m"
     And the answer stays visible
+
+  # Upstream #29166: opening the folded work at the bottom of the timeline kept the timeline at the
+  # bottom and pushed the heading out of view.
+  @backlog @shared
+  Scenario: Opening folded work keeps its heading where it was
+    Given the user is at the bottom of the timeline
+    When the user opens "Worked for 2m"
+    Then the "Worked for 2m" heading stays where it was
+    And the work opens below it
 
   # Upstream #21393: the phone left the agent's progress notes beside the final answer.
   @backlog @shared
@@ -351,6 +364,15 @@ Feature: Streaming the agent's reply
     Then the 10 finished paragraphs are not parsed or drawn again
     And once the reply finishes it is shown whole
 
+  # Upstream #28285: a list item's code block whose closing fence sat at the line start was cut
+  # early while streaming, so the reply jumped when it finished.
+  @backlog @shared @priority-low
+  Scenario: A streaming reply shows a list item's code block as the finished reply will
+    Given a streaming reply has a list item whose code block is closed by a fence at the line start
+    When text after the fence streams in
+    Then the reply is shown as it will be once finished
+    And it does not change its layout when the turn ends
+
   # Upstream #27418: the git actions panel redrew with its menus on every streamed update.
   @backlog @shared @priority-low
   Scenario: The git actions do not redraw while a reply streams
@@ -365,6 +387,17 @@ Feature: Streaming the agent's reply
     When the turn completes after 2 minutes
     And the user opens the folded work
     Then only the answer shows its time and actions
+
+  # Upstream #28610: the reply written just before a running command had no time on hover until the
+  # whole response ended; the latest finished reply showed its time while the turn went on.
+  # Upstream #29680: reverted it as a timeline change that had shipped without a UI review, so the
+  # passing scenario above stands.
+  @dropped @desktop
+  Scenario: A finished reply shows its time on hover while the turn runs a command
+    Given the agent wrote a reply and then started a command that is still running
+    When the user holds the pointer over the reply
+    Then the reply shows the time it was written
+    And it offers no copy or fork until the turn completes
 
   @shared
   Scenario Outline: A message says when it was sent, in the time format the user chose

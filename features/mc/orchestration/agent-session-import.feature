@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23219
+#   https://github.com/pingdotgg/t3code/pull/23690
+#   https://github.com/pingdotgg/t3code/pull/23192
 #   https://github.com/pingdotgg/t3code/pull/27743
 #   https://github.com/pingdotgg/t3code/pull/24982
 #   https://github.com/pingdotgg/t3code/pull/23747
@@ -7,6 +10,8 @@
 #   https://github.com/pingdotgg/t3code/pull/16662
 #   https://github.com/pingdotgg/t3code/pull/15634
 #   https://github.com/pingdotgg/t3code/pull/20278
+#   https://github.com/pingdotgg/t3code/pull/30174
+#   https://github.com/pingdotgg/t3code/pull/30652
 #   apps/server-ex/lib/hal_c2/agent_sessions.ex (agentSessions.scan, agentSessions.import)
 #   apps/server/src/project/AgentSessionScanner.ts and its import service
 #   apps/server/src/project/AgentSessionImporter.ts (modified or moved threads), AgentSessionJson.ts (streaming selection and limits)
@@ -66,6 +71,36 @@ Feature: Importing history from agents already used on this machine
     When a client scans for agent sessions
     Then candidate "app" carries the key for "git@github.com:a/b.git"
 
+  # Upstream #30174: a "bare = true" continued onto the next line with a backslash was missed, so
+  # the linked checkouts of that bare repository were skipped as ordinary linked worktrees.
+  @mc @backlog @priority-low
+  Scenario Outline: A linked checkout of a bare repository is offered
+    Given an agent session ran in "~/code/app", a linked checkout of a bare repository
+    And the bare repository's git config writes "bare = true" <how>
+    When a client scans for agent sessions
+    Then "app" is a candidate
+
+    Examples:
+      | how                                                       |
+      | on one line                                               |
+      | continued onto the next line                              |
+      | continued onto a last line that has no newline at its end |
+
+  # Upstream #23690: a git config that never opens (a FIFO, or a macOS-protected folder) pinned a
+  # shared file worker per scan until the whole server stopped answering.
+  @mc @backlog @priority-high
+  Scenario Outline: A scan is not held up by a git config that never opens
+    Given "~/code/app" has <config>
+    When a client scans for agent sessions four times
+    Then every scan finishes within a few seconds
+    And candidate "app" is listed without a repository identity
+    And the MC keeps answering other requests
+
+    Examples:
+      | config                                             |
+      | a FIFO at ".git/config"                            |
+      | a ".git/config" the MC is not allowed to read      |
+
   @mc
   Scenario: A very large number of transcripts is capped
     Given more than 5,000 Codex transcripts exist
@@ -85,6 +120,15 @@ Feature: Importing history from agents already used on this machine
     Given a Claude session was imported as a thread
     When the user sends a follow-up in that thread
     Then the provider resumes the original Claude session
+
+  # Upstream #23219: the first follow-up to an imported Claude Code session tried to create the
+  # session again and failed with "Session ID … is already in use".
+  @mc @backlog @plugin-claude @priority-high
+  Scenario: The first message to an imported Claude session resumes it
+    Given a Claude Code terminal conversation was imported as a thread
+    When the user sends the first follow-up in that thread
+    Then the provider resumes the original Claude session on that first send
+    And the thread shows no "already in use" failure
 
   @mc
   Scenario: Sessions older than 30 days are not imported
@@ -470,6 +514,22 @@ Feature: Importing history from agents already used on this machine
     When it is imported
     Then the thread resumes the id the transcript names first
 
+  # Upstream #30652: a Codex rewind writes a new transcript that builds on the one it replaces; only
+  # the newest was read, so the imported thread began at the last rewind.
+  @mc @backlog @plugin-codex
+  Scenario: A rewound Codex session is imported with what came before the rewind
+    Given a Codex session was rewound four times, leaving five transcripts that each build on the last
+    When it is imported
+    Then one thread is imported with the messages from before the rewinds, then those after
+    And the import stays within its usual history and size budgets
+
+  # Upstream #30652: a broken chain keeps today's import of the newest transcript.
+  @mc @backlog @plugin-codex @priority-low
+  Scenario: A rewound Codex session whose earlier transcript is gone imports the newest alone
+    Given a rewound Codex session whose earlier transcript is missing
+    When it is imported
+    Then the thread holds the newest transcript's messages
+
   # Upstream #16662: Codex subagent, review and other child sessions were imported as threads of
   # their own and used up the budget before their parents.
   @mc @plugin-codex
@@ -487,13 +547,22 @@ Feature: Importing history from agents already used on this machine
     Then the thread belongs to the account "work"
     And a follow-up resumes the session through that account
 
-  # Legacy: apps/server/src/project/AgentSessionScanner.ts (MAX_IMPORT_BYTES, MAX_IMPORT_TRANSCRIPTS, MAX_IMPORT_RECORDS)
+  # Legacy: apps/server/src/project/AgentSessionScanner.ts (MAX_IMPORT_BYTES, MAX_IMPORT_TRANSCRIPTS)
+  # Upstream #23192: the 100,000-record limit is each transcript's own, not a budget they share.
   @mc @backlog @priority-low
   Scenario: An import stops taking sessions once it has read its overall budget
-    Given project "demo" has recent sessions whose transcripts together hold more than 4 GiB or 100,000 records
+    Given project "demo" has recent sessions whose transcripts together hold more than 4 GiB
     When a client imports agent sessions for "demo"
     Then the sessions that fit are imported
     And every later session is counted as skipped without being read
+
+  # Upstream #23192: transcripts shared one 100,000-record allowance, so the last of four valid
+  # conversations was skipped until a retry.
+  @mc @backlog @priority-low
+  Scenario: Each transcript gets its own record limit
+    Given project "demo" has Codex transcripts of 20,000, 20,000, 20,000 and 58,000 records
+    When a client imports agent sessions for "demo"
+    Then all four conversations are imported
 
   # Upstream #21464: large Windows file ids collided, so a replaced transcript looked imported.
   @backlog @mc @priority-low

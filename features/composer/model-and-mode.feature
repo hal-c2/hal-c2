@@ -48,6 +48,8 @@
 #   Auto balance is desktop and terminal only; phones pick the machine by hand (settings/load-balancing.feature).
 #   https://github.com/pingdotgg/t3code/pull/23448
 #   https://github.com/pingdotgg/t3code/pull/23493
+#   https://github.com/pingdotgg/t3code/pull/30275
+#   https://github.com/pingdotgg/t3code/pull/29789
 
 Feature: Choosing the model, effort, permissions and workspace for a turn
   Before sending, the user decides which model runs the turn, how hard it
@@ -659,6 +661,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #25869: a new thread always says which permissions its first message will use,
   # and choosing them there opens the permissions as the permissions key does.
+  # Upstream #30275: choosing them opens the permissions menu directly, not the model list first.
   @backlog @shared @priority-high
   Scenario: A new thread says which permissions its first message uses
     Given the default permissions are Full access
@@ -901,3 +904,12 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user opens the thread
     Then the composer shows "gpt-5.4" on "Codex Work" at high effort
     But a custom model named "5.4" on "Codex Personal" is not taken for "gpt-5.4"
+
+  # Upstream #29789: picking a custom model whose name matched a built-in Codex alias stored the
+  # built-in model, and its effort was saved under the built-in model too.
+  @backlog @shared @priority-high
+  Scenario: A custom model named like a Codex alias stays the model the user picked
+    Given the Codex account "Codex Proxy" has the custom model "gpt-5-codex"
+    When the user picks "gpt-5-codex" on "Codex Proxy" at high effort and sends a message
+    Then the turn runs on the custom model "gpt-5-codex", not on a built-in model it is an alias of
+    And picking "gpt-5-codex" again offers high effort
