@@ -504,7 +504,109 @@ defmodule HalC2.Steps.Orchestration.AgentSessionImport do
     context
   end
 
+  # --- sessions other threads own, and imports the user has since used --------------------
+
+  step ~r/^thread "(?<id>[^"]+)" in "(?<project>[^"]+)" already runs the agent session "(?<session>[^"]+)" and is (?<state>active|archived|deleted)$/,
+       %{args: [title, project, name, state]} = context do
+    path = mkdir(dir(context, "~/code/app"))
+    session_id = session(context, path, source: "claude")
+    context = project(context, project, path)
+    context = World.create_thread(context, title, project, %{"modelSelection" => claude_model()})
+    id = World.thread_id(context, title)
+
+    pt = HalC2.Orchestration.Entities.provider_thread_id("claudeAgent", id)
+
+    provider_thread =
+      HalC2.Orchestration.Entities.provider_thread(
+        pt,
+        id,
+        nil,
+        nil,
+        HalC2.Orchestration.Entities.now(),
+        "claudeAgent",
+        "claudeAgent"
+      )
+      |> Map.put(
+        "nativeThreadRef",
+        HalC2.Orchestration.Entities.provider_ref(session_id, "claudeAgent")
+      )
+
+    context = World.put_entity(context, title, "provider-thread", pt, %{"s" => provider_thread})
+
+    command =
+      case state do
+        "active" -> nil
+        "archived" -> "thread.archive"
+        "deleted" -> "thread.delete"
+      end
+
+    if command do
+      {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => command, "threadId" => id})
+      World.await_row(id, &(&1["archivedAt"] != nil or &1["deletedAt"] != nil))
+    end
+
+    _ = name
+    Map.put(context, :owner_session, session_id)
+  end
+
+  step "no new thread is created for {string}", context do
+    assert [] =
+             imported(context, "demo")
+             |> Enum.filter(fn {id, _} -> String.starts_with?(id, "import:") end)
+
+    context
+  end
+
+  step "{string} is counted as neither imported nor failed", context do
+    assert context.import == %{"importedCount" => 0, "skippedCount" => 0}
+    context
+  end
+
+  step ~r/^a session was imported as a thread and (?<change>the user continued it in HAL-C2|the thread now belongs to another project)$/,
+       %{args: [change]} = context do
+    path = mkdir(dir(context, "~/code/app"))
+    session(context, path, source: "claude")
+    context = context |> project("demo", path) |> import_sessions("demo")
+    assert context.import["importedCount"] == 1
+    [{id, _}] = imported(context, "demo")
+    context = put_in(context, [:threads, "imported"], id)
+    seq = HalC2.Streams.Server.state(HalC2.Streams.ensure(id)).seq
+
+    context =
+      case change do
+        "the user continued it in HAL-C2" ->
+          World.add_run(context, "imported", "completed")
+
+        _ ->
+          context = project(context, "other", mkdir(dir(context, "~/code/other")))
+          other = World.project(context, "other").id
+          World.patch_thread(context, "imported", %{"projectId" => other})
+      end
+
+    context
+    |> Map.put(:imported_thread, id)
+    |> Map.put(:imported_seq, HalC2.Streams.Server.state(HalC2.Streams.ensure(id)).seq)
+    |> Map.put(:seq_before_change, seq)
+  end
+
+  step "a client imports the agent sessions of {string} again", %{args: [title]} = context do
+    import_sessions(context, title)
+  end
+
+  step "the thread is not overwritten", context do
+    id = context.imported_thread
+    assert HalC2.Streams.Server.state(HalC2.Streams.ensure(id)).seq == context.imported_seq
+    context
+  end
+
+  step "the session is counted as skipped", context do
+    assert context.import == %{"importedCount" => 0, "skippedCount" => 1}
+    context
+  end
+
   # --- helpers ---------------------------------------------------------------------------
+
+  defp claude_model, do: %{"instanceId" => "claudeAgent", "model" => "haiku"}
 
   defp dir(context, "~/" <> rest), do: Path.join(context.agent_home, rest)
 

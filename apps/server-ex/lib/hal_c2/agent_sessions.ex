@@ -385,13 +385,11 @@ defmodule HalC2.AgentSessions do
       |> Enum.filter(&(Path.expand(&1.cwd) == root))
       |> Enum.sort_by(& &1.mtime, :desc)
 
-    moved = moved_sessions()
-
-    {done, pending} =
-      Enum.split_with(
-        recent,
-        &(imported?(&1, project_id) or MapSet.member?(moved, "#{&1.source}:#{&1.session_id}"))
-      )
+    owned = MapSet.union(moved_sessions(), owned_sessions(project_id))
+    by_state = Enum.group_by(recent, &session_state(&1, project_id, owned))
+    done = Map.get(by_state, :imported, [])
+    pending = Map.get(by_state, :new, [])
+    continued = length(Map.get(by_state, :continued, []))
 
     {too_big, pending} = Enum.split_with(pending, &(&1.size > max_import_bytes()))
     {eligible, over_budget} = Enum.split(pending, @max_imports)
@@ -400,7 +398,7 @@ defmodule HalC2.AgentSessions do
     {imported, skipped, _seen} =
       Enum.reduce(
         eligible,
-        {MapSet.size(already), length(too_big) + length(over_budget), already},
+        {MapSet.size(already), continued + length(too_big) + length(over_budget), already},
         fn transcript, {imported, skipped, seen} ->
           case parse(transcript) do
             nil ->
@@ -426,17 +424,32 @@ defmodule HalC2.AgentSessions do
     %{"importedCount" => imported, "skippedCount" => skipped}
   end
 
-  # A session this project already holds, which does not count against the budget.
-  # The thread's row can trail its write by a moment; such a session is read again
-  # and found in its stream.
-  defp imported?(%{source: source, session_id: id}, project_id) when is_binary(id) do
-    match?(
-      {"thread", %{"projectId" => ^project_id}},
-      HalC2.Shell.row(node(), "import:#{source}:#{id}")
-    )
+  # Where a session stands for this import: `:imported` (its import thread is here, as
+  # imported), `:continued` (that thread has run since, so it is left alone and counts
+  # skipped), `:owned` (another thread runs the session; neither imported nor failed),
+  # or `:new`. The thread's row can trail its write by a moment; such a session is
+  # read again and found in its stream.
+  defp session_state(%{source: source, session_id: id}, project_id, owned) when is_binary(id) do
+    case HalC2.Shell.row(node(), "import:#{source}:#{id}") do
+      {"thread", %{"projectId" => ^project_id, "latestRunId" => nil}} -> :imported
+      {"thread", %{"projectId" => ^project_id}} -> :continued
+      _ -> if MapSet.member?(owned, "#{source}:#{id}"), do: :owned, else: :new
+    end
   end
 
-  defp imported?(_transcript, _project_id), do: false
+  defp session_state(_transcript, _project_id, _owned), do: :new
+
+  # The sessions that other threads of the project run, archived and deleted ones
+  # included, as "source:id". Only those threads' streams are read, once per import.
+  defp owned_sessions(project_id) do
+    for {{mc, id}, {"thread", %{"projectId" => ^project_id}}} <- HalC2.Shell.rows(),
+        mc == node() and not String.starts_with?(id, "import:"),
+        pt <- StreamState.list(HalC2.Streams.state(id), "provider-thread"),
+        %{"driver" => driver, "nativeId" => native} <- [pt["nativeThreadRef"]],
+        is_binary(native),
+        into: MapSet.new(),
+        do: "#{driver}:#{native}"
+  end
 
   # The sessions of threads that moved from this MC to another (`HalC2.ThreadMove`),
   # as "source:id": they belong to those threads, not to an import.

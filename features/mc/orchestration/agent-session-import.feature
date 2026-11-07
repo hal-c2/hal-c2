@@ -100,7 +100,7 @@ Feature: Importing history from agents already used on this machine
 
   # Upstream #15634: bulk import skips a native session another thread already owns, archived
   # and deleted owners included, and counts it as neither imported nor failed.
-  @mc @backlog @priority-high
+  @mc
   Scenario Outline: A session a thread already runs is not imported again
     Given thread "t1" in "demo" already runs the agent session "s1" and is <state>
     When a client imports agent sessions for "demo"
@@ -227,7 +227,7 @@ Feature: Importing history from agents already used on this machine
     Then the line is skipped and the rest of the session is imported
 
   # Legacy: apps/server/src/project/AgentSessionImporter.ts (AgentSessionThreadModifiedError, AgentSessionThreadProjectConflictError)
-  @mc @backlog @priority-high
+  @mc
   Scenario Outline: An imported thread the user has since used or moved is left alone
     Given a session was imported as a thread and <change>
     When a client imports the agent sessions of "demo" again
