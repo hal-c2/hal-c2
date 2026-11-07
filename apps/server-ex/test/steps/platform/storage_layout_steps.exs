@@ -143,8 +143,14 @@ defmodule HalC2.Steps.Platform.StorageLayout do
 
   # `the user runs "hal-c2 pair"` is the shared step in common_steps.exs
   # (`HalC2.Test.Storage.pair/1`).
+  # The command's lines, whether the step collected one string or one entry per line.
+  defp pair_lines(output) when is_list(output),
+    do: Enum.flat_map(output, &String.split(&1, "\n"))
+
+  defp pair_lines(output), do: output
+
   step "it prints a pairing link for that server", context do
-    assert [link] = context.pair_output
+    [link, _expires] = pair_lines(context.pair_output)
     base = "http://127.0.0.1:#{context.mc.port}/?token="
     assert String.starts_with?(link, base), link
     # The token is in the running server's store: it pairs a client with that server.
@@ -195,7 +201,7 @@ defmodule HalC2.Steps.Platform.StorageLayout do
   end
 
   step "it prints a Tailscale pairing link for that server", context do
-    assert [link, _note] = context.pair_output
+    [link, _expires, _note] = pair_lines(context.pair_output)
     base = "https://box.tail5e3a.ts.net/?token="
     assert String.starts_with?(link, base), link
     token = String.replace_prefix(link, base, "")

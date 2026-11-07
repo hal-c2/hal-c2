@@ -67,4 +67,11 @@ defmodule HalC2.Projection.HistoryTest do
     assert History.snapshot(state([{"turn-item", "i-1", item}]))["runlessHistory"] == true
     assert History.snapshot(state([]))["runlessHistory"] == false
   end
+
+  test "overBudget measures what is sent, not the history the wire drops" do
+    big = Map.put(handoff("ready"), "history", [%{"text" => String.duplicate("x", 1_200_000)}])
+    snapshot = History.snapshot(state([{"context-handoff", "h-ready", big}]))
+    assert snapshot["overBudget"] == false
+    refute Map.has_key?(row(snapshot, "h-ready"), "history")
+  end
 end

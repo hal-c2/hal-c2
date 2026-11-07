@@ -1,6 +1,8 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/10439 (find in thread)
 #   https://github.com/pingdotgg/t3code/pull/14658
+#   https://github.com/pingdotgg/t3code/pull/25463
+#   https://github.com/pingdotgg/t3code/pull/22627
 #   docs/user/thread-sidebar.md (Searching threads)
 #   apps/web/src/components/Sidebar.tsx (thread search, result keyboard)
 #   apps/web/src/components/Sidebar.logic.ts (title search, content matches)
@@ -118,6 +120,13 @@ Feature: Searching threads
       | acme/app#12                         |
       | https://github.com/acme/app/pull/12 |
 
+  # Upstream #22627: a result found by one of a stack's pull requests showed only that number.
+  @backlog @desktop
+  Scenario: A result found by a pull request shows the thread's pull requests as its row does
+    Given "Fix OAuth loop" is linked to a stack of 5 pull requests including 12 of "acme/app"
+    When the user searches threads for "#12"
+    Then the result for "Fix OAuth loop" shows "Stack of 5 pull requests" as its row in the thread list does
+
   @backlog @desktop @priority-low
   Scenario: Threads matching by title or pull request come before threads matching by message
     Given "Add dark mode" has a message containing "oauth"
@@ -222,6 +231,13 @@ Feature: Searching threads
     Given the user went to a match in a turn that was collapsed
     When the user closes the find bar
     Then the thread stays where it is and the turn stays open
+
+  # Upstream #25463: a thread opened with find open shows the match, not the remembered position.
+  @backlog @desktop
+  Scenario: Switching to a thread while finding shows the match
+    Given the user is finding "deploy" and last read "t2" far from its matches
+    When the user switches to thread "t2"
+    Then the thread scrolls to its selected match of "deploy", not to where the user last read
 
   # Upstream #10439: find messages and plans in the current thread
   @backlog @desktop @priority-low

@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import { DEFAULT_SERVER_SETTINGS } from "@hal-c2/contracts";
 
-import { fakeClient, shell } from "../../features/support/fakeClient.ts";
+import { fakeClient, projectTwo, shell, thread } from "../../features/support/fakeClient.ts";
 import type { OrchestrationShellSnapshot } from "../connection.ts";
 import { createHost } from "./host.ts";
 
@@ -111,10 +111,112 @@ describe("createHost", () => {
     host.destroy();
   });
 
+  it("does not redraw the timeline for the error of the thread it left", () => {
+    const { host, connect, emitShell, emitThread, get } = boot();
+    connect();
+    const rows = shell([
+      {
+        id: "t1",
+        projectId: "p1",
+        title: "Thread one",
+        updatedAt: NOW,
+        session: { status: "error", lastError: "Rate limited" },
+        latestTurn: null,
+      },
+      { id: "t2", projectId: "p1", title: "Thread two", updatedAt: NOW, session: null },
+    ] as unknown as OrchestrationShellSnapshot["threads"]);
+    emitShell(rows);
+    // Thread two was read before, so opening it shows it at once.
+    emitThread({ ...thread(), id: "t2", title: "Thread two" } as never);
+    host.dispatch("thread.open", { key: "local:t1" });
+    emitThread(thread());
+    host.dispatch("thread.open", { key: "local:t2" });
+    expect(get("page")).toMatchObject({ kind: "thread", title: "Thread two" });
+
+    const drawn = get("timeline");
+    emitShell(rows);
+    expect(get("timeline")).toBe(drawn);
+    host.destroy();
+  });
+
   it("logs an unknown action once", () => {
     const { host, logged } = boot();
     host.dispatch("nope");
     host.dispatch("nope");
     expect(logged).toEqual(['hal-c2 tui: unknown shell action "nope"']);
+  });
+
+  describe("a new thread's draft moved to another project", () => {
+    const refs = (names: string[]) =>
+      ({
+        refs: names.map((name, i) => ({
+          name,
+          current: i === 0,
+          isDefault: i === 0,
+          worktreePath: null,
+        })),
+        isRepo: true,
+        hasPrimaryRemote: true,
+        nextCursor: null,
+        totalCount: names.length,
+      }) as never;
+
+    it("ignores the old project's branches when they land after the move", async () => {
+      let releaseOld!: () => void;
+      const fake = fakeClient({
+        shellSnapshot: shell(undefined, [
+          { id: "p1", title: "Project one", workspaceRoot: "/workspace/project-one" },
+          projectTwo,
+        ] as never),
+        listRefs: (async (cwd: string) => {
+          if (cwd === "/workspace/project-one") {
+            await new Promise<void>((resolve) => (releaseOld = resolve));
+            return refs(["old-only"]);
+          }
+          return refs(["main", "feature"]);
+        }) as never,
+      });
+      const host = createHost({
+        client: fake.client,
+        size: { columns: 140, rows: 40 },
+        log: () => {},
+        now: () => NOW,
+      });
+      fake.connect();
+      host.dispatch("thread.new", { projectKey: "local:p1" });
+      host.dispatch("composer.projectPicker.toggle");
+      host.dispatch("select.choose", { index: 1 });
+      releaseOld();
+      // Both projects' branch loads, the old one released last.
+      await host.idle();
+      const draft = host.state.get("newThread") as any;
+      expect(draft.branch).toBe("main");
+      expect(JSON.stringify(draft)).not.toContain("old-only");
+      host.destroy();
+    });
+
+    it("puts the highlight back on the current project when the search is cleared", () => {
+      const fake = fakeClient({
+        shellSnapshot: shell(undefined, [
+          { id: "p1", title: "Project one", workspaceRoot: "/workspace/project-one" },
+          projectTwo,
+        ] as never),
+      });
+      const host = createHost({
+        client: fake.client,
+        size: { columns: 140, rows: 40 },
+        log: () => {},
+        now: () => NOW,
+      });
+      fake.connect();
+      host.dispatch("thread.new", { projectKey: "local:p2" });
+      host.dispatch("composer.projectPicker.toggle");
+      expect((host.state.get("select") as any).index).toBe(1);
+      host.dispatch("select.query.set", { query: "one" });
+      expect((host.state.get("select") as any).index).toBe(0);
+      host.dispatch("select.query.set", { query: "" });
+      expect((host.state.get("select") as any).index).toBe(1);
+      host.destroy();
+    });
   });
 });

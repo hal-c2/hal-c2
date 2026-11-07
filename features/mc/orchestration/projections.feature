@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24589
+#   https://github.com/pingdotgg/t3code/pull/24648
+#   https://github.com/pingdotgg/t3code/pull/23783
 #   https://github.com/pingdotgg/t3code/pull/18163
 #   https://github.com/pingdotgg/t3code/pull/19423
 #   https://github.com/pingdotgg/t3code/pull/2829
@@ -73,6 +76,15 @@ Feature: What the engine projects for clients
     Given "t1" has a long conversation
     Then the shell row of "t1" has no latest visible message text
     And it records when the latest user message was sent
+
+  # Upstream #23783: 39 delegated threads streaming at once overflowed the shell subscription's
+  # buffer and left every client catching up.
+  @backlog @mc @priority-low
+  Scenario: A subagent's transcript does not stream to the shell
+    Given "t1" has many subagents streaming their replies
+    Then shell subscribers get each subagent's run changes and requests for input
+    But not the subagents' transcript updates
+    And a client that opens a subagent still gets its whole transcript
 
   @mc
   Scenario: A thread with an active proposed plan is marked actionable
@@ -155,6 +167,40 @@ Feature: What the engine projects for clients
     Given "t1" was stored with a model selection that names provider "codex"
     Then the shell row of "t1" shows instance "codex" and the model
 
+  # Upstream #24648: idle subagent threads were a third of every cold connect's thread list,
+  # for rows the sidebar never shows.
+  @backlog @mc @priority-high
+  Scenario Outline: A shell snapshot can leave out idle subagent threads
+    Given "t1" has a subagent thread "t1-child" that <state>
+    When a client that asks to leave out idle subagents connects
+    Then the shell snapshot <outcome> "t1-child"
+
+    Examples:
+      | state                                        | outcome          |
+      | is idle                                      | does not contain |
+      | has a live or queued run                     | contains         |
+      | waits on a request or has background work    | contains         |
+      | has a subagent of its own                    | contains         |
+
+  @backlog @mc @priority-high
+  Scenario: Opening a thread reads its subagent family
+    Given the shell snapshot left out the idle subagents of "t1"
+    When the user opens "t1"
+    Then the client reads the subagent tree of "t1" once
+    And its lineage, subagent rows and their diffs show as before
+
+  @backlog @shared @mobile
+  Scenario Outline: A thread missing from the shell is not taken for deleted
+    Given the shell snapshot left out the idle subagent "t1-child"
+    When <action>
+    Then <outcome>
+
+    Examples:
+      | action                                              | outcome                                                   |
+      | the user follows a link to "t1-child"               | "t1-child" opens                                          |
+      | the phone sends a message queued for "t1-child"     | the message is sent once its family is read, not dropped  |
+      | the user deletes a thread that shares the worktree  | the MC is asked which threads use the worktree first      |
+
   @mc
   Scenario: The archived shell snapshot lists archived threads and their projects
     Given "t1" is archived and "t2" is active and "t3" is archived and deleted
@@ -210,12 +256,22 @@ Feature: What the engine projects for clients
     When it asks for the page before that cursor
     Then it receives the 20 user turns before them
 
+  # Upstream #24589: one agent turn of 10,454 rows loaded whole and froze the client. A turn
+  # of up to 500 rows stays whole; a longer one is paged.
   @mc @priority-high
-  Scenario: A page of history never splits a turn
-    Given an earlier turn of "t1" ran hundreds of tool calls and was steered twice
+  Scenario: A page of history keeps an ordinary turn whole
+    Given an earlier turn of "t1" ran 400 tool calls and was steered twice
     When a client pages back to that turn
     Then the page holds the whole turn, from the user's message to its last item
     And the steering messages do not count as turns of their own
+
+  @mc @backlog @priority-high
+  Scenario: Opening a thread whose turn is longer than 500 rows starts at its newest rows
+    Given the last turn of "t1" holds 900 rows
+    When a client asks for a bounded snapshot of "t1"
+    Then it receives the turn's newest rows within one megabyte and a cursor for older history
+    When it asks for the page before that cursor
+    Then it receives at most 75 older rows of the same turn
 
   # Upstream #19423: a notification that starts a run counts as a turn, so a woken thread's window stays bounded
   @mc

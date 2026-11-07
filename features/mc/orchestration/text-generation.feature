@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21882
+#   https://github.com/pingdotgg/t3code/pull/18291
+#   https://github.com/pingdotgg/t3code/pull/24857
+#   https://github.com/pingdotgg/t3code/pull/19813
 #   https://github.com/pingdotgg/t3code/pull/15615
 #   https://github.com/pingdotgg/t3code/pull/17058
 #   https://github.com/pingdotgg/t3code/pull/18781
@@ -43,6 +47,20 @@ Feature: Generated titles, branch names and source control text
   Scenario: The default text generation model
     Given no text generation model is chosen
     Then titles are written by "gpt-6-luna" on "codex" with low reasoning effort
+
+  # Upstream #21882: settings name the title model but cannot say how titles are written.
+  @backlog @mc
+  Scenario: Thread title instructions are given to the title writer
+    Given the project "demo" has the thread title instructions "Start with the ticket number"
+    When a title is generated for "Fix ABC-12 login redirect loop"
+    Then the title writer is asked to follow "Start with the ticket number"
+    And with no instructions set the title request is unchanged
+
+  @backlog @desktop @tui
+  Scenario: Thread title instructions are set under text generation
+    When the user sets thread title instructions in the text generation settings
+    Then new and regenerated titles follow them
+    And a project can override them, and restoring defaults clears them
 
   @mc
   Scenario: Branch names use the source control writer when it is usable
@@ -135,8 +153,7 @@ Feature: Generated titles, branch names and source control text
       | "opencode"    | as one prompt in an empty folder with every tool request refused |
 
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.ts (disableAllHooks, --strict-mcp-config, temp folder)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation.ex (claude args, isolate)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Claude writes in an empty folder with no hooks, commands or MCP servers
     When "claudeAgent" writes a title
     Then it runs in a new temporary folder that is removed afterwards
@@ -150,8 +167,7 @@ Feature: Generated titles, branch names and source control text
     And the branch name is still written when Codex cannot list its MCP servers
 
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.test.ts ("runs Claude text generation with the configured CLAUDE_CONFIG_DIR")
-  # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation.ex (claude_command per instance)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Claude writes with the home of the instance chosen for text generation
     Given the text model is on a Claude instance with its own home folder
     When a title is generated
@@ -202,24 +218,21 @@ Feature: Generated titles, branch names and source control text
     Then the title is taken from the final result
 
   # Legacy: apps/server/src/textGeneration/CursorTextGeneration.ts (plan mode, temp folder, sandbox.json refusal)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation.ex (cursor)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Cursor writes in plan mode in an empty folder
     When "cursor" writes a title
     Then it runs in plan mode in a new temporary folder
     And it is stopped if it does not answer in 3 minutes
 
   # Legacy: apps/server/src/textGeneration/CursorTextGeneration.ts (the SDK loads sandbox.json on its own)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation.ex (sandbox.json check)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Cursor does not write text when the user's sandbox file would loosen isolation
     Given the user has a custom "~/.cursor/sandbox.json"
     When "cursor" is asked to write a title
     Then it fails saying Cursor text generation cannot enforce workspace isolation with that file and to use another provider
 
   # Legacy: apps/server/src/textGeneration/AntigravityTextGeneration.ts (global hooks and MCP refusal, tool work refused)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation.ex (Antigravity refusals)
-  @backlog @mc @plugin-antigravity @priority-high
+  @mc @plugin-antigravity @priority-high
   Scenario Outline: Antigravity does not write text where its own configuration could act first
     Given the Antigravity profile <config>
     When "antigravity" is asked to write a title
@@ -231,15 +244,18 @@ Feature: Generated titles, branch names and source control text
       | has MCP servers configured          |
 
   # Legacy: apps/server/src/textGeneration/AntigravityTextGeneration.ts (default mode, tool and file requests stop the run)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation.ex
-  @backlog @mc @plugin-antigravity @priority-high
-  Scenario: Antigravity is stopped when it reaches for a tool or a file
-    When "antigravity" writes a title and asks to run a command or read a file
+  @mc @plugin-antigravity @priority-high
+  Scenario Outline: Antigravity is stopped when it reaches for a tool or a file
+    When "antigravity" writes a title and asks to <reach>
     Then the run is stopped and text generation fails
 
+    Examples:
+      | reach         |
+      | run a command |
+      | read a file   |
+
   # Legacy: apps/server/src/textGeneration/PiTextGeneration.ts (no tools, no extensions), OpenCodeTextGeneration.ts (provider/model format)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation.ex (Pi provider/model)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A writing model that is not a provider/model pair is refused
     Given the text model is "sonnet" on a <provider> instance
     When a title is generated
@@ -356,8 +372,7 @@ Feature: Generated titles, branch names and source control text
     And no session is created
 
   # Legacy: apps/server/src/textGeneration/AntigravityTextGeneration.ts (rejects a helper that writes files in its temporary workspace)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation.ex ("Antigravity wrote files during text generation.")
-  @backlog @mc @plugin-antigravity @priority-high
+  @mc @plugin-antigravity @priority-high
   Scenario: Antigravity that left files in its temporary folder does not give a title
     When "antigravity" writes a title and leaves a file in its working folder
     Then it fails saying Antigravity wrote files during text generation
@@ -376,8 +391,7 @@ Feature: Generated titles, branch names and source control text
       | text that holds no valid JSON                    | text generation fails                  |
 
   # Legacy: apps/server/src/textGeneration/CodexTextGeneration.ts (image inputs by attachment id)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation.ex (images/1)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Codex gets each attached image as an image input and skips missing ones
     Given a message with two images attached and one of them no longer stored
     When "codex" writes a title
@@ -426,9 +440,22 @@ Feature: Generated titles, branch names and source control text
     Then the writer is given at most 8,000 characters of messages
     And each message is cut to 2,000 characters
 
+  # Upstream #24857: a fork's first title came from its one follow-up, with no context.
+  @backlog @mc
+  Scenario: A forked thread's title is written from the history it inherits
+    Given "Sidebar re-renders" was forked, and the fork's first message is "ok now do the same for mobile"
+    When a title is generated for the fork
+    Then the writer is given the source's title and its messages up to the fork point, across forks of forks
+    And it is asked for the inherited subject together with the fork's new direction
+
+  @backlog @mc
+  Scenario: A fork whose source is gone is titled from its own messages
+    Given a forked thread whose source thread was deleted
+    When a title is generated for the fork
+    Then the writer is given only the fork's own messages
+
   # Legacy: apps/server/src/textGeneration/ThreadTitleContext.ts (formatThreadTitleContext), ThreadTitleContext.test.ts
-  # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation/prompts.ex (thread_context)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Long assistant output cannot push out what the user asked
     Given a thread whose assistant replies are each far longer than 2,000 characters
     And the user changed the scope of the task in a late message
@@ -437,8 +464,7 @@ Feature: Generated titles, branch names and source control text
     And the assistant replies take only the space the user's messages left
 
   # Legacy: apps/server/src/textGeneration/ThreadTitleContext.ts (OMITTED and TRUNCATED markers)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation/prompts.ex
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A cut message keeps both of its ends and says it was cut
     Given a user message longer than the space it is given
     When a title is generated for that thread
@@ -446,8 +472,7 @@ Feature: Generated titles, branch names and source control text
     And when messages were left out the context begins with "[Earlier content truncated]"
 
   # Legacy: apps/server/src/textGeneration/ThreadTitleContext.ts (system and reasoning roles dropped)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation/prompts.ex
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Reasoning traces and system notes are not part of a title's context
     Given a thread with user messages, assistant replies, reasoning traces and system notes
     When a title is generated for that thread
@@ -455,8 +480,7 @@ Feature: Generated titles, branch names and source control text
     And each is labelled "USER:" or "ASSISTANT:"
 
   # Legacy: apps/server/src/textGeneration/ThreadTitleContext.ts (attachment names, first plus last three)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation/prompts.ex
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Attachments are named and at most four are sent
     Given a thread whose first message has an image and whose later messages have five more
     When a title is generated for that thread
@@ -574,8 +598,7 @@ Feature: Generated titles, branch names and source control text
       | the template exists only in the working copy, not the base branch    |
 
   # Legacy: apps/server/src/sourceControl/PrTemplateDetection.ts (TEMPLATE_PATHS, TEMPLATE_DIRECTORIES)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation/style.ex
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario Outline: The first template in the usual places is the one used
     Given the base branch has <templates>
     When pull request text is generated
@@ -589,16 +612,14 @@ Feature: Generated titles, branch names and source control text
       | a file in ".github/PULL_REQUEST_TEMPLATE" and "pull_request_template.md"             | "pull_request_template.md"                  |
 
   # Legacy: apps/server/src/sourceControl/PrTemplateDetection.ts (readTemplateBlob, parseTemplateTreeEntries)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation/style.ex
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A very long template is cut and says so
     Given the base branch has a pull request template of 20,000 characters
     When pull request text is generated
     Then the writer is given the first 8,000 bytes of it followed by "[truncated]"
 
   # Legacy: apps/server/src/sourceControl/PrTemplateDetection.ts (parseTemplateTreeEntries, readTemplateBlob)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation/style.ex
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario Outline: A template that is not a plain file in the base branch is passed over
     Given the base branch has <entry> at ".github/pull_request_template.md"
     When pull request text is generated
@@ -615,6 +636,31 @@ Feature: Generated titles, branch names and source control text
   Scenario: Templates are followed only on a host that has them
     Given the project follows pull request templates
     And the base branch has ".github/pull_request_template.md"
-    And the project's remote is on GitLab, Forgejo, Azure DevOps or Bitbucket
+    And the project's remote is on Forgejo, Azure DevOps or Bitbucket
     When pull request text is generated
     Then the writer is given no template
+
+  # Upstream #19813: GitLab merge requests follow the repository's default merge request template.
+  @mc @backlog
+  Scenario: A GitLab merge request follows the repository's default template
+    Given the project follows pull request templates
+    And the project's remote is on GitLab
+    And the base branch has ".gitlab/merge_request_templates/default.md"
+    When pull request text is generated
+    Then the writer is given that template for the body
+    And no other template in ".gitlab/merge_request_templates" is used in its place
+
+  # Upstream #18291: generated pull requests said tests were not run because the writer saw only the diff.
+  @mc @backlog
+  Scenario: Pull request text generated from a thread knows what the thread checked
+    Given a thread ran "mix test" and it passed
+    When pull request text is generated for that thread's branch
+    Then the writer is given a short account of the thread's visible history with the check and its result
+    And turns that were rolled back are left out of it
+
+  @mc @backlog
+  Scenario: Pull request text from a thread needs permission to read the thread
+    Given a client that may write to source control but may not read threads
+    When it asks for pull request text for a thread
+    Then the request is refused
+    But committing and pushing for that thread are still allowed

@@ -816,9 +816,9 @@ defmodule HalC2.Steps.Orchestration.Projections do
     context
   end
 
-  step ~r/^an earlier turn of "(?<thread>[^"]+)" ran hundreds of tool calls and was steered twice$/,
+  step ~r/^an earlier turn of "(?<thread>[^"]+)" ran 400 tool calls and was steered twice$/,
        %{args: [thread]} = context do
-    big = user_turn(11, 300)
+    big = user_turn(11, 400)
 
     steering =
       for i <- 1..2 do
@@ -839,7 +839,7 @@ defmodule HalC2.Steps.Orchestration.Projections do
   step "the page holds the whole turn, from the user's message to its last item", context do
     rows = context.history["rows"]
     assert ["message", "msg-11"] in for([kind, id, _] <- rows, do: [kind, id])
-    assert length(for ["turn-item", "item-11-" <> _, _] <- rows, do: 1) == 300
+    assert length(for ["turn-item", "item-11-" <> _, _] <- rows, do: 1) == 400
     context
   end
 

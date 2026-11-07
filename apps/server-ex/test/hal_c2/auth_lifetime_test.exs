@@ -45,6 +45,21 @@ defmodule HalC2.AuthLifetimeTest do
     assert Auth.take_ticket(ticket) == :error
   end
 
+  # Found by prop/hal_c2/auth_prop_test.exs: the tickets of a session that ran out were
+  # dropped with it before being counted, so prune reported none.
+  test "prune counts the tickets of a session that ran out, and tells watchers it is gone",
+       %{path: path} do
+    {access, %{id: id}} = session(path)
+    {:ok, _ticket, _} = Auth.issue_ticket(access)
+    Auth.subscribe(self())
+
+    advance(31 * 24 * 3_600_000)
+    assert %{sessions: 1, tickets: 1} = Auth.prune()
+
+    assert_receive {:hal_c2_auth_access,
+                    %{"type" => "clientRemoved", "payload" => %{"sessionId" => ^id}}}
+  end
+
   test "prune drops what expired and nothing else", %{path: path} do
     {access, _} = session(path)
     {:ok, ticket, _} = Auth.issue_ticket(access)

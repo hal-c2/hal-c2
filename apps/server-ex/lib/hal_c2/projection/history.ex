@@ -53,8 +53,12 @@ defmodule HalC2.Projection.History do
     windowed = windowed_rows(state, runs ++ queued)
     actionable = Enum.filter(small, &actionable?/1) ++ queued_messages(windowed, queued)
 
+    # What is sent, so what the wire leaves out (a handoff's history) does not count.
     size =
-      actionable |> Enum.map(&JSON.encode!(elem(&1, 2))) |> Enum.map(&byte_size/1) |> Enum.sum()
+      actionable
+      |> encode()
+      |> Enum.map(&byte_size(JSON.encode!(List.last(&1))))
+      |> Enum.sum()
 
     %{
       "rows" => encode(small ++ windowed),

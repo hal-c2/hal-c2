@@ -996,6 +996,9 @@ defmodule HalC2.Terminal do
   def put_scrollback(thread_id, terminal_id, text),
     do: write_history(thread_id, terminal_id, text)
 
+  @doc "Removes the saved scrollback of a thread's terminal."
+  def delete_scrollback(thread_id, terminal_id), do: delete_history(thread_id, terminal_id)
+
   defp write_history(thread_id, terminal_id, text) do
     path = history_path(thread_id, terminal_id)
     File.mkdir_p!(Path.dirname(path))
