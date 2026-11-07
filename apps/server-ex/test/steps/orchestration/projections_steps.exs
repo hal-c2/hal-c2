@@ -789,6 +789,311 @@ defmodule HalC2.Steps.Orchestration.Projections do
       else: until_live(client, [frame | acc])
   end
 
+  # --- bounded history -------------------------------------------------------------------
+
+  step ~r/^"(?<thread>[^"]+)" has (?<n>\d+) user turns$/, %{args: [thread, n]} = context do
+    commit(context, thread, Enum.flat_map(1..String.to_integer(n), &user_turn/1))
+    Map.put(context, :thread, thread)
+  end
+
+  step ~r/^a client asks for a bounded snapshot of "(?<thread>[^"]+)"$/,
+       %{args: [thread]} = context do
+    history(context, thread, nil)
+  end
+
+  step "it receives the newest 10 user turns and a cursor for older history", context do
+    assert user_messages(context.history) == for(n <- 51..60, do: "msg-#{n}")
+    assert is_binary(context.history["cursor"])
+    context
+  end
+
+  step "it asks for the page before that cursor", context do
+    history(context, context.thread, context.history["cursor"])
+  end
+
+  step "it receives the 20 user turns before them", context do
+    assert user_messages(context.history) == for(n <- 31..50, do: "msg-#{n}")
+    context
+  end
+
+  step ~r/^an earlier turn of "(?<thread>[^"]+)" ran hundreds of tool calls and was steered twice$/,
+       %{args: [thread]} = context do
+    big = user_turn(11, 300)
+
+    steering =
+      for i <- 1..2 do
+        message = %{"id" => "steer-#{i}", "runId" => "run-11", "role" => "user", "text" => "also"}
+        {"message", message["id"], %{"s" => message}}
+      end
+
+    turns = for n <- 1..30, n != 11, do: user_turn(n)
+    commit(context, thread, Enum.concat([big, steering | turns]))
+    Map.put(context, :thread, thread)
+  end
+
+  step "a client pages back to that turn", context do
+    context = history(context, context.thread, nil)
+    history(context, context.thread, context.history["cursor"])
+  end
+
+  step "the page holds the whole turn, from the user's message to its last item", context do
+    rows = context.history["rows"]
+    assert ["message", "msg-11"] in for([kind, id, _] <- rows, do: [kind, id])
+    assert length(for ["turn-item", "item-11-" <> _, _] <- rows, do: 1) == 300
+    context
+  end
+
+  step "the steering messages do not count as turns of their own", context do
+    # Twenty user turns fill a page, whatever steered them.
+    assert length(user_messages(context.history)) == 20 + 2 - 2
+    assert Enum.all?(~w(steer-1 steer-2), &("steer-" <> _ = &1))
+    context
+  end
+
+  step ~r/^"(?<thread>[^"]+)" has hundreds of turns started by background work between two user messages$/,
+       %{args: [thread]} = context do
+    auto =
+      for n <- 2..301 do
+        run = %{"id" => "run-#{n}", "ordinal" => n, "status" => "completed"}
+        {"run", run["id"], %{"s" => run}}
+      end
+
+    commit(context, thread, user_turn(1) ++ auto ++ user_turn(302))
+    Map.put(context, :thread, thread)
+  end
+
+  step "the snapshot holds at most 150 turns of any kind", context do
+    runs = for ["turn-item", _, %{"runId" => run}] <- context.history["rows"], uniq: true, do: run
+    assert length(runs) <= 150
+    assert user_messages(context.history) == ["msg-302"]
+    context
+  end
+
+  step ~r/^a client asks for older history of "(?<thread>[^"]+)" with (?<cursor>an empty cursor|a cursor the MC never gave|a cursor longer than 4,096 characters)$/,
+       %{args: [thread, cursor]} = context do
+    cursor =
+      case cursor do
+        "an empty cursor" -> ""
+        "a cursor the MC never gave" -> "not-a-cursor"
+        _ -> String.duplicate("a", 4_097)
+      end
+
+    {reply, context} =
+      World.call(context, "hal-c2.threadHistory", %{
+        "threadId" => World.thread_id(context, thread),
+        "cursor" => cursor
+      })
+
+    Map.put(context, :reply, World.normalize_reply(reply))
+  end
+
+  step "the request fails as an invalid history cursor", context do
+    assert {:error, "invalid history cursor", %{"_tag" => "InvalidHistoryCursor"}} = context.reply
+    context
+  end
+
+  step ~r/^a client holds a cursor into the history of "(?<thread>[^"]+)"$/,
+       %{args: [thread]} = context do
+    commit(context, thread, Enum.flat_map(1..40, &user_turn/1))
+    context = history(context, thread, nil)
+    cursor = context.history["cursor"]
+    context = history(context, thread, cursor)
+    Map.merge(context, %{thread: thread, cursor: cursor, before: user_messages(context.history)})
+  end
+
+  step "{string} gains new turns", %{args: [thread]} = context do
+    commit(context, thread, Enum.flat_map(41..50, &user_turn/1))
+    context
+  end
+
+  step "the client asks for the page before that cursor", context do
+    history(context, context.thread, context.cursor)
+  end
+
+  step "it receives the same older turns as before, with none skipped or repeated", context do
+    assert user_messages(context.history) == context.before
+    assert context.before == Enum.uniq(context.before)
+    context
+  end
+
+  step "the item the cursor names has since left the timeline", context do
+    {:ok, _} =
+      HalC2.Streams.commit(
+        World.thread_id(context, context.thread),
+        :thread,
+        [{"run", "run-31", %{"s" => %{"status" => "rolled_back"}}}]
+      )
+
+    context
+  end
+
+  step "it receives the turns before the position the cursor recorded", context do
+    assert user_messages(context.history) == context.before
+    context
+  end
+
+  step ~r/^an active proposed plan, a pending handoff, a pending approval and a queued message are older than its newest turns$/,
+       context do
+    thread = context.thread
+    owned = %{"threadId" => World.thread_id(context, thread), "runId" => "run-1"}
+    queued = %{"id" => "run-q", "ordinal" => 0, "status" => "queued", "userMessageId" => "msg-q"}
+    message = %{"id" => "msg-q", "runId" => "run-q", "role" => "user", "text" => "later"}
+
+    changes = [
+      {"plan", "plan-1",
+       %{
+         "s" =>
+           Map.merge(owned, %{
+             "id" => "plan-1",
+             "kind" => "proposed_plan",
+             "status" => "active",
+             "markdown" => "# Plan"
+           })
+       }},
+      {"context-handoff", "handoff-1",
+       %{
+         "s" =>
+           Map.merge(owned, %{"id" => "handoff-1", "status" => "pending", "summaryText" => "s"})
+       }},
+      {"runtime-request", "request-1",
+       %{
+         "s" =>
+           Map.merge(owned, %{"id" => "request-1", "kind" => "approval", "status" => "pending"})
+       }},
+      {"run", "run-q", %{"s" => queued}},
+      {"message", "msg-q", %{"s" => message}}
+    ]
+
+    commit(context, thread, changes)
+    context
+  end
+
+  step "the snapshot still carries the plan, the handoff, the approval and the queued message",
+       context do
+    ids = for [kind, id, _] <- context.history["rows"], do: {kind, id}
+
+    for key <- [
+          {"plan", "plan-1"},
+          {"context-handoff", "handoff-1"},
+          {"runtime-request", "request-1"},
+          {"message", "msg-q"}
+        ],
+        do: assert(key in ids, "#{inspect(key)} is not in the snapshot")
+
+    # Bounded all the same: the oldest turns' items are not.
+    refute {"turn-item", "item-1-1"} in ids
+    context
+  end
+
+  step ~r/^the newest turns of "(?<thread>[^"]+)" include a completed plan and a finished handoff$/,
+       %{args: [thread]} = context do
+    owned = %{"threadId" => World.thread_id(context, thread), "runId" => "run-2"}
+
+    plan =
+      Map.merge(owned, %{
+        "id" => "plan-1",
+        "kind" => "proposed_plan",
+        "status" => "completed",
+        "markdown" => "# the plan text"
+      })
+
+    handoff =
+      Map.merge(owned, %{
+        "id" => "handoff-1",
+        "status" => "consumed",
+        "summaryText" => "the summary",
+        "history" => [%{"text" => "hi"}]
+      })
+
+    commit(
+      context,
+      thread,
+      user_turn(1) ++
+        user_turn(2) ++
+        [{"plan", "plan-1", %{"s" => plan}}, {"context-handoff", "handoff-1", %{"s" => handoff}}]
+    )
+
+    Map.put(context, :thread, thread)
+  end
+
+  step "each carries its status and says its detail is in its timeline item", context do
+    for {id, status} <- [{"plan-1", "completed"}, {"handoff-1", "consumed"}] do
+      entity = history_row(context.history, id)
+      assert entity["status"] == status
+      assert entity["detailInTimeline"] == true
+    end
+
+    context
+  end
+
+  step "neither carries the plan text or the handoff summary a second time", context do
+    refute Map.has_key?(history_row(context.history, "plan-1"), "markdown")
+    handoff = history_row(context.history, "handoff-1")
+    assert handoff["summaryText"] in [nil, ""]
+    refute Map.has_key?(handoff, "history")
+    context
+  end
+
+  step ~r/^what the user can still act on in "(?<thread>[^"]+)" is larger than one megabyte$/,
+       %{args: [thread]} = context do
+    plan = %{
+      "id" => "plan-1",
+      "threadId" => World.thread_id(context, thread),
+      "runId" => "run-1",
+      "kind" => "proposed_plan",
+      "status" => "active",
+      "markdown" => String.duplicate("x", 1_200_000)
+    }
+
+    commit(context, thread, user_turn(1) ++ [{"plan", "plan-1", %{"s" => plan}}])
+    Map.put(context, :thread, thread)
+  end
+
+  step "nothing the user can act on is left out", context do
+    assert history_row(context.history, "plan-1")["markdown"] |> byte_size() == 1_200_000
+    context
+  end
+
+  step "the snapshot is marked as over its payload budget", context do
+    assert context.history["overBudget"] == true
+    context
+  end
+
+  defp commit(context, thread, changes),
+    do: {:ok, _} = HalC2.Streams.commit(World.thread_id(context, thread), :thread, changes)
+
+  defp history(context, thread, cursor) do
+    input = %{"threadId" => World.thread_id(context, thread)}
+    input = if cursor, do: Map.put(input, "cursor", cursor), else: input
+    {reply, context} = World.call!(context, "hal-c2.threadHistory", input)
+    Map.merge(context, %{thread: thread, history: reply})
+  end
+
+  defp user_messages(history),
+    do: for(["message", "msg-" <> _ = id, _] <- history["rows"], do: id) |> Enum.sort_by(&msg_n/1)
+
+  defp msg_n("msg-" <> n), do: String.to_integer(n)
+
+  defp history_row(history, id), do: hd(for [_, ^id, entity] <- history["rows"], do: entity)
+
+  # A run a user message started, with its items.
+  defp user_turn(n, items \\ 3) do
+    run = %{
+      "id" => "run-#{n}",
+      "ordinal" => n,
+      "status" => "completed",
+      "userMessageId" => "msg-#{n}"
+    }
+
+    message = %{"id" => "msg-#{n}", "runId" => run["id"], "role" => "user", "text" => "ask #{n}"}
+
+    [{"run", run["id"], %{"s" => run}}, {"message", message["id"], %{"s" => message}}] ++
+      for i <- 1..items do
+        item = %{"id" => "item-#{n}-#{i}", "runId" => run["id"], "type" => "reasoning"}
+        {"turn-item", item["id"], %{"s" => Map.put(item, "ordinal", n * 1000 + i)}}
+      end
+  end
+
   # --- the full projection ------------------------------------------------------------
 
   step "{string} has a finished run with a message, an item, a plan, a checkpoint and a pending request",

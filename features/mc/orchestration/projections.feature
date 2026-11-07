@@ -191,7 +191,7 @@ Feature: What the engine projects for clients
     Then the page holds only visible turns
     And it ends at the true start of the history
 
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A bounded snapshot holds the newest 10 user turns and older pages hold 20
     Given "t1" has 60 user turns
     When a client asks for a bounded snapshot of "t1"
@@ -199,7 +199,7 @@ Feature: What the engine projects for clients
     When it asks for the page before that cursor
     Then it receives the 20 user turns before them
 
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A page of history never splits a turn
     Given an earlier turn of "t1" ran hundreds of tool calls and was steered twice
     When a client pages back to that turn
@@ -207,11 +207,11 @@ Feature: What the engine projects for clients
     And the steering messages do not count as turns of their own
 
   # Upstream #19423: a notification that starts a run counts as a turn, so a woken thread's window stays bounded
-  @mc @backlog
+  @mc
   Scenario: Automatic turns cannot make a page of history unbounded
     Given "t1" has hundreds of turns started by background work between two user messages
-    When a client asks for a bounded page of the history of "t1"
-    Then the page holds at most 150 turns of any kind
+    When a client asks for a bounded snapshot of "t1"
+    Then the snapshot holds at most 150 turns of any kind
 
   @mc @backlog
   Scenario: History that records no turn starts is paged by items and size
@@ -220,7 +220,7 @@ Feature: What the engine projects for clients
     Then the page holds at most 75 items and about one megabyte
     And it holds at least one item, however large that item is
 
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario Outline: A history cursor the MC cannot use is refused
     When a client asks for older history of "t1" with <cursor>
     Then the request fails as an invalid history cursor
@@ -231,35 +231,35 @@ Feature: What the engine projects for clients
       | a cursor the MC never gave            |
       | a cursor longer than 4,096 characters |
 
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A history cursor stays valid while the thread grows
     Given a client holds a cursor into the history of "t1"
     When "t1" gains new turns
     And the client asks for the page before that cursor
     Then it receives the same older turns as before, with none skipped or repeated
 
-  @mc @backlog
+  @mc
   Scenario: A history cursor whose item is gone resumes from where the item was
     Given a client holds a cursor into the history of "t1"
     And the item the cursor names has since left the timeline
     When the client asks for the page before that cursor
     Then it receives the turns before the position the cursor recorded
 
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A bounded snapshot keeps everything the user can still act on
-    Given "t1" has a very long history
+    Given "t1" has 60 user turns
     And an active proposed plan, a pending handoff, a pending approval and a queued message are older than its newest turns
     When a client asks for a bounded snapshot of "t1"
     Then the snapshot still carries the plan, the handoff, the approval and the queued message
 
-  @mc @backlog
+  @mc
   Scenario: Finished plans and handoffs in a bounded snapshot carry only their status
     Given the newest turns of "t1" include a completed plan and a finished handoff
     When a client asks for a bounded snapshot of "t1"
     Then each carries its status and says its detail is in its timeline item
     And neither carries the plan text or the handoff summary a second time
 
-  @mc @backlog
+  @mc
   Scenario: A bounded snapshot says when it could not stay within its size budget
     Given what the user can still act on in "t1" is larger than one megabyte
     When a client asks for a bounded snapshot of "t1"
