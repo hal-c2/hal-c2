@@ -439,11 +439,7 @@ defmodule HalC2.ProviderUsageLimits do
 
         if now == nil or now["checkedAt"] == (before || %{})["checkedAt"] or
              get_in(now, ["unavailable", "reason"]) == "probeFailed" do
-          {:reply,
-           setup_error(
-             instance,
-             "The reset was applied, but Codex could not confirm the new limits. Refresh to check."
-           ), state}
+          {:reply, setup_error(instance, unconfirmed(outcome)), state}
         else
           {:reply, {:ok, %{"outcome" => outcome}}, state}
         end
@@ -455,6 +451,15 @@ defmodule HalC2.ProviderUsageLimits do
          %{state | redeem_keys: Map.put(state.redeem_keys, instance, key)}}
     end
   end
+
+  # Only a redemption that reset the limit needs its new limits confirmed; a refused one
+  # says why, since nothing was applied.
+  defp unconfirmed("alreadyRedeemed"), do: "That credit was already redeemed."
+  defp unconfirmed("nothingToReset"), do: "Nothing to reset right now."
+  defp unconfirmed("noCredit"), do: "No reset credit left."
+
+  defp unconfirmed(_),
+    do: "The reset was applied, but Codex could not confirm the new limits. Refresh to check."
 
   @impl true
   def handle_cast({key, instance, value}, state) when key in [:account, :commands] do

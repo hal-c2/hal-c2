@@ -136,7 +136,7 @@ Feature: Subscription limits
     Then "Using reset credit…" shows under the bar after the popover closes
     And it is replaced by how the reset went
 
-  @backlog @mc @plugin-codex @priority-low
+  @mc @plugin-codex
   Scenario Outline: A refused Codex reset credit is not reported as unconfirmed when the following check fails
     Given Codex refuses the reset credit because <refusal>
     When the user uses the reset credit and the following check fails
@@ -264,7 +264,7 @@ Feature: Subscription limits
     Then the account shows its windows with no reset credits
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (failed account never publishes the upstream body)
-  @mc @backlog @priority-low
+  @mc
   Scenario: What a hub's upstream said is not shown to clients
     Given a hub account whose upstream request fails with a message that holds a secret
     When the MC reads the hub
@@ -310,7 +310,7 @@ Feature: Subscription limits
     And the user is warned that routing may resume only after the hub's cooldown expires
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (account in a redemption must be one the hub listed)
-  @mc @backlog @priority-low
+  @mc
   Scenario: A redemption for an account the hub does not list is not forwarded
     Given a hub that lists two accounts
     When the user uses a reset credit naming an account the hub does not list

@@ -54,10 +54,19 @@ defmodule HalC2.Steps.Providers.UsageLimits.Hub do
 
   defp route(conn, "/v0/management/api-call", %{"url" => url}, hub, state) do
     case upstream(url, hub, state) do
-      :fail -> json(conn, %{"status_code" => 500, "body" => ""})
-      body -> json(conn, %{"status_code" => 200, "body" => JSON.encode!(body)})
+      :fail ->
+        json(conn, %{"status_code" => 500, "body" => ""})
+
+      {:fail, message} ->
+        json(conn, %{"status_code" => 500, "body" => message, "error" => message})
+
+      body ->
+        json(conn, %{"status_code" => 200, "body" => JSON.encode!(body)})
     end
   end
+
+  defp upstream("https://chatgpt.com/backend-api/wham/usage", %{leak: true}, _),
+    do: {:fail, "token sk-secret-123 rejected"}
 
   defp upstream("https://chatgpt.com/backend-api/wham/usage", %{crash: true}, _),
     do: %{"plan_type" => "pro", "rate_limit" => "garbled"}
@@ -904,6 +913,65 @@ defmodule HalC2.Steps.Providers.UsageLimits do
   step "refreshing by hand still reads them", context do
     {_, context} = World.call!(context, "server.refreshProviders", %{})
     assert_received {:hub, "/v0/management/auth-files", _}
+    context
+  end
+
+  # --- refusals and hub safety --------------------------------------------------------
+
+  step ~r/^Codex refuses the reset credit because (?<why>it was already redeemed|nothing needs resetting|the account has no credit)$/,
+       %{args: [why]} = context do
+    outcome =
+      %{
+        "it was already redeemed" => "alreadyRedeemed",
+        "nothing needs resetting" => "nothingToReset",
+        "the account has no credit" => "noCredit"
+      }[why]
+
+    context = limits(context)
+    System.put_env("FAKE_CODEX_CONSUME_OUTCOME", outcome)
+    context
+  end
+
+  step "the reset is not reported as applied", context do
+    assert {:error, _, _} = context.reply
+    context
+  end
+
+  step "a hub account whose upstream request fails with a message that holds a secret", context do
+    context |> add_hub() |> put_hub(:leak, true)
+  end
+
+  step "the account is reported as not read", context do
+    [%{"accounts" => accounts}] = context.hubs
+
+    assert %{"unavailable" => %{"reason" => "probeFailed"}} =
+             Enum.find(accounts, &(&1["id"] == "codex-a"))["usageLimits"]
+
+    context
+  end
+
+  step "the secret text is not in anything sent to clients", context do
+    refute inspect(context.hubs) =~ "sk-secret-123"
+    refute inspect(HalC2.UsageLimitSources.current()) =~ "sk-secret-123"
+    context
+  end
+
+  step "a hub that lists two accounts", context do
+    context |> add_hub() |> tap(fn _ -> assert [%{"accounts" => [_, _]}] = read_hubs() end)
+  end
+
+  step "the user uses a reset credit naming an account the hub does not list", context do
+    drain_hub()
+    consume(context, %{"sourceId" => "hub", "accountId" => "ghost", "creditId" => "c1"})
+  end
+
+  step "the MC sends nothing to the hub's upstream", context do
+    refute_received {:hub, "/v0/management/api-call", _}
+    context
+  end
+
+  step "the user is told the account is missing or disabled", context do
+    assert {:error, "The Codex hub account is missing or disabled.", _} = context.reply
     context
   end
 
