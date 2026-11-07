@@ -857,7 +857,7 @@ Feature: The thread list
     When a screen reader moves through the sidebar from its first thread
     Then "one" and then "two" are reached before the settled shelf and its footer
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The Working section folds away busy threads
     Given Working section is on in General settings
     When threads are working, connecting or monitoring
@@ -866,7 +866,7 @@ Feature: The thread list
     And drag reordering in the inbox is off while it is on
 
   # Upstream #25190: the Working section was off unless turned on; it now starts on.
-  @backlog @desktop @mobile @priority-low
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: The Working section is on until the user turns it off
     Given the user never changed whether the Working section is on
     When threads are working
@@ -913,7 +913,7 @@ Feature: The thread list
     Then the sidebar sorts projects that way
     And Restore defaults resets it
 
-  @backlog @shared @priority-high
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: Working threads keep their order while agents finish and wake
     Given several threads are in the Working section
     When an agent run ends, or a subagent result or pull request watch wakes a thread
@@ -921,7 +921,7 @@ Feature: The thread list
 
   # Upstream #24760: a thread that stops working waits two seconds in Working, so a run that
   # continues or a settle that follows does not flash it through the inbox.
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario Outline: A thread that stops working waits briefly before it leaves Working
     Given the Working section is on
     And "Fix login" is in the Working section
@@ -941,7 +941,7 @@ Feature: The thread list
     Then releasing applies the action to every row swept in that section
     And Escape or losing focus cancels it, and a plain click keeps its single-row action
 
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario: A thread's status has a spoken name
     When a screen reader reaches a thread's status marker
     Then it announces Working, Awaiting input or Pending approval

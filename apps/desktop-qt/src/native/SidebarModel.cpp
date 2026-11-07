@@ -154,6 +154,39 @@ bool latestRunCompletedAfterSnooze(const Thread& thread) {
   return completedAt && *completedAt > *snoozedAt;
 }
 
+// The inbox while the Working section is on: newest return first, a return
+// being a new thread, an un-settle, a run asked for or ended, or this device
+// seeing the thread leave the section.
+void sortByReturn(QList<Thread>& threads, const WorkingTracker& tracker) {
+  const auto returned = [&tracker](const Thread& thread) {
+    qint64 at = std::max(sortableMs(thread.createdAt), sortableMs(thread.unsettledAt));
+    if (thread.latestRun) {
+      at = std::max({at, sortableMs(thread.latestRun->requestedAt), sortableMs(thread.latestRun->completedAt)});
+    }
+    return std::max(at, tracker.returnedAt(thread.key()).value_or(0));
+  };
+  sortByMs(threads, returned, [](qint64 leftMs, qint64 rightMs, const Thread& left, const Thread& right) {
+    if (leftMs != rightMs) return leftMs > rightMs;
+    return compareIdentity(left, right) < 0;
+  });
+}
+
+// The Working section: the thread the user last sent work to first. A wake or
+// an agent's message is not the user's, so it moves no row; an MC that does
+// not say which messages the user typed leaves the latest run's request.
+void sortBySend(QList<Thread>& threads) {
+  const auto sent = [](const Thread& thread) {
+    const Nullable at = thread.latestUserAuthoredMessageAt ? *thread.latestUserAuthoredMessageAt
+                        : thread.latestRun                 ? thread.latestRun->requestedAt
+                                                           : std::nullopt;
+    return std::max(sortableMs(thread.createdAt), sortableMs(at));
+  };
+  sortByMs(threads, sent, [](qint64 leftMs, qint64 rightMs, const Thread& left, const Thread& right) {
+    if (leftMs != rightMs) return leftMs > rightMs;
+    return compareIdentity(left, right) < 0;
+  });
+}
+
 QDateTime localAt(const QDate& date, int hour) {
   return QDateTime(date, QTime(hour, 0));
 }
@@ -181,6 +214,9 @@ Thread threadFromRow(const QString& environmentId, const QJsonObject& row) {
   thread.createdAt = row.value(QLatin1String("createdAt")).toString();
   thread.updatedAt = row.value(QLatin1String("updatedAt")).toString();
   thread.latestUserMessageAt = stringField(row, "latestUserMessageAt");
+  if (row.contains(QLatin1String("latestUserAuthoredMessageAt"))) {
+    thread.latestUserAuthoredMessageAt = stringField(row, "latestUserAuthoredMessageAt");
+  }
   thread.archivedAt = stringField(row, "archivedAt");
   thread.subagent = row.value(QLatin1String("lineage")).toObject().value(QLatin1String("relationshipToParent")).toString() ==
                     QLatin1String("subagent");
@@ -383,6 +419,74 @@ Nullable visibleWokeAt(const Thread& thread, qint64 nowMs) {
   const auto wokeMs = parseIso(woke);
   if (!visitedAt || (wokeMs && *visitedAt < *wokeMs)) return woke;
   return std::nullopt;
+}
+
+bool working(const Thread& thread) {
+  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
+  const bool busy = (thread.runtime && activeRunStatus(thread.runtime->status)) || thread.pendingBackgroundTasks > 0;
+  if (!busy) return false;
+  return !(thread.interactionMode == QLatin1String("plan") && thread.hasActionableProposedPlan && latestRunSettled(thread));
+}
+
+void WorkingTracker::observe(const QList<Thread>& threads, qint64 nowMs) {
+  QSet<QString> present;
+  for (const Thread& thread : threads) {
+    const QString key = thread.key();
+    present.insert(key);
+    const auto found = m_states.constFind(key);
+    const std::optional<State> previous = found == m_states.constEnd() ? std::nullopt : std::optional<State>(*found);
+    const bool wasWorking = previous && previous->working;
+    const bool actual = working(thread);
+    std::optional<QString> placement;
+    if (actual || wasWorking) {
+      QStringList fields;
+      for (const Nullable& field : {thread.archivedAt, thread.pinnedAt, thread.settledOverride, thread.settledAt,
+                                    thread.snoozedAt, thread.snoozedUntil, thread.activeOrderKey}) {
+        fields.append(field ? QLatin1Char('=') + *field : QStringLiteral("-"));
+      }
+      placement = fields.join(QLatin1Char('\x1f'));
+    }
+    // Asking for something or failing is news: it is never held back.
+    const bool actionable = thread.hasPendingApprovals || thread.hasPendingUserInput ||
+                            (thread.interactionMode == QLatin1String("plan") && thread.hasActionableProposedPlan) ||
+                            (thread.runtime && thread.runtime->lastErrorClass) ||
+                            (thread.latestRun && thread.latestRun->status == QLatin1String("failed"));
+    const bool moved = previous && previous->placement != placement;
+    const bool excluded = thread.archivedAt || thread.pinnedAt || thread.settledOverride == QLatin1String("settled") ||
+                          effectiveSnoozed(thread, nowMs);
+    std::optional<qint64> deadline;
+    if (!actual && wasWorking && !actionable && !moved && !excluded) {
+      deadline = previous->deadline.value_or(nowMs + kWorkingExitGraceMs);
+    }
+    const bool stillWorking = actual || (deadline && *deadline > nowMs);
+    if (wasWorking && !stillWorking) m_returns.insert(key, nowMs);
+    m_states.insert(key, State{stillWorking, stillWorking ? deadline : std::nullopt, placement});
+  }
+  m_states.removeIf([&present](const auto& entry) { return !present.contains(entry.key()); });
+  m_returns.removeIf([&present](const auto& entry) { return !present.contains(entry.key()); });
+}
+
+void WorkingTracker::clear() {
+  m_states.clear();
+  m_returns.clear();
+}
+
+bool WorkingTracker::isWorking(const Thread& thread) const {
+  const auto found = m_states.constFind(thread.key());
+  return found != m_states.constEnd() ? found->working : working(thread);
+}
+
+std::optional<qint64> WorkingTracker::returnedAt(const QString& key) const {
+  const auto found = m_returns.constFind(key);
+  return found != m_returns.constEnd() ? std::optional<qint64>(*found) : std::nullopt;
+}
+
+std::optional<qint64> WorkingTracker::nextDeadline() const {
+  std::optional<qint64> next;
+  for (const State& state : m_states) {
+    if (state.deadline && (!next || *state.deadline < *next)) next = state.deadline;
+  }
+  return next;
 }
 
 Partition partition(const QList<Thread>& threads, const std::optional<QSet<QString>>& scopedProjectKeys,
@@ -748,6 +852,14 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
     const QString open = input.activeThreadKey.value_or(QString());
     sections.settled.removeIf([&open](const Thread& thread) { return !thread.pluginId.isEmpty() && thread.key() != open; });
   }
+  QList<Thread> working;
+  if (input.working) {
+    QList<Thread> inbox;
+    for (Thread& thread : sections.active) (input.working->isWorking(thread) ? working : inbox).append(std::move(thread));
+    sections.active = std::move(inbox);
+    sortByReturn(sections.active, *input.working);
+    sortBySend(working);
+  }
 
   QHash<QString, QString> projectNames;
   for (const ProjectGroup& group : input.projects) projectNames.insert(group.key, group.summary.value(QStringLiteral("displayName")).toString());
@@ -824,6 +936,7 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
   const qsizetype unlimited = std::numeric_limits<qsizetype>::max();
   const QVariantList pinned = convert(sections.pinned, false, false, unlimited);
   const QVariantList active = convert(sections.active, false, false, unlimited);
+  const QVariantList workingRows = convert(working, false, false, unlimited);
   const QVariantList snoozed = convert(sections.snoozed, true, true, unlimited);
   const QVariantList settled = convert(sections.settled, false, true, input.settledLimit);
 
@@ -863,6 +976,9 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
       {QStringLiteral("scopeProjectKey"), nullable(scopeProjectKey)},
       {QStringLiteral("pinned"), pinned},
       {QStringLiteral("active"), active},
+      {QStringLiteral("working"), workingRows},
+      // While the Working section is on the inbox keeps its own order: no arranging.
+      {QStringLiteral("workingShelf"), input.working != nullptr},
       {QStringLiteral("snoozed"), snoozed},
       {QStringLiteral("settled"), settled},
       {QStringLiteral("settledTotal"), sections.settled.size()},

@@ -45,6 +45,9 @@ struct Thread {
   QString createdAt;
   QString updatedAt;
   Nullable latestUserMessageAt;
+  // The latest message the user typed, which a wake or an agent's message does
+  // not move; nothing at all from an MC that does not send it.
+  std::optional<Nullable> latestUserAuthoredMessageAt;
   Nullable archivedAt;
   bool subagent = false;
   QString interactionMode;
@@ -103,6 +106,43 @@ QString workingLabel(const Thread& thread, qint64 nowMs);
 Nullable statusLabel(const Thread& thread);
 bool unread(const Thread& thread);
 Nullable visibleWokeAt(const Thread& thread, qint64 nowMs);
+
+// Whether the thread is busy for the Working section: its run is going or
+// connecting, or it waits on background work it resumes from. Not while it
+// asks for an approval or an answer, nor with a plan to review.
+bool working(const Thread& thread);
+
+// How long a thread that stopped working stays in the Working section: a run
+// can end moments before its continuation starts, or before the MC settles it.
+inline constexpr qint64 kWorkingExitGraceMs = 2000;
+
+// The Working section's placement on this device (upstream's
+// createInboxReturnTracker): observe() every list of threads the sidebar is
+// built from. A thread that stops working stays in the section for
+// kWorkingExitGraceMs, unless it asks for something, fails, or the user or
+// the MC moves it (pins, snoozes, settles, archives); when it leaves, the time
+// is its return to the inbox. Threads not observed since are forgotten.
+class WorkingTracker {
+public:
+  void observe(const QList<Thread>& threads, qint64 nowMs);
+  // Forgets everything, as when the section is turned off.
+  void clear();
+  bool isWorking(const Thread& thread) const;
+  // When the thread `key` last left the section, as this device saw it.
+  std::optional<qint64> returnedAt(const QString& key) const;
+  // The soonest grace that runs out, to observe again then.
+  std::optional<qint64> nextDeadline() const;
+
+private:
+  struct State {
+    bool working = false;
+    std::optional<qint64> deadline;
+    // Where the thread was placed while it worked; a change is a move.
+    std::optional<QString> placement;
+  };
+  QHash<QString, State> m_states;
+  QHash<QString, qint64> m_returns;
+};
 
 struct Capabilities {
   bool settlement = false;
@@ -221,13 +261,17 @@ struct Input {
   // Whether Settled lists the settled threads a plugin started, such as code
   // reviews (`sidebarShowSettledPluginThreads`); the open one is listed either way.
   bool showSettledPluginThreads = false;
+  // The Working section (sidebarWorkingShelfEnabled), off without one: busy
+  // inbox threads list in `working`, ordered by when the user last sent work,
+  // and the inbox orders by when each came back, so it cannot be arranged.
+  const WorkingTracker* working = nullptr;
 
   const ProjectGroup* group(const QString& key) const;
 };
 
 struct View {
   QVariantMap state;
-  // Rows in the order they render (pinned, active, snoozed, settled), and
+  // Rows in the order they render (pinned, active, working, snoozed, settled), and
   // which of them are parked (snoozed or settled).
   QStringList orderedKeys;
   QSet<QString> parkedKeys;

@@ -85,7 +85,7 @@ QVariantMap sidebar(World& world) {
 
 std::optional<QVariantMap> rowOf(World& world, const QString& key) {
   const QVariantMap state = sidebar(world);
-  for (const QString& section : {QStringLiteral("pinned"), QStringLiteral("active"), QStringLiteral("snoozed"), QStringLiteral("settled")}) {
+  for (const QString& section : {QStringLiteral("pinned"), QStringLiteral("active"), QStringLiteral("working"), QStringLiteral("snoozed"), QStringLiteral("settled")}) {
     for (const QVariant& row : state.value(section).toList()) {
       if (row.toMap().value(QStringLiteral("key")) == key) return row.toMap();
     }

@@ -183,6 +183,7 @@ Feature: Pinning and arranging threads
 
   @desktop
   Scenario: Moving a thread up or down from its menu
+    Given the Working section is off
     When the user moves "Beta" up
     Then "Beta" is listed above "Alpha"
 
@@ -241,8 +242,11 @@ Feature: Pinning and arranging threads
       | "Alpha" | up        |
       | "Gamma" | down      |
 
+  # Upstream #25190: with the Working section on (the default) the active list orders by when
+  # threads came back from it instead, and cannot be arranged.
   @desktop @mobile @backlog-mobile @priority-high
   Scenario: Activity does not reorder threads
+    Given the Working section is off
     When the agent finishes work in "Gamma"
     Then the order of the active threads does not change
 
@@ -254,13 +258,15 @@ Feature: Pinning and arranging threads
 
   @desktop
   Scenario: Arranging is unavailable on an environment that needs an update
-    Given the environment does not support reordering active threads
+    Given the Working section is off
+    And the environment does not support reordering active threads
     When the user tries to move "Beta"
     Then the user is told "Update this environment's server to reorder active threads."
 
   @desktop
   Scenario Outline: Reordering threads by dragging within a section is kept
-    Given the <section> threads are "Alpha" then "Beta"
+    Given the Working section is off
+    And the <section> threads are "Alpha" then "Beta"
     When the user drags "Beta" above "Alpha"
     Then the <section> threads are "Beta" then "Alpha"
     And the order is the same after a restart

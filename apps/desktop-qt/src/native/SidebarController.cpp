@@ -1,5 +1,6 @@
 #include "SidebarController.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "ComposerController.h"
@@ -30,6 +31,8 @@ SidebarController::SidebarController(ShellBridge* bridge, McClient* client, Shel
   // Snoozes wake and "2h" labels tick over on the minute.
   connect(&m_minute, &QTimer::timeout, this, &SidebarController::refresh);
   connect(store, &ShellStore::changed, this, &SidebarController::refresh);
+  m_workingGrace.setSingleShot(true);
+  connect(&m_workingGrace, &QTimer::timeout, this, &SidebarController::refresh);
   m_visitLater.setSingleShot(true);
   connect(&m_visitLater, &QTimer::timeout, this, &SidebarController::visitOpenThread);
 }
@@ -139,6 +142,13 @@ void SidebarController::refresh() {
   input.settledLimit = m_settledShown;
   input.settledPage = m_settledPage;
   input.showSettledPluginThreads = m_showSettledPluginThreads;
+  const qint64 nowMs = now.toMSecsSinceEpoch();
+  if (m_workingShelf) {
+    m_working.observe(threads, nowMs);
+    input.working = &m_working;
+  } else {
+    m_working.clear();
+  }
   input.jumpLabels = m_jumpLabels;
   input.showJumpHints = m_showJumpHints;
   input.describeWake = [this, now](const QString& snoozedUntil) {
@@ -146,7 +156,12 @@ void SidebarController::refresh() {
   };
   m_view = sidebar::build(threads, input, m_scope,
                           [this](const QString& environmentId) { return m_store->capabilities(environmentId); },
-                          now.toMSecsSinceEpoch());
+                          nowMs);
+  if (const auto deadline = m_working.nextDeadline()) {
+    m_workingGrace.start(int(std::clamp<qint64>(*deadline - nowMs, 1, sidebar::kWorkingExitGraceMs)));
+  } else {
+    m_workingGrace.stop();
+  }
   // A thread that went, or left the list (archived), is not selected any more,
   // so it does not come back selected.
   m_selected.removeIf([this](const QString& key) { return !m_view.orderedKeys.contains(key); });
@@ -566,7 +581,8 @@ QStringList SidebarController::sectionKeys(const QString& section) const {
 }
 
 QString SidebarController::sectionOf(const QString& key) const {
-  for (const QString& section : {QStringLiteral("pinned"), QStringLiteral("active"), QStringLiteral("snoozed"), QStringLiteral("settled")}) {
+  for (const QString& section : {QStringLiteral("pinned"), QStringLiteral("active"), QStringLiteral("working"),
+                                 QStringLiteral("snoozed"), QStringLiteral("settled")}) {
     if (sectionKeys(section).contains(key)) return section;
   }
   return {};
@@ -575,6 +591,7 @@ QString SidebarController::sectionOf(const QString& key) const {
 bool SidebarController::canMove(const QString& key, bool up) const {
   const QString section = sectionOf(key);
   if (section != QLatin1String("pinned") && section != QLatin1String("active")) return false;
+  if (section == QLatin1String("active") && m_workingShelf) return false;
   const QStringList ordered = sectionKeys(section);
   const qsizetype index = ordered.indexOf(key);
   return up ? index > 0 : index < ordered.size() - 1;
@@ -617,6 +634,7 @@ void SidebarController::drop(const QString& key, const QString& section, const Q
   const auto thread = m_store->thread(key);
   const QString from = sectionOf(key);
   if (!thread || from.isEmpty() || section == QLatin1String("snoozed")) return;
+  if (from == QLatin1String("working") || section == QLatin1String("working")) return;
   const QVariantMap keyed{{QStringLiteral("key"), key}};
   const auto placed = [&] {
     QStringList ordered = sectionKeys(section);
@@ -626,7 +644,7 @@ void SidebarController::drop(const QString& key, const QString& section, const Q
     return ordered;
   };
   if (section == from) {
-    if (section == QLatin1String("pinned") || section == QLatin1String("active")) {
+    if (section == QLatin1String("pinned") || (section == QLatin1String("active") && !m_workingShelf)) {
       const QStringList ordered = placed();
       if (ordered != sectionKeys(section)) arrange(section, ordered, key);
     }
@@ -685,6 +703,7 @@ void SidebarController::readSettings() {
   m_timestampFormat = QStringLiteral("locale");
   m_threadSortOrder = QStringLiteral("updated_at");
   m_showSettledPluginThreads = false;
+  m_workingShelf = true;
   const auto* settings = NativeShell::of(this)->controller<SettingsController>();
   if (!settings) return;
   // The shell's own MC decides for the whole sidebar, as its Settings row shows.
@@ -698,6 +717,7 @@ void SidebarController::readSettings() {
   text("sidebarProjectSortOrder", m_grouping.sortOrder);
   text("timestampFormat", m_timestampFormat);
   text("sidebarThreadSortOrder", m_threadSortOrder);
+  m_workingShelf = device.value(QLatin1String("sidebarWorkingShelfEnabled")).toBool(true);
   const QJsonObject overrides = device.value(QLatin1String("sidebarProjectGroupingOverrides")).toObject();
   for (auto it = overrides.constBegin(); it != overrides.constEnd(); ++it) {
     if (it.value().isString()) m_grouping.overrides.insert(it.key(), it.value().toString());

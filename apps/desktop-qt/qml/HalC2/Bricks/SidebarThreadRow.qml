@@ -111,6 +111,19 @@ Item {
         }
         return "";
     }
+    // What a screen reader says for the status marker: the short word
+    // spelled out where it would not stand on its own.
+    readonly property string spokenStatus: {
+        switch (item.status) {
+        case "working":
+            return row.offline || row.movingTo.length > 0 ? statusWord : qsTr("Working");
+        case "approval":
+            return qsTr("Pending approval");
+        case "input":
+            return qsTr("Awaiting input");
+        }
+        return statusWord;
+    }
     readonly property string statusIcon: {
         if (row.offline) {
             return "cloud";
@@ -333,7 +346,8 @@ Item {
         property bool cancelled: false
 
         target: null
-        enabled: !row.draft && !row.offline
+        // A busy thread in the Working section stays where it is.
+        enabled: !row.draft && !row.offline && row.section !== "working"
         acceptedDevices: row.touch ? PointerDevice.Mouse | PointerDevice.TouchPad : PointerDevice.AllDevices
         acceptedButtons: Qt.LeftButton
         onActiveChanged: {
@@ -580,6 +594,8 @@ Item {
 
             ShellIcon {
                 objectName: "statusIcon"
+                Accessible.role: Accessible.Indicator
+                Accessible.name: row.spokenStatus
                 anchors.right: parent.right
                 anchors.rightMargin: (Theme.icon.lg - size) / 2
                 anchors.verticalCenter: parent.verticalCenter

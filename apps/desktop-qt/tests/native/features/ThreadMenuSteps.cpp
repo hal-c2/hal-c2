@@ -211,7 +211,7 @@ void view(World& world, const QString& key) {
 // The sidebar section listing the thread `key`, empty when none does.
 QString sectionOf(World& world, const QString& key) {
   const QVariantMap sidebar = world.state(QStringLiteral("sidebar")).toMap();
-  for (const QString& section : {QStringLiteral("pinned"), QStringLiteral("active"), QStringLiteral("settled"), QStringLiteral("snoozed")}) {
+  for (const QString& section : {QStringLiteral("pinned"), QStringLiteral("active"), QStringLiteral("working"), QStringLiteral("settled"), QStringLiteral("snoozed")}) {
     for (const QVariant& row : sidebar.value(section).toList()) {
       if (row.toMap().value(QStringLiteral("key")) == key) return section;
     }
@@ -246,6 +246,7 @@ QString itemId(const QString& phrase) {
       {QStringLiteral("rename"), QStringLiteral("rename")},
       {QStringLiteral("regenerate title"), QStringLiteral("regenerate-title")},
       {QStringLiteral("mark unread"), QStringLiteral("mark-unread")},
+      {QStringLiteral("auto-settle behavior"), QStringLiteral("auto-settle")},
       {QStringLiteral("copy"), QStringLiteral("copy")},
       {QStringLiteral("project settings"), QStringLiteral("project-settings")},
       {QStringLiteral("create page from thread"), QStringLiteral("page-from-thread")},
