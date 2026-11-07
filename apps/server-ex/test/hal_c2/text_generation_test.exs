@@ -174,6 +174,38 @@ defmodule HalC2.TextGenerationTest do
     end
   end
 
+  describe "a project's switch on an ACP agent configured only under providers" do
+    setup do
+      Application.put_env(:hal_c2, :acp_commands, %{"opencode" => ["python3", "-u", @fake_acp]})
+      :ok
+    end
+
+    test "turns it off where the environment has it on" do
+      settings!(%{
+        "providers" => %{"opencode" => %{"enabled" => true}},
+        "projectSettingsOverrides" => %{
+          "p1" => %{"providerInstances" => %{"opencode" => %{"enabled" => false}}}
+        }
+      })
+
+      selection = %{"instanceId" => "opencode", "model" => "fake/two"}
+      assert TextGeneration.usable?(Settings.settings(), selection)
+      refute TextGeneration.usable?(Settings.resolve(Settings.settings(), "p1"), selection)
+    end
+
+    test "turns it on where the environment has it off" do
+      settings!(%{
+        "projectSettingsOverrides" => %{
+          "p1" => %{"providerInstances" => %{"opencode" => %{"enabled" => true}}}
+        }
+      })
+
+      selection = %{"instanceId" => "opencode", "model" => "fake/two"}
+      refute TextGeneration.usable?(Settings.settings(), selection)
+      assert TextGeneration.usable?(Settings.resolve(Settings.settings(), "p1"), selection)
+    end
+  end
+
   describe "writing style" do
     test "Conventional Commits and custom instructions", %{repo: repo} do
       settings!(%{"sourceControlWritingStyle" => %{"mode" => "conventional_commits"}})

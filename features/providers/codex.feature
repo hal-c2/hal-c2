@@ -869,7 +869,7 @@ Feature: Codex
   # Upstream #18415: Codex threads get the whole orchestration instructions
   Scenario: Codex receives the whole orchestration instructions
     Given a Codex thread in default mode
-    When the turn starts
+    When its first turn starts
     Then Codex is given every part of HAL-C2's orchestration instructions
     And none is cut away by Codex's limit on the length of one instruction
 
