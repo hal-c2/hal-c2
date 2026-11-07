@@ -950,8 +950,8 @@ defmodule HalC2.OrchestrationPropTest do
     cond do
       refused = refusal(state, tid, :resume) -> refused
       own = agents_own(state, tid, msg) -> own
-      running(thread) -> {:error, :another_turn}
       msg not in thread.queue -> {:error, :not_queued}
+      running(thread) -> {:error, :another_turn}
       true -> nil
     end
   end

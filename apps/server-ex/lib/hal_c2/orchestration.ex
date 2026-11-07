@@ -3913,11 +3913,14 @@ defmodule HalC2.Orchestration do
       else: :ok
   end
 
-  # Why `queued-run.start` did not start `run_id` (`decide_next/3` said idle).
+  # Why `queued-run.start` did not start `run_id` (`decide_next/3` said idle). The
+  # named run is checked before any active turn: it may itself be that turn (the
+  # queue started it, or a double click), and then it is not queued at all.
   defp not_started(thread_id, run_id) do
     state = HalC2.Streams.state(thread_id)
     thread = StreamState.get(state, "thread")[thread_id]
     runs = StreamState.list(state, "run")
+    run = Enum.find(runs, &(&1["id"] == run_id))
 
     cond do
       thread == nil ->
@@ -3926,11 +3929,17 @@ defmodule HalC2.Orchestration do
       thread["deletedAt"] != nil ->
         "Thread #{thread_id} is deleted."
 
+      thread["archivedAt"] != nil ->
+        "Thread #{thread_id} is not active."
+
       moving = thread["moving"] ->
         "#{thread["title"]} is moving to #{moving["label"]}. Try again once it has arrived."
 
       moved = thread["movedTo"] ->
         "#{thread["title"]} has moved to #{moved["label"]}."
+
+      run == nil or run["status"] != "queued" ->
+        "Queued run #{run_id} is not queued."
 
       Enum.any?(runs, &(&1["status"] in @active_statuses)) ->
         "Another turn started first, so the message stays queued. Steer the running turn with it instead."
