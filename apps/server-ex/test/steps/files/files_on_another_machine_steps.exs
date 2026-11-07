@@ -191,11 +191,16 @@ defmodule HalC2.Steps.Files.FilesOnAnotherMachine do
     context
   end
 
+  # As this MC's `HalC2.Cluster.remove/1`: the sidebar forgets the machine, and a move
+  # cut off on its way there is settled.
   step "{string} is removed from the cluster", %{args: [label]} = context do
-    assert File.dir?(folder(context, label))
-    HalC2.Shell.forget(Machines.machine(context, label).environment)
+    if context[:machine_files], do: assert(File.dir?(folder(context, label)))
+    context = Machines.member_table(context)
+    Mc.ensure(HalC2.ThreadMove)
+    :ok = HalC2.Cluster.remove(Machines.machine(context, label).environment)
+    :ok = Machines.moves_settled()
     :ok = HalC2.Shell.sync()
-    :ok = MachineFiles.sync()
+    if context[:machine_files], do: :ok = MachineFiles.sync()
     context
   end
 

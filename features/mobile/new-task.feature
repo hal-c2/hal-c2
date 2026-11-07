@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20825
 #   https://github.com/pingdotgg/t3code/pull/19641
 #   https://github.com/pingdotgg/t3code/pull/17409
 #   https://github.com/pingdotgg/t3code/pull/17611
@@ -12,6 +13,10 @@
 #   apps/mobile/src/features/threads/new-task-context-presentation.ts (checkout, worktree and branch labels)
 #   apps/mobile/src/state/use-composer-drafts.ts (retargetNewTaskDraft), apps/mobile/src/state/pending-thread-creation.ts, apps/mobile/src/state/pending-new-tasks-model.ts (unstarted and pending tasks)
 #   https://github.com/pingdotgg/t3code/pull/14532
+#   https://github.com/pingdotgg/t3code/pull/25712
+#   https://github.com/pingdotgg/t3code/pull/25706
+#   https://github.com/pingdotgg/t3code/pull/24741
+#   https://github.com/pingdotgg/t3code/pull/24269
 # Drafting and sending are specified in features/composer/ and features/threads/. This file covers
 # the phone's new task screens: choosing where the task runs before the first message is sent.
 
@@ -126,6 +131,35 @@ Feature: Starting a task from a phone
     Then the task will run in that worktree
     And no branch is switched
 
+  # Upstream #20825: a branch another worktree held failed with "Could not switch branch".
+  @backlog @mobile
+  Scenario: A thread's branch held by another worktree starts the new task there
+    Given the thread "Fix checkout" is on "feature/cart", which another worktree of "shop" holds
+    When the user starts a new thread on that branch from the thread's menu
+    Then the task will run in that worktree
+    And no branch is switched
+
+  # Upstream #20825: a remote branch reuses a local one only when it tracks that remote branch.
+  @backlog @mobile @priority-low
+  Scenario Outline: A remote branch reuses the worktree of the local branch that tracks it
+    Given the local branch "feature/search" is checked out in another worktree and tracks <upstream>
+    When the user chooses "origin/feature/search" as the task's branch
+    Then <outcome>
+
+    Examples:
+      | upstream                  | outcome                                  |
+      | "origin/feature/search"   | the task will run in that worktree       |
+      | "fork/feature/search"     | that worktree is not reused              |
+
+  # Upstream #20825: reusing a worktree's root would move an agent out of a subfolder project.
+  @backlog @mobile @priority-low
+  Scenario: A subfolder project is not moved to another worktree's root
+    Given the project "web" is the folder "apps/web" of its repository
+    And "feature/search" is checked out in another worktree of that repository
+    When the user chooses "feature/search" as the task's branch
+    Then the user is told to choose another branch or start in a new worktree
+    And the task keeps the branch it had
+
   @backlog @mobile @priority-high
   Scenario: A branch that is not checked out anywhere is switched to when the task is started in the project folder
     Given "feature/search" is not checked out anywhere
@@ -159,6 +193,29 @@ Feature: Starting a task from a phone
     When the user starts a new thread on the branch of "Fix checkout" from the thread's menu
     Then the user is told the branch could not be switched and why
     And the user is back on "Fix checkout"
+
+  # Upstream #25712: a reconnect while the branch is being switched does not switch it again.
+  @backlog @mobile
+  Scenario: A reconnect while the task's branch is being switched switches it once
+    Given a new task on "feature/cart" is switching the project folder
+    When the phone loses and regains its connection to "Office Mac" before the switch finishes
+    Then the project folder is switched to "feature/cart" once
+    And the new task opens when that switch finishes
+
+  # Upstream #25706: a Local choice made before the branches load picks up the current branch.
+  @backlog @mobile @priority-low
+  Scenario: Choosing the project folder before its branches load picks up the current branch
+    Given the project folder of "shop" is on "feature/cart" and its branches have not loaded yet
+    When the user chooses to run the new task in the project folder
+    And the phone app is closed and reopened before the branches load
+    Then the task reads "feature/cart" once the branches load, and is sent on it
+
+  # Upstream #25706: a new worktree with no chosen base starts from the project's default branch.
+  @backlog @mobile @priority-low
+  Scenario: A new worktree without a chosen base starts from the project's default branch
+    Given "shop" has the default branch "main" and only "origin/main" exists
+    When the user chooses a new worktree for the task without choosing a base
+    Then the task reads "origin/main" as its base, and is sent with it
 
   @backlog @mobile @priority-low
   Scenario Outline: The task's branch list explains why it has nothing to choose
@@ -244,3 +301,48 @@ Feature: Starting a task from a phone
     Given the user is drafting a new task with No project chosen
     Then the project choice reads "No project"
     And No project is marked as chosen in the project picker
+
+# Upstream #24741: New thread starts in the current or last project, else the picker.
+Rule: New thread starts in the project the user is working in
+
+  @backlog @mobile
+  Scenario Outline: New thread starts in the project the user is working in
+    Given <where>
+    When the user starts a new thread from the thread list
+    Then <result>
+
+    Examples:
+      | where                                                                  | result                                           |
+      | the user is in a thread of "shop"                                      | the new task's draft is in "shop"                |
+      | the user is in a subagent or archived thread of "shop"                 | the new task's draft is in "shop"                |
+      | the user is in no thread and last opened a thread of "docs" on the phone | the new task's draft is in "docs"              |
+      | the user has not opened or chosen a project on the phone               | the project picker opens                         |
+
+  @backlog @mobile @priority-low
+  Scenario: Turning off Use last project always opens the project picker
+    Given the user turned off "Use last project" in Settings, General, New threads, on the phone
+    And the user is in a thread of "shop"
+    When the user starts a new thread from the thread list
+    Then the project picker opens
+    And "Use last project" stays on for the user's other phones
+
+  @backlog @mobile @priority-low
+  Scenario: Backing out of the first project picker closes the draft
+    Given the project picker opened for a new thread
+    When the user backs out of it without choosing
+    Then no draft is left open in a project nobody chose
+
+  # Upstream #24269: adding a project from the new task flow opens that project's draft.
+  @backlog @mobile
+  Scenario: Adding a project from the new task flow opens its draft on the chosen machine
+    Given the user chose "Office Mac" in the new task flow
+    When the user adds the folder "~/dev/shop" as a project
+    Then the new task's draft opens in "shop" on "Office Mac" once the project is listed
+    And the screen goes straight to the draft, without passing through the thread list
+
+  @backlog @mobile
+  Scenario: A project added after the user moved on does not take them back
+    Given the user added a project from the new task flow
+    And the user left that flow and opened another screen before the project was listed
+    When the project is listed
+    Then the user stays on the screen they opened

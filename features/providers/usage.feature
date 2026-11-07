@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23729
+#   https://github.com/pingdotgg/t3code/pull/21899
+#   https://github.com/pingdotgg/t3code/pull/21898
 #   https://github.com/pingdotgg/t3code/pull/17769
 #   https://github.com/pingdotgg/t3code/pull/21862
 #   https://github.com/pingdotgg/t3code/pull/21863
@@ -74,6 +77,16 @@ Feature: Usage
     Given a Codex turn reported 3 requests of 1000 tokens each and a running total of 3000 tokens
     When the user opens usage
     Then the turn counts 3000 tokens
+
+  # Upstream #23729: a forked or subagent Codex transcript starts with totals it inherited, and
+  # its first request was dropped as a skipped record.
+  @backlog @mc @plugin-codex @priority-low
+  Scenario: The first request of a forked Codex transcript is counted
+    Given a Codex subagent's transcript starts with its parent's running total of 5000 tokens
+    And its first request used 800 tokens
+    When the user opens Usage
+    Then that request counts 800 tokens
+    And the inherited 5000 tokens are not counted again
 
   @mc
   Scenario: A cost reported by the provider is used as is
@@ -314,6 +327,15 @@ Feature: Usage
     Given a Claude request on Opus 5.5 in fast mode that costs $0.28 at the standard rate
     When the user opens Usage
     Then the request is priced at $0.56
+
+  # Upstream #21898, #21899: Codex can omit its first turn's tier, which priced it at Standard.
+  @mc @plugin-codex @backlog @priority-low
+  Scenario: A Codex turn started on Fast is priced at Fast when Codex did not record the tier
+    Given a Codex thread was started on the Fast service tier
+    And Codex's transcript does not record a tier for that turn
+    When the user opens Usage
+    Then that turn is priced at the Fast rate
+    And a tier Codex did record wins over the one the thread asked for
 
   # Upstream #10409: Cursor's account history counts only once the user has enabled it.
   @mc @plugin-cursor @backlog @priority-low

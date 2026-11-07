@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18430
 #   https://github.com/pingdotgg/t3code/pull/19550
 #   https://github.com/pingdotgg/t3code/pull/17886
 #   https://github.com/pingdotgg/t3code/pull/15393
@@ -34,6 +35,7 @@
 #   apps/tui/src/features.backlog.test.ts (review-workspace)
 #   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml (Diff)
 #   https://github.com/pingdotgg/t3code/pull/15005
+#   https://github.com/pingdotgg/t3code/pull/21909
 
 Feature: Reviewing working tree and branch changes
   Beside a thread the user reviews what changed in the checkout, either uncommitted work
@@ -238,6 +240,15 @@ Feature: Reviewing working tree and branch changes
     Given the user commented on lines 10 to 12 of "src/cart.ts"
     When the user deletes that comment
     Then the composer no longer carries it
+
+  # Upstream #18430: a comment draft on a file that left the diff blocked commenting on the rest.
+  @backlog @desktop @priority-low
+  Scenario: A comment draft on a file that leaves the diff is let go
+    Given the user started a line comment on "src/old.ts" without adding it
+    When the diff refreshes and "src/old.ts" is no longer changed
+    Then the draft on "src/old.ts" is gone
+    And the user can comment on lines of "src/cart.ts"
+    But a draft on a file still in the diff survives the refresh
 
   @desktop
   Scenario: Opening a diff file in the editor
@@ -503,6 +514,13 @@ Feature: Reviewing working tree and branch changes
     Given a GitLab merge request is open for review
     When the user expands the unchanged lines of a file
     Then the unchanged lines are shown
+
+  # Upstream #21909: self-managed GitLab 15.7 to 17.10 refuse diff pages of more than 30 files.
+  @backlog @mc @priority-low
+  Scenario: A large GitLab merge request opens on GitLab 15.7 to 17.10
+    Given a self-managed GitLab 16.4 with a merge request changing 65 files
+    When the user opens the merge request's code
+    Then all 65 files are shown
 
   @backlog @shared @priority-high
   Scenario: The diff panel opens on all branch changes

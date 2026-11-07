@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21299
+#   https://github.com/pingdotgg/t3code/pull/22826
 #   https://github.com/pingdotgg/t3code/pull/18329
 #   https://github.com/pingdotgg/t3code/pull/18549
 #   https://github.com/pingdotgg/t3code/pull/14345
@@ -77,6 +79,18 @@ Feature: The MC working with its host machine
       | Cursor   |
       | Zed      |
       | IntelliJ |
+
+  # Upstream #22826: JetBrains IDEs count columns from zero, so the column moves back by one.
+  @backlog @mc @priority-low
+  Scenario Outline: A JetBrains IDE opens a location at the column the user asked for
+    When a client opens "src/app.ts" at line 12 column <asked> in IntelliJ
+    Then IntelliJ is launched with line 12 and column <passed>
+
+    Examples:
+      | asked | passed |
+      | 4     | 3      |
+      | 1     | 0      |
+      | 0     | 0      |
 
   @mc
   Scenario: The user's default text editor is offered first
@@ -720,6 +734,29 @@ Feature: The MC working with its host machine
     Given the MC runs on macOS or in a container without a systemd user manager
     When a thread starts an agent
     Then the agent starts directly, with no scope around it
+
+  # Upstream #21299: agent-browser and Chrome left by an agent called setsid, escaped its process
+  # group and outlived it.
+  @backlog @mc
+  Scenario Outline: An agent's detached helpers end with it on Linux
+    Given the MC runs on Linux under a systemd user manager
+    And a <provider> agent started a browser that detached from it
+    When <ending>
+    Then the browser ends with the agent's scope
+
+    Examples:
+      | provider | ending                                               |
+      | Claude   | the user stops the thread                            |
+      | Claude   | a model change restarts the agent                    |
+      | Pi       | the agent exits on its own                           |
+      | Muse     | the agent is released after 30 minutes idle          |
+      | ACP      | the session ends while a helper still holds its pipe |
+
+  @backlog @mc @priority-low
+  Scenario: Agents that share one server keep their helpers when a session ends
+    Given Codex and OpenCode serve several threads from one server
+    When one of their sessions ends
+    Then the server and its helpers keep running
 
   @backlog @mc
   Scenario: An out-of-memory kill marks only the session it ended

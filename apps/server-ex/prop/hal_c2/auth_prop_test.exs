@@ -383,11 +383,15 @@ defmodule HalC2.AuthPropTest do
     now = state.clock
     live = fn map -> map |> Enum.reject(fn {_, v} -> v.expires <= now end) |> Map.new() end
 
+    # A session that ran out takes the sockets it opened with it.
+    ran_out = for {h, v} <- state.sessions, v.expires <= now, do: h
+
     %{
       state
       | links: live.(state.links),
         sessions: live.(state.sessions),
-        tickets: live.(state.tickets)
+        tickets: live.(state.tickets),
+        sockets: Map.drop(state.sockets, ran_out)
     }
   end
 
@@ -481,14 +485,16 @@ defmodule HalC2.AuthPropTest do
     end
   end
 
-  def postcondition(state, {:call, _, :clients, []}, result) do
+  # A client whose session ran out stays listed while its socket is open.
+  def postcondition(state, {:call, _, :clients, []}, {result, ordered?}) do
     expected =
-      for {h, s} <- state.sessions, s.expires > state.clock do
+      for {h, s} <- state.sessions,
+          s.expires > state.clock or Map.get(state.sockets, h, 0) > 0 do
         {h, s.scopes, s.expires, if(s.key, do: "dpop-access-token", else: "bearer-access-token"),
          Map.get(state.sockets, h, 0) > 0}
       end
 
-    result == Enum.sort(expected)
+    ordered? and result == Enum.sort(expected)
   end
 
   def postcondition(state, {:call, _, :list_static, []}, result) do
@@ -577,8 +583,14 @@ defmodule HalC2.AuthPropTest do
     end
   end
 
-  def postcondition(state, {:call, _, :prune, []}, {removed, remaining}) do
+  def postcondition(state, {:call, _, :prune, []}, {removed, remaining, closed, announced}) do
     now = state.clock
+
+    ran_out =
+      Enum.sort(
+        for {h, v} <- state.sessions, v.expires <= now, Map.get(state.sockets, h, 0) > 0, do: h
+      )
+
     count = fn map -> Enum.count(map, fn {_, v} -> v.expires <= now end) end
     threshold = div(now, 1000) - 305
 
@@ -590,7 +602,8 @@ defmodule HalC2.AuthPropTest do
       remaining.pairing == map_size(state.links) - count.(state.links) and
       remaining.sessions == map_size(state.sessions) - count.(state.sessions) and
       remaining.tickets == map_size(state.tickets) - count.(state.tickets) and
-      remaining.proofs <= live_proofs
+      remaining.proofs <= live_proofs and closed == ran_out and
+      announced == Enum.sort(for {h, v} <- state.sessions, v.expires <= now, do: h)
   end
 
   # --- system under test --------------------------------------------------------
@@ -655,7 +668,22 @@ defmodule HalC2.AuthPropTest do
     end
   end
 
-  def clients, do: summarize(Auth.clients(), true)
+  # The list sorted by `summarize/2`, and whether the MC listed it administrators first,
+  # then the connected, then the newest.
+  def clients do
+    rows = Auth.clients()
+    rank = &{"access:write" not in &1["scopes"], not &1["connected"]}
+
+    ordered? =
+      rows
+      |> Enum.chunk_every(2, 1, :discard)
+      |> Enum.all?(fn [a, b] ->
+        rank.(a) < rank.(b) or (rank.(a) == rank.(b) and a["issuedAt"] >= b["issuedAt"])
+      end)
+
+    {summarize(rows, true), ordered?}
+  end
+
   def list_static, do: summarize(Auth.list_sessions(Store.path()), false)
 
   defp summarize(rows, connected?) do
@@ -784,7 +812,16 @@ defmodule HalC2.AuthPropTest do
   def advance(ms), do: Reg.advance(ms)
 
   def prune do
+    # Watchers are told each expired client is gone, so a live view stops listing it.
+    Auth.subscribe(self())
+    _ = drain_removed([])
     removed = Auth.prune()
+    _ = :sys.get_state(Auth)
+    gone = drain_removed([])
+    Auth.unsubscribe(self())
+
+    announced =
+      for {{:session, h}, {id, _}} <- :ets.tab2list(:auth_prop_handles), id in gone, do: h
 
     remaining = %{
       pairing: count("auth_pairing"),
@@ -793,7 +830,19 @@ defmodule HalC2.AuthPropTest do
       proofs: :ets.info(Auth.Dpop.Proofs, :size)
     }
 
-    {removed, remaining}
+    {removed, remaining, closed_sockets(), Enum.sort(announced)}
+  end
+
+  defp drain_removed(acc) do
+    receive do
+      {:hal_c2_auth_access, %{"type" => "clientRemoved", "payload" => %{"sessionId" => id}}} ->
+        drain_removed([id | acc])
+
+      {:hal_c2_auth_access, _} ->
+        drain_removed(acc)
+    after
+      0 -> acc
+    end
   end
 
   defp count(table) do
