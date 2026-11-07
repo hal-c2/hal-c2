@@ -3152,6 +3152,26 @@
             }
           ]
         },
+        "snoozed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allProjects": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "settled": {
           "anyOf": [
             {
@@ -3347,8 +3367,7 @@
           "anyOf": [
             {
               "type": "integer",
-              "minimum": 1,
-              "maximum": 100
+              "minimum": 1
             },
             {
               "type": "null"
@@ -3359,8 +3378,7 @@
           "anyOf": [
             {
               "type": "integer",
-              "minimum": 1,
-              "maximum": 50
+              "minimum": 1
             },
             {
               "type": "null"
@@ -3371,8 +3389,7 @@
           "anyOf": [
             {
               "type": "integer",
-              "minimum": 1,
-              "maximum": 50000
+              "minimum": 1
             },
             {
               "type": "null"
