@@ -51,17 +51,20 @@ defmodule HalC2.Projection.History do
           do: {kind, id, compact(kind, entity)}
 
     windowed = windowed_rows(state, runs ++ queued)
-    actionable = Enum.filter(small, &actionable?/1) ++ queued_messages(windowed, queued)
 
-    # What is sent, so what the wire leaves out (a handoff's history) does not count.
+    held =
+      Enum.map(small, &{actionable?(&1), &1}) ++
+        Enum.map(windowed, &{queued_message?(&1, queued), &1})
+
+    # Encoded once: the rows sent, and the size of what the user can act on as sent, so
+    # what the wire leaves out (a handoff's history) does not count.
+    encoded = for {keep?, row} <- held, do: {keep?, hd(encode([row]))}
+
     size =
-      actionable
-      |> encode()
-      |> Enum.map(&byte_size(JSON.encode!(List.last(&1))))
-      |> Enum.sum()
+      for({true, [_, _, entity]} <- encoded, do: byte_size(JSON.encode!(entity))) |> Enum.sum()
 
     %{
-      "rows" => encode(small ++ windowed),
+      "rows" => Enum.map(encoded, &elem(&1, 1)),
       "cursor" => cursor,
       "offset" => state.seq,
       "overBudget" => size > @budget,
@@ -125,9 +128,8 @@ defmodule HalC2.Projection.History do
     for {kind, id, entity} <- StreamState.run_rows(state, runs), do: {kind, id, entity}
   end
 
-  defp queued_messages(rows, queued) do
-    for {"message", _, %{"runId" => run}} = row <- rows, run in queued, do: row
-  end
+  defp queued_message?({"message", _, %{"runId" => run}}, queued), do: run in queued
+  defp queued_message?(_row, _queued), do: false
 
   # A handoff waits to be delivered while `pending` or `ready` (the MC writes `ready`,
   # then `consumed` or `failed`); a context transfer waits while `pending`.
