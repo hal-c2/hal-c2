@@ -121,5 +121,28 @@ ScrollView {
         }
 
         WorkingIndicator {}
+
+        // A held queue says its messages are safe and how to go on (^X q, the palette).
+        Item {
+            id: queueHeld
+            objectName: "queueHeld"
+            readonly property var held: scroller.timeline.queueHeld
+            visible: held !== null
+            flexDirection: "row"
+            flexShrink: 0
+            height: 1
+            marginBottom: 1
+            overflow: "hidden"
+
+            Text { flexShrink: 1; text: queueHeld.held ? queueHeld.held.text : "" }
+            Text { flexShrink: 0; text: "  " }
+            Text {
+                objectName: "queueResume"
+                flexShrink: 0
+                text: queueHeld.held ? queueHeld.held.hint : ""
+                color: Theme.colors.dim
+                onMouseDown: Shell.dispatch("composer.queue.resume")
+            }
+        }
     }
 }

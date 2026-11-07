@@ -29,8 +29,8 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       {
         keys: "^X …",
         description:
-          "Leader: n new · k commands · f filter · l panel · e terminal · s settings · b files · p Spaces",
-        chords: ["ctrl+x", "n", "k", "f", "l", "e", "s", "b", "p"],
+          "Leader: n new · k commands · f filter · l panel · e terminal · s settings · b files · p Spaces · q resume queue",
+        chords: ["ctrl+x", "n", "k", "f", "l", "e", "s", "b", "p", "q"],
       },
     ],
   },
@@ -253,6 +253,7 @@ export const LEADER_ACTIONS: ReadonlyArray<{
   { key: "s", title: "Settings", action: "settings.open" },
   { key: "b", title: "Browse files", action: "files.open" },
   { key: "p", title: "Spaces", action: "space.open" },
+  { key: "q", title: "Resume the queue", action: "composer.queue.resume" },
 ];
 
 const LEADER_LAYER: KeymapLayer = {

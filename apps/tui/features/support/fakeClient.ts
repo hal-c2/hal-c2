@@ -596,6 +596,7 @@ export function fakeClient({
       setInteractionMode ?? echo((interactionMode) => ({ interactionMode }) as never),
     setRuntimeMode: echo((runtimeMode) => ({ runtimeMode }) as never),
     interrupt: async () => {},
+    resumeQueue: async () => {},
     renameThread,
     archiveThread,
     unarchiveThread,

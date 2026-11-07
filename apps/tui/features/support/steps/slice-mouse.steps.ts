@@ -81,6 +81,7 @@ const KEY: Record<string, string> = {
   "sidebar.scroll": "thread.next",
   "space.select": "space.next",
   "terminal.scroll": "terminal.scroll.lineUp",
+  "composer.queue.resume": "leader.run.q",
 };
 /** A palette entry: a command that dispatches this action is defined. */
 const PALETTE: Record<string, string> = {
