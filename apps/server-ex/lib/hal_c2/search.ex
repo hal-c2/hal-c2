@@ -13,7 +13,9 @@ defmodule HalC2.Search do
   @roles ["user", "assistant"]
   @snippet 240
   @not_typed ~w(senderThreadId scheduledTaskId notification delegatedCompletion providerWake)
-  @read "messages_typed"
+  # Bumped when `typed?/2` learned that a stored JSON null (`:null`) is absent:
+  # rows an older MC indexed keep `typed = false` until every thread is re-read.
+  @read "messages_typed_2"
 
   @doc "Indexes the messages `events` finished or deleted, reading them from the committed `stream`."
   def index(stream_id, events, stream) do
