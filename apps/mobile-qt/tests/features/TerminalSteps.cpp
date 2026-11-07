@@ -657,7 +657,10 @@ const Steps steps([] {
     openOn(world, c[1]);
   });
 
-  step(S("the user switches to %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+  // A terminal's own name (term-1), not a thread's: switching to a thread
+  // of that shape is ScrollingSteps' step, and two matching definitions
+  // would fail both as ambiguous.
+  step(S("the user switches to \"(term-[^\"]*)\""), [](World& world, const Captures& c, const Table&) {
     openMenu(world);
     choose(world, S("terminal:") + c[0]);
   });

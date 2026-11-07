@@ -298,7 +298,7 @@ const Steps steps([] {
 
   // No connection.
   step(S("%1 is unreachable").arg(kQuoted), [](World& world, const Captures&, const Table&) { goDown(world); });
-  step(S("the connection to %1 drops").arg(kQuoted), [](World& world, const Captures&, const Table&) { goDown(world); });
+  step(S("the connection to %1 is lost").arg(kQuoted), [](World& world, const Captures&, const Table&) { goDown(world); });
   step(S("%1 becomes reachable").arg(kQuoted), [](World& world, const Captures&, const Table&) { comeBack(world); });
   step(S("the phone reconnects(?: and has the current thread list)?"), [](World& world, const Captures&, const Table&) { comeBack(world); });
   step(S("the last known conversation is shown"), [](World& world, const Captures&, const Table&) {
