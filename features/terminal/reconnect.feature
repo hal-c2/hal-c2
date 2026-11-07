@@ -21,6 +21,9 @@
 #   apps/web/src/components/TerminalEventSync.tsx
 #   Cross-domain: connections/ owns remote transport; mc/ owns cluster routing.
 #   https://github.com/pingdotgg/t3code/pull/21654
+#   https://github.com/pingdotgg/t3code/pull/29604
+#   https://github.com/pingdotgg/t3code/pull/29649
+#   https://github.com/pingdotgg/t3code/pull/29696
 
 Feature: Reattaching to terminals
   A terminal outlives the client that opened it. Any client, on any device, can attach later
@@ -107,6 +110,15 @@ Feature: Reattaching to terminals
       When the terminal's MC is back
       Then the client is asked to attach again
       And attaching again follows the terminal's output
+
+    # Upstream #29696: after the connection dropped and came back, the MC sized the terminal as when
+    # it was first opened and the client never sent its size again.
+    @backlog @mc @desktop @mobile @tui
+    Scenario: A terminal fits its pane again after the client reconnects
+      Given a client attached to a running terminal and then made its pane larger
+      When the client's connection drops and comes back
+      Then the terminal is sized to the pane as it is now
+      And not to the size it had when it was first opened
 
     # Upstream #18444: opening a closed terminal again on purpose still starts a new shell.
     # Legacy: apps/server/src/terminal/Manager.test.ts (keeps attach streams live when a terminal id is
@@ -279,6 +291,28 @@ Feature: Reattaching to terminals
         | a colour change          | CAN    |
         | a window title           | SUB    |
         | a device control string  | CAN    |
+
+    # Upstream #29604: an OSC, DCS, PM or APC string with no terminator held back every later
+    # output from saved history; the live terminal ends such a string at the next ESC.
+    @mc @backlog
+    Scenario Outline: Output after an unterminated <string> survives the replay
+      Given the shell prints <string> with no terminator, then coloured "build done", and exits
+      When a client attaches and the history is replayed
+      Then the replay shows "build done" in its colour, as the live terminal did
+
+      Examples:
+        | string                  |
+        | a hyperlink cut short   |
+        | a window title          |
+        | a device control string |
+
+    # Upstream #29649: text with a character in U+0080 to U+009F, common in double-encoded text, was
+    # read as the start of a control string and held back every later output from saved history.
+    @mc @backlog
+    Scenario: Output after text with a C1 character survives the replay
+      Given the shell prints a file holding the double-encoded text "â€\u009d" and then "build done"
+      When a client attaches and the history is replayed
+      Then the replay shows that text and "build done", as the live terminal did
 
 
     @mc

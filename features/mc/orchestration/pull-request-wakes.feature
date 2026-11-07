@@ -11,7 +11,12 @@
 #   https://github.com/pingdotgg/t3code/pull/21155
 #   https://github.com/pingdotgg/t3code/pull/24781
 #   https://github.com/pingdotgg/t3code/pull/26183
+#   https://github.com/pingdotgg/t3code/pull/29767
+#   https://github.com/pingdotgg/t3code/pull/30291
+#   https://github.com/pingdotgg/t3code/pull/29450
+#   https://github.com/pingdotgg/t3code/pull/30403
 #   https://github.com/hal-c2/hal-c2/issues/518
+#   https://github.com/pingdotgg/t3code/pull/29633
 #   apps/server-ex/lib/hal_c2/pull_requests/wakes.ex
 #   apps/server-ex/lib/hal_c2/pull_requests/sync.ex (the sweep that reads each link's host state)
 #   apps/server-ex/lib/hal_c2/pull_requests/github.ex (@summary_selection: the review and comment marker)
@@ -52,6 +57,20 @@ Feature: A thread hears when a pull request it owns needs attention
     When its checks start failing and the MC reads "acme/app#12" again
     Then the message to the agent of "t1" says "acme/app#12" stays linked and watched
     And it tells the agent not to link, watch or list it again
+
+  # Upstream #29767: a push that left the branch conflicting was not news, so the agent never
+  # learned its fix did not work.
+  @backlog @mc
+  Scenario Outline: A push that leaves the branch conflicting wakes the thread again
+    Given the agent of "t1" was woken because "acme/app#12" conflicts with its base branch
+    When <what> and the MC reads "acme/app#12" again
+    Then <outcome>
+
+    Examples:
+      | what                                                      | outcome                                                           |
+      | the agent pushes a new head that still conflicts          | the agent of "t1" is woken again about the conflict              |
+      | the host reports no head for "acme/app#12" this time      | the agent of "t1" is not woken                                    |
+      | the host has not yet worked out whether the new head merges | the agent of "t1" is not woken until the host says it conflicts |
 
   # A thread whose pull requests are all done settles on its own, unless the user
   # keeps it active or another of them is still open.
@@ -95,6 +114,19 @@ Feature: A thread hears when a pull request it owns needs attention
     Then the agent of "t1" is woken once about "acme/app#12"
     When the MC reads "acme/app#12" again
     Then the agent of "t1" is not woken again
+
+  # Upstream #30403: GitLab comments carried no edit time, so a bot rewriting its comment never
+  # woke the watcher; resolving a thread moves GitLab's stamp on every note, which is no edit.
+  @mc @backlog @priority-low
+  Scenario Outline: A GitLab comment that is <changed> <wakes>
+    Given the agent of "t1" watches GitLab merge request "acme/app!12" and was woken for a bot's comment
+    When the comment is <changed> and the MC reads "acme/app!12" again
+    Then the agent of "t1" <wakes>
+
+    Examples:
+      | changed                       | wakes              |
+      | rewritten by the bot          | is woken once      |
+      | in a thread that was resolved | is not woken again |
 
   @mc
   Scenario Outline: Changes that are not worth acting on wake nothing
@@ -170,6 +202,15 @@ Feature: A thread hears when a pull request it owns needs attention
     And the message says "gh pr checks https://github.com/acme/app/pull/12"
     And the message says "gh api repos/acme/app/pulls/12/reviews"
     And the message says "list_thread_pull_requests"
+
+  # Upstream #29633: a long comment cut inside an emoji kept half of it, and Codex and the Anthropic
+  # API refused the wake.
+  @backlog @mc @priority-high
+  Scenario: A long comment is shortened in the wake without splitting an emoji
+    Given a trusted reviewer comments on "acme/app#12" at length with an emoji where the wake shortens it
+    When the MC reads "acme/app#12" again
+    Then the message quotes the comment shortened to end on a whole character
+    And the agent of "t1" receives the wake
 
   @mc
   Scenario: News the thread already heard does not wake it again
@@ -313,6 +354,31 @@ Feature: A thread hears when a pull request it owns needs attention
     When the MC reads "acme/app#12" again
     Then the agent of "t1" is not woken
     And thread "t1" still shows "acme/app#12" as open
+
+  # Upstream #29450: a watch stopped after eight failed reads, so a long outage cut off every later
+  # check and review update.
+  @backlog @mc
+  Scenario: A watch outlasts a long outage of its host
+    Given "t1" watches "acme/app#12"
+    And the host cannot be reached for 30 minutes
+    When the host answers again and the checks of "acme/app#12" have passed
+    Then the agent of "t1" is woken once to say the checks passed
+
+  @backlog @mc @priority-low
+  Scenario: A watch the host keeps refusing ends and says so
+    Given "t1" watches "acme/app#12"
+    When the host refuses access to "acme/app#12" read after read
+    Then the watch of "acme/app#12" ends
+    And the agent of "t1" is told the watch stopped because the host refused access
+
+  # Upstream #30291: one sweep read no pull request until every host had answered, so one slow
+  # host held back every other watched pull request's wake.
+  @backlog @mc @priority-low
+  Scenario: A slow host does not hold back wakes from other hosts
+    Given "t1" watches "acme/app#12" on github.com and "t2" watches "corp/api#7" on a GitHub Enterprise host
+    And the GitHub Enterprise host is taking many seconds to answer
+    When the checks of "acme/app#12" start failing and the MC reads both again
+    Then the agent of "t1" is woken without waiting for the GitHub Enterprise host
 
   # Upstream #18775: a failed optional check stopped a Forgejo watch from passing.
   @backlog @mc @priority-low

@@ -3,6 +3,7 @@
 #   https://github.com/pingdotgg/t3code/pull/23113
 #   https://github.com/pingdotgg/t3code/pull/19311 (dropped)
 #   https://github.com/pingdotgg/t3code/pull/22253
+#   https://github.com/pingdotgg/t3code/pull/29464 (dropped)
 #   apps/server-ex/lib/hal_c2/upgrade.ex (plan, release upgrade, restart with exit 75, outcome)
 #   apps/server-ex/lib/hal_c2/upgrade/release.ex (release_handler: unpack, relup, install, permanent, rollback, NIFs)
 #   apps/server-ex/lib/hal_c2/upgrade/appup.ex (appups from the release diff: code_change, soft purge)
@@ -132,6 +133,8 @@ Feature: MC self-update and release upgrades
   # Upstream #19311: its service launcher stopped the server, copied the database and gave
   # the new server 120 s to prepare. The MC upgrades in place through release upgrades, with
   # no database copy before it stops and no prepare window to miss.
+  # Upstream #29464: an update killed mid-backup left a partial copy that later updates counted
+  # against the free space; with no copy, the MC leaves no partial one behind.
   @dropped @mc
   Scenario: An update whose database backup cannot fit is refused before the server stops
     Given the disk has less free space than a copy of the MC's database

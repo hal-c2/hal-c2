@@ -22,6 +22,8 @@
 #   docs/internals/mobile-navigation.md (AVKit video, Quick Look previews)
 #   apps/mobile/modules/hal-c2-native-controls/ios/HalC2NativeVideoPresentation.swift (audio session while a video is open)
 #   https://github.com/pingdotgg/t3code/pull/21894
+#   https://github.com/pingdotgg/t3code/pull/30929
+#   https://github.com/pingdotgg/t3code/pull/29044
 # Workspace files are specified in features/source-control/ and the files domain. This file
 # covers browsing and previewing them on a phone.
 
@@ -781,6 +783,16 @@ Feature: Browsing a thread's files on a phone
     When the user swipes the picture away
     Then the full-screen picture closes
 
+  # Upstream #29044: on iOS a tapped image of a pull request waited for every other image of
+  # the gallery to download, with nothing to show or close meanwhile.
+  @backlog @mobile
+  Scenario: A tapped picture opens while the rest of its gallery loads
+    Given a pull request shows 24 pictures and one of them is slow to download
+    When the user taps another of its pictures
+    Then that picture opens full screen at once
+    And a picture still loading shows a loading page that can be closed
+    And a picture that failed to load shows its error on its own page, leaving the others viewable
+
   # Upstream #15047: on Android swipe-to-close took the pinch, so pinch wins there and the
   # picture closes with its close button or Back.
   @backlog @mobile @priority-low
@@ -789,6 +801,14 @@ Feature: Browsing a thread's files on a phone
     When the user pinches the picture apart
     Then the picture zooms in
     And swiping does not close the picture, but its close button and Back do
+
+  # Upstream #30929: a very wide picture fitted as a thin strip, and a pinch starting beside the strip did nothing.
+  @backlog @mobile @priority-low
+  Scenario: A pinch anywhere on the viewer zooms a very wide picture
+    Given the user is looking at a 16000 by 900 picture full screen
+    When the user pinches apart starting in the space above and below the picture
+    Then the picture zooms in
+    But a pinch while the picture is still loading does nothing until it has loaded
 
   # Upstream #19241: the Android image viewer keeps panning after an interrupted pinch.
   @backlog @mobile @priority-low

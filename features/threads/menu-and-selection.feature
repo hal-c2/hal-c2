@@ -16,6 +16,8 @@
 #   https://github.com/pingdotgg/t3code/pull/10637
 #   https://github.com/pingdotgg/t3code/pull/15436
 #   https://github.com/pingdotgg/t3code/pull/26202
+#   https://github.com/pingdotgg/t3code/pull/26290
+#   https://github.com/pingdotgg/t3code/pull/29815
 
 Feature: Thread menu and selecting several threads
   Every thread has a menu of the things the user can do to it. Selecting several threads
@@ -97,6 +99,22 @@ Feature: Thread menu and selecting several threads
       | which has no pull request      | presses the copy-thread key             | a reference to "Tidy logs"     |
       | which has no pull request      | runs "Copy thread" from the palette     | a reference to "Tidy logs"     |
       | which links a pull request     | presses the copy-thread key             | the pull request's link        |
+
+  # Upstream #26290: "Copy thread" now copies an app.t3.codes link that opens the thread from
+  # anywhere. Dropped: HAL-C2 has no hosted web app for such a link to land on; the reference
+  # above is what it copies.
+  @dropped @shared
+  Scenario: Copying a thread copies a hosted web link that opens it
+    When the user copies the thread "Tidy logs" from its menu
+    Then the clipboard holds a hosted web link that opens "Tidy logs"
+
+  # Upstream #29815: phones claim the hosted thread links, so a copied link opens the app.
+  # Dropped with the hosted thread link above.
+  @dropped @mobile
+  Scenario: A hosted thread link opens the thread in the phone app
+    Given the phone app is installed
+    When the user taps a hosted link to "Tidy logs"
+    Then "Tidy logs" opens in the app instead of the browser
 
   @tui
   Scenario: The path cannot be copied from a thread without a workspace

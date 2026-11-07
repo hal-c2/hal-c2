@@ -51,6 +51,8 @@
 #   https://github.com/pingdotgg/t3code/pull/21503
 #   https://github.com/pingdotgg/t3code/pull/27899
 #   https://github.com/pingdotgg/t3code/pull/23446
+#   https://github.com/pingdotgg/t3code/pull/27457
+#   https://github.com/pingdotgg/t3code/pull/30421
 
 Feature: Editing the draft
   The user edits the draft with the keys they are used to, in an outside
@@ -567,6 +569,23 @@ Feature: Editing the draft
       | - [ ] milk    | "milk" as an unchecked task    |
       | - [x] milk    | "milk" as a checked task       |
 
+  # Upstream #30421: styled Markdown showed its delimiters as decoration, so selecting
+  # and deleting "**" deleted letters instead.
+  @backlog @desktop
+  Scenario Outline: The Markdown under the caret can be edited as written
+    Given rich text editing is on
+    And the draft shows "bold" in bold from "**bold**"
+    When the user moves the caret into "bold"
+    Then the draft shows "**bold**" as it was written
+    When the user <edits>
+    Then once the caret leaves, the draft shows <shown>
+
+    Examples:
+      | edits                                 | shown               |
+      | deletes both "**"                     | "bold" plain        |
+      | changes both "**" to "*"              | "bold" in italics   |
+      | types " text" before the closing "**" | "bold text" in bold |
+
   # Upstream #17435: filling a typed pair of backticks left them literal; moving past the closing
   # backtick now makes the text code.
   @backlog @desktop
@@ -586,6 +605,16 @@ Feature: Editing the draft
     Then the draft shows "hello" as code
     And the caret is at the start of the code
     And undoing it gives back "hello`"
+
+  # Upstream #27457: on a layout where the backtick is a dead key, a typed pair of backticks stayed
+  # literal, and a later backtick paired with the literal one and formatted the wrong words.
+  @backlog @desktop
+  Scenario: Backticks typed with a dead key make code like any others
+    Given rich text editing is on
+    And the keyboard layout types the backtick as a dead key
+    When the user types "testing `test` and `test`"
+    Then the draft shows both "test" words as code
+    And "and" is plain
 
   # Upstream #25659: a closing "*" matched an opening one inside earlier inline code, and the
   # line was italicised with the delimiter pulled out of the code.
