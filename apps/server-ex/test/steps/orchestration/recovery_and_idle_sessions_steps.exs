@@ -1048,8 +1048,9 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
     {context, ending} =
       case situation do
+        # Its turn stays open, so its run stays the thread's active one.
         "still running inside its own turn" ->
-          {context, ending}
+          {Map.put(context, :open_run, run["id"]), ending}
 
         "left running by a turn the user stopped" ->
           {reply, context} =
@@ -1771,11 +1772,18 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   end
 
   # Once the runtime has handled what it was sent, every wake it started is sent or
-  # dropped, and a run one started has ended.
+  # dropped, and a run one started has ended. A run the scenario left open
+  # (`:open_run`) may stay active: waiting for it to end failed whenever the row had
+  # already caught up with it (#1192).
   defp wakes_sent(context) do
     :sys.get_state(runtime(context, context.thread))
     :ok = HalC2.Orchestration.Wake.drain()
-    World.await_row(World.thread_id(context, context.thread), &(&1["activeRunId"] == nil))
+
+    World.await_row(
+      World.thread_id(context, context.thread),
+      &(&1["activeRunId"] in [nil, context[:open_run]])
+    )
+
     context
   end
 
