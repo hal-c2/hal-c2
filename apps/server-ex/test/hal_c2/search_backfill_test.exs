@@ -62,6 +62,10 @@ defmodule HalC2.SearchBackfillTest do
 
     assert [{"th-null", "2026-11-01", 1}] = Store.typed_messages_since(Store.path(), "2000-01-01")
 
+    # Control: the current mark alone counts as read; the old one does not.
+    :ok = Store.put_meta("messages_typed_2", "1")
+    assert Search.read?()
+    :ok = Store.delete_meta("messages_typed_2")
     :ok = Store.put_meta("messages_typed", "1")
     refute Search.read?()
   end
