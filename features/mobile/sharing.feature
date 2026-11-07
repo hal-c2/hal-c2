@@ -11,6 +11,7 @@
 # Composer attachments are specified in features/composer/. This file covers the phone's
 # system share sheet in both directions.
 
+@priority-low
 Feature: Sharing into and out of the phone app
   Other apps can share text, links, images and files into a new task. Files and media the
   agent produced can be shared out to other apps.

@@ -39,7 +39,7 @@ Feature: Searching threads
     When the user starts a search from the thread list
     Then the command palette opens ready to search threads
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-high
   Scenario: Title search ignores case and project details
     When the user searches threads for "DARK"
     Then "Add dark mode" is found
@@ -102,7 +102,7 @@ Feature: Searching threads
       | https://github.com/acme/app/pull/12 |
       | refresh tokens                      |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Threads matching by title or pull request come before threads matching by message
     Given "Add dark mode" has a message containing "oauth"
     When the user searches threads for "oauth"

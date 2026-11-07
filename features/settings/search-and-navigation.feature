@@ -192,7 +192,7 @@ Feature: Settings search and navigation
         | the user is in a web browser               | local env   | Local environment |
 
       # Waits on the WSL backend setting of settings/connections.feature.
-      @backlog @blocked
+      @backlog @blocked @priority-low
       Examples:
         | condition                                  | query       | setting           |
         | the machine is not running Windows         | wsl         | WSL backend       |
@@ -211,7 +211,7 @@ Feature: Settings search and navigation
 
       # Waits on the desktop managing this machine's server: Network access, the environment
       # icon and Tailscale HTTPS in settings/connections.feature.
-      @backlog @blocked
+      @backlog @blocked @priority-low
       Examples:
         | condition                                        | query              | setting                |
         | the app cannot manage this machine's server      | network access     | Network access         |

@@ -65,25 +65,25 @@ Feature: Provider setup, updates and sign-in
       | a pnpm global install            | pnpm against that global install          |
       | an npm global prefix             | npm against that same prefix              |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A package inside a project folder is not a global install
     Given Codex's executable is a package inside a project's node_modules
     When the user opens Codex's update details
     Then no update command is offered for Codex
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A Node installed by Homebrew still updates its global packages through npm
     Given Codex was installed with npm into a Node that Homebrew installed
     When the user opens Codex's update details
     Then the update command runs npm and not Homebrew
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A Homebrew keg outside the Homebrew that would run the upgrade is not updated by it
     Given Codex's executable sits in a Homebrew keg under a different prefix than the brew on the path
     When the user opens Codex's update details
     Then no update command is offered for Codex
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A version manager's shim is never updated through Homebrew
     Given Codex's executable is a shim that resolves into Homebrew's mise
     When the user opens Codex's update details
@@ -96,33 +96,33 @@ Feature: Provider setup, updates and sign-in
     When the user updates Codex
     Then Codex's updater runs against that home and not the default one
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: The update command is copyable as written
     Given Codex's executable path contains spaces
     When the user opens Codex's update details
     Then the update command quotes that path so it can be pasted into a shell
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: The installer's own answer decides whether a newer Homebrew version exists
     Given Codex was installed with Homebrew
     And npm already has a release that Homebrew has not published yet
     When the MC checks provider versions
     Then Codex is compared against the version Homebrew would install
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A Homebrew install whose latest version cannot be read shows no update
     Given Codex was installed with Homebrew
     And Homebrew does not answer within ten seconds
     When the MC checks provider versions
     Then Codex's update status is unknown
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Latest versions are looked up at most once an hour per package
     Given Codex was installed with npm
     When the MC checks provider versions twice within an hour
     Then the registry is asked for the latest Codex version once
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A registry that does not answer leaves the update status unknown
     Given Codex was installed with npm
     And the package registry does not answer within four seconds
@@ -130,7 +130,7 @@ Feature: Provider setup, updates and sign-in
     Then Codex's update status is unknown
     And no error is shown to the user
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: A provider that cannot be updated yet is not checked against the registry
     Given Codex is <state>
     When the MC checks provider versions
@@ -177,7 +177,7 @@ Feature: Provider setup, updates and sign-in
     Then it shows "Sign-in is in progress in another client."
     And it shows no sign-in address or interaction
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Only the client that started a sign-in can answer or cancel it
     Given the user started a sign-in for an ACP agent on one client
     When another client answers or cancels that sign-in
@@ -274,7 +274,7 @@ Feature: Provider setup, updates and sign-in
     Then the update fails naming exit code 1
     And the update's result carries the command's error output
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An update's output is capped
     Given Codex is behind the latest version
     And its update command prints far more than ten thousand characters
@@ -375,7 +375,7 @@ Feature: Provider setup, updates and sign-in
     Then running threads sharing that sign-in stop
     And thread history is kept
 
-  @desktop @mobile @backlog-mobile @backlog-mc
+  @desktop @mobile @backlog-mobile @backlog-mc @priority-low
   Scenario: The signed-in email is hidden until the user reveals it
     Given a provider is signed in as "me@example.com"
     When the user opens the provider
@@ -397,7 +397,7 @@ Feature: Provider setup, updates and sign-in
     Then the command updates that installation rather than starting a cached copy
     And an install it cannot identify copies a relaunch command saying that it does not update the installed MC
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: Wherever a provider offers an update, its version details open
     Given a provider with an update available
     When the user selects the update offer in either place it shows

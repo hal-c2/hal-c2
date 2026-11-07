@@ -137,7 +137,7 @@ Feature: Thread lifecycle in the orchestration engine
     Then both terminals are closed
     And their saved output is deleted
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Archiving a thread stops its agent's live session
     Given thread "t1" is idle with a live provider session that left work running in the background
     When a client archives "t1"
@@ -206,7 +206,7 @@ Feature: Thread lifecycle in the orchestration engine
     When the MC starts again
     Then the terminals' saved output and the attached files of "t1" are removed
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: Deleting a thread cancels its running and queued work
     Given thread "t1" has a running turn and a queued message "Next"
     When a client deletes "t1"
@@ -220,7 +220,7 @@ Feature: Thread lifecycle in the orchestration engine
     Then both requests are cancelled with the reason "The thread was deleted."
     And neither can be answered any more
 
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: Deleting a thread that is already deleted keeps the first deletion time
     Given thread "t1" was deleted at 10:00
     When a client deletes "t1" again at 10:05
@@ -298,20 +298,20 @@ Feature: Thread lifecycle in the orchestration engine
       | change the model of          |
       | link a pull request to       |
 
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A thread that never finished a turn cannot be marked unread
     Given thread "t1" exists in "demo" and has no completed run
     When a client marks "t1" unread
     Then the command fails with "Thread t1 has no completed run to mark unread."
 
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A visit with a time that is not a timestamp is refused
     Given thread "t1" exists in "demo"
     When a client records a visit to "t1" at "yesterday-ish"
     Then the command fails saying the visit time is not a valid timestamp
     And the read watermark of "t1" is unchanged
 
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A metadata update meant for an empty thread fails once the thread has a message
     Given thread "t1" exists in "demo"
     And a client prepared a workspace change for "t1" while it was empty

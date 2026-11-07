@@ -644,20 +644,20 @@ Feature: Connection health
     Then the thread says "studio is reconnecting"
     And no notice says "Finishing an update"
 
-  @backlog @shared
+  @backlog @shared @priority-high
   Scenario: Reconnects back off with jitter
     Given the connection to an environment drops
     When the client retries
     Then waits grow with random jitter so clients do not retry in lockstep
     And an authorization or unsupported-version failure does not retry on the same session
 
-  @backlog @shared
+  @backlog @shared @priority-high
   Scenario: A false offline report does not replace a healthy connection
     Given the connection is working
     When the device reports being offline then online
     Then the existing connection is kept
 
-  @backlog @shared
+  @backlog @shared @priority-high
   Scenario: Failed subscriptions retry with growing delay
     Given a subscription keeps failing for an expected reason
     Then its retries double up to 30 seconds
@@ -675,7 +675,7 @@ Feature: Connection health
     When the user switches away and the stream is closed
     Then the connection keeps reading replies and heartbeats and does not reconnect
 
-  @backlog @shared
+  @backlog @shared @priority-high
   Scenario: A connection lost to silence says so
     Given the client's ping to an MC went unanswered
     When the connection is dropped

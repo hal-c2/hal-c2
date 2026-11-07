@@ -126,14 +126,14 @@ Feature: Windows, zoom and quitting
       Then the window is drawn at that opacity
 
     # Legacy: apps/desktop/src/window/DesktopWindow.ts (render-process-gone recovery)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A window whose page crashes comes back by itself
       Given a thread is open in the window
       When the window's page crashes or runs out of memory
       Then the window reloads itself after a moment
       And the thread comes back from the MC with its work still running
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A window that keeps crashing stops reloading itself
       Given the window's page has crashed and reloaded three times within a minute
       When the page crashes a fourth time within that minute
@@ -362,7 +362,7 @@ Feature: Windows, zoom and quitting
       And only the second menu is shown
 
     # Likely already implemented: apps/desktop-qt/qml/HalC2/Bricks/ContextMenuHost.qml
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: A context menu opened near the edge stays inside the window
       Given the pointer is at the bottom right corner of the window
       When the user opens a context menu
@@ -378,7 +378,7 @@ Feature: Windows, zoom and quitting
       And where there is no room on that side it opens on the other
 
     # Likely already implemented: apps/desktop-qt/qml/HalC2/Bricks/ContextMenuHost.qml
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: Disabled entries cannot be chosen and destructive ones are marked
       Given a context menu with a disabled entry and a destructive entry
       When the user clicks the disabled entry
@@ -392,14 +392,14 @@ Feature: Windows, zoom and quitting
       Then the menu closes with nothing chosen
 
     # The Electron desktop's native context menu (DesktopWindow.ts).
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A misspelled word offers corrections in its context menu
       Given the user typed a misspelled word in a text field
       When the user opens the context menu on the word
       Then up to five spelling suggestions are offered
       And choosing one replaces the word
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A misspelled word with no corrections says so
       Given the user typed a word the spell checker has no suggestion for
       When the user opens the context menu on the word
@@ -419,13 +419,13 @@ Feature: Windows, zoom and quitting
         | text is selected in read-only text               | copy         |
         | the clipboard holds text and the field is empty  | paste        |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A link's context menu can copy the link
       Given the conversation shows a link
       When the user opens the context menu on the link
       Then the user can copy the link address
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An image's context menu can copy the image
       Given the conversation shows an image
       When the user opens the context menu on the image
@@ -485,7 +485,7 @@ Feature: Windows, zoom and quitting
       Then the app quits
 
     # Legacy: apps/desktop/src/window/QuitHold.ts (other keys, concealed window, unreadable setting)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Pressing another key cancels a quit in progress
       Given the quit shortcut is set to Hold
       And the user is holding mod+Q
@@ -493,7 +493,7 @@ Feature: Windows, zoom and quitting
       Then the app keeps running
       And a following single press of mod+Q starts over
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A held quit hides the window until the shortcut is released
       Given the quit shortcut is set to Hold
       When the user has held mod+Q long enough to quit

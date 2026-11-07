@@ -3,6 +3,7 @@
 #   Cross-domain: desktop/shell-host.feature owns failures while the app starts; this file owns
 #   a view that fails once the app is running.
 
+@priority-low
 Feature: A view that fails says so and lets the user carry on
   When part of the app fails while it is running the user is not left with a blank window.
   The failure is named, the user can try again or reload, and can copy a report to send on.

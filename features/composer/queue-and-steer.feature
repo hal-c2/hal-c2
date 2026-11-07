@@ -71,7 +71,7 @@ Feature: Follow-ups while the agent is working
       | steer   | sends                     | tweak   | steers the running turn     |
       | steer   | sends the opposite way    | tweak   | is queued                   |
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: The phone sends a follow-up the other way than its setting
     Given the follow-up behaviour setting is "queue"
     When the user sends "tweak" the opposite way from the phone
@@ -262,7 +262,7 @@ Feature: Follow-ups while the agent is working
     Then the composer holds "unrelated draft" again
     And the queued message still reads "fix typo"
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario Outline: The send control says what sending will do
     Given the draft reads "tweak"
     And <situation>
@@ -305,14 +305,14 @@ Feature: Follow-ups while the agent is working
     When the user types "tweak" into the composer
     Then the send control is back
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The queue can be folded away and says how much it holds
     Given "a" and "b" are queued
     Then the queue is headed "Queued" with the count 2
     When the user folds the queue away
     Then "a" and "b" are hidden and the count is still shown
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: A queued message is listed before the MC confirms it
     Given the MC has not yet confirmed a message the user queued
     Then the message is listed in the queue as being saved
@@ -324,13 +324,13 @@ Feature: Follow-ups while the agent is working
     When the user focuses the handle of "c" and presses Up twice
     Then the queue order is "c", "a", "b"
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: A queued message cannot steer when no turn is running
     Given the queue is held after a restart and the turn is no longer running
     When the user looks at a queued message
     Then steering it is unavailable and says "There is no active run to steer"
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: One queue action at a time
     Given "a" and "b" are queued
     When the user removes "a" and the MC has not answered yet
@@ -396,7 +396,7 @@ Feature: Follow-ups while the agent is working
     When the user resumes the queue
     Then the MC is asked to resume the queue
 
-  @backlog @tui
+  @backlog @tui @priority-high
   Scenario: A held queue is resumed from the terminal
     Given "later" was queued when the MC restarted
     When the MC comes back
@@ -404,14 +404,14 @@ Feature: Follow-ups while the agent is working
     When the user resumes the queue
     Then the MC is asked to resume the queue
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Steers keep the newest next-turn selection
     Given a provider that steers live but cannot restart the turn
     When the user steers with one model or thinking level, then steers back to the running one
     Then the saved next-turn selection is the newest choice
     And a steer that misses the turn starts the follow-up on that choice
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A queued message can be removed on the phone
     When the user removes a queued message on the phone
     Then the queued message is cancelled

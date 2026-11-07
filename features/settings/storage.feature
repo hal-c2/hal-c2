@@ -55,7 +55,7 @@ Feature: Storage cleanup
       Then the worktree is kept
 
     # Legacy: apps/server/src/workspace/workspaceLease.ts (withWorkspaceLease), storageCleanup.ts (cleanWorktree), terminal/Manager.ts (open, restart)
-    @mc @backlog
+    @mc @backlog @priority-high
     Scenario Outline: A terminal started in a worktree and the worktree's removal never overlap
       Given a worktree about to be removed as idle
       When a terminal is <action> in that worktree while the sweep is removing it
@@ -102,7 +102,7 @@ Feature: Storage cleanup
       Then rotated logs older than 30 days are deleted
       And the current logs are kept
 
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: A deleted thread's worktree is kept until its deletion has finished
       Given the user turned on deleting worktrees of deleted threads
       And a thread was deleted and its cleanup steps have not all finished
@@ -111,7 +111,7 @@ Feature: Storage cleanup
       When the cleanup steps have finished and the MC sweeps storage again
       Then the worktree is removed
 
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario Outline: A worktree with work the default branch lacks is kept by the merge and unchanged rules
       Given the user turned on <rule>
       And a thread's worktree has commits the default branch does not have
@@ -124,7 +124,7 @@ Feature: Storage cleanup
         | deleting merged worktrees    |
         | deleting unchanged worktrees |
 
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: Cleanup never follows a symbolic link out of the folder it cleans
       Given the user turned on deleting browser captures after 14 days
       And the captures folder holds a symbolic link to an old file elsewhere
@@ -132,7 +132,7 @@ Feature: Storage cleanup
       Then the file the link points to is untouched
       And the link is left in place
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Only numbered rotations of a log are deleted
       Given the user turned on deleting rotated logs after 30 days
       And a log file of the current name and a numbered rotation of it are both 40 days old
@@ -141,13 +141,13 @@ Feature: Storage cleanup
       Then the numbered rotation is deleted
       And the log of the current name and the other file are kept
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Turning a retention rule off during a sweep stops its deletions
       Given a sweep of browser captures is under way
       When the user turns off deleting browser captures
       Then the sweep deletes no further captures
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: A failed cleanup step does not stop the others
       Given the user turned on worktree and rotated log cleanup
       And the worktree cleanup fails
@@ -157,37 +157,37 @@ Feature: Storage cleanup
 
   Rule: Storage settings
 
-    @shared @backlog-mobile
+    @shared @backlog-mobile @priority-low
     Scenario: Settings for several machines show mixed values
       Given "laptop" deletes inactive worktrees and "server" does not
       When the user views storage settings for both machines
       Then that rule shows as mixed
 
-    @shared @backlog-mobile
+    @shared @backlog-mobile @priority-low
     Scenario: The rule for idle threads' temporary files reads seven days until changed
       When the user opens storage settings
       Then deleting idle threads' temporary files reads 7 days
 
-    @shared @backlog-mobile
+    @shared @backlog-mobile @priority-low
     Scenario: The user chooses the folder for temporary files
       When the user opens storage settings
       And the user sets the temporary files folder to "/mnt/scratch"
       Then the machine's temporary files folder is "/mnt/scratch"
 
-    @shared @backlog-mobile
+    @shared @backlog-mobile @priority-low
     Scenario: Blanking the temporary files folder goes back to the default
       Given the machine's temporary files folder is set to "/mnt/scratch"
       When the user opens storage settings
       And the user sets the temporary files folder to ""
       Then the machine's temporary files folder is ""
 
-    @shared @backlog-mobile
+    @shared @backlog-mobile @priority-low
     Scenario: A machine too old for storage cleanup asks to be updated
       Given the selected machine does not support storage cleanup
       When the user opens storage settings
       Then the user is asked to update that machine first
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A machine too old for project worktree cleanup asks to be updated
       Given the selected machine supports storage cleanup but not per-project worktree cleanup
       When the user opens storage settings for project "api"
@@ -211,27 +211,27 @@ Feature: Storage cleanup
       Then the four worktree rules are not shown
       And choosing custom rules shows them
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Several projects with different cleanup modes show as mixed
       Given project "api" uses custom rules and project "web" inherits
       When the user views storage settings for both projects
       Then automatic worktree cleanup shows as mixed
       And the project rules are not shown until one mode is chosen
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A project has no artifact or log retention
       When the user opens storage settings for project "api"
       Then only the worktree rules are shown
       And browser artifact and rotated log retention are left to the machine
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A retention rule is turned on at eight days
       Given deleting old browser artifacts is off
       When the user turns it on
       Then it deletes artifacts older than 8 days
       And the same default applies to inactive worktrees and rotated logs
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A retention period is kept between one day and ten years
       Given deleting old rotated logs is on
       When the user sets the period to <typed>
@@ -243,7 +243,7 @@ Feature: Storage cleanup
         | 12       | 12   |
         | 5000     | 3650 |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Clearing a retention period keeps the previous one
       Given deleting old rotated logs is on at 30 days
       When the user clears the period and leaves the field
@@ -256,7 +256,7 @@ Feature: Storage cleanup
       Then the rule shows as off
       And no rotated log is deleted by age
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: Worktree location is a per-machine setting
     When the user opens the storage settings
     Then the worktree location is at the top of the worktrees section, empty for the default

@@ -33,7 +33,7 @@ Feature: Starting a task from a phone
     When the user chooses "shop"
     Then the task is aimed at "shop" on "Office Mac"
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Projects are searched by name or folder
     Given "My MacBook" has the projects "shop" in "~/code/shop" and "docs" in "~/work/handbook"
     When the user searches the projects for "handbook"
@@ -67,7 +67,7 @@ Feature: Starting a task from a phone
     When the user aims the task at "Office Mac"
     Then the task is aimed at "web" on "Office Mac"
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Switching environments falls back to the folder name and then the title
     Given the new task is aimed at the project "shop" in "~/code/shop" on "My MacBook"
     And "Office Mac" has a project "shop" in "~/src/shop" whose repository is not known yet
@@ -81,14 +81,14 @@ Feature: Starting a task from a phone
     When the user aims the task at "Office Mac"
     Then the task is not aimed at that "shop"
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Aiming the task at another project keeps what was written
     Given the user wrote "Add search" and attached a photo in a new task for "shop"
     When the user aims the task at the project "web"
     Then the new task editor still holds "Add search" and the photo
     And no second unstarted task is created for "web"
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Aiming the task at another project forgets the branch and keeps the model
     Given the new task for "shop" is set to the model "Opus 4", plan mode and a new worktree from "main"
     When the user aims the task at the project "web"
@@ -102,14 +102,14 @@ Feature: Starting a task from a phone
     Then the photo stays in the task
     And the photo is uploaded to "Office Mac"
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A branch checked out in another worktree starts the task there
     Given "feature/search" is checked out in another worktree of "shop"
     When the user chooses "feature/search" as the task's branch
     Then the task will run in that worktree
     And no branch is switched
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A branch that is not checked out anywhere is switched to when the task is started in the project folder
     Given "feature/search" is not checked out anywhere
     When the user chooses "feature/search" as the task's branch
@@ -130,7 +130,7 @@ Feature: Starting a task from a phone
     Then the screen says the branch is being switched
     And the new task opens once the project folder is on "feature/cart"
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The user cannot leave while the branch is being switched
     Given a new task on "feature/cart" is switching the project folder
     When the user tries to go back
@@ -143,7 +143,7 @@ Feature: Starting a task from a phone
     Then the user is told the branch could not be switched and why
     And the user is back on "Fix checkout"
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: The task's branch list explains why it has nothing to choose
     When the user opens the branch list of the new task and <situation>
     Then the list says "<message>"
@@ -154,19 +154,19 @@ Feature: Starting a task from a phone
       | the project has no branches       | No branches available |
       | a search matches no branch        | No matching branches  |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A branch search ignores case and finds a dashed branch by typed spaces
     Given "feature/login-page" is a branch of "shop"
     When the user searches the new task's branches for "Login Page"
     Then "feature/login-page" is listed
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A branch that exists only on the remote is listed and labelled as remote
     Given "feature/cart" exists on the remote of "shop" but nowhere locally
     When the user opens the branch list of the new task
     Then "feature/cart" is listed with a "remote" label
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A branch list that could not be loaded can be asked for again
     Given "My MacBook" cannot list the branches of "shop"
     When the user opens the branch list of the new task
@@ -175,14 +175,14 @@ Feature: Starting a task from a phone
     And the user asks to try again
     Then the branches are listed
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The task's branch list loads more branches as the user scrolls
     Given "shop" has more branches than one page holds
     When the user opens the branch list of the new task
     And the user scrolls to the end of the list
     Then the next branches are listed
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A task the phone cannot save for sending is not started
     Given the user wrote a new task in "shop"
     And the phone cannot save the task for sending
@@ -190,7 +190,7 @@ Feature: Starting a task from a phone
     Then the user is told the task could not be queued and why
     And the draft is kept in the editor
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario Outline: A task cannot be started until it can be sent
     Given the user is writing a new task in "shop"
     When <situation>
@@ -205,7 +205,7 @@ Feature: Starting a task from a phone
       | the voice input is still being transcribed              |
       | the task is already being sent                          |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The project picker has one No project row on top
     Given several machines are connected
     When the user opens the project picker

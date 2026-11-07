@@ -194,7 +194,7 @@ Feature: The MC's event store and projections
       | the projections stopped at an earlier sequence than the log | the sequence they are at and the log's |
       | the projections were written by another projection format   | the format version it found            |
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: Projections are rebuilt from the log
     Given the projections of the MC are damaged
     When the projections are rebuilt
@@ -210,7 +210,7 @@ Feature: The MC's event store and projections
     And the thread's creation and every timeline item update stay in the log
     And rebuilding the projections gives the same threads as before
 
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: Compacting the log reports what it removed and what can be reclaimed
     When the log is compacted
     Then it reports how many events and receipts it removed

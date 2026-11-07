@@ -150,7 +150,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Legacy: packages/shared/src/model.ts (applyClaudePromptEffortPrefix)
   # Likely already implemented: apps/server-ex/lib/hal_c2/claude/provider.ex (prompt/2)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: Ultrathink is left off a message it would break
     Given the thread runs on Claude with Ultrathink turned on
     When the user sends "<message>"
@@ -170,20 +170,20 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user removes it from the favourites
     Then it is no longer listed among the favourites
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: A started thread can move to another provider
     Given the thread has already run a turn on Codex
     When the user chooses the model "claude-opus"
     Then the next turn moves the thread to Claude before it runs on "claude-opus"
 
-  @desktop @tui @mobile @backlog-mobile
+  @desktop @tui @mobile @backlog-mobile @priority-high
   Scenario: The last model used with each provider is remembered
     Given the user last used "gpt-5" with Codex
     When the user starts a new thread on Codex
     Then "gpt-5" is chosen
     But a model set for the project takes precedence
 
-  @desktop @tui @mobile @backlog-mobile
+  @desktop @tui @mobile @backlog-mobile @priority-high
   Scenario: New threads start with the default permissions
     Given the default permissions for new threads are Supervised
     When the user starts a new thread
@@ -225,7 +225,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the workspace label reads "Worktree"
 
   # Upstream #13555: the collapsed bar's labels must not flip while the user scrolls.
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: The collapsed composer bar keeps its labels steady while the user scrolls
     Given the user has collapsed the composer bar on a thread with a long branch name
     When the user scrolls the thread
@@ -245,19 +245,19 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user chooses "Auto balance" as the machine a new thread runs on
     Then the thread starts on the machine with the most room when the first message is sent
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Auto balance says when it cannot check the machines
     Given the user chose "Auto balance" for a new thread
     When checking the machines' free resources fails
     Then the picker shows "Auto balance unavailable"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The user takes a new thread off Auto balance
     Given the user chose "Auto balance" for a new thread
     When the user chooses the machine "laptop" instead
     Then the thread starts on "laptop"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Auto balance says it is checking until a machine is picked
     Given the user chose "Auto balance" for a new thread
     When the machines' free resources are still being checked
@@ -276,14 +276,14 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | the machines are still being checked    | Checking machine resources   |
       | no machine has room for another thread  | Choose a machine to continue |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Auto balance is refused while the draft has attachments
     Given the draft of a new thread has an attached file
     When the user chooses "Auto balance" as the machine the thread runs on
     Then the user is told "Keep attachments on this machine" and to remove them first
     And the thread still runs on the machine it was on
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A machine is named the way its owner would know it
     Given the machine is <machine> and its own name is "<own>" and the user named it "<saved>"
     When the user opens the choice of machine for a new thread
@@ -297,20 +297,20 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | another one         | server   | Rack      | server      |
       | another one         |          | Rack      | Rack        |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The only connected machine is still shown when it is a remote one
     Given the project runs on a remote machine "server" and no other machine is connected
     When the user looks at a new thread's composer
     Then the machine "server" is shown
     And it cannot be changed
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The machine is left out when it is the only one and it is this one
     Given the project runs on the machine being used and no other machine is connected
     When the user looks at a new thread's composer
     Then no machine is shown
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: Updates for every balanced machine are gathered in one notice
     Given the user chose "Auto balance" for a new thread
     And <state>
@@ -357,7 +357,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user looks through Codex's models
     Then "gpt-6" is marked as new
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario Outline: A provider that cannot be used says why in the model picker
     Given the provider instance "Codex Work" <state>
     When the user rests on "Codex Work" in the model picker
@@ -387,20 +387,20 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user rests on Claude in the model picker
     Then the user reads "Claude is unavailable in this thread. Start a new thread to switch providers."
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: The model cannot be changed while a message is on its way
     Given the user has sent a message the MC has not taken yet
     Then the model picker cannot be opened
     And it can be opened again once the MC takes the message
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The model picker waits for the provider list before it can be used
     Given the environment has not yet reported its providers
     Then the composer shows the thread's model and the model picker cannot be opened
     When the providers arrive
     Then the model picker can be opened
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario Outline: A composer with no usable provider says so in place of the model
     Given no provider can run a turn
     And <setup>
@@ -413,7 +413,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | one of the providers can be set up      | Open provider settings |
       | none of the providers can be set up     | No provider available  |
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: A saved model its provider no longer lists is kept and marked unavailable
     Given the thread runs on OpenCode with the model "kimi-k2"
     And OpenCode no longer lists "kimi-k2"
@@ -421,7 +421,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the model reads "kimi-k2 (Unavailable)"
     And the thread's model is not changed to another one
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Several models are chosen for a new thread with Shift
     Given the project is a Git repository
     And the user is starting a new thread with "gpt-5-codex" chosen
@@ -430,20 +430,20 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user chooses "opus" and "sonnet" with Shift held again
     Then only "gpt-5-codex" is chosen and the thread starts on it alone
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Choosing a model without Shift goes back to one model
     Given the user has chosen "gpt-5-codex" and "opus" for a new thread
     When the user chooses "sonnet"
     Then only "sonnet" is chosen
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A thread that has started takes one model only
     Given the thread has already run a turn on Codex
     When the user chooses a model with Shift held
     Then that model replaces the thread's model
     And no second model is chosen
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: Planning and building are toggled on the desktop only when plan mode is on
     Given the plan mode setting is on
     Then the composer offers to switch between "Build" and "Plan"
@@ -451,13 +451,13 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the composer offers no such switch
     And the next turn builds
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: Only the permissions the provider supports are offered
     Given the thread's provider supports only Supervised and Full access
     When the user opens the permissions
     Then only Supervised and Full access are offered, each with a line saying what it allows
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: A thread whose saved permissions its provider no longer offers is shown as Supervised
     Given the thread was saved with Auto-accept edits
     And its provider now supports only Supervised and Full access
@@ -487,7 +487,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user opens the model's options
     Then the provider's default effort is marked "Default"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Choosing another effort takes Ultrathink off the prompt
     Given the thread runs on Claude
     And the user turned on Ultrathink and typed "design the cache"
@@ -495,7 +495,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the draft reads "design the cache" without "Ultrathink:"
     And the next turn runs with high effort
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A prompt that says ultrathink in its own words fixes the effort
     Given the thread runs on Claude
     And the user has typed "please ultrathink about the cache"
@@ -503,19 +503,19 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the effort reads "Ultrathink" and cannot be changed
     And the user is told "Your prompt contains "ultrathink" in the text. Remove it to change this option."
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: Each model keeps the options the user last gave it
     Given the user set "opus" to high effort and "sonnet" to low effort
     When the user switches from "opus" to "sonnet" and back
     Then "sonnet" was offered with low effort and "opus" is back at high effort
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: An unavailable model shows the options saved with it without letting them change
     Given the thread runs on OpenCode with a model OpenCode no longer lists, saved with high effort
     When the user opens the model's options
     Then high effort is shown and cannot be changed
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: OpenCode's plan agent is offered only when plan mode is on
     Given the thread runs on OpenCode
     And the plan mode setting is off
@@ -523,7 +523,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the agent "plan" is not offered
     And a thread saved with the agent "plan" sends its next turn without it
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: The traits trigger names reasoning and speed in text
     Given Fast is on with high reasoning
     When the user looks at the traits trigger

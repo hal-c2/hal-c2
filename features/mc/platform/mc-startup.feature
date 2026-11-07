@@ -151,7 +151,7 @@ Feature: Starting the MC
     Then it writes an access token file readable only by its owner
     And local tools connect with that token
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: The MC's secrets are kept readable by its owner only
     When the MC creates a secret it keeps on disk
     Then the secrets directory and the secret's file are not readable by other users
@@ -226,7 +226,7 @@ Feature: Starting the MC
     And it declares orchestration protocol version 3
     And it lists the MC's capabilities
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: An MC started with a minimal environment finds the tools on the user's search path
     Given the MC is started by a service manager or a desktop launcher with a short PATH
     When the MC starts
@@ -247,13 +247,13 @@ Feature: Starting the MC
     Then the MC starts with the PATH it was given
     And the failure is written to the log
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: On macOS a user's PATH is read from the login session when the shell gives none
     Given the MC runs on macOS and the login shell gives no PATH
     When the MC starts
     Then the MC takes the PATH of the user's login session
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: On Windows the MC repairs a stale environment from the user's settings
     Given the MC runs on Windows with an environment that predates the user's latest settings
     When the MC starts
@@ -261,7 +261,7 @@ Feature: Starting the MC
     And a failure to read them is written to the log without stopping the MC
 
   # Legacy: apps/desktop/src/shell/DesktopShellEnvironment.ts (installWindowsEnvironment, knownWindowsCliDirs)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: On Windows the places command line tools are usually installed are searched
     Given the MC runs on Windows and the user's PATH does not name where npm, Node, Volta, pnpm, bun or scoop put commands
     When the MC starts
@@ -284,14 +284,14 @@ Feature: Starting the MC
     When the MC starts
     Then the MC uses that session bus
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Agents started by an MC on macOS without a locale write UTF-8
     Given the MC runs on macOS started by a launcher that sets no locale
     And the user's login shell has none either
     When an agent produces text with non-ASCII characters
     Then the text is decoded as UTF-8
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A locale the MC was given is not mixed with the login shell's
     Given the MC runs on macOS with one locale variable set
     When the MC starts
@@ -460,7 +460,7 @@ Feature: Starting the MC
     When a user starts the server with a home directory flag
     Then the server uses that home directory
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: The MC command line rejects an unknown word
     When the MC command is run with a bare word that names no command or existing directory
     Then it fails with help instead of starting a server

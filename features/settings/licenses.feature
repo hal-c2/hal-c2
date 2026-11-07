@@ -4,6 +4,7 @@
 #   docs/internals/open-source-licenses.md
 #   apps/web/src/components/settings/SettingsSidebarNav.tsx (licenses page keeps General active)
 
+@priority-low
 Feature: Open source licenses
   The user can read the license and attribution notice of every third-party package and asset
   HAL-C2 ships or installs on demand, without being connected to any environment.

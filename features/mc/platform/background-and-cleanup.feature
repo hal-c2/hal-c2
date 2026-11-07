@@ -114,13 +114,13 @@ Feature: Background work and storage cleanup on the MC
       | low power mode, with pausing on    |
       | being unplugged, with pausing on   |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A host power reading that has gone stale pauses nothing
     Given a client in front shows a checkout
     And the host's last power report is too old to trust
     Then the MC keeps refreshing that checkout
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A host power report older than one already accepted is ignored
     Given the host reported it is locked
     When an older report that says it is unlocked arrives afterwards

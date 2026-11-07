@@ -33,13 +33,13 @@ Feature: The MC working with its host machine
     And the file manager is listed last
 
   # Upstream #7079: the agy command is Google's Antigravity CLI, not the Antigravity IDE.
-  @backlog @mc @plugin-antigravity
+  @backlog @mc @plugin-antigravity @priority-low
   Scenario: The agy command is not taken for the Antigravity IDE
     Given the Antigravity CLI "agy" is installed on the host and the Antigravity IDE is not
     When a client reads the MC's server config
     Then the available editors do not include Antigravity
 
-  @backlog @mc @plugin-antigravity
+  @backlog @mc @plugin-antigravity @priority-low
   Scenario: The Antigravity IDE opens a location at its line
     Given the Antigravity IDE is installed on the host
     When a client opens "src/app.ts" at line 12 column 4 in Antigravity IDE
@@ -381,7 +381,7 @@ Feature: The MC working with its host machine
       | xdg-mime is not installed                           |
       | the query for the folder handler fails              |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A folder handler lookup that stalls drops only the file manager
     Given a Linux host with a display whose folder handler lookup never answers
     When a client reads the MC's server config
@@ -402,13 +402,13 @@ Feature: The MC working with its host machine
     Then the file manager is still offered for folders
     But revealing a file in it is not offered
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: On WSL a file is revealed in Windows Explorer through its Windows path
     Given the MC runs inside WSL with Explorer and PowerShell reachable from it
     When a client reveals a file in the file manager
     Then Windows Explorer shows that file selected under the distro's network path
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: On WSL a reveal that Windows cannot do falls back to the Linux file manager
     Given the MC runs inside WSL and <situation>
     When a client reveals a file in the file manager
@@ -433,14 +433,14 @@ Feature: The MC working with its host machine
     When a client reads the available editors
     Then the editor is offered launched through the PATH command
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Installing an editor shows up in the server config within a minute
     Given a client read the server config a moment ago
     When an editor is installed on the host
     Then the next read within a minute may still omit it
     But a read after a minute offers the new editor
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A client that disconnects during an editor scan does not break the next one
     Given a client disconnects while the MC is scanning for editors
     When another client reads the server config
@@ -453,7 +453,7 @@ Feature: The MC working with its host machine
     Then the host's default browser opens that link
     And the MC does not wait for the browser to close
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A host with no way to open a browser says which command it could not run
     Given the host has no command that opens a browser
     When the MC opens a link on its host
@@ -544,7 +544,7 @@ Feature: The MC working with its host machine
     Given a client asks the MC to run a command that is not installed
     Then the client is told the command could not be started and in which folder it was tried
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Output that is not valid text is passed on and marked
     Given a command prints bytes that are not valid UTF-8
     When the command finishes
@@ -662,7 +662,7 @@ Feature: The MC working with its host machine
       | not signed in           | signs in to github.com  | HTTPS     |
       | signed in to github.com | signs out               | SSH       |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A JetBrains editor whose application bundle carries a version is found
     Given the editor "IntelliJ IDEA 2026.1.4.app" is installed in Applications on macOS
     When the MC looks for installed editors

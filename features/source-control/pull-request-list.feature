@@ -128,7 +128,7 @@ Feature: Browsing pull requests
     When the user lists pull requests
     Then GitLab is listed as not configured with "This host cannot be browsed here yet."
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Listing change requests on other hosts
     Given the project "infra" has its remote on <host>
     When the user lists open pull requests
@@ -1529,13 +1529,13 @@ Feature: Browsing pull requests
     When the user searches pull requests for "   "
     Then the list is not narrowed
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A GitLab project in a nested group is addressed by its full path
     Given the project "infra" has its remote on GitLab at "acme/platform/infra"
     When the user lists open merge requests
     Then the merge requests of "acme/platform/infra" are listed
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Host states are shown as open, closed or merged
     Given a change request on <host> that the host calls <host state>
     When the user lists change requests
@@ -1552,14 +1552,14 @@ Feature: Browsing pull requests
       | GitLab       | locked              | open     |
       | GitLab       | closed with a merge time | merged |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Azure DevOps rows are dated by when they closed
     Given a completed pull request on Azure DevOps that was closed on 5 July
     When the user lists pull requests
     Then the row is dated 5 July
 
   # Legacy: apps/server/src/sourceControl/azureDevOpsPullRequests.ts (azureDevOpsPullRequestWebUrl)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: An Azure DevOps pull request is opened at the host's own link or one built from what it said
     Given pull request 7 on Azure DevOps comes with <given>
     When the user lists pull requests
@@ -1574,7 +1574,7 @@ Feature: Browsing pull requests
       | nothing but a programming address of another kind                                              | that address as it came                                         |
 
   # Legacy: apps/server/src/sourceControl/gitLabMergeRequests.ts, forgejoPullRequests.ts, azureDevOpsPullRequests.ts, bitbucketPullRequests.ts
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Each host marks a draft in its own way
     Given a change request on <host> that <marking>
     When the user lists change requests
@@ -1591,7 +1591,7 @@ Feature: Browsing pull requests
       | Azure DevOps | is flagged as a draft                               | a draft      |
       | Bitbucket    | is flagged as a draft                               | a draft      |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A host that reports no line counts leaves them out
     Given an open merge request on GitLab
     When the user lists open pull requests
@@ -1746,14 +1746,14 @@ Feature: Browsing pull requests
     Then reads of pull requests go to the host instead of being remembered
     And the user is not shown an error
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A self-hosted project of an unrecognised kind is identified before it is listed
     Given the project "docs" has its remote on "code.example.test", which no built-in rule recognises
     When the user lists pull requests
     Then the MC asks which kind of host "code.example.test" is before listing "docs"
     And its merge requests are listed as GitLab ones from "code.example.test"
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Another checkout on the same host identifies it when one is gone
     Given two projects have their remote on "code.example.test"
     And the folder of the first project no longer exists
@@ -1761,14 +1761,14 @@ Feature: Browsing pull requests
     Then the host is identified through the second project
     And both projects are listed under GitLab
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A host that stays unidentified is reported but not read
     Given a project has its remote on a host whose kind cannot be identified
     When the user lists pull requests
     Then that host is reported as one the MC cannot read yet
     And the other hosts are listed as usual
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A review request is flagged for the user, spelled any way, but not on their own pull request
     Given the user is "bilal" and a review of pull request 1 is requested of "Bilal"
     And pull request 2 was written by "bilal" and lists "bilal" among its requested reviewers
@@ -1776,74 +1776,74 @@ Feature: Browsing pull requests
     Then pull request 1 is flagged as awaiting the user's review
     And pull request 2 is not
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A summary is made from details the MC already holds
     Given the details of pull request 1 were read a moment ago
     When a client asks for the summary of pull request 1
     Then the summary carries the title, draft flag, line counts, mergeability, review decision and checks of those details
     And the host is not asked again
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An older answer never replaces a newer one
     Given the MC holds a summary of pull request 1 updated at 10:05
     When details of pull request 1 updated at 10:00 arrive late
     Then the summary still shows the 10:05 state
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A merged pull request just observed settles without another read
     Given the MC saw pull request 1 merge a moment ago
     When a client asks for its state to settle a thread
     Then it is answered as merged without asking the host
 
   # Legacy: apps/server/src/pullRequest/GitHubPullRequestCli.ts (matchesInvolvement), gitHubPullRequestJson.ts (hasTeamReviewRequest)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: On GitHub a review asked of a team is listed among those awaiting the user's review
     Given pull request 1 on GitHub has a review requested of the team "acme/core" and of no person
     When the user lists pull requests where their review is requested
     Then pull request 1 is listed
 
   # Legacy: apps/server/src/pullRequest/AzureDevOpsPullRequestCli.ts (AzureDevOpsViewerUnavailableError)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An Azure DevOps sign-in that names no account cannot be listed for
     Given the Azure CLI answers for the current sign-in with no account
     When the user lists their pull requests on Azure DevOps
     Then the user is told "Azure CLI returned no account for the current sign-in."
 
   # Legacy: apps/server/src/pullRequest/BitbucketPullRequestApi.ts (BitbucketViewerUnavailableError)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Bitbucket credentials that name no account cannot be listed for
     Given Bitbucket answers for the configured credentials with no account name
     When the user lists their pull requests on Bitbucket
     Then the user is told "Bitbucket returned no account name for the configured credentials."
 
   # Legacy: apps/server/src/pullRequest/BitbucketPullRequestApi.ts (BitbucketRepositoryUnsupportedError)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A Bitbucket repository that is not a workspace and a name is refused
     Given a project whose Bitbucket repository is not written as workspace/repository
     When the user lists its pull requests
     Then the user is told "A Bitbucket repository is addressed as workspace/repository."
 
   # Legacy: apps/server/src/pullRequest/AzureDevOpsPullRequestProvider.ts (toChangeRequest: additions 0, deletions 0, labels [])
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An Azure DevOps row has no labels and no line counts, since the host keeps neither on the pull request
     Given an open pull request on Azure DevOps
     When the user lists open pull requests
     Then its row shows no labels
     And the row claims no added or removed lines
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The pull request list offers one-click actions on request
     When the user asks for quick actions on the list
     Then open pull requests offer close and merge, drafts close and ready for review, closed ones reopen
     And merged ones offer none, and ending the request restores the rows
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Fast close and merge clicks are queued
     Given the user presses close and merge on several rows quickly
     When the actions run
     Then each runs once, in order, and one does not restart another's checks
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Shift-drag closes a batch
     Given the user holds Shift and presses Close
     When they drag across rows of one group and release

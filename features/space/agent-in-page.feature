@@ -369,7 +369,7 @@ Feature: An agent in a page
       When the user asks "tidy this and wait" on the page "Roadmap"
       Then the agent's thread of "Roadmap" can call the page tools
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Rule: Providers that may not get the page tools
 
     # `features/providers/opencode.feature`: the hal-c2 server is offered only to a local

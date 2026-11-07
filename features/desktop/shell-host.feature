@@ -269,7 +269,7 @@ Feature: The desktop app runs its own MC
       Then no failure message is shown
 
     # Legacy: apps/desktop/src/app/DesktopAppIdentity.ts (About panel)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: The About panel names the app and the build it came from
       Given the desktop app is <build>
       When the user opens the About panel
@@ -282,21 +282,21 @@ Feature: The desktop app runs its own MC
         | run from a development checkout                 | unknown      |
 
     # Legacy: apps/desktop/src/app/DesktopObservability.ts (desktop log files, backend output log, OTLP endpoints)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The desktop app keeps what its MC prints in a log file
       Given the desktop app started its MC
       When the MC prints output or an error
       Then the output is kept in a log file in the app's log folder
       And a failure of the MC shows up there with the time it happened
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The desktop app's log files stop growing at a fixed size
       Given the desktop app's log file is full at 10 MiB
       When the app writes more
       Then it starts a new file and keeps at most ten older ones
       And the oldest is removed
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A telemetry endpoint set in the environment wins over the saved one
       Given the saved settings name a <signal> endpoint
       And the environment names another <signal> endpoint
@@ -311,7 +311,7 @@ Feature: The desktop app runs its own MC
         | logs    |
 
     # The standard telemetry switch wins over every endpoint, saved or set in the environment.
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The standard telemetry switch stops every export, even to a saved endpoint
       Given the saved settings name a traces endpoint
       And the environment sets the standard telemetry switch to "true"
@@ -321,7 +321,7 @@ Feature: The desktop app runs its own MC
 
     # The resource attributes are an optional tag. A value the exporter cannot read is ignored
     # as a whole, the way a bad kill switch is, so a machine-wide variable never blocks launch.
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A resource attribute setting that cannot be read is ignored at startup
       Given the environment sets the resource attributes to "team=%zz"
       When the user starts the desktop app
@@ -330,7 +330,7 @@ Feature: The desktop app runs its own MC
       And the startup log names the setting as ignored
 
     # Legacy: apps/desktop/src/backend/DesktopBackendManager.ts (restart delay, readiness timeout)
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: An MC that exits while the app runs is started again with growing delays
       Given the desktop app started its MC and the window is open
       When the MC exits unexpectedly several times in a row
@@ -380,13 +380,13 @@ Feature: The desktop app runs its own MC
       And the file is not repaired until the user changes a setting
 
     # Legacy: apps/desktop/src/settings/DesktopAppSettings.ts (normalizeTailscaleServePort)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A saved Tailscale HTTPS port that is not a valid port falls back to 443
       Given the desktop settings file holds a Tailscale HTTPS port outside 1 to 65535
       When the user starts the desktop app
       Then Tailscale HTTPS uses port 443
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The version prints without a display
       When the desktop is started with --version and no display is available
       Then it prints its version and exits successfully
@@ -394,21 +394,21 @@ Feature: The desktop app runs its own MC
   Rule: The app fits the desktop it runs on
 
     # Legacy: apps/desktop/src/app/DesktopLinuxUrlHandler.ts
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: On Linux a link for HAL-C2 opens the installed app
       Given the user runs the packaged app on Linux
       When the app starts
       Then the system is told that HAL-C2 opens links such as "hal-c2://pair"
       And opening such a link from a browser or another app brings up HAL-C2
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Failing to register the link handler does not stop the app
       Given the user runs the packaged app on Linux
       And the system's link handler registration fails
       When the app starts
       Then the app starts normally
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An unpackaged app does not take over the system's links
       Given the user runs the app from a development checkout on Linux
       When the app starts
@@ -416,7 +416,7 @@ Feature: The desktop app runs its own MC
 
     # Legacy: apps/desktop/src/linuxSecretStorage.ts, apps/desktop/src/settings/DesktopAppSettings.ts (linuxPasswordStore)
     # Uncertain: depends on how the Qt desktop stores secrets; may be dropped with Electron's safeStorage.
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: On Linux the app picks where it keeps secrets from the desktop environment
       Given the user runs the app on Linux with the password store set to "<setting>"
       And the desktop environment is "<desktop>"
@@ -431,7 +431,7 @@ Feature: The desktop app runs its own MC
         | kwallet6        | GNOME   | the KDE Wallet 6  |
         | gnome-libsecret | KDE     | the GNOME keyring |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A password store given on the command line wins over the setting
       Given the password store setting is "kwallet"
       When the user starts the app on Linux with the password store "gnome-libsecret" on the command line
@@ -496,7 +496,7 @@ Feature: The desktop app runs its own MC
 
   Rule: Browser screenshots keep their own files
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Two browser screenshots of the same page never overwrite each other
     Given the user takes two screenshots of the same page in the same instant
     Then each is saved under its own file name

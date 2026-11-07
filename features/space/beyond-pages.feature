@@ -4,7 +4,7 @@
 #     slides-sites-and-images.feature (sites and images),
 #     living-pages-and-visualizations.feature, collaboration-agents-and-dots.feature
 
-@backlog
+@backlog @priority-low
 Feature: Spaces beyond Pages
   Pages are the first part of Spaces. These are the parts still to come. Sites and
   slides have their own files, `sites.feature` and `slides.feature`.

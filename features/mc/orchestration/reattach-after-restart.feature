@@ -164,7 +164,7 @@ Feature: Reattaching to provider programs after a restart
         | acpRegistry |
 
       # Their fakes ask only when a scenario scripts it; the runtime path is the same.
-      @backlog
+      @backlog @priority-high
       Examples:
         | provider    |
         | claudeAgent |
@@ -261,7 +261,7 @@ Feature: Reattaching to provider programs after a restart
 
   Rule: Still to come
 
-    @backlog
+    @backlog @priority-high
     Scenario Outline: What a provider wrote while the MC was down reaches the thread once, in order
       Given thread "t1" has a running turn on "<provider>"
       When the MC dies partway through reading a line from the provider
@@ -281,7 +281,7 @@ Feature: Reattaching to provider programs after a restart
         | muse        |
         | acpRegistry |
 
-    @backlog
+    @backlog @priority-high
     Scenario Outline: A HAL-C2 tool call the restart cut off does not end the turn
       Given thread "t1" has a turn on "<provider>" calling a HAL-C2 tool
       When the MC dies before answering the call
@@ -301,7 +301,7 @@ Feature: Reattaching to provider programs after a restart
         | muse        |
         | acpRegistry |
 
-    @backlog
+    @backlog @priority-high
     Scenario Outline: Background work goes on through a restart
       Given thread "t1" left a command running in the background on "<provider>"
       When the MC dies
@@ -325,7 +325,7 @@ Feature: Reattaching to provider programs after a restart
       When Claude reports the subagent completed with "3 files"
       Then the subagent of "t1" is completed with "3 files"
 
-    @backlog
+    @backlog @priority-high
     Scenario Outline: A reattached idle session is still released
       Given thread "t1" finished a turn on "<provider>" and its provider process is live
       When the MC dies
@@ -347,7 +347,7 @@ Feature: Reattaching to provider programs after a restart
         | muse        |
         | acpRegistry |
 
-    @backlog
+    @backlog @priority-high
     Scenario Outline: A program that cannot be reattached is killed before anything resumes
       Given thread "t1" has a running turn on "claudeAgent"
       And project "demo" continues threads after a server update
@@ -364,7 +364,7 @@ Feature: Reattaching to provider programs after a restart
         | the program does not answer on reattaching  |
         | the new MC cannot read the program's format |
 
-    @backlog
+    @backlog @priority-high
     Scenario: A pid reused by another program is left alone
       Given thread "t1" has a running turn on "codex"
       When the MC dies
@@ -374,14 +374,14 @@ Feature: Reattaching to provider programs after a restart
       And the run of "t1" is interrupted
 
     # Windows has no named pipe that outlives its owner this way, and tracks no programs.
-    @backlog
+    @backlog @priority-low
     Scenario: On Windows a restart still interrupts the turn
       Given the MC runs on Windows
       And thread "t1" has a running turn on "codex"
       When the MC restarts
       Then the run of "t1" is interrupted
 
-    @backlog
+    @backlog @priority-high
     Scenario: Stopping the MC for good stops its programs
       Given thread "t1" has a running turn on "codex"
       When the user stops the MC without restarting it

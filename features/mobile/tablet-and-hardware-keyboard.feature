@@ -15,6 +15,7 @@
 # Keybinding ids and the desktop command palette are specified in features/navigation/.
 # This file covers the tablet layout and hardware keyboards attached to phones and tablets.
 
+@priority-low
 Feature: Tablet layout and hardware keyboards
   On a wide enough screen the app shows the thread list, the thread and an inspector side
   by side. A hardware keyboard reaches the common actions without touching the screen.

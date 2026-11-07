@@ -219,13 +219,13 @@ Feature: Organizing threads in the engine
     Then thread "t1" is settled by override
     And the question is dismissed
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Automatic settling never dismisses a pending question
     Given thread "t1" waits only for an answer to a question the provider does not block on
     When the MC settles "t1" automatically
     Then the command fails with "Thread t1 has active or blocked work and cannot be settled."
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A settled thread is brought back when the agent needs the user
     Given thread "t1" is settled
     When the provider raises <need> on "t1"
@@ -296,7 +296,7 @@ Feature: Organizing threads in the engine
       | is idle                                | a past time    |
 
   # Only the web and TUI clients refuse this today; neither server does.
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: The engine refuses to archive a thread whose agent is running
     Given thread "t1" has a running turn
     When a client archives "t1"

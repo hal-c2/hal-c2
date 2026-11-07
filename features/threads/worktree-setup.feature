@@ -159,7 +159,7 @@ Feature: Preparing a new thread's worktree
     Then the conversation offers no retry
 
   # Legacy: packages/client-runtime/src/worktreeSetup.ts (resolveVisibleWorktreeSetup)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: A setup that went cleanly leaves the conversation once the agent is replying
     Given the setup of "Cart totals" finished with every step done
     When the agent starts replying in "Cart totals"
@@ -167,7 +167,7 @@ Feature: Preparing a new thread's worktree
     But a setup that failed, or whose script failed, or that was cancelled, stays shown
 
   # Legacy: packages/client-runtime/src/worktreeSetup.ts (resolveVisibleWorktreeSetup)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: The setup is history once the user sends a follow-up
     Given the setup of "Cart totals" failed
     When the user sends another message in "Cart totals"
@@ -195,7 +195,7 @@ Feature: Preparing a new thread's worktree
     Then the conversation says how long the agent has been working
     And the user can open the setup progress by naming the script that is still running
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The setup details show the last lines of the setup script's output
     Given the setup script of "Cart totals" is running or failed
     When the user opens the setup details

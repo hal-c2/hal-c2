@@ -37,14 +37,14 @@ Feature: Staying useful through backgrounding and bad connections
     When the user returns to the app
     Then the phone checks the existing connection instead of reconnecting
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Returning to the app after a longer break reconnects
     Given the user switched away from the app for a minute
     When the user returns to the app
     Then the phone reconnects to "My MacBook"
     And "Fix checkout" catches up on what happened while the app was away
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Cached threads open without a connection
     Given "My MacBook" is unreachable
     When the user opens "Fix checkout"
@@ -57,7 +57,7 @@ Feature: Staying useful through backgrounding and bad connections
     When the user opens a thread the phone has never loaded
     Then the user is told the thread will load when the connection returns
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: The app keeps retrying on its own
     Given "My MacBook" is unreachable
     Then the user is told the app will keep retrying automatically
@@ -165,52 +165,52 @@ Feature: Staying useful through backgrounding and bad connections
     When "Fix checkout" is deleted on another device
     Then the user is told the thread was deleted or is no longer available
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Messages written offline are sent in order once the connection returns
     Given "My MacBook" is unreachable
     When the user sends "first" and then "second" in "Fix checkout"
     And "My MacBook" becomes reachable
     Then "first" is sent before "second"
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A message the environment rejects after reconnecting is kept for the user
     Given the user sent "first" while offline
     And the environment rejects "first" when the connection returns
     Then "first" is no longer waiting to send
     And "first" is back in the draft of its thread, where the user can edit or delete it
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The user sees how much each environment stores on the phone
     When the user opens client storage settings
     Then the storage used by "My MacBook" is shown
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Clearing one environment's cache keeps the connection
     When the user clears the cache for "My MacBook" and confirms
     Then offline threads for "My MacBook" are removed from the phone
     And the phone stays paired with "My MacBook"
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Clearing all client caches asks first
     When the user asks to clear all client caches
     Then the user is asked to confirm
     When the user cancels
     Then nothing is cleared
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The splash screen waits for the user's appearance settings
     Given the user chose a dark theme
     When the app starts
     Then the first screen the user sees already uses the dark theme
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Drafts are saved before the system suspends the app
     Given the user has typed "add a test" in "Fix checkout"
     When the system suspends and later terminates the app
     And the user opens the app again
     Then the draft in "Fix checkout" still reads "add a test"
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Messages waiting to send survive the app being closed
     Given "My MacBook" is unreachable
     And the user sent "add a test" in "Fix checkout"
@@ -220,14 +220,14 @@ Feature: Staying useful through backgrounding and bad connections
     When "My MacBook" becomes reachable
     Then "add a test" is sent
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A dropped connection never discards a message waiting to send
     Given the user sent "add a test" in "Fix checkout"
     And the connection to "My MacBook" drops before it answers
     Then "add a test" stays waiting to send
     And the phone tries again with a delay that grows up to 16 seconds
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A new task the environment already created is not created twice
     Given the user started the task "Add search" while "My MacBook" was unreachable
     And "My MacBook" had already created that thread before the phone heard back
@@ -249,7 +249,7 @@ Feature: Staying useful through backgrounding and bad connections
     And "My MacBook" has reconnected but its thread list has not arrived
     Then "add a test" keeps waiting to send
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A refused message joins what the user has typed in the draft since
     Given the user sent "add a test" in "Fix checkout" while offline
     And the user has typed "also check lint" in the draft of "Fix checkout" since
@@ -267,7 +267,7 @@ Feature: Staying useful through backgrounding and bad connections
     When the user removes enough attachments
     Then the refused message returns to the draft
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A new task the environment refuses reopens in the new task editor
     Given the user started the task "Add search" while offline
     And the environment refuses the task when the connection returns
@@ -284,7 +284,7 @@ Feature: Staying useful through backgrounding and bad connections
     Then the user is told the draft could not be restored and why
     And the thread of the task still offers to edit it
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Work typed into a task that failed to start comes back with it
     Given the user started the task "Add search" and typed more into its thread while it was being set up
     And the environment refuses the task
@@ -292,14 +292,14 @@ Feature: Staying useful through backgrounding and bad connections
     Then the extra text and attachments are in the new task editor
     And the thread's own draft is empty
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A reopened task with too many attachments keeps every file
     Given a refused task has more attachments than one message can carry
     When the user reopens the task
     Then every attachment is still in the editor
     And the user is asked to remove attachments before sending
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A queued file larger than the environment accepts returns to the draft
     Given the user sent a message with a file attached while offline
     And the file is larger than "My MacBook" accepts
@@ -402,7 +402,7 @@ Feature: Staying useful through backgrounding and bad connections
     Then "add a test" is not sent
     And the photos already uploaded for it are kept for the editor
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A message waiting to send can be pulled back into the composer
     Given the user sent "add a test" with a photo in "Fix checkout" while offline
     When the user edits the waiting message
@@ -464,14 +464,14 @@ Feature: Staying useful through backgrounding and bad connections
     Then the drafts and waiting messages stay on the phone
     And saving them is tried again the next time the app starts or an account signs in
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Client storage with nothing kept says so
     Given the phone has used no environment yet
     When the user opens client storage
     Then the user is told there is no cached data
     And clearing caches is not offered
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Client storage that cannot be read says so and keeps the connections
     Given the phone cannot read its storage
     When the user opens client storage
@@ -480,7 +480,7 @@ Feature: Staying useful through backgrounding and bad connections
     And the paired environments and their credentials are untouched
 
   # Likely already implemented: apps/mobile/src/connection/catalog-store.ts
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Environments saved by an earlier version of the app are still paired after updating
     Given the phone holds environments paired with an earlier version of the app
     When the user opens the updated app
@@ -494,13 +494,13 @@ Feature: Staying useful through backgrounding and bad connections
     Then the phone starts with no paired environments
     And the user is offered to add an environment
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The clear button says how much it will free
     Given the phone keeps 12 MB of cached data
     When the user opens client storage
     Then clearing caches offers to clear 12 MB
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Each environment tells the phone whether it is in front
     Given the phone is paired with "My MacBook" and "Office Mac"
     When the user opens the app
@@ -508,27 +508,27 @@ Feature: Staying useful through backgrounding and bad connections
     When the user switches away from the app
     Then "My MacBook" and "Office Mac" are told the phone is in the background
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The phone keeps telling its environments it is still there
     Given the phone is connected to "My MacBook"
     When about half a minute passes
     Then "My MacBook" is told again what the phone is showing
     And the report expires on "My MacBook" if the phone stops sending it
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A burst of changes is reported once
     Given the phone is connected to "My MacBook"
     When the user switches between several threads within a moment
     Then "My MacBook" receives one report of what the phone is showing
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The phone reports the status and checkout it is looking at
     Given the user is looking at "Fix checkout" and the checkout's source control status
     Then "My MacBook" is told the phone is following that checkout's status
     When the user leaves "Fix checkout"
     Then "My MacBook" is told the phone no longer follows it
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: An environment that cannot be reached does not stop the other reports
     Given the phone is paired with "My MacBook" and "Office Mac"
     And "Office Mac" is unreachable
@@ -559,7 +559,7 @@ Feature: Staying useful through backgrounding and bad connections
     When the user opens the same screen for another thread
     Then the screen is drawn instead of the failure
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The details of a drawing failure can be copied for a bug report
     Given a screen failed to draw
     When the user copies the details

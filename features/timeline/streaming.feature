@@ -42,14 +42,14 @@ Feature: Streaming the agent's reply
 
   # A section title is an ATX heading or a line of only bold text. It is held until the text
   # under it arrives, so a title never sits alone while the paragraph below it is written.
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A section title in paragraph streaming waits for the text under it
     Given the project streams responses by paragraph
     When the agent writes a section title and pauses before its paragraph
     Then the title does not appear on its own
     And the title appears with the first lines of its paragraph
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A held section title appears when the turn ends
     Given the project streams responses by paragraph
     When the agent writes a section title and then finishes the turn
@@ -323,7 +323,7 @@ Feature: Streaming the agent's reply
     Then no sync status is shown
     And the tasks row stays visible
 
-  @shared @backlog
+  @shared @backlog @priority-low
   Scenario: A sync status that has appeared stays for at least 400 milliseconds
     Given the thread's sync status has just appeared
     When the catch-up ends 100 milliseconds later
@@ -332,7 +332,7 @@ Feature: Streaming the agent's reply
 
   # Upstream #13554: the desktop keeps running threads subscribed in the background, so
   # opening one is already caught up and shows no sync status.
-  @desktop @backlog
+  @desktop @backlog @priority-high
   Scenario: A running thread the desktop has been following is already caught up when opened
     Given the desktop has been following a running thread in the background
     When the user opens that thread

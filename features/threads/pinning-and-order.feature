@@ -26,19 +26,19 @@ Feature: Pinning and arranging threads
     When the user looks at the thread list
     Then "Gamma" is listed in the pinned section above "Alpha" and "Beta"
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: Pinning a thread
     When the user pins "Beta"
     Then "Beta" moves to the pinned section
     And every connected device shows "Beta" as pinned
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: Unpinning a thread
     Given "Beta" is pinned
     When the user unpins "Beta"
     Then "Beta" returns to its place among the active threads
 
-  @desktop @backlog-desktop @mobile @backlog-mobile
+  @desktop @backlog-desktop @mobile @backlog-mobile @priority-high
   Scenario: A pinned thread shows a pin that unpins it
     Given "Beta" is pinned
     Then the row of "Beta" shows a pin labelled "Unpin thread"
@@ -72,7 +72,7 @@ Feature: Pinning and arranging threads
     When the user presses the shortcut that pins a thread
     Then nothing is pinned and no error is shown
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario Outline: Undoing a thread change
     Given the user just <changed> "Beta"
     When the user undoes the change within five seconds
@@ -128,7 +128,7 @@ Feature: Pinning and arranging threads
     Then the text edit is undone
     And "Beta" stays unpinned
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: The undo offer expires
     Given the user just unpinned "Beta"
     When five seconds pass
@@ -185,7 +185,7 @@ Feature: Pinning and arranging threads
     Then "Beta" and "Gamma" are listed in the order the user gave them
     And "Alpha" is listed after them
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: Moving a thread beside one that was never arranged arranges the section once
     Given "Alpha" and "Beta" are pinned and were never arranged
     When the user moves "Beta" above "Alpha"
@@ -194,7 +194,7 @@ Feature: Pinning and arranging threads
     When the user moves "Alpha" above "Beta"
     Then only "Alpha" is changed
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: Arranging leaves the places of threads that are filtered out alone
     Given "Gamma" is hidden from the thread list by a filter
     And "Alpha" and "Beta" are pinned in that order
@@ -219,7 +219,7 @@ Feature: Pinning and arranging threads
       | "Alpha" | up        |
       | "Gamma" | down      |
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: Activity does not reorder threads
     When the agent finishes work in "Gamma"
     Then the order of the active threads does not change
@@ -279,7 +279,7 @@ Feature: Pinning and arranging threads
     Then "Beta" opens
     And the files are attached to its composer with the usual attachment limits
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: Reordered threads respect reduced motion
     Given the user prefers reduced motion
     When a thread moves in the list
@@ -298,7 +298,7 @@ Feature: Pinning and arranging threads
     Then "Beta" stays where it was
     And no thread changes section
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A drag that is interrupted changes nothing
     When the user starts dragging "Beta" and <interruption>
     Then "Beta" stays where it was

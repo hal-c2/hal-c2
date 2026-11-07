@@ -53,7 +53,7 @@ Feature: What the engine projects for clients
     Then the shell row has no active run
     And its activity status is waiting
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A cancelled queued run does not hide the run still running before it
     Given run 1 of "t1" is running and run 2 was queued behind it
     When run 2 is cancelled before it starts
@@ -190,7 +190,7 @@ Feature: What the engine projects for clients
     Then the page holds only visible turns
     And it ends at the true start of the history
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A bounded snapshot holds the newest 10 user turns and older pages hold 20
     Given "t1" has 60 user turns
     When a client asks for a bounded snapshot of "t1"
@@ -198,7 +198,7 @@ Feature: What the engine projects for clients
     When it asks for the page before that cursor
     Then it receives the 20 user turns before them
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A page of history never splits a turn
     Given an earlier turn of "t1" ran hundreds of tool calls and was steered twice
     When a client pages back to that turn
@@ -218,7 +218,7 @@ Feature: What the engine projects for clients
     Then the page holds at most 75 items and about one megabyte
     And it holds at least one item, however large that item is
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario Outline: A history cursor the MC cannot use is refused
     When a client asks for older history of "t1" with <cursor>
     Then the request fails as an invalid history cursor
@@ -229,7 +229,7 @@ Feature: What the engine projects for clients
       | a cursor the MC never gave            |
       | a cursor longer than 4,096 characters |
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A history cursor stays valid while the thread grows
     Given a client holds a cursor into the history of "t1"
     When "t1" gains new turns
@@ -243,7 +243,7 @@ Feature: What the engine projects for clients
     When the client asks for the page before that cursor
     Then it receives the turns before the position the cursor recorded
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A bounded snapshot keeps everything the user can still act on
     Given "t1" has a very long history
     And an active proposed plan, a pending handoff, a pending approval and a queued message are older than its newest turns
@@ -264,7 +264,7 @@ Feature: What the engine projects for clients
     Then nothing the user can act on is left out
     And the snapshot is marked as over its payload budget
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario Outline: Bulky item bodies are left out of what a thread subscriber is sent
     Given "t1" has <item>
     When a client reads or follows "t1"
@@ -320,7 +320,7 @@ Feature: What the engine projects for clients
     Then it receives the full diff
     And the stored command outputs, tool results and handoff transcripts are unchanged
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: The first shell snapshot does not wait for repository lookups
     Given project "demo" has a repository whose identity is not resolved yet
     When a client subscribes to the shell

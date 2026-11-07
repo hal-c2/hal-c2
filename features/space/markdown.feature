@@ -817,6 +817,7 @@ Feature: GitHub Markdown in a page
     # The diagram is drawn by the one Mermaid renderer the pages, the chat and the file
     # viewer share. The terminal shows it drawn in characters, or, for a type with no
     # drawing in characters, its source, named as a diagram.
+    @priority-low
     Scenario Outline: A Mermaid diagram is drawn
       When the user imports a page holding a "<type>" Mermaid diagram
       Then the page has a diagram block of the type "<type>"
@@ -831,23 +832,27 @@ Feature: GitHub Markdown in a page
         | stateDiagram-v2 |
         | gantt           |
 
+    @priority-low
     Scenario: A diagram type the renderer cannot draw shows its source and says why
       When the user imports a page holding a "block-beta" Mermaid diagram
       Then the diagram's source is shown
       And the user is told "block-beta" diagrams cannot be drawn yet
 
+    @priority-low
     Scenario: A diagram with a mistake shows its source and the mistake
       When the user imports a page holding a flowchart with an unclosed bracket
       Then the diagram's source is shown
       And the user is told where the mistake is
       And nothing claims the diagram is still being drawn
 
+    @priority-low
     Scenario: The user edits a diagram's source
       Given a page with a flowchart
       When the user adds a node to its source
       Then the diagram is drawn again with the new node
       And the export writes the new source
 
+    @priority-low
     Scenario: A diagram is drawn once, not over and over
       Given a page with a flowchart
       When the user scrolls the page past it and back
@@ -1278,7 +1283,7 @@ Feature: GitHub Markdown in a page
       Then the user is told "Only a footnote has a label."
 
     # https://github.com/hal-c2/hal-c2/issues/877
-    @shared @backlog
+    @shared @backlog @priority-low
     Scenario: A footnote reference and its note go together
       Given a page with a paragraph holding the reference "[^1]" and the footnote "1"
       When the user opens the page
@@ -1341,7 +1346,7 @@ Feature: GitHub Markdown in a page
       Then the exported Markdown is "# Plan\n\n```latex\nx^2\n```\n"
 
     # https://github.com/hal-c2/hal-c2/issues/877
-    @shared @backlog
+    @shared @backlog @priority-low
     Scenario Outline: Math is shown as math
       Given a page holding <math>
       When the user opens the page

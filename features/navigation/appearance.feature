@@ -155,7 +155,7 @@ Feature: Appearance
       And the app still uses "iris" in light
 
     # Legacy: apps/web/src/themePalette.ts (resolveThemeAppearance, resolveDesktopTheme)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A theme that has only one appearance is drawn in that appearance
       Given "Midnight" only has a dark palette and is the theme choice
       And the appearance is <mode>
@@ -176,7 +176,7 @@ Feature: Appearance
       Then the app uses "iris"
 
     # Legacy: apps/web/src/hooks/useSettings.ts (resolveEnvironmentIdentificationMode)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A theme the user made shows the version pill where a built-in theme shows artwork
       Given environment identification is set to "Artwork"
       And the environment is a Nightly build
@@ -185,7 +185,7 @@ Feature: Appearance
       And the setting still reads "Artwork"
 
     # Legacy: apps/web/src/components/settings/ThemeSettings.tsx (CustomThemeCollectionCard, variantNavigation)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A theme collection offers its variants separately for light and dark
       Given the installed collection "Dusk" has the variants "Dusk Soft", "Dusk Bold" and "Dusk Night"
       When the user looks at the "Dusk" card
@@ -195,7 +195,7 @@ Feature: Appearance
       And the dark theme is unchanged
 
     # Legacy: apps/web/src/components/settings/ThemeSettings.tsx (selectCollectionDefaults)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Choosing a theme collection uses its first light and first dark variants
       Given the installed collection "Dusk" has several light and dark variants
       When the user chooses the "Dusk" card
@@ -215,12 +215,12 @@ Feature: Appearance
 
       # Contrast runs from 50 to 200 (packages/contracts settings.ts), so 20 is not a
       # value the row can take, and below 100 it softens rather than sharpens.
-      @backlog
+      @backlog @priority-low
       Examples: Not drawn by the desktop yet
         | setting       | value | effect                                   |
         | contrast      | 20    | text and borders stand out more          |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: Interface sliders keep to their range
       When the user drags <setting> to its <end>
       Then <setting> is <value>
@@ -264,7 +264,7 @@ Feature: Appearance
         | Version pill | the app shows a Nightly version pill           |
         | None         | the app shows no environment marker            |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: The environment's version decides whether it is a Nightly build
       Given the app's own stage is "Alpha"
       And the primary environment runs version "<version>"
@@ -292,7 +292,7 @@ Feature: Appearance
 
     # A rice's sidebar can leave off the brand band (Sidebar.showBrand); the
     # stage moves above the list then.
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile @backlog-mobile @priority-low
     Scenario Outline: A shell without the brand band still shows which build it is
       Given the app's own stage is "Dev"
       And the user's shell leaves off the sidebar's brand band
@@ -318,7 +318,7 @@ Feature: Appearance
         | Dev     | HAL-C2 (Dev)      |
 
       # The desktop has no Alpha stage of its own yet.
-      @backlog
+      @backlog @priority-low
       Examples: Not yet on the desktop
         | stage   | name              |
         | Alpha   | HAL-C2 (Alpha)    |
@@ -397,7 +397,7 @@ Feature: Appearance
       Then the panels snap to that thread's layout
 
     # Legacy: apps/web/src/components/settings/PanelAnimationsPreview.tsx
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The motion setting previews its duration and can be replayed
       Given panel animations are set to 200 ms
       When the user looks at the panel animation setting
@@ -469,13 +469,13 @@ Feature: Appearance
       Then the prompt, code and terminal fonts and sizes can be set one by one
       And leaving the terminal font empty uses the terminal's default instead of the code font
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The advanced typography choice stays on this device
       Given the user turned on advanced typography
       When the user restarts HAL-C2
       Then advanced typography is still on
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Jumping to an advanced font setting from search shows it
       Given advanced typography is off
       When the user opens the terminal font from settings search
@@ -562,13 +562,13 @@ Feature: Appearance
       And the user can search them
       And a search with no match says "No fonts found."
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Without a font list the user types the font name
       Given the computer does not let HAL-C2 list installed fonts
       When the user opens the interface font setting
       Then a plain field accepts a font family name
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Only the chosen font family is validated
     Given the user can list every installed font family
     When they pick one

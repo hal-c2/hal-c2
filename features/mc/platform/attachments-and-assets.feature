@@ -106,7 +106,7 @@ Feature: Attachments and assets served by the MC
     When the client sends a message naming all of them
     Then the message fails before any upload is claimed into the thread
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A message whose attachments cannot all be claimed claims none of them
     Given the client uploaded two images
     When the client sends a message naming both and the second cannot be claimed
@@ -114,7 +114,7 @@ Feature: Attachments and assets served by the MC
     And the first image does not belong to the thread
     And both uploads can still be sent again
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A message the MC refuses after claiming its uploads gives them back
     Given the client uploaded an image
     When the client sends a message naming that upload and the MC refuses the message
@@ -171,7 +171,7 @@ Feature: Attachments and assets served by the MC
   #   apps/server/src/assets/AttachmentUpload.test.ts (deletes pending uploads without deleting
   #   thread-owned copies)
   # Likely already implemented: apps/server-ex/lib/hal_c2/attachments.ex (delete)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Removing an upload never removes a thread's copy
     Given an upload that is still pending and the same image already stored with a thread
     When a client deletes the pending upload twice and then deletes the thread's attachment id
@@ -224,7 +224,7 @@ Feature: Attachments and assets served by the MC
     Then the MC stores them as thread attachments
 
   # Likely already implemented: apps/server-ex/lib/hal_c2/attachments.ex (persist)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A pasted image that is not what it claims to be is refused
     When the client sends a message with a pasted image <problem>
     Then the message fails naming the image
@@ -245,7 +245,7 @@ Feature: Attachments and assets served by the MC
     And the second send finds the stored image under the same attachment id
 
   # Likely already implemented: apps/server-ex/lib/hal_c2/attachments.ex (id_suffix)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A file the MC cannot name safely is stored as a binary file
     Given the client uploads a file named <name>
     When the client sends a message naming that upload
@@ -272,7 +272,7 @@ Feature: Attachments and assets served by the MC
     And the image still belongs to its first thread
 
   # Likely already implemented: apps/server-ex/lib/hal_c2/attachments.ex (safe_id?)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: An attachment id that points outside the attachment store finds nothing
     When a client asks for the attachment <id>
     Then the MC answers that no such attachment exists
@@ -337,14 +337,14 @@ Feature: Attachments and assets served by the MC
       | JPEG whose metadata is large            |
 
   # Legacy: packages/shared/src/imageDimensions.ts (readJpeg, exifOrientationSwapsAxes)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A photo stored on its side is given the size it is shown at
     Given the project holds a JPEG photo whose metadata says it is rotated a quarter turn
     When the client asks for an asset URL for it
     Then the width and height are swapped from those stored in the file
 
   # Legacy: packages/shared/src/imageDimensions.ts (null on unknown or malformed headers)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: An image whose size cannot be read is served without one
     Given the project holds <file>
     When the client asks for an asset URL for it
@@ -379,7 +379,7 @@ Feature: Attachments and assets served by the MC
   # Legacy: apps/server/src/assets/AssetAccess.ts (resolveAsset: signature, expiry),
   #   apps/server/src/assets/AssetAccess.test.ts (tampered tokens)
   # Likely already implemented: apps/server-ex/lib/hal_c2/attachments.ex (verify)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A signed URL that was altered is not served
     Given a signed URL for a media file on the host
     When the client reads the URL with <change>
@@ -393,7 +393,7 @@ Feature: Attachments and assets served by the MC
 
   # Legacy: apps/server/src/assets/AssetAccess.ts (SIGNING_SECRET_NAME, getOrCreateRandom)
   # Likely already implemented: apps/server-ex/lib/hal_c2/attachments.ex (secret)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A signed URL still works after the MC restarts
     Given a signed URL for a project file
     When the MC restarts
@@ -436,7 +436,7 @@ Feature: Attachments and assets served by the MC
   #   name), apps/server/src/assets/AssetAccess.test.ts (issues project favicon capabilities ...;
   #   buckets project favicon expiry after content hashing)
   # Likely already implemented: apps/server-ex/lib/hal_c2/attachments.ex (favicon_expiry, "v<sha256>-")
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A favicon's URL stays the same until the icon changes
     Given a signed URL for a project's favicon
     When a client asks for the project's favicon URL again within half an hour
@@ -449,7 +449,7 @@ Feature: Attachments and assets served by the MC
   #   apps/server/src/assets/AssetAccess.test.ts (issues an exact capability for a saved favicon
   #   outside the workspace; ignores a client favicon path hint; keeps automatic favicon resolution
   #   separate from a saved override)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: The icon the user saved decides which favicon is served
     Given the project has the automatic icon "favicon.svg"
     And <saved>
@@ -467,7 +467,7 @@ Feature: Attachments and assets served by the MC
   # Legacy: apps/server/src/assets/AssetAccess.test.ts (rejects a resolved project favicon with a
   #   non-image extension)
   # Likely already implemented: apps/server-ex/lib/hal_c2/attachments.ex (@image_extensions)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A saved icon that is not an image is refused
     Given the user saved "secret.txt" as the project's icon
     When a client asks for the project's favicon URL
@@ -490,7 +490,7 @@ Feature: Attachments and assets served by the MC
   #   resolveNativeAppIconUncached; macOS only)
   # Likely already implemented on Linux: apps/server-ex/lib/hal_c2/attachments/app_icon.ex (desktop
   #   entries); the macOS lookup below is not
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: On macOS the MC finds an application's icon in its bundle
     Given the MC runs on macOS and Spotlight knows <apps>
     When a client asks for the icon of the application <reference>
@@ -504,7 +504,7 @@ Feature: Attachments and assets served by the MC
 
   # Legacy: apps/server/src/assets/NativeAppIconResolver.ts (iconName checks, relativeSource,
   #   ICON_SIZE, cacheKey)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: A macOS application icon is turned into a small picture the client can use
     Given the application bundle <bundle>
     When a client asks for its icon
@@ -522,7 +522,7 @@ Feature: Attachments and assets served by the MC
   # Legacy: apps/server/src/assets/NativeAppIconResolver.ts (Cache: one hour, 256 entries, misses
   #   cached, rebuilt when the file is gone; Semaphore of two; containsControlCharacter;
   #   escapeSpotlightString), apps/server/src/assets/NativeAppIconResolver.test.ts
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Asking again for an application's icon does not search again
     Given a client asked for the icon of an application the host does not have
     When a client asks for that icon again within the hour
@@ -532,7 +532,7 @@ Feature: Attachments and assets served by the MC
   # Legacy: apps/server/src/assets/NativeAppIconResolver.ts (containsControlCharacter,
   #   escapeSpotlightString)
   # Likely already implemented: apps/server-ex/lib/hal_c2/attachments/app_icon.ex (resolve)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: An application name that cannot be searched safely finds no icon
     When a client asks for the icon of the application named <name>
     Then the MC does not search the host with it as part of a query
@@ -558,7 +558,7 @@ Feature: Attachments and assets served by the MC
   # Legacy: apps/server/src/assets/AssetAccess.ts (github-media case), packages/shared/src/githubMedia.ts,
   #   apps/server/src/assets/AssetAccess.test.ts (serves GitHub-hosted pull request media ...)
   # Likely already implemented: apps/server-ex/lib/hal_c2/attachments/github_media.ex (fetch_url)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A GitHub media address is checked when its URL is issued
     When the client asks for an asset URL for the GitHub media address <address>
     Then <result>
@@ -578,7 +578,7 @@ Feature: Attachments and assets served by the MC
 
   # Legacy: apps/server/src/assets/AssetAccess.test.ts (the error never carries the rejected URL)
   # Likely already implemented: apps/server-ex/lib/hal_c2/attachments.ex (asset_claims github-media)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A refused GitHub media address is not repeated in the error
     When the client asks for an asset URL for "https://example.com/shot.png?token=private-media-token"
     Then the failure does not contain the address or its token
@@ -586,7 +586,7 @@ Feature: Attachments and assets served by the MC
   # Legacy: apps/server/src/assets/GitHubMediaFetch.ts (githubToken: no credential is not cached),
   #   apps/server/src/assets/AssetAccess.test.ts (loads private media immediately after login)
   # Likely already implemented: apps/server-ex/lib/hal_c2/attachments/github_media.ex (token)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Signing in to GitHub takes effect on the next media request
     Given the host's GitHub CLI is not signed in
     And a private repository image is signed for a client
@@ -599,7 +599,7 @@ Feature: Attachments and assets served by the MC
 
   # Legacy: apps/server/src/assets/GitHubMediaFetch.ts (githubMediaResponse)
   # Likely already implemented: apps/server-ex/lib/hal_c2/attachments/github_media.ex (serve, fetch)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: GitHub's answer to a media request is passed on or refused
     Given GitHub answers a media request with <upstream>
     When a client reads the media URL
@@ -617,7 +617,7 @@ Feature: Attachments and assets served by the MC
   # Legacy: apps/server/src/assets/GitHubMediaFetch.ts (FORWARDED_REQUEST_HEADERS,
   #   FORWARDED_RESPONSE_HEADERS, cache-control from the URL's remaining life)
   # Likely already implemented: apps/server-ex/lib/hal_c2/attachments/github_media.ex (serve)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A seek in GitHub-hosted video costs one range request upstream
     Given a signed URL for a video hosted on GitHub
     When a player asks for "bytes=100-199"
@@ -625,13 +625,13 @@ Feature: Attachments and assets served by the MC
     And answers with GitHub's range, length and validators
     And the response may be cached privately for as long as the signed URL has left, and not at all once it has expired
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A GitHub SVG is served in a sandbox that cannot run scripts
     Given a pull request comment with an SVG image in a repository
     When a client asks for that image
     Then the response is an SVG that runs no scripts and loads nothing from outside
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: GitHub's credential is not sent to a redirect host outside GitHub
     Given GitHub answers a media request with a redirect to a signed object address
     When the MC follows the redirect
@@ -658,7 +658,7 @@ Feature: Attachments and assets served by the MC
   #   the file opened during resolution; rejects a symlink swapped in after canonical validation
   #   but before open; closes a descriptor rejected when its path changes during open; rejects an
   #   ancestor symlink race)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A file swapped for a link while it is being served never reveals the target
     Given a signed URL for the video "recording.mp4", beside a private "secret.txt"
     When <swap> and the client reads the URL<range>
@@ -681,7 +681,7 @@ Feature: Attachments and assets served by the MC
 
   # Legacy: apps/server/src/assets/AssetAccess.ts (resolveAsset workspace-file: decodeRelativePath,
   #   PREVIEW_ASSET_EXTENSIONS)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A page's neighbouring files are served by name under its URL
     Given a signed URL for "report.html" in the project, beside "report.css" and ".env"
     When the client reads "report.css" under that URL
@@ -690,7 +690,7 @@ Feature: Attachments and assets served by the MC
 
   # Legacy: apps/server/src/assets/AssetAccess.ts (resolveAsset: dot segments, NUL, extension
   #   whitelist, canonical workspace containment)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: A page's neighbours are limited to what a page needs
     Given a signed URL for "report.html" in the project
     When the client reads <name> under that URL
@@ -706,7 +706,7 @@ Feature: Attachments and assets served by the MC
       | "link.css", a link to a file outside the project |
 
   # Legacy: apps/server/src/assets/AssetAccess.ts (draft-workspace-file; issueAssetUrl)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A draft page is served from the folder it was written for
     Given a draft in the project "/work/app" refers to "report.html"
     When the client asks for an asset URL for it with no thread
@@ -738,7 +738,7 @@ Feature: Attachments and assets served by the MC
       | the last zero bytes of the file          |
       | bytes starting beyond any real file size |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A player can ask for the last bytes of a file
     Given a signed URL for a video on the host
     When a player asks for only the last bytes of the file
@@ -772,7 +772,7 @@ Feature: Attachments and assets served by the MC
       | XHTML                 |
       | a malformed type      |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Office documents keep their own type
     Given a signed download URL for an uploaded Word, Excel or PowerPoint file
     When the client reads it
@@ -781,7 +781,7 @@ Feature: Attachments and assets served by the MC
   # Legacy: apps/server/src/assets/AssetAccess.ts (INLINE_PREVIEW_MIME_TYPES, audioMimeTypeFromExtension),
   #   apps/server/src/assets/AssetAccess.test.ts (serves video attachments inline; serves document
   #   attachments inline when a viewer requests it; serves audio previews ...)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: A viewer can ask for a document or recording to be shown rather than saved
     Given a thread attachment stored as <stored>
     When the client asks for its URL with the name "<name>", the claimed type "<claimed>" and <disposition>
@@ -797,14 +797,14 @@ Feature: Attachments and assets served by the MC
 
   # Legacy: apps/server/src/assets/AssetAccess.test.ts (keeps inline requests for other attachment
   #   types as downloads)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A file type that cannot be shown stays a download whatever the client claims
     Given a thread attachment stored as ".zip"
     When the client asks for its URL claiming "text/html" and asks for it inline
     Then the MC serves it as a download
     And the type comes from the stored file, not from the claim
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: HTML and SVG files served from a project are sandboxed
     Given a signed URL for an HTML file and one for an SVG file in the project
     When the client reads them

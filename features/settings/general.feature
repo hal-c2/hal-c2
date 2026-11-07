@@ -88,7 +88,7 @@ Feature: General settings
       When the MC sweeps threads
       Then the thread is not settled
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile @backlog-mobile @priority-low
     Scenario: Turning inactive settling on starts from the default number of days
       Given "Auto-settle inactive threads" is off
       When the user turns it on
@@ -96,7 +96,7 @@ Feature: General settings
       And the user can change the number of days
 
     # Legacy: apps/web/src/components/settings/SettingsPanels.tsx (AutoSettleDaysInput), packages/contracts/src/settings.ts (1 to 90 days)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: Only whole days from 1 to 90 are kept as the inactivity limit
       Given "Auto-settle inactive threads" is on with 3 days
       When the user types <entry> as the number of days
@@ -113,7 +113,7 @@ Feature: General settings
         | 90    | becomes 90 days | 90    |
         | 1     | becomes 1 day   | 1     |
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: Environments whose auto-settle settings differ can be brought in line
       Given "laptop" settles threads after 3 days and "server" after 7 days
       And the phone shows the settings of "laptop"
@@ -195,7 +195,7 @@ Feature: General settings
       When the user opens a thread with a linked pull request
       Then no side panel opens by itself
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: Proactive panels open the changes of a turn that just finished only when they are large
       Given proactive panels are on and the thread has no linked pull request
       When a turn the user watched finishes having changed <files> with <lines> changed lines
@@ -208,7 +208,7 @@ Feature: General settings
         | 2 files | 49    | does not open           |
         | 0 files | 0     | does not open           |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A panel the user chose during a turn is not replaced when the turn finishes
       Given proactive panels are on
       And the user opened the file explorer beside the thread while a turn was running
@@ -216,26 +216,26 @@ Feature: General settings
       Then the file explorer stays open
       And a later turn that finishes with large changes may open the diff again
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A panel the user chose in one thread does not hold back another thread
       Given proactive panels are on
       And the user closed the side panel of the thread "Cart totals"
       When the user opens another thread with a linked pull request
       Then the pull request panel opens with that thread
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A thread with several pull requests opens their list
       Given proactive panels are on
       When the user opens a thread linked to pull requests 12 and 14
       Then the list of the thread's pull requests opens instead of one of them
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A linked pull request keeps a finished turn's changes from opening
       Given proactive panels are on and the thread has a linked pull request
       When a turn finishes with large changes
       Then the diff does not open over the pull request
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: Proactive panels stay closed where they would get in the way
       Given proactive panels are on
       And <situation>
@@ -248,7 +248,7 @@ Feature: General settings
         | the window is so narrow the panel covers the thread    | a turn finishes with large changes                  |
         | the project folder is not a Git repository             | a turn finishes with large changes                  |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An open pull request panel follows the thread's pull request even with proactive panels off
       Given proactive panels are off
       And the pull request panel shows the thread's linked pull request 12
@@ -284,7 +284,7 @@ Feature: General settings
         | Modifier and Enter for multiline prompts | multiline   | gets a new line        |
         | Modifier and Enter always               | single line | gets a new line        |
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile @backlog-mobile @priority-high
     Scenario Outline: Follow-up behaviour decides what a message sent during a run does
       Given the follow-up behaviour is "<mode>"
       When the user sends a message while the agent is running
@@ -358,19 +358,19 @@ Feature: General settings
       When the user types "~/src" in the base directory field and clicks elsewhere
       Then the setting is saved as "~/src" once
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A typed setting that was not changed is not saved
       Given the add project base directory is "~/code"
       When the user clicks into the base directory field and leaves it again
       Then nothing is saved
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A setting changed elsewhere does not replace what the user is typing
       Given the user is typing "~/sr" in the base directory field
       When the setting is reset to its default from another window
       Then the field still shows "~/sr"
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Enter that confirms an input method composition does not save the field
       Given the user is composing text in the base directory field with an input method
       When the user presses Enter to confirm the composition
@@ -451,7 +451,7 @@ Feature: General settings
       When the user unfolds it
       Then the legacy plan mode, context window indicator and per-project sidebar can be turned on
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A legacy feature restores the retired behaviour
       When the user turns on the legacy "<feature>"
       Then <result>

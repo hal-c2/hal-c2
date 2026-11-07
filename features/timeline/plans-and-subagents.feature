@@ -877,7 +877,7 @@ Feature: Plans and subagents
     When the user opens "Tax tests" from the Agents tab
     Then the subagent's thread is shown
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: Subagent descriptions read as display names
     Given a subagent description containing a filesystem path or a "Subagent:" prefix
     When it is listed as pending background work
@@ -896,7 +896,7 @@ Feature: Plans and subagents
     When the user opens the thread's lineage
     Then the subagent is listed as running with its timer going, not as done
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: A subagent's finish notification looks like its card
     Given a delegated task finished
     When the notification appears in the parent thread
@@ -910,7 +910,7 @@ Feature: Plans and subagents
     Then the subagent shows that model instead of "Not reported"
     And a known model is kept when a later update leaves the model out
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario Outline: A subagent's details show the effort and speed it was started with
     Given a subagent ran on a model with the saved effort "<effort>" and speed "<speed>"
     When the user looks at the subagent's details
@@ -930,7 +930,7 @@ Feature: Plans and subagents
     And the parent hears the interrupted result like any other finished subagent
     And subagents the provider owns and settled subagents offer no stop
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: Expanding the lineage keeps the workspace options
     Given a thread with dozens of previous agents
     When the user expands the previous agents or asks to see more

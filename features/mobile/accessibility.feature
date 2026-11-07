@@ -66,7 +66,7 @@ Feature: Accessibility on phones and tablets
       | 7d    | Past 7 days    |
       | 90d   | Past 90 days   |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Upload state is announced on attachments
     Given an attachment is uploading
     When a screen reader focuses the attachment
@@ -85,21 +85,21 @@ Feature: Accessibility on phones and tablets
     Then each reference is focused on its own as a button named by its label
     And activating a reference opens its details
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Dictation state is announced
     Given a screen reader is on
     When the user starts dictating
     Then the screen reader announces that recording started
     And the user can cancel dictation from the screen reader
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Messages grow with the system text size
     Given the user set the system text size to the largest accessibility size
     When the user reads a thread
     Then message text is shown at the larger size
     And no message text is cut off
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Compact controls stay usable at large text sizes
     Given the user set the system text size to the largest accessibility size
     When the user looks at a segmented choice such as the usage range
@@ -107,7 +107,7 @@ Feature: Accessibility on phones and tablets
 
   # Upstream #13356: Android header and icon controls follow the Settings text size, and keep a
   # 48dp touch target.
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Android header buttons grow with the app's text size and keep a 48dp touch target
     Given the user set the app's text size to the largest option on Android
     When the user looks at the thread list header
@@ -115,13 +115,13 @@ Feature: Accessibility on phones and tablets
     And each button stays at least 48dp to tap
 
   # New behaviour: the React Native app does not guarantee this today.
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Reduced motion replaces sliding transitions
     Given the user turned on reduced motion
     When the user opens a thread
     Then the thread appears without a sliding animation
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Working indicators do not animate continuously with reduced motion
     Given the user turned on reduced motion
     And an agent is working
@@ -144,7 +144,7 @@ Feature: Accessibility on phones and tablets
     When the user looks at any action in the thread list or composer
     Then its touch area is at least 44 points square
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A video is announced as something to play
     Given a message carries the video "demo.mp4"
     When a screen reader focuses the video

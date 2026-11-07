@@ -147,20 +147,20 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user resets the sidebar width
       Then the sidebar returns to its default width
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Clicking the sidebar's edge without dragging leaves it as it is
       Given the sidebar is open at a width the user chose
       When the user clicks the sidebar's edge without moving
       Then the sidebar keeps its width
       And the sidebar stays open
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Releasing a drag on the sidebar's edge is not also a click
       When the user drags the sidebar's edge and lets go
       Then the sidebar has the width where it was released
       And nothing else is activated by the release
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A resize in progress ends where it is when the window loses focus
       Given the user is dragging the <edge>
       When the window loses focus
@@ -211,7 +211,7 @@ Feature: Layout: sidebar, header, right panel and drawer
       And the start of the title still shows
 
     # Proved by tst_Workspace.qml (test_tightHeaderKeepsTheTitleReadable), not yet by a step (hal-c2/hal-c2#213).
-    @desktop @backlog-desktop
+    @desktop @backlog-desktop @priority-low
     Scenario: The full thread title is a hover away
       Given a shortened thread title
       When the user hovers it
@@ -345,12 +345,12 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then pull request cannot be added
       And the Add menu says "This thread's branch has no pull request yet." for pull request
 
-    @desktop @backlog-desktop
+    @desktop @backlog-desktop @priority-low
     Scenario: The right panel is set apart from the thread by a border
       Given the right panel is open
       Then a 1 px border in the theme's border colour marks its leading edge
 
-    @desktop @backlog-desktop
+    @desktop @backlog-desktop @priority-low
     Scenario: Tabs that do not fit scroll and keep the active one in view
       Given the right panel has more tabs than fit
       When the user adds a Device tab
@@ -397,7 +397,7 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user returns to "Fix login"
       Then the right panel is the width the user dragged it to
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Switching threads in the middle of a drag leaves both widths alone
       Given the user is dragging the right panel's edge on "Fix login"
       When the user switches to "Add tests" before letting go
@@ -513,7 +513,7 @@ Feature: Layout: sidebar, header, right panel and drawer
         | L      | linked pull requests  |
         | M      | device                |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The letters of an empty right panel are left alone while the user types
       Given the right panel is open with no tabs
       And the user is typing in the composer
@@ -521,7 +521,7 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then "d" is typed into the composer
       And no tab opens in the right panel
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An empty right panel is worked with the arrow keys
       Given the right panel is open with no tabs
       When the user moves down the offered kinds with the arrow keys and presses Enter
@@ -634,14 +634,14 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user toggles the thread details panel
       Then the thread details open over the right panel
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Floating thread details are not reopened by a restart
       Given the thread details are open over the conversation
       When the desktop quits and starts again
       Then the thread details are not open
       And the user's choice to keep them beside the conversation is remembered
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Opening the right panel closes floating thread details
       Given the thread details are open over the conversation
       When the user opens the right panel
@@ -670,7 +670,7 @@ Feature: Layout: sidebar, header, right panel and drawer
       And no tab is added
 
     # Legacy: apps/web/src/rightPanelStore.ts (pullRequestSurfaceId: host and environment are part of a tab's identity)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: Pull requests that only look alike each get their own tab
       Given the right panel has a tab for pull request 42 of "acme/shop" on "github.com"
       When the user opens <other>

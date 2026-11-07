@@ -75,7 +75,7 @@ Feature: Models
     Then the last usable manifest is kept
 
   # Upstream #14152 adds Claude Sonnet 5.5. The bundled manifest does not list it yet.
-  @backlog
+  @backlog @priority-high
   Scenario: The Claude catalog lists Claude Sonnet 5.5
     Given the MC uses its bundled model manifest
     When the MC has read Claude's model list
@@ -108,13 +108,13 @@ Feature: Models
 
   # Refresh rules of apps/server/src/provider/ModelManifest.ts (TTL one hour, retry five
   # minutes, ten second download limit).
-  @backlog
+  @backlog @priority-low
   Scenario: The manifest is downloaded at most once an hour
     Given the MC fetched the model manifest less than an hour ago
     When the MC would refresh the manifest
     Then no download is made
 
-  @backlog
+  @backlog @priority-low
   Scenario: A failed manifest download is retried after five minutes
     Given the MC's last manifest download failed two minutes ago
     When the MC would refresh the manifest
@@ -122,20 +122,20 @@ Feature: Models
     When five minutes have passed since the failed download
     Then the manifest is downloaded again
 
-  @backlog
+  @backlog @priority-low
   Scenario: A manifest download that takes too long is abandoned
     Given the manifest server does not answer within ten seconds
     When the MC refreshes the manifest
     Then the last usable manifest is kept
     And no error is shown to the user
 
-  @backlog
+  @backlog @priority-low
   Scenario: Refreshing the manifest by hand ignores the schedule
     Given the MC fetched the model manifest a minute ago
     When the user refreshes the models
     Then the manifest is downloaded again
 
-  @backlog
+  @backlog @priority-low
   Scenario: The manifest is not downloaded when provider update checks are off
     Given the user turned off provider update checks
     When the MC would refresh the manifest
@@ -157,7 +157,7 @@ Feature: Models
     When the MC has read the provider's model list
     Then "model-a" stays the default
 
-  @backlog
+  @backlog @priority-low
   Scenario: Custom models are never marked legacy by the manifest
     Given the user added a custom model that the manifest does not list
     When the MC has read the provider's model list
@@ -211,13 +211,13 @@ Feature: Models
     When the user removes the custom model "my-model"
     Then it is no longer offered or listed as a favourite
 
-  @desktop @mobile @backlog-mobile @backlog-mc
+  @desktop @mobile @backlog-mobile @backlog-mc @priority-high
   Scenario: Favourite, hidden and ordered models are remembered on the device
     When the user favourites one model, hides another and moves a third up
     Then the model picker on this device reflects those choices
     And other devices keep their own choices
 
-  @desktop @mobile @backlog-mobile @backlog-mc
+  @desktop @mobile @backlog-mobile @backlog-mc @priority-high
   Scenario: A hidden model can be shown again
     Given the user hid the model "Haiku"
     When the user shows "Haiku" in the picker again

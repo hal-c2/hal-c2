@@ -22,14 +22,14 @@ Feature: Source Control settings
     Then each version control and hosting tool is listed as available, missing or status unknown
     And each available tool shows its version
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: Revealing a signed-in account
     Given the GitHub CLI is signed in as "octocat"
     And GitHub reads "Authenticated" without the account name
     When the user reveals the account
     Then the account "octocat" is shown
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: Hiding a revealed account again
     Given the user revealed the GitHub account
     When the user hides it
@@ -66,7 +66,7 @@ Feature: Source Control settings
     When the panel loads
     Then the user is told "Could not scan the server environment"
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: A host that is not supported yet is marked coming soon
     When the panel loads
     Then hosts HAL-C2 cannot use yet are marked "Coming Soon"
@@ -98,20 +98,20 @@ Feature: Source Control settings
     When the user opens Settings, Source Control
     Then the user is told to connect an environment to inspect its version control tools and hosting integrations
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Several environments show one machine's tools at a time
     Given the user is editing settings across "Laptop" and "Build box"
     When the panel loads
     Then the tools of "Laptop" are listed
     And the version control section is named after "Laptop"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The first scan shows placeholders and can be rescanned only once it ends
     When the panel is still running its first scan
     Then placeholders stand in for the tools
     And rescanning is not possible until the scan ends
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A hosting tool says why it cannot be used yet
     Given the hosting tool "GitLab" <state>
     When the panel loads
@@ -125,20 +125,20 @@ Feature: Source Control settings
       | is installed but its sign-in could not be checked        | Could not verify GitLab, with the reason or the install hint               |
       | is not on this server                                    | Not available on this server, with its install hint                         |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A tool's availability is shown, not changed
     When the user looks at a tool's availability
     Then it shows on only when the tool is available and, for a hosting tool, signed in
     And the user cannot change it from the panel
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Git's details open from its row or from a search for the fetch interval
     Given the panel lists Git
     When the user searches settings for the automatic fetch interval
     Then Git's details open with the interval in view
     And no other tool offers details
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A fetch interval is kept as whole seconds from zero
     When the user enters <typed> as the automatic Git fetch interval
     Then it is kept as <kept> seconds
@@ -150,21 +150,21 @@ Feature: Source Control settings
       | -5    | 0    |
       | empty | 0    |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A custom fetch interval makes the background profile advanced
     Given the background activity profile is "Balanced"
     When the user sets a fetch interval that is not the profile's
     Then General settings show the background activity profile as advanced
     And the shared background activity policy still decides whether a fetch may run when the timer fires
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Scanning can be retried from the empty state
     Given nothing was detected on the environment
     When the user chooses to scan from the empty state
     Then the environment is scanned again
     And scanning cannot be started twice while it runs
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Hosting tools are listed alone when there is no version control tool
     Given the environment reports hosting tools but no version control tool
     When the panel loads
@@ -192,7 +192,7 @@ Feature: Source Control settings
     When the user removes the Bitbucket credentials
     Then Bitbucket is not configured on the environment
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A saved Bitbucket token stays out of the settings file and every client payload
     Given the user saved a Bitbucket API token on the environment
     When a client reads the server settings

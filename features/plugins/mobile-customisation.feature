@@ -4,6 +4,7 @@
 #   apps/mobile/src/features/threads/ThreadSettingsSheet.tsx
 #   apps/server-ex/lib/hal_c2/environment.ex (per-environment identity)
 
+@priority-low
 Feature: Customising the mobile app
   The mobile app is QML too, so the user can load UI plugins onto it the same way as
   on the other surfaces: from a file on the phone, from a paired MC, or from a

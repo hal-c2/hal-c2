@@ -37,14 +37,14 @@ Feature: Removing and updating projects
     When a client renames an unknown project
     Then the MC answers "unknown project"
 
-  @desktop @mobile @tui @backlog-mobile
+  @desktop @mobile @tui @backlog-mobile @priority-high
   Scenario: Removing a project asks for confirmation and explains what is lost
     Given "shop" has 4 threads
     When the user asks to remove "shop"
     Then the user is told 4 threads and their conversation history will be cleared
     And the user is told the files on disk are kept
 
-  @desktop @mobile @tui @backlog-mobile
+  @desktop @mobile @tui @backlog-mobile @priority-high
   Scenario: Confirming removal clears the project and its drafts
     Given "shop" has an unsent draft
     When the user confirms removing "shop"
@@ -63,7 +63,7 @@ Feature: Removing and updating projects
     When the MC removes the project "shop"
     Then the removal confirmation is closed
 
-  @desktop @mobile @tui @backlog-mobile
+  @desktop @mobile @tui @backlog-mobile @priority-high
   Scenario: A removal the environment refuses keeps the project and says why
     Given the environment refuses to change projects with "Project shop is busy."
     When the user confirms removing "shop"
@@ -143,7 +143,7 @@ Feature: Removing and updating projects
       Then the command fails saying an active project already exists for "/home/sam/shop"
       And "shop" is still the only project at that folder
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario Outline: An empty title is refused from the command line
       When the operator <command>
       Then the command fails saying the project title cannot be empty
@@ -170,7 +170,7 @@ Feature: Removing and updating projects
       When the operator runs "hal-c2 project remove /home/sam/shop"
       Then "shop" is no longer listed for "laptop"
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Renaming a project to its own title changes nothing
       When the operator runs "hal-c2 project rename shop shop"
       Then the command says "shop" is already named that
@@ -181,7 +181,7 @@ Feature: Removing and updating projects
       When the operator runs "hal-c2 project remove /home/sam/nothing"
       Then the command fails saying no active project was found for "/home/sam/nothing"
 
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: Removing a project that has threads needs force
       Given "shop" has threads
       When the operator runs "hal-c2 project remove shop"

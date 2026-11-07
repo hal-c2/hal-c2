@@ -109,7 +109,7 @@ Feature: Generated titles, branch names and source control text
 
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.ts (disableAllHooks, --strict-mcp-config, temp folder)
   # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation.ex (claude args, isolate)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Claude writes in an empty folder with no hooks, commands or MCP servers
     When "claudeAgent" writes a title
     Then it runs in a new temporary folder that is removed afterwards
@@ -117,7 +117,7 @@ Feature: Generated titles, branch names and source control text
 
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.test.ts ("runs Claude text generation with the configured CLAUDE_CONFIG_DIR")
   # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation.ex (claude_command per instance)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Claude writes with the home of the instance chosen for text generation
     Given the text model is on a Claude instance with its own home folder
     When a title is generated
@@ -169,7 +169,7 @@ Feature: Generated titles, branch names and source control text
 
   # Legacy: apps/server/src/textGeneration/CursorTextGeneration.ts (plan mode, temp folder, sandbox.json refusal)
   # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation.ex (cursor)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Cursor writes in plan mode in an empty folder
     When "cursor" writes a title
     Then it runs in plan mode in a new temporary folder
@@ -177,7 +177,7 @@ Feature: Generated titles, branch names and source control text
 
   # Legacy: apps/server/src/textGeneration/CursorTextGeneration.ts (the SDK loads sandbox.json on its own)
   # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation.ex (sandbox.json check)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Cursor does not write text when the user's sandbox file would loosen isolation
     Given the user has a custom "~/.cursor/sandbox.json"
     When "cursor" is asked to write a title
@@ -185,7 +185,7 @@ Feature: Generated titles, branch names and source control text
 
   # Legacy: apps/server/src/textGeneration/AntigravityTextGeneration.ts (global hooks and MCP refusal, tool work refused)
   # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation.ex (Antigravity refusals)
-  @backlog @mc @plugin-antigravity
+  @backlog @mc @plugin-antigravity @priority-high
   Scenario Outline: Antigravity does not write text where its own configuration could act first
     Given the Antigravity profile <config>
     When "antigravity" is asked to write a title
@@ -198,14 +198,14 @@ Feature: Generated titles, branch names and source control text
 
   # Legacy: apps/server/src/textGeneration/AntigravityTextGeneration.ts (default mode, tool and file requests stop the run)
   # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation.ex
-  @backlog @mc @plugin-antigravity
+  @backlog @mc @plugin-antigravity @priority-high
   Scenario: Antigravity is stopped when it reaches for a tool or a file
     When "antigravity" writes a title and asks to run a command or read a file
     Then the run is stopped and text generation fails
 
   # Legacy: apps/server/src/textGeneration/PiTextGeneration.ts (no tools, no extensions), OpenCodeTextGeneration.ts (provider/model format)
   # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation.ex (Pi provider/model)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A writing model that is not a provider/model pair is refused
     Given the text model is "sonnet" on a <provider> instance
     When a title is generated
@@ -287,7 +287,7 @@ Feature: Generated titles, branch names and source control text
     And the PDF is not sent
 
   # Legacy: apps/server/src/textGeneration/OpenCodeTextGeneration.ts (warm server, idle TTL), OpenCodeTextGeneration.test.ts
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: OpenCode's server is kept warm between requests and closed when idle
     Given OpenCode writes text on a server the MC started
     When two commit messages are generated one after the other
@@ -297,7 +297,7 @@ Feature: Generated titles, branch names and source control text
     And the next request starts a new one
 
   # Legacy: apps/server/src/textGeneration/OpenCodeTextGeneration.ts (configured server URL, auth), OpenCodeTextGeneration.test.ts
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A configured OpenCode server is used as is and never closed by the MC
     Given OpenCode is set up with the URL of a server the user runs
     When commit messages are generated
@@ -307,7 +307,7 @@ Feature: Generated titles, branch names and source control text
     And the password saved in the OpenCode settings is
 
   # Legacy: apps/server/src/textGeneration/OpenCodeTextGeneration.ts (connection check before the session), OpenCodeTextGeneration.test.ts
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An OpenCode server that is too old is refused before a session is created
     Given a configured OpenCode server older than the supported version
     When a commit message is generated
@@ -316,14 +316,14 @@ Feature: Generated titles, branch names and source control text
 
   # Legacy: apps/server/src/textGeneration/AntigravityTextGeneration.ts (rejects a helper that writes files in its temporary workspace)
   # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation.ex ("Antigravity wrote files during text generation.")
-  @backlog @mc @plugin-antigravity
+  @backlog @mc @plugin-antigravity @priority-high
   Scenario: Antigravity that left files in its temporary folder does not give a title
     When "antigravity" writes a title and leaves a file in its working folder
     Then it fails saying Antigravity wrote files during text generation
     And the folder and the session it made are removed
 
   # Legacy: apps/server/src/textGeneration/GrokTextGeneration.ts, GrokTextGeneration.test.ts
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Grok's answer must hold the JSON that was asked for
     When "grok" writes a title and answers <answer>
     Then <outcome>
@@ -336,7 +336,7 @@ Feature: Generated titles, branch names and source control text
 
   # Legacy: apps/server/src/textGeneration/CodexTextGeneration.ts (image inputs by attachment id)
   # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation.ex (images/1)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Codex gets each attached image as an image input and skips missing ones
     Given a message with two images attached and one of them no longer stored
     When "codex" writes a title
@@ -387,7 +387,7 @@ Feature: Generated titles, branch names and source control text
 
   # Legacy: apps/server/src/textGeneration/ThreadTitleContext.ts (formatThreadTitleContext), ThreadTitleContext.test.ts
   # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation/prompts.ex (thread_context)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Long assistant output cannot push out what the user asked
     Given a thread whose assistant replies are each far longer than 2,000 characters
     And the user changed the scope of the task in a late message
@@ -397,7 +397,7 @@ Feature: Generated titles, branch names and source control text
 
   # Legacy: apps/server/src/textGeneration/ThreadTitleContext.ts (OMITTED and TRUNCATED markers)
   # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation/prompts.ex
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A cut message keeps both of its ends and says it was cut
     Given a user message longer than the space it is given
     When a title is generated for that thread
@@ -406,7 +406,7 @@ Feature: Generated titles, branch names and source control text
 
   # Legacy: apps/server/src/textGeneration/ThreadTitleContext.ts (system and reasoning roles dropped)
   # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation/prompts.ex
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Reasoning traces and system notes are not part of a title's context
     Given a thread with user messages, assistant replies, reasoning traces and system notes
     When a title is generated for that thread
@@ -415,7 +415,7 @@ Feature: Generated titles, branch names and source control text
 
   # Legacy: apps/server/src/textGeneration/ThreadTitleContext.ts (attachment names, first plus last three)
   # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation/prompts.ex
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Attachments are named and at most four are sent
     Given a thread whose first message has an image and whose later messages have five more
     When a title is generated for that thread
@@ -519,7 +519,7 @@ Feature: Generated titles, branch names and source control text
 
   # Legacy: apps/server/src/sourceControl/PrTemplateDetection.ts (TEMPLATE_PATHS, TEMPLATE_DIRECTORIES)
   # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation/style.ex
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario Outline: The first template in the usual places is the one used
     Given the base branch has <templates>
     When pull request text is generated
@@ -534,7 +534,7 @@ Feature: Generated titles, branch names and source control text
 
   # Legacy: apps/server/src/sourceControl/PrTemplateDetection.ts (readTemplateBlob, parseTemplateTreeEntries)
   # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation/style.ex
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A very long template is cut and says so
     Given the base branch has a pull request template of 20,000 characters
     When pull request text is generated
@@ -542,7 +542,7 @@ Feature: Generated titles, branch names and source control text
 
   # Legacy: apps/server/src/sourceControl/PrTemplateDetection.ts (parseTemplateTreeEntries, readTemplateBlob)
   # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation/style.ex
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario Outline: A template that is not a plain file in the base branch is passed over
     Given the base branch has <entry> at ".github/pull_request_template.md"
     When pull request text is generated

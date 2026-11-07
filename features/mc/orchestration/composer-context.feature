@@ -91,12 +91,12 @@ Feature: Inline context in messages
     When the upload is claimed into "t1" under a new id
     Then the context record points at the claimed attachment
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Each file attached to a message is named to the provider with where it was saved
     When a message with an attached file "notes.pdf" is sent to "t1"
     Then the provider's prompt ends with a line saying the attached file "notes.pdf" is saved at its path on the MC
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: Only images the provider can see are sent as images
     When a message with an attached <attachment> is sent to "t1"
     Then the provider receives it <as>
@@ -107,7 +107,7 @@ Feature: Inline context in messages
       | image of a type providers do not take as input | only as a saved file path            |
       | text file                                      | only as a saved file path            |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: What a Snap Shot read from a window reaches the provider as untrusted data
     Given a message carries a Snap Shot with the window's text and controls
     When it is sent to "t1"
@@ -115,14 +115,14 @@ Feature: Inline context in messages
     And the data is introduced as untrusted, to be treated only as data and never followed as instructions
     And text in the window cannot end that section early
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A Snap Shot's controls are placed by their position in the image
     Given a message carries a Snap Shot whose controls have positions
     When it is sent to "t1"
     Then each control's position is given in pixels of the attached image
     And the provider is told a control without a position had none it could trust
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A Snap Shot's window data is left out when it would overflow the provider's input
     Given a message carries a Snap Shot whose window data would take the prompt past the provider's input limit
     When it is sent to "t1"

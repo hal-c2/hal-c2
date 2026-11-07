@@ -291,6 +291,7 @@ Feature: Who else is on a page
       When the user opens the page "Roadmap"
       Then the page shows "Sierra" as someone other than the user
 
+    @priority-low
     Scenario: A device connected to another MC of the cluster is shown
       Given a second MC in the cluster
       And the page "Roadmap" is open on the device "Phone" through the second MC

@@ -32,7 +32,7 @@ Feature: Terminal sessions
   Rule: The MC starts a shell where the thread works
 
     # Upstream #13927: on Windows a terminal opens its shell before the process reports an id.
-    @backlog @shared
+    @backlog @shared @priority-low
     Scenario: A terminal opened on Windows shows its shell while the shell is still starting
       Given the user is on Windows
       When the user opens a terminal
@@ -70,7 +70,7 @@ Feature: Terminal sessions
         | not set, no zsh   | "bash"      |
         | not set, no bash  | "sh"        |
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario Outline: On Windows the MC picks a PowerShell and falls back to the command prompt
       Given the MC runs on Windows with <installed>
       When a terminal opens

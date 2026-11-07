@@ -37,34 +37,34 @@ Feature: Moving through a thread and following links
     And the user is looking at a long thread in "shop"
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: The view follows new output while the user is at the end
     Given the user is at the end of the thread
     When the agent writes more of its reply
     Then the new text stays in view
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: The end of the thread holds still while nothing new is written
     Given the user is at the end of the thread
     And a reply with a table sits just above the end
     When nothing new is written
     Then the view does not move
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: Scrolling away stops the view from following
     Given the agent is writing its reply
     When the user scrolls up to an earlier message
     Then the view stays on that message while the reply grows
     And the user is offered a way to scroll to the end
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: The user returns to the end of the thread
     Given the user has scrolled away from the end while the agent writes
     When the user scrolls to the end
     Then the latest output is shown
     And the view follows new output again
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: Another thread opens at its end however far the last was scrolled
     Given the user has scrolled away from the end of the thread
     When the user opens another thread
@@ -72,13 +72,13 @@ Feature: Moving through a thread and following links
     And the composer is not resting
 
   # Upstream #13530: a running thread's placeholder row used to count as content, so its list opened at the start.
-  @shared @backlog
+  @shared @backlog @priority-high
   Scenario: A running thread opens at its latest output while its messages are still loading
     Given the user opens a thread whose agent is still working
     When the thread's messages arrive
     Then the view shows the latest output at the end, not the start of the thread
 
-  @desktop @backlog
+  @desktop @backlog @priority-high
   Scenario: A thread opens where the user left it
     Given the user read an earlier message of the thread "Cart totals" and left it there
     And the user had opened one folded turn's work
@@ -86,7 +86,7 @@ Feature: Moving through a thread and following links
     Then the same message is at the same place in the view
     And the work the user had opened is still open
 
-  @desktop @backlog
+  @desktop @backlog @priority-high
   Scenario: A thread the user left at its end opens following new output
     Given the user left the thread "Cart totals" at its end
     When the user comes back to "Cart totals" after the agent wrote more
@@ -113,7 +113,7 @@ Feature: Moving through a thread and following links
     When the agent starts running tool calls
     Then the view moves to the end and follows the new output
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: A long thread opens as its newest turns
     Given the thread has more turns than a client loads at once
     When the user opens it again
@@ -121,14 +121,14 @@ Feature: Moving through a thread and following links
     And only those turns are sent and shown
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: Earlier turns load when the user reaches the top
     Given the thread has more turns than are loaded
     When the user loads earlier turns
     Then the user sees that earlier turns are loading
     And the earlier turns appear above without moving the message being read
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: A thread that does not fill the view loads earlier turns by itself
     Given the thread has more turns than are loaded
     When what is loaded leaves room in the view
@@ -179,7 +179,7 @@ Feature: Moving through a thread and following links
     When the user moves to the previous turn
     Then the third turn is shown
 
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: Pointing at the turn index previews the turn
     Given the thread has ten turns
     When the user points at the index of the fourth turn
@@ -208,7 +208,7 @@ Feature: Moving through a thread and following links
     When the user presses Page Up
     Then the view scrolls back up by almost one page
 
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: Holding a page key scrolls faster the longer it is held
     Given the thread is longer than the view
     When the user holds Page Down for half a second
@@ -228,7 +228,7 @@ Feature: Moving through a thread and following links
       | the user is composing text with an input method            | Page Down               |
       | the user holds a modifier key                              | Shift and Page Down     |
 
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: A scrollable block inside a reply keeps the scroll until it has no more to give
     Given the agent's reply has a code block that scrolls sideways or vertically
     When the user scrolls over the code block
@@ -275,7 +275,7 @@ Feature: Moving through a thread and following links
       | https://example.com/docs | Open link | Copy link | https://example.com/docs | "https://example.com/docs" opens in the system browser  |
       | src/cart.ts:12:3         | Open file | Copy path | src/cart.ts              | the Files tab shows "src/cart.ts" at line 12            |
 
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario Outline: The user chooses where a web link opens
     Given the agent's reply links to "https://example.com/docs"
     When the user chooses to <choice>
@@ -317,7 +317,7 @@ Feature: Moving through a thread and following links
       | has been edited            | the earlier reply is shown with "The quoted text has changed"                |
       | is no longer in the thread | the quote is still readable and "Could not open the cited response" is shown |
 
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: A selection too long to cite says so
     Given the user selected more than 8,000 characters of the agent's reply
     Then the cite action reads "Shorten selection" and cannot be used
@@ -404,7 +404,7 @@ Feature: Moving through a thread and following links
     When the user presses Escape
     Then the cite action goes away and the selection stays
 
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: A citation in the draft shows a short form of what it quotes
     Given the draft cites a paragraph of 200 characters with no comment
     Then the citation shows its first 64 characters followed by an ellipsis
@@ -495,7 +495,7 @@ Feature: Moving through a thread and following links
     Then the cited sentence pulses once and stays highlighted for a moment
     And the highlight fades without repainting continuously
 
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: With reduced motion the cited sentence is highlighted without pulsing
     Given the operating system asks for reduced motion
     When the user follows a citation to an earlier reply

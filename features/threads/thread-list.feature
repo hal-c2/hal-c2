@@ -212,7 +212,7 @@ Feature: The desktop's thread list against its MC
       Then the MC receives a "thread.unsnooze" command for "t1"
       And the toast "Snoozed until 11:00" is gone
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A wake time is told the way a person would say it
       Given this device's "timestampFormat" is set to "24-hour"
       And it is Wednesday 2026-09-23 at 10:00

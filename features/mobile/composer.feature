@@ -40,13 +40,13 @@ Feature: Writing to an agent from a phone
     Given the phone is paired with "My MacBook"
     And the user is in the thread "Fix checkout"
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: The composer stays above the on-screen keyboard
     When the user starts typing a message
     Then the message being written stays visible above the keyboard
     And the latest messages stay visible above the composer
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Dismissing the keyboard keeps the draft
     Given the user has typed "add a test"
     When the user dismisses the keyboard
@@ -58,7 +58,7 @@ Feature: Writing to an agent from a phone
     When the app is closed and reopened
     Then the draft in "Fix checkout" still reads "add a test"
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: The Return key does what the user chose on a hardware keyboard
     Given the user set the Return key to "<setting>"
     When the user presses <keys> in the composer
@@ -71,7 +71,7 @@ Feature: Writing to an agent from a phone
       | Insert new line | Return       | a new line is inserted     |
       | Insert new line | Cmd-Return   | the message is sent        |
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario Outline: A message sent while the agent works can run later, steer or restart
     Given the agent is working on a turn
     When the user sends "also update docs" to <mode>
@@ -83,7 +83,7 @@ Feature: Writing to an agent from a phone
       | steer now                     | the agent receives the message during the turn  |
       | restart the turn              | the current turn stops and a new one starts     |
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario Outline: The send control names what sending will do
     Given <situation>
     Then the send control reads "<label>"
@@ -96,7 +96,7 @@ Feature: Writing to an agent from a phone
       | the agent is working and the follow-up setting is steer             | Steer                  |
       | the user is editing a queued message                                | Update queued message  |
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: An agent that cannot take a steer is only offered the queue
     Given the agent is working on a turn
     And the agent's provider cannot steer a running turn
@@ -119,13 +119,13 @@ Feature: Writing to an agent from a phone
     And the result of the delegated task "Tax tests" is waiting for the current turn
     Then the composer lists "also update docs" with "Tax tests finished" waiting behind it
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: The user edits a queued message before it runs
     Given the message "also update docs" is waiting for the current turn
     When the user edits it to "also update the changelog"
     Then "also update the changelog" runs after the current turn
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: The user cancels a queued message
     Given the message "also update docs" is waiting for the current turn
     When the user cancels it
@@ -144,7 +144,7 @@ Feature: Writing to an agent from a phone
       | a PDF        | the files app     |
 
   # New behaviour: the React Native app offers the photo library and files but no camera.
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: The user takes a photo and attaches it
     When the user takes a photo from the composer
     Then the draft shows the photo
@@ -218,20 +218,20 @@ Feature: Writing to an agent from a phone
     Then "notes.txt" is attached
     And the user is told "'disk.img' exceeds the 25 MB attachment limit."
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A file is never attached above 50 MB however much the environment would take
     Given "My MacBook" accepts files of at most 80 MB
     When the user chooses "archive.zip" of 51 MB from the files app
     Then the user is told "'archive.zip' exceeds the 50 MB attachment limit."
     And nothing is attached
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: An empty file is said to be empty and not too large
     When the user chooses "empty.txt" with no content from the files app
     Then the user is told "'empty.txt' is empty or could not be read."
     And nothing is attached
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A file that grew after it was chosen is judged by its real size
     Given the files app reported "log.txt" as 1 KB
     And "log.txt" is 30 MB when the phone copies it
@@ -248,7 +248,7 @@ Feature: Writing to an agent from a phone
     Then the user is told the file could not be attached
     And no partial copy of "report.pdf" is left on the phone
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A photo or video the phone cannot fetch says why and the picker lets go
     Given the user chose a video that is stored in the phone's cloud photo library
     When the phone cannot download it
@@ -256,29 +256,29 @@ Feature: Writing to an agent from a phone
     And nothing is attached
     And an update that was waiting may restart the app once the user is back
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A picture chosen from the files app is treated as a picture
     When the user chooses "IMG_4997.PNG" from the files app
     Then the draft shows it as a picture and not as a document
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A file chosen without a name is still attached
     When the user chooses a file from the files app whose provider reports no name
     Then the file is attached named "file"
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Upload progress is shown until the attachment is ready
     When the user attaches a large video
     Then the attachment shows how much has uploaded
     And only a failed upload stops the message from being sent
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A failed upload can be retried
     Given an attachment failed to upload
     When the user retries the upload
     Then the attachment uploads to "My MacBook"
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A message sent while an attachment is still uploading goes out when the upload finishes
     Given the draft has a large video attached that is still uploading
     When the user sends the message
@@ -305,7 +305,7 @@ Feature: Writing to an agent from a phone
     When the user sends the message to a project on another environment
     Then "bug.png" is uploaded to that environment
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A waiting message the user deletes takes its uploads with it
     Given a message with "design.pdf" is waiting to send and its upload has started
     When the user deletes the waiting message
@@ -333,7 +333,7 @@ Feature: Writing to an agent from a phone
     When the user goes back to the home screen
     Then the upload still completes
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: The user removes an attachment from the draft
     Given the draft has a photo attached
     When the user opens the photo and removes it from the draft
@@ -359,7 +359,7 @@ Feature: Writing to an agent from a phone
       | the clipboard holds an image the phone cannot read | Clipboard image is unavailable.                             |
       | a full draft and the clipboard holds an image      | You can attach up to 100 images per message.                |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A copied picture with its caption pastes the picture only
     Given the clipboard holds a picture and its caption text
     When the user pastes into the composer
@@ -377,7 +377,7 @@ Feature: Writing to an agent from a phone
     Then the user is told the pasted text is too large
 
   # The shortcut is Cmd-Shift-V on an iPad and Ctrl-Shift-V on an Android device.
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Paste as Text on a hardware keyboard keeps a long paste in the draft
     Given a hardware keyboard is attached
     And the clipboard holds a long log
@@ -386,7 +386,7 @@ Feature: Writing to an agent from a phone
     And nothing is attached
     And the user can undo the paste in one step
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Paste as Text still refuses a paste that would overfill the draft
     Given a hardware keyboard is attached
     And the draft is within a few characters of the longest a message can be
@@ -394,14 +394,14 @@ Feature: Writing to an agent from a phone
     Then the user is told the pasted text is too large
     And the draft and the selection are unchanged
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Paste as Text pastes copied references as their text
     Given the clipboard holds references copied from another draft
     When the user presses the Paste as Text shortcut in the composer
     Then the draft gets the text of the references
     And no reference or file is brought along
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Paste as Text does nothing in a composer that is read only
     Given the composer is read only
     When the user presses the Paste as Text shortcut
@@ -421,7 +421,7 @@ Feature: Writing to an agent from a phone
     When the user puts the caret before the reference and presses Delete
     Then the whole reference is removed at once
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A long prompt hint stays on one line
     Given the composer is empty
     And the text size or the width of the composer leaves too little room for its hint
@@ -437,7 +437,7 @@ Feature: Writing to an agent from a phone
     Then the pictures are attached to the draft
     And nothing is inserted into the text
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Nothing is dropped onto a composer that is read only
     Given the composer is read only
     When the user drops a picture or text onto it
@@ -490,7 +490,7 @@ Feature: Writing to an agent from a phone
     Then "/plan" and "/default" are not offered
     And "/model" is still offered
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Another thread or a pull request is attached as context from the composer
     Given the environment has the thread "Auth refactor"
     When the user chooses "Auth refactor" after typing "@" in the composer
@@ -560,7 +560,7 @@ Feature: Writing to an agent from a phone
     When the user types "$lint" in the composer
     Then "lint-fix" is offered first
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Typing only the skill sign lists no more than twenty skills
     Given the provider offers 30 skills
     When the user types "$" in the composer
@@ -598,7 +598,7 @@ Feature: Writing to an agent from a phone
     Then the suggestion list shows why pull requests could not be read
     And no pull request is offered
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A Codex feedback notice can be dismissed unless it is still sending
     Given the user sent "/feedback The agent stopped early" in a Codex thread
     Then the feedback notice cannot be dismissed while the feedback is being sent
@@ -627,7 +627,7 @@ Feature: Writing to an agent from a phone
     When the user picks the model "Opus" with the 1M context window and fast mode on
     Then the next message is sent to "Opus" with the 1M context window and fast mode on
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A message written with no connection is sent once the connection returns
     Given "My MacBook" is unreachable
     When the user sends "add a test"
@@ -635,7 +635,7 @@ Feature: Writing to an agent from a phone
     When "My MacBook" becomes reachable
     Then the message is sent
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A usage limit is explained above the composer
     Given the provider has hit its usage limit for the thread
     Then the user is told when the limit resets
@@ -670,7 +670,7 @@ Feature: Writing to an agent from a phone
   # features/composer/queue-and-steer.feature over the same brick and native
   # controller. This scenario stays @backlog because it describes the old
   # dedicated queued-messages screen, which the QML phone does not have.
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A queue held after a restart is resumed from the queued messages
     Given "also update docs" was queued when "My MacBook" restarted
     When the user opens the queued messages
@@ -684,21 +684,21 @@ Feature: Writing to an agent from a phone
     When the user opens the queued messages
     Then the user is told no messages are waiting in this queue
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A model choice made in the model sheet applies only when saved
     Given the composer is using "Sonnet"
     When the user picks "Opus" with high reasoning in the model sheet
     And the user cancels the sheet
     Then the composer is still using "Sonnet"
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Saving the model sheet applies the model and its options together
     Given the composer is using "Sonnet"
     When the user picks "Opus" with high reasoning in the model sheet
     And the user saves the sheet
     Then the composer uses "Opus" with high reasoning
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Models the provider has retired are hidden until asked for
     Given the provider lists a legacy model "Opus 3" that the thread is not using
     When the user opens the model sheet
@@ -706,7 +706,7 @@ Feature: Writing to an agent from a phone
     When the user chooses to show legacy models
     Then "Opus 3" is listed with a legacy label
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A legacy model that is in use or a favourite is still listed
     Given "Opus 3" is a legacy model and the thread is using it
     When the user opens the model sheet
@@ -724,7 +724,7 @@ Feature: Writing to an agent from a phone
       | the search matches no model                  | No matching models   |
       | no provider has an available model           | No available models  |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Other providers' models are folded away until the user looks for them
     Given the user has models from several providers
     When the user opens the model sheet
@@ -732,12 +732,12 @@ Feature: Writing to an agent from a phone
     When the user searches the models for "gpt"
     Then every provider with a matching model is expanded
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Pulling the model sheet down refreshes the models
     When the user pulls down on the model sheet
     Then the environment is asked for its models again
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A refresh that fails says so and keeps the models
     Given the environment cannot list its models
     When the user pulls down on the model sheet
@@ -751,7 +751,7 @@ Feature: Writing to an agent from a phone
     Then the model sheet is not saved
     And the user is told the model is unavailable and to select another
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A new task cannot start on an Antigravity model that is not set up
     Given the new task's model is an Antigravity model that "My MacBook" has not set up
     When the user starts the task
@@ -779,14 +779,14 @@ Feature: Writing to an agent from a phone
     Then nothing is sent
     And the user is told to wait for uploads to finish or retry failed uploads
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A message with more attachments than one message can carry is not sent
     Given the draft has more than 100 attachments
     When the user sends the message
     Then nothing is sent
     And the user is told to remove attachments until there are at most 100
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A message whose context is too large is not sent
     Given the draft carries more referenced context than a message can hold
     When the user sends the message
@@ -800,14 +800,14 @@ Feature: Writing to an agent from a phone
     Then the user is told to remove some context from the draft
     And the comment is not added
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A model that has not been set up cannot be sent to
     Given the thread uses an Antigravity model that "My MacBook" has not set up
     When the user sends "add a test"
     Then nothing is sent
     And the user is told to set Antigravity up on the desktop or choose another model
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Attaching files is refused by an environment that takes none
     Given "My MacBook" does not accept file attachments
     When the user attaches a file
@@ -825,7 +825,7 @@ Feature: Writing to an agent from a phone
     When the user pastes text that cannot be attached
     Then the user is told to remove an attachment or paste less text and try again
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A queued message cannot be saved empty
     Given the user is editing the queued message "also update docs"
     When the user clears the text and saves
@@ -847,7 +847,7 @@ Feature: Writing to an agent from a phone
     Then the user is told the message may already have started
     And the edit is still in the composer
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A queued message that starts running while it is edited keeps the edit when the draft was empty
     Given the user is editing the queued message "also update docs"
     And the composer's own draft is empty
@@ -865,21 +865,21 @@ Feature: Writing to an agent from a phone
     And the composer still reads "also check lint"
     And the user is told the message already started so the edit was discarded
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A queued message edit does not come back after the app restarts
     Given the user is editing the queued message "also update docs" and has changed its text
     When the app restarts
     Then the composer is not in edit mode
     And the composer holds the draft the user had before the edit
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: /feedback in a Codex thread sends feedback to OpenAI from the phone
     Given a Codex thread that has run a turn
     When the user sends "/feedback The agent stopped early"
     Then the draft is cleared and the user sees that feedback is being sent to OpenAI
     And once it is sent the user sees the feedback thread id
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: /feedback before the first Codex turn is refused on the phone
     Given a Codex thread with no messages yet
     When the user sends "/feedback"
@@ -943,7 +943,7 @@ Feature: Writing to an agent from a phone
     Then "notes.docx" opens in the file screen
     And pictures, videos and PDFs keep opening in their own viewers
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: Tapping a reference shows what it carries
     Given the draft carries <reference>
     When the user taps the reference
@@ -960,7 +960,7 @@ Feature: Writing to an agent from a phone
       | a thread                                   | the thread's title                                          |
       | a skill                                    | the skill's name and description                            |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A skill without a description says so
     Given the draft references a skill that has no description
     When the user taps the reference
@@ -1005,7 +1005,7 @@ Feature: Writing to an agent from a phone
     Then the user is told this kind of context is not supported by this version
     And the reference is sent with the message exactly as it was
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: A referenced attachment says why it cannot be shown
     Given the draft references the attachment "bug.png"
     And <problem>
@@ -1017,14 +1017,14 @@ Feature: Writing to an agent from a phone
       | the phone's own copy of the attachment is gone           | The local file is unavailable. Attach it again. |
       | the attachment is only on "My MacBook", which is offline | Attachment unavailable. Reconnect and try again |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A referenced attachment can be opened or shared from its reference
     Given the draft references the attachment "report.pdf"
     When the user taps the reference and chooses to open or share the attachment
     Then the attachment is fetched if the phone does not hold it
     And the phone's share sheet offers it
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: An attachment that cannot be fetched for sharing says to reconnect
     Given the draft references the attachment "report.pdf", held only on "My MacBook"
     And "My MacBook" is not connected
@@ -1037,14 +1037,14 @@ Feature: Writing to an agent from a phone
     When the user taps the reference and removes it from the draft
     Then the reference is gone and the rest of the text is unchanged
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A reference cannot be removed while the composer is read only
     Given the composer is read only
     When the user taps a reference
     Then the reference's details open
     And no way to remove it is offered
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: References in a resting composer start writing instead of opening
     Given the composer is resting with a draft full of references
     When the user taps a reference
@@ -1053,14 +1053,14 @@ Feature: Writing to an agent from a phone
     When the user taps the same reference in the open composer
     Then its details open
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Copying references from the draft and pasting them into another draft brings them along
     Given the draft references "src/cart.ts" and has "bug.png" attached
     When the user copies that part of the draft and pastes it into another thread's draft
     Then the other draft references "src/cart.ts" with the same text
     And the other draft has its own copy of "bug.png" attached
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Copying part of a sent message and pasting it into a draft brings its references along
     Given the user sent "Compare @src/cart.ts with the screenshot" with "src/cart.ts" referenced and "bug.png" attached
     When the user selects that sentence in the sent message and copies it
@@ -1083,21 +1083,21 @@ Feature: Writing to an agent from a phone
     And the user pastes into a draft
     Then the draft holds the annotation with its screenshot
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The composer waits while pasted references bring their files
     Given the user pastes references that carry a file held on "My MacBook"
     When the file is being brought into the draft
     Then the user sees that context is being copied
     And the composer cannot be edited or sent until the copy ends
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Leaving the draft stops a paste that is still bringing files
     Given the user pastes references that carry a file held on "My MacBook"
     When the user opens another thread before the file arrives
     Then the file is not added to any draft
     And nothing the paste had already copied is left on the phone
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Pasting references whose files cannot be brought along keeps the references
     Given the user copied references that carry "trace.log" from an environment that is now offline
     When the user pastes them into a draft
@@ -1105,47 +1105,47 @@ Feature: Writing to an agent from a phone
     And the references without their files are marked unavailable
     And the user is told to reconnect to the source environment and copy them again
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A paste that brings more than the draft can hold is refused
     Given the draft already holds the most context items a message can carry
     When the user pastes references into it
     Then nothing is pasted
     And the user is told to remove some attachments or context items and paste again
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A copy of more references than the clipboard can carry says so
     Given the draft holds references whose content is too large to put on the clipboard together
     When the user copies all of them
     Then the user is told the selection is too large to copy and to select fewer items
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A picture that is still uploading can be copied into another draft
     Given the draft has "bug.png" attached and it is still uploading
     When the user copies its reference and pastes it into another draft
     Then the other draft has its own copy of "bug.png" from the phone's copy
     And it uploads from there
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Pasted references are given new identities
     Given the draft references "src/cart.ts"
     When the user copies the reference and pastes it into the same draft
     Then the draft holds two separate references to "src/cart.ts"
     And removing one leaves the other
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Undoing the removal of a reference brings back what it carried
     Given the draft references "src/cart.ts" and carries a preview annotation with its screenshot
     When the user deletes the annotation and then undoes
     Then the annotation is back with its screenshot
     And the references that were not removed are unchanged
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A screenshot stays while its annotation remains
     Given the draft carries a preview annotation with its screenshot
     When the user deletes the screenshot's own reference but keeps the annotation
     Then the annotation keeps its screenshot
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Removing a reference removes what it carried
     Given the draft carries the reference "trace.log" with its attached file
     When the user deletes the reference from the draft text
@@ -1189,7 +1189,7 @@ Feature: Writing to an agent from a phone
     When the user starts a new task
     Then the task starts on a model of a provider that is signed in
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The options chosen for a model come back when that model is chosen again
     Given the user chose "Opus 4" with high effort in "Fix checkout"
     When the user later chooses "Opus 4" in another thread or a new task
@@ -1198,13 +1198,13 @@ Feature: Writing to an agent from a phone
     And the user chooses "Opus 4" in a new task
     Then "Opus 4" is still chosen with high effort
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Options remembered for one model are not applied to another model
     Given the user chose "Opus 4" with high effort
     When the user chooses "Sonnet 4" in a new task
     Then "Sonnet 4" starts with its own default options
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A retired model is never chosen on the user's behalf
     Given the project's default model is a legacy model
     When the user starts a new task
@@ -1212,7 +1212,7 @@ Feature: Writing to an agent from a phone
     When the user chooses the legacy model in the model sheet
     Then the task starts on the legacy model
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: An Antigravity model is kept when its catalog changes
     Given the thread uses an Antigravity model that "My MacBook" no longer lists
     When the user opens the thread
@@ -1220,7 +1220,7 @@ Feature: Writing to an agent from a phone
     And the model is marked as unavailable
     And the model is not replaced by another model without the user choosing one
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: A provider is shown with its own icon
     Given a model or thread uses <provider>
     Then it is shown with the <provider> icon
@@ -1235,7 +1235,7 @@ Feature: Writing to an agent from a phone
       | Antigravity  |
       | Pi           |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A provider icon follows the app's light or dark appearance
     Given a model uses Cursor
     When the app is dark
@@ -1243,26 +1243,26 @@ Feature: Writing to an agent from a phone
     When the app is light
     Then the Cursor icon is drawn dark
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: An ACP agent shows the agent's own icon once it has loaded
     Given the ACP agent "Gemini CLI" has an icon in the official registry
     Then the agent is shown with a generic agent icon until its own icon has loaded
     When the icon has loaded
     Then the agent is shown with its own icon
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: An ACP agent whose icon cannot be loaded keeps the generic icon
     Given the ACP agent "Gemini CLI" has an icon that cannot be loaded
     Then the agent is shown with the generic agent icon
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A menu opened from the composer keeps the keyboard open on Android
     Given the user is writing in the composer on an Android phone with the keyboard open
     When the user opens the model or mode menu above the composer
     Then the menu is shown
     And the keyboard stays open
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A message the MC rejects says why in the thread
     Given the MC refuses a sent message
     When the text returns to the composer

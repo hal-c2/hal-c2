@@ -65,7 +65,7 @@ Feature: Background activity and the background service
       Then the client tells the MC it is watching that thread's git status
 
     # Legacy: apps/web/src/lib/backgroundActivityReporter.ts (REPORT_INTERVAL_MS, LEASE_TTL_MS, debounce)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A client renews its activity report well before the MC would let it lapse
       Given a client connected to an MC
       When nothing changes for a minute
@@ -78,12 +78,12 @@ Feature: Background activity and the background service
       When the user brings it to the front
       Then the client tells the MC it is in front within a moment
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A burst of changes is reported once
       Given the user switches threads, focus and windows within a fraction of a second
       Then the client sends one report to each MC for that burst
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A client that has been left alone reports itself as not in use
       Given the client is in front
       And the user has not touched it for 45 seconds
@@ -96,7 +96,7 @@ Feature: Background activity and the background service
       Then both "studio" and "laptop" receive the report
       And a report that cannot reach "laptop" does not stop the one to "studio"
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Two views of one checkout are reported as one and end together
       Given two views of the same checkout's git status are open
       Then the client reports that checkout once
@@ -113,20 +113,20 @@ Feature: Background activity and the background service
       When the user opens diagnostics
       Then it also reports watching diagnostics
 
-    @shared @backlog-mobile
+    @shared @backlog-mobile @priority-low
     Scenario: The user sets custom background intervals
       When the user chooses advanced background activity for the environment
       And the user sets git fetch to every 2 minutes and turns off pausing when locked
       Then the MC fetches git every 2 minutes, even when locked
 
-    @backlog @desktop @mobile @tui
+    @backlog @desktop @mobile @tui @priority-low
     Scenario: Changing the profile keeps the custom intervals
       Given the user set git fetch to every 2 minutes
       When the user changes the background profile to performance
       Then git fetch is still every 2 minutes
       And the other intervals follow the performance profile
 
-    @backlog @desktop @mobile @tui
+    @backlog @desktop @mobile @tui @priority-low
     Scenario Outline: Background intervals are whole seconds with a floor
       When the user enters <entry> for the <interval> interval
       Then the interval is <result>
@@ -139,7 +139,7 @@ Feature: Background activity and the background service
         | provider health         | empty | the smallest allowed         |
 
     # Legacy: apps/web/src/components/settings/SettingsPanels.tsx (host power monitor intervals, minimum 5, normalizeIntervalSeconds)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: Host power checks cannot be set faster than every 5 seconds
       When the user enters <entry> for the <interval> interval
       Then the interval is <result>
@@ -153,7 +153,7 @@ Feature: Background activity and the background service
 
     # Legacy: apps/web/src/components/settings/SettingsPanels.tsx, SourceControlSettings.tsx,
     # apps/web/src/components/ui/number-field.tsx (Increase and Decrease, arrow keys; steps of 5 or 30)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: The interval buttons and arrow keys step by the interval's own amount
       Given the <interval> interval is <from> seconds
       When the user chooses Increase, or presses the up arrow in the field
@@ -168,7 +168,7 @@ Feature: Background activity and the background service
         | active host power check | 10   | 15  |
         | idle host power check   | 60   | 90  |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Decreasing an interval stops at its smallest allowed value
       Given the git fetch interval is 3 seconds
       When the user chooses Decrease
@@ -177,7 +177,7 @@ Feature: Background activity and the background service
       Then the interval is still 0 seconds
 
     # Legacy: apps/web/src/components/settings/SettingsPanels.tsx (BackgroundActivityDialog, resetBackgroundActivitySettings)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Resetting all background activity settings returns to the default profile
       Given the user set custom background intervals and turned off pausing when locked
       When the user chooses to reset all background activity settings
@@ -194,7 +194,7 @@ Feature: Background activity and the background service
       Then the advanced choice can be chosen
 
     # Legacy: apps/web/src/components/settings/SettingsPanels.tsx (BACKGROUND_ACTIVITY_BOOLEAN_OVERRIDES)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: Each pause rule can be turned off separately
       Given the user chose advanced background activity for the environment
       When the user turns off <rule>
@@ -208,7 +208,7 @@ Feature: Background activity and the background service
         | pausing on client low power | the client being in low power mode |
         | pausing on battery          | the host being on battery          |
 
-    @backlog @desktop @mobile @tui
+    @backlog @desktop @mobile @tui @priority-low
     Scenario: A legacy interval setting shows up as advanced
       Given the settings file still holds a git fetch interval from before profiles existed
       When the user opens background activity
@@ -276,13 +276,13 @@ Feature: Background activity and the background service
       Then the install is refused saying an update is pending
       And the service is left as it was
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Installing without starting only rewrites the service files
       When the user installs the background service without starting it
       Then the service definition is rewritten
       And a running service is marked as waiting for a restart
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Restarting the service leaves a service for another HAL-C2 home alone
       Given a background service that serves a different HAL-C2 home
       When the user restarts the service from this home
@@ -294,14 +294,14 @@ Feature: Background activity and the background service
       When the user repairs it and the repair fails
       Then the service that was running before is started again
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: On Linux the service gets lingering before it is installed
       Given the user's account cannot keep services running after logout
       When the user installs the background service
       Then the installer turns lingering on if it may
       And otherwise the status says to run the loginctl enable-linger command as an administrator
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Windows has no background service yet
       Given the MC runs on Windows
       When the user installs the background service

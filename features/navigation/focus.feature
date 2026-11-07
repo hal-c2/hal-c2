@@ -80,12 +80,12 @@ Feature: Keyboard focus and keyboard-only use
       When the user opens the terminal
       Then the terminal has keyboard focus
 
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: A new thread puts focus in the composer
       When the user starts a new thread
       Then the composer has keyboard focus
 
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: Typing with nothing focused goes to the composer
       Given the user is looking at a thread and no field has keyboard focus
       When the user types "h"
@@ -115,7 +115,7 @@ Feature: Keyboard focus and keyboard-only use
       Then the composer has keyboard focus
       And the draft reads "npm test"
 
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: Coming back to the window puts focus in the composer
       Given the user is looking at a thread and keyboard focus was last outside any field
       When the user switches to another app and back
@@ -266,14 +266,14 @@ Feature: Keyboard focus and keyboard-only use
       Then each entry is a list item named by its title, then its description and shortcut
 
     # Proved by tst_Timeline.qml (test_workLinesAreNamed), not yet by a step (hal-c2/hal-c2#213).
-    @desktop @backlog-desktop @backlog-mobile @backlog-tui
+    @desktop @backlog-desktop @backlog-mobile @backlog-tui @priority-low
     Scenario: Tool calls and subagents in the timeline are announced
       Given the timeline shows tool calls and a subagent
       Then each tool call is announced by its label
       And a subagent is announced by its title, its status and its latest line, as a link when it has a thread
 
     # A switch that does not report its state reads as off to a screen reader.
-    @backlog @desktop @mobile
+    @backlog @desktop @mobile @priority-low
     Scenario Outline: A switch tells screen readers whether it is on, off or mixed
       Given a switch is <state>
       When a screen reader reads the switch
@@ -285,7 +285,7 @@ Feature: Keyboard focus and keyboard-only use
         | off       | off       |
         | partly on | mixed     |
 
-    @backlog @desktop @mobile
+    @backlog @desktop @mobile @priority-low
     Scenario Outline: Turning a switch announces its new state
       Given a screen reader is following a switch that is <before>
       When the user turns the switch <after>

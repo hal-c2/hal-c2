@@ -49,7 +49,7 @@ Feature: Providers settings panel
       Then this machine is listed first and the others follow by name
 
     # The desktop does not know what its own session may do yet.
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: A session that may only view providers cannot change them
       Given the user's session may view but not operate "Build box"
       When the user shows the providers of "Build box"
@@ -178,37 +178,37 @@ Feature: Providers settings panel
       When the user goes back to choosing a driver
       Then the choices already made are kept
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An instance id may not be longer than 64 characters
       When the user enters an instance id of 65 letters and continues
       Then the user stays on the identity step and is told "Instance ID must be 64 characters or fewer."
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A long label still gets a usable instance id
       Given an instance with the id suggested for a 100 character label exists
       When the user adds a "Claude" provider with that label
       Then the suggested instance id is a number-suffixed id of at most 64 characters
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A provider can be added without typing anything
       When the user chooses "Claude" and adds it with the suggested label and id
       Then an instance with the id "claudeAgent" is listed
       And it is shown with the provider's own name
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Jumping ahead past an invalid id stops at the identity step
       Given the instance id is invalid
       When the user jumps straight to the configuration step
       Then the user lands on the identity step
       And the problem with the id is shown
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Each provider keeps its own label and accent while choosing
       Given the user typed the label "Work" for "Claude" and picked a green accent
       When the user chooses "Codex" and then "Claude" again
       Then "Claude" still has the label "Work" and the green accent
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The wizard cannot be moved while an instance is being saved
       Given the user is adding a provider instance and saving has started
       When the user tries to move to another step or add it again
@@ -222,7 +222,7 @@ Feature: Providers settings panel
       Then the user is told the provider instance could not be added
 
     # Legacy: apps/web/src/components/settings/providerDriverMeta.ts (badgeLabel, hasDefaultInstance)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A provider still in early access is marked in the choices and on its instances
       When the user opens the choice of providers to add
       Then "<provider>" is marked "<mark>"
@@ -235,13 +235,14 @@ Feature: Providers settings panel
         | Muse Code    | Beta         |
 
     # Legacy: apps/web/src/components/settings/providerDriverMeta.ts (hasDefaultInstance: false)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: ACP Registry agents exist only as instances the user adds
       Given no ACP Registry agent has been added
       When the user opens the provider settings
       Then no ACP Registry instance is listed
       And ACP Registry is offered only when adding an instance
 
+  @priority-low
   Rule: Adding an agent from the ACP Registry
 
     @mc
@@ -374,6 +375,7 @@ Feature: Providers settings panel
       When the registry results are shown on two days
       Then the icon is fetched once and reused
 
+  @priority-low
   Rule: Native ACP sessions and model providers
 
     @backlog @desktop
@@ -671,6 +673,7 @@ Feature: Providers settings panel
 
   # Antigravity is the one provider whose runtime the MC installs itself; the
   # MC's side is in providers/provider-setup.feature.
+  @priority-low
   Rule: The managed Antigravity runtime
 
     @desktop @plugin-antigravity
@@ -785,7 +788,7 @@ Feature: Providers settings panel
       When the environment confirms the sign-in
       Then the card says the user is signed in
 
-    @backlog @desktop @plugin-antigravity
+    @backlog @desktop @plugin-antigravity @priority-low
     Scenario: The same status message is shown once
       Given the runtime and the sign-in report the same problem
       When the user opens the Antigravity instance
@@ -949,13 +952,13 @@ Feature: Providers settings panel
       When the user signs in
       Then the sign-in starts with the provider's default method
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A long pasted answer reaches the sign-in terminal in pieces in order
       Given the agent's login terminal waits for input
       When the user pastes 10,000 characters into the sign-in terminal
       Then the environment receives them in order, 4,096 characters at a time
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A failed send to the sign-in terminal drops what was still queued
       Given the user pasted a long answer into the sign-in terminal
       When the environment rejects one piece
@@ -1138,7 +1141,7 @@ Feature: Providers settings panel
       Then "a" and "b" are offered again
       And the hidden entry for the model that is gone is kept
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A custom model cannot be hidden from the picker
       When the user looks at the picker switch of a custom model
       Then the switch is on and cannot be turned off
@@ -1183,14 +1186,14 @@ Feature: Providers settings panel
         | my-model         | That custom model is already saved. |
 
     # Legacy: apps/web/src/components/settings/ProviderModelsSection.tsx (handleAdd, MAX_CUSTOM_MODEL_LENGTH)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A custom model id longer than 256 characters is refused
       When the user adds a custom model to Claude whose id has 257 characters
       Then the user is told "Model slugs must be 256 characters or less."
       And nothing is saved
 
     # Legacy: apps/web/src/components/settings/ProviderModelsSection.tsx (FILTER_THRESHOLD, handleAdd)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A short models list has no filter
       Given Codex reports eight models
       When the user opens Codex's models
@@ -1199,7 +1202,7 @@ Feature: Providers settings panel
       Then the models can be filtered
 
     # Legacy: apps/web/src/components/settings/ProviderModelsSection.tsx (handleAdd clears the filter)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A custom model added while filtering is shown at once
       Given Codex reports twelve models and the user filtered them by "mini"
       When the user adds the custom model "my-model" to Codex
@@ -1207,7 +1210,7 @@ Feature: Providers settings panel
       And "my-model" is listed and brought into view
 
     # Legacy: apps/web/src/components/settings/ProviderModelsSection.tsx (driverKind antigravity)
-    @backlog @desktop @plugin-antigravity
+    @backlog @desktop @plugin-antigravity @priority-low
     Scenario: Antigravity's models cannot be extended with custom ones
       When the user opens Antigravity's models
       Then no custom model can be added
@@ -1217,7 +1220,7 @@ Feature: Providers settings panel
       When the user adds a custom model with no options
       Then the composer uses the provider's default options for it
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A custom option that repeats an id is named in the message
       Given the custom model "my-model" has the options <options>
       When the user saves the custom model
@@ -1230,30 +1233,30 @@ Feature: Providers settings panel
         | "effort" with the choices "low" and "low"          | Option 1: choice "low" is used twice.  |
         | "effort" with a choice that has no value           | Option 1 has a choice without a value. |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A custom model's name falls back to its id
       When the user adds the custom model "my-model" and leaves its name empty
       Then the model is listed as "my-model"
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A custom choice without a label is shown by its value
       When the user adds a choice with the value "high" and no label to a custom option
       Then the composer lists that choice as "high"
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A custom option offers the options the provider actually reads
       When the user adds an option to a custom Claude model
       Then the suggested options are reasoning, fast mode and thinking
       And an option with any other id is saved as typed
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Copying options from Claude leaves out what a custom model cannot carry
       Given a built-in Claude model offers an "ultrathink" reasoning choice and a context window
       When the user copies the options of that model into a custom model
       Then the copy offers the reasoning choices except "ultrathink"
       And the copy does not offer the context window
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A custom option can be a switch
       When the user adds a custom option that is on or off
       Then the composer offers it as a switch

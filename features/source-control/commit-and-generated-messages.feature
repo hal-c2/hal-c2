@@ -185,7 +185,7 @@ Feature: Committing with written or generated messages
     Then the writer is given the commits and changes since "origin/main"
 
   # Legacy: apps/server/src/git/GitManager.ts (runPrStep: limitContext 20,000 / 20,000 / 60,000)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario Outline: The writer is given a bounded view of a large pull request
     Given the branch has a <part> longer than <limit> characters
     When the user runs "Create PR"
@@ -198,7 +198,7 @@ Feature: Committing with written or generated messages
       | patch             | 60,000 |
 
   # Legacy: apps/server/src/git/GitManager.ts (runPrStep: bodyFile)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: The written description is handed to the host through a file that is removed afterwards
     When the user runs "Create PR" and the host accepts or refuses the pull request
     Then the description file in the MC's temporary folder is gone
@@ -299,13 +299,13 @@ Feature: Committing with written or generated messages
     Then the action ran on "env-c"
     And a commit "Add tax" holds both files
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Failing to write a commit message leaves staging alone
     Given some changes are unstaged
     When generating the commit message fails
     Then nothing was staged and no commit exists
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A Forgejo or Gitea pull request is not called conflicted without evidence
     Given the host reports the pull request as not mergeable
     When its status is read

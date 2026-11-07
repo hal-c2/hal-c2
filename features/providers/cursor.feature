@@ -165,7 +165,7 @@ Feature: Cursor
 
   # Upstream #10409: the keychain is read for Cursor usage only after the user opts in. Replaces
   # the scenario above once the MC carries it.
-  @backlog
+  @backlog @priority-low
   Scenario: Cursor usage through a keychain login waits until the user enables it
     Given Cursor is signed in through the system keychain
     When the user opens the limits view
@@ -174,14 +174,14 @@ Feature: Cursor
 
   # Upstream #13714: the keychain read is offered only where the Cursor provider is ready, so a
   # machine without a working Cursor sees no prompt.
-  @backlog @shared @plugin-cursor
+  @backlog @shared @plugin-cursor @priority-low
   Scenario: The Cursor keychain prompt is offered only where Cursor is ready
     Given Cursor is not set up in this environment
     When the user opens the limits view
     Then Cursor's keychain prompt is not offered
 
   # Upstream #13820: a missing login is not a login problem; only an unreadable saved login is.
-  @backlog
+  @backlog @priority-low
   Scenario: Cursor usage names no login problem when none is saved
     Given Cursor has no saved login
     When the user opens the limits view
@@ -189,7 +189,7 @@ Feature: Cursor
 
   # Upstream #13870: once one environment reports Cursor account usage, another environment's
   # keychain is not read to report the same account again.
-  @backlog
+  @backlog @priority-low
   Scenario: The Cursor keychain is not read again for an environment that already reports the account
     Given one selected environment already reports Cursor account usage
     And another selected environment has Cursor signed in through the system keychain
@@ -197,7 +197,7 @@ Feature: Cursor
     Then the keychain of the other environment is not read
 
   # Upstream #13870: a keychain request nobody answers times out and says how to allow it.
-  @backlog
+  @backlog @priority-low
   Scenario: An unanswered Cursor keychain request times out with guidance
     Given Cursor is signed in through the system keychain
     And the keychain request is not answered
@@ -209,7 +209,7 @@ Feature: Cursor
     When the user mentions "deploy" in a message
     Then Cursor receives the skill reference
 
-  @backlog
+  @backlog @priority-low
   Scenario: Credentials from an older Cursor login move to the MC's secrets once
     Given an older Cursor login file exists
     When Cursor starts for the first time on this version
@@ -248,7 +248,7 @@ Feature: Cursor
     Then the retry removes only the restriction that blocked it
     And the thread gets its title
 
-  @backlog
+  @backlog @priority-low
   Scenario: Cursor keeps its metadata out of the workspace
     Given a Cursor thread in a project folder
     When a Cursor turn runs
@@ -284,25 +284,25 @@ Feature: Cursor
       | .codex/skills  |
       | .claude/skills |
 
-  @backlog
+  @backlog @priority-low
   Scenario: A project's Cursor skill wins over the user's skill of the same name
     Given the skill "deploy" exists in the project and in the user's home
     When the user opens the skill list in a Cursor thread
     Then "deploy" is offered once, from the project
 
-  @backlog
+  @backlog @priority-low
   Scenario: A skill that is not meant for the Cursor CLI is not offered
     Given the project has a Cursor skill whose header limits it to surfaces other than the CLI
     When the user opens the skill list in a Cursor thread
     Then that skill is not offered
 
-  @backlog
+  @backlog @priority-low
   Scenario: A Cursor skill only the user may run is marked so
     Given the project has a Cursor skill whose header forbids the model from starting it
     When the user opens the skill list in a Cursor thread
     Then the skill is offered as one only the user can run
 
-  @backlog
+  @backlog @priority-low
   Scenario Outline: A Cursor skill search that cannot finish is reported, not cut short
     Given <situation>
     When the MC reads the Cursor skills
@@ -314,7 +314,7 @@ Feature: Cursor
       | the skill folders are nested more than ten levels deep                 | scan-budget-exhausted |
       | a skill folder cannot be read                                          | filesystem-error      |
 
-  @backlog
+  @backlog @priority-low
   Scenario: Only a known Cursor skill is turned into a skill reference
     Given the project has the Cursor skill "deploy"
     When the user sends "run $deploy with $HOME set" to Cursor
@@ -338,7 +338,7 @@ Feature: Cursor
     When Cursor's whole reply is a connection error such as "Something went wrong communicating with the server. Please try again."
     Then the turn fails as a connection problem instead of showing the error as Cursor's answer
 
-  @backlog
+  @backlog @priority-low
   Scenario: An answer that quotes a connection error is still an answer
     Given the user asked Cursor what a connection error means
     When Cursor answers and its answer quotes the error text
@@ -384,12 +384,12 @@ Feature: Cursor
     Then the file change shows the diff
     And it shows how many lines were added and removed
 
-  @backlog
+  @backlog @priority-low
   Scenario: A folder Cursor lists shows every file under it
     When Cursor lists a folder with nested folders
     Then every file under it is listed with its path
 
-  @backlog
+  @backlog @priority-low
   Scenario: Lint problems Cursor reads are listed with their position
     When Cursor reads the lint problems of a file
     Then each problem is listed with its message, line and column
@@ -401,7 +401,7 @@ Feature: Cursor
     And the subagent's tool calls appear in the child thread
     And the subagent's result is shown when it finishes
 
-  @backlog
+  @backlog @priority-low
   Scenario Outline: A Cursor subagent that never reported back takes the run's outcome
     Given a Cursor subagent is still working
     When the Cursor run <ends> without the subagent reporting a result
@@ -414,7 +414,7 @@ Feature: Cursor
       | fails                  | failed      |
       | is stopped by the user | interrupted |
 
-  @backlog
+  @backlog @priority-low
   Scenario: Cancelled and empty Cursor to-dos are left out of the task list
     When Cursor updates its to-do list with a cancelled item and an item with no text
     Then neither item appears in the task list
@@ -458,20 +458,20 @@ Feature: Cursor
     And it holds neither the Cursor API key nor the HAL-C2 tools credential
 
   # CursorSkills.ts: the corners of reading Cursor's skill folders.
-  @backlog
+  @backlog @priority-low
   Scenario: Cursor skills kept in sub-folders of a skill folder are found
     Given the project keeps the skill "deploy" in "team/release/deploy" under ".cursor/skills"
     When the user opens the skill list in a Cursor thread
     Then "deploy" is offered
 
-  @backlog
+  @backlog @priority-low
   Scenario: A Cursor skill is known by its folder and shown by the name in its header
     Given the project has a Cursor skill in the folder "deploy" whose header names it "Ship it"
     When the user opens the skill list in a Cursor thread
     Then the skill is shown as "Ship it"
     And the user mentions it as "deploy"
 
-  @backlog
+  @backlog @priority-low
   Scenario: A Cursor skill linked from outside its skill folder is offered without searching where it lives
     Given ".cursor/skills" holds a link "shared" to a skill kept elsewhere on the machine
     And that skill's own folder holds further skills below it
@@ -479,20 +479,20 @@ Feature: Cursor
     Then "shared" is offered
     And the skills below it are not searched for
 
-  @backlog
+  @backlog @priority-low
   Scenario: A Cursor skill whose header cannot be read is not offered
     Given the project has a Cursor skill whose header is not valid
     When the user opens the skill list in a Cursor thread
     Then that skill is not offered
     And the other skills are still offered
 
-  @backlog
+  @backlog @priority-low
   Scenario: A Cursor skill file larger than 1 MB is offered without its description
     Given the project has a Cursor skill "manual" whose skill file is larger than 1 MB
     When the user opens the skill list in a Cursor thread
     Then "manual" is offered under its folder's name with no description
 
-  @backlog
+  @backlog @priority-low
   Scenario: A Cursor skill the user may not start is listed as unavailable to them
     Given the project has a Cursor skill whose header says the user cannot start it
     When the user opens the skill list in a Cursor thread

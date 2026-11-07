@@ -20,7 +20,7 @@
 # and a binding in its config, or the KDE and Hyprland capture helpers, through
 # MacSnapShot on macOS, which alone carries app text, and directly on Windows.
 
-@desktop
+@desktop @priority-low
 Feature: Snap Shot settings
   The SnapShots panel turns capture on, walks through setup, records the shortcut and
   sets the capture cues. Capturing itself lives in source-control/snap-shot.feature.

@@ -25,7 +25,7 @@ Feature: Thread titles
     Then the thread is listed as "Fix OAuth login"
     And every connected client shows the new title
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: Renaming a thread from the desktop and phone
     When the user renames "Fix login" to "Fix OAuth login"
     Then the thread is listed as "Fix OAuth login"
@@ -75,7 +75,7 @@ Feature: Thread titles
     Then the environment receives no change
     And the user is told nothing
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A double-click with a modifier key does not start a rename
     When the user double-clicks "Fix login" in the thread list while holding Shift
     Then its title does not become editable
@@ -160,7 +160,7 @@ Feature: Thread titles
       | only a space                               | New thread        |
       | only the photo "photo.png"                 | Image: photo.png  |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A task that starts from a cited reply is titled from the cited words
     Given the user cited "Keep the cache shared.\nRetry!" from an earlier reply
     When the user starts a task on the phone with that citation and no comment
@@ -195,7 +195,7 @@ Feature: Thread titles
     Then the thread's first title holds the words and the cited text without link markup
     And the citation is sent as written
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A first title is cut short when a comment makes it long
     Given the user cited "Keep the cache shared.\nRetry!" from an earlier reply
     When the user starts a task on the phone with that citation and a comment

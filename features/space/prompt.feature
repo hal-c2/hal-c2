@@ -186,7 +186,7 @@ Feature: A page's prompt is the timeline's prompt
       Then the prompt of "Work" does not read "half a thought"
 
     # The TUI's prompt has no stash (#886).
-    @backlog-tui
+    @backlog-tui @priority-low
     Scenario: A page's draft can be stashed and brought back
       Given the user typed "half a thought" in the prompt of "Roadmap"
       When the user stashes the prompt of "Roadmap"

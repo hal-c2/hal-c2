@@ -212,26 +212,26 @@ Feature: Scheduled tasks
       When the user starts a new task and types "rel" as its base branch
       Then the base branches offered are "release/2.0"
 
-    @shared @backlog-mobile
+    @shared @backlog-mobile @priority-low
     Scenario: The last weekday of a task cannot be turned off
       Given a new task that runs only on Wednesday
       When the user turns Wednesday off and saves it
       Then the task still runs on Wednesday
 
-    @shared @backlog-mobile
+    @shared @backlog-mobile @priority-low
     Scenario: Editing a task with a sub-minute interval says saving raises it
       Given a task saved by an older version that runs every 10 seconds
       When the user edits it
       Then the editor says saving raises the interval to a minute
       And saving it runs every minute
 
-    @shared @backlog-mobile
+    @shared @backlog-mobile @priority-low
     Scenario: An open editor says when its task was deleted elsewhere
       Given a task "Check Sentry"
       When the user edits the task and another client deletes it
       Then the editor says the task no longer exists
 
-    @shared @backlog-mobile
+    @shared @backlog-mobile @priority-low
     Scenario: A slow save does not close a task opened after it
       When the user saves a task and starts another before the save is answered
       Then the first task is saved and the new task stays open
@@ -248,7 +248,7 @@ Feature: Scheduled tasks
       When the user deletes the task
       Then it no longer runs and is no longer listed
 
-    @shared @backlog-mobile
+    @shared @backlog-mobile @priority-low
     Scenario: A link to a task that is gone says so
       When the user follows a link to a task that was deleted
       Then the user is told the task is unavailable

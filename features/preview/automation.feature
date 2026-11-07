@@ -244,37 +244,37 @@ Feature: Agents drive the preview browser
         | the recording is larger than 50 MiB        | The recording exceeds 50 MiB. The saved copy remains on the desktop.   |
         | the transfer is not finished in time       | The recording transfer deadline expired. The saved copy remains on the desktop. |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Stopping a recording that was never started fails
       Given an agent's current tab is not being recorded
       When the agent stops the recording
       Then the tool fails saying no recording is active for that tab
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Only one tab is recorded at a time
       Given an agent is recording one tab of the thread
       When the agent starts a recording of another tab
       Then the tool fails saying the other tab cannot be recorded while the first is already being recorded
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Typing into something that cannot take text fails
       Given an agent's current tab has the focus on a page area that is not editable
       When the agent types text into the page
       Then the tool fails saying the action needs an editable target in that tab
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A page that never draws at the requested size fails the resize
       Given an agent's current tab shows a page
       When the agent resizes the page and the desktop never renders that size within the wait
       Then the tool fails saying the viewport was not rendered in time
 
     # Proved by tst_PreviewAutomationHostProp.cpp (an action on a tab with no page), not yet by a step (hal-c2/hal-c2#213).
-    @desktop @backlog-desktop
+    @desktop @backlog-desktop @priority-low
     Scenario: A browser that is not showing the tab in time fails the open
       When an agent opens a preview and the desktop does not show the page's browser within the wait
       Then the tool fails saying the browser did not register in time
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An action on a tab that was replaced by an MC restart fails
       Given an agent's current tab was opened before the MC restarted
       When the agent asks for an action on that tab after the restart
@@ -282,77 +282,77 @@ Feature: Agents drive the preview browser
       And the desktop does not act on the tab it had before the restart
 
     # Proved by tst_PreviewAutomationHostProp.cpp (the user closes the tab mid-action), not yet by a step (hal-c2/hal-c2#213).
-    @desktop @backlog-desktop
+    @desktop @backlog-desktop @priority-low
     Scenario: An action on a tab the user has since closed fails
       Given an agent's current tab shows a page
       When the user closes the tab before the agent's action reaches the desktop
       Then the tool fails saying the tab is no longer available
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A page the agent is waiting on is not acted on before its size is applied
       Given an agent has just opened a tab at a fixed size
       When the agent acts on the page before the desktop has rendered that size
       Then the desktop waits until the page is at the requested size, give or take a pixel
       And only then acts
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A tab that is not on screen is still recorded in full
       Given an agent is recording a tab the user is not looking at
       Then the recording has every frame of the page
       And it is not cut off because the tab is out of sight
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Closing a tab that is being recorded stops its recording first
       Given an agent is recording a tab
       When the user closes that tab
       Then the recording is stopped before the tab goes away
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A second tab cannot start recording while another is still starting
       Given an agent asked to record one tab and its recording has not started yet
       When the agent asks to record another tab within ten seconds
       Then the tool fails saying the first tab is still claiming the capture stream
       And the first tab's recording is not disturbed
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A recording that was asked for but never started frees the way after ten seconds
       Given an agent asked to record a tab and the recording never started
       When ten seconds pass
       Then the agent can record another tab
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A recording is not started while the app window is closed
       Given the desktop's main window is closed
       When an agent asks to record a tab
       Then the tool fails saying recording cannot start while the main window is closed
 
     # Proved by tst_PreviewAutomationWeb.cpp (keepsOffDevTools), not yet by a step (hal-c2/hal-c2#213).
-    @desktop @backlog-desktop
+    @desktop @backlog-desktop @priority-low
     Scenario: An agent cannot control a tab while its developer tools are open
       Given the user has the developer tools open on a tab
       When an agent acts on that tab
       Then the tool fails saying to close the preview's developer tools before using agent browser control
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An agent cannot control a tab another debugger is attached to
       Given another debugger is attached to a tab's page
       When an agent acts on that tab
       Then the tool fails saying agent control cannot attach because another debugger owns the page
 
     # Proved by tst_PreviewAutomationWeb.cpp (keepsOffDevTools), not yet by a step (hal-c2/hal-c2#213).
-    @desktop @backlog-desktop
+    @desktop @backlog-desktop @priority-low
     Scenario: Agent control comes back once the developer tools are closed
       Given an agent was refused because the developer tools were open on a tab
       When the user closes the developer tools
       Then the agent's next action on that tab goes through
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A click outside the page is refused with the page's size
       Given an agent's current tab is rendered at 1280 by 800
       When the agent clicks at a point beyond the page's edge
       Then the tool fails naming the point and saying it is outside the 1280x800 viewport
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A click on an element that cannot be clicked is reported as not found
       Given an agent's current tab shows a page with a button that is <state>
       When the agent clicks that button
@@ -365,7 +365,7 @@ Feature: Agents drive the preview browser
         | hidden                |
         | disabled              |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A target the agent describes badly is rejected with the reason
       Given an agent's current tab shows a page
       When the agent clicks a target written in a way the page cannot understand
@@ -373,26 +373,26 @@ Feature: Agents drive the preview browser
       And the reason the page gave is reported
 
     # Proved by tst_PreviewAutomationWeb.cpp (evaluates), not yet by a step (hal-c2/hal-c2#213).
-    @desktop @backlog-desktop
+    @desktop @backlog-desktop @priority-low
     Scenario: A script that throws reports what it threw
       Given an agent's current tab shows a page
       When the agent evaluates a script that throws an error
       Then the tool fails saying the evaluation failed
       And the error's own message is reported
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A script result of more than sixty-four thousand bytes is refused
       Given an agent's current tab shows a page
       When the agent evaluates a script whose result is larger than 64,000 bytes
       Then the tool fails saying the result was too large and what the maximum is
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Waiting for text gives up after fifteen seconds by default
       Given an agent's current tab shows a page without the text the agent waits for
       When the agent waits for that text without saying how long
       Then the tool fails after fifteen seconds saying the condition did not match in time
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A key press the page never received is reported
       Given an agent's current tab shows a page
       When the agent presses a key and the page does not confirm having received it within five seconds
@@ -503,7 +503,7 @@ Feature: Agents drive the preview browser
       When an agent opens the same page again
       Then the existing tab is reused at 500 by 700
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: An agent can ask for the floating preview to show or stay hidden
       Given auto-show floating preview is <setting>
       When an agent opens a preview and says <request>
@@ -516,14 +516,14 @@ Feature: Agents drive the preview browser
         | off     | to show it           | shown   |
         | on      | not to show it       | hidden  |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An agent acting on a tab brings the floating preview into view
       Given auto-show floating preview is on
       And an agent opened a preview tab and did not ask to hide it
       When the agent clicks on the page after the user closed the floating preview
       Then the floating preview shows again
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An agent that asked not to show a preview is not shown one when it acts
       Given an agent opened a preview tab asking not to show it
       When the agent clicks on the page
@@ -548,13 +548,13 @@ Feature: Agents drive the preview browser
       Then the tool fails saying the navigation did not reach load readiness in time
       And the failure arrives before the MC gives up on the browser
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The agent's pointer shows where it last acted and fades when idle
       Given an agent clicked an element of a page in the thread's browser
       Then the agent's pointer rests on that element, brighter for a moment after the click
       And it fades when the agent is idle, more so while the user is in control
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The agent's pointer is cleared when the page navigates
       Given the agent's pointer rests on an element of the page
       When the tab navigates to another page
@@ -587,14 +587,14 @@ Feature: Agents drive the preview browser
       Then it lists the first 200 interactive elements
       And it carries the first 20,000 characters of the visible text
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A screenshot for a snapshot is no wider than 1280 pixels
       Given a page rendered 1920 pixels wide
       When an agent takes a snapshot
       Then the screenshot is scaled down to 1280 pixels wide
       And a page narrower than that is not scaled
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A snapshot is retried when the page has no picture to give yet
       Given a page that cannot be captured on the first try
       When an agent takes a snapshot
@@ -680,7 +680,7 @@ Feature: Agents drive the preview browser
     Then it is saved to the browser artifacts folder with no Save dialog
     And once the user clicks, types or navigates, downloads show the Save dialog again
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: Agent clicks do not steal composer focus
     Given the user is typing in the composer
     When the agent clicks in the preview

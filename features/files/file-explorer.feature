@@ -79,7 +79,7 @@ Feature: Exploring project files
     And the result is marked as truncated
 
   # Legacy: apps/server/src/workspace/WorkspaceEntries.ts (list: directory must be inside the workspace)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A folder that is really a link to somewhere outside the project is not listed
     Given "shop" holds a link "outside" to a folder elsewhere on the machine
     When a client lists the folder "outside" of "shop"
@@ -87,7 +87,7 @@ Feature: Exploring project files
     And nothing from the linked folder is returned
 
   # Legacy: apps/server/src/workspace/WorkspaceEntries.ts (list: only files and folders)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: Links and special files are not listed as entries
     Given "shop" holds a link to a file and a named pipe next to "README.md"
     When a client lists the folder "" of "shop"
@@ -95,7 +95,7 @@ Feature: Exploring project files
     And the link and the named pipe are not
 
   # Legacy: apps/server/src/workspace/WorkspaceEntries.ts (list: check-ignore in batches, optional)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A folder of thousands of entries still reports which are ignored
     Given a folder of "shop" holds 5,000 entries and 2,500 of them are ignored
     When a client lists that folder
@@ -146,7 +146,7 @@ Feature: Exploring project files
     When the user browses files
     Then the user is told the files could not be listed
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: Expanding a folder loads its children on demand
     When the user expands "src"
     Then "app.ts" and "lib" are shown under "src"
@@ -192,7 +192,7 @@ Feature: Exploring project files
     When the user adds "src/app.ts" to the chat
     Then the user is told the chat is not ready to accept input right now
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: Copying a mention reports how it went
     Given the clipboard <state>
     When the user copies a mention of "src/app.ts"
@@ -211,7 +211,7 @@ Feature: Exploring project files
     And the open file shows its new contents
     And an active filter is applied to the new listing
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Choosing a file in the tree does not clear the user's filter
     Given the user filtered the tree by "cart"
     When the user opens "src/lib/cart.ts" from the filtered tree
@@ -247,7 +247,7 @@ Feature: Exploring project files
     And the user retries
     Then the top of "shop" is shown
 
-  @backlog @mc @shared
+  @backlog @mc @shared @priority-low
   Scenario: A workspace too large to index in time lists what was found so far
     Given the project's folder is too large to scan within the initial scan budget
     When the user opens the file explorer or searches for a file

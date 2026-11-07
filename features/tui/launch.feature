@@ -65,13 +65,13 @@ Feature: Launching and leaving the terminal client
     Then the terminal client writes its diagnostics to a log file next to the server's runtime record
     And the screen is never used for diagnostics
 
-  @backlog @tui
+  @backlog @tui @priority-low
   Scenario: The user chooses where the terminal client writes its diagnostic log
     Given the environment variable "HAL_C2_TUI_LOG" names a file
     When the user starts the terminal client
     Then the terminal client appends its diagnostics to that file
 
-  @backlog @tui
+  @backlog @tui @priority-low
   Scenario: A diagnostic log that cannot be written never breaks the terminal client
     Given the diagnostic log's folder is not writable
     When the user starts the terminal client
@@ -265,7 +265,7 @@ Feature: Launching and leaving the terminal client
     And the client exits with status 1
 
   # No detach: the client is one process on the terminal and leaves with it.
-  @backlog @tui
+  @backlog @tui @priority-high
   Scenario: The user detaches and resumes the same terminal client later
     Given the terminal client is open on a thread
     When the user detaches from the terminal client
@@ -351,7 +351,7 @@ Feature: Launching and leaving the terminal client
 
   # The TUI reaches only the MC it connected to: the host has no environment
   # list, pairing or access management (`connection.environments` is that one MC).
-  @backlog @tui
+  @backlog @tui @priority-high
   Scenario: The user lists environments and activates a reachable one
     Given local, remote and cloud environments are saved
     When the user opens the environment list from the terminal client
@@ -367,7 +367,7 @@ Feature: Launching and leaving the terminal client
 
   # The TUI reaches only the MC it connected to: the host has no environment
   # list, pairing or access management (`connection.environments` is that one MC).
-  @backlog @tui
+  @backlog @tui @priority-high
   Scenario: The user reviews and revokes other clients' access
     Given other clients are paired with this environment
     When the user opens access management from the terminal client

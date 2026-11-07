@@ -86,7 +86,7 @@ Feature: Runs, interruptions and the queue
     Then "A" joins the running turn
     And the queue is empty
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario Outline: A sent message says how it reached the agent
     When the user's message was <how>
     Then the message is marked "<marker>"
@@ -97,7 +97,7 @@ Feature: Runs, interruptions and the queue
       | sent as a steer                      | Steered the active turn                                   |
       | queued and later promoted to a steer | Originally queued, then promoted to steer the active turn |
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A message the MC has not acknowledged yet is marked as pending
     Given the user sent a message that the MC has not yet acknowledged
     When the user reads the thread
@@ -105,19 +105,19 @@ Feature: Runs, interruptions and the queue
     When the MC acknowledges the message
     Then the message shows the time it was sent
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: A sent message shows its images
     When the user sent the image "cart.png" with a message
     Then the message shows the image "cart.png" from its MC
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: An image is still shown after its address stops working
     Given the user sent the image "cart.png" with a message
     And the message shows the image "cart.png" from its MC
     When more than an hour passes
     Then the message shows the image "cart.png" from a new address
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: A sent file shows its name, kind and size
     When the user sent the file "report.pdf" of 2 MB with a message
     Then the message shows "report.pdf" with its kind and size
@@ -142,7 +142,7 @@ Feature: Runs, interruptions and the queue
     When the user opens it
     Then the video plays
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-low
   Scenario: A sent attachment of a kind this client does not know is listed by name only
     Given the message carries an attachment of a kind a newer environment added
     Then the message lists the attachment by its name
@@ -186,7 +186,7 @@ Feature: Runs, interruptions and the queue
     When the provider exits before the turn starts
     Then the run fails with "The provider stopped while starting the turn."
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario Outline: A finished turn that left work running says what it is waiting on
     Given the turn has finished and left <tasks> running in the background
     Then the thread says "<notice>"
@@ -198,13 +198,13 @@ Feature: Runs, interruptions and the queue
       | the task "watch tests"             | Waiting on background task    |
       | the tasks "watch tests" and "lint" | Waiting on 2 background tasks |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Background work is not announced while a turn is running
     Given a turn is running and has started background tasks
     Then the thread shows no notice about background work
     And stopping the turn is the way to stop them
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: Stopping background work can be asked again
     Given the turn has finished and left the task "watch tests" running
     When the user stops the background work and the environment accepts
@@ -219,14 +219,14 @@ Feature: Runs, interruptions and the queue
     Then the thread shows the reason as its error
     And the notice about "watch tests" stays
 
-  @shared @backlog
+  @shared @backlog @priority-high
   Scenario: The user dismisses a thread's error
     Given the thread shows the error "Rate limited"
     When the user dismisses the error
     Then the error is hidden for this thread
     And a different error on the same thread is still shown
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: A usage limit is one warning line naming when to retry
     Given the provider stopped the turn at its usage limit, resetting at the top of an hour
     Then the timeline shows one warning line naming when to retry
@@ -244,7 +244,7 @@ Feature: Runs, interruptions and the queue
       | cancels the auto-resume    | the thread waits for the user after 3 pm |
 
   # TUI: renders the meter from apps/tui/src/contextWindow.ts, but the MC does not report context usage yet.
-  @shared @backlog
+  @shared @backlog @priority-high
   Scenario Outline: The thread shows how full the context window is
     Given the agent has used 144,000 tokens <of>
     Then the context window reads "<reading>"
@@ -262,7 +262,7 @@ Feature: Runs, interruptions and the queue
     When the user turns the context window meter setting on
     Then the context window reads "72% · 144k/200k"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A context window under a tenth full is read to one decimal
     Given the agent has used <used> tokens of a 200,000 token window
     Then the context window is "<percent>" full
@@ -310,7 +310,7 @@ Feature: Runs, interruptions and the queue
     Then the details show "Total processed" as 1.2m and "Cost" as "USD 0.42"
     And a thread whose provider reports no cost shows no cost
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: The context window's details say when the provider compacts on its own
     Given the thread runs on a model named "Sonnet" that compacts its context automatically
     And the provider <reports>
@@ -322,7 +322,7 @@ Feature: Runs, interruptions and the queue
       | says it compacts at 160,000 tokens         | Compacts automatically at 160,000 tokens.              |
       | does not say when it compacts              | Context for Sonnet compacts automatically when needed. |
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: The conversation is compacted from the context window's details
     Given the thread's provider can compact a conversation on request
     When the user chooses "Compact context" in the context window's details
@@ -369,7 +369,7 @@ Feature: Runs, interruptions and the queue
       | 99,999  | 3 hours    | not shown                                      |
       | 400,000 | 69 minutes | not shown                                      |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Only Claude threads are offered to continue with less context
     Given a Codex thread with 400,000 tokens in its context window that was last active 3 hours ago
     When the user opens the thread
@@ -386,13 +386,13 @@ Feature: Runs, interruptions and the queue
       | the agent is working on a turn     |
       | a question is waiting for the user |
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: Compacting from the offer compacts the conversation
     Given a Claude thread shows the offer "Resume with less context"
     When the user chooses "Compact"
     Then Claude is asked to compact the conversation
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Keeping the full history puts the offer away until the conversation moves on
     Given the Claude threads "Cart totals" and "Tax rounding" both show the offer "Resume with less context"
     When the user chooses "Keep full history" in "Cart totals"
@@ -400,13 +400,13 @@ Feature: Runs, interruptions and the queue
     When "Cart totals" runs another turn and again sits unused for 70 minutes
     Then the offer is shown in "Cart totals" again
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Telling Claude never to ask about compacting also ends HAL-C2's offer
     Given Claude asked whether to compact before resuming and the user answered never to be asked again
     When the user later comes back to a long Claude conversation on that Claude instance
     Then the offer "Resume with less context" is not shown
 
-  @desktop @backlog
+  @desktop @backlog @priority-high
   Scenario Outline: The thread says when its provider cannot run
     Given the thread in "shop" runs on Codex
     And Codex <problem>
@@ -448,7 +448,7 @@ Feature: Runs, interruptions and the queue
     When the user looks at the thread
     Then no provider notice is shown
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A message to Antigravity is held with the reason it cannot be sent
     Given the thread in "shop" runs on Antigravity
     And <state>
@@ -463,7 +463,7 @@ Feature: Runs, interruptions and the queue
       | Antigravity is signed in and lists no models                      | Refresh Antigravity models in provider settings before sending.     |
       | Antigravity is ready and the thread's model has left its catalog  | That Antigravity model is no longer available. Choose another model. |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A message to Antigravity is not held when only starting the turn can tell
     Given the thread in "shop" runs on Antigravity with a model chosen
     And <state>

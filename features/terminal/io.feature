@@ -432,7 +432,7 @@ Feature: Terminal input and output
 
     # The terminal does this, but the offscreen platform the scenarios run on has
     # no selection clipboard to paste from. Needs an X11 or Wayland run.
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Middle-clicking on Linux pastes the selected text
       Given the user is on Linux
       And the terminal has a selection

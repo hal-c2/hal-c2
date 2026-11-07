@@ -72,7 +72,7 @@ Feature: Settings scopes and inheritance
       Then the default model is the environment's default model
 
     # Likely already implemented: apps/server-ex/lib/hal_c2/settings.ex (the file is checked again every couple of seconds)
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: A settings file edited by hand reaches connected clients
       Given a client is connected to the MC
       When the user changes a setting in settings.json with a text editor
@@ -107,7 +107,7 @@ Feature: Settings scopes and inheritance
         | cannot be opened                | the read fails and the user's saved choices are not overwritten  |
 
     # Likely already implemented: apps/server-ex/lib/hal_c2/settings.ex (write!: temporary file, owner-only, rename)
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: The settings file is private to its owner and replaced in one step
       When a client saves a setting
       Then settings.json is readable only by the user the MC runs as
@@ -120,7 +120,7 @@ Feature: Settings scopes and inheritance
       Then settings.json holds only that setting
       And a setting the user never changed follows a newer version's default
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario Outline: A retired streaming mode becomes the nearest current one
       Given settings.json sets the response streaming mode to "token"<where>
       When the MC reads the settings
@@ -205,26 +205,26 @@ Feature: Settings scopes and inheritance
         | a project that was removed           | This project is no longer available.                                           |
         | a checkout that was removed          | This checkout is no longer available in the selected project and environment. |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A section with nothing to change at this scope offers where to go instead
       Given the user is editing settings for the project "hal-c2"
       When the user opens a section that only has environment-wide settings
       Then the page offers each environment the section can be changed on
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Environments that share a name are told apart by address
       Given two environments are both named "Development"
       When the user chooses which environment settings apply to
       Then each is listed as "Development" followed by its address
       And when an environment has no address its id is used instead
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A renamed environment no longer needs its address shown
       Given two environments were both named "Development"
       When one is renamed "Production"
       Then each is listed by its name alone
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An older settings link for a project and environment still opens it
       Given the user opens a settings link that names a project and a machine from before checkouts existed
       When the settings page loads
@@ -290,7 +290,7 @@ Feature: Settings scopes and inheritance
       Then the setting cannot be changed
       And the user is told to update that environment
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Changing one field of a project's writing style keeps the other fields
       Given "hal-c2" overrides the writing style with custom instructions "Keep it short."
       When the user changes only the custom instructions to "Be terse."
@@ -307,13 +307,13 @@ Feature: Settings scopes and inheritance
         | the default thread mode | the override is removed and the environment's value applies  |
         | the default model    | the project keeps an explicit "no default model" override        |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Clearing the last override of a project removes its entry
       Given "hal-c2" overrides only the default model
       When the user resets the default model for the project
       Then "hal-c2" has no overrides left on that environment
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Clearing one override leaves the project's other overrides
       Given "hal-c2" overrides the default model and auto pull
       When the user resets the default model for the project
@@ -386,7 +386,7 @@ Feature: Settings scopes and inheritance
         | "Build box" lists "opus" as unavailable                                    |
 
     # Legacy: apps/web/src/components/settings/settingsLayout.tsx (inheritance summary)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A setting says in one line where its value comes from
       Given <situation>
       When the user looks at the setting
@@ -403,7 +403,7 @@ Feature: Settings scopes and inheritance
         | nothing sets it                                                  | Built-in default                           |
 
     # Legacy: apps/web/src/components/settings/SettingInheritance.tsx (formatValue)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A layer with no value reads in the setting's own words
       Given no layer sets "<setting>"
       When the user asks where it comes from
@@ -419,7 +419,7 @@ Feature: Settings scopes and inheritance
         | Worktree submodules           | Inherit                |
 
     # Legacy: apps/web/src/components/settings/SettingInheritance.tsx (overridingProjects)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Projects overriding a value can be opened or reset together
       Given "hal-c2" and "docs" both override the default model on "Laptop"
       And the user is editing settings for "Laptop"
@@ -431,7 +431,7 @@ Feature: Settings scopes and inheritance
       Then neither project overrides the default model
 
     # Legacy: apps/web/src/components/settings/SettingInheritance.tsx (chains per target)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Across several environments the chain is listed once for each
       Given the user is editing settings across "Laptop" and "Build box"
       When the user asks where the default model comes from

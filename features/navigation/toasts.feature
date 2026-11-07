@@ -93,7 +93,7 @@ Feature: Toasts
     When the user opens "env-a:t1"
     Then the user sees an "error" toast "Failed to settle thread" saying "No"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A timed toast counts down only while HAL-C2 is in front
     Given the user sees a "success" toast "Committed abc0001"
     And 4 seconds pass
@@ -103,7 +103,7 @@ Feature: Toasts
     And 6 seconds pass
     Then the toast "Committed abc0001" is gone
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Keyboard focus in the toast stack expands it
     Given the user settles "env-a:t1"
     And the user sees an "error" toast "Failed to settle thread" saying "No"
@@ -115,7 +115,7 @@ Feature: Toasts
     And 1 second passes
     Then the toast "Failed to settle thread" is gone
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A long error is shortened in its toast and can still be copied whole
     Given the MC refuses "thread.settle" with a reason of 300 characters
     When the user settles "env-a:t1"

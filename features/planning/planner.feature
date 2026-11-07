@@ -129,19 +129,19 @@ Feature: Planner
       When the user sets "Rate limits" to 80% done
       Then "Rate limits" is 80% done
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: A task that ends before its baseline says how many days early
       Given the plan has "API" ending 3 days before its baseline
       When the user opens the task "API"
       Then its panel says it ends 3 days before its baseline
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: The chart reaches back to a baseline long before the plan
       Given the plan has the milestone "Launch" due 200 days after its baseline
       When the user is on the view "Timeline"
       Then the chart reaches back to the baseline of "Launch"
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: A task names a project the MC no longer offers
       Given the plan has "API" in the project "gone"
       When the user opens the task "API"
@@ -189,7 +189,7 @@ Feature: Planner
       When the user removes "Backend this month"
       Then no client has the view "Backend this month"
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-high
     Scenario: The Gantt chart draws tasks, milestones, dependencies and today
       Given the plan has "Schema" from "2026-10-19" to "2026-10-23", "API" waiting for it, and the milestone "Beta"
       When the user switches to the "Planner" tab with the view "Timeline"
@@ -202,38 +202,38 @@ Feature: Planner
       When the user drags the bar of "API" one week later on the "Timeline"
       Then "API" is moved to "2026-10-28" to "2026-11-06"
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: A milestone without a date has no marker
       Given the plan has the milestone "Beta" without a due date
       When the user switches to the "Planner" tab with the view "Timeline"
       Then "Beta" is listed with no marker on the timeline
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: Dragging the end of a bar changes when the task ends
       Given the plan has "API" from "2026-10-21" to "2026-10-30"
       When the user drags the end of the bar of "API" to "2026-11-03"
       Then "API" ends on "2026-11-03"
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-high
     Scenario: The board moves a task between states
       Given the plan has "API" not started
       When the user drags "API" to "In progress" on the "Board"
       Then "API" is in progress
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: The board shows dropped work
       Given the plan has "Docs" dropped
       When the user switches to the "Planner" tab with the view "Board"
       Then "Docs" is under "Dropped" on the board
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: The board grouped by parent moves a subtask to another parent
       Given the plan has "Routes" under "API" and "Pages" under "Web"
       And the "Board" is grouped by "parent"
       When the user drags "Routes" to "Web" on the "Board"
       Then "Routes" is moved under "Web"
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: The board grouped by milestone moves a task to another milestone
       Given the milestones "Beta" and "Launch", with "Beta" waiting for "API"
       And the "Board" is grouped by "milestone"
@@ -297,7 +297,7 @@ Feature: Planner
       When the user scrolls the list sideways to its end
       Then the column of the last field is shown
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-high
     Scenario: The user edits a task from any view
       Given the plan has "API"
       When the user opens "API" and sets its owner to "dana" and its due date to "2026-11-06"
@@ -516,7 +516,7 @@ Feature: Planner
       When the user opens the run's thread
       Then the action, the state of its run and the apply action are shown above the conversation
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-high
     Scenario: A proposal of only a status update can be applied
       Given the run of "Write status update" proposes only that the plan is "at-risk"
       When the user opens the run's thread
@@ -569,37 +569,37 @@ Feature: Planner
       When the user changes the prompt of "Reschedule" and resets "Give feedback"
       Then the prompt of "Reschedule" is saved as changed and "Give feedback" as the plugin's
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: What the user changes while the settings save is kept
       Given the user opens the settings of "planner"
       When the user changes the prompt of "Reschedule" and saves, then changes it again before the settings are read back
       Then the prompt of "Reschedule" holds the second change, left to save
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: The settings save again only once the last save is read back
       Given the user opens the settings of "planner"
       When the user saves a change to the prompt of "Reschedule", then undoes it and tries to save again before the settings are read back
       Then the prompt of "Reschedule" is the plugin's again, left to save
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: A save whose read-back fails is what the next save starts from
       Given the user opens the settings of "planner"
       When the user saves a change to the prompt of "Reschedule", then undoes it before a read-back that fails
       Then the prompt of "Reschedule" is the plugin's again, left to save
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: The settings name a model and project the MC no longer offers
       Given "planner" runs its actions on the model "claude-retired" in the project "gone"
       When the user opens the planner's settings
       Then the planner's model reads "claude-retired" and its default project "gone"
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: The settings take no count the MC refuses
       Given the user opens the planner's settings
       When the user types "0" as the actions at once and as the minutes between looks at GitHub
       Then neither setting is changed
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: The settings do not save while a count reads what it cannot be
       Given the user opens the planner's settings
       When the user changes the prompt of "Reschedule", clears the actions at once and saves
@@ -778,7 +778,7 @@ Feature: Planner
       Then "API" is done
 
     # Pasting the address again is also how a link to the wrong host is corrected.
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: A user links a pull request of a GitHub Enterprise host by its web address
       Given the plan has "API"
       When the user opens the task "API"
@@ -786,7 +786,7 @@ Feature: Planner
       Then the MC is asked to link "API" to #12 of "acme/other" at "https://github.example.com:8443/acme/other/pull/12/files"
 
     # The MC would drop these addresses and link the pull request on github.com.
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario Outline: The address <address> is not a pull request's and cannot be linked
       Given the plan has "API"
       When the user opens the task "API"
@@ -1165,7 +1165,7 @@ Feature: Planner
       When the settings of "planner" list the boards
       Then they say gh needs the "project" scope
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: The user picks the board and its date fields from lists in the settings
       Given "acme" has the board "acme/3" "Roadmap" with the date fields "Begins" and "Ends"
       When the user opens the planner's settings
@@ -1187,7 +1187,7 @@ Feature: Planner
       Then beside its date fields the settings say "acme/9 was not found."
       And the date fields are typed in as "Begins" and "Ends"
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario Outline: A screen reader names the planner's settings when the board's date fields are <dates>
       Given "acme" has the board "acme/3" "Roadmap" with the date fields "Begins" and "Ends"
       And "planner" follows the board "<board>" with "Begins" and "Ends" as its dates
@@ -1961,7 +1961,7 @@ Feature: Planner
       When the plugin looks at GitHub
       Then the plugin reports that only part of "acme/api" and of "acme/3" was read
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Issues from other hosts become tasks
       Given "planner" follows the issues of a repository on GitLab
       When the plugin looks at it
@@ -2060,7 +2060,7 @@ Feature: Planner
       Then the plan has the update "Docs slip a week"
       And the plugin reports that Slack is not connected
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: The user picks the planner's Slack channel in its settings
       Given the MC is connected to Slack
       When the user opens the planner's settings

@@ -60,7 +60,7 @@ MC, native QML, and the TUI.
 - `@backlog-mc`, `@backlog-desktop`, `@backlog-mobile` and `@backlog-tui` mean it does not
   pass on that one surface yet. When a `@backlog @desktop @mobile` scenario starts passing on
   the desktop it becomes `@desktop @mobile @backlog-mobile`; `@shared @backlog-mobile
-@backlog-tui` passes only on the desktop. Each runner treats its own surface's tag like
+  @backlog-tui` passes only on the desktop. Each runner treats its own surface's tag like
   `@backlog`.
 - `@dropped` means we decided not to carry the behaviour. The scenario stays so the decision
   is visible and reviewable.
@@ -80,6 +80,23 @@ It takes a count, `@tag`s to require, `-@tag`s to exclude, and files or globs un
 only work still missing on it, so `@desktop` draws `@backlog` and `@backlog-desktop` scenarios.
 `@blocked` work is left out; `mise run features:pick 20 @blocked` lists it with what each
 scenario waits for.
+
+Priority is user value per unit of work. Our users drive agents all day, so the core loop comes
+first.
+
+- `@priority-high`: the everyday loop on the main surfaces (start or continue a thread, compose
+  and send, read the timeline, approvals, model and mode) and the MC's protocol, orchestration
+  and auth; data loss, safety and security; a shipped feature still missing on a surface where
+  users hit the gap; a missing way back out (a one-way door is a bug); and scenarios the MC
+  probably already does (`# Likely already implemented:`), because they are cheap to close.
+- `@priority-low`: niche settings, polish, rarely used providers (`@plugin-grok`, `@plugin-pi`,
+  `@plugin-antigravity`, `@plugin-muse`, `@plugin-acp-registry`), phone-only nice-to-haves, and
+  behaviour of the removed surfaces with little value on ours.
+- Everything else is normal and carries no tag.
+
+Tag at the widest scope that is true, a `Feature` or `Rule` when all its backlog work shares a
+priority, at the end of its tag line. High wins over low, so a low group can hold high
+scenarios; a group with normal exceptions is tagged narrower instead.
 
 ## Writing rules
 

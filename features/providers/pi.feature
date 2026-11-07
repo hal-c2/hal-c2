@@ -11,7 +11,7 @@
 #   apps/server/src/orchestration-v2/Adapters/piHalC2McpExtensionSource.ts (approval hook, HAL-C2 tools bridge, OpenRouter output cap)
 #   apps/server/src/provider/Layers/piThinkingCapabilities.ts, apps/server/src/textGeneration/PiTextGeneration.ts
 
-@plugin-pi @mc
+@plugin-pi @mc @priority-low
 # Pi has no built-in subagents, so the subagents setting (features/settings/subagents.feature) has nothing to turn off here.
 Feature: Pi
   Pi uses the user's existing Pi installation with its own models, logins, extensions,

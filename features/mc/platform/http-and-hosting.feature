@@ -132,7 +132,7 @@ Feature: The MC's HTTP surface and what it hosts
     When it asks the MC for its client bundle
     Then the MC serves the bundle matching its version
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The mobile client loads its QML overlay from the MC
     Given the mobile client paired with an MC of a newer version
     When it connects
@@ -170,7 +170,7 @@ Feature: The MC's HTTP surface and what it hosts
     Then the secret is exchanged directly with the MC
     And it is removed from the browser history
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A client that hangs up mid-response does not take the MC down
     Given a client is receiving a large response or a socket upgrade
     When the client disconnects before the MC finishes writing

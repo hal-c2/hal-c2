@@ -487,7 +487,7 @@ Feature: The HAL-C2 MCP server agents receive
     And saving it gives the agent a one-use reference, never the value
     And the transcript never holds the value
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A delegation to a provider whose probe failed tries it again once
     Given the cached state of a provider says it was not found
     And the user has since fixed it
@@ -510,7 +510,7 @@ Feature: The HAL-C2 MCP server agents receive
     And the user chooses how much access it gets, from read only to full access
     And the agent can then use the tools that access allows
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A hosted agent can sign in with an https callback
     Given a hosted agent such as ChatGPT registers an https callback address
     Then it is accepted and the callback must match exactly
@@ -518,7 +518,7 @@ Feature: The HAL-C2 MCP server agents receive
     And an http callback off loopback is refused
     And a client that asks for a secret is registered as a public client proved by PKCE
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: Copying an environment's MCP address
     Given the user has an environment saved
     When the user chooses to copy its MCP address

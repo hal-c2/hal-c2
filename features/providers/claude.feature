@@ -668,7 +668,7 @@ Feature: Claude
 
   # Upstream #13999: Claude gets a few seconds to record an interrupted turn before its session
   # closes, so the conversation it saved can be continued.
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A stopped Claude turn is recorded before its session closes
     Given the user stopped a running Claude turn
     When Claude records the interrupted turn within three seconds
@@ -922,7 +922,7 @@ Feature: Claude
       | 2.1.279 | graceful    |
       | 2.1.280 | unknown     |
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A Claude-initiated result does not end a /compact turn early
     Given a resumed Claude thread whose previous process left a background task
     When the user compacts the thread
@@ -930,20 +930,20 @@ Feature: Claude
     And no made-up "Compacted context" row is shown
     And the thread does not stay busy afterwards
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A Claude subagent shows the model its agent file picks
     Given a subagent whose agent file sets its own model
     When the subagent runs
     Then its row and thread show that model, not the parent's
     And an agent it spawns starts with its owner's model
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Claude MCP tool calls show their names and icons
     When Claude calls an MCP tool
     Then the item is titled with the tool's display name and server, with its icon
     And the raw name like "Mcp__server__tool" is not shown
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A model change that would kill background agents is refused
     Given Claude has a background agent or shell still running
     When the user sends a message on a different model or option
@@ -951,55 +951,55 @@ Feature: Claude
     And the running background work is untouched
     And Stop still allows the change
 
-  @backlog @shared
+  @backlog @shared @priority-high
   Scenario: Claude skill calls show the skill name
     When Claude calls a skill
     Then the row reads "Skill: <name>"
     And expanding it shows only the arguments as plain text
     And a call with no arguments does not expand
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A thread stays working while Claude starts a wake turn
     Given a Claude thread waiting on a background command
     When the command finishes and Claude begins reacting
     Then the thread never leaves working in between
 
-  @backlog
+  @backlog @priority-high
   Scenario: A Claude command the user stops is recorded as interrupted
     Given a Claude turn is running a command
     When the user stops the turn
     Then the command is recorded as interrupted, as Codex and Cursor record it
     And agents reading the thread are told it was interrupted, not that it failed
 
-  @backlog
+  @backlog @priority-high
   Scenario: A thread stays out of plan mode that Claude entered itself
     Given Claude calls EnterPlanMode during a turn on a thread whose mode is not plan
     When the user sends the next turn
     Then Claude can edit again and the subagents it starts do not inherit plan mode
     And ExitPlanMode still captures the plan as a proposed plan and denies the tool
 
-  @backlog
+  @backlog @priority-low
   Scenario: A skill whose description holds a colon is still listed
     Given a Claude skill whose frontmatter description contains an unquoted ": "
     When the skill picker is opened
     Then the skill is listed with its invocation metadata
     And a skill with malformed structure is still left out
 
-  @backlog
+  @backlog @priority-high
   Scenario: Slash commands are discovered in the thread's own workspace
     Given a project with commands under its ".claude/commands"
     When the user opens the slash menu in a thread of that project
     Then those commands are listed, not only the ones found in the MC's directory
     And if command discovery fails the workspace's skills are still listed
 
-  @backlog
+  @backlog @priority-low
   Scenario: Normal and unset fast mode count as the same selection
     Given a Claude thread has a command running in the background
     When a follow-up arrives with fast mode off where the first turn left it unset
     Then the follow-up is accepted and the background command keeps running
     And a real model or settings change is still refused while that command runs
 
-  @backlog @mc @plugin-claude
+  @backlog @mc @plugin-claude @priority-high
   Scenario: Child completion notices wait for Claude's pending tools
     Given Claude has tool calls pending
     When a delegated task finishes, or a scheduled prompt comes due

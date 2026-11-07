@@ -343,19 +343,19 @@ Feature: Codex
     When Codex's usage has been checked
     Then Codex shows the account's email and its ChatGPT Pro plan
 
-  @backlog
+  @backlog @priority-low
   Scenario: A ChatGPT Pro Max plan is shown by name
     Given Codex is signed in with a ChatGPT Pro Max subscription
     When Codex's usage has been checked
     Then Codex shows the account's email and its "ChatGPT Pro Max Subscription" plan
 
-  @backlog
+  @backlog @priority-low
   Scenario: A ChatGPT plan HAL-C2 does not know still signs the account in
     Given Codex is signed in with a ChatGPT plan named by a newer Codex
     When Codex's account is read
     Then Codex shows as signed in and its plan is shown by the plan's own name
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: The Ultrafast service tier is offered for a model that lists it
     Given the selected Codex model lists the "ultrafast" service tier
     When the user opens the service tier choices
@@ -390,14 +390,14 @@ Feature: Codex
     When the user disconnects the account
     Then Codex on that environment is no longer signed in with it
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: A connected ChatGPT account's email is hidden until the user reveals it
     Given Codex is connected with a ChatGPT account
     Then the account's email is not shown
     When the user asks to show it
     Then the email is shown
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: The first ChatGPT connection explains that plan usage counts against the plan
     Given the user has never connected a ChatGPT account
     When the user connects one
@@ -443,13 +443,13 @@ Feature: Codex
 
   # Upstream #13547: a model catalog's own default-mode text replaced the instructions sent
   # inside the collaboration mode, so HAL-C2's details went missing on newer models.
-  @mc @plugin-codex @backlog
+  @mc @plugin-codex @backlog @priority-high
   Scenario: A model whose catalog replaces default mode still gets HAL-C2's runtime details
     Given the "hal-c2" server is attached to a Codex thread on a model whose catalog replaces default mode
     When the user sends a message in default mode
     Then Codex is told the runtime, the model's name and slug, and the PR linking rules
 
-  @mc @plugin-codex @backlog
+  @mc @plugin-codex @backlog @priority-high
   Scenario: Codex gets HAL-C2's runtime and tool instructions again after compacting the thread
     Given the "hal-c2" server is attached to a Codex thread
     When Codex compacts the thread's context
@@ -907,14 +907,14 @@ Feature: Codex
       | 0.155.0 | unsupported |
       | 0.156.0 | supported   |
 
-  @backlog
+  @backlog @priority-high
   Scenario: A thread whose Codex session was archived outside HAL-C2 resumes it
     Given the native Codex session of a thread was archived by Codex itself
     When the user sends a turn
     Then the MC unarchives that same session and resumes it once
     And an unrelated resume error is shown as it is
 
-  @backlog @mc @plugin-codex
+  @backlog @mc @plugin-codex @priority-high
   Scenario: Stop ends a Codex command after its thread was settled
     Given Codex left a command running and the thread was settled
     And Codex has since unloaded the thread

@@ -80,7 +80,7 @@ Feature: Moving a thread and its agent to another machine
 
   Rule: Moving within a cluster
 
-    @shared @backlog-mobile
+    @shared @backlog-mobile @priority-high
     Scenario: The user moves a thread to another machine
       When the user moves "Alpha" to "desktop"
       Then "Alpha" is listed under "desktop"
@@ -101,7 +101,7 @@ Feature: Moving a thread and its agent to another machine
       When the user chooses where to move "Alpha"
       Then both machines called "desktop" are offered, each with its environment id
 
-    @backlog @shared
+    @backlog @shared @priority-low
     Scenario: Moving is not offered on a machine that is alone
       Given "laptop" is not in a cluster
       When the user opens the menu for "Alpha"
@@ -340,7 +340,7 @@ Feature: Moving a thread and its agent to another machine
 
   Rule: Moving back
 
-    @shared @backlog-mobile
+    @shared @backlog-mobile @priority-high
     Scenario: A moved thread can be moved back
       Given "Alpha" was moved from "laptop" to "desktop"
       And the user worked in "Alpha" on "desktop"
@@ -364,7 +364,7 @@ Feature: Moving a thread and its agent to another machine
       When the user follows the link
       Then "Alpha" opens on "desktop"
 
-    @shared @backlog-mobile
+    @shared @backlog-mobile @priority-low
     Scenario: A notification from before the move opens the thread where it lives now
       Given the user was notified that "Alpha" finished while it lived on "laptop"
       And "Alpha" has since moved to "desktop"
@@ -428,7 +428,7 @@ Feature: Moving a thread and its agent to another machine
       Then the user is told to answer or stop "Alpha" before moving it
       And "Alpha" stays on "laptop"
 
-    @shared @backlog-mobile
+    @shared @backlog-mobile @priority-high
     Scenario: The user can stop the turn and move the thread in one step
       Given the agent is working in "Alpha"
       When the user moves "Alpha" to "desktop" and chooses to stop it first
@@ -443,7 +443,7 @@ Feature: Moving a thread and its agent to another machine
       Then the running turn of "Alpha" is interrupted
       And "Alpha" moves to "desktop"
 
-    @shared @backlog-mobile
+    @shared @backlog-mobile @priority-high
     Scenario: A message cannot be sent while the thread is moving
       Given "Alpha" is moving to "desktop"
       When the user writes a message in "Alpha"
@@ -522,7 +522,7 @@ Feature: Moving a thread and its agent to another machine
       Then "Alpha" lives on "desktop"
       And when "laptop" comes back it lists "Alpha" only under "desktop"
 
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: A move to a machine that is removed from the cluster is called off
       Given a move of "Alpha" was cut off while "desktop" was taking it
       And "desktop" has not come back
@@ -565,7 +565,7 @@ Feature: Moving a thread and its agent to another machine
       When the user asks the command palette to move the thread to another machine
       Then the user is asked which machine to move "Alpha" to
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Moving several selected threads
       Given "Alpha" and "Beta" on "laptop" are selected
       When the user moves the selection to "desktop"
@@ -717,7 +717,7 @@ Feature: Moving a thread and its agent to another machine
       And the most recently updated thread is listed first
       But "Gamma" is not listed
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Listing threads from the command line works while the MC is stopped
       Given the MC on "laptop" is stopped
       When the user lists the threads of "laptop" from the command line
@@ -730,7 +730,7 @@ Feature: Moving a thread and its agent to another machine
       When the user lists the threads of "laptop" from the command line
       Then the user is told no threads were found
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: The thread list can be printed as JSON
       When the user lists the threads of "laptop" from the command line asking for JSON
       Then the complete list is printed as one JSON document with each thread's id, title and project
@@ -742,21 +742,21 @@ Feature: Moving a thread and its agent to another machine
       Then the thread is printed on one line with the breaks shown as spaces
 
     # Likely already implemented: apps/server-ex/lib/hal_c2/thread_archive.ex (find_thread)
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: Exporting a thread that does not exist says so
       When the user exports "Zeta" on "laptop" to the file "zeta.hal-c2-thread"
       Then the user is told there is no thread "Zeta" on "laptop"
       And no file is written
 
     # Likely already implemented: apps/server-ex/lib/hal_c2/thread_archive.ex (find_thread)
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: A thread title that two threads share is not guessed
       Given "laptop" has two threads called "Alpha"
       When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
       Then the user is told several threads are called "Alpha" and to name one by its id
       And no file is written
 
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: Exporting never overwrites a file that already exists
       Given the file "alpha.hal-c2-thread" already exists
       When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
@@ -772,18 +772,18 @@ Feature: Moving a thread and its agent to another machine
       Then the file holds the terminal scrollback
 
     # Likely already implemented: apps/server-ex/lib/hal_c2/thread_archive.ex (export_file, owner-only file)
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: An exported thread file is readable only by its owner
       When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
       Then no other user of "laptop" can read the file
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: The user is told what an export contained
       When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
       Then the user is told the thread's title and id, the file's path, and how many events, attachments and terminal logs it holds
 
     # Likely already implemented: apps/server-ex/lib/hal_c2/thread_archive.ex (the file cannot be read)
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario Outline: A file that is not a thread file is refused
       Given <file>
       When the user imports it on "desktop"
@@ -797,7 +797,7 @@ Feature: Moving a thread and its agent to another machine
         | a thread file cut short                        |
 
     # Likely already implemented: apps/server-ex/lib/hal_c2/thread_archive.ex (project name)
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: Importing into a project the destination does not have is refused
       When the user imports "alpha.hal-c2-thread" on "desktop" into the project "nonexistent"
       Then the user is told "desktop" has no project "nonexistent"
@@ -817,7 +817,7 @@ Feature: Moving a thread and its agent to another machine
         | terminal log   | named with a folder path                        |
         | terminal log   | named for a different thread                    |
 
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: An import never replaces a different file the destination already has
       Given "desktop" already has a file under the name of one of the thread file's attachments
       And its contents differ from the attachment's
@@ -833,7 +833,7 @@ Feature: Moving a thread and its agent to another machine
       Then "Alpha" is listed under "desktop" with all its attachments
       And the identical copy is not written again
 
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: An import that fails part way leaves the destination as it was
       Given the destination cannot take the thread's events after its files were copied
       When the user imports the file on "desktop"

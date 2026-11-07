@@ -64,7 +64,7 @@ Feature: Acting on a pull request
     When the user reopens it
     Then pull request 42 is open
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Bitbucket cannot reopen a declined pull request
     Given a Bitbucket pull request that was declined
     When the user looks at its actions
@@ -153,7 +153,7 @@ Feature: Acting on a pull request
     Then the user is told "You need triage access on this repository to change its labels."
 
   # Legacy: packages/client-runtime/src/state/pullRequests.ts (requestReviewers onSuccess)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: A confirmed review request shows on the pull request and in the reviewer menu at once
     Given the user has the reviewer menu of pull request 42 open
     When the user asks "hubot" to review it and the host confirms
@@ -162,14 +162,14 @@ Feature: Acting on a pull request
     And nothing waits for the pull request to be read again
 
   # Legacy: packages/client-runtime/src/state/pullRequests.ts (requestReviewers onSuccess keep)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: Taking back a review request keeps a reviewer who already reviewed
     Given "hubot" reviewed pull request 42 and was asked again
     When the user takes back the request to "hubot"
     Then "hubot" is still listed with the review given
 
   # Legacy: packages/client-runtime/src/state/pullRequests.ts (setLabels onSuccess)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: A confirmed label change shows on the pull request and in the label menu at once
     Given the user has the label menu of pull request 42 open
     When the user adds the label "tax" and the host confirms
@@ -177,7 +177,7 @@ Feature: Acting on a pull request
     And "tax" is marked as applied in the label menu
 
   # Legacy: apps/web/src/components/pullRequest/PullRequestCandidatePicker.tsx (candidates read on open)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: The people or labels to choose from are read only when the menu is opened
     Given the user is looking at pull request 42
     When the user has not opened the <menu> menu
@@ -192,7 +192,7 @@ Feature: Acting on a pull request
       | label    | the labels the repository has           |
 
   # Legacy: apps/web/src/components/pullRequest/PullRequestCandidatePicker.tsx (local narrowing)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: Typing in a menu narrows what has arrived without asking the host again
     Given the <menu> menu of pull request 42 is open and its choices have arrived
     When the user types "<typed>"
@@ -205,7 +205,7 @@ Feature: Acting on a pull request
       | label    | bug   | name or description   |
 
   # Legacy: apps/web/src/components/pullRequest/PullRequestCandidatePicker.tsx (empty and no-match notes)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A menu with nothing to choose says why
     Given the <menu> menu of pull request 42 is open
     When <what>
@@ -219,7 +219,7 @@ Feature: Acting on a pull request
       | label    | the user types a label the repository lacks       | No label matches that.                |
 
   # Legacy: apps/web/src/components/pullRequest/PullRequestCandidatePicker.tsx (error state)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A menu whose choices could not be read says so and gives the host's reason
     Given the host refuses to list <candidates> saying "Rate limit exceeded."
     When the user opens the <menu> menu of pull request 42
@@ -232,7 +232,7 @@ Feature: Acting on a pull request
       | label    | labels           | The labels could not be read.            |
 
   # Legacy: apps/web/src/components/pullRequest/PullRequestReviewerPicker.tsx, PullRequestLabelPicker.tsx (truncated)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A menu that was cut short tells the user where to find the rest
     Given the host listed only part of <candidates>
     When the user opens the <menu> menu of pull request 42
@@ -244,7 +244,7 @@ Feature: Acting on a pull request
       | label    | the labels       | This repository has more labels than are listed here. Apply the rest on the host.                 |
 
   # Legacy: apps/web/src/components/pullRequest/PullRequestCandidatePicker.tsx (menu stays open, rows locked while changing)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A menu stays open after a choice so several can be made, but waits for each change
     Given the label menu of pull request 42 is open
     When the user picks the label "tax"
@@ -254,7 +254,7 @@ Feature: Acting on a pull request
     Then the choices can be picked again
 
   # Legacy: apps/web/src/components/pullRequest/PullRequestReviewerPicker.tsx (team, requested rows)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A team is told apart from a person and someone already asked is marked
     Given "hubot" has been asked to review pull request 42 and so has the team "acme/core"
     When the user opens the reviewer menu
@@ -262,7 +262,7 @@ Feature: Acting on a pull request
     And "acme/core" is marked "team" and "Already asked"
 
   # Legacy: apps/web/src/components/pullRequest/PullRequestLabelPicker.tsx (colour and description, applied marker)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A label is shown in its colour with its description and marked when applied
     Given pull request 42 carries the label "bug", which the repository describes as "Something is broken"
     When the user opens the label menu
@@ -270,7 +270,7 @@ Feature: Acting on a pull request
     And "bug" is marked as applied
 
   # Legacy: apps/web/src/components/pullRequest/PullRequestReviewerPicker.tsx, PullRequestLabelPicker.tsx (disabled with reason)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: Without the access the menu is unavailable and says what is missing
     Given the user lacks <access> access on "acme/shop"
     When the user looks at the <menu> menu of pull request 42
@@ -283,7 +283,7 @@ Feature: Acting on a pull request
       | label    | triage | Changing labels needs triage access on this repository                 |
 
   # Legacy: apps/web/src/components/pullRequest/PullRequestReviewerPicker.tsx (toasts)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: Asking for a review, or taking the request back, says what happened
     When the user <change> in the reviewer menu and the host <answer>
     Then the user sees a "<kind>" toast "<toast>"
@@ -296,7 +296,7 @@ Feature: Acting on a pull request
       | takes back the request to "hubot"   | refuses | error   | Could not take back the review request to hubot |
 
   # Legacy: apps/web/src/components/pullRequest/PullRequestReviewerPicker.tsx, PullRequestLabelPicker.tsx (refusal description)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A refused change without a reason from the host suggests what to check
     When the host refuses <change> of pull request 42 without saying why
     Then the toast says "<hint>"
@@ -307,7 +307,7 @@ Feature: Acting on a pull request
       | a label change            | The host refused it. Check that you have triage access on this repository.                                            |
 
   # Legacy: apps/web/src/components/pullRequest/PullRequestLabelPicker.tsx (toasts)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A label that could not be changed says which one
     When the user <change> the label "tax" and the host refuses
     Then the user sees an "error" toast "<toast>"
@@ -318,12 +318,12 @@ Feature: Acting on a pull request
       | takes off | Could not take tax off |
 
   # Legacy: apps/web/src/components/pullRequest/PullRequestLabelPicker.tsx (no success toast)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A label change that went through is shown on the pull request, not announced
     When the user adds the label "tax" and the host confirms
     Then no toast appears
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Auto-merge on other hosts
     Given an open change request on <host>
     When the user enables auto-merge
@@ -334,7 +334,7 @@ Feature: Acting on a pull request
       | GitLab       |
       | Azure DevOps |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Changing a comment on Azure DevOps happens on the host
     Given a comment the user wrote on an Azure DevOps pull request
     When the user wants to edit it
@@ -345,7 +345,7 @@ Feature: Acting on a pull request
     When the user merges pull request 42 from its review with the default merge method
     Then the review shows pull request 42 as merged
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario Outline: Far-reaching actions ask before they run
     When the user chooses to <action> pull request 42 from its review
     Then the user is asked "<question>" and can confirm with "<confirm>"
@@ -816,7 +816,7 @@ Feature: Acting on a pull request
     Then the user is told "You need write access on this repository to merge."
     And pull request 42 is not merged
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: An action a host does not have is refused
     Given an open change request on <host>
     When a client asks for the action "<action>" on it
@@ -835,34 +835,34 @@ Feature: Acting on a pull request
       | GitLab       | revert            |
       | GitLab       | approve-workflows |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A merge method the host does not have is refused rather than swapped
     Given an open pull request on Azure DevOps
     When the user merges it with the rebase method
     Then the user is told "This host cannot merge with the rebase strategy."
     And the pull request is not merged
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A host that can only rebase refuses to merge the target in
     Given a GitLab merge request that is behind its target
     When the user updates its branch by merge
     Then the user is told "This host cannot update a branch by merge."
     And the merge request is not changed
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A GitLab project's own merge settings narrow the methods offered
     Given a GitLab project that does not allow squash merges
     When the user looks at the actions of one of its merge requests
     Then squash is not among the merge methods offered
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Merging on GitLab merges at once rather than arming auto-merge
     Given a GitLab merge request whose pipeline is still running
     When the user merges it
     Then the merge request is merged now
     And auto-merge is not left armed
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Auto-merge keeps the method it was armed with
     Given an open change request on <host>
     When the user enables auto-merge with the squash method
@@ -873,7 +873,7 @@ Feature: Acting on a pull request
       | GitLab       |
       | Azure DevOps |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Cancelling auto-merge on other hosts
     Given auto-merge is armed on a change request on <host>
     When the user disables auto-merge
@@ -884,32 +884,32 @@ Feature: Acting on a pull request
       | GitLab       |
       | Azure DevOps |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Closing a Bitbucket pull request declines it
     Given an open pull request on Bitbucket
     When the user closes it
     Then the pull request is declined
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A Bitbucket reader can still decline, comment and review but not merge
     Given a Bitbucket pull request in a repository where the configured account can only read
     When the user looks at its actions
     Then merging is not offered
     But declining, commenting and reviewing are offered
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Bitbucket's retired permission lookup is read as granted
     Given Bitbucket no longer answers the repository permission lookup
     When the user looks at the actions of a Bitbucket pull request
     Then merging is offered
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A Bitbucket permission lookup that fails for any other reason is reported
     Given Bitbucket refuses the repository permission lookup with an authentication failure
     When the user looks at the actions of a Bitbucket pull request
     Then the lookup is reported as failed
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Hosts without labels refuse to change them
     Given an open change request on <host>
     When the user adds the label "tax"
@@ -921,27 +921,27 @@ Feature: Acting on a pull request
       | Azure DevOps |
       | Bitbucket    |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Reviewer candidates cannot be listed on Azure DevOps
     Given an open pull request on Azure DevOps
     When the user searches reviewers for "ali"
     Then the user is told "This host cannot say who may review a change request."
     But asking "alice@acme.test" for a review is accepted
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Taking back one review request leaves the other reviewers
     Given "hubot" and "octocat" have been asked to review a change request
     When the user takes back the request to "hubot"
     Then "octocat" is still a requested reviewer
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Approving the workflows of a pull request from the same repository does nothing
     Given pull request 42 comes from a branch in "acme/shop" itself
     When the user approves its workflows
     Then no workflow is approved
     And the user is not shown an error
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Workflows are not approved when the fork's head cannot be told apart
     Given pull request 42 comes from a fork and its workflows wait for approval
     And <situation>
@@ -956,7 +956,7 @@ Feature: Acting on a pull request
       | GitHub lists more than 1000 workflow runs awaiting approval         | GitHub returned more than 1000 workflow runs awaiting approval.          |
       | GitHub does not report the fork's head revision                     | GitHub did not report a complete head revision for #42.                  |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Workflows are approved only for the revision the user saw
     Given pull request 42 comes from a fork and 2 of its workflows wait for approval
     And the fork owner pushes a new revision after the first workflow was approved
@@ -965,7 +965,7 @@ Feature: Acting on a pull request
     And the user is told "The head revision of #42 changed before its workflows could be approved."
 
   # Legacy: apps/server/src/pullRequest/gitHubPullRequestJson.ts (decodeReviewerCandidatesJson)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: People and teams already asked lead the reviewer suggestions
     Given "hubot" and the team "acme/core" have been asked to review pull request 42
     And "hubot" could not be asked again because they no longer have access to "acme/shop"
@@ -974,7 +974,7 @@ Feature: Acting on a pull request
     And the other people who may be asked follow them
 
   # Legacy: apps/server/src/pullRequest/gitHubPullRequestJson.ts (decodeReviewerCandidatesJson, teams asked only where already requested)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A team is listed among the suggestions only once it has been asked
     Given the organization has the team "acme/design", which has not been asked to review pull request 42
     When the user opens the reviewer suggestions of pull request 42
@@ -982,7 +982,7 @@ Feature: Acting on a pull request
     But a team already asked is listed, so that its request can be taken back
 
   # Legacy: apps/server/src/pullRequest/BitbucketPullRequestApi.ts, GitLabPullRequestCli.ts, ForgejoPullRequestProvider.ts (listReviewerCandidates)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Each host suggests the people it lets be asked, and never the author
     Given an open change request on <host> opened by "octocat"
     When the user opens its reviewer suggestions
@@ -998,7 +998,7 @@ Feature: Acting on a pull request
       | Bitbucket | the members of the workspace the repository is in    |
 
   # Legacy: apps/server/src/pullRequest/gitHubPullRequestJson.ts, GitLabPullRequestCli.ts, ForgejoPullRequestProvider.ts, BitbucketPullRequestApi.ts (candidate truncation)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: A very long list of people to ask is cut short and says so
     Given a change request on <host> in a project with more people to ask than one read holds
     When the user opens its reviewer suggestions
@@ -1013,7 +1013,7 @@ Feature: Acting on a pull request
       | Bitbucket |
 
   # Legacy: apps/server/src/pullRequest/GitLabPullRequestCli.ts (setReviewerRequest)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Asking someone already listed as a reviewer asks them again and leaves the others
     Given "hubot" and "octocat" are listed as reviewers of a change request
     And "hubot" has already reviewed it
@@ -1022,7 +1022,7 @@ Feature: Acting on a pull request
     And "octocat" is still a requested reviewer
 
   # Legacy: apps/server/src/pullRequest/gitHubPullRequestJson.ts (decodeLabelCandidatesJson)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Labels on a pull request that the repository no longer defines still lead the label suggestions
     Given pull request 42 carries the label "legacy", which "acme/shop" no longer defines
     When the user opens the label suggestions of pull request 42
@@ -1030,7 +1030,7 @@ Feature: Acting on a pull request
     And the labels the repository defines follow
 
   # Legacy: apps/server/src/pullRequest/gitHubPullRequestJson.ts, ForgejoPullRequestProvider.ts (label candidate truncation)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: A very long list of labels is cut short and says so
     Given a change request on <host> in a repository with more labels than one read holds
     When the user opens its label suggestions
@@ -1043,7 +1043,7 @@ Feature: Acting on a pull request
       | Forgejo |
 
   # Legacy: apps/server/src/pullRequest/ForgejoPullRequestProvider.ts (setLabels)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Naming a label the repository does not have changes nothing
     Given an open pull request on Forgejo
     When the user adds the labels "tax" and "no-such-label"
@@ -1051,7 +1051,7 @@ Feature: Acting on a pull request
     And pull request 42 gets neither label
 
   # Legacy: apps/server/src/pullRequest/gitHubPullRequestJson.ts (toCanWrite: an unknown permission is not write access)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A repository permission the host does not report is not taken as write access
     Given GitHub does not report the user's permission on "acme/shop" at all
     When the user looks at the actions of pull request 42
@@ -1059,7 +1059,7 @@ Feature: Acting on a pull request
     But the permissions GitHub does report one by one are taken as they are
 
   # Legacy: apps/server/src/pullRequest/gitHubPullRequestJson.ts (toCanTriage)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Triage access is enough to change labels but not to merge or ask for reviews
     Given the user has triage access to "acme/shop"
     When the user looks at the actions of pull request 42
@@ -1067,7 +1067,7 @@ Feature: Acting on a pull request
     But merging and asking for reviews are not offered
 
   # Legacy: apps/server/src/pullRequest/AzureDevOpsPullRequestProvider.ts (viewer permissions)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Azure DevOps does not say what the user may do so every action it has is offered
     Given an open pull request on Azure DevOps
     When the user looks at its actions
@@ -1076,14 +1076,14 @@ Feature: Acting on a pull request
     And a refusal from Azure DevOps is shown when an action is not allowed after all
 
   # Legacy: apps/server/src/pullRequest/ForgejoPullRequestProvider.ts (permissions)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An archived Forgejo repository offers no action, comment, review or label
     Given an open pull request in a Forgejo repository that is archived
     When the user looks at its actions
     Then no action, comment, review, review request or label change is offered
 
   # Legacy: apps/server/src/pullRequest/ForgejoPullRequestProvider.ts (permissions: comment, is_locked)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A locked Forgejo pull request takes comments only from people who may write
     Given a Forgejo pull request whose conversation is locked
     When a reader without write access looks at its actions
@@ -1091,7 +1091,7 @@ Feature: Acting on a pull request
     But a user with write access may still comment
 
   # Legacy: apps/server/src/pullRequest/ForgejoPullRequestProvider.ts (permissions: merge, update-branch, requestReviewers, labels)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Forgejo reserves merging, updating and labelling for people who may push
     Given an open Forgejo pull request opened by someone else
     And the user cannot push to the repository
@@ -1100,7 +1100,7 @@ Feature: Acting on a pull request
     And closing and asking for reviews are not offered either
 
   # Legacy: apps/server/src/pullRequest/ForgejoPullRequestProvider.ts (permissions: author may edit)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: The author of a Forgejo pull request who cannot push may still close it and ask for reviews
     Given a Forgejo pull request the user opened
     And the user cannot push to the repository
@@ -1109,7 +1109,7 @@ Feature: Acting on a pull request
     But merging, updating the branch and changing labels are not offered
 
   # Legacy: apps/server/src/pullRequest/ForgejoPullRequestProvider.ts (CAPABILITIES.mergeMethods, mergeCapabilities)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A Forgejo repository's own settings narrow the merge methods offered
     Given a Forgejo repository that does not allow rebase merges
     When the user looks at the actions of one of its pull requests
@@ -1117,7 +1117,7 @@ Feature: Acting on a pull request
     And a repository that reports nothing about a method is taken as allowing it
 
   # Legacy: apps/server/src/pullRequest/ForgejoPullRequestProvider.ts (permissions.updateMethods: allow_rebase_update)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A Forgejo repository that does not allow rebasing a branch offers only merging the target in
     Given a Forgejo repository that does not allow updating a branch by rebase
     And a pull request in it that is behind its base
@@ -1125,7 +1125,7 @@ Feature: Acting on a pull request
     Then updating the branch is offered by merge only
 
   # Legacy: apps/server/src/pullRequest/AzureDevOpsPullRequestCli.ts (AzureDevOpsReviewerNameError)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An Azure DevOps reviewer is named by an email address or an identity id
     Given an open pull request on Azure DevOps
     When the user asks a reviewer named like a command line option to review it

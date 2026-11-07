@@ -68,7 +68,7 @@ Feature: Desktop shell gaps
       Then the update is installed
       And the app relaunches into the same windows
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Changing update channel takes effect on the next check
       When the user switches to the Nightly update channel
       Then the next update check looks at the Nightly channel
@@ -82,7 +82,7 @@ Feature: Desktop shell gaps
       Then HAL-C2 starts on "build-box"
       And "build-box" is added as an environment
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: SSH passwords are not remembered by the page
       When the user answers a password prompt while adding an SSH host
       Then the password is not kept in the app's page state

@@ -20,7 +20,7 @@ Feature: Touch gestures on a phone
   Background:
     Given the phone is paired with an environment that supports settling threads
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario Outline: Swiping a thread offers the action that fits its state
     Given a thread is <state>
     When the user swipes the thread to reveal its actions
@@ -33,19 +33,19 @@ Feature: Touch gestures on a phone
       | settled  | Un-settle |
       | snoozed  | Wake      |
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A full swipe commits the main action
     Given a thread is active
     When the user swipes the thread all the way across
     Then the thread is settled
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A full swipe on a settled thread un-settles it
     Given a thread is settled
     When the user swipes the thread all the way across
     Then the thread is active again
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A full swipe on a snoozed thread wakes it
     Given a thread is snoozed until tomorrow
     When the user swipes the thread all the way across
@@ -71,13 +71,13 @@ Feature: Touch gestures on a phone
       | tomorrow     |
       | next week    |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Snoozing by swipe accepts a custom date and time
     Given a thread is active
     When the user swipes the thread and snoozes it until a custom date and time
     Then the thread is snoozed until that date and time
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The custom snooze choice starts an hour ahead or at two hours
     Given a thread is active
     When the user opens the custom snooze choice
@@ -85,7 +85,7 @@ Feature: Touch gestures on a phone
     When the user switches to a duration
     Then the duration starts at 2 hours
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: A custom snooze duration is read the way the user types it
     Given a thread is active
     When the user snoozes it for a custom duration of "<typed>" <unit>
@@ -98,7 +98,7 @@ Feature: Touch gestures on a phone
       | 0     | hours   | the user is told to enter a positive duration              |
       | soon  | days    | the user is told to enter a positive duration              |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A custom snooze date in the past is refused with a reason
     Given a thread is active
     When the user chooses a custom date and time that has already passed
@@ -118,7 +118,7 @@ Feature: Touch gestures on a phone
     Then the thread returns to its place in the list
     And the user is told the action failed
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Archiving is refused while the agent is working
     Given the environment predates settling threads
     And a thread has a turn running
@@ -126,19 +126,19 @@ Feature: Touch gestures on a phone
     Then the thread is not archived
     And the user is told to wait for the agent or stop it first
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Swipes do not trigger while the list is scrolling
     Given the user is scrolling the thread list
     When the user's finger moves sideways over a thread
     Then no thread action is revealed
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A two-finger trackpad swipe reveals thread actions on a tablet
     Given the user has a trackpad attached to a tablet
     When the user swipes sideways with two fingers over a thread
     Then the thread's actions are revealed
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario Outline: Long pressing a thread offers its actions
     Given a thread is <state>
     When the user long presses the thread
@@ -159,20 +159,20 @@ Feature: Touch gestures on a phone
       | settled | Un-settle                  |
       | snoozed | Wake thread                |
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Deleting from the long-press menu asks first
     When the user chooses to delete a thread from its long-press menu
     Then the user is asked to confirm
     When the user cancels
     Then the thread is still listed
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Regenerating a title shows progress until the new title lands
     When the user asks to regenerate a thread's title
     Then the thread shows that its title is regenerating
     And the new title replaces the old one when it arrives
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: Dragging a thread between sections changes its state
     Given a thread is <from>
     When the user drags the thread into the <to> section
@@ -185,13 +185,13 @@ Feature: Touch gestures on a phone
       | settled | active  | active again        |
       | snoozed | active  | no longer snoozed   |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Dragging within a section reorders threads
     Given two pinned threads "A" then "B"
     When the user drags "B" above "A"
     Then the pinned threads are ordered "B" then "A"
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: A dragged thread says what dropping it will do
     Given a thread is <from>
     When the user drags the thread over the <to> section
@@ -206,40 +206,40 @@ Feature: Touch gestures on a phone
       | snoozed | active  | Unsnooze |
       | pinned  | pinned  | Reorder  |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A thread cannot be dropped on the snoozed section
     Given a thread is active
     When the user drags the thread over the snoozed section
     Then dropping it there does nothing
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A rearranged list keeps its new order until the environment confirms it
     Given two active threads "A" then "B"
     When the user drags "B" above "A"
     Then the list shows "B" then "A" at once
     And the list does not flicker back to "A" then "B" while the environment is still saving the order
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Threads cannot be moved again while an arrangement is being saved
     Given the user dragged "B" above "A" and the environment has not confirmed it
     Then no thread offers to move up or down
     When the environment confirms the new order
     Then the threads offer to move up or down again
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: An arrangement is let go when the list changes underneath it
     Given the user dragged "B" above "A" and the environment has not confirmed it
     When another device pins "C" before the environment confirms
     Then the list shows the environment's order
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Long pressing an archived thread offers to unarchive or delete it
     Given the user is looking at archived threads
     When the user long presses an archived thread
     Then the user is offered to unarchive it
     And the user is offered to delete it
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Swiping from the edge goes back to the previous screen
     Given the user opened a thread from the home screen
     When the user swipes from the leading edge of the screen
@@ -258,19 +258,19 @@ Feature: Touch gestures on a phone
     Then one thread screen is open
     And going back returns to the home screen
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The back swipe wins over a sideways-scrolling code block
     Given the user is reading a thread with a wide code block scrolled to its start
     When the user swipes from the leading edge over the code block
     Then the user goes back instead of scrolling the code block
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A code block scrolled away from its start still scrolls first
     Given the user is reading a thread with a wide code block scrolled to the middle
     When the user swipes toward the start over the code block
     Then the code block scrolls toward its start
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Android predictive back previews the screen it returns to
     Given the user is on an Android phone with predictive back
     And the user opened a thread from the home screen
@@ -279,7 +279,7 @@ Feature: Touch gestures on a phone
     When the user releases the gesture without completing it
     Then the thread stays open
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A snooze time that passed while the choice was open is refused
     Given the user opened the snooze choices for a thread an hour ago
     When the user picks a snooze time that has already passed
@@ -322,38 +322,38 @@ Feature: Touch gestures on a phone
     Then the custom snooze choice closes
     And no other thread is snoozed
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Pulling down archived threads refreshes them
     Given the user is looking at archived threads
     When the user pulls down on the list
     Then the phone asks the environments for fresh archived threads
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Copying text gives a light tap
     When the user copies text from the app
     Then the text is on the clipboard
     And the phone gives a light physical tap
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A phone that cannot give a tap still copies
     Given the phone cannot give physical feedback
     When the user copies text from the app
     Then the text is on the clipboard
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A copy the phone refuses is reported and not confirmed
     Given the phone refuses to write to the clipboard
     When the user copies text from the app
     Then the user is told "Could not copy" and to try again
     And the copy control does not show that it copied
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The copy control confirms for a moment
     When the user copies text from the app with the copy control
     Then the control shows that it copied
     And a moment later it offers to copy again
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A long press that opens a menu is felt and still lets the tap work
     Given the user is on an Android phone
     When the user long presses a control that offers a menu

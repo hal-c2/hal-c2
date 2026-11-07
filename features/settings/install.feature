@@ -73,7 +73,7 @@ Feature: Installing and uninstalling
 
   # Blocked: how does a release reach the user's machine? The install script and the
   # `hal-c2 update` and `hal-c2 uninstall` commands belong to the legacy CLI.
-  @backlog @blocked @mc
+  @backlog @blocked @mc @priority-low
   Scenario: An Intel Mac has no prebuilt server
     Given an Intel Mac
     When the user runs the install script
@@ -233,14 +233,14 @@ Feature: Installing and uninstalling
     When the user runs the install script
     Then the CLI is installed in the default data directory instead
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The user opens a folder in the desktop app from the terminal
     Given the desktop app is running
     When the user runs "hal-c2 app ~/code/api"
     Then the desktop app opens a new thread for "api", adding the project if needed
     But if the desktop app cannot be reached the command fails with an error
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: The background service on macOS needs Full Disk Access for protected folders
     Given the background service runs on macOS without Full Disk Access
     And a project lives in the user's Documents folder

@@ -26,13 +26,13 @@ Feature: Command palette
 
   Rule: Opening and closing
 
-    @shared @backlog-mobile
+    @shared @backlog-mobile @priority-low
     Scenario: The palette opens from its shortcut
       When the user presses the command palette shortcut
       Then the command palette is open
       And the search field has keyboard focus
 
-    @shared @backlog-mobile
+    @shared @backlog-mobile @priority-low
     Scenario: The palette closes from its shortcut
       Given the command palette is open
       When the user presses the command palette shortcut
@@ -215,7 +215,7 @@ Feature: Command palette
 
   Rule: Choosing entries
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile @backlog-tui @priority-high
     Scenario: Enter runs the highlighted entry
       Given the command palette lists "Open settings"
       When the user moves the highlight to "Open settings" and presses Enter

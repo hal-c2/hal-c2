@@ -45,13 +45,13 @@ Feature: Projects on an MC
       | with no folder                                    | a workspace folder is required              |
       | for missing folder /missing without asking to create it | /missing does not exist on this machine     |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A monogram of more than two characters is refused
     Given project "p1" exists
     When a client sets the icon of "p1" to the monogram "ABC"
     Then it fails with "Project monograms must contain at most two characters."
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: A new project script needs an id that can be a shortcut
     Given project "p1" exists
     When a client adds a script to "p1" with the id "<id>"
@@ -64,7 +64,7 @@ Feature: Projects on an MC
       | build_all                 |
       | abcdefghijklmnopqrstuvwxy |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A script saved with an id that is no longer valid can still be edited and removed
     Given project "p1" has a script whose id "Old_Build" predates the id rules
     When a client edits that script's command
@@ -195,7 +195,7 @@ Feature: Projects on an MC
       And the repository and icon of each follow as the lookups finish
 
     # Legacy: apps/server/src/project/ProjectEnrichmentService.ts (failureTtl, successTtl)
-    @mc @backlog
+    @mc @backlog @priority-low
     Scenario: A failed repository lookup is tried again soon but a good one is kept for a while
       Given a project's repository lookup failed
       When a client reads the project again a few seconds later

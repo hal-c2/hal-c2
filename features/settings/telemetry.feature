@@ -32,33 +32,33 @@ Feature: Product telemetry
     When a turn finishes
     Then no event is sent
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Client events are only accepted from signed in connections
     Given an unauthenticated connection
     When it reports client use
     Then no event is sent for it
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Bad client details do not block a connection
     Given a client that sends malformed device details
     When it connects
     Then the connection is accepted
     And the unknown details are left out of events
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Telemetry sends nothing until the server is given an analytics project
     Given the MC has telemetry switched on but no analytics project configured
     When a turn finishes
     Then no event is sent
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Events that cannot be delivered are kept and sent later
     Given the analytics service cannot be reached
     When turns finish
     Then their events are kept and sent once it is reachable again
     But when more than 1,000 events are waiting the oldest are dropped
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An event is tied to the Codex account, then the Claude account, then an installation id
     Given the user is signed in to Codex on this machine
     When a turn finishes

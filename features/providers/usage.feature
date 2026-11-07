@@ -75,26 +75,26 @@ Feature: Usage
     When the user opens Usage
     Then that model's cost is marked unpriced
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A bare model family name is marked unpriced rather than guessed
     Given a turn recorded only the model family name "opus"
     When the user opens Usage
     Then that model is marked unpriced rather than priced at one generation's rate
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A model's larger context variant is priced at its base rate
     Given a turn on a model recorded with a bracketed context-size suffix such as "[1m]"
     When the user opens Usage
     Then that model is priced at the rate of its base model
 
   # Upstream #13731: Cursor names carry tier and speed suffixes that the price table does not key on.
-  @backlog @mc @plugin-cursor
+  @backlog @mc @plugin-cursor @priority-low
   Scenario: A Cursor model with a tier or speed suffix is priced at its base model's rate
     Given a Cursor turn on a model whose name carries a tier or speed suffix
     When the user opens Usage
     Then the turn's cost and cache savings use the rate of its base model
 
-  @backlog @mc @plugin-cursor
+  @backlog @mc @plugin-cursor @priority-low
   Scenario: A Cursor turn's reported cost is kept when its model is a tier or speed variant
     Given Cursor reported a cost for a turn on a model whose name carries a tier or speed suffix
     When the user opens Usage
@@ -170,13 +170,13 @@ Feature: Usage
     When the user opens Usage again
     Then only the new lines of that transcript are read
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Codex repeating an unchanged token count is counted once
     Given a Codex session re-sends the same token count at a stream boundary
     When the user opens Usage
     Then the repeated count adds nothing to the totals
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A transcript record too large to hold in memory still counts its usage
     Given a Codex transcript holds a tool output of several hundred megabytes that records 10,000 tokens
     And a Claude transcript records 2,000 tokens
@@ -185,7 +185,7 @@ Feature: Usage
 
   # Legacy: apps/server/src/usage/usageTranscriptReader.ts (tailRecords), usageScanCache.ts
   # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (tail)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A transcript line the CLI is still writing is counted once it is complete
     Given a transcript whose last line has no line ending yet
     When the user opens Usage
@@ -195,7 +195,7 @@ Feature: Usage
 
   # Legacy: apps/server/src/usage/usageTranscriptReader.ts (guard hash, shrunk file)
   # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (size and mtime resume)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A transcript that did not just grow is read again from the start
     Given the user opened Usage and a transcript was read
     And the transcript was then <change>
@@ -210,7 +210,7 @@ Feature: Usage
 
   # Legacy: apps/server/src/usage/usageScanCache.ts (decodeScanCache, cache version, corrupt rows)
   # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (@cache_version)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A saved scan the MC cannot trust is discarded
     Given the MC saved its scan of the history before it restarted
     And the saved scan <damage>
@@ -225,21 +225,21 @@ Feature: Usage
       | has one entry that is damaged                  |
 
   # Legacy: apps/server/src/usage/UsageService.ts (in-flight scans keyed by request and prices)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Identical requests that overlap share one scan
     Given the user opened Usage in two clients at the same moment
     When both ask for the same window and time zone
     Then the transcripts are scanned once and both get the same totals
 
   # Legacy: apps/server/src/usage/UsageService.ts ("does not share an in-flight scan after custom prices change")
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A scan under way does not answer a request made after a price changed
     Given a usage scan is under way
     When the user saves a custom price and asks for usage
     Then the new request gets totals priced with the new price
 
   # Legacy: apps/server/src/usage/UsageService.ts ("does not orphan an in-flight scan when its first caller is interrupted")
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A scan other callers wait for survives its first caller leaving
     Given two clients wait on the same usage scan
     When the client that started it disconnects
@@ -247,7 +247,7 @@ Feature: Usage
 
   # Legacy: apps/server/src/usage/UsageService.ts (RATES_REFRESH_FLOOR_MS, "refetches a rate table inside its TTL only when the client asks")
   # Likely already implemented: apps/server-ex/lib/hal_c2/usage/pricing.ex (@refresh_floor_ms)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Refreshing again within a minute does not fetch prices again
     Given the user refreshed Usage and prices were fetched ten seconds ago
     When the user refreshes Usage again
@@ -255,7 +255,7 @@ Feature: Usage
     And an ordinary open of Usage never fetches inside the daily refresh
 
   # Legacy: apps/server/src/usage/UsageService.ts (pricing fetched while transcripts stream, 10 s timeout)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A price table that is slow to fetch does not hold up the scan
     Given the price table has to be fetched and the source is slow
     When the user opens Usage
@@ -264,7 +264,7 @@ Feature: Usage
 
   # Legacy: apps/server/src/usage/UsageService.ts (collectDirs: MTIME_SLACK_MS)
   # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (@mtime_slack_ms)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Only transcripts touched near the window are read, and only records inside it count
     Given a Claude transcript last changed 30 hours before the window began, holding records from before and inside the window
     And another transcript last changed 40 hours before the window began
@@ -274,7 +274,7 @@ Feature: Usage
 
   # Legacy: apps/server/src/usage/UsageService.ts (codexEventOccurrences)
   # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (codex_key)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A moved copy of a Codex rollout counts once but equal events inside one rollout all count
     Given a Codex rollout was copied into another folder
     And one rollout has two token counts with identical time, model and totals
@@ -284,7 +284,7 @@ Feature: Usage
 
   # Legacy: apps/server/src/usage/usageTranscripts.ts (Grok reads updates.jsonl only)
   # Likely already implemented: apps/server-ex/lib/hal_c2/usage/transcripts.ex
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Only Grok's session update log is read as usage
     Given a Grok session folder with "updates.jsonl" and other JSONL files
     When the user opens Usage
@@ -297,26 +297,26 @@ Feature: Usage
     Then last week's totals still include it
 
   # Upstream #13599: Claude's fast mode bills at a multiple of the standard rate.
-  @mc @plugin-claude @backlog
+  @mc @plugin-claude @backlog @priority-low
   Scenario: A Claude request in fast mode is priced at the fast rate
     Given a Claude request on Opus 5.5 in fast mode that costs $0.28 at the standard rate
     When the user opens Usage
     Then the request is priced at $0.56
 
   # Upstream #10409: Cursor's account history counts only once the user has enabled it.
-  @mc @plugin-cursor @backlog
+  @mc @plugin-cursor @backlog @priority-low
   Scenario: Cursor's account history is not counted until the user enables Cursor account usage
     Given Cursor is signed in and the user has not enabled Cursor account usage
     When the user opens Usage
     Then Cursor's history is not counted
 
-  @mc @plugin-opencode @backlog
+  @mc @plugin-opencode @backlog @priority-low
   Scenario: OpenCode's local history counts toward usage
     Given OpenCode has local session history
     When the user opens Usage
     Then OpenCode's tokens are counted
 
-  @mc @plugin-antigravity @backlog
+  @mc @plugin-antigravity @backlog @priority-low
   Scenario: Antigravity's local history counts toward usage
     Given Antigravity has local session history
     When the user opens Usage
@@ -329,7 +329,7 @@ Feature: Usage
     Then the user is told "Transcripts could not be scanned."
 
   # Clients leave a missing source out of the totals; saved records keep counting.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A provider with no history folder on an environment is noted and its saved usage still counts
     Given an environment where Grok has never written a history folder
     And the MC counted Grok usage there before
@@ -343,7 +343,7 @@ Feature: Usage
     When the user selects only one environment in Usage
     Then costs, tokens and limits are shown for that environment only
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: Environments still scanning are shown as they finish
     Given two connected environments, one slow to scan
     When the user opens Usage
@@ -426,27 +426,27 @@ Feature: Usage
     When Codex reports a late token count for it during the next turn
     Then the late count is not recorded against the next turn
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A turn's usage says when subagents ran in it
     Given a Claude turn in which the agent started a subagent
     When the turn completes
     Then the turn's usage says it covers the main agent only
     And it says subagents ran
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Fast and Ultrafast Codex cost what they bill
     Given Codex usage at Fast or Ultrafast speed
     When the Usage tab prices it
     Then Fast counts at 2x and Ultrafast at 6x the standard rate for models that bill so
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A preview model is folded into the model it is mapped to
     Given the model prices map "example-preview" to "claude-opus-5-5"
     When usage is summed
     Then the preview model's tokens and cost count under "claude-opus-5-5" at that model's price
     And clearing the mapping lists the preview model on its own row again
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: Model shares and order follow the selected metric
     Given the Usage page shows model shares
     When the user switches the metric from cost to tokens

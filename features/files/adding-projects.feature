@@ -48,7 +48,7 @@ Feature: Adding projects
       Then the user is asked what they should work on
       And the user is offered to add a project
 
-    @backlog @mobile
+    @backlog @mobile @priority-high
     Scenario: A phone user with no projects is invited to add one
       Given "laptop" has no projects
       When the user opens the app on a phone
@@ -61,14 +61,14 @@ Feature: Adding projects
       Then the project "shop" is listed for "laptop"
       And a draft thread opens in "shop"
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile @backlog-mobile @priority-high
     Scenario: Adding a folder from the desktop and mobile apps registers it and starts a thread
       Given the folder "/home/sam/shop" exists on "laptop"
       When the user adds the local folder "/home/sam/shop"
       Then the project "shop" is listed for "laptop"
       And a draft thread opens in "shop"
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile @backlog-mobile @priority-high
     Scenario: A folder the environment refuses to add says why
       Given the folder "/home/sam/shop" exists on "laptop"
       And the environment refuses to change projects with "Disk is read-only"
@@ -156,7 +156,7 @@ Feature: Adding projects
       Then no second project is created
       And the user is told the project was already added
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile @backlog-mobile @priority-high
     Scenario: Adding an existing project from the desktop and mobile apps opens its latest thread
       Given "shop" is already a project on "laptop" with an unsettled thread "Fix checkout"
       When the user adds the local folder of "shop" again
@@ -257,7 +257,7 @@ Feature: Adding projects
       Then the user is told why the repository could not be found
       And the user can correct the name
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: Nothing is looked up until something is typed
       When the user opens the GitHub repository source with nothing typed
       Then the user cannot continue
@@ -283,13 +283,13 @@ Feature: Adding projects
       When the user chooses to go up a level
       Then the path becomes "/home/sam/code"
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: The path the user types narrows the folders listed
       Given "/home/sam/code" holds the folders "shop" and "docs"
       When the user types "/home/sam/code/sh"
       Then only "shop" is listed
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: A clone destination keeps the repository's folder name while browsing
       Given the user is choosing where to clone "acme/shop"
       When the user browses into "/home/sam/code"
@@ -302,21 +302,21 @@ Feature: Adding projects
       When the user browses to "/home/sam/code"
       Then the user is told "Permission denied"
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: Adding waits while a folder is being opened
       Given the user chose a folder and the phone is still reading it
       Then adding the project is not offered yet
       When the phone has read the folder
       Then adding the project is offered with the folder as its path
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: Changing the environment starts the path again from that environment
       Given the phone is paired with "laptop" and "desktop"
       And the user typed a path under "laptop"
       When the user chooses "desktop"
       Then the path starts in the folder "desktop" keeps new projects in
 
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario: A clone that has not reached the phone yet says it will appear
       Given the MC accepted the clone of "acme/shop" and the project has not reached the phone
       When fifteen seconds pass
@@ -364,7 +364,7 @@ Feature: Adding projects
       Then the user is told the folder could not be opened
       And no project is created
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A drop whose path is not absolute is refused
       Given the desktop app is connected to its own local environment
       And a project is selected
@@ -372,14 +372,14 @@ Feature: Adding projects
       Then the user is told "Drop an existing folder using its absolute local path."
       And no project is created
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A second drop while the first is still opening is ignored
       Given the desktop app is connected to its own local environment
       And a dropped folder is still being opened
       When the user drops another folder
       Then the second folder is not opened
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A drop that failed can be tried again
       Given the desktop app is connected to its own local environment
       And dropping "/home/sam/shop" failed
@@ -407,7 +407,7 @@ Feature: Adding projects
         | Resolving deltas: 100% (3/3), done.   | resolving | 100     |
         | Updating files:  80% (8/10)           | checkout  | 80      |
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile @backlog-mobile @priority-high
     Scenario: Clone progress is shown while the user keeps working
       Given a clone of "acme/shop" is receiving objects at 45 percent
       When the user looks at the app
@@ -428,7 +428,7 @@ Feature: Adding projects
       Then the clone is no longer reported
       And the project "shop" stays with its files
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile @backlog-mobile @priority-high
     Scenario: A finished clone offers to open its project
       Given a clone of "acme/shop" finished
       When the user looks at the app
@@ -467,14 +467,14 @@ Feature: Adding projects
       When the user retries the clone
       Then the clone is reported as running
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile @backlog-mobile @priority-high
     Scenario: A failed or cancelled clone offers to remove the project it created
       Given a clone of "acme/shop" failed
       When the user removes the project from the clone's failure notice
       Then the project "shop" is no longer listed
 
     # Likely already implemented: apps/desktop-qt/src/native/ProjectCloneController.cpp
-    @backlog @desktop @mobile
+    @backlog @desktop @mobile @priority-high
     Scenario: A cancelled clone is announced as cancelled and can be retried from there
       Given a clone of "acme/shop" was cancelled
       When the user looks at the app
@@ -482,7 +482,7 @@ Feature: Adding projects
       And the user can retry the clone or remove the project
 
     # Likely already implemented: apps/desktop-qt/src/native/ProjectCloneController.cpp
-    @backlog @desktop @mobile
+    @backlog @desktop @mobile @priority-high
     Scenario Outline: A clone request the MC did not accept is reported
       Given a clone of "acme/shop" is <state>
       And the MC refuses the request
@@ -495,7 +495,7 @@ Feature: Adding projects
         | failed  | retries the clone | Failed to retry clone  |
 
     # Likely already implemented: apps/desktop-qt/src/native/ProjectCloneController.cpp
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: The clone notice steps aside while the user is in that project's new thread
       Given a clone of "acme/shop" is running
       When the user opens a new thread in "shop"
@@ -503,7 +503,7 @@ Feature: Adding projects
       When the user leaves that new thread
       Then the clone's notice is shown again
 
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario Outline: A message cannot be sent into a project whose clone has not finished
       Given a clone of "acme/shop" <state>
       And the user wrote a message in a new thread in "shop"
@@ -516,19 +516,19 @@ Feature: Adding projects
         | failed        | Repository not cloned |
         | was cancelled | Repository not cloned |
 
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: A message can be sent once the clone finishes
       Given the user wrote a message in a new thread in "shop" while "acme/shop" was cloning
       When the clone finishes
       Then the message can be sent
 
-    @backlog @desktop @mobile
+    @backlog @desktop @mobile @priority-low
     Scenario: A finished clone's notice goes away by itself
       Given a clone of "acme/shop" finished
       When eight seconds pass
       Then the notice "Cloned acme/shop" is gone
 
-    @backlog @desktop @mobile
+    @backlog @desktop @mobile @priority-low
     Scenario: A clone's notice goes when the MC stops tracking the clone
       Given a clone of "acme/shop" failed and its notice is shown
       When the project "shop" is removed on another device
@@ -542,7 +542,7 @@ Feature: Adding projects
       And the project "shop" is still listed with its folder
 
     # Legacy: apps/server/src/project/ProjectCloneTracker.ts (rejectCommandsDuringClone)
-    @mc @backlog
+    @mc @backlog @priority-high
     Scenario Outline: A thread cannot start in a project whose clone has not landed
       Given a clone of "acme/shop" is <state>
       When a client starts a thread in the project "shop"
@@ -563,7 +563,7 @@ Feature: Adding projects
       And no second project is created
 
     # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (prepareDestination)
-    @mc @backlog
+    @mc @backlog @priority-high
     Scenario: A clone is refused before anything is created when its folder has files
       Given the folder "/home/sam/shop" already holds files
       When a client starts cloning "https://example.com/acme/shop.git" into "/home/sam/shop"
@@ -584,7 +584,7 @@ Feature: Adding projects
       Then the clone goes into "/home/sam/work/shop"
 
     # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (redactRemoteUrl, redactUrlCredentials)
-    @mc @backlog
+    @mc @backlog @priority-high
     Scenario: Credentials in a pasted clone address never reach clients
       When a client starts cloning "https://sam:s3cret@example.com/acme/shop.git" into "/home/sam/shop"
       Then git is given the address as pasted
@@ -600,7 +600,7 @@ Feature: Adding projects
       And the clone is reported as failed with the last lines git printed
 
     # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (CLONE_TIMEOUT_MS)
-    @mc @backlog
+    @mc @backlog @priority-low
     Scenario: A tracked clone has no deadline but a one-shot clone gives up after two minutes
       Given a clone is still transferring after two minutes
       Then a clone started in the background keeps running
@@ -622,7 +622,7 @@ Feature: Adding projects
       And the checkout is kept
 
     # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (discardClone)
-    @mc @backlog
+    @mc @backlog @priority-high
     Scenario: Cleaning up a clone never deletes files that did not come from it
       Given a clone of "acme/shop" failed
       And the user has since put files of their own in "/home/sam/shop"
@@ -631,7 +631,7 @@ Feature: Adding projects
       And the user's files are untouched
 
     # Legacy: apps/server/src/project/ProjectCloneTracker.ts (discard)
-    @mc @backlog
+    @mc @backlog @priority-high
     Scenario: Deleting a project stops its clone and removes the partial checkout
       Given a clone of "acme/shop" is running for the project "shop"
       When a client deletes the project "shop"
@@ -640,7 +640,7 @@ Feature: Adding projects
       But a clone that had already finished keeps its files
 
     # Legacy: apps/server/src/project/gitCloneProgress.ts, ProjectCloneTracker.ts (progress)
-    @mc @backlog
+    @mc @backlog @priority-low
     Scenario: Clone progress detail and errors are kept short
       Given git reports a transfer detail or an error far longer than a notice can show
       Then the reported detail and error are cut with an ellipsis within the contract's limit
@@ -723,7 +723,7 @@ Feature: Adding projects
         | https://host/acme/123                    | 123    |
 
     # Legacy: packages/client-runtime/src/operations/projects.ts (getCloneDirectoryName)
-    @backlog @desktop @mobile @tui
+    @backlog @desktop @mobile @tui @priority-low
     Scenario Outline: A pasted address that names no repository proposes no folder
       When the user pastes <address> as the Git URL to clone
       Then no folder name is proposed

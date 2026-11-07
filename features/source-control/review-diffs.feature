@@ -412,7 +412,7 @@ Feature: Reviewing working tree and branch changes
       | for the contents of a file | outside the MC's projects and worktrees        | it is refused with "Review cwd must be inside one of this MC's projects."     |
       | for a review               | reached through a link out of the MC's projects | it is refused with "Review cwd must be inside one of this MC's projects."    |
 
-  @backlog @shared
+  @backlog @shared @priority-high
   Scenario: The diff panel opens on all branch changes
     Given the agent committed and pushed everything
     When the user opens the diff panel

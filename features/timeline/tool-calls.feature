@@ -69,7 +69,7 @@ Feature: Tool calls and file changes
   # before it at its end. It changes as calls land and never animates.
   # Proved by tst_Timeline.qml (test_runningToolCallsReadAsOneLiveRow), not yet by a step (hal-c2/hal-c2#213).
   # TUI: the latest call and "+N previous tool calls" are still two lines (apps/tui/src/host/timelineState.ts).
-  @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-high
   Scenario: A running turn's tool calls read as one live row
     Given the agent has run five tool calls in a row in the running turn
     Then one row shows the latest tool call with "+4 previous tool calls" beside it
@@ -743,27 +743,27 @@ Feature: Tool calls and file changes
     Then the failure row stays open with its message
     And the row has nothing more to expand
 
-  @backlog @shared
+  @backlog @shared @priority-high
   Scenario: The thinking row after a failed call still opens the run's tool calls
     Given the latest tool call of a running turn failed and the live row reads "Thinking"
     When the user opens that row
     Then the run's tool calls show below it and close again when it is closed
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: Tool inputs that are JSON are highlighted
     Given a tool call whose input is valid JSON
     When the user inspects the call
     Then the input is highlighted for the current theme
     And an input that is not JSON shows as plain text
 
-  @backlog @shared
+  @backlog @shared @priority-high
   Scenario: An expanded command or tool call shows its output
     Given a finished command whose output was not sent with the thread
     When the user expands the call
     Then the MC supplies its stored output, limited to 256 KiB per value
     And a call with nothing more to show does not expand
 
-  @backlog @shared
+  @backlog @shared @priority-high
   Scenario: An expanded call shows the call above a muted result
     When the user expands a tool call
     Then the full call shows first and its result below it, muted, without cards or labels
@@ -776,13 +776,13 @@ Feature: Tool calls and file changes
     And it shows the server's logo when the provider supplies one
     And a run of calls to that server groups as "Used Firecrawl integration"
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: An agent's own built-in tools are not shown as an integration
     Given an agent labels its built-in shell and edit tools like MCP tools
     When they are shown
     Then they keep their command and diff display and are not grouped as an integration
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: An expanded shell command is syntax highlighted
     Given a command row with a chained command, or a script inside a heredoc or a shell wrapper
     When the user expands it
@@ -798,14 +798,14 @@ Feature: Tool calls and file changes
     Then the image is shown, also when the output is larger than the 256 KiB the expanded read allows
     And no base64 text is shown
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: An agent can show an HTML page inline above its reply
     Given an agent published a self-contained HTML page in the thread
     When the thread is shown
     Then the page renders inline above the agent's final reply
     And it cannot read local files or reach the local network, and a link in it opens only after a user action in the frame
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: An inline HTML page does not hold the thread's scroll
     Given an inline page that wraps a few pixels taller than its frame
     When the user scrolls the thread with the pointer over it

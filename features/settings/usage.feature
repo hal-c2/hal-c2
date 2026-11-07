@@ -93,6 +93,7 @@ Feature: Usage and limits
       When a client asks for daily usage in "Mars/Olympus"
       Then the buckets are in UTC
 
+  @priority-low
   Rule: Prices
 
     @mc
@@ -243,7 +244,7 @@ Feature: Usage and limits
       Then "server" usage is shown
       And "laptop" is shown as still scanning
 
-    @desktop @backlog-desktop
+    @desktop @backlog-desktop @priority-low
     Scenario: Usage shows one loading state until the first answer
       Given the first scan of session history is still running
       When the user views usage for the cost metric
@@ -261,7 +262,7 @@ Feature: Usage and limits
       When the user opens usage again
       Then it shows tokens
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile @backlog-tui @priority-low
     Scenario: An environment on an older server is left out of the totals
       Given "server" runs an older server version
       When the user views usage for all environments
@@ -270,7 +271,7 @@ Feature: Usage and limits
 
     # Upstream #8208: an environment on a newer usage contract than this app is left out, and the
     # notice says the app is the side that is behind.
-    @shared @backlog
+    @shared @backlog @priority-low
     Scenario: An environment on a newer usage format is left out and the app is named as behind
       Given "server" reports usage in a newer format than this app reads
       When the user views usage for all environments
@@ -278,7 +279,7 @@ Feature: Usage and limits
       And the usage of "server" is not counted
 
     # Upstream #10076: a provider this app does not know leaves the rest of the usage shown.
-    @shared @backlog
+    @shared @backlog @priority-low
     Scenario: A provider this app does not know leaves the rest of usage shown
       Given "server" reports usage for a provider this app does not know, alongside Claude
       When the user views usage for all environments
@@ -358,7 +359,7 @@ Feature: Usage and limits
       Then each model shows what percentage of the total cost it makes up
 
     # Legacy: packages/shared/src/usageFormat.ts (formatTokens, formatPercent, formatDayShort)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: Usage figures are written short enough to line up in a column
       Given a model used <tokens> tokens on "2026-08-07" and makes up a share of 0.123 of the cost
       When the user views usage broken down by model and by day
@@ -508,7 +509,7 @@ Feature: Usage and limits
       When the user views limits
       Then the limit shows the time it resets and how long that is from now
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An account's email can be revealed and hidden
       Given the limits show a provider account whose email is masked
       When the user reveals the email
@@ -519,7 +520,7 @@ Feature: Usage and limits
   Rule: Keyboard shortcuts on the Usage page
 
     # Upstream #10158. Letter shortcuts stay out of text fields, popups and dialogs.
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario Outline: A letter key shows that usage metric
       Given the user is on the Usage page
       When the user presses "<key>"
@@ -531,7 +532,7 @@ Feature: Usage and limits
         | T   | tokens |
         | L   | limits |
 
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario Outline: Ctrl or Cmd with Shift and a number picks the usage period
       Given the user is on the Usage page showing cost
       When the user presses <shortcut>
@@ -544,25 +545,25 @@ Feature: Usage and limits
         | Ctrl+Shift+3 | 30 days  |
         | Ctrl+Shift+4 | 90 days  |
 
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: The usage period shortcuts do nothing while limits is shown
       Given the user is on the Usage page showing limits
       When the user presses Ctrl+Shift+2
       Then the Usage page still shows limits
 
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: Escape goes back from the Usage page to the page before it
       Given the user opened usage from a thread
       When the user presses Escape
       Then the thread is shown again
 
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: Escape in a text field on the Usage page does not leave the page
       Given the user is typing in a text field on the Usage page
       When the user presses Escape
       Then the Usage page stays open
 
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: A letter typed in a text field on the Usage page does not change the metric
       Given the user is typing in a text field on the Usage page showing cost
       When the user types "t"

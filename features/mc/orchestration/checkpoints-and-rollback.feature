@@ -394,7 +394,7 @@ Feature: Checkpoints, diffs and rewinding
 
   # Codex 0.156 has no thread/rollback. A thread with legacy history (created before Codex 0.151)
   # is refused by thread/revert, and the refusal reaches the user rather than falling back.
-  @mc @backlog @plugin-codex
+  @mc @backlog @plugin-codex @priority-high
   Scenario: A Codex rollback that Codex refuses for legacy history is reported as a failure
     Given a Codex thread created before Codex 0.151 with a run to rewind to
     When the user rewinds it to that run

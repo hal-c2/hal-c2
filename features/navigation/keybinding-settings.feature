@@ -163,14 +163,14 @@ Feature: Keybindings settings
       Then "sidebarFocus" is flagged as unknown
 
     # Legacy: apps/web/src/components/settings/KeybindingsSettings.tsx (WhenExpressionBuilder, parseError overlay)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The condition builder is paused while the typed condition is broken
       When the user types the condition "terminalFocus &&"
       Then the visual condition builder says to fix the expression to continue editing visually
       And the condition can be edited again once the expression is valid
 
     # Legacy: apps/web/src/components/settings/KeybindingsSettings.logic.ts (whenNodeRemoveLabel)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: Removing from the condition builder says how much it removes
       Given a binding whose condition is "terminalFocus && !previewOpen"
       When the user looks at the removal choice for <target>
@@ -249,7 +249,7 @@ Feature: Keybindings settings
       When the user opens keybindings.json from settings
       Then the user is told "Unable to open keybindings file"
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A browser warns that it may claim shortcuts
       Given the user is using HAL-C2 in a browser
       Then the panel warns that some shortcuts may be claimed by the browser before HAL-C2 sees them

@@ -129,7 +129,7 @@ Feature: Provider capabilities
       | Cursor      |
       | Antigravity |
 
-  @backlog
+  @backlog @priority-low
   Scenario: Antigravity refuses a rewind of the conversation
     Given an Antigravity thread with three turns
     When the user rewinds to the first turn
@@ -147,7 +147,7 @@ Feature: Provider capabilities
 
     # The OpenCode row is split out: OpenCode's plan agent answers in prose, and neither
     # server captures a proposed plan from it (OpenCodeAdapterV2.ts emitsProposedPlan: false).
-    @backlog
+    @backlog @priority-low
     Examples: Not yet on the MC
       | provider |
       | OpenCode |
@@ -172,21 +172,21 @@ Feature: Provider capabilities
       | provider    |
       | Codex       |
 
-  @shared @backlog-desktop @backlog-mobile
+  @shared @backlog-desktop @backlog-mobile @priority-low
   Scenario: An ACP subagent's messages stay in its own thread
     Given an ACP agent starts a native child session
     When the child sends messages and a final summary
     Then they appear in the child's thread
     And the parent receives only the child's result
 
-  @shared @backlog-mc @backlog-desktop @backlog-mobile
+  @shared @backlog-mc @backlog-desktop @backlog-mobile @priority-low
   Scenario: An ACP edit carries its replaced lines
     Given an ACP agent edits a file by giving the old text and the new text
     When the user looks at the change
     Then the diff shows the replaced lines
     And the diff is not empty just because the agent sent no patch
 
-  @backlog
+  @backlog @priority-low
   Scenario: A registry agent declares its capabilities through its plugin
     Given a registry agent that declares it can be steered
     When the user sends a follow-up during its turn

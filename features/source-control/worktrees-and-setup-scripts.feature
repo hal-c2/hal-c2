@@ -577,13 +577,13 @@ Feature: Worktrees and setup scripts
     When the user opens a new thread in "shop"
     Then that thread's worktree starts from origin
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A new worktree honors the submodule setting
     Given the submodule setting is "skip" and the project has no worktree script of its own
     When a worktree is created
     Then submodules are not initialized
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: A temporary worktree branch gets its name from the prefix
     Given <state>
     When a worktree thread is provisioned

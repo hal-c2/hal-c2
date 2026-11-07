@@ -158,14 +158,14 @@ Feature: Viewing and editing files
         | data/blob.zzz   | holds plain text                           |
         | src/bundle.ts   | holds more than 512K characters of code    |
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile @backlog-mobile @priority-low
     Scenario: A coloured line too long to show is cut with its colours
       Given "src/long.ts" in "shop" has a line of TypeScript 3000 characters long
       When the user opens "src/long.ts"
       Then the long line is shown up to its 2000th character and then "…"
       And no colour reaches past the cut
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile @backlog-mobile @priority-low
     Scenario: An open file follows the theme without being read again
       Given the appearance is Light
       And "src/cart.ts" in "shop" holds TypeScript code
@@ -343,7 +343,7 @@ Feature: Viewing and editing files
       And the file tree gives way before the buttons do
       And a tab too narrow to leave the tree room for ten characters of a name at the user's font size shows the file alone
 
-    @desktop @backlog-desktop
+    @desktop @backlog-desktop @priority-low
     Scenario: A font too large for the Files tab keeps the way out of the file
       Given the user's interface font is so large the buttons above the file do not fit the Files tab
       When the user opens "docs/guide.md"
@@ -872,7 +872,7 @@ Feature: Viewing and editing files
         | build.log   | text                                        |
         | invoice.pdf | a document the user can page through        |
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile @backlog-mobile @priority-low
     Scenario Outline: A text attachment is coloured by the language its name says
       Given the user has attached "<file>" to a draft
       When the user opens the attachment from the draft

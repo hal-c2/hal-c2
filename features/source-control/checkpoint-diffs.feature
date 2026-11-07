@@ -12,6 +12,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/DiffPanel.qml
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 
+@priority-high
 Feature: What each turn changed
   Every finished turn leaves a hidden checkpoint of the checkout, so the user can see what
   one turn changed or everything the thread has changed since it began.

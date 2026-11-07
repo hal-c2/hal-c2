@@ -106,7 +106,7 @@ Feature: Bringing history over from the Node server
   # The Node server migrates version 1 threads as it starts and reports progress to
   # clients. The MC imports only when the operator runs the import (above), so this
   # conflicts with that decision; a maintainer should keep or drop it.
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A version 1 database is migrated on startup
     Given the Node server's database holds threads from the version 1 orchestrator
     When the MC starts on it
@@ -129,7 +129,7 @@ Feature: Bringing history over from the Node server
     Then the whole transcript is migrated before the thread is read or changed
     And migrating it again adds no message twice
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A transcript that fails to migrate does not stop the others
     Given the transcript of one version 1 thread cannot be migrated
     When the MC migrates transcripts in the background
@@ -144,7 +144,7 @@ Feature: Bringing history over from the Node server
     And they are told it is complete once the last transcript is in
     And a start with nothing left to migrate announces no migration
 
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario Outline: A version 1 thread with unusable details is migrated with defaults
     Given a version 1 thread has <detail>
     When the thread is migrated
@@ -175,7 +175,7 @@ Feature: Bringing history over from the Node server
     Then the thread gains its pin, snooze, unsettle time, pull requests and place in the active order from the version 1 data
     And a detail the user has changed since the migration is left as it is
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A deleted version 1 thread stays deleted after migration
     Given a version 1 thread was deleted before the migration
     When the thread is migrated

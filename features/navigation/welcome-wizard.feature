@@ -396,6 +396,7 @@ Feature: Welcome wizard
       When the wizard checks agents
       Then only Claude Code and Codex are listed
 
+  @priority-low
   Rule: Import your projects
 
     @mc

@@ -255,7 +255,7 @@ Feature: Runs and turns
     Then the plugin opens the session again
     And the run fails only once the plugin gives up
 
-  @mc @shared @backlog-mobile
+  @mc @shared @backlog-mobile @priority-high
   Scenario: A failed turn keeps the output it had already produced
     Given the provider streamed part of its answer to "t1" and then failed
     When the failure is recorded
@@ -290,7 +290,7 @@ Feature: Runs and turns
       | the provider gives up on its usage limit     | Usage limit reached    |
       | the user stops the turn while it is retrying | Provider retry stopped |
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A failed turn says what the user can do about it
     When a turn of "t1" fails because <cause>
     Then the run fails with "<message>"
@@ -304,7 +304,7 @@ Feature: Runs and turns
       | the MC cannot tell whether handed-over history arrived  | HAL-C2 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.       |
       | of an internal error the provider did not explain       | Provider turn failed.                                                                                                    |
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A failure message never shows credentials
     When the provider fails a turn of "t1" with a message holding <secret>
     Then the failure the thread records shows <shown>
@@ -316,7 +316,7 @@ Feature: Runs and turns
       | an API key, token, password or secret      | "[REDACTED]" in place of the value       |
       | a URL that cannot be read                  | "[REDACTED_URL]" in place of the URL     |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A very long failure message is cut short
     When the provider fails a turn of "t1" with a message longer than 4,096 characters
     Then the failure the thread records is at most 4,096 characters and ends with "…"
@@ -366,7 +366,7 @@ Feature: Runs and turns
     Then the run fails with "Cannot compact an empty thread" and "Start a conversation before compacting this thread."
     And nothing is sent to the provider
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A workspace that is missing or is not a folder fails the turn before the provider starts
     Given the workspace of "t1" is not a worktree and its folder is gone
     When the user sends "Hi" to "t1"
@@ -434,14 +434,14 @@ Feature: Runs and turns
     When the user uploads feedback for "t1"
     Then it fails with "Provider 'claudeAgent' does not support feedback uploads."
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: An interrupt is recorded as a request and then as its outcome
     Given "t1" has a running turn
     When the user interrupts the run giving the reason "wrong branch"
     Then the run records an item titled "Interrupt requested" saying "wrong branch"
     And once the provider stops, an item titled "Interrupted" saying "Run interrupted by user"
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An interrupt without a reason says only that it was requested
     Given "t1" has a running turn
     When the user interrupts the run without a reason
@@ -491,14 +491,14 @@ Feature: Runs and turns
     Then the run fails with "Run preparation failed."
     And the internal error text is not shown on the run
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Output of another thread on a shared provider process stays off this run
     Given "t1" and thread "t2" share one provider process and both have a running turn
     When the provider reports output for the turn of "t2"
     Then nothing is recorded on the run of "t1"
     And the output is recorded on the run of "t2"
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Stop settles a run whose provider disappeared before it finished
     Given a run is still active because its provider vanished before reporting an end
     When the user stops the thread
@@ -506,7 +506,7 @@ Feature: Runs and turns
     And its pending requests are closed and its checkpoint is captured
     And a late result from the provider cannot undo the stop or replace a newer attempt
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Stopping during a slow provider start leaves no session behind
     Given a provider session is still starting
     When the user stops the thread before the start completes

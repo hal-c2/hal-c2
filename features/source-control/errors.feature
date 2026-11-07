@@ -173,7 +173,7 @@ Feature: When source control goes wrong
       | "fatal: cannot lock ref"                            | Git could not update a local reference. Another Git operation or a stale lock may be blocking the fetch; check the repository on the server, then retry. |
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (STATUS_UPSTREAM_REFRESH_ENV, fetchRemote)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A background fetch never stops to ask for a password
     Given the remote of "shop" needs a password that git has not stored
     When the MC fetches the remote in the background
@@ -217,7 +217,7 @@ Feature: When source control goes wrong
     Then the user is told the repository could not be found on GitHub
 
   # Legacy: apps/server/src/sourceControl/SourceControlProvider.ts (transportSafeSourceControlErrorValue)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario Outline: A repository or link named in a failure carries no secrets
     When the user looks up <named> and the host refuses it
     Then the failure names <shown>

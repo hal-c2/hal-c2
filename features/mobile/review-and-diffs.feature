@@ -20,7 +20,7 @@ Feature: Reviewing changes on a phone
     Given the phone is paired with "My MacBook"
     And the thread "Fix checkout" has changed "src/cart.ts" and "src/price.ts"
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario Outline: The user chooses which changes to review
     When the user reviews the <source> of "Fix checkout"
     Then the diff shows the <source>
@@ -62,7 +62,7 @@ Feature: Reviewing changes on a phone
     When the user switches to the working tree and back
     Then "src/cart.ts" is still viewed in the latest turn
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Changed words are highlighted within a changed line
     Given a line changed from "total = 1" to "total = 2"
     When the user reviews that line
@@ -74,14 +74,14 @@ Feature: Reviewing changes on a phone
     Then the lines of "src/cart.ts" are coloured as TypeScript
     And a multi-line comment or string keeps its colour across the lines it spans
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A very long line in a diff stays plain while the lines after it are still coloured
     Given the diff of "src/cart.ts" contains a line of more than 1,000 characters
     When the user reads the diff
     Then that line is shown without colour
     And the lines after it are coloured as usual
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Words are not marked inside a very long changed line
     Given a changed line of more than a thousand characters
     When the user reviews that line
@@ -110,13 +110,13 @@ Feature: Reviewing changes on a phone
     And the file is marked as a partial preview
     And its added and removed counts still cover the whole file
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: The user comments on a range of lines
     Given the user is reviewing "src/cart.ts"
     When the user selects lines 10 to 14 and writes "use the helper here"
     Then the comment is attached to lines 10 to 14 in the draft for "Fix checkout"
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Tapping a line starts a comment on that line
     Given the user is reviewing "src/cart.ts"
     When the user taps line 10
@@ -130,7 +130,7 @@ Feature: Reviewing changes on a phone
     When the user taps line 14
     Then a comment on lines 10 to 14 is started
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A range cannot be carried into another file
     Given the user touched and held line 10 of "src/cart.ts"
     When the user taps line 3 of "src/price.ts"
@@ -167,7 +167,7 @@ Feature: Reviewing changes on a phone
       | line 10          | Line 10    |
       | lines 10 to 14   | Lines 10-14 |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A long selection is previewed in a few lines that scroll
     Given the user selected twelve lines of "src/cart.ts"
     When the user starts a review comment
@@ -193,7 +193,7 @@ Feature: Reviewing changes on a phone
     When the user reads the message on the phone
     Then the comment is shown with its file name, its line range and the lines in the language of the file
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: An empty diff says so
     Given the latest turn changed nothing
     When the user reviews the latest turn
@@ -206,7 +206,7 @@ Feature: Reviewing changes on a phone
     Then the user is told there are no review diffs
     And the user is told the thread has no ready turn diffs and the worktree diff is empty
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario Outline: Each turn is offered as a source named by its number
     Given "Fix checkout" has a turn whose diff <state>
     When the user opens the choice of diffs to review
@@ -219,7 +219,7 @@ Feature: Reviewing changes on a phone
       | is still being prepared | Diff pending    |
       | could not be made       | Diff error      |
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Turns are offered newest first and the newest is the latest turn
     Given "Fix checkout" has three turns with ready diffs
     When the user opens the choice of diffs to review
@@ -238,7 +238,7 @@ Feature: Reviewing changes on a phone
     Then the working tree is offered as the dirty worktree
     And it says it covers tracked, staged and untracked changes
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A diff that could not be loaded names the file and can be retried
     Given the diff of "src/cart.ts" could not be loaded
     When the user reviews the changes
@@ -246,14 +246,14 @@ Feature: Reviewing changes on a phone
     When the user selects "src/cart.ts"
     Then the diff of "src/cart.ts" is asked for again
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A file preview that cannot be drawn says so and keeps the counts
     Given the preview of "src/cart.ts" cannot be displayed
     When the user reviews the changes
     Then "src/cart.ts" says its preview could not be displayed
     And its added and removed counts are still shown
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: A diff the phone cannot lay out is shown as a raw patch
     Given the diff of the latest turn <problem>
     When the user reviews the latest turn
@@ -273,14 +273,14 @@ Feature: Reviewing changes on a phone
     When the user pulls down on the diff
     Then the phone asks "My MacBook" for the working tree changes again
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Android offers to refresh the current diff from the menu
     Given the user is on an Android phone
     And the user is reviewing the working tree
     When the user opens the review menu
     Then the user is offered to refresh the current diff
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The review header summarises the diff and the pending comments
     Given the diff adds 12 lines and removes 4
     And the draft for "Fix checkout" carries two review comments
@@ -295,7 +295,7 @@ Feature: Reviewing changes on a phone
     Then the user is told the review is unavailable and why
     And the earlier diff is still shown below
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A diff seen before is shown while offline
     Given the user reviewed the latest turn earlier
     And "My MacBook" is unreachable
@@ -309,26 +309,26 @@ Feature: Reviewing changes on a phone
     When the user reviews branch changes for the first time
     Then the user is told the diff will load when the connection returns
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Only recent diffs are kept on the phone
     Given the user has reviewed nine different diffs
     Then the phone keeps only the eight most recent diffs
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A diff too large to keep does not push the kept diffs out
     Given the user has reviewed three diffs that the phone kept
     When the user reviews a diff too large for the phone to keep
     Then the large diff is shown while it is open
     And the three earlier diffs are still kept
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Nearby diffs are prepared before the user opens them
     Given the user is reviewing the latest turn
     When the user opens the choice of diffs
     Then the diffs next to the open one are already prepared
     And choosing one shows it without waiting
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Offline the choice of diffs still offers the diffs seen before
     Given the user reviewed only the latest turn earlier
     And "My MacBook" is unreachable
@@ -348,32 +348,32 @@ Feature: Reviewing changes on a phone
     When the diff is read again and no longer contains "src/price.ts"
     Then no file is selected in the changed files list
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Wide diffs scroll sideways without breaking the back swipe
     Given the user is reviewing a file with very long lines scrolled to their start
     When the user swipes from the leading edge
     Then the user goes back to the thread
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Each file in a diff scrolls sideways on its own
     Given the diff shows "src/cart.ts" and "src/price.ts" with very long lines
     When the user scrolls the lines of "src/cart.ts" sideways
     Then the lines of "src/price.ts" stay where they were
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The header of the file being read stays at the top of the diff
     Given the diff of "src/cart.ts" is longer than the screen
     When the user scrolls down through "src/cart.ts"
     Then the header of "src/cart.ts" stays at the top
     And the header of "src/price.ts" replaces it when the user reaches that file
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A renamed file's header shows where it came from
     Given the agent renamed "src/cart.ts" to "src/basket.ts"
     When the user reviews the changes
     Then the header reads "src/cart.ts" to "src/basket.ts"
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A long file path in a header scrolls instead of being cut off
     Given the path of a changed file is wider than the screen
     When the user looks at its header
@@ -381,19 +381,19 @@ Feature: Reviewing changes on a phone
     When the user drags the path sideways
     Then the rest of the path is shown
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Collapsing a file keeps its header where the user is looking
     Given the user has scrolled into the middle of "src/cart.ts"
     When the user collapses "src/cart.ts"
     Then the header of "src/cart.ts" is still on screen
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Deleted lines are marked in a way that does not rely on colour
     Given a line was deleted from "src/cart.ts"
     When the user reviews the changes
     Then the deleted line is marked with stripes as well as its colour
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A comment inside a diff can be collapsed to its range
     Given "src/cart.ts" has a comment on lines 10 to 14
     When the user reviews the changes
@@ -403,7 +403,7 @@ Feature: Reviewing changes on a phone
     When the user expands the comment
     Then the comment text is shown again
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario Outline: Git actions can be taken from the phone
     When the user chooses to <action> from the thread
     Then <outcome>
@@ -416,7 +416,7 @@ Feature: Reviewing changes on a phone
       | pull the latest changes       | the branch is updated from its remote           |
       | open the pull request         | the pull request opens in the browser           |
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A git action in progress is shown over the thread until it ends
     Given the user started committing the changes of the thread
     Then a notice over the thread says the commit is in progress
@@ -424,20 +424,20 @@ Feature: Reviewing changes on a phone
     Then the notice says what was done
     And the user can dismiss it
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A finished git action that made a pull request leads to it
     Given the user opened a pull request from the thread
     When the notice that the pull request was opened is tapped
     Then the pull request opens in the browser
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A running git action shows its latest output or how long it has run
     Given a git action of the thread is running
     Then the notice shows the latest line the action printed
     When the action has printed nothing for a while
     Then the notice says how many seconds it has been running
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A finished git action's notice goes away by itself
     Given a git action of the thread finished
     When 5 seconds pass
@@ -474,7 +474,7 @@ Feature: Reviewing changes on a phone
       | create a branch                 |
       | pull the latest changes         |
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A failed git action is reported over the thread until dismissed
     Given committing the changes of the thread fails
     Then a notice over the thread says the git action failed and why
@@ -516,7 +516,7 @@ Feature: Reviewing changes on a phone
     When the user opens the branch list
     Then "feature/search" cannot be chosen
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: Each branch in the branch list says where it stands
     Given the thread's checkout is on "feature/cart" and the default branch is "main"
     When the user opens the branch list
@@ -573,7 +573,7 @@ Feature: Reviewing changes on a phone
       | 1 commit behind its remote     | 1 behind            |
       | on a branch with pull request 12 | PR #12            |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A long branch name is shortened in the middle in the git menu
     Given the thread's branch is "feature/very-long-name-for-the-cart-total-rounding-fix"
     When the user opens the git menu of the thread
@@ -598,7 +598,7 @@ Feature: Reviewing changes on a phone
     When the user opens the git sheet
     Then pulling the latest changes is not listed
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The git sheet shows the checkout's worktree folder
     Given the thread works in a worktree
     When the user opens the git sheet
@@ -620,7 +620,7 @@ Feature: Reviewing changes on a phone
     When the user goes back
     Then the thread is shown
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: The user merges a thread's work back to its source from the thread
     Given "Fix checkout" is a fork whose work can be merged back to its source
     When the user chooses to merge back to the source
@@ -649,7 +649,7 @@ Feature: Reviewing changes on a phone
     When the user resets the selection
     Then both files are selected again
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Only the files the user kept are committed
     Given the user left "src/price.ts" out of the commit
     When the user commits

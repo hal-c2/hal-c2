@@ -48,13 +48,13 @@ Feature: Formatted messages
     Given a connected environment with the project "shop"
     And the user is looking at a thread in "shop"
 
-  @shared @backlog-mobile
+  @shared @backlog-mobile @priority-high
   Scenario: A reply shows its formatting
     When the agent answers with a heading, a list, a quote, a code block and a table
     Then the heading and the list are shown as text
     And the quote, the code block and the table are each shown in their own form
 
-  @shared @backlog-mobile
+  @shared @backlog-mobile @priority-high
   Scenario: The user copies a code block
     Given the agent's reply has a code block
     When the user copies the code block
@@ -157,20 +157,20 @@ Feature: Formatted messages
     When the agent answers with a link to "javascript:alert(1)"
     Then the link's text is shown and nothing can be opened
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: A reply being written keeps what is already shown
     Given the agent is writing a reply of several paragraphs
     When the reply grows by another paragraph
     Then the paragraphs already shown are not drawn again
 
-  @shared @backlog-mobile
+  @shared @backlog-mobile @priority-high
   Scenario: A code block is shown as code while it is written
     Given the agent is writing a code block
     Then the code written so far is shown as a code block
     When the agent closes the code block
     Then the same code block is shown, finished
 
-  @shared @backlog-mobile
+  @shared @backlog-mobile @priority-low
   Scenario Outline: A GitHub alert shows its kind
     When the agent answers with a "<marker>" alert
     Then the quote is titled "<title>"
@@ -186,7 +186,7 @@ Feature: Formatted messages
   # The same renderer draws diagrams in pages and the file viewer
   # (features/space/markdown.feature).
   # https://github.com/hal-c2/hal-c2/issues/843
-  @shared @backlog-mobile
+  @shared @backlog-mobile @priority-low
   Scenario: A Mermaid diagram in a reply is drawn
     When the agent answers with a "mermaid" code block holding a flowchart
     Then on the desktop and the phone the flowchart is drawn in place of the code block
@@ -194,7 +194,7 @@ Feature: Formatted messages
     And the user can switch to the diagram's source and copy it
 
   # https://github.com/hal-c2/hal-c2/issues/843
-  @shared @backlog-mobile
+  @shared @backlog-mobile @priority-low
   Scenario: A Mermaid diagram that cannot be drawn shows its source and says why
     When the agent answers with a "mermaid" code block holding a flowchart with an unclosed bracket
     Then the diagram's source is shown as a code block
@@ -209,12 +209,12 @@ Feature: Formatted messages
     When the agent closes the code block
     Then the diagram is drawn
 
-  @shared @backlog-mobile
+  @shared @backlog-mobile @priority-high
   Scenario: A user message keeps its line breaks
     Given the user's message has two lines
     Then the message is shown on two lines
 
-  @desktop @mobile @backlog
+  @desktop @mobile @backlog @priority-low
   Scenario Outline: A code block is headed by the file name its fence gives
     Given the agent's reply has a code block whose fence reads <fence>
     Then the code block is headed "<heading>"
@@ -235,12 +235,12 @@ Feature: Formatted messages
     When the user closes the section
     Then its content is hidden
 
-  @desktop @mobile @backlog
+  @desktop @mobile @backlog @priority-low
   Scenario: A collapsible section without a title is called "Details"
     Given the agent's reply has a collapsible section with no title
     Then the section shows "Details"
 
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: A Codex template card puts its skill into the draft
     Given the agent's reply offers the "Google Slides" template
     When the user chooses "Use template"
@@ -263,7 +263,7 @@ Feature: Formatted messages
     Then the user is told "Unable to add to chat"
 
   # Legacy: packages/client-runtime/src/codexArtifactTemplates.ts (codexArtifactTemplatePresentationLabel)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario Outline: A Codex template card names the kind of template it is
     When the agent's reply offers the "Hello World" template of the kind <kind>
     Then the card reads "Hello World" with the label "<label>"
@@ -301,7 +301,7 @@ Feature: Formatted messages
 
   # Legacy: packages/client-runtime/src/codexFileCitations.ts (markdownDestinationPath),
   # packages/client-runtime/src/codexMarkdownDirectives.test.ts (path round trips)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario Outline: A cited file whose path has awkward characters still opens that file
     When the agent's reply cites the file <path> at line 7
     Then following the chip opens <path> at line 7
@@ -342,7 +342,7 @@ Feature: Formatted messages
       | "vendor/jquery-3.6.0.min.js" | a file chip              |
 
   # Legacy: packages/client-runtime/src/markdownLinks.ts (parseMarkdownFileLink)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario Outline: A link in a reply is a file only when its destination looks like one
     When the agent's reply links to "<destination>"
     Then the link is <shown>
@@ -483,7 +483,7 @@ Feature: Formatted messages
 
   # The desktop links no video player (Qt Multimedia): it offers the video to
   # open in the browser.
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: A linked video opens as a preview
     Given the agent's reply links to the file "media/intro.mp4"
     When the user follows the link
@@ -615,7 +615,7 @@ Feature: Formatted messages
     When the user copies its full path from the file chip's menu
     Then the user is told "Failed to copy full path" with the reason
 
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: A link to a website carries the site's icon
     When the agent's reply links to "https://example.com/docs" with the text "the docs"
     Then the link is shown with the icon of "example.com"
@@ -725,7 +725,7 @@ Feature: Formatted messages
     When the user selects exactly that code block and copies
     Then the clipboard holds the code without a fence
 
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: An image or video in a reply shows where it comes from on hover
     Given the agent's reply embeds the image "assets/logo.png" from the thread's workspace
     When the user holds the pointer over the image
@@ -796,7 +796,7 @@ Feature: Formatted messages
       | an image on the host       | the image has more than 64 million pixels              | Copy image | Could not copy image      |
       | a video on the host        | the file cannot be fetched                             | Save video | Could not save video      |
 
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: A media menu stays single while it is open
     Given the agent's reply embeds an image
     And the image's menu is open
@@ -903,7 +903,7 @@ Feature: Formatted messages
     When the agent's reply reads "/tmp/frame.png" in plain text and again in code formatting
     Then only the path in code formatting is a link to the file
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A link keeps its destination when its text is code
     When the agent's reply links to "https://example.com/docs" with the text "src/main.ts" in code formatting
     Then the link opens "https://example.com/docs"
@@ -919,7 +919,7 @@ Feature: Formatted messages
     Then the link opens "https://cdn.example.com/clip.mp4" and not a file on the phone
 
   # Upstream #13795: bare addresses with a port or a one-word host were not links.
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario Outline: A bare address with a port or a one-word host in a reply is one link
     When the agent's reply contains "<address>"
     Then "<address>" is shown as one link
@@ -948,7 +948,7 @@ Feature: Formatted messages
     When the user selects and copies the whole reply
     Then the clipboard holds the sentence with no icon character and no extra space in front of the file or the link
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The handles of a text selection follow the theme
     Given the user selected text in a reply
     When the phone switches between the light and the dark theme
@@ -987,7 +987,7 @@ Feature: Formatted messages
     When it is shown
     Then the path is used as written, not read as escapes
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: A descriptive file link keeps its words
     Given a reply says "This function [validates the input](/repo/src/example.ts:12)."
     When the reply is shown

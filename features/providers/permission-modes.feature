@@ -75,7 +75,7 @@ Feature: Permission modes
     When the user sends a message
     Then Cursor starts in auto-accept edits
 
-  @backlog
+  @backlog @priority-low
   Scenario Outline: Each mode reaches Antigravity as its own approval mode
     Given an Antigravity thread in <mode>
     When the user sends a message
@@ -218,7 +218,7 @@ Feature: Permission modes
 
   # The thread takes it at once, not with the next message: a turn waiting on
   # approvals blocks the composer, and the provider may apply it to that turn.
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: The permission mode can be changed from the desktop and mobile composers
     Given a supervised thread
     When the user switches the thread to auto-accept edits on desktop or mobile

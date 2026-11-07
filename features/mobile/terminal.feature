@@ -195,7 +195,7 @@ Feature: Using a terminal on a phone
     Then the shell is told how many columns and rows now fit
     And the shell is not told again while the size is unchanged
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Prompt symbols are drawn without an installed symbol font
     When the shell prints a prompt with powerline separators and file-type icons
     Then the terminal draws those symbols
@@ -522,7 +522,7 @@ Feature: Using a terminal on a phone
     When the user opens its terminal
     Then the user is told the thread is unavailable
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A phone that cannot draw the terminal still shows its output as text
     Given the phone cannot draw the terminal itself
     When the user opens the terminal

@@ -5,6 +5,7 @@
 #   apps/web/src/components/settings/IntegrationsSettings.tsx (Import from, browser profiles)
 #   apps/desktop/src/preview/BrowserImport (browser and profile discovery, running detection, cookie reading and writing)
 
+@priority-low
 Feature: Importing cookies from another browser
   The user can bring cookies from an installed browser into a HAL-C2 browser profile, so agents
   and previews are signed in to the same sites.

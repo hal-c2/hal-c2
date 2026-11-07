@@ -860,13 +860,13 @@ Feature: Threads that work on or link pull requests
     Then no read is made and the watch carries on
     And reads that fail for another reason are the only ones that count toward giving up
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Threads watching the same pull request share one read
     Given two threads in one project watch the same pull request
     When the watches are checked
     Then the pull request is read once for both
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A pull request with nothing in flight is read only when it changed
     Given a watched pull request whose state, checks, mergeability and review decision have not changed
     When the watch is checked
@@ -881,7 +881,7 @@ Feature: Threads that work on or link pull requests
     Then the agent is woken once for the edit
     And a reaction on the comment wakes nothing
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A required check that was never seen pending still counts
     Given a watched pull request whose required checks all passed
     When a required check appears and finishes between two reads
@@ -909,14 +909,14 @@ Feature: Threads that work on or link pull requests
     And no watch wake starts another turn on the stopped thread
     And cancelling a finished task also ends the watches its thread left
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A subagent cannot watch a pull request
     Given a subagent of a thread that owns a pull request
     When the subagent asks to watch it
     Then the tool says the parent thread owns the pull request
     And a watch left on a subagent ends on the next pass
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A new subagent does not inherit its parent's pull request links
     Given a parent thread linked to pull request 123
     When it delegates a task
@@ -929,32 +929,32 @@ Feature: Threads that work on or link pull requests
     Then the thread stays in Working with a "Waiting" status and does not settle by itself
     And it returns to the inbox when the watch ends, the pull request merges or closes, the agent asks a question, or the run fails
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: The thread details card shows and stops pull request watches
     Given a thread watching an open pull request
     When the user opens the thread's details
     Then that pull request's row shows it is watched
     And one click stops the watch the same way the pull request panel does
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: The pull request panel opens for any linked pull request
     Given a thread has a pull request linked through the MCP tool or the dialog
     When the user opens the pull request panel
     Then it is enabled and shows that pull request
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: A pull request link that is really an issue says so
     Given a chat link of the form "/pull/N" where N is an issue
     When the user opens it
     Then the viewer says the host has no such pull request, with no retry that cannot succeed
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: A linked pull request's actions open from a secondary click
     Given a thread has a linked pull request
     When the user secondary-clicks the pull request's row
     Then the same actions open as from the row's menu, at the pointer
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: Holding a modifier on a linked pull request offers its quick actions
     Given a thread has a linked pull request
     When the user holds the quick-action modifier over its row

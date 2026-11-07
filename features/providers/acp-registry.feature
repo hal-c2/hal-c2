@@ -30,7 +30,7 @@
 #   packages/effect-acp/src/client.ts, packages/effect-acp/src/protocol.ts, packages/effect-acp/src/compat.ts (wire generations)
 #   packages/effect-acp/src/errors.ts (protocol error codes and messages)
 
-@plugin-acp-registry @mc
+@plugin-acp-registry @mc @priority-low
 Feature: ACP registry agents
   Any agent in the official ACP registry can run on an MC. The MC installs the exact
   version the registry publishes under its own home, runs it on the MC's machine, and
