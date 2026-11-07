@@ -55,7 +55,7 @@ defmodule HalC2.Terminal do
   def open(%{"threadId" => _, "terminalId" => _, "cwd" => cwd} = input) do
     with :ok <- check_cwd(cwd),
          {:ok, input} <- provider_env(input),
-         do: call(ensure(input), {:open, input})
+         do: starting(input, cwd, fn -> call(ensure(input), {:open, input}) end)
   end
 
   @doc """
@@ -73,7 +73,7 @@ defmodule HalC2.Terminal do
       {nil, cwd} ->
         with :ok <- check_cwd(cwd),
              {:ok, input} <- provider_env(input),
-             do: call(ensure(input), {:attach, input, subscriber})
+             do: starting(input, cwd, fn -> call(ensure(input), {:attach, input, subscriber}) end)
 
       {pid, _} ->
         case running_attach_env(input) do
@@ -105,7 +105,16 @@ defmodule HalC2.Terminal do
   def restart(%{"cwd" => cwd} = input) do
     with :ok <- check_cwd(cwd),
          {:ok, input} <- provider_env(input),
-         do: call(ensure(input), {:restart, input})
+         do: starting(input, cwd, fn -> call(ensure(input), {:restart, input}) end)
+  end
+
+  # A shell starts holding its worktree's (else its folder's) lease, its folder checked
+  # again inside it: storage cleanup removing that worktree waits for the start, or the
+  # start for the removal and then finds the folder gone (`HalC2.WorkspaceLease`).
+  defp starting(input, cwd, start) do
+    HalC2.WorkspaceLease.with_lease(input["worktreePath"] || cwd, fn ->
+      with :ok <- check_cwd(cwd), do: start.()
+    end)
   end
 
   @doc "`terminal.close`: one terminal, or every terminal of the thread without a `terminalId`."
@@ -686,7 +695,7 @@ defmodule HalC2.Terminal do
       {:kill_timeout, 1}
     ]
 
-    case Enum.find(shells(), &File.exists?(hd(&1))) do
+    case shell() do
       nil ->
         failed(state, "No shell found (tried #{Enum.map_join(shells(), ", ", &hd/1)})")
 
@@ -887,6 +896,12 @@ defmodule HalC2.Terminal do
   # The user's shell first, then common ones (`:terminal_shells` replaces the
   # common ones, for tests of a machine without them). zsh must not print its partial-line
   # marker into a fresh terminal.
+  @doc """
+  The shell a terminal starts, as its argv: the program `SHELL` names when it is there,
+  else the first fallback that is; nil when none is.
+  """
+  def shell, do: Enum.find(shells(), &File.exists?(hd(&1)))
+
   defp shells do
     requested = System.get_env("SHELL", "") |> String.split() |> List.first()
 

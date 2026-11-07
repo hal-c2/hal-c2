@@ -24,6 +24,8 @@ defmodule HalC2.Steps.Platform.Upgrades do
     root = Mc.release(context.mc)
     Mc.ensure(HalC2.Settings)
     Mc.ensure(HalC2.Upgrade)
+    # Its first boot removes old versions off the server; the scenario starts after.
+    :ok = HalC2.Upgrade.await_pruned()
     assert Upgrade.capability() == "hot-upgrade"
     Map.put(context, :root, root)
   end
@@ -916,7 +918,649 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
+  # --- exact versions, preflight, no service --------------------------------------------
+
+  step ~r/^a client asks the MC to update to "(?<target>[^"]+)"$/, %{args: [target]} = context do
+    context = Map.merge(context, %{target: target, version: Upgrade.version()})
+    {reply, context} = World.call(context, "server.updateServer", %{"targetVersion" => target})
+    Map.put(context, :reply, reply)
+  end
+
+  step "the update fails saying it is not an exact version", context do
+    assert {:error, _, %{"_tag" => "ServerSelfUpdateError", "reason" => reason}} = context.reply
+    assert reason =~ "is not an exact version"
+    context
+  end
+
+  step "the running MC is left as it was", context do
+    assert Upgrade.version() == context.version
+    assert start_version(context) == context.version
+    refute File.exists?(Source.cache_dir(context.target))
+    refute_received {:hal_c2_restart, _}
+    context
+  end
+
+  step "the MC downloaded and staged the target version", context do
+    upgrade_url(@unreachable)
+    Map.put(context, :version, Upgrade.version())
+  end
+
+  # The bundle's launcher starts its release the way a mix release's does, with the
+  # release's code on the path, and evaluates what the MC asks: the preflight the
+  # bundle carries, which finds a module whose native code does not load here.
+  step "the staged version's own preflight says it cannot run here", context do
+    {native, _} = nif = Mc.nif_module(context.mc)
+    context = preflight_bundle(context, [nif])
+    Map.put(context, :native, native)
+  end
+
+  step "the update fails with the preflight's reason", context do
+    assert {:error, _, %{"_tag" => "ServerSelfUpdateError", "reason" => reason}} = context.reply
+    assert reason =~ "#{context.target} cannot run on this machine"
+    assert reason =~ "#{inspect(context.native)} does not load here"
+    context
+  end
+
+  step "the running MC keeps serving without interruption", context do
+    refute_received {:hal_c2_restart, _}
+    assert Upgrade.version() == context.version
+    # The next start is still this version, and the staged one's launchers did not go in.
+    assert start_version(context) == context.version
+    refute File.exists?(Path.join([context.root, "bin", "hal_c2"]))
+    refute File.exists?(Path.join([context.root, "releases", "start_erl.data.previous"]))
+    client = WsClient.send_json(World.client(context), %{"t" => "ping"})
+    {_, client} = Mc.await(client, &(&1["t"] == "pong"))
+    World.put_client(context, client)
+  end
+
+  step "an MC that is neither the desktop app's server nor a background service", context do
+    System.delete_env("HAL_C2_SERVICE")
+    refute HalC2.DesktopUpdate.available?()
+    context
+  end
+
+  step "the update fails saying remote updates need the background service", context do
+    assert {:error, _, %{"_tag" => "ServerSelfUpdateError", "reason" => reason}} = context.reply
+    assert reason =~ "Remote updates that restart the MC need the background service"
+    refute_received {:hal_c2_restart, _}
+    Map.put(context, :reason, reason)
+  end
+
+  step "it says to run the service install command on the server machine", context do
+    assert context.reason =~ "run `hal-c2-mc install` on the server machine"
+    context
+  end
+
+  # --- downloads and installs ---------------------------------------------------------------
+
+  # The release location is a loopback server whose behaviour each step sets
+  # (`release_server/2`); a minute without data is a second here.
+  step "the MC is downloading a version to install", context do
+    Application.put_env(:hal_c2, :upgrade_download_idle_ms, 1_000)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :upgrade_download_idle_ms) end)
+    context |> bundle(%{}, [], false) |> Map.put(:version, Upgrade.version())
+  end
+
+  step "the download is interrupted", context do
+    release_server(context, :cut)
+    Map.put(context, :reply, Upgrade.update(%{"targetVersion" => context.target}))
+  end
+
+  step "nothing is left that could be mistaken for an installed version", context do
+    assert {:error, %{"reason" => reason}} = context.reply
+    assert reason =~ "is not available"
+    nothing_installed(context)
+  end
+
+  # Ten minutes is fifteen times the second without data a download may go: one that
+  # keeps receiving has no limit to reach.
+  step "the download is still receiving data after ten minutes", context do
+    release_server(context, {:slow, 15, 100})
+    Map.put(context, :reply, Upgrade.update(%{"targetVersion" => context.target}))
+  end
+
+  step "it carries on until it finishes", context do
+    assert {:ok, %{"targetVersion" => target}} = context.reply
+    assert target == context.target
+    assert File.read!(cached(context.mc, target)) == File.read!(context.archive)
+    context
+  end
+
+  step "a download that receives nothing for a minute fails and leaves nothing half-installed",
+       context do
+    context = context |> bundle(%{}, [], false) |> Map.put(:version, Upgrade.version())
+    release_server(context, :stall)
+    reply = Upgrade.update(%{"targetVersion" => context.target})
+    assert {:error, %{"reason" => reason}} = reply
+    assert reason =~ "sent nothing for 1000 ms"
+    nothing_installed(context)
+  end
+
+  step "an earlier install of a version stopped before it finished", context do
+    upgrade_url(@unreachable)
+    context = bundle(context)
+
+    # What an install cut off leaves: its directories still being written.
+    for dir <- [
+          Path.join([context.root, "releases", context.target <> ".partial"]),
+          Path.join([context.root, "lib", "hal_c2_bundle-#{context.target}.partial"])
+        ] do
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "half"), "cut off")
+    end
+
+    context
+  end
+
+  step "it replaces the partial install with a complete one", context do
+    assert {:ok, %{"targetVersion" => target}} = context.reply
+    assert target == context.target and Upgrade.version() == target
+    release = Path.join([context.root, "releases", target])
+    lib = Path.join([context.root, "lib", "hal_c2_bundle-#{target}"])
+    assert File.regular?(Path.join(release, "hal_c2.rel"))
+    refute File.exists?(Path.join(release, "half"))
+    refute File.exists?(Path.join(lib, "half"))
+    assert Path.wildcard(Path.join([context.root, "**", "*.partial"]), match_dot: true) == []
+    context
+  end
+
+  step "a version that is fully installed", context do
+    upgrade_url(@unreachable)
+    context = context |> Map.put(:version, Upgrade.version()) |> preflight_bundle([])
+    assert {:ok, _} = Upgrade.update(%{"targetVersion" => context.target})
+    assert_receive {:hal_c2_restart, 75}, 3_000
+    assert start_version(context) == context.target
+    Map.put(context, :installed, installed_files(context))
+  end
+
+  step "another install of the same version fails its checks", context do
+    archive =
+      Mc.bundle(context.mc, context.target, preflight_changes(), [
+        preflight_module(),
+        Mc.nif_module(context.mc)
+      ])
+
+    :ok = Source.put(context.target, Upgrade.platform(), archive)
+    Map.put(context, :reply, Upgrade.update(%{"targetVersion" => context.target}))
+  end
+
+  step "the installed version is left in place", context do
+    assert {:error, %{"reason" => reason}} = context.reply
+    assert reason =~ "cannot run on this machine"
+    refute_received {:hal_c2_restart, _}
+    assert installed_files(context) == context.installed
+    assert start_version(context) == context.target
+    context
+  end
+
+  # --- the service wrapper ----------------------------------------------------------------
+
+  # `bin/hal-c2-service` over a release whose `bin/hal_c2` stands in for the MC: it
+  # notes the version `start_erl.data` names, and as the old version it installs the
+  # new one and exits 75, as an update restart does; the new version fails to boot.
+  step "a restart into a new version fails before it is ready", context do
+    root = Mc.tmp_dir(context.mc, "service")
+    File.mkdir_p!(Path.join(root, "bin"))
+    File.mkdir_p!(Path.join(root, "releases"))
+    service = Path.join(root, "bin/hal-c2-service")
+    File.cp!(Path.expand("../../../rel/overlays/bin/hal-c2-service", __DIR__), service)
+    File.chmod!(service, 0o755)
+    File.write!(Path.join(root, "releases/start_erl.data"), "16.0 1.1.0\n")
+
+    launcher = Path.join(root, "bin/hal_c2")
+
+    File.write!(launcher, """
+    #!/bin/sh
+    releases="$(dirname "$0")/../releases"
+    version=$(cut -d' ' -f2 "$releases/start_erl.data")
+    echo "$version" >> "$releases/../started"
+    case "$version:$(grep -c . "$releases/../started")" in
+      1.1.0:1)
+        cp "$releases/start_erl.data" "$releases/start_erl.data.previous"
+        echo "16.0 1.2.0" > "$releases/start_erl.data"
+        exit 75 ;;
+      1.2.0:*) exit 1 ;;
+      *) exit 0 ;;
+    esac
+    """)
+
+    File.chmod!(launcher, 0o755)
+    {_, status} = System.cmd("timeout", ["60", service], stderr_to_stdout: true)
+    Map.merge(context, %{service_root: root, service_status: status})
+  end
+
+  step "the service wrapper starts the previous version again", context do
+    root = context.service_root
+    assert File.read!(Path.join(root, "started")) |> String.split() == ~w(1.1.0 1.2.0 1.1.0)
+    assert File.read!(Path.join(root, "releases/start_erl.data")) =~ " 1.1.0"
+    refute File.exists?(Path.join(root, "releases/start_erl.data.previous"))
+    assert context.service_status == 0
+    context
+  end
+
+  # --- removing old versions ----------------------------------------------------------------
+
+  step ~r/^the MC has installed versions (?<versions>.+) and runs "(?<running>[^"]+)"$/,
+       %{args: [versions, running]} = context do
+    versions = Regex.scan(~r/"([^"]+)"/, versions, capture: :all_but_first) |> List.flatten()
+    for version <- versions, do: old_version(context, version)
+    runs(context, running)
+  end
+
+  step ~r/^"(?<version>[^"]+)" is the version an update would roll back to$/,
+       %{args: [version]} = context do
+    # The update restarting into the running version came from it, and the service
+    # kept its release to go back to.
+    previous = Path.join([context.root, "releases", "start_erl.data.previous"])
+    File.write!(previous, "16.0 #{version}\n")
+    outcome = outcome_path(context.mc.home)
+    File.mkdir_p!(Path.dirname(outcome))
+
+    File.write!(
+      outcome,
+      JSON.encode!(%{
+        "id" => "hot-upgrade-t",
+        "fromVersion" => version,
+        "targetVersion" => context.running,
+        "status" => "restarting"
+      })
+    )
+
+    context
+  end
+
+  step "the MC starts after an update", context do
+    boot(context.running)
+    assert %{"status" => "committed"} = Upgrade.outcome()
+    context
+  end
+
+  step "an SSH host whose MC was started from its installed version {string}",
+       %{args: [version]} = context do
+    System.delete_env("HAL_C2_SERVICE")
+    old_version(context, version)
+    runs(context, version)
+  end
+
+  step "the host still has {string} installed, which nothing uses",
+       %{args: [version]} = context do
+    old_version(context, version)
+    context
+  end
+
+  step "that MC starts", context do
+    boot(context.running)
+    context
+  end
+
+  step "the MC has the old installed version {string}", %{args: [version]} = context do
+    old_version(context, version)
+    Map.put(context, :running, Upgrade.version())
+  end
+
+  step "a running process executes {string}", %{args: [version]} = context do
+    # A process started from that release names it on its command line, as a VM's
+    # `-boot <root>/releases/<version>/start` does.
+    boot = Path.join([context.root, "releases", version, "start"])
+
+    port =
+      Port.open({:spawn_executable, System.find_executable("sh")}, [
+        :binary,
+        args: ["-c", "echo up; read line", boot]
+      ])
+
+    # It has its command line once it says so; it ends when the scenario closes its input.
+    assert_receive {^port, {:data, "up\n"}}, 5_000
+    Map.put(context, :holder, port)
+  end
+
+  step "{string} finished installing less than an hour ago", %{args: [version]} = context do
+    File.touch!(Path.join([context.root, "releases", version]))
+    context
+  end
+
+  step "the MC cannot read which versions are running", context do
+    Application.put_env(:hal_c2, :upgrade_processes, fn -> {:error, "ps is missing"} end)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :upgrade_processes) end)
+    context
+  end
+
+  step "the MC cannot read which version it would roll back to", context do
+    File.write!(Path.join([context.root, "releases", "start_erl.data.previous"]), "garbled")
+    context
+  end
+
+  step "the MC removes versions nothing can use", context do
+    boot(nil)
+    context
+  end
+
+  step "the installed version {string} is removed", %{args: [version]} = context do
+    for path <- version_paths(context, version), do: refute(File.exists?(path), path)
+    assert removing(context) == []
+    context
+  end
+
+  step ~r/^(?<versions>".+) (?:is|are) kept$/, %{args: [versions]} = context do
+    versions = Regex.scan(~r/"([^"]+)"/, versions, capture: :all_but_first) |> List.flatten()
+
+    for version <- versions,
+        path <- version_paths(context, version),
+        do: assert(File.exists?(path), path)
+
+    context
+  end
+
+  step "the MC is removing the old installed version {string}", %{args: [version]} = context do
+    old_version(context, version)
+    context |> Map.put(:running, Upgrade.version()) |> Map.put(:removing, version)
+  end
+
+  # Cut off after the release was set aside and before it was all deleted.
+  step "the removal is interrupted", context do
+    release = Path.join([context.root, "releases", context.removing])
+    File.rename!(release, release <> ".removing")
+    File.rm!(Path.join(release <> ".removing", "start.boot"))
+    context
+  end
+
+  step "{string} is not taken for an installed version", %{args: [version]} = context do
+    releases = Path.join(context.root, "releases")
+    refute File.exists?(Path.join(releases, version))
+
+    installed =
+      for rel <- Path.wildcard(Path.join([releases, "*", "*.rel"])),
+          do: rel |> Path.dirname() |> Path.basename()
+
+    refute version in installed
+    context
+  end
+
+  step "the next removal clears what was left", context do
+    boot(nil)
+    for path <- version_paths(context, context.removing), do: refute(File.exists?(path), path)
+    assert removing(context) == []
+    context
+  end
+
+  # --- continuing running turns -----------------------------------------------------
+
+  # A project that does not continue threads after restarts, a turn mid-way in it, and a
+  # version that needs a restart. The continuation's turn starts no real Codex.
+  step "turns are running on the MC", context do
+    World.put_app_env(:codex_command, ["hal-c2-test-no-codex"])
+    Mc.ensure({Registry, keys: :unique, name: HalC2.Codex.Registry})
+    Mc.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
+
+    context
+    |> World.create_project("shop")
+    |> mid_turn("Busy")
+    |> bundle(%{"otpRelease" => "30"})
+  end
+
+  step "a client asks the MC to update and to continue running threads", context do
+    input = %{"targetVersion" => context.target, "continueRunningThreads" => true}
+    {reply, context} = World.call(context, "server.updateServer", input)
+    assert {:ok, %{"targetVersion" => _}} = reply
+    assert_receive {:hal_c2_restart, 75}, 3_000
+    context
+  end
+
+  step "those threads are marked to continue once the new version is up", context do
+    :persistent_term.put({Upgrade, :version}, context.target)
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    project = World.project(context, "shop").id
+    refute HalC2.Settings.for_project(project)["continueThreadsAfterServerUpdate"]
+    # The continuation is dispatched off the boot; its message is the receipt.
+    World.await_state(context, "Busy", &(continuations(&1) != []))
+    assert [%{"createdBy" => "agent"}] = continuations(context, "Busy")
+    context
+  end
+
+  # The update asking again is refused before its restart; the MC restarting later
+  # for another reason continues nothing.
+  step "a restart that does not happen clears those marks", context do
+    context = mid_turn(context, "Refused")
+    {native, _} = nif = Mc.nif_module(context.mc)
+    context = preflight_bundle(context, [nif])
+    input = %{"targetVersion" => context.target, "continueRunningThreads" => true}
+    {reply, context} = World.call(context, "server.updateServer", input)
+    assert {:error, _, %{"reason" => reason}} = reply
+    assert reason =~ "cannot run on this machine"
+    refute :code.is_loaded(native)
+
+    # `Recovery.continue/0` decides before it returns; only the dispatch runs after.
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    assert continuations(context, "Refused") == []
+    context
+  end
+
+  # --- deferred restarts -------------------------------------------------------------
+
+  step "an update asked the service to restart later", context do
+    Mc.release(context.mc)
+    HalC2.Service.mark_restart_pending("1.2.0")
+    context
+  end
+
+  step "the service starts and runs the version it was asked for", context do
+    boot("1.2.0")
+    context
+  end
+
+  step "the deferred restart is cleared", context do
+    refute File.exists?(restart_pending())
+    context
+  end
+
+  step "a service that is still on an older version keeps waiting for a newer one",
+       context do
+    HalC2.Service.mark_restart_pending("1.3.0")
+    boot("1.2.0")
+    assert File.read!(restart_pending()) == "1.3.0\n"
+    context
+  end
+
   # --- helpers ---------------------------------------------------------------------------
+
+  # A turn mid-way in thread `title` of "shop", on a Codex provider thread.
+  defp mid_turn(context, title) do
+    context = World.create_thread(context, title, "shop")
+    provider_thread = "pt-#{World.slug(title)}"
+
+    {:ok, _} =
+      HalC2.Streams.commit(World.thread_id(context, title), :thread, [
+        {"provider-thread", provider_thread,
+         %{
+           "s" => %{
+             "id" => provider_thread,
+             "status" => "active",
+             "nativeThreadRef" => %{"type" => "codex", "threadId" => "native-#{provider_thread}"}
+           }
+         }}
+      ])
+
+    World.add_run(context, title, "running", nil, %{"providerThreadId" => provider_thread})
+  end
+
+  defp continuations(context, title), do: continuations(World.state(context, title))
+
+  defp continuations(state) do
+    state
+    |> HalC2.StreamState.list("message")
+    |> Enum.filter(&(&1["text"] == "Continue where you left off."))
+  end
+
+  defp restart_pending, do: Path.join(HalC2.Paths.state_dir(), ".restart-pending")
+
+  # --- helpers for preflight and removal ---------------------------------------------------
+
+  # A restart bundle whose launcher runs the preflight it carries, with `modules` too.
+  defp preflight_bundle(context, modules) do
+    target = target()
+    archive = Mc.bundle(context.mc, target, preflight_changes(), [preflight_module() | modules])
+    :ok = Source.put(target, Upgrade.platform(), archive)
+    Map.merge(context, %{target: target, archive: archive})
+  end
+
+  defp preflight_changes,
+    do: %{"otpRelease" => "30", "bin" => %{"hal_c2" => preflight_launcher()}}
+
+  defp preflight_module do
+    {HalC2.Upgrade.Preflight, elem(:code.get_object_code(HalC2.Upgrade.Preflight), 1)}
+  end
+
+  # `bin/hal_c2 eval <expr>` as a mix release runs it: its release's code on the path.
+  defp preflight_launcher do
+    """
+    #!/bin/sh
+    RELEASE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+    export RELEASE_ROOT
+    expr="$2"
+    set --
+    for dir in "$RELEASE_ROOT"/lib/*/ebin; do set -- "$@" -pa "$dir"; done
+    exec "#{System.find_executable("elixir")}" "$@" -e "$expr"
+    """
+  end
+
+  # Every file a version installed at the release root, with its content's hash.
+  defp installed_files(context) do
+    dirs = [
+      Path.join([context.root, "bin"]),
+      Path.join([context.root, "releases", context.target]),
+      Path.join([context.root, "lib", "hal_c2_bundle-#{context.target}"])
+    ]
+
+    for dir <- dirs,
+        file <- Path.wildcard(Path.join(dir, "**")),
+        File.regular?(file),
+        into: %{} do
+      {file, :crypto.hash(:sha256, File.read!(file))}
+    end
+  end
+
+  defp nothing_installed(context) do
+    assert Upgrade.version() == context.version
+    refute_received {:hal_c2_restart, _}
+    cache = Source.cache_dir(context.target)
+    assert Path.wildcard(Path.join(cache, "*"), match_dot: true) == []
+    refute File.exists?(Path.join([context.root, "releases", context.target]))
+    refute File.exists?(Path.join([context.root, "lib", "hal_c2_bundle-#{context.target}"]))
+    context
+  end
+
+  # The release location for `context.archive`, at HAL_C2_UPGRADE_URL: `:cut` sends half
+  # the bundle and hangs up, `{:slow, chunks, ms}` sends it in `chunks` pieces `ms`
+  # apart, `:stall` sends its first piece and then nothing. Checksums come at once.
+  defp release_server(context, mode) do
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+    {:ok, port} = :inet.port(listen)
+    body = File.read!(context.archive)
+    sum = File.read!(context.archive <> ".sha256")
+    server = spawn(fn -> serve_release(listen, body, sum, mode, []) end)
+    :ok = :gen_tcp.controlling_process(listen, server)
+    ExUnit.Callbacks.on_exit(fn -> Process.exit(server, :kill) end)
+    upgrade_url("http://127.0.0.1:#{port}/hal-c2-mc-{version}-{platform}.tar.gz")
+  end
+
+  defp serve_release(listen, body, sum, mode, held) do
+    {:ok, socket} = :gen_tcp.accept(listen)
+    {:ok, request} = read_request(socket, "")
+    head = &"HTTP/1.1 200 OK\r\nContent-Length: #{&1}\r\nConnection: close\r\n\r\n"
+
+    cond do
+      request =~ ".sha256 " ->
+        :gen_tcp.send(socket, [head.(byte_size(sum)), sum])
+        :gen_tcp.close(socket)
+
+      mode == :cut ->
+        :gen_tcp.send(socket, [
+          head.(byte_size(body)),
+          binary_part(body, 0, div(byte_size(body), 2))
+        ])
+
+        :gen_tcp.close(socket)
+
+      mode == :stall ->
+        :gen_tcp.send(socket, [head.(byte_size(body)), binary_part(body, 0, 1)])
+
+      match?({:slow, _, _}, mode) ->
+        {:slow, chunks, ms} = mode
+        :gen_tcp.send(socket, head.(byte_size(body)))
+        size = div(byte_size(body), chunks) + 1
+
+        send_slowly(socket, body, size, ms)
+        :gen_tcp.close(socket)
+    end
+
+    serve_release(listen, body, sum, mode, [socket | held])
+  end
+
+  defp send_slowly(socket, body, size, _ms) when byte_size(body) <= size,
+    do: :gen_tcp.send(socket, body)
+
+  defp send_slowly(socket, body, size, ms) do
+    <<chunk::binary-size(size), rest::binary>> = body
+    :gen_tcp.send(socket, chunk)
+    # The release location is slow, not the test: the download is what waits on it.
+    Process.sleep(ms)
+    send_slowly(socket, rest, size, ms)
+  end
+
+  defp read_request(socket, acc) do
+    if String.contains?(acc, "\r\n\r\n") do
+      {:ok, acc}
+    else
+      with {:ok, data} <- :gen_tcp.recv(socket, 0, 10_000), do: read_request(socket, acc <> data)
+    end
+  end
+
+  # An installed version nothing points at, two hours old: its release, its
+  # application's and runtime's directories and its cached bundle.
+  defp old_version(context, version) do
+    [release, lib, erts, cache] = version_paths(context, version)
+    File.mkdir_p!(release)
+
+    HalC2.Upgrade.Appup.write_term!(
+      Path.join(release, "hal_c2.rel"),
+      {:release, {~c"hal_c2", String.to_charlist(version)}, {:erts, ~c"0.0-#{version}"},
+       [{:hal_c2_old, String.to_charlist(version)}]}
+    )
+
+    File.write!(Path.join(release, "start.boot"), "boot")
+    File.mkdir_p!(Path.join(lib, "ebin"))
+    File.write!(Path.join([lib, "ebin", "hal_c2_old.app"]), "app")
+    File.mkdir_p!(Path.join(erts, "bin"))
+    File.mkdir_p!(cache)
+    File.write!(Path.join(cache, Source.file_name(version, Upgrade.platform())), "bundle")
+    old = System.os_time(:second) - 7200
+    for path <- [release, lib, erts, cache], do: File.touch!(path, old)
+  end
+
+  defp version_paths(context, version) do
+    [
+      Path.join([context.root, "releases", version]),
+      Path.join([context.root, "lib", "hal_c2_old-#{version}"]),
+      Path.join(context.root, "erts-0.0-#{version}"),
+      Source.cache_dir(version)
+    ]
+  end
+
+  defp runs(context, version) do
+    File.write!(Path.join([context.root, "releases", "start_erl.data"]), "16.0 #{version}\n")
+    Map.put(context, :running, version)
+  end
+
+  defp removing(context) do
+    for dir <- [
+          context.root,
+          Path.join(context.root, "releases"),
+          Path.join(context.root, "lib"),
+          Path.join(context.mc.home, "upgrades")
+        ],
+        path <- Path.wildcard(Path.join(dir, "*.removing"), match_dot: true),
+        do: path
+  end
 
   # A checkout's `_build/dev`: a copy of the MC's compiled application, `modules`
   # (`{module, beam}`) over it, whose beams the scenario's end loads back.
@@ -1003,8 +1647,8 @@ defmodule HalC2.Steps.Platform.Upgrades do
     if version, do: :persistent_term.put({Upgrade, :version}, version)
     :ok = ExUnit.Callbacks.stop_supervised(HalC2.Upgrade)
     Mc.ensure(HalC2.Upgrade)
-    # The outcome is read in handle_continue; a call returns after it ran.
-    _ = :sys.get_state(HalC2.Upgrade)
+    # The outcome is read in handle_continue, which starts removing old versions.
+    :ok = HalC2.Upgrade.await_pruned()
   end
 
   defp config_shape, do: %{"type" => "config", "mc" => Atom.to_string(node())}

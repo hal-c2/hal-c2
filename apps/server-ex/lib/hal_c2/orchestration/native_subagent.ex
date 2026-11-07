@@ -179,11 +179,13 @@ defmodule HalC2.Orchestration.NativeSubagent do
       text: ""
     }
 
+    # Running again, so no longer what a restart cut off (`Recovery.cut_off?/1`).
     open =
       &Map.merge(&1, %{
         "status" => "running",
         "completedAt" => nil,
         "result" => nil,
+        "statusDetail" => nil,
         "updatedAt" => at
       })
 

@@ -18,6 +18,20 @@ QString iso(const QDateTime& at) {
   return at.toUTC().toString(Qt::ISODate);
 }
 
+// A running thread moves into the sidebar's Working section, which starts
+// folded (threads/sidebar-list.feature); the user unfolds it to see the row.
+void unfoldWorking(World& world, const QString& title) {
+  const auto listed = [&] {
+    return world.findWhere([&](QQuickItem* candidate) {
+             return candidate->objectName().startsWith(QLatin1String("threadRow:")) &&
+                    candidate->property("item").toMap().value(QStringLiteral("title")).toString() == title;
+           }) != nullptr;
+  };
+  world.waitFor([&] { return listed() || world.find(QStringLiteral("header:working")) != nullptr; },
+                [&] { return QStringLiteral("%1 or the Working section in the thread list; the screen says: %2").arg(title, world.texts().join(QStringLiteral(" | "))); });
+  if (!listed()) world.tap(QStringLiteral("header:working"));
+}
+
 // The thread "Fix cart" the scenarios speak of, with the fields a state adds.
 void putState(World& world, const QString& state) {
   using S = QString;
@@ -56,6 +70,7 @@ void putState(World& world, const QString& state) {
   }
   world.mc.threads.insert(id, row);
   world.mc.sendRow(id, row);
+  if (state == QLatin1String("has a turn running")) unfoldWorking(world, S("Fix cart"));
 }
 
 // The thread "Fix cart"'s row as the MC sends it after `change`.

@@ -2841,10 +2841,13 @@
   },
   {
     "name": "hal_c2_thread_launch",
-    "description": "Start a separate TOP-LEVEL thread with an explicit workspace binding before its agent runs. Use it only when the user asks for a separate/new/top-level thread (for example a PR stack in its own worktree); for workers, including ones that need their own worktree, use delegate_task. workspaceStrategy: {type:\"worktree\",baseRef:\"parent-branch\",branch:\"new-branch\",startFromOrigin:false} for a new worktree on local commits (startFromOrigin:true for upstream commits), {type:\"existing_worktree\",worktreePath:\"/absolute/path\",branch:\"existing-branch\"} (paths from hal_c2_worktree_list), or {type:\"root\"}. Omitting it means the project root, NOT the caller's worktree. Never create worktrees with `git worktree add` or ask the agent to: that does not update the thread binding. Put the task in message. Omit projectId/modelSelection/modes to inherit them. There is no retry key and the result is not delivered back: retain threadId, follow it with hal_c2_thread_read or hal_c2_thread_wait, and after an error or lost response check hal_c2_thread_list before retrying. Attachments must be pending uploads. Requires a full-access/default caller.",
+    "description": "Start a separate TOP-LEVEL thread with an explicit workspace binding before its agent runs. Use it only when the user asks for a separate/new/top-level thread (for example a PR stack in its own worktree); for workers, including ones that need their own worktree, use delegate_task. workspaceStrategy: {type:\"worktree\",baseRef:\"parent-branch\",branch:\"new-branch\",startFromOrigin:false} for a new worktree on local commits (startFromOrigin:true for upstream commits), {type:\"existing_worktree\",worktreePath:\"/absolute/path\",branch:\"existing-branch\"} (paths from hal_c2_worktree_list), or {type:\"root\"}. Omitting it means the project root, NOT the caller's worktree. Never create worktrees with `git worktree add` or ask the agent to: that does not update the thread binding. Put the task in message. Omit projectId/modelSelection/modes to inherit them. The result is not delivered back: retain threadId and follow it with hal_c2_thread_read or hal_c2_thread_wait. Pass clientRequestId so a retry after a lost response returns the same thread instead of launching a second one. Attachments must be pending uploads. Requires a full-access/default caller.",
     "inputSchema": {
       "type": "object",
       "properties": {
+        "clientRequestId": {
+          "type": "string"
+        },
         "projectId": {
           "anyOf": [
             {
@@ -3117,7 +3120,7 @@
   },
   {
     "name": "hal_c2_thread_list",
-    "description": "List HAL-C2 threads in the calling thread's project, newest first. Filter by durable run status, title, or settled state (settled=true lists threads the user or auto-settlement moved out of the active list) and paginate with the returned cursor. Threads from other projects are never exposed.",
+    "description": "List HAL-C2 threads newest first: the calling thread's project, or every project on this MC with allProjects=true (each item names its projectId; the top-level projectId is then null). Filter by durable run status, title, settled state (settled=true lists threads the user or auto-settlement moved out of the active list), or snoozed state (snoozed=true lists only snoozed threads, false only awake ones), and paginate with the returned cursor. Every listed thread can be read with hal_c2_thread_read and organized with hal_c2_thread_organize.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3159,6 +3162,26 @@
           ]
         },
         "includeSubagents": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "snoozed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allProjects": {
           "anyOf": [
             {
               "type": "boolean"
@@ -3264,7 +3287,7 @@
   },
   {
     "name": "hal_c2_thread_organize",
-    "description": "Pin, snooze, settle, archive, or mark a thread unread in the calling project. Omit threadId for this thread. snooze requires snoozedUntil. Existing thread lifecycle rules apply; this does not schedule a future action.",
+    "description": "Pin, snooze, settle, archive, or mark unread any thread on this MC, of any project. Omit threadId for this thread. snooze requires snoozedUntil. Existing thread lifecycle rules apply; this does not schedule a future action.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3309,7 +3332,7 @@
   },
   {
     "name": "hal_c2_thread_read",
-    "description": "Read durable state and a paginated timeline from a HAL-C2 thread in the calling project, or from a thread the user attached to this conversation as context. The default messages view returns user messages, assistant messages, and proposed plans; activity returns all summarized timeline items. Reading an untruncated terminal assistant result from this parent thread's direct app-owned child acknowledges that child's automatic completion delivery. Continue with afterPosition=nextPosition. Recover long item text with itemId and textOffset=nextTextOffset until nextTextOffset is null; offsets count UTF-16 code units.",
+    "description": "Read durable state and a paginated timeline from any HAL-C2 thread on this MC, of any project. The default messages view returns user messages, assistant messages, and proposed plans; activity returns all summarized timeline items. Reading an untruncated terminal assistant result from this parent thread's direct app-owned child acknowledges that child's automatic completion delivery. Continue with afterPosition=nextPosition. Recover long item text with itemId and textOffset=nextTextOffset until nextTextOffset is null; offsets count UTF-16 code units.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3363,8 +3386,7 @@
           "anyOf": [
             {
               "type": "integer",
-              "minimum": 1,
-              "maximum": 100
+              "minimum": 1
             },
             {
               "type": "null"
@@ -3375,8 +3397,7 @@
           "anyOf": [
             {
               "type": "integer",
-              "minimum": 1,
-              "maximum": 50
+              "minimum": 1
             },
             {
               "type": "null"
@@ -3387,8 +3408,7 @@
           "anyOf": [
             {
               "type": "integer",
-              "minimum": 1,
-              "maximum": 50000
+              "minimum": 1
             },
             {
               "type": "null"

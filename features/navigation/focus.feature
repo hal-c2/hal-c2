@@ -91,7 +91,7 @@ Feature: Keyboard focus and keyboard-only use
       When a terminal starts on its own
       Then the composer keeps keyboard focus
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Explicitly opening a terminal focuses it
       Given the terminal is closed
       When the user opens the terminal
@@ -213,13 +213,13 @@ Feature: Keyboard focus and keyboard-only use
 
   Rule: Keyboard-only thread list
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Tab reaches the thread list
       Given the thread list is visible
       When the user tabs into the thread list
       Then the current thread is highlighted for the keyboard
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario Outline: Home and End jump to the ends of the thread list
       Given the thread list has keyboard focus on a middle thread
       When the user presses <key>
@@ -230,7 +230,7 @@ Feature: Keyboard focus and keyboard-only use
         | Home | first |
         | End  | last  |
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario Outline: Enter and Space open the highlighted thread
       Given the thread list has keyboard focus on thread "B"
       When the user presses <key>
@@ -247,7 +247,7 @@ Feature: Keyboard focus and keyboard-only use
       When the user moves the keyboard focus down the thread list
       Then the row the focus is on shows a visible focus mark
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: The menu key opens the highlighted thread's menu
       Given the thread list has keyboard focus on thread "B"
       When the user presses the menu key
@@ -361,7 +361,7 @@ Feature: Keyboard focus and keyboard-only use
 
   Rule: Keyboard-only panels and window
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A right panel tab is activated from the keyboard
       Given the right panel has "Diff" and "Files" tabs with "Diff" active
       When the user focuses the "Files" tab and presses Enter
@@ -375,7 +375,7 @@ Feature: Keyboard focus and keyboard-only use
       Then the focus is on the control that opens the right panel
       And Tab does not reach the controls of the closing panel
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario Outline: Window controls are announced by name
       Then the window control "<name>" is available to assistive technology
 

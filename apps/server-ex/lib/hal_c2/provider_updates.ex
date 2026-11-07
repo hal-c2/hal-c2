@@ -7,7 +7,7 @@ defmodule HalC2.ProviderUpdates do
   unless the user turned off `enableProviderUpdateChecks`; providers are
   re-announced when it arrives. The update runs whatever installed
   the CLI, told apart by where its executable really lives: Homebrew, a global npm
-  prefix, or Claude Code's own `claude update`. Anything else is reported without
+  prefix, or Claude Code's own `claude update` and OpenCode's own `opencode upgrade`. Anything else is reported without
   an update command.
 
   Updates through one installer run one at a time; a provider waiting its turn,
@@ -16,8 +16,12 @@ defmodule HalC2.ProviderUpdates do
   that the provider is no longer behind.
   """
 
-  @packages %{"codex" => "@openai/codex", "claudeAgent" => "@anthropic-ai/claude-code"}
-  @names %{"codex" => "Codex", "claudeAgent" => "Claude"}
+  @packages %{
+    "codex" => "@openai/codex",
+    "claudeAgent" => "@anthropic-ai/claude-code",
+    "opencode" => "opencode-ai"
+  }
+  @names %{"codex" => "Codex", "claudeAgent" => "Claude", "opencode" => "OpenCode"}
   @ttl :timer.hours(1)
 
   @doc """
@@ -138,7 +142,7 @@ defmodule HalC2.ProviderUpdates do
   # "Succeeded" needs the provider to be installed and no longer behind, or at the
   # version that was asked for.
   defp verify(driver, instance, started, output, target) do
-    forget_version(driver, executable(driver, instance))
+    forget_version(driver, instance, executable(driver, instance))
     entry = Enum.find(HalC2.Environment.providers(), &(&1["instanceId"] == instance))
 
     {status, message} =
@@ -230,6 +234,10 @@ defmodule HalC2.ProviderUpdates do
              String.ends_with?(path, "/.local/bin/claude")) ->
         [path, "update"]
 
+      # OpenCode's own installer keeps it in the user's `.opencode/bin`; it upgrades itself.
+      driver == "opencode" and String.contains?(real, "/.opencode/bin/") ->
+        [path, "upgrade"]
+
       true ->
         nil
     end
@@ -253,7 +261,13 @@ defmodule HalC2.ProviderUpdates do
     end
   end
 
-  defp executable(driver, instance) when driver in ["codex", "claudeAgent"] do
+  @doc """
+  The executable instance `instance` of `driver` updates, or nil. An OpenCode instance
+  runs its `binaryPath`, else `opencode` on the PATH.
+  """
+  def executable(driver, instance)
+
+  def executable(driver, instance) when driver in ["codex", "claudeAgent"] do
     key = if driver == "codex", do: :codex_command, else: :claude_command
     default = [if(driver == "codex", do: "codex", else: "claude")]
 
@@ -263,11 +277,22 @@ defmodule HalC2.ProviderUpdates do
     end
   end
 
-  defp executable(_driver, _instance), do: nil
+  def executable("opencode", instance) do
+    case HalC2.Acp.binary_path(instance) do
+      nil -> nil
+      path -> if Path.type(path) == :absolute, do: path, else: System.find_executable(path)
+    end
+  end
+
+  def executable(_driver, _instance), do: nil
 
   # Provider entries cache the version of each executable; an update makes the
-  # updated one's stale, and only that one is read again.
-  defp forget_version(driver, path) do
+  # updated one's stale, and only that one is read again. OpenCode's is read again from
+  # a throwaway session of the CLI on disk; its running sessions keep the version they
+  # started with.
+  defp forget_version("opencode", instance, _path), do: HalC2.Acp.reload(instance)
+
+  defp forget_version(driver, _instance, path) do
     module = %{"codex" => HalC2.Codex.Provider, "claudeAgent" => HalC2.Claude.Provider}[driver]
 
     if module do

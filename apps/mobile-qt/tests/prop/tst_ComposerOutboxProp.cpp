@@ -12,6 +12,8 @@
 // none comes back to the draft to be sent again, none runs under a mode the
 // user had left, and none is sent while it is away.
 
+#include <QFile>
+
 #include "ComposerController.h"
 #include "FakeMc.h"
 #include "McClient.h"
@@ -65,6 +67,11 @@ struct Sut {
   // Each thread's mode at the MC, and the mode each message ran under.
   QMap<QString, QString> modes;
   QMap<QString, QString> ranUnder;
+  // Uploads the MC was asked for, the ids whose bytes arrived, and the
+  // answers held back until the test lets an upload land.
+  int uploadsAsked = 0;
+  QStringList uploadsStored;
+  QList<std::function<void(int, const QJsonObject&)>> heldUploads;
 
   Sut() {
     mc.projects.insert(QStringLiteral("p1"), QJsonObject{
@@ -97,6 +104,19 @@ struct Sut {
                {QStringLiteral("config"), QJsonObject{{QStringLiteral("providers"), providers}, {QStringLiteral("settings"), QJsonObject()}}}});
     });
     mc.onShape(QStringLiteral("stream"), [this](int id, const QJsonObject& shape) { sendThread(id, shape); });
+    // A file's upload: its bytes are taken, and the answer waits until the
+    // test lets it land (finishUploads), as a slow upload's does.
+    mc.onRpc(QStringLiteral("attachments.createUploadUrl"), [this](const FakeMc::Rpc& rpc) {
+      const QString id = QStringLiteral("pending-%1").arg(++uploadsAsked);
+      const QString url = QStringLiteral("/api/attachments/upload/prop-%1").arg(uploadsAsked);
+      mc.onHttp(url, [this, id](const QJsonObject&, std::function<void(int, const QJsonObject&)> respond) {
+        uploadsStored.append(id);
+        heldUploads.append(std::move(respond));
+      });
+      mc.reply(rpc, QJsonObject{{QStringLiteral("attachmentId"), id},
+                                {QStringLiteral("relativeUrl"), url},
+                                {QStringLiteral("expiresAt"), 4102444800000.0}});
+    });
     // The MC keeps a message once, by its id, as the real one does.
     mc.effects.append([this](const QJsonObject& command) {
       if (command.value(QLatin1String("type")) == QLatin1String("thread.interaction-mode.set")) {
@@ -207,7 +227,45 @@ struct Sut {
                                  {QStringLiteral("intent"), QStringLiteral("foreground")}});
   }
 
+  // Attaches a file whose upload is still going up, then sends: the message
+  // waits in the outbox until finishUploads lets the upload land.
+  void sendWithFile(const QString& thread, const QString& text) {
+    open(thread);
+    const QString path = home.filePath(QStringLiteral("report.pdf"));
+    QFile file(path);
+    RC_ASSERT(file.open(QIODevice::WriteOnly) && file.write(QByteArray(4096, 'p')) == 4096);
+    file.close();
+    bridge->dispatch(QStringLiteral("composer.attach"),
+                     QVariantMap{{QStringLiteral("files"),
+                                  QVariantList{QVariantMap{{QStringLiteral("name"), QStringLiteral("report.pdf")},
+                                                           {QStringLiteral("mimeType"), QStringLiteral("application/pdf")},
+                                                           {QStringLiteral("path"), path}}}}});
+    RC_ASSERT(prop::until([&] {
+      const QVariantList carried = composerState().value(QStringLiteral("attachments")).toList();
+      return carried.size() == 1 && carried.constFirst().toMap().value(QStringLiteral("status")) == QLatin1String("uploading");
+    }));
+    bridge->dispatch(QStringLiteral("composer.text.set"),
+                     QVariantMap{{QStringLiteral("target"), keyOf(thread)},
+                                 {QStringLiteral("edit"), QVariantMap{{QStringLiteral("clientId"), QStringLiteral("qml")}, {QStringLiteral("revision"), ++edit}}},
+                                 {QStringLiteral("text"), text},
+                                 {QStringLiteral("cursor"), text.size()}});
+    bridge->dispatch(QStringLiteral("composer.submit"),
+                     QVariantMap{{QStringLiteral("edit"), QVariantMap{{QStringLiteral("clientId"), QStringLiteral("qml")}, {QStringLiteral("revision"), ++edit}}},
+                                 {QStringLiteral("text"), text},
+                                 {QStringLiteral("intent"), QStringLiteral("foreground")}});
+  }
+
+  void finishUploads() {
+    RC_ASSERT(prop::until([&] { return !heldUploads.isEmpty(); }));
+    const auto held = std::exchange(heldUploads, {});
+    for (const auto& respond : held) respond(204, QJsonObject());
+  }
+
   void keep(const QJsonObject& command) {
+    // A dispatched file is one whose bytes the MC already has.
+    for (const QJsonValue& file : command.value(QLatin1String("attachments")).toArray()) {
+      RC_ASSERT(uploadsStored.contains(file.toObject().value(QLatin1String("id")).toString()));
+    }
     const QString thread = command.value(QLatin1String("threadId")).toString();
     const QString id = command.value(QLatin1String("messageId")).toString();
     const bool known = std::any_of(messages[thread].cbegin(), messages[thread].cend(),
@@ -386,6 +444,28 @@ struct SendPlanDropped : Command {
   }
 };
 
+// A message sent while its file is still uploading waits in the outbox and
+// goes, carrying the arrived file, when the upload lands.
+struct SendWhileUploading : Command {
+  QString thread = pick(kThreads);
+  QString text;
+  explicit SendWhileUploading(const Model& m) : text(QStringLiteral("message %1").arg(m.written + 1)) {}
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.up); }
+  void apply(Model& m) const override {
+    ++m.written;
+    m.open = thread;
+    m.sent[thread].append(text);
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.sendWithFile(thread, text);
+    RC_ASSERT(prop::until([&] { return sut.outbox().contains(text); }));
+    RC_ASSERT(!sut.sent(thread).contains(text));
+    sut.finishUploads();
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "SendWhileUploading(" << thread.toStdString() << ", " << text.toStdString() << ")"; }
+};
+
 struct GoDown : Command {
   void checkPreconditions(const Model& m) const override { RC_PRE(m.up); }
   void apply(Model& m) const override { m.up = false; }
@@ -434,7 +514,7 @@ private slots:
       Model model;
       verify(model, sut);
       const auto commands = *rc::gen::scale(
-          0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Open, Send, Send, Send, SendStillSending, SendPlanDropped, GoDown, ComeBack, Restart>()));
+          0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Open, Send, Send, Send, SendStillSending, SendPlanDropped, SendWhileUploading, GoDown, ComeBack, Restart>()));
       rc::state::runAll(commands, model, sut);
       // Every message the MC was sent twice was sent again after a drop.
       const QStringList ids = sut.dispatched();

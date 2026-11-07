@@ -183,6 +183,28 @@ defmodule HalC2.VcsTest do
     assert {:ok, nil} = Vcs.remove_worktree(%{"cwd" => repo, "path" => path})
   end
 
+  test "a long branch's folder keeps its start, whole characters, and a hash of the branch",
+       %{repo: repo} do
+    long = &(String.duplicate("a", 45) <> &1)
+    one = Path.basename(Vcs.worktree_path(repo, long.("/one")))
+    two = Path.basename(Vcs.worktree_path(repo, long.("/two")))
+
+    assert String.length(one) == 40 and String.length(two) == 40
+    assert String.starts_with?(one, String.duplicate("a", 31) <> "-")
+    assert one != two
+
+    emoji = Path.basename(Vcs.worktree_path(repo, "a" <> String.duplicate("😀", 60)))
+    assert String.valid?(emoji) and String.length(emoji) == 40
+    assert Path.basename(Vcs.worktree_path(repo, "fix/cart")) == "fix-cart"
+  end
+
+  test "a rename under an existing branch's path is flattened", %{repo: repo} do
+    git!(repo, ~w(branch hal-c2))
+    git!(repo, ~w(branch temp))
+    assert {:ok, "hal-c2-fix-cart"} = Vcs.rename_branch(repo, "temp", "hal-c2/fix-cart")
+    assert {:ok, "feature/cart"} = Vcs.rename_branch(repo, "hal-c2-fix-cart", "feature/cart")
+  end
+
   test "watchers get a snapshot, then only what changed", %{repo: repo} do
     assert %{"_tag" => "snapshot", "local" => %{"hasWorkingTreeChanges" => false}} =
              HalC2.Vcs.Watch.subscribe(repo, self())
