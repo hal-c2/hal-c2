@@ -8,7 +8,8 @@ defmodule HalC2.OrchestrationPropTest do
   reconnect does, or send the same steer twice at once, which Codex takes or refuses:
   the repeat hears it is still being sent, and the first hears how it went;
   cancel, edit, reorder and promote queued messages (and have Codex refuse to take a
-  promoted one, also after the thread was archived while Codex was asked); resume a held queue; interrupt a turn, or the run of a message as a
+  promoted one, also after the thread was archived while Codex was asked); send a
+  queued message now on an idle thread, held or not; resume a held queue; interrupt a turn, or the run of a message as a
   client that read it as active does (#403, #474);
   crash a provider runtime mid-turn, or end only its provider stream (the app-server
   exiting), which fails the run, unless the MC is shutting down, when the run is left
@@ -335,7 +336,8 @@ defmodule HalC2.OrchestrationPropTest do
            let(
              [{t, m} <- oneof(queued), how <- oneof([:taken, :refused])],
              do: {:call, __MODULE__, :promote, [t, m, how]}
-           )}
+           )},
+          {4, let({t, m} <- oneof(queued), do: {:call, __MODULE__, :start_queued, [t, m]})}
         ]
 
     # Archiving while Codex is asked needs Codex to be asked: a running turn that can
@@ -483,7 +485,7 @@ defmodule HalC2.OrchestrationPropTest do
         steers?(threads[tid], msg)
 
   def precondition(%{threads: threads}, {:call, _, fun, [tid, msg | _]})
-      when fun in [:cancel, :edit, :reorder, :promote, :resend, :interrupt_run],
+      when fun in [:cancel, :edit, :reorder, :promote, :resend, :interrupt_run, :start_queued],
       do: Map.has_key?((threads[tid] || %{messages: %{}}).messages, msg)
 
   # An agent switches the thread it runs in; one put away has no agent to switch it.
@@ -673,8 +675,15 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp step(state, _result, {:call, _, :interrupt, [tid]}) do
     case refusal(state, tid, :interrupt) do
-      nil -> update(state, tid, &(&1 |> end_running(:interrupted) |> start_next()))
-      _ -> state
+      nil ->
+        # The stop of a limit stop is the user giving up the resume scheduled for it.
+        update(state, tid, fn thread ->
+          thread = if limit_stop(thread), do: %{thread | recovery: nil}, else: thread
+          thread |> end_running(:interrupted) |> start_next()
+        end)
+
+      _ ->
+        state
     end
   end
 
@@ -695,9 +704,17 @@ defmodule HalC2.OrchestrationPropTest do
   # A stop pinned to a message's run ends only that run's turn: one that ended, or
   # never started, leaves whatever runs now.
   defp step(state, _result, {:call, _, :interrupt_run, [tid, msg]}) do
-    if pinned_running?(state, tid, msg),
-      do: update(state, tid, &(&1 |> end_running(:interrupted) |> start_next())),
-      else: state
+    cond do
+      pinned_running?(state, tid, msg) ->
+        update(state, tid, &(&1 |> end_running(:interrupted) |> start_next()))
+
+      # Stopping the limit stop's own run gives up the resume scheduled for it.
+      pinned_limited?(state, tid, msg) ->
+        update(state, tid, &%{&1 | recovery: nil})
+
+      true ->
+        state
+    end
   end
 
   defp step(state, _result, {:call, _, :crash, [tid]}),
@@ -790,6 +807,23 @@ defmodule HalC2.OrchestrationPropTest do
           thread
           |> set_runs(&if(&1.msg in thread.queue, do: %{&1 | held: false}, else: &1))
           |> start_next()
+        end)
+
+      _ ->
+        state
+    end
+  end
+
+  # Sent now, the queued message starts ahead of the rest, which stay as they were.
+  defp step(state, _result, {:call, _, :start_queued, [tid, msg]}) do
+    case start_refusal(state, tid, msg) do
+      nil ->
+        update(state, tid, fn thread ->
+          %{thread | queue: List.delete(thread.queue, msg)}
+          |> set_runs(&if(&1.msg == msg, do: %{&1 | held: false}, else: &1))
+          |> Map.put(:instance, Enum.find(thread.runs, &(&1.msg == msg)).instance)
+          |> put_in([:messages, msg, :shown], true)
+          |> started(msg)
         end)
 
       _ ->
@@ -919,14 +953,28 @@ defmodule HalC2.OrchestrationPropTest do
       %{status: status, title: title} when command == :unarchive and status != :archived ->
         {:error, "#{title} is not archived."}
 
+      # Stopping a thread on a limit stop gives up its resume instead of stopping a turn.
       thread when command == :interrupt ->
-        if running(thread), do: nil, else: {:error, "no running turn"}
+        if running(thread) || limit_stop(thread), do: nil, else: {:error, "no running turn"}
 
       %{status: :archived} when command == :resume ->
         {:error, "Thread #{tid} is not active."}
 
       _ ->
         nil
+    end
+  end
+
+  # A queued message is sent now only on a live thread with no turn running.
+  defp start_refusal(state, tid, msg) do
+    thread = state.threads[tid]
+
+    cond do
+      refused = refusal(state, tid, :resume) -> refused
+      own = agents_own(state, tid, msg) -> own
+      msg not in thread.queue -> {:error, :not_queued}
+      running(thread) -> {:error, :another_turn}
+      true -> nil
     end
   end
 
@@ -999,6 +1047,8 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp expected_reply(state, :cancel, [tid | _]), do: refusal(state, tid, :queue) || :ok
 
+  defp expected_reply(state, :start_queued, [tid, msg]), do: start_refusal(state, tid, msg) || :ok
+
   defp expected_reply(state, :reorder, [tid, msg, before]),
     do: refusal(state, tid, :queue) || reorder_refusal(state, tid, msg, before) || :ok
 
@@ -1033,9 +1083,10 @@ defmodule HalC2.OrchestrationPropTest do
   # A stop for the latest run, which completed as the stop arrived, counts as
   # done: the provider had nothing active to stop (commands.feature).
   defp expected_reply(state, :interrupt_run, [tid, msg]) do
-    if pinned_running?(state, tid, msg) or pinned_completed?(state, tid, msg),
-      do: :ok,
-      else: {:error, "no running turn"}
+    if pinned_running?(state, tid, msg) or pinned_completed?(state, tid, msg) or
+         pinned_limited?(state, tid, msg),
+       do: :ok,
+       else: {:error, "no running turn"}
   end
 
   defp expected_reply(state, :release, [tid]),
@@ -1078,6 +1129,9 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp reply_matches?({:error, :not_queued}, {:error, message}),
     do: message =~ ~r/^Queued run \S+ is not queued\.$/
+
+  defp reply_matches?({:error, :another_turn}, {:error, message}),
+    do: message =~ "Another turn started first, so the message stays queued."
 
   defp reply_matches?({:error, :agents_own}, {:error, message}),
     do: message =~ ~r/^Automatic completion deliveries cannot be/
@@ -1167,6 +1221,12 @@ defmodule HalC2.OrchestrationPropTest do
     do:
       refusal(state, tid, :interrupt) == nil and
         match?(%{msg: ^msg}, running(state.threads[tid]))
+
+  # The thread's latest run is this message's limit stop.
+  defp pinned_limited?(state, tid, msg) do
+    thread = state.threads[tid]
+    thread != nil and thread.status != :deleted and match?(%{msg: ^msg}, limit_stop(thread))
+  end
 
   defp pinned_completed?(state, tid, msg) do
     thread = state.threads[tid]
@@ -1277,11 +1337,18 @@ defmodule HalC2.OrchestrationPropTest do
   defp limited(nil), do: nil
 
   defp limited(thread) do
+    if not Enum.any?(Map.values(thread.requests), &(&1.status == "pending")),
+      do: limit_stop(thread)
+  end
+
+  # The thread's latest run when it is a limit stop, whatever waits on the user: what a
+  # stop gives up the resume of.
+  defp limit_stop(nil), do: nil
+
+  defp limit_stop(thread) do
     case latest(thread) do
       %{status: :failed, msg: msg} = run ->
-        if limit_text?(thread.messages[msg].text) and
-             not Enum.any?(Map.values(thread.requests), &(&1.status == "pending")),
-           do: run
+        if limit_text?(thread.messages[msg].text), do: run
 
       _ ->
         nil
@@ -1289,10 +1356,15 @@ defmodule HalC2.OrchestrationPropTest do
   end
 
   # The recovery at the reset: the held queue resumes, or a continuation runs to its end.
+  # The run the resumed queue starts continues the stop (`continues`), as the
+  # continuation's message does.
   defp recovered(thread, msg) do
     if Enum.any?(thread.runs, &(&1.msg in thread.queue and &1.held)) do
+      [next | _] = thread.queue
+
       thread
       |> set_runs(&if(&1.msg in thread.queue, do: %{&1 | held: false}, else: &1))
+      |> set_runs(&if(&1.msg == next, do: Map.put(&1, :continues, msg), else: &1))
       |> start_next()
     else
       resume = "resume:#{msg}"
@@ -1408,7 +1480,9 @@ defmodule HalC2.OrchestrationPropTest do
       runs:
         for(
           run <- thread.runs,
-          do: {run.msg, Atom.to_string(run.status), run.held, run.instance, Map.get(run, :by)}
+          do:
+            {run.msg, Atom.to_string(run.status), run.held, run.instance, Map.get(run, :by),
+             Map.get(run, :continues)}
         ),
       queue: thread.queue,
       foreign: [],
@@ -1922,6 +1996,14 @@ defmodule HalC2.OrchestrationPropTest do
     )
   end
 
+  def start_queued(tid, msg),
+    do:
+      thread_command(%{
+        "type" => "queued-run.start",
+        "threadId" => tid,
+        "runId" => run_of(tid, msg)
+      })
+
   def cancel(tid, msg),
     do:
       thread_command(%{
@@ -2376,7 +2458,8 @@ defmodule HalC2.OrchestrationPropTest do
               run <- runs,
               do:
                 {run["userMessageId"], run["status"], run["queueHeld"] == true,
-                 run["providerInstanceId"], by_id[run["steeredByRunId"]]["userMessageId"]}
+                 run["providerInstanceId"], by_id[run["steeredByRunId"]]["userMessageId"],
+                 by_id[run["usageLimitContinuationOfRunId"]]["userMessageId"]}
             ),
           queue: queue,
           foreign: foreign(state, runs),

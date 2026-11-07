@@ -5,7 +5,7 @@ defmodule HalC2.OpencodeSteerPropTest do
   steered or stopped, either joining the steer into its running loop or ending that loop,
   or failing it, as the steer lands (so OpenCode answers the steer in a loop of its own);
   steer the running turn, with a message whose own loop answers, fails, or keeps working
-  until the next steer joins, ends or fails it; interrupt it.
+  until the next steer joins, ends or fails it; interrupt it; rename the thread.
 
   Turns run on the fake `opencode acp` in `test/support/fake_acp.py`. The model checks
   that each turn ends once, with the status of the last loop it ran (a failed loop
@@ -17,6 +17,9 @@ defmodule HalC2.OpencodeSteerPropTest do
   started, and a loop that keeps working has shown its answer. Stopped, a turn ends at
   its prompt's answer, since a steer may never be answered, so text from a loop the MC
   had not seen yet is not the turn's: the test stops a turn only once it has seen them.
+
+  OpenCode's session carries the thread's name from each turn's prompt: a rename shows
+  there at the next turn, never in the middle of one (a steer does not retitle it).
   """
 
   use ExUnit.Case, async: false
@@ -89,11 +92,27 @@ defmodule HalC2.OpencodeSteerPropTest do
   # --- model ----------------------------------------------------------------------
 
   # runs: [{msg, status}] in the order they were made; turn: the running turn's msg,
-  # and how its current loop takes a steer; replies: the steers' answers, in order.
-  def initial_state, do: %{runs: [], turn: nil, how: nil, replies: [], next: 1}
+  # and how its current loop takes a steer; replies: the steers' answers, in order;
+  # title: the thread's; session_title: OpenCode's session's (nil before a turn).
+  def initial_state,
+    do: %{
+      runs: [],
+      turn: nil,
+      how: nil,
+      replies: [],
+      next: 1,
+      title: "OpenCode",
+      session_title: nil
+    }
 
-  def command(%{turn: nil, next: next}),
-    do: {:call, __MODULE__, :send, ["m#{next}", oneof([:joins, :ends, :fails])]}
+  defp rename, do: {:call, __MODULE__, :rename, [oneof(["OpenCode", "Fix login", "Fix it"])]}
+
+  def command(%{turn: nil, next: next}) do
+    frequency([
+      {4, {:call, __MODULE__, :send, ["m#{next}", oneof([:joins, :ends, :fails])]}},
+      {1, rename()}
+    ])
+  end
 
   # `how` is the turn's, for the harness to know whether the steer ends its loop.
   def command(%{next: next, how: how}) do
@@ -101,11 +120,13 @@ defmodule HalC2.OpencodeSteerPropTest do
 
     frequency([
       {3, {:call, __MODULE__, :steer, ["m#{next}", outcome, how]}},
-      {1, {:call, __MODULE__, :interrupt, []}}
+      {1, {:call, __MODULE__, :interrupt, []}},
+      {1, rename()}
     ])
   end
 
   def precondition(%{turn: turn}, {:call, _, :send, _}), do: turn == nil
+  def precondition(_state, {:call, _, :rename, _}), do: true
 
   def precondition(%{turn: turn, how: how}, {:call, _, :steer, [_, _, steered]}),
     do: turn != nil and steered == how
@@ -114,8 +135,18 @@ defmodule HalC2.OpencodeSteerPropTest do
 
   def next_state(state, _result, {:call, _, :send, [msg, how]}) do
     runs = state.runs ++ [{msg, "running"}]
-    %{state | next: state.next + 1, runs: runs, turn: msg, how: how}
+
+    %{
+      state
+      | next: state.next + 1,
+        runs: runs,
+        turn: msg,
+        how: how,
+        session_title: state.title
+    }
   end
+
+  def next_state(state, _result, {:call, _, :rename, [title]}), do: %{state | title: title}
 
   # A steer the turn's loop takes in answers with it; one in a loop of its own ends the
   # turn as that loop does, or keeps the turn running, its loop now the one the next
@@ -142,7 +173,9 @@ defmodule HalC2.OpencodeSteerPropTest do
 
   def postcondition(state, call, {reply, projection}) do
     model = next_state(state, nil, call)
-    reply == :ok and projection == %{runs: model.runs, replies: model.replies}
+
+    reply == :ok and
+      projection == %{runs: model.runs, replies: model.replies, title: model.session_title}
   end
 
   # --- commands ---------------------------------------------------------------------
@@ -194,6 +227,18 @@ defmodule HalC2.OpencodeSteerPropTest do
 
   defp steer_text(msg, {:keeps, :fails}),
     do: "steer #{msg}, it keeps working, it fails as steered"
+
+  def rename(title) do
+    result =
+      Orchestration.dispatch(%{
+        "type" => "thread.metadata.update",
+        "commandId" => "rename-#{System.unique_integer([:positive])}",
+        "threadId" => @tid,
+        "title" => title
+      })
+
+    reply(result, [])
+  end
 
   def interrupt do
     ending = active_runs()
@@ -281,7 +326,21 @@ defmodule HalC2.OpencodeSteerPropTest do
           m <- state |> StreamState.list("message") |> Enum.sort_by(& &1["createdAt"]),
           m["role"] == "assistant" and String.starts_with?(m["text"] || "", "steered:"),
           do: String.trim_trailing(m["text"])
-        )
+        ),
+      title: session_title(state)
     }
+  end
+
+  # The title the fake OpenCode keeps for the thread's session, nil before it has one.
+  defp session_title(state) do
+    with [thread | _] <- Map.values(StreamState.get(state, "thread")),
+         %{} = provider_thread <-
+           StreamState.get(state, "provider-thread")[thread["activeProviderThreadId"]],
+         id when is_binary(id) <- get_in(provider_thread, ["nativeThreadRef", "nativeId"]),
+         {:ok, title} <- File.read(Path.join(System.get_env("FAKE_ACP_SESSIONS"), "#{id}.title")) do
+      title
+    else
+      _ -> nil
+    end
   end
 end

@@ -5,7 +5,7 @@
 #   apps/server-ex/lib/hal_c2/orchestration.ex (dispatch clauses, @thread_updates)
 #   apps/server-ex/lib/hal_c2/import/v2.ex (how each Node event becomes an entity patch)
 #   apps/server/src/orchestration/decider.ts, apps/server/src/orchestration/projector.ts
-#   Counts: 48 commands (38 aligned, 10 dropped);
+#   Counts: 49 commands (39 aligned, 10 dropped);
 #   42 version 2 events (all aligned); 33 version 1 events (all aligned).
 #   The MC stores whole-entity changes as patches keyed by entity kind, so an event
 #   is aligned when the MC records the same entity change and streams it to clients.
@@ -26,7 +26,7 @@ Feature: Command and event parity with the TypeScript server
     Then the MC accepts it through its <kind> path
     And clients following the thread see the resulting change
 
-    Examples: 38 aligned commands
+    Examples: 39 aligned commands
       | command                         | kind          |
       | thread.create                   | dispatch      |
       | thread.archive                  | thread update |
@@ -57,6 +57,7 @@ Feature: Command and event parity with the TypeScript server
       | run.interrupt                   | dispatch      |
       | queued-message.promote-to-steer | dispatch      |
       | queue.resume                    | dispatch      |
+      | queued-run.start                | dispatch      |
       | queued-run.reorder              | dispatch      |
       | queued-run.cancel               | dispatch      |
       | queued-run.edit                 | dispatch      |

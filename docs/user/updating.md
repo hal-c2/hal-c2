@@ -56,10 +56,13 @@ Update the MC on every machine of a cluster; a clustered MC passes the release
 to the others.
 
 An MC you started by hand in a terminal, without the service, has nothing to start
-it again. Stop it and start it again after the update, or the update is refused.
+it again, so an update that needs a restart is refused. Run `<mc> install` on that
+machine to start it as the background service, then update again.
 An MC running from a source checkout updates with `mix hal_c2.upgrade` instead.
 
 After the restart the app learns whether the update committed or rolled back.
+Once it runs, the MC removes the versions it no longer needs, keeping the one it
+would go back to.
 
 ## Update the desktop app
 
@@ -104,8 +107,8 @@ allow operating the MC; the page says which.
 ## If an update fails
 
 Keep the client open until it reconnects or reports a failure. A release that fails its
-checksum is not installed, and one that cannot boot is replaced by the version that ran
-before. If the update still fails:
+checksum is not installed, one built for another kind of machine is refused before the
+MC restarts, and one that cannot boot is replaced by the version that ran before. If the update still fails:
 
 1. Retry the offered action once.
 2. Check that you updated the MC's machine, not only the device you are using.

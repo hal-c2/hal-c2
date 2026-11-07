@@ -178,3 +178,7 @@ runs the `@mobile` and `@shared` scenarios of the `mobile/` files it lists again
 root; like the desktop's it leaves out `@backlog` and its own surface's `@backlog-mobile`, and `--backlog` runs only those instead.
 `mise run features` runs all four and reports each. Step definitions live in `apps/server-ex/test/steps/`, `apps/tui/features/`,
 `apps/desktop-qt/tests/native/features/` and `apps/mobile-qt/tests/features/`.
+
+The desktop and phone runners select by their own glob lists, not by tag alone, so a scenario can
+look passing here while no runner runs it. `mise run features:check` fails on those (CI's Ledger
+check runs it); `--fix` adds the missing `@backlog-desktop` / `@backlog-mobile` tags.

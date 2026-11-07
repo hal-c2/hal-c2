@@ -81,11 +81,9 @@ defmodule HalC2.Projection.BackgroundWork do
     do: task["awaited"] == true or task["taskType"] not in @unless_awaited
 
   defp roster_task(task) do
-    description = if d = get(task, "description"), do: trim(d)
-
     Map.take(task, ["taskId", "taskType"])
     |> json()
-    |> put_present("description", if(description != "", do: description))
+    |> put_present("description", non_blank(get(task, "description")))
     |> put_present("awaited", if(get(task, "awaited") == true, do: true))
   end
 
@@ -134,11 +132,17 @@ defmodule HalC2.Projection.BackgroundWork do
     end
   end
 
+  # A description is one line, the first that says anything: a subagent's
+  # prompt or a heredoc command is many, and clients show it in a single row.
   defp non_blank(value) when is_binary(value) do
-    case trim(value) do
-      "" -> nil
-      trimmed -> trimmed
-    end
+    value
+    |> String.split(["\r\n", "\n", "\r"])
+    |> Enum.find_value(fn line ->
+      case trim(line) do
+        "" -> nil
+        trimmed -> trimmed
+      end
+    end)
   end
 
   defp non_blank(_), do: nil
