@@ -1098,7 +1098,12 @@ providers/provider-instances.feature: Provider status headlines [not installed, 
 providers/provider-instances.feature: Provider status headlines [signed in, Authenticated]
 providers/provider-instances.feature: Provider status headlines [signed out, Not authenticated]
 providers/provider-setup.feature: Signing out asks for confirmation and keeps history
+providers/usage-limits.feature: An account named by its email is hidden in the /usage-limits answer until asked for
 providers/usage-limits.feature: Automatic checks wait at least five minutes per environment
+providers/usage-limits.feature: The /usage-limits answer is dismissed without sending anything
+providers/usage-limits.feature: The /usage-limits answer says whose limits it shows [a second Codex instance named "Work", Codex · Work]
+providers/usage-limits.feature: The /usage-limits answer says whose limits it shows [the one Codex account on the "Pro" plan, Codex · Pro]
+providers/usage-limits.feature: The /usage-limits answer says whose limits it shows [three accounts pooled by a hub, 3 accounts]
 providers/usage-limits.feature: The /usage-limits command is not offered for providers without limits
 providers/usage-limits.feature: The /usage-limits command shows the current model's limits
 providers/usage-limits.feature: The same account on two environments counts once
@@ -2016,6 +2021,7 @@ timeline/approvals-and-questions.feature: The user answers the agent's question 
 timeline/approvals-and-questions.feature: The user writes their own answer
 timeline/checkpoints.feature: A revert the MC refuses says why
 timeline/checkpoints.feature: Cancelling a revert leaves the thread as it was
+timeline/checkpoints.feature: Editing from a message returns the prompt to the composer
 timeline/checkpoints.feature: Either way in asks first, then keeps or restores the files [its reply, Keep files, the MC is asked to leave the files as they are]
 timeline/checkpoints.feature: Either way in asks first, then keeps or restores the files [its reply, Revert files too, the workspace files match the end of turn 1]
 timeline/checkpoints.feature: Either way in asks first, then keeps or restores the files [the diff panel, Keep files, the MC is asked to leave the files as they are]
@@ -2075,11 +2081,28 @@ timeline/plans-and-subagents.feature: A finished task's notification names its w
 timeline/plans-and-subagents.feature: A finished task's result is kept apart from the agent's replies until opened
 timeline/plans-and-subagents.feature: A message from another agent says which thread it came from
 timeline/plans-and-subagents.feature: A plan card does not repeat its title
+timeline/plans-and-subagents.feature: A plan implemented in a new thread names the thread after the plan [titled "Add a tax line", Implement Add a tax line]
+timeline/plans-and-subagents.feature: A plan implemented in a new thread names the thread after the plan [with no heading, Implement plan]
+timeline/plans-and-subagents.feature: A plan is saved as the same text however it is kept [copies the plan]
+timeline/plans-and-subagents.feature: A plan is saved as the same text however it is kept [downloads the plan]
+timeline/plans-and-subagents.feature: A plan is saved as the same text however it is kept [saves the plan to the workspace]
+timeline/plans-and-subagents.feature: A plan that cannot be written says so and keeps the dialog
+timeline/plans-and-subagents.feature: A plan that cannot reach the clipboard says so
+timeline/plans-and-subagents.feature: A plan's copy is named after its title [(no heading), plan.md]
+timeline/plans-and-subagents.feature: A plan's copy is named after its title [Add a tax line, add-a-tax-line.md]
+timeline/plans-and-subagents.feature: A plan's copy is named after its title [Fix `cart.ts`, finally, fix-cartts-finally.md]
 timeline/plans-and-subagents.feature: A proposed plan appears as a card titled by its first heading
 timeline/plans-and-subagents.feature: A result a thread stored as a user message still shows as a notification
 timeline/plans-and-subagents.feature: A subagent shows the model it runs on
 timeline/plans-and-subagents.feature: A subagent's approval request shows up in the parent thread
 timeline/plans-and-subagents.feature: A subagent's elapsed time moves only while the Agents tab shows
+timeline/plans-and-subagents.feature: A subagent's model is written the way a person would write its name [My Custom Model, My Custom Model]
+timeline/plans-and-subagents.feature: A subagent's model is written the way a person would write its name [claude-opus-4-6, Claude Opus 4.6]
+timeline/plans-and-subagents.feature: A subagent's model is written the way a person would write its name [claude-opus-4-6[1m], Claude Opus 4.6[1m]]
+timeline/plans-and-subagents.feature: A subagent's model is written the way a person would write its name [custom/model-v2, custom/model-v2]
+timeline/plans-and-subagents.feature: A subagent's model is written the way a person would write its name [gemini-2.5-pro-preview-06-05, Gemini 2.5 Pro Preview 06 05]
+timeline/plans-and-subagents.feature: A subagent's model is written the way a person would write its name [gpt-5.4, GPT-5.4]
+timeline/plans-and-subagents.feature: A subagent's model is written the way a person would write its name [openai/gpt-5.4-mini, openai/GPT-5.4-Mini]
 timeline/plans-and-subagents.feature: A subagent's status is shown in the parent [cancelled, Stopped]
 timeline/plans-and-subagents.feature: A subagent's status is shown in the parent [completed, Completed]
 timeline/plans-and-subagents.feature: A subagent's status is shown in the parent [failed, Failed]
@@ -2087,6 +2110,10 @@ timeline/plans-and-subagents.feature: A subagent's status is shown in the parent
 timeline/plans-and-subagents.feature: A subagent's status is shown in the parent [running, Working]
 timeline/plans-and-subagents.feature: A subagent's status is shown in the parent [waiting on a request, Working]
 timeline/plans-and-subagents.feature: A subagent's thread opens from the Agents tab
+timeline/plans-and-subagents.feature: A subagent's title is shown without its provider's prefix or task path [/root/baz_qux, Baz Qux]
+timeline/plans-and-subagents.feature: A subagent's title is shown without its provider's prefix or task path [/root/team/review_docs/, Review Docs]
+timeline/plans-and-subagents.feature: A subagent's title is shown without its provider's prefix or task path [Review the docs, Review the docs]
+timeline/plans-and-subagents.feature: A subagent's title is shown without its provider's prefix or task path [Subagent: Fix the cart, Fix the cart]
 timeline/plans-and-subagents.feature: A wake-up a thread stored as a user message is not from another agent either
 timeline/plans-and-subagents.feature: A working subagent shows its latest progress
 timeline/plans-and-subagents.feature: Changes to the thread's context are marked in the timeline [the agent creates a thread, Created thread]
@@ -2095,6 +2122,8 @@ timeline/plans-and-subagents.feature: Changes to the thread's context are marked
 timeline/plans-and-subagents.feature: Changes to the thread's context are marked in the timeline [the conversation is forked, Conversation fork]
 timeline/plans-and-subagents.feature: No plan is offered while the agent is still working
 timeline/plans-and-subagents.feature: Saving the plan fails when the workspace is unavailable
+timeline/plans-and-subagents.feature: Saving the plan to the workspace needs a path
+timeline/plans-and-subagents.feature: Saving the plan to the workspace starts from its file name
 timeline/plans-and-subagents.feature: Starting the implementation thread fails
 timeline/plans-and-subagents.feature: The Agents tab follows a subagent as it finishes
 timeline/plans-and-subagents.feature: The Agents tab keeps its rows as work starts and ends
@@ -2158,10 +2187,72 @@ timeline/streaming.feature: Reasoning shows while it is written
 timeline/streaming.feature: Reasoning written in Markdown is labelled by its words alone
 timeline/streaming.feature: Retrying follows the thread again once its MC sends it
 timeline/streaming.feature: The user copies an assistant reply
+timeline/tool-calls.feature: A HAL-C2 tool call that answered with an error counts as failed though the provider finished it
 timeline/tool-calls.feature: A call is labelled by what it did
+timeline/tool-calls.feature: A call to one of HAL-C2's own tools is named for what it does [delegate_task, Delegate a child task]
+timeline/tool-calls.feature: A call to one of HAL-C2's own tools is named for what it does [device_screenshot, Take a screenshot of the device]
+timeline/tool-calls.feature: A call to one of HAL-C2's own tools is named for what it does [hal_c2_thread_interrupt, Interrupt a HAL-C2 thread]
+timeline/tool-calls.feature: A call to one of HAL-C2's own tools is named for what it does [hal_c2_thread_read, Read a HAL-C2 thread]
+timeline/tool-calls.feature: A call to one of HAL-C2's own tools is named for what it does [hal_c2_thread_wait, Wait for a HAL-C2 thread]
+timeline/tool-calls.feature: A call to one of HAL-C2's own tools is named for what it does [link_pull_request, Link a pull request]
+timeline/tool-calls.feature: A call to one of HAL-C2's own tools is named for what it does [preview_open, Open a page in the preview browser]
+timeline/tool-calls.feature: A call to one of HAL-C2's own tools is named for what it does [task_cancel, Cancel delegated task]
+timeline/tool-calls.feature: A command is named by the program it runs, through the shells and set-up around it ["/bin/zsh -lc 'git diff --check'", git]
+timeline/tool-calls.feature: A command is named by the program it runs, through the shells and set-up around it ["CI=1 env -u DEBUG sudo -u root vp test run", vp]
+timeline/tool-calls.feature: A command is named by the program it runs, through the shells and set-up around it ["bash -lc \"zsh -c 'git status'\"", git]
+timeline/tool-calls.feature: A command is named by the program it runs, through the shells and set-up around it ["cd apps/web && vp test run", vp]
+timeline/tool-calls.feature: A command is named by the program it runs, through the shells and set-up around it ["export CI=1 && vp test run", vp]
+timeline/tool-calls.feature: A command is named by the program it runs, through the shells and set-up around it ["pwsh -NoProfile -Command \"Set-Location C:\\work; pnpm test\"", pnpm]
+timeline/tool-calls.feature: A command is named by the program it runs, through the shells and set-up around it ["timeout 10 pnpm test", pnpm]
+timeline/tool-calls.feature: A command is named by the program it runs, through the shells and set-up around it ["vp test && git status", vp]
+timeline/tool-calls.feature: A command is shown without the shell the provider wrapped it in ["/bin/zsh -lc 'git diff --stat'", "git diff --stat"]
+timeline/tool-calls.feature: A command is shown without the shell the provider wrapped it in ["bash -c \"printf hi; git status\"", "printf hi; git status"]
+timeline/tool-calls.feature: A command is shown without the shell the provider wrapped it in ["git status", "git status"]
+timeline/tool-calls.feature: A command is shown without the shell the provider wrapped it in ["zsh -lc 'echo $1' name value", "zsh -lc 'echo $1' name value"]
+timeline/tool-calls.feature: A command is shown without the shell the provider wrapped it in ["zsh -lc 'pwd'; git status", "zsh -lc 'pwd'; git status"]
+timeline/tool-calls.feature: A command is shown without the shell the provider wrapped it in ["zsh script.sh", "zsh script.sh"]
+timeline/tool-calls.feature: A command the provider called finished is shown as failed when its output says it failed ["Cannot find path 'C:\x' because it does not exist"]
+timeline/tool-calls.feature: A command the provider called finished is shown as failed when its output says it failed ["No such file or directory"]
+timeline/tool-calls.feature: A command the provider called finished is shown as failed when its output says it failed ["command not found"]
+timeline/tool-calls.feature: A command the provider called finished is shown as failed when its output says it failed ["exited with exit code 1"]
+timeline/tool-calls.feature: A command whose output merely mentions a zero exit code stays a success
+timeline/tool-calls.feature: A command with no program to name is called "command" ["cd packages/client-runtime"]
+timeline/tool-calls.feature: A command with no program to name is called "command" ["export NODE_ENV=test"]
+timeline/tool-calls.feature: A command with no program to name is called "command" ["if test -f package.json; then vp test; fi"]
+timeline/tool-calls.feature: A command with no program to name is called "command" ["zsh -lc 'git status"]
+timeline/tool-calls.feature: A group of only reasoning reads as a thought [one thought, Thought]
+timeline/tool-calls.feature: A group of only reasoning reads as a thought [three thoughts, Thought (×3)]
 timeline/tool-calls.feature: A group of tool calls reads as a summary of what the agent did
 timeline/tool-calls.feature: A group opens into each call's details
+timeline/tool-calls.feature: A group with a failed call is marked as having a failure
+timeline/tool-calls.feature: A running command's progress does not split the agent's message in two
 timeline/tool-calls.feature: A summary names at most two kinds of work
+timeline/tool-calls.feature: A summary of calls that all failed says what the agent tried
+timeline/tool-calls.feature: A summary says what kind of work the calls were [edits to three different files, Changed 3 files]
+timeline/tool-calls.feature: A summary says what kind of work the calls were [one command, Ran 1 command]
+timeline/tool-calls.feature: A summary says what kind of work the calls were [one file read, Read 1 file]
+timeline/tool-calls.feature: A summary says what kind of work the calls were [one pull request unlinked, Unlinked 1 pull request]
+timeline/tool-calls.feature: A summary says what kind of work the calls were [one search of the project's code, Searched code 1 time]
+timeline/tool-calls.feature: A summary says what kind of work the calls were [one thread the agent created, Created 1 thread]
+timeline/tool-calls.feature: A summary says what kind of work the calls were [one tool with no more specific kind, Used 1 tool]
+timeline/tool-calls.feature: A summary says what kind of work the calls were [three browser calls, Used browser 3 times]
+timeline/tool-calls.feature: A summary says what kind of work the calls were [two checks of the linked pull requests, Checked linked pull requests 2 times]
+timeline/tool-calls.feature: A summary says what kind of work the calls were [two device controls, Used device controls 2 times]
+timeline/tool-calls.feature: A summary says what kind of work the calls were [two edits to the same file, Changed 1 file]
+timeline/tool-calls.feature: A summary says what kind of work the calls were [two links of a pull request and one check, Linked 2 pull requests and checked linked pull requests]
+timeline/tool-calls.feature: A summary says what kind of work the calls were [two progress updates, Received 2 updates]
+timeline/tool-calls.feature: A summary says what kind of work the calls were [two web searches, Searched the web 2 times]
+timeline/tool-calls.feature: A summary says what the agent did through HAL-C2's own tools [a pending question answered, Answered 1 pending question request]
+timeline/tool-calls.feature: A summary says what the agent did through HAL-C2's own tools [a queued message edited and another reordered, Edited 1 queued message and reordered 1 queued run]
+timeline/tool-calls.feature: A summary says what the agent did through HAL-C2's own tools [one handoff to a worktree, Handed off to 1 worktree]
+timeline/tool-calls.feature: A summary says what the agent did through HAL-C2's own tools [one project registered and one cloned, Registered 1 project and cloned 1 repository]
+timeline/tool-calls.feature: A summary says what the agent did through HAL-C2's own tools [one scheduled task created, Scheduled 1 task]
+timeline/tool-calls.feature: A summary says what the agent did through HAL-C2's own tools [one scheduled task run on request, Requested 1 scheduled task run]
+timeline/tool-calls.feature: A summary says what the agent did through HAL-C2's own tools [one thread read and the same thread read again, Read 1 thread]
+timeline/tool-calls.feature: A summary says what the agent did through HAL-C2's own tools [one wait on a thread, Waited on 1 thread]
+timeline/tool-calls.feature: A summary says what the agent did through HAL-C2's own tools [the same task cancelled twice, Requested cancellation of 1 task]
+timeline/tool-calls.feature: A summary says what the agent did through HAL-C2's own tools [two attachments sent to one thread, Sent 2 attachments to 1 thread]
+timeline/tool-calls.feature: A summary says what the agent did through HAL-C2's own tools [two tasks delegated to subagents, Delegated 2 tasks]
 timeline/tool-calls.feature: A tool call shows how it ended [failed, Failed]
 timeline/tool-calls.feature: A tool call shows how it ended [is still running, Running]
 timeline/tool-calls.feature: A tool call shows how it ended [was declined by the user, Declined]
@@ -2172,13 +2263,32 @@ timeline/tool-calls.feature: A tool call's icon says what kind of work it was [c
 timeline/tool-calls.feature: A tool call's icon says what kind of work it was [ran a command, terminal]
 timeline/tool-calls.feature: A tool call's icon says what kind of work it was [searched the files, search]
 timeline/tool-calls.feature: A tool call's icon says what kind of work it was [searched the web, globe]
+timeline/tool-calls.feature: A tool of another server with the same name is not shown as HAL-C2's
 timeline/tool-calls.feature: A turn's changed files are folded under their folders
 timeline/tool-calls.feature: An ACP agent's read, search and fetch tools keep their meaning [fetch, a web search]
 timeline/tool-calls.feature: An ACP agent's read, search and fetch tools keep their meaning [read, a file read]
 timeline/tool-calls.feature: An ACP agent's read, search and fetch tools keep their meaning [search, a file search]
+timeline/tool-calls.feature: Calls a summary leaves out are counted
+timeline/tool-calls.feature: Calls through a named integration are summarised by its name
 timeline/tool-calls.feature: Consecutive tool calls in a running turn show only the latest
 timeline/tool-calls.feature: Failed calls are not counted as work done
 timeline/tool-calls.feature: Files changed by a turn are listed under its reply
+timeline/tool-calls.feature: HAL-C2's own tools are recognised however the provider writes their names [hal-c2 · hal_c2_thread_read]
+timeline/tool-calls.feature: HAL-C2's own tools are recognised however the provider writes their names [hal-c2.hal_c2_thread_read]
+timeline/tool-calls.feature: HAL-C2's own tools are recognised however the provider writes their names [hal-c2:hal_c2_thread_read]
+timeline/tool-calls.feature: HAL-C2's own tools are recognised however the provider writes their names [hal_c2_thread_read completed]
+timeline/tool-calls.feature: HAL-C2's own tools are recognised however the provider writes their names [hal_c2_thread_read]
+timeline/tool-calls.feature: HAL-C2's own tools are recognised however the provider writes their names [mcp__hal-c2__hal_c2_thread_read]
+timeline/tool-calls.feature: HAL-C2's own tools are recognised however the provider writes their names [mcp__hal_c2__hal_c2_thread_read]
+timeline/tool-calls.feature: Reasoning is left out of a group's counts
+timeline/tool-calls.feature: Several integrations are named in a list [the "Chrome" and "Slack" integrations, Used Chrome and Slack integrations]
+timeline/tool-calls.feature: Several integrations are named in a list [the "Chrome", "Slack" and "Linear" integrations, Used Chrome, Slack, and Linear integrations]
+timeline/tool-calls.feature: Several integrations are named in a list [the built-in browser and computer controls, Used Browser and Computer Use]
+timeline/tool-calls.feature: The live row's verb follows how the command ended [fails, Failed npm]
+timeline/tool-calls.feature: The live row's verb follows how the command ended [is declined by the user, Declined npm]
+timeline/tool-calls.feature: The live row's verb follows how the command ended [is running, Running npm]
+timeline/tool-calls.feature: The live row's verb follows how the command ended [is stopped, Stopped npm]
+timeline/tool-calls.feature: The live row's verb follows how the command ended [succeeds, Ran npm]
 timeline/tool-calls.feature: The previous tool calls can be shown and hidden again
 timeline/tool-calls.feature: The user opens the diff of a single changed file
 timeline/tool-calls.feature: The user opens the diff of one turn
