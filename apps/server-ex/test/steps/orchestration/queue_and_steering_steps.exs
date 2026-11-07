@@ -913,12 +913,35 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     context
   end
 
-  step "{string} starts once the turn has stopped", %{args: [text]} = context do
-    {_pid, state} = World.codex_runtime(context, context.thread)
+  # A turn of its own on the record (no provider runs it), so the hal-c2 tools take its calls.
+  step "an agent is working in thread {string} in {string}",
+       %{args: [thread, project]} = context do
+    context
+    |> World.named_thread(thread, project)
+    |> World.numbered_run(thread, 1, "running")
+  end
 
-    World.codex_notify(context, context.thread, "turn/completed", %{
-      "turn" => %{"id" => state.turn.native_turn_id, "status" => "interrupted"}
-    })
+  step "the agent of {string} interrupts {string} and lets its queue run",
+       %{args: [caller, thread]} = context do
+    arguments = %{"threadId" => World.thread_id(context, thread), "holdQueue" => false}
+
+    assert {:ok, %{"status" => "interrupt_requested"}} =
+             World.mcp_tool(context, caller, "hal_c2_thread_interrupt", arguments)
+
+    context
+  end
+
+  step "{string} starts once the turn has stopped", %{args: [text]} = context do
+    # The provider ends the stopped turn, unless it already has.
+    case World.codex_runtime(context, context.thread) do
+      {_pid, %{turn: %{native_turn_id: turn}}} ->
+        World.codex_notify(context, context.thread, "turn/completed", %{
+          "turn" => %{"id" => turn, "status" => "interrupted"}
+        })
+
+      _ ->
+        :ok
+    end
 
     id = run_for(context, text)["id"]
     World.await_state(context, context.thread, &(&1.entities["run"][id]["status"] in @started))

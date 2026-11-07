@@ -8,6 +8,7 @@
 #   https://github.com/pingdotgg/t3code/pull/19210
 #   https://github.com/pingdotgg/t3code/pull/13764 (covered: the MC sends queued runs, so a thread the user is not viewing still sends when its turn ends)
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   apps/server-ex/priv/mcp_tools.json (hal_c2_thread_interrupt, holdQueue)
 #   packages/contracts/src/orchestrationV2.ts (message.dispatch dispatchMode and deliveryIntent,
 #     queued-run.cancel, queued-run.edit, queued-run.reorder, queued-message.promote-to-steer,
 #     queue.resume, run.updated, message.updated, turn-item.updated)
@@ -465,6 +466,23 @@ Feature: Queueing, steering and restarting
     When the user stops the turn
     Then "A" is held
     And no run starts for it until the user resumes the queue or sends a message
+
+  # An agent stops a turn for the user (hal_c2_thread_interrupt): its Stop holds the queue too.
+  @mc
+  Scenario: An agent's interrupt holds the queue
+    Given an agent is working in thread "caller" in "demo"
+    And "t1" has a running turn and a queued message "A"
+    When the agent of "caller" interrupts "t1"
+    Then "A" is held
+    And no run starts for it until the user resumes the queue or sends a message
+
+  # An orchestrating agent may stop a turn and let the next queued message go on.
+  @mc
+  Scenario: An agent's interrupt can let the queue run
+    Given an agent is working in thread "caller" in "demo"
+    And "t1" has a running turn and a queued message "A"
+    When the agent of "caller" interrupts "t1" and lets its queue run
+    Then "A" starts once the turn has stopped
 
   # Upstream #21473: only the user coming back releases the hold.
   @mc
