@@ -844,7 +844,18 @@ Feature: Moving a thread and its agent to another machine
       When the user imports the file on "desktop"
       Then the user is told the import failed
       And the attachments and terminal scrollback the import copied are removed
+      And the checkpoints and the agent's session the import placed are removed
       And "desktop" lists no thread "Alpha"
+
+    @mc
+    Scenario: An import of the previous server's file that fails part way leaves the destination as it was
+      Given a thread file exported by the previous server
+      And the destination cannot take the thread's events after its files were copied
+      When the user imports the file on "desktop"
+      Then the user is told the import failed
+      And the attachments and terminal scrollback the import copied are removed
+      And "desktop" keeps none of the thread's events
+      And "desktop" lists no thread "Legacy"
 
     @backlog @mc
     Scenario: An import keeps a copy of the destination's stored data from before it

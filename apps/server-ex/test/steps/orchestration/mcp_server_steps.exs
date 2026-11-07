@@ -997,7 +997,7 @@ defmodule HalC2.Steps.Orchestration.McpServer do
     )
 
     assert_receive {:forwarded, "srv-1"}, 5_000
-    refute_received {:forwarded, "tools/list"}, 100
+    refute_received {:forwarded, "tools/list"}
     send(worker, :release_init)
     HalC2.Mcp.Bridge.flush(context.bridge)
     context

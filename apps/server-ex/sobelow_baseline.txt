@@ -426,7 +426,6 @@ Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/thread_archi
 Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/thread_archive.ex | path
 Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/thread_archive.ex | path
 Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/thread_archive.ex | path
-Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/thread_archive.ex | source
 Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/thread_archive.ex | to
 Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/traces.ex | path
 Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/upgrade.ex | previous

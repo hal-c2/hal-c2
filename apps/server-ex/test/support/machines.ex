@@ -239,8 +239,12 @@ defmodule HalC2.Test.Machines do
   def refuse_changes(id),
     do: Application.put_env(:hal_c2, :store_hook, {__MODULE__, :refuse_change, [id]})
 
+  # Only this MC's own store: a scratch store an import folds into is not its disk.
   @doc false
-  def refuse_change(id, :append_change, id), do: raise("the disk is full")
+  def refuse_change(id, :append_change, id) do
+    if self() == Process.whereis(HalC2.Store), do: raise("the disk is full"), else: :ok
+  end
+
   def refuse_change(_id, _stage, _stream_id), do: :ok
 
   @doc "The diff of a thread's runs `from` to `to` on this MC (`HalC2.Checkpoint.turn_diff/5`)."

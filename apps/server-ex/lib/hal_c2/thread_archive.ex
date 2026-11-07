@@ -700,6 +700,7 @@ defmodule HalC2.ThreadArchive do
     id = meta["id"]
     dest_root = project["workspaceRoot"]
     same_repo? = repository(dest_root) != nil and repository(dest_root) == meta["repository"]
+    refs = refs_before(archive, dest_root, same_repo?)
 
     {checkpoint_notes, checkpoints_ok?} = place_checkpoints(archive, project, same_repo?)
     {worktree, worktree_notes} = place_worktree(archive, project, same_repo?)
@@ -749,6 +750,8 @@ defmodule HalC2.ThreadArchive do
           do:
             HalC2.Vcs.remove_worktree(%{"cwd" => dest_root, "path" => worktree, "force" => true})
 
+        PortableSessions.unplace(carried_session)
+        restore_refs(dest_root, refs)
         failed
 
       done ->
@@ -884,47 +887,30 @@ defmodule HalC2.ThreadArchive do
 
   # --- version 1 (an earlier install's archive) ----------------------------------------
 
-  defp write_v1(%{"thread" => %{"id" => id}} = archive, project) do
+  # The thread's events are folded into its entities in a store of their own first, so
+  # they reach this MC's store in the one commit a version 2 archive makes: an import
+  # that fails leaves no event of it behind.
+  defp write_v1(%{"thread" => %{"id" => id} = meta} = archive, project) do
     terminals =
       for %{"fileName" => name} = file <- archive["terminalLogs"],
           terminal = v1_terminal(name, id),
           do: {terminal, file}
 
-    placing_files(archive, id, terminals, fn -> write_v1_thread(archive, project) end)
+    placing_files(archive, id, terminals, fn ->
+      commit(id, changes(id, v1_entities(archive, project, meta), System.os_time(:millisecond)))
+
+      {:ok,
+       %{thread: id, title: meta["title"], project: project["id"], session: false, notes: []}}
+    end)
   end
 
-  defp write_v1_thread(archive, project) do
-    meta = archive["thread"]
-    id = meta["id"]
-
-    HalC2.Search.storing_thread(id, fn -> v1_thread(archive, project, meta) end)
-    loaded = StreamState.load(Store.path(), id)
-
-    # Provider sessions from an earlier install do not come along: the next message hands
-    # the conversation over.
-    native =
-      for pt <- StreamState.list(loaded, "provider-thread"),
-          is_map(pt["nativeThreadRef"]),
-          do: {"provider-thread", pt["id"], %{"s" => %{"nativeThreadRef" => nil}}}
-
-    # Through the thread's stream when it runs: rebuilding its row above started it.
-    :ok = commit(id, native)
-
-    if Process.whereis(HalC2.Shell) do
-      case HalC2.Projection.rebuild(id) do
-        {_, _} = kind_row -> HalC2.Shell.put_row(id, kind_row)
-        nil -> :ok
-      end
-    else
-      HalC2.Projection.rebuild(id)
-    end
-
-    {:ok, %{thread: id, title: meta["title"], project: project["id"], session: false, notes: []}}
-  end
-
-  # Stores the thread and its files, as `Import.V2` writes them in batches.
-  defp v1_thread(archive, project, %{"id" => id} = meta) do
+  # The thread's entities, as `Import.V2` stores an earlier install's events. Provider
+  # sessions from an earlier install do not come along: the next message hands the
+  # conversation over. The files it removes are its own scratch files.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp v1_entities(archive, project, %{"id" => id} = meta) do
     source = HalC2.Scratch.path("hal-c2-thread", ".sqlite")
+    folded = HalC2.Scratch.path("hal-c2-thread-store", ".sqlite")
 
     rewrite =
       rewriter(
@@ -944,9 +930,21 @@ defmodule HalC2.ThreadArchive do
         end
 
       node_log(source, events)
-      {:ok, _} = HalC2.Import.V2.run(source, Store, only: [id])
+      {:ok, store} = Store.start_link(path: folded, name: nil)
+
+      try do
+        {:ok, _} = HalC2.Import.V2.run(source, store, only: [id])
+
+        for {kind, eid, entity} <- StreamState.rows(StreamState.load(folded, id)) do
+          if kind == "provider-thread" and is_map(entity["nativeThreadRef"]),
+            do: {kind, eid, Map.put(entity, "nativeThreadRef", nil)},
+            else: {kind, eid, entity}
+        end
+      after
+        GenServer.stop(store)
+      end
     after
-      File.rm(source)
+      for path <- [source, folded, folded <> "-wal", folded <> "-shm"], do: File.rm(path)
     end
   end
 
@@ -1131,6 +1129,56 @@ defmodule HalC2.ThreadArchive do
 
   defp place_checkpoints(%{"thread" => meta}, project, false),
     do: {[checkpoints_note(meta, project, :different)], false}
+
+  # What the refs an import may write (the carried checkpoints and the worktree's
+  # branch) point at in `root` before it: `[{ref, object | nil}]`.
+  defp refs_before(_archive, _root, false), do: []
+
+  defp refs_before(archive, root, true) do
+    checkpoints = (archive["checkpoints"] || %{})["refs"] || []
+    branch = (archive["worktree"] || %{})["branch"]
+    refs = Enum.filter(checkpoints ++ List.wrap(branch && "refs/heads/#{branch}"), &plain_ref?/1)
+    now = refs_now(root, refs)
+    for ref <- refs, do: {ref, now[ref]}
+  end
+
+  defp plain_ref?(ref),
+    do: is_binary(ref) and String.starts_with?(ref, "refs/") and not (ref =~ ~r/[\s\x00]/)
+
+  defp refs_now(_root, []), do: %{}
+
+  defp refs_now(root, refs) do
+    case HalC2.Git.ok(root, ["for-each-ref", "--format=%(refname) %(objectname)" | refs]) do
+      {:ok, out} ->
+        for line <- String.split(out, "\n", trim: true),
+            [ref, object] = String.split(line, " ", parts: 2),
+            into: %{},
+            do: {ref, object}
+
+      {:error, _} ->
+        %{}
+    end
+  end
+
+  # Puts `refs` (`refs_before/3`) back: a ref the import made goes, one it moved points
+  # where it did, and one nobody touched is left alone.
+  defp restore_refs(_root, []), do: :ok
+
+  defp restore_refs(root, refs) do
+    now = refs_now(root, Enum.map(refs, &elem(&1, 0)))
+
+    commands =
+      for {ref, before} <- refs, now[ref] != before do
+        if before,
+          do: "update #{ref} #{before}\n",
+          else: "delete #{ref} #{now[ref]}\n"
+      end
+
+    if commands != [],
+      do: HalC2.Git.ok(root, ["update-ref", "--stdin"], input: Enum.join(commands))
+
+    :ok
+  end
 
   # A new worktree of `project` on the carried branch, put back to the thread's last
   # checkpoint. A branch of that name that has other commits here is left alone.

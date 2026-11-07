@@ -527,31 +527,49 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
   step "the destination cannot take the thread's events after its files were copied",
        context do
     context = ensure_file(context, "alpha.hal-c2-thread")
-    id = World.thread_id(context, "Alpha")
-    Machines.on(context, "desktop", Machines, :refuse_changes, [id])
+    Machines.on(context, "desktop", Machines, :refuse_changes, [imported_id(context)])
 
     ExUnit.Callbacks.on_exit(fn ->
       safely(fn -> Machines.on(context, "desktop", Machines, :refuse_changes, [nil]) end)
     end)
 
-    context
+    Map.put(context, :before_import, destination(context, "desktop"))
   end
 
   step "the user is told the import failed", context do
     Machines.on(context, context.import_machine, Machines, :refuse_changes, [nil])
     assert {:error, message} = context.imported
-    assert message == "The import of Alpha failed: the disk is full. Nothing was imported."
+    title = if context[:legacy], do: "Legacy", else: "Alpha"
+    assert message == "The import of #{title} failed: the disk is full. Nothing was imported."
     context
   end
 
   step "the attachments and terminal scrollback the import copied are removed", context do
     machine = context.import_machine
-    id = World.thread_id(context, "Alpha")
+    image = (context[:legacy] || %{})[:image] || context.image
 
-    assert Machines.on(context, machine, HalC2.Attachments, :path, [%{"id" => context.image}]) ==
-             nil
+    assert Machines.on(context, machine, HalC2.Attachments, :path, [%{"id" => image}]) == nil
 
-    assert Machines.on(context, machine, HalC2.Terminal, :saved_scrollback, [id]) == []
+    assert Machines.on(context, machine, HalC2.Terminal, :saved_scrollback, [imported_id(context)]) ==
+             []
+
+    context
+  end
+
+  step "the checkpoints and the agent's session the import placed are removed", context do
+    # The file carried both, so the import placed them before the thread was refused.
+    archive = context.thread_file |> File.read!() |> JSON.decode!()
+    assert [_ | _] = archive["checkpoints"]["refs"]
+    assert [_ | _] = archive["session"]["files"]
+
+    assert destination(context, context.import_machine) == context.before_import
+    context
+  end
+
+  step "{string} keeps none of the thread's events", %{args: [machine]} = context do
+    path = Machines.on(context, machine, HalC2.Store, :path, [])
+    streams = Machines.on(context, machine, HalC2.Store, :list_streams, [path])
+    refute Enum.any?(streams, &(&1.id == imported_id(context)))
     context
   end
 
@@ -2836,6 +2854,26 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
   end
 
   defp ensure_file(%{thread_file: _} = context, _name), do: context
+
+  defp imported_id(context),
+    do: (context[:legacy] || %{})[:id] || World.thread_id(context, "Alpha")
+
+  # What an import may write on `machine` besides the thread: the checkpoint refs of its
+  # checkouts and every file and folder where its agents keep their sessions.
+  defp destination(context, machine) do
+    refs =
+      for %{root: root} <- checkouts(context, machine),
+          do: {root, World.git!(root, ~w(for-each-ref refs/hal-c2))}
+
+    sessions =
+      for {home, instance} <- [codex_home: "codex", claude_home: "claudeAgent"],
+          dir = Machines.on(context, machine, HalC2.PortableSessions, home, [instance]),
+          path <- Path.wildcard(Path.join(dir, "**"), match_dot: true),
+          do: path
+
+    %{refs: refs, sessions: Enum.sort(sessions)}
+  end
+
   defp ensure_file(context, name), do: context |> furnish("Alpha") |> export("Alpha", name)
 
   defp import_file(context, machine, opts) do
