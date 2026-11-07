@@ -38,7 +38,7 @@ Feature: Keybindings settings
       Then both shortcuts are listed for "chat.new"
       And each is marked Default
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: The panel shows how many bindings there are
       Then the number of bindings is shown
 
@@ -56,12 +56,12 @@ Feature: Keybindings settings
         | outside the te | condition |
         | Custom         | source    |
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Searching starts from its shortcut
       When the user presses mod+f
       Then the keybinding search has focus
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Nothing matches the search
       When the user searches keybindings for "qqqq"
       Then the panel says "No keybindings match your search."
@@ -87,12 +87,12 @@ Feature: Keybindings settings
       Then "diff.toggle" is bound to mod+shift+y
       And the binding is marked Custom
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: The recorder waits for a shortcut
       When the user starts recording a shortcut for "diff.toggle"
       Then the user is prompted "Press shortcut"
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Escape cancels recording
       Given the user is recording a shortcut for "diff.toggle"
       When the user presses Escape
@@ -157,7 +157,7 @@ Feature: Keybindings settings
 
   Rule: Conditions and conflicts
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A binding with no condition applies always
       When the user clears every condition on a binding
       Then the binding's condition reads "Always"
@@ -286,7 +286,7 @@ Feature: Keybindings settings
       When the user adds a keybinding for "thread.stop" with mod+shift+.
       Then "thread.stop" is bound to mod+shift+.
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Adding a binding can be cancelled
       Given the user started adding a keybinding
       When the user cancels

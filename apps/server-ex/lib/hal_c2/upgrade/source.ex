@@ -399,26 +399,67 @@ defmodule HalC2.Upgrade.Source do
 
   # --- HTTP ------------------------------------------------------------------------
 
+  # Streamed into `<path>.part` and renamed once whole, so a download cut off leaves
+  # nothing that looks like a bundle. It may take as long as it keeps receiving; one
+  # that receives nothing for `:upgrade_download_idle_ms` (a minute) fails.
+  # sobelow_skip ["Traversal.FileModule"]
   defp download(url, path) do
     File.mkdir_p!(Path.dirname(path))
     part = path <> ".part"
+    {:ok, file} = File.open(part, [:write, :binary, :raw])
 
-    case :httpc.request(:get, {String.to_charlist(url), []}, http_options(), [
-           {:stream, String.to_charlist(part)}
-         ]) do
-      {:ok, :saved_to_file} ->
+    result =
+      try do
+        case :httpc.request(
+               :get,
+               {String.to_charlist(url), []},
+               Keyword.put(http_options(), :timeout, :infinity),
+               sync: false,
+               stream: :self
+             ) do
+          {:ok, ref} -> receive_body(ref, file, url, download_idle_ms())
+          {:error, reason} -> {:error, "#{url}: #{inspect(reason)}"}
+        end
+      after
+        File.close(file)
+      end
+
+    case result do
+      :ok ->
         File.rename!(part, path)
         :ok
 
-      {:ok, {{_, status, _}, _, _}} ->
+      error ->
         File.rm(part)
-        {:error, "#{url} answered #{status}"}
-
-      {:error, reason} ->
-        File.rm(part)
-        {:error, "#{url}: #{inspect(reason)}"}
+        error
     end
   end
+
+  defp receive_body(ref, file, url, idle) do
+    receive do
+      {:http, {^ref, :stream_start, _headers}} ->
+        receive_body(ref, file, url, idle)
+
+      {:http, {^ref, :stream, chunk}} ->
+        :ok = :file.write(file, chunk)
+        receive_body(ref, file, url, idle)
+
+      {:http, {^ref, :stream_end, _headers}} ->
+        :ok
+
+      {:http, {^ref, {{_, status, _}, _headers, _body}}} ->
+        {:error, "#{url} answered #{status}"}
+
+      {:http, {^ref, {:error, reason}}} ->
+        {:error, "#{url}: #{inspect(reason)}"}
+    after
+      idle ->
+        :httpc.cancel_request(ref)
+        {:error, "#{url} sent nothing for #{idle} ms"}
+    end
+  end
+
+  defp download_idle_ms, do: Application.get_env(:hal_c2, :upgrade_download_idle_ms, 60_000)
 
   defp fetch_text(url) do
     case :httpc.request(:get, {String.to_charlist(url), []}, http_options(), body_format: :binary) do
@@ -429,7 +470,7 @@ defmodule HalC2.Upgrade.Source do
 
   defp http_options do
     [
-      timeout: :timer.minutes(10),
+      timeout: :timer.minutes(1),
       connect_timeout: 15_000,
       autoredirect: true,
       ssl: [verify: :verify_peer, cacerts: :public_key.cacerts_get(), depth: 4]

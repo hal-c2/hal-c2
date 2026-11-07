@@ -98,6 +98,36 @@ defmodule HalC2.SettingsTest do
     assert HalC2.Settings.resolve(settings, nil) == settings
   end
 
+  test "a project's own provider switch wins either way; without one the environment's applies" do
+    settings = %{
+      "providers" => %{"codex" => %{"enabled" => false}},
+      "providerInstances" => %{"codex-work" => %{"driver" => "codex"}},
+      "projectSettingsOverrides" => %{
+        "on" => %{"providerInstances" => %{"codex" => %{"enabled" => true}}},
+        "off" => %{"providerInstances" => %{"codex-work" => %{"enabled" => false}}}
+      }
+    }
+
+    assert Settings.provider_on?(settings, "on", "codex")
+    refute Settings.provider_on?(settings, "other", "codex")
+    refute Settings.provider_on?(settings, nil, "codex")
+    assert Settings.provider_off(settings, "other", "codex") =~ "turned off on this MC"
+
+    # An instance without an `enabled` of its own is on, whatever its driver's says.
+    assert Settings.provider_on?(settings, "other", "codex-work")
+    assert Settings.provider_off(settings, "off", "codex-work") =~ "turned off for this project"
+    assert Settings.provider_off(settings, "on", "codex") == nil
+
+    assert Settings.provider_on_in_a_project?(settings, "codex")
+    refute Settings.provider_on_in_a_project?(settings, "codex-work")
+
+    # What reads the resolved document (text generation) sees the project's switch.
+    assert Settings.resolve(settings, "on")["providers"]["codex"]["enabled"] == true
+
+    assert Settings.resolve(settings, "off")["providerInstances"]["codex-work"]["enabled"] ==
+             false
+  end
+
   test "an instance's driver setting is its own, else its driver's, and blank is unset" do
     assert {:ok, 1} =
              Settings.put(

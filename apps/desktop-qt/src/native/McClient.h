@@ -150,7 +150,8 @@ public:
   void post(QObject* context, const QString& path, const QJsonObject& body, Reply reply);
   // POSTs `bytes` to a signed URL the MC handed out (`relativeUrl`, as
   // `attachments.createUploadUrl`'s): the URL is its own authorization.
-  void upload(QObject* context, const QString& relativeUrl, const QByteArray& bytes, const QString& mimeType, Reply reply);
+  void upload(QObject* context, const QString& relativeUrl, const QByteArray& bytes, const QString& mimeType, Reply reply,
+              std::function<void(qint64 sent, qint64 total)> progress = {});
   // GETs a signed URL the MC handed out (`assets.createUrl`'s `relativeUrl`)
   // and gives its bytes, or why it could not be read.
   using Bytes = std::function<void(const QByteArray& bytes, const std::optional<QString>& error)>;

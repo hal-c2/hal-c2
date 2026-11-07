@@ -241,6 +241,9 @@ export const AuthClientMetadata = Schema.Struct({
   deviceType: AuthClientMetadataDeviceType,
   os: Schema.optionalKey(TrimmedNonEmptyString),
   browser: Schema.optionalKey(TrimmedNonEmptyString),
+  // What the client last reported connecting (`clientSurface`, `clientAppVersion`).
+  surface: Schema.optionalKey(ClientSurface),
+  appVersion: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type AuthClientMetadata = typeof AuthClientMetadata.Type;
 

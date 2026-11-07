@@ -258,6 +258,35 @@ describe("derivePendingBackgroundWork", () => {
     ]);
   });
 
+  it("keeps the first line that says anything of a many-line description", () => {
+    expect(
+      derivePendingBackgroundWork({
+        latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" as const },
+        providerThreads: [
+          {
+            id: "pt-1" as never,
+            pendingBackgroundTasks: [
+              { taskId: "native-task", description: "  \r\nwatch CI\r\nthen merge" },
+            ],
+          },
+        ],
+        turnItems: [
+          {
+            id: "item-subagent" as never,
+            type: "subagent",
+            status: "running",
+            title: null,
+            nativeItemRef: null,
+            prompt: "\n  Read the issue first.\n\nWhat to build:\n- the style\n",
+          } as never,
+        ],
+      }),
+    ).toEqual([
+      { taskId: "native-task", description: "watch CI" },
+      { taskId: "item-subagent", description: "Read the issue first.", taskType: "subagent" },
+    ]);
+  });
+
   it("dedupes roster entries against turn items by native task id", () => {
     const tasks = derivePendingBackgroundWork({
       latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },

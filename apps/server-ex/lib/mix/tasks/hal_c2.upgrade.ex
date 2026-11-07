@@ -293,7 +293,8 @@ defmodule Mix.Tasks.HalC2.Upgrade do
         {~c"#{base}/api/dev/reload", [{~c"authorization", ~c"Bearer #{String.trim(token)}"}],
          ~c"application/json", body}
 
-      case :httpc.request(:post, request, [timeout: :timer.minutes(15)], body_format: :binary) do
+      # The MC bounds each stage of the update; a long one is waited for.
+      case :httpc.request(:post, request, [timeout: :infinity], body_format: :binary) do
         {:ok, {{_, 200, _}, _, body}} ->
           result = JSON.decode!(body)
           Mix.shell().info("#{base}: #{result["method"]} to #{result["targetVersion"]}")
@@ -361,7 +362,7 @@ defmodule Mix.Tasks.HalC2.Upgrade do
 
     for mc <- mcs do
       input = [%{"targetVersion" => version}]
-      {mc, :erpc.call(mc, HalC2.Upgrade, :update, input, :timer.minutes(15))}
+      {mc, :erpc.call(mc, HalC2.Upgrade, :update, input, :infinity)}
     end
   end
 

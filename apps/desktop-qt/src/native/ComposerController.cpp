@@ -175,6 +175,11 @@ QString newestUserMessage(const QHash<QString, QJsonObject>& messages, const QSe
 constexpr qsizetype kMaxStashEntries = 20;
 // packages/contracts/src/chatAttachment.ts PROVIDER_SEND_TURN_MAX_INPUT_CHARS.
 constexpr qsizetype kMaxPromptChars = 120000;
+// What one message can carry (packages/contracts: a provider turn's
+// attachments, and COMPOSER_CONTEXT_MAX_RECORDS / its serialized size).
+constexpr qsizetype kMaxAttachments = 100;
+constexpr qsizetype kMaxContextRecords = 200;
+constexpr qsizetype kMaxContextChars = 16000000;
 // What Claude's ultrathink choice puts at the start of a prompt.
 const QString kUltrathinkPrefix = QStringLiteral("Ultrathink:\n");
 
@@ -382,8 +387,46 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
       action == QLatin1String("composer.reviewComment.remove")) {
     if (target.isEmpty()) return true;
     const QString id = map.value(QStringLiteral("id")).toString();
-    if (m_drafts[target].excerpts.removeIf([&](const Excerpt& context) { return context.id == id; }) > 0) {
-      publish();
+    Draft& kept = m_drafts[target];
+    // A carried thread's link is in the text where it was chosen: taking
+    // its chip off takes the link out too, or the send carries a link with
+    // no record behind it.
+    const bool threadLink = std::any_of(kept.excerpts.cbegin(), kept.excerpts.cend(),
+                                        [&](const Excerpt& context) { return context.id == id && !context.thread.isEmpty(); });
+    if (kept.excerpts.removeIf([&](const Excerpt& context) { return context.id == id; }) > 0) {
+      bool published = false;
+      if (threadLink) {
+        const QString text = draft(target);
+        const QRegularExpression link(QStringLiteral(" ?\\[@[^\\]]*\\]\\(hal-c2-context://v1/thread/thread_%1\\)")
+                                          .arg(QRegularExpression::escape(id)));
+        // The caret keeps its place among the words that stay: a link
+        // stripped before it moves it back by the link's length, and one
+        // stripped around it leaves it where the link started.
+        const int cursor = std::clamp(kept.cursor, 0, int(text.size()));
+        QString stripped;
+        stripped.reserve(text.size());
+        qsizetype at = 0;
+        qsizetype removed = 0;
+        std::optional<int> spanned;
+        for (auto matches = link.globalMatch(text); matches.hasNext();) {
+          const QRegularExpressionMatch match = matches.next();
+          stripped += text.sliced(at, match.capturedStart() - at);
+          if (!spanned) {
+            if (match.capturedEnd() <= cursor) {
+              removed += match.capturedLength();
+            } else if (match.capturedStart() < cursor) {
+              spanned = int(match.capturedStart() - removed);
+            }
+          }
+          at = match.capturedEnd();
+        }
+        stripped += text.sliced(at);
+        if (stripped != text) {
+          setText(target, stripped, spanned.value_or(int(cursor - removed)));
+          published = true;
+        }
+      }
+      if (!published) publish();
     }
     return true;
   }
@@ -540,6 +583,10 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     if (!target.isEmpty()) editWaiting(target, map.value(QStringLiteral("messageId")).toString());
     return true;
   }
+  if (action == QLatin1String("composer.outbox.delete")) {
+    if (!target.isEmpty()) deleteWaiting(target, map.value(QStringLiteral("messageId")).toString());
+    return true;
+  }
   if (action == QLatin1String("composer.queue.edit.cancel")) {
     if (m_queuedEdit && m_queuedEdit->thread == target) endQueuedEdit();
     return true;
@@ -604,6 +651,34 @@ void ComposerController::stepHistory(const QString& target, bool backward) {
 }
 
 // Why a prompt cannot be sent for its length, else empty.
+QString ComposerController::carryProblem(const QList<Attachment>& attachments, const QList<Excerpt>& contexts) {
+  if (attachments.size() > kMaxAttachments) {
+    return QStringLiteral("Remove attachments until there are at most %1.").arg(kMaxAttachments);
+  }
+  // Each excerpt rides as one context record (withExcerpts); a quote rides
+  // as a link with none.
+  qsizetype records = 0;
+  qsizetype chars = 0;
+  for (const Excerpt& context : contexts) {
+    if (!context.citation.isEmpty()) continue;
+    if (!context.thread.isEmpty()) {
+      ++records;
+      chars += context.thread.value(QLatin1String("title")).toString().size();
+      continue;
+    }
+    if (context.text.trimmed().isEmpty()) continue;
+    ++records;
+    chars += context.text.size() + context.terminalLabel.size();
+  }
+  if (records > kMaxContextRecords) {
+    return QStringLiteral("Remove context items until there are at most %1.").arg(kMaxContextRecords);
+  }
+  if (chars > kMaxContextChars) {
+    return QStringLiteral("This draft has too much context to send. Remove some context items and try again.");
+  }
+  return {};
+}
+
 QString ComposerController::promptProblem(const QString& text) {
   const qsizetype excess = text.trimmed().size() - kMaxPromptChars;
   if (excess <= 0) return {};
@@ -781,6 +856,10 @@ bool ComposerController::submit(const QVariantMap& payload) {
   if (!text.trimmed().isEmpty()) m_usageLimits.remove(target);
   if (!m_draftId.isEmpty()) return submitDraft(target, payload);
   const Draft& kept = m_drafts.value(target);
+  if (const QString problem = carryProblem(kept.attachments, kept.excerpts); !problem.isEmpty()) {
+    toast(QStringLiteral("Message not sent"), problem);
+    return true;
+  }
   const bool hasExtras = !kept.attachments.isEmpty() || !kept.excerpts.isEmpty();
   const bool planFollowUp = !hasExtras && turnState().value(QStringLiteral("plan")).isValid();
   if (text.trimmed().isEmpty() && !hasExtras && !planFollowUp) return true;
@@ -788,9 +867,17 @@ bool ComposerController::submit(const QVariantMap& payload) {
 
   QString mode = QStringLiteral("auto");
   if (running(target)) {
-    const bool queue = setting(QStringLiteral("followUpBehavior")).toString() == QLatin1String("queue");
-    const bool alternate = payload.value(QStringLiteral("intent")).toString() == QLatin1String("alternate");
-    mode = queue != alternate ? QStringLiteral("queue") : QStringLiteral("steer");
+    const QString intent = payload.value(QStringLiteral("intent")).toString();
+    if (intent == QLatin1String("restart") && canSteerActive()) {
+      mode = QStringLiteral("restart");
+    } else if (intent == QLatin1String("queue") || intent == QLatin1String("steer")) {
+      mode = intent == QLatin1String("steer") && !canSteerActive() ? QStringLiteral("queue") : intent;
+    } else {
+      const bool queue = setting(QStringLiteral("followUpBehavior")).toString() == QLatin1String("queue");
+      const bool alternate = intent == QLatin1String("alternate");
+      mode = queue != alternate ? QStringLiteral("queue") : QStringLiteral("steer");
+      if (mode == QLatin1String("steer") && !canSteerActive()) mode = QStringLiteral("queue");
+    }
   }
   return sendTurn(target, text, mode, planFollowUp, true);
 }
@@ -799,12 +886,28 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
                                   bool fromDraft) {
   const auto thread = m_store->thread(target);
   if (!thread) return false;
-  // The outbox takes a message the MC cannot be reached for, and one written
-  // behind a message still waiting there, which must go first.
+  // An Antigravity model its environment has not set up cannot be sent to:
+  // its setup lives on the desktop, so say so instead of dispatching.
+  const QJsonObject chosen = selection(target);
+  if (const composer::Instance* instance = instanceOf(chosen);
+      instance && instance->driver == QLatin1String("antigravity") &&
+      (!instance->ready() ||
+       (!str(chosen, QLatin1String("model")).isEmpty() && composer::findModel(*instance, str(chosen, QLatin1String("model"))).isEmpty()))) {
+    toast(QStringLiteral("Antigravity model unavailable"),
+          QStringLiteral("Set up Antigravity on the desktop, or choose another model."));
+    return true;
+  }
+  // The outbox takes a message the MC cannot be reached for, one whose files
+  // are still going up, and one written behind a message still waiting there,
+  // which must go first.
   const bool connected = m_client->isReady() && m_store->threadOnline(target);
+  const QList<Attachment> carrying = m_drafts.value(target).attachments;
+  const bool uploading = fromDraft && std::any_of(carrying.cbegin(), carrying.cend(), [](const Attachment& a) {
+                           return a.upload == QLatin1String("uploading");
+                         });
   const bool waits =
       m_waitsOffline && fromDraft &&
-      (!connected || m_outboxHeld.contains(target) ||
+      (!connected || uploading || m_outboxHeld.contains(target) ||
        std::any_of(m_kept.unsent.cbegin(), m_kept.unsent.cend(), [&](const Unsent& u) { return u.waiting && u.target == target; }));
   // Else nothing leaves while the MC is out of reach: the draft stays as it is.
   if (!connected && !waits) {
@@ -813,7 +916,12 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
         QStringLiteral("Reconnecting to the environment. Try again once it is connected."));
     return true;
   }
-  if (fromDraft && filesBlock(m_drafts.value(target).attachments, QStringLiteral("sending"))) return true;
+  // A failed upload stops the send; one still going up holds it in the
+  // outbox where the shell waits offline, and stops it where it does not.
+  if (fromDraft) {
+    const bool failed = std::any_of(carrying.cbegin(), carrying.cend(), [](const Attachment& a) { return a.upload == QLatin1String("failed"); });
+    if ((failed || (uploading && !waits)) && filesBlock(carrying, QStringLiteral("sending"))) return true;
+  }
   // Nor while the thread is on its way to another machine, which would refuse it.
   if (thread->movingTo) {
     NativeShell::of(this)->controller<ToastController>()->show(
@@ -992,6 +1100,10 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
   QList<Attachment> attachments = m_drafts.value(draftId).attachments;
   const QList<Excerpt> contexts = m_drafts.value(draftId).excerpts;
   if (text.trimmed().isEmpty() && attachments.isEmpty() && contexts.isEmpty()) return true;
+  if (const QString problem = carryProblem(attachments, contexts); !problem.isEmpty()) {
+    toast(QStringLiteral("Message not sent"), problem);
+    return true;
+  }
   if (stopForExpiredExcerpts(text, m_drafts.value(draftId))) return true;
   if (m_launching.contains(draftId)) return true;
 
@@ -1534,9 +1646,18 @@ void ComposerController::drainOutbox() {
   }
   QStringList targets;
   QSet<QString> gone;
+  QSet<QString> blocked;
   for (const Unsent& unsent : std::as_const(m_kept.unsent)) {
-    if (!unsent.waiting || targets.contains(unsent.target) || gone.contains(unsent.target)) continue;
+    if (!unsent.waiting || targets.contains(unsent.target) || gone.contains(unsent.target) || blocked.contains(unsent.target)) continue;
     if (m_queues.contains(unsent.target) || m_outboxHeld.contains(unsent.target)) continue;
+    // A send whose files have not all arrived waits for them, in its order.
+    const bool filesReady = std::all_of(unsent.attachments.cbegin(), unsent.attachments.cend(), [](const Attachment& a) {
+      return a.upload != QLatin1String("uploading") && a.upload != QLatin1String("failed");
+    });
+    if (!filesReady) {
+      blocked.insert(unsent.target);
+      continue;
+    }
     if (!m_store->environmentOnline(unsent.target.section(QLatin1Char(':'), 0, 0))) continue;
     // The environment has said what it holds, and the thread is not there.
     if (!m_store->thread(unsent.target)) {
@@ -1655,6 +1776,27 @@ bool ComposerController::editWaiting(const QString& target, const QString& messa
   const QString typed = draft(target);
   const QString text = typed.isEmpty() ? unsent.prompt : unsent.prompt.isEmpty() ? typed : unsent.prompt + QStringLiteral("\n\n") + typed;
   setText(target, text, int(text.size()));
+  save();
+  publish();
+  return true;
+}
+
+bool ComposerController::deleteWaiting(const QString& target, const QString& messageId) {
+  const auto found = std::find_if(m_kept.unsent.cbegin(), m_kept.unsent.cend(), [&](const Unsent& unsent) {
+    return unsent.messageId == messageId && unsent.target == target && unsent.waiting;
+  });
+  if (found == m_kept.unsent.cend()) return true;
+  const Unsent unsent = *found;
+  m_kept.unsent.erase(found);
+  // What had already arrived for it is the MC's to drop; an upload still in
+  // flight finds nothing holding it when it lands and is dropped then
+  // (uploadFile), and its copies going here stops the send being drained.
+  for (const Attachment& attachment : unsent.attachments) {
+    if (attachment.remoteId.isEmpty()) continue;
+    m_client->call(this, attachment.environmentId, QStringLiteral("attachments.delete"),
+                   QJsonObject{{QStringLiteral("attachmentId"), attachment.remoteId}},
+                   [](const QJsonValue&, const std::optional<QString>&) {});
+  }
   save();
   publish();
   return true;
@@ -1851,6 +1993,7 @@ QJsonObject ComposerController::excerptJson(const Excerpt& excerpt) {
                    {QStringLiteral("lineEnd"), excerpt.lineEnd}, {QStringLiteral("text"), excerpt.text}};
   if (!excerpt.citation.isEmpty()) kept.insert(QStringLiteral("citation"), excerpt.citation);
   if (!excerpt.review.isEmpty()) kept.insert(QStringLiteral("review"), excerpt.review);
+  if (!excerpt.thread.isEmpty()) kept.insert(QStringLiteral("thread"), excerpt.thread);
   return kept;
 }
 
@@ -1858,7 +2001,7 @@ ComposerController::Excerpt ComposerController::excerptOf(const QJsonObject& kep
   return {str(kept, QLatin1String("id")), str(kept, QLatin1String("terminalId")), str(kept, QLatin1String("terminalLabel")),
           kept.value(QLatin1String("lineStart")).toInt(1), kept.value(QLatin1String("lineEnd")).toInt(1),
           str(kept, QLatin1String("text")), kept.value(QLatin1String("citation")).toObject(),
-          kept.value(QLatin1String("review")).toObject()};
+          kept.value(QLatin1String("review")).toObject(), kept.value(QLatin1String("thread")).toObject()};
 }
 
 void ComposerController::dispatchAll(const Send& send, qsizetype index, Dispatched done) {
@@ -1913,9 +2056,26 @@ bool ComposerController::attach(const QVariantList& files) {
   const QString target = this->target();
   if (target.isEmpty()) return true;
   const QString environmentId = environmentOf(target);
+  const bool acceptsFiles = m_store->acceptsFileAttachments(environmentId);
+  bool refusedFile = false;
   QStringList added;
   for (const QVariant& value : files) {
     const QVariantMap file = value.toMap();
+    // An environment that takes no file attachments refuses files as they
+    // are chosen; images, which ride with the message, still attach. A
+    // large paste turned into a text file is no file to refuse: its words
+    // go into the draft where they were pasted instead.
+    if (!acceptsFiles && !file.contains(QStringLiteral("base64"))) {
+      if (file.contains(QStringLiteral("text"))) {
+        const QString pasted = file.value(QStringLiteral("text")).toString();
+        const QString text = draft(target);
+        const int cursor = std::clamp(m_drafts[target].cursor, 0, int(text.size()));
+        setText(target, text.left(cursor) + pasted + text.mid(cursor), cursor + int(pasted.size()));
+        continue;
+      }
+      refusedFile = true;
+      continue;
+    }
     const QString name = file.value(QStringLiteral("name")).toString();
     const QString mimeType = file.value(QStringLiteral("mimeType")).toString();
     QList<Attachment>& attachments = m_drafts[target].attachments;
@@ -1949,6 +2109,11 @@ bool ComposerController::attach(const QVariantList& files) {
     }
     attachments.append(attachment);
     added.append(attachment.id);
+  }
+  if (refusedFile) {
+    NativeShell::of(this)->controller<ToastController>()->show(
+        QStringLiteral("warning"), QStringLiteral("File not attached"),
+        QStringLiteral("The server does not support file attachments."));
   }
   save();
   publish();
@@ -2029,7 +2194,39 @@ ComposerController::Attachment* ComposerController::findAttachment(const QString
       }
     }
   }
+  for (Unsent& unsent : m_kept.unsent) {
+    for (Attachment& attachment : unsent.attachments) {
+      if (attachment.id == id) return &attachment;
+    }
+  }
+  for (QList<Send>& queue : m_queues) {
+    for (Send& send : queue) {
+      for (Attachment& attachment : send.attachments) {
+        if (attachment.id == id) return &attachment;
+      }
+    }
+  }
   return nullptr;
+}
+
+int ComposerController::updateAttachmentCopies(const QString& id, const std::function<void(Attachment&)>& change) {
+  int copies = 0;
+  const auto apply = [&](QList<Attachment>& held) {
+    for (Attachment& attachment : held) {
+      if (attachment.id != id) continue;
+      change(attachment);
+      ++copies;
+    }
+  };
+  for (Draft& draft : m_drafts) apply(draft.attachments);
+  for (auto& questions : m_answerFiles) {
+    for (QList<Attachment>& files : questions) apply(files);
+  }
+  for (Unsent& unsent : m_kept.unsent) apply(unsent.attachments);
+  for (QList<Send>& queue : m_queues) {
+    for (Send& send : queue) apply(send.attachments);
+  }
+  return copies;
 }
 
 QString ComposerController::environmentOf(const QString& target) const {
@@ -2047,10 +2244,11 @@ void ComposerController::uploadFile(const QString& id, const QString& environmen
   Attachment* attachment = findAttachment(id);
   if (!attachment) return;
   const auto failed = [this, id](const QString& why) {
-    if (Attachment* found = findAttachment(id)) {
-      found->upload = QStringLiteral("failed");
-      found->error = why;
-    }
+    updateAttachmentCopies(id, [&](Attachment& held) {
+      held.upload = QStringLiteral("failed");
+      held.error = why;
+      held.progress = -1;
+    });
     save();
     publish();
   };
@@ -2058,6 +2256,7 @@ void ComposerController::uploadFile(const QString& id, const QString& environmen
   attachment->error.clear();
   attachment->remoteId.clear();
   attachment->environmentId = environmentId;
+  attachment->progress = -1;
   QByteArray bytes = attachment->content;
   if (!attachment->path.isEmpty()) {
     QFile file(attachment->path);
@@ -2076,25 +2275,48 @@ void ComposerController::uploadFile(const QString& id, const QString& environmen
                              {QStringLiteral("name"), attachment->name},
                              {QStringLiteral("mimeType"), mimeType},
                              {QStringLiteral("sizeBytes"), bytes.size()}},
-                 [this, id, bytes, mimeType, failed](const QJsonValue& result, const std::optional<QString>& error) {
+                 [this, id, bytes, mimeType, environmentId, failed](const QJsonValue& result, const std::optional<QString>& error) {
                    const QString url = result.toObject().value(QLatin1String("relativeUrl")).toString();
                    const QString remoteId = result.toObject().value(QLatin1String("attachmentId")).toString();
                    if (error || url.isEmpty() || remoteId.isEmpty()) {
                      failed(error.value_or(tr("The environment did not take the upload.")));
                      return;
                    }
-                   m_client->upload(this, url, bytes, mimeType, [this, id, remoteId, failed](const QJsonValue&, const std::optional<QString>& error) {
-                     if (error) {
-                       failed(*error);
-                       return;
-                     }
-                     if (Attachment* found = findAttachment(id)) {
-                       found->upload.clear();
-                       found->remoteId = remoteId;
-                     }
-                     save();
-                     publish();
-                   });
+                   m_client->upload(
+                       this, url, bytes, mimeType,
+                       [this, id, remoteId, environmentId, failed](const QJsonValue&, const std::optional<QString>& error) {
+                         if (error) {
+                           failed(*error);
+                           return;
+                         }
+                         const int copies = updateAttachmentCopies(id, [&](Attachment& held) {
+                           held.upload.clear();
+                           held.remoteId = remoteId;
+                           held.progress = -1;
+                         });
+                         if (copies == 0) {
+                           // What it was uploading for went while it went up:
+                           // the upload is the MC's to drop again.
+                           m_client->call(this, environmentId, QStringLiteral("attachments.delete"),
+                                          QJsonObject{{QStringLiteral("attachmentId"), remoteId}},
+                                          [](const QJsonValue&, const std::optional<QString>&) {});
+                         }
+                         save();
+                         publish();
+                         // A send waiting on this upload can go now.
+                         drainOutbox();
+                       },
+                       [this, id](qint64 sent, qint64 total) {
+                         if (total <= 0) return;
+                         const double gone = double(sent) / double(total);
+                         bool steps = false;
+                         updateAttachmentCopies(id, [&](Attachment& held) {
+                           if (int(held.progress * 100) == int(gone * 100)) return;
+                           held.progress = gone;
+                           steps = true;
+                         });
+                         if (steps) publish();
+                       });
                  });
 }
 
@@ -2164,6 +2386,7 @@ QVariantList ComposerController::shownAttachments(const QList<Attachment>& attac
                       {QStringLiteral("name"), attachment.name},
                       {QStringLiteral("kind"), attachment.file ? QStringLiteral("file") : QStringLiteral("image")},
                       {QStringLiteral("status"), attachment.upload},
+                      {QStringLiteral("progress"), attachment.progress},
                       {QStringLiteral("error"), attachment.error},
                       {QStringLiteral("source"), source}};
     if (previews && !attachment.file) {
@@ -2396,6 +2619,17 @@ void ComposerController::withExcerpts(QJsonObject& message, const QList<Excerpt>
       links.append(citationLink(context.citation));
       continue;
     }
+    if (!context.thread.isEmpty()) {
+      // A thread carried as context: its link is already in the text where
+      // it was chosen; the record says which thread it names.
+      records.append(QJsonObject{{QStringLiteral("version"), 1},
+                                 {QStringLiteral("contextId"), QStringLiteral("thread_") + context.id},
+                                 {QStringLiteral("kind"), QStringLiteral("thread")},
+                                 {QStringLiteral("environmentId"), context.thread.value(QLatin1String("environmentId"))},
+                                 {QStringLiteral("threadId"), context.thread.value(QLatin1String("threadId"))},
+                                 {QStringLiteral("title"), context.thread.value(QLatin1String("title"))}});
+      continue;
+    }
     if (!context.review.isEmpty()) {
       // reviewCommentRecord: the note with the file, the lines and their text.
       const QString filePath = context.review.value(QLatin1String("filePath")).toString();
@@ -2433,11 +2667,14 @@ void ComposerController::withExcerpts(QJsonObject& message, const QList<Excerpt>
         {QStringLiteral("text"), context.text},
     });
   }
-  // A quote is a link with no record, so the links decide whether anything is added.
-  if (links.isEmpty()) return;
-  const QString text = message.value(QLatin1String("text")).toString();
-  const QString joined = links.join(QLatin1Char(' '));
-  message.insert(QStringLiteral("text"), text.isEmpty() ? joined : text + QStringLiteral("\n\n") + joined);
+  // A quote is a link with no record, and a thread's record has its link
+  // already in the text: either alone adds its half.
+  if (links.isEmpty() && records.isEmpty()) return;
+  if (!links.isEmpty()) {
+    const QString text = message.value(QLatin1String("text")).toString();
+    const QString joined = links.join(QLatin1Char(' '));
+    message.insert(QStringLiteral("text"), text.isEmpty() ? joined : text + QStringLiteral("\n\n") + joined);
+  }
   if (records.isEmpty()) return;
   QJsonObject context = message.value(QLatin1String("context")).toObject();
   QJsonArray existing = context.value(QLatin1String("records")).toArray();
@@ -2995,6 +3232,35 @@ void ComposerController::startAsk() {
 bool ComposerController::running(const QString& target) const {
   const auto thread = m_store->thread(target);
   return thread && thread->activeRunId.has_value();
+}
+
+bool ComposerController::canSteerActive() const {
+  if (!m_timeline) return true;
+  // Sessions are keyed per instance and a provider switch keeps the old
+  // one, so only the session that would take the steer counts: the active
+  // run's instance, else the thread's current one. Neither known, every
+  // session counts, as before.
+  QString instance;
+  if (const auto thread = m_store->thread(m_thread)) {
+    if (thread->activeRunId) {
+      const QJsonObject run = m_timeline->entities(QStringLiteral("run")).value(*thread->activeRunId);
+      instance = run.value(QLatin1String("providerInstanceId")).toString();
+      if (instance.isEmpty()) {
+        instance = run.value(QLatin1String("modelSelection")).toObject().value(QLatin1String("instanceId")).toString();
+      }
+    }
+    if (instance.isEmpty()) instance = thread->modelSelection.value(QLatin1String("instanceId")).toString();
+  }
+  for (const QJsonObject& session : m_timeline->entities(QStringLiteral("provider-session"))) {
+    if (!instance.isEmpty() && session.value(QLatin1String("providerInstanceId")).toString() != instance) continue;
+    const QJsonValue steers = session.value(QLatin1String("capabilities"))
+                                  .toObject()
+                                  .value(QLatin1String("turns"))
+                                  .toObject()
+                                  .value(QLatin1String("supportsActiveSteering"));
+    if (steers.isBool() && !steers.toBool()) return false;
+  }
+  return true;
 }
 
 void ComposerController::toast(const QString& title, const QString& description) {
@@ -3636,7 +3902,35 @@ bool ComposerController::selectSuggestion(const QString& target, const QString& 
   const QList<composer::Suggestion> offered = suggestions(target, trigger);
   const auto chosen = std::find_if(offered.cbegin(), offered.cend(), [&](const composer::Suggestion& item) { return item.id == id; });
   if (chosen == offered.cend()) return false;
-  const QString replacement = chosen->replacement;
+  QString replacement = chosen->replacement;
+  if (chosen->kind == QLatin1String("thread")) {
+    // The draft carries the thread as context; the text names it with the
+    // record's link. Choosing it again reuses the same reference.
+    const QString named = id.mid(QStringLiteral("thread:").size());
+    const qsizetype split = named.indexOf(u':');
+    const QString environmentId = named.left(split);
+    const QString threadId = named.mid(split + 1);
+    QList<Excerpt>& excerpts = m_drafts[target].excerpts;
+    const auto held = std::find_if(excerpts.cbegin(), excerpts.cend(), [&](const Excerpt& context) {
+      return context.thread.value(QLatin1String("environmentId")).toString() == environmentId &&
+             context.thread.value(QLatin1String("threadId")).toString() == threadId;
+    });
+    QString excerptId;
+    if (held != excerpts.cend()) {
+      excerptId = held->id;
+    } else {
+      excerptId = newId();
+      Excerpt excerpt;
+      excerpt.id = excerptId;
+      excerpt.thread = QJsonObject{{QStringLiteral("environmentId"), environmentId},
+                                   {QStringLiteral("threadId"), threadId},
+                                   {QStringLiteral("title"), chosen->label}};
+      excerpts.append(excerpt);
+    }
+    QString label = chosen->label;
+    label.replace(u'[', u' ').replace(u']', u' ');
+    replacement = QStringLiteral("[@%1](hal-c2-context://v1/thread/thread_%2) ").arg(label.trimmed(), excerptId);
+  }
   int end = trigger->end;
   if (replacement.endsWith(u' ') && end < text.size() && text.at(end) == u' ') ++end;
   const QString next = text.left(trigger->start) + replacement + text.mid(end);
@@ -3658,8 +3952,26 @@ QList<composer::Suggestion> ComposerController::suggestions(const QString& targe
                                 draft(target).trimmed() == u'/' + trigger->query);
   }
   if (trigger->kind == QLatin1String("skill")) return composer::skillItems(instance, *trigger);
-  if (trigger->kind == QLatin1String("path") && m_paths.target == target && m_paths.query == trigger->query) {
-    return composer::pathItems(m_paths.entries);
+  if (trigger->kind == QLatin1String("path")) {
+    QList<composer::Suggestion> items;
+    if (m_paths.target == target && m_paths.query == trigger->query) items = composer::pathItems(m_paths.entries);
+    // Threads can be carried as context from the same menu, ranked by title.
+    QList<std::pair<int, composer::Suggestion>> scored;
+    const QString query = trigger->query.toLower();
+    for (const sidebar::Thread& thread : m_store->threads()) {
+      if (thread.archivedAt || thread.title.isEmpty()) continue;
+      if (thread.environmentId + QLatin1Char(':') + thread.id == target) continue;
+      const std::optional<int> score =
+          query.isEmpty() ? std::optional<int>(0)
+                          : composer::scoreQueryMatch(thread.title.toLower(), query, 0, 2, 4, 6, 100);
+      if (!score) continue;
+      scored.append({*score,
+                     {QStringLiteral("thread:%1:%2").arg(thread.environmentId, thread.id), QStringLiteral("thread"),
+                      thread.title, QStringLiteral("Thread"), QStringLiteral("@%1 ").arg(thread.title)}});
+    }
+    std::stable_sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (const auto& [score, item] : scored.mid(0, 10)) items.append(item);
+    return items;
   }
   return {};
 }
@@ -3844,6 +4156,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
   const QVariantList attachments = shownSent() + shownAttachments(kept.attachments, true);
   QVariantList terminalContexts;
   QVariantList reviewComments;
+  QVariantList threadContexts;
   QVariantList citations;
   for (const Excerpt& context : kept.excerpts) {
     if (!context.citation.isEmpty()) {
@@ -3862,6 +4175,13 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
                                         {QStringLiteral("lineStart"), context.lineStart},
                                         {QStringLiteral("lineEnd"), context.lineEnd},
                                         {QStringLiteral("text"), context.text}});
+      continue;
+    }
+    if (!context.thread.isEmpty()) {
+      threadContexts.append(QVariantMap{{QStringLiteral("id"), context.id},
+                                        {QStringLiteral("label"), context.thread.value(QLatin1String("title")).toString()},
+                                        {QStringLiteral("threadId"), context.thread.value(QLatin1String("threadId")).toString()},
+                                        {QStringLiteral("environmentId"), context.thread.value(QLatin1String("environmentId")).toString()}});
       continue;
     }
     terminalContexts.append(QVariantMap{{QStringLiteral("id"), context.id},
@@ -3962,6 +4282,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       {QStringLiteral("attachments"), attachments},
       {QStringLiteral("terminalContexts"), terminalContexts},
       {QStringLiteral("reviewComments"), reviewComments},
+      {QStringLiteral("threadContexts"), threadContexts},
       {QStringLiteral("citations"), citations},
       {QStringLiteral("placeholder"), placeholder},
       {QStringLiteral("editorDisabled"), !approvals.isEmpty() || choiceOnly},
@@ -3973,9 +4294,11 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       // More words for a page's working agent go to its thread, so a page
       // has no queue or steering: its send button sends, or stops.
       {QStringLiteral("followUpBehavior"), page ? QString()
-                                         : setting(QStringLiteral("followUpBehavior")).toString() == QLatin1String("queue")
+                                         : !canSteerActive() || setting(QStringLiteral("followUpBehavior")).toString() == QLatin1String("queue")
                                                ? QStringLiteral("queue")
                                                : QStringLiteral("steer")},
+      // A provider that cannot take a steer is offered no other way either.
+      {QStringLiteral("canSteer"), canSteerActive()},
       {QStringLiteral("enterIntents"), composer::enterIntents(keys->resolved(), keys->mac(),
                                                               setting(QStringLiteral("sendShortcut")).toString(), isDraft,
                                                               isRunning && !page)},
@@ -4090,6 +4413,7 @@ QVariantMap ComposerController::imagesComposerState() const {
       {QStringLiteral("attachments"), QVariantList()},
       {QStringLiteral("terminalContexts"), QVariantList()},
       {QStringLiteral("reviewComments"), QVariantList()},
+      {QStringLiteral("threadContexts"), QVariantList()},
       {QStringLiteral("citations"), QVariantList()},
       {QStringLiteral("placeholder"), answered && !able
                                           ? QStringLiteral("No provider here can generate images. Set up Codex or Grok in Settings.")
@@ -4099,6 +4423,7 @@ QVariantMap ComposerController::imagesComposerState() const {
       {QStringLiteral("sendDisabledReason"), disabledReason},
       {QStringLiteral("isRunning"), false},
       {QStringLiteral("followUpBehavior"), QString()},
+      {QStringLiteral("canSteer"), true},
       {QStringLiteral("enterIntents"), composer::enterIntents(keys->resolved(), keys->mac(),
                                                               setting(QStringLiteral("sendShortcut")).toString(), false, false)},
       {QStringLiteral("isSendBusy"), busy},
