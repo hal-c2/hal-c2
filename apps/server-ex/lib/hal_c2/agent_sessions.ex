@@ -40,7 +40,7 @@ defmodule HalC2.AgentSessions do
       transcripts
       |> with_cwds()
       |> Enum.group_by(&real_path(&1.cwd))
-      |> Enum.flat_map(fn {cwd, group} -> candidate(cwd, group, projects) end)
+      |> Enum.flat_map(fn {real, group} -> candidate(real, group, projects) end)
       |> Enum.sort_by(&{&1["lastActiveAt"], &1["path"]}, fn {a, pa}, {b, pb} ->
         if a == b, do: pa <= pb, else: a >= b
       end)
@@ -50,14 +50,16 @@ defmodule HalC2.AgentSessions do
      |> then(&if(truncated, do: Map.put(&1, "truncated", true), else: &1))}
   end
 
-  defp candidate(cwd, group, projects) do
-    path = cwd
-
-    with false <- excluded?(path),
-         true <- File.dir?(path),
-         {:ok, git} <- git_identity(path) do
-      project = projects[path]
-      last = group |> Enum.map(& &1.mtime) |> Enum.max()
+  # `real` is the folder with its links followed, only the key to compare by; the
+  # candidate shows the project's own root, else where the newest transcript ran.
+  defp candidate(real, group, projects) do
+    with false <- excluded?(real),
+         true <- File.dir?(real),
+         {:ok, git} <- git_identity(real) do
+      {project_id, project_root} = projects[real] || {nil, nil}
+      newest = Enum.max_by(group, & &1.mtime)
+      path = project_root || Path.expand(newest.cwd)
+      last = newest.mtime
 
       [
         %{
@@ -66,10 +68,10 @@ defmodule HalC2.AgentSessions do
           "sources" => group |> Enum.map(& &1.source) |> Enum.uniq(),
           "threadCount" => length(group),
           "lastActiveAt" => iso(last),
-          "alreadyImported" => project != nil,
+          "alreadyImported" => project_id != nil,
           "git" => git
         }
-        |> then(&if(project, do: Map.put(&1, "projectId", project), else: &1))
+        |> then(&if(project_id, do: Map.put(&1, "projectId", project_id), else: &1))
       ]
     else
       _ -> []
@@ -365,7 +367,7 @@ defmodule HalC2.AgentSessions do
     for {{mc, id}, {"project", project}} <- HalC2.Shell.rows(),
         mc == node() and project["deletedAt"] == nil and is_binary(project["workspaceRoot"]),
         into: %{},
-        do: {real_path(project["workspaceRoot"]), project["id"] || id}
+        do: {real_path(project["workspaceRoot"]), {project["id"] || id, project["workspaceRoot"]}}
   end
 
   # --- import ---------------------------------------------------------------------
@@ -424,7 +426,12 @@ defmodule HalC2.AgentSessions do
       |> Enum.filter(&(real_path(&1.cwd) == root))
       |> Enum.sort_by(& &1.mtime, :desc)
 
-    owned = MapSet.union(moved_sessions(), owned_sessions(project_id))
+    # Other threads' sessions only matter to a session without its import row.
+    owned =
+      if Enum.any?(recent, &(not import_row?(&1, project_id))),
+        do: MapSet.union(moved_sessions(), owned_sessions(project_id)),
+        else: MapSet.new()
+
     by_state = Enum.group_by(recent, &session_state(&1, project_id, owned))
     done = Map.get(by_state, :imported, [])
     pending = Map.get(by_state, :new, [])
@@ -480,12 +487,21 @@ defmodule HalC2.AgentSessions do
 
   defp session_state(_transcript, _project_id, _owned), do: :new
 
+  defp import_row?(%{source: source, session_id: id}, project_id) when is_binary(id),
+    do:
+      match?(
+        {"thread", %{"projectId" => ^project_id}},
+        HalC2.Shell.row(node(), "import:#{source}:#{id}")
+      )
+
+  defp import_row?(_transcript, _project_id), do: false
+
   # The sessions that other threads of the project run, archived and deleted ones
   # included, as "source:id". Only those threads' streams are read, once per import.
   defp owned_sessions(project_id) do
     for {{mc, id}, {"thread", %{"projectId" => ^project_id}}} <- HalC2.Shell.rows(),
         mc == node() and not String.starts_with?(id, "import:"),
-        pt <- StreamState.list(HalC2.Streams.state(id), "provider-thread"),
+        pt <- HalC2.Streams.read(id, &StreamState.list(&1, "provider-thread")),
         %{"driver" => driver, "nativeId" => native} <- [pt["nativeThreadRef"]],
         is_binary(native),
         into: MapSet.new(),

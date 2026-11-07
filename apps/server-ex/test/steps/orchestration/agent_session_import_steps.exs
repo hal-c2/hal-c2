@@ -845,6 +845,18 @@ defmodule HalC2.Steps.Orchestration.AgentSessionImport do
     context
   end
 
+  step "project {string} has the folder {string}, a link to {string}",
+       %{args: [title, via, real]} = context do
+    app = mkdir(dir(context, real))
+    link(context, app, via)
+    project(context, title, dir(context, via))
+  end
+
+  step "sessions were recorded under {string}", %{args: [folder]} = context do
+    session(context, dir(context, folder), source: "codex")
+    context
+  end
+
   step "the candidate is marked already imported with project {string}",
        %{args: [title]} = context do
     id = World.project(context, title).id

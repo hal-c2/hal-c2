@@ -417,6 +417,15 @@ Feature: Importing history from agents already used on this machine
     Then the candidate is marked already imported with project "demo"
     And the candidate's path is "~/code/app"
 
+  # Legacy: apps/server/src/project/AgentSessionScanner.ts (scan: importedProjectsByRoot)
+  @mc
+  Scenario: A project rooted at a link keeps the link as its path
+    Given project "demo" has the folder "~/links/app", a link to "~/code/app"
+    And sessions were recorded under "~/code/app"
+    When a client scans for agent sessions
+    Then the candidate is marked already imported with project "demo"
+    And the candidate's path is "~/links/app"
+
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (readCwd)
   @mc
   Scenario: A transcript is placed by a folder named after its first records
