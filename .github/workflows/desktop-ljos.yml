@@ -188,7 +188,7 @@ jobs:
           - name: settings
             globs: "settings/* connections/*"
           - name: threads
-            globs: "threads/* preview/* providers/*"
+            globs: "threads/* preview/* providers/* space/*"
           - name: composer
             globs: "composer/* files/* mc/* plugins/*"
           - name: timeline
