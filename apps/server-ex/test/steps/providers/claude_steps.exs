@@ -1493,6 +1493,48 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # Plan mode wins over Full access: Claude runs in its plan mode, and every tool it
+  # asks about there reaches the user instead of being approved for them.
+  step "a Claude thread in plan mode with full access", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "wait for me", %{
+        "interactionMode" => "plan",
+        "runtimeMode" => "full-access"
+      })
+
+    World.await_running(context, @thread)
+    World.await_provider_log(context, "claude", &(get_in(&1, ["in", "type"]) == "user"))
+    assert flag_value(last_argv(context), "--permission-mode") == "plan"
+    refute "--dangerously-skip-permissions" in last_argv(context)
+    context
+  end
+
+  step "Claude asks to write a file while planning", context do
+    context = claude_asks(context, "perm-plan-write", "Write", tool_input("Write"))
+    Map.put(context, :request, World.await_request(context, @thread))
+  end
+
+  step "the user is asked to approve the write", context do
+    assert %{"kind" => "file-change", "status" => "pending"} = context.request
+    assert [%{"status" => "running"}] = World.runs(context, @thread)
+    context
+  end
+
+  step "the plan Claude proposed is still captured", context do
+    claude_asks(context, "perm-plan-exit", "ExitPlanMode", %{"plan" => "# Plan\n- write it"})
+
+    World.await_value(context, @thread, fn state ->
+      Enum.any?(
+        StreamState.list(state, "plan"),
+        &(&1["kind"] == "proposed_plan" and &1["markdown"] =~ "write it")
+      )
+    end)
+
+    context
+  end
+
   step "Claude asks the user a multiple choice question", context do
     context =
       context |> World.fake_providers() |> World.launch_on(@thread, "claudeAgent", "ask me")
@@ -3886,6 +3928,53 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- auto on a model without it -----------------------------------------------------
+
+  # The fake runs such a model in its default mode and refuses a switch to auto, as
+  # Claude Code does when its auto gate is off for the model.
+  step "a Claude thread in auto on a model that Claude runs without its auto mode", context do
+    World.put_os_env("FAKE_CLAUDE_NO_AUTO", "1")
+
+    context
+    |> World.fake_providers()
+    |> World.launch_on(@thread, "claudeAgent", "which mode", %{"runtimeMode" => "auto"})
+  end
+
+  step "Claude ran the first turn in its default mode", context do
+    World.await_runs(context, @thread, ["completed"])
+    assert flag_value(last_argv(context), "--permission-mode") == "auto"
+    assert World.replies(context, @thread) == ["mode default"]
+    context
+  end
+
+  step "the user sends a follow-up", context do
+    World.post_message(context, @thread, "which mode")
+  end
+
+  step "the follow-up runs in the mode Claude reported for the first turn", context do
+    World.await_runs(context, @thread, ["completed", "completed"])
+    assert World.replies(context, @thread) == ["mode default", "mode default"]
+    context
+  end
+
+  # Claude is not asked to switch to auto, and its process is not restarted to get it.
+  step "it does not fail asking for auto again", context do
+    log = World.provider_log(context, "claude")
+    assert Enum.count(log, &Map.has_key?(&1, "argv")) == 1
+
+    refute Enum.any?(
+             log,
+             &(get_in(&1, ["in", "request", "subtype"]) == "set_permission_mode")
+           )
+
+    assert Enum.all?(
+             StreamState.list(World.stream(context, @thread), "provider-session"),
+             &(&1["lastError"] == nil)
+           )
+
+    context
+  end
+
   # --- launch, context meter, read-only runs -----------------------------------------
 
   defp last_argv(context) do
@@ -5344,14 +5433,16 @@ defmodule HalC2.Steps.Providers.Claude do
     "Claude's own safety check on a recursive delete" =>
       {"safetyCheck", "rm -rf on a path Claude could not verify always asks"},
     "an ask rule in the user's Claude permissions" =>
-      {"rule", "Permission rule 'Bash(rm:*)' from user settings requires approval"}
+      {"rule", "Permission rule 'Bash(rm:*)' from user settings requires approval"},
+    "a hook in the user's Claude settings" =>
+      {"hook", "Hook PreToolUse:Bash asked for approval: deletes need a second look"}
   }
 
   step "a Claude thread in Full access", context do
     running_turn(context)
   end
 
-  step ~r/^(?<cause>Claude's own safety check on a recursive delete|an ask rule in the user's Claude permissions) makes Claude ask to run a command$/,
+  step ~r/^(?<cause>Claude's own safety check on a recursive delete|an ask rule in the user's Claude permissions|a hook in the user's Claude settings) makes Claude ask to run a command$/,
        %{args: [cause]} = context do
     {type, reason} = Map.fetch!(@full_access_causes, cause)
     [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
@@ -5399,6 +5490,12 @@ defmodule HalC2.Steps.Providers.Claude do
       )
 
     assert approval_item(context)["fullAccessOverride"] == expected
+    context
+  end
+
+  # Only an ask rule and Claude's own safety checks are named; a hook is neither.
+  step "the approval does not say which Full access check asked", context do
+    refute Map.has_key?(approval_item(context), "fullAccessOverride")
     context
   end
 

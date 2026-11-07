@@ -588,7 +588,7 @@ Feature: Claude
     And the plan stays pending until the user answers
 
   # Upstream #17963: Claude's plan mode asks before writes even in Auto and Full access
-  @backlog @priority-high
+  @priority-high
   Scenario: Claude in plan mode asks before a write whatever the access mode
     Given a Claude thread in plan mode with full access
     When Claude asks to write a file while planning
@@ -771,7 +771,7 @@ Feature: Claude
       | --dangerously-skip-permissions | bypassPermissions |
 
   # Upstream #15687: on a model without Auto, Claude ran the first turn in Manual and follow-ups failed retrying Auto.
-  @backlog @priority-high
+  @priority-high
   Scenario: A Claude thread in auto on a model without it keeps working on follow-ups
     Given a Claude thread in auto on a model that Claude runs without its auto mode
     And Claude ran the first turn in its default mode
@@ -1984,6 +1984,14 @@ Feature: Claude
       | cause                                               | explanation               |
       | Claude's own safety check on a recursive delete     | Claude's own safety check |
       | an ask rule in the user's Claude permissions        | the user's ask rule       |
+
+  # Upstream #22546: only an ask rule and Claude's own safety checks are named; a hook that asks is neither.
+  @mc @plugin-claude
+  Scenario: A Claude approval a hook asked for in Full access names no Full access check
+    Given a Claude thread in Full access
+    When a hook in the user's Claude settings makes Claude ask to run a command
+    Then the approval shows Claude's reason
+    And the approval does not say which Full access check asked
 
   # Upstream #22546: when Claude forbids remembering the answer, the approval offers only decline
   # and approve.

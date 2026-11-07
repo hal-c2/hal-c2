@@ -663,8 +663,9 @@ defmodule HalC2.Claude.ThreadRuntime do
       context["title"] || context["description"] || context["decision_reason"] ||
         summarize_tool(tool, input)
 
-    {state, request_id} = open_request(flush(state), id, kind, prompt)
-    state = explain_request(state, id, prompt, context)
+    {state, request_id} =
+      open_request(flush(state), id, kind, prompt, nil, request_reason(state, prompt, context))
+
     request = {:permission, id, tool, context["permission_suggestions"]}
     {:noreply, %{state | requests: Map.put(state.requests, request_id, request)}}
   end
@@ -2576,11 +2577,11 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   defp presentation_fields(_name, _meta), do: %{}
 
-  # Claude's reason for asking goes on the approval when it says more than the
-  # prompt. In Full access Claude asks only when a user ask rule or its own safety
-  # check fires, so the item names which (`fullAccessOverride`) for the clients to
-  # explain why Full access still asked.
-  defp explain_request(state, id, prompt, context) do
+  # The approval item's account of why Claude asked: its reason when it says more
+  # than the prompt, and in Full access which kind of check still asked
+  # (`fullAccessOverride`): an ask rule in the user's permissions, or one of Claude's
+  # own safety checks. Claude's other reasons (a hook, its classifier, ...) name none.
+  defp request_reason(state, prompt, context) do
     reason =
       case context["decision_reason"] do
         reason when is_binary(reason) ->
@@ -2592,27 +2593,15 @@ defmodule HalC2.Claude.ThreadRuntime do
       end
 
     override =
-      if state.permission_mode == "bypassPermissions",
-        do: if(context["decision_reason_type"] == "rule", do: "ask_rule", else: "provider_check")
+      if state.permission_mode == "bypassPermissions" do
+        case context["decision_reason_type"] do
+          "rule" -> "ask_rule"
+          "safetyCheck" -> "provider_check"
+          _ -> nil
+        end
+      end
 
-    fields =
-      %{"reason" => reason, "fullAccessOverride" => override}
-      |> Map.reject(fn {_, value} -> is_nil(value) end)
-
-    if fields != %{} do
-      commit(state, fn stream ->
-        [
-          Orchestration.upsert(
-            stream,
-            "turn-item",
-            "turn-item:approval:#{id}",
-            &Map.merge(&1, fields)
-          )
-        ]
-      end)
-    end
-
-    state
+    Map.reject(%{"reason" => reason, "fullAccessOverride" => override}, fn {_, v} -> is_nil(v) end)
   end
 
   defp bounded(text, max), do: text |> String.trim() |> String.slice(0, max)

@@ -299,7 +299,7 @@ defmodule HalC2.Claude.Skills do
   when a layer of its settings (`skill_overrides/2`'s, with the remote policy Claude
   caches in its home) sets `permissions.disableBypassPermissionsMode` to `"disable"`,
   `:unreadable` when a file that is there cannot be read or parsed, else `:allowed`.
-  A missing file is no layer.
+  A missing file is no layer, nor is a blank one, which Claude reads as `{}`.
   """
   @spec bypass_permissions(String.t(), String.t() | nil) :: :allowed | :disabled | :unreadable
   def bypass_permissions(config_dir, cwd) do
@@ -319,6 +319,7 @@ defmodule HalC2.Claude.Skills do
   # sobelow_skip ["Traversal.FileModule"]
   defp read_bypass(path) do
     with {:ok, text} <- File.read(path),
+         false <- String.trim(text) == "",
          {:ok, settings} when is_map(settings) <- decode_lenient(text) do
       case settings["permissions"] do
         %{"disableBypassPermissionsMode" => "disable"} -> :disabled
@@ -327,6 +328,7 @@ defmodule HalC2.Claude.Skills do
     else
       {:error, :enoent} -> :allowed
       {:error, :enotdir} -> :allowed
+      true -> :allowed
       _ -> :unreadable
     end
   end

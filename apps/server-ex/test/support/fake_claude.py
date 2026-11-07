@@ -90,6 +90,11 @@ resume_at = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--resume
 # The permission mode, from argv and then set_permission_mode; in auto Claude's own
 # classifier approves the command "approve" would otherwise ask about.
 mode = sys.argv[sys.argv.index("--permission-mode") + 1] if "--permission-mode" in sys.argv else "default"
+# FAKE_CLAUDE_NO_AUTO: a model without auto mode. Claude Code runs it in its default
+# mode instead, says so in its init message, and refuses a later switch to auto.
+NO_AUTO = bool(os.environ.get("FAKE_CLAUDE_NO_AUTO"))
+if NO_AUTO and mode == "auto":
+    mode = "default"
 # The login is the config directory's, as Claude Code keeps it (`.claude.json`'s
 # oauthAccount); without one the fake is signed in as me@example.com.
 ACCOUNT_EMAIL = "me@example.com"
@@ -148,6 +153,9 @@ for line in sys.stdin:
             send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": usage}})
             continue
         # The account a signed-in Claude Code reports when it starts.
+        if sub == "set_permission_mode" and NO_AUTO and msg["request"]["mode"] == "auto":
+            send({"type": "control_response", "response": {"subtype": "error", "request_id": msg["request_id"], "error": "Cannot set permission mode to auto: auto mode unavailable for this model"}})
+            continue
         if sub == "set_permission_mode":
             mode = msg["request"]["mode"]
         if sub == "initialize":
@@ -198,7 +206,7 @@ for line in sys.stdin:
     if os.environ.get("FAKE_CLAUDE_INPUT_LOG"):
         with open(os.environ["FAKE_CLAUDE_INPUT_LOG"], "a") as f:
             f.write(json.dumps(text) + "\n")
-    send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku"})
+    send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku", "permissionMode": mode})
     record("user", text)
     # "usage limit until EPOCH": the plan's five-hour window rejects the turn until then.
     if text.startswith("usage limit until "):
