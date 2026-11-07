@@ -184,6 +184,8 @@ defmodule HalC2.Attachments.AppIcon do
     end
   end
 
+  # The PNG and its part file are named by a hash under the MC's cache directory.
+  # sobelow_skip ["Traversal.FileModule"]
   defp to_png(bundle, icon) do
     version =
       plist_value(Path.join([bundle, "Contents", "Info.plist"]), "CFBundleVersion") ||
@@ -212,6 +214,9 @@ defmodule HalC2.Attachments.AppIcon do
     end
   end
 
+  # Runs one of the fixed macOS tools by name from the tools directory, with list
+  # arguments and no shell.
+  # sobelow_skip ["CI.System"]
   defp tool(name, args) do
     command = Path.join(Application.get_env(:hal_c2, :mac_tools_dir, "/usr/bin"), name)
 

@@ -150,6 +150,8 @@ defmodule HalC2.Attachments do
   message: the thread's copies go, and the pending uploads they were copied from stay,
   so the client can send them again. Attachments the thread already had are not touched.
   """
+  # Removes only files named by a checked id in the attachments directory.
+  # sobelow_skip ["Traversal.FileModule"]
   def release(attachments, claimed) when is_list(attachments) and is_list(claimed) do
     for {%{"id" => from}, %{"id" => id}} <- Enum.zip(attachments, claimed),
         from != id,
