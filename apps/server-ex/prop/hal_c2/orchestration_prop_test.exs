@@ -1399,6 +1399,9 @@ defmodule HalC2.OrchestrationPropTest do
   defp release_queue(thread),
     do: set_runs(thread, &if(&1.msg in thread.queue, do: %{&1 | held: false}, else: &1))
 
+  defp held_queue?(thread),
+    do: Enum.any?(thread.runs, &(&1.held and &1.msg in thread.queue))
+
   # Where a newly queued message goes: the agent's results first, in the order they came,
   # then the user's messages. A restart, or the agent's result, goes ahead of the user's.
   defp enqueue(thread, msg, mode) do

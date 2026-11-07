@@ -1799,6 +1799,37 @@ defmodule HalC2.OrchestrationTest do
       refute queued["queueHeld"]
     end
 
+    # Found by the property: the stop left an interrupt request on the queued run, so
+    # once it started it read as being stopped and refused every steer.
+    test "a stop for a run still queued does not mark it as being stopped once it starts" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", "wait for it")
+      [_, queued] = runs(await_statuses(thread_id, ["running", "queued"]))
+
+      _ =
+        Orchestration.dispatch(%{
+          "type" => "run.interrupt",
+          "threadId" => thread_id,
+          "runId" => queued["id"]
+        })
+
+      {:ok, _} =
+        Orchestration.dispatch(%{
+          "type" => "run.interrupt",
+          "threadId" => thread_id,
+          "holdQueue" => false
+        })
+
+      _ = await_statuses(thread_id, ["interrupted", "running"])
+
+      assert {:ok, _} =
+               send_message(thread_id, "m3", "also this", %{
+                 "deliveryIntent" => "steer",
+                 "dispatchMode" => %{"type" => "steer_active", "targetRunId" => queued["id"]}
+               })
+    end
+
     test "archiving a thread cancels what it had queued" do
       thread_id = launch("wait for it")
       _ = await_run(thread_id, "running")

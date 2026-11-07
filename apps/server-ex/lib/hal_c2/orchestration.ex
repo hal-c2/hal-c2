@@ -2774,7 +2774,9 @@ defmodule HalC2.Orchestration do
 
     item_id = run && "turn-item:run:#{run["id"]}:signal:interrupt-request"
 
-    if run && StreamState.get(state, "turn-item")[item_id] == nil do
+    # A run still queued has no turn to stop: a request left on it would read as a
+    # stop under way once it starts (`stopping?/2`).
+    if run && run["status"] != "queued" && StreamState.get(state, "turn-item")[item_id] == nil do
       at = Entities.now()
 
       ids = %{
