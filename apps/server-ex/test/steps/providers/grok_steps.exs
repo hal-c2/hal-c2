@@ -15,6 +15,8 @@ defmodule HalC2.Steps.Providers.Grok do
     %{"value" => "grok-4", "name" => "Grok 4"}
   ]
 
+  @child_session "0f8e2a4c-5b6d-4e7f-8a9b-1c2d3e4f5a6b"
+
   defp signed_in_config,
     do: %{
       "configOptions" => [
@@ -1587,6 +1589,244 @@ defmodule HalC2.Steps.Providers.Grok do
     context
   end
 
+  # --- unnamed completion notices and plain failures --------------------------------
+
+  step "two prompts are waiting on the same Grok session", context do
+    context =
+      context
+      |> FakeAcp.install("grok", signed_in_config(), enabled: true)
+      |> FakeAcp.thread()
+      |> FakeAcp.send_message("start a long task")
+
+    FakeAcp.await_run(context, "running")
+    await_answer(context)
+
+    # A second prompt of the same turn is still out with Grok.
+    extra = make_ref()
+    pid = runtime_pid(context)
+
+    :sys.replace_state(pid, fn state ->
+      %{state | prompts: Map.put(state.prompts, extra, :steer)}
+    end)
+
+    Map.put(context, :extra_prompt, extra)
+  end
+
+  step "Grok reports a turn complete without naming a prompt", context do
+    grok_says(context, "x.ai/session/prompt_complete", %{
+      "sessionId" => session(context),
+      "stopReason" => "end_turn"
+    })
+
+    sync_runtime(context)
+    context
+  end
+
+  step "neither prompt is completed", context do
+    assert run_status(context) == "running"
+    context
+  end
+
+  step "the same notice completes the prompt when only one is waiting", context do
+    pid = runtime_pid(context)
+
+    :sys.replace_state(pid, fn state ->
+      %{state | prompts: Map.delete(state.prompts, context.extra_prompt)}
+    end)
+
+    grok_says(context, "x.ai/session/prompt_complete", %{
+      "sessionId" => session(context),
+      "stopReason" => "end_turn"
+    })
+
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step "Grok refuses a message with an error that is not its rate-limit error", context do
+    turns = [
+      %{
+        "match" => "keep going",
+        "steps" => [
+          %{"error" => %{"code" => -32603, "message" => "Rate limit headers were malformed"}}
+        ]
+      }
+    ]
+
+    context
+    |> FakeAcp.install("grok", Map.put(signed_in_config(), "turns", turns), enabled: true)
+    |> FakeAcp.thread()
+    |> FakeAcp.send_message("keep going")
+  end
+
+  defp last_error(context) do
+    context
+    |> FakeAcp.await_run("failed")
+    |> HalC2.StreamState.list("provider-session")
+    |> Enum.find_value(& &1["lastError"])
+  end
+
+  step "the turn fails with Grok's message and error code", context do
+    assert last_error(context) == "Rate limit headers were malformed (-32603)"
+    context
+  end
+
+  step "it is not reported as a usage limit, even when the message mentions a rate limit",
+       context do
+    refute last_error(context) =~ "usage limit reached"
+    context
+  end
+
+  # --- how background work ends -------------------------------------------------------
+
+  step "Grok left a command running in the background", context do
+    context = background_thread(context, "work in the background")
+
+    World.await_row(
+      World.thread_id(context, context.thread),
+      &(length(&1["runningBackgroundTasks"] || []) == 2)
+    )
+
+    context
+  end
+
+  step "Grok left a subagent running in the background", context do
+    context = background_thread(context, "work in the background")
+
+    World.await_row(
+      World.thread_id(context, context.thread),
+      &(length(&1["runningBackgroundTasks"] || []) == 2)
+    )
+
+    context
+  end
+
+  step "Grok left a subagent named {string} running in the background",
+       %{args: [name]} = context do
+    context = background_thread(context, "work in the background")
+
+    World.await_row(
+      World.thread_id(context, context.thread),
+      &(length(&1["runningBackgroundTasks"] || []) == 2)
+    )
+
+    Map.put(context, :subagent_name, name)
+  end
+
+  defp task_ended(context, snapshot) do
+    grok_says(context, "x.ai/task_completed", %{
+      "sessionId" => session(context),
+      "update" => %{
+        "sessionUpdate" => "task_completed",
+        "task_snapshot" => Map.put(snapshot, "task_id", "task-sh")
+      }
+    })
+
+    context
+  end
+
+  step "Grok reports the command ended with the status {string}", %{args: [status]} = context do
+    task_ended(context, %{"status" => status})
+  end
+
+  step "Grok reports the command ended with no status and exit code 0", context do
+    task_ended(context, %{"exit_code" => 0})
+  end
+
+  step "Grok reports the command ended with no status and a non-zero exit code", context do
+    task_ended(context, %{"exit_code" => 3})
+  end
+
+  defp await_command(context, status) do
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      background_items(state)["sh-1"] == status
+    end)
+
+    context
+  end
+
+  step "the command is shown as completed", context do
+    await_command(context, "completed")
+  end
+
+  step "the command is shown as stopped", context do
+    await_command(context, "cancelled")
+  end
+
+  step "Grok tries to kill it and the kill fails", context do
+    context = FakeAcp.send_message(context, "try to stop the dev server")
+    FakeAcp.await_runs(context, 2)
+    context
+  end
+
+  step "the command is still listed as background work", context do
+    assert %{"sh-1" => "running"} = background_items(World.state(context, context.thread))
+
+    assert Enum.any?(
+             World.row(context, context.thread)["runningBackgroundTasks"] || [],
+             &(&1["taskType"] == "command_execution")
+           )
+
+    context
+  end
+
+  defp subagent_says(context, text) do
+    grok_says(context, "session/update", %{
+      "sessionId" => session(context),
+      "update" => %{
+        "sessionUpdate" => "user_message_chunk",
+        "content" => %{"type" => "text", "text" => text}
+      }
+    })
+
+    context
+  end
+
+  step ~r/^Grok says the subagent (?<outcome>.+)$/, %{args: [outcome]} = context do
+    name = if context[:subagent_name], do: ~s[ ("#{context.subagent_name}")], else: ""
+    subagent_says(context, ~s[Background subagent "#{@child_session}"#{name} #{outcome}.])
+  end
+
+  step "text passes through the thread that talks about background subagents without being Grok's notice",
+       context do
+    context =
+      subagent_says(
+        context,
+        "Background subagents like #{@child_session} are still working on it."
+      )
+
+    sync_runtime(context)
+    [subagent] = HalC2.StreamState.list(World.state(context, context.thread), "subagent")
+    Map.put(context, :subagent, subagent)
+  end
+
+  step "Grok starts a subagent in the background and the launching tool call returns", context do
+    background_thread(context, "work in the background")
+  end
+
+  step "the subagent's thread is still running", context do
+    [subagent] = HalC2.StreamState.list(World.state(context, context.thread), "subagent")
+    assert subagent["status"] == "running"
+    context
+  end
+
+  step "it finishes when Grok reports the subagent's result", context do
+    context =
+      subagent_says(
+        context,
+        ~s[Background subagent "#{@child_session}" (type: "general") completed successfully.]
+      )
+
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      case HalC2.StreamState.list(state, "subagent") do
+        [%{"status" => "completed"}] -> true
+        _ -> false
+      end
+    end)
+
+    context
+  end
+
   # xAI's billing API, played by `HalC2.Test.FakeHttp`.
   defp billing(context, response) do
     {url, log} = HalC2.Test.FakeHttp.start(%{"/v1/billing" => {200, response}})
@@ -1606,8 +1846,6 @@ defmodule HalC2.Steps.Providers.Grok do
   end
 
   # --- subagents -------------------------------------------------------------------
-
-  @child_session "0f8e2a4c-5b6d-4e7f-8a9b-1c2d3e4f5a6b"
 
   # Grok's `task` tool: the child's answer streams under its own session, before the
   # tool call names that session ("Agent ID: ...") and completes.
@@ -1932,9 +2170,32 @@ defmodule HalC2.Steps.Providers.Grok do
     context
   end
 
+  # A later turn whose kill of the background shell does not go through.
+  @kill_failed [
+    %{
+      "update" => %{
+        "sessionUpdate" => "tool_call",
+        "toolCallId" => "kill-2",
+        "title" => "kill_command_or_subagent",
+        "kind" => "other",
+        "status" => "in_progress",
+        "rawInput" => %{"task_id" => "task-sh"}
+      }
+    },
+    %{
+      "update" => %{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => "kill-2",
+        "status" => "failed"
+      }
+    },
+    %{"text" => "I could not stop it."}
+  ]
+
   defp background_thread(context, text) do
     turns = [
       %{"match" => "work in the background", "steps" => @background},
+      %{"match" => "try to stop the dev server", "steps" => @kill_failed},
       %{"match" => "stop the dev server", "steps" => @kill},
       %{"match" => "watch the log", "steps" => @monitor}
       | FakeAcp.turns()

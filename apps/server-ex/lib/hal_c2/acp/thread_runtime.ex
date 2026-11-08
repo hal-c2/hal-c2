@@ -628,8 +628,10 @@ defmodule HalC2.Acp.ThreadRuntime do
   def handle_info({:json_rpc, _conn, {:notification, method, params}}, state)
       when method in @xai_completed do
     update = xai_params(params)["update"] || %{}
-    task = get_in(update, ["task_snapshot", "task_id"]) || update["task_id"]
-    {:noreply, if(is_binary(task), do: end_task(state, task, "completed"), else: state)}
+    snapshot = update["task_snapshot"] || %{}
+    task = snapshot["task_id"] || update["task_id"]
+    status = task_end_status(snapshot["status"] || update["status"], task_exit(snapshot, update))
+    {:noreply, if(is_binary(task), do: end_task(state, task, status), else: state)}
   end
 
   # Grok says the turn is complete although its prompt request may never be
@@ -970,6 +972,15 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp grok_stop_reason(_reason), do: "end_turn"
 
+  # A Grok failure that is not its usage limit keeps Grok's own message and
+  # code; only xAI's rate-limit code (-32003, above) reads as a usage limit,
+  # never a message that merely mentions one.
+  defp grok_failure(state, error, message) do
+    if grok?(state) and is_integer(error["code"]),
+      do: "#{message} (#{error["code"]})",
+      else: message
+  end
+
   defp answered(state, result) do
     {status, failure} =
       case result do
@@ -987,7 +998,7 @@ defmodule HalC2.Acp.ThreadRuntime do
           {"failed", "Grok usage limit reached. Try again later."}
 
         {:error, %{"message" => message} = error} ->
-          {"failed", usage_limit(state, error) || message}
+          {"failed", usage_limit(state, error) || grok_failure(state, error, message)}
 
         # The agent's process went away before it answered.
         {:error, :closed} ->
@@ -2621,8 +2632,34 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp subagent_ended(state, %{"content" => %{"text" => text}}) do
     [_, session, rest] = Regex.run(~r/Background subagent\s+["']?(#{@uuid})["']?(.*)/is, text)
-    status = if rest =~ ~r/\bfail/i, do: "failed", else: "completed"
+
+    # The notice may name the subagent by its task ("fix failed tests"), so a
+    # success it states outright wins over failure words in the name.
+    status =
+      cond do
+        rest =~ ~r/completed successfully/i -> "completed"
+        rest =~ ~r/\b(fail|crash|cancel|interrupt|error|timed?\s*out)/i -> "failed"
+        true -> "completed"
+      end
+
     end_task(state, session, status)
+  end
+
+  # How a background task Grok reports ended is shown: its reported status
+  # when it gives one, else its exit code.
+  defp task_end_status(status, _exit) when status in ["completed", "success"], do: "completed"
+  defp task_end_status(status, _exit) when status in ["failed", "error"], do: "failed"
+  defp task_end_status(status, _exit) when status in ["killed", "cancelled"], do: "cancelled"
+  defp task_end_status(_status, 0), do: "completed"
+  defp task_end_status(_status, exit) when is_integer(exit), do: "failed"
+  defp task_end_status(_status, _exit), do: "completed"
+
+  defp task_exit(snapshot, update) do
+    Enum.find_value([snapshot, update], fn source ->
+      Enum.find_value(["exit_code", "exitCode", "exit"], fn key ->
+        if is_integer(source[key]), do: source[key]
+      end)
+    end)
   end
 
   # Ends the background task or subagent Grok knows as `task`: a subagent by its

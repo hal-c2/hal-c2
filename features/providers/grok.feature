@@ -383,7 +383,6 @@ Feature: Grok
     Then the turn completes
     And a completion notice for a subagent's session or for finished background work does not complete it
 
-  @backlog
   Scenario: A background Grok subagent stays running until Grok reports its result
     When Grok starts a subagent in the background and the launching tool call returns
     Then the subagent's thread is still running
@@ -498,7 +497,6 @@ Feature: Grok
       | is still answering                        | Grok is asked to cancel only what it is answering |
       | has answered and waits on background work | Grok is not asked to cancel anything              |
 
-  @backlog
   Scenario: A Grok failure that is not a usage limit shows Grok's own message and code
     When Grok refuses a message with an error that is not its rate-limit error
     Then the turn fails with Grok's message and error code
@@ -568,7 +566,6 @@ Feature: Grok
     When Grok reports the turn complete with a rate limit and never answers the prompt request
     Then the turn fails with "Grok usage limit reached. Try again later."
 
-  @backlog
   Scenario: A Grok completion notice that names no prompt ends the turn only when one prompt is waiting
     Given two prompts are waiting on the same Grok session
     When Grok reports a turn complete without naming a prompt
@@ -670,7 +667,6 @@ Feature: Grok
     When Grok says the monitor ended and gives no summary
     Then the monitor's output ends with "Monitor ended."
 
-  @backlog
   Scenario Outline: A Grok background subagent ends the way Grok's notice says
     Given Grok left a subagent running in the background
     When Grok says the subagent <outcome>
@@ -685,13 +681,11 @@ Feature: Grok
       | was interrupted        | failed    |
       | timed out              | failed    |
 
-  @backlog
   Scenario: A Grok subagent whose name mentions a failure is not failed by its name
     Given Grok left a subagent named "fix failed tests" running in the background
     When Grok says the subagent completed successfully
     Then the subagent is shown as completed
 
-  @backlog
   Scenario: Text that only mentions a subagent does not end one
     Given Grok left a subagent running in the background
     When text passes through the thread that talks about background subagents without being Grok's notice
@@ -710,14 +704,12 @@ Feature: Grok
     Then the first subagent is finished
     And the second is still running although the answer's text mentions it
 
-  @backlog
   Scenario: A Grok kill that did not go through leaves the task running
     Given Grok left a command running in the background
     When Grok tries to kill it and the kill fails
     Then the command is still listed as background work
 
   # XAiBackgroundTasks.ts: how Grok's background tasks are listed.
-  @backlog
   Scenario Outline: A Grok background task ends the way its reported status says
     Given Grok left a command running in the background
     When Grok reports the command ended with <report>
