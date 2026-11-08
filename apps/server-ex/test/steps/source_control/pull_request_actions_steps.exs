@@ -617,14 +617,15 @@ defmodule HalC2.Steps.SourceControl.PullRequestActions do
   end
 
   # `ssh -G <alias>` answers from `aliases/<alias>` of the fake remotes (test/support/mc.ex).
-  step "the checkout's {string} is reached as the ssh alias {string} for github.com",
-       %{args: [repository, alias_name]} = context do
+  step ~r/^the checkout's "(?<repository>[^"]+)" is reached as the (?<userless>userless|user-named) ssh alias "(?<alias>[^"]+)" for github.com$/,
+       %{args: [repository, userless, alias_name]} = context do
     context = World.github_project(context, repository)
     root = World.project(context, repository).root
     aliases = Path.join(System.get_env("HAL_C2_FAKE_REMOTES"), "aliases")
     File.mkdir_p!(aliases)
     File.write!(Path.join(aliases, alias_name), "github.com\n")
-    World.git!(root, ["remote", "set-url", "origin", "git@#{alias_name}:#{repository}.git"])
+    user = if userless == "user-named", do: "git@", else: ""
+    World.git!(root, ["remote", "set-url", "origin", "#{user}#{alias_name}:#{repository}.git"])
 
     context
     |> Map.merge(%{cwd: root, checkout: repository})

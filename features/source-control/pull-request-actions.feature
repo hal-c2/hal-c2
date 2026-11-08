@@ -928,12 +928,18 @@ Feature: Acting on a pull request
       | github.acme.dev           | in a separate worktree |
       | a Forgejo at git.acme.dev | in this repository     |
 
-  # Review of #1307: an `ssh_config` alias is not another host; ssh says which host it reaches.
+  # Review of #1307: an `ssh_config` alias is not another host; ssh says which host it reaches,
+  # whether the remote names the user (`git@github-work:`) or ssh_config does (`github-work:`).
   @mc
-  Scenario: A remote reached through an ssh alias is the checkout's own host
-    Given the checkout's "acme/shop" is reached as the ssh alias "github-work" for github.com
+  Scenario Outline: A remote reached through an ssh alias is the checkout's own host
+    Given the checkout's "acme/shop" is reached as the <remote> ssh alias "github-work" for github.com
     When the user checks out pull request 42 by its github.com URL in this repository
     Then it is checked out through the checkout's own remote
+
+    Examples:
+      | remote     |
+      | user-named |
+      | userless   |
 
   # Upstream #15036: Check out here could throw away local edits and commits and still say it worked.
   @mc @desktop @backlog-desktop @priority-high

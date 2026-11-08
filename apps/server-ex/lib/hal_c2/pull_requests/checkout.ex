@@ -64,7 +64,7 @@ defmodule HalC2.PullRequests.Checkout do
   # is added once the pull request is read (`host_remote/2`).
   defp host(cwd, reference) do
     host = host(cwd)
-    checkout = host.url && PullRequests.parse_remote(host.url)
+    checkout = host.url && parse_remote(host.url)
 
     with %URI{scheme: scheme, host: name, path: path} when scheme in ["http", "https"] <-
            URI.parse(String.trim(reference)),
@@ -149,7 +149,7 @@ defmodule HalC2.PullRequests.Checkout do
         _ -> nil
       end
 
-    parsed = url && PullRequests.parse_remote(url)
+    parsed = url && parse_remote(url)
 
     kind =
       if parsed && parsed.kind in ~w(gitlab bitbucket forgejo), do: parsed.kind, else: "github"
@@ -725,7 +725,21 @@ defmodule HalC2.PullRequests.Checkout do
   defp ssh?(nil), do: false
 
   defp ssh?(url),
-    do: String.match?(url, ~r/^ssh:\/\//i) or String.match?(url, ~r/^[^\/:@]+@[^\/:]+:/)
+    do: String.match?(url, ~r/^ssh:\/\//i) or scp_like?(url)
+
+  # `user@host:path`, or `host:path` where ssh_config names the user. Not a Windows
+  # drive (`C:\repo`, one letter) nor a path.
+  @scp_like ~r/^(?:[^\/:@]+@)?[^\/:@\\]{2,}:(?!\/\/)/
+
+  defp scp_like?(url), do: String.match?(url, @scp_like)
+
+  # `PullRequests.parse_remote/1`, which wants `user@`, also for `host:owner/name.git`.
+  defp parse_remote(url) do
+    PullRequests.parse_remote(url) ||
+      if(scp_like?(url) and not String.contains?(url, "@"),
+        do: PullRequests.parse_remote("git@" <> url)
+      )
+  end
 
   # A remote already at `url` (by `HalC2.AgentSessions.remote_key/1`), else a new one
   # named after `owner`, numbered when that name is taken. As `ensureRemote`.
