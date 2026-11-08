@@ -480,6 +480,21 @@ defmodule HalC2.Steps.Space.AgentInPage do
     context
   end
 
+  step "the thread of the agent of {string} says the user stopped it",
+       %{args: [title]} = context do
+    thread_id = agent(context, title)["threadId"]
+
+    outcome =
+      World.await_stream(thread_id, fn state ->
+        state
+        |> StreamState.list("turn-item")
+        |> Enum.find(&String.ends_with?(&1["id"], ":signal:interrupt-result"))
+      end)
+
+    assert outcome["message"] == "Stopped by user"
+    context
+  end
+
   step "{string} says its agent stopped because {string}", %{args: [title, reason]} = context do
     await_agent(
       context,

@@ -133,7 +133,9 @@ defmodule HalC2.Steps.Plugins.PluginCatalog do
     context = AcpRegistry.publish(context, [AcpRegistry.agent(context, "acme")])
 
     {{:ok, %{"agents" => [_]}}, context} =
-      World.call(context, "server.searchAcpRegistry", %{"query" => ""})
+      HalC2.Test.AcpFixtures.with_runners(context, fn ->
+        World.call(context, "server.searchAcpRegistry", %{"query" => ""})
+      end)
 
     context
   end

@@ -86,7 +86,11 @@ defmodule HalC2.Steps.Settings.ProvidersPanel do
   # --- the ACP Registry ------------------------------------------------------------------
 
   step "the user searches the ACP Registry for {string}", %{args: [query]} = context do
-    {reply, context} = World.call(context, "server.searchAcpRegistry", %{"query" => query})
+    {reply, context} =
+      HalC2.Test.AcpFixtures.with_runners(context, fn ->
+        World.call(context, "server.searchAcpRegistry", %{"query" => query})
+      end)
+
     Map.put(context, :reply, reply)
   end
 
@@ -353,7 +357,7 @@ defmodule HalC2.Steps.Settings.ProvidersPanel do
           }),
           agent.("gemini-mac", "Gemini Mac", "Gemini on another machine", binary.(elsewhere)),
           agent.("lite-gemini", "Lite Gemini", "A smaller agent", %{
-            "uvx" => %{"package" => "lite-gemini"}
+            "uvx" => %{"package" => "lite-gemini==1.2.3"}
           }),
           agent.("gemini-cli", "Gemini CLI", "Google's agent", binary.(here)),
           agent.("atlas", "Atlas", "Maps", binary.(here))

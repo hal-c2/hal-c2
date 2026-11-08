@@ -3072,11 +3072,6 @@ Red"} <- StreamState.get(state, "message")[message],
     context
   end
 
-  step "the turn goes on", context do
-    assert %{"status" => "running"} = World.latest_run(context, @thread)
-    context
-  end
-
   step "no Codex turn is running in the thread", context do
     context = context |> World.fake_providers() |> World.launch_on(@thread, "codex", "hello")
     World.await_runs(context, @thread, ["completed"])

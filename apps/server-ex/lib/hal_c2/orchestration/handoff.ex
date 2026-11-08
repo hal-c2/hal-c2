@@ -539,17 +539,12 @@ defmodule HalC2.Orchestration.Handoff do
     end
   end
 
-  # A row's transcript entry as `{run, at, role, text}`, if it has one.
+  # A row's transcript entry as `{run, at, role, text}`, if it has one. A bare
+  # `/compact` or `/logout` the user sent was an instruction to the provider of its
+  # day, not conversation: the next provider is not handed it, so a refused
+  # `/compact` leaves the thread with nothing to compact.
   defp entry({"message", _, message}) do
-    case String.trim(message["text"] || "") do
-      "" ->
-        []
-
-      text ->
-        role = if message["role"] == "user", do: :user, else: :assistant
-        label = if role == :user, do: "User", else: "Assistant"
-        [{message["runId"], message["createdAt"] || "", role, "#{label}: #{text}"}]
-    end
+    if maintenance?(message), do: [], else: message_entry(message)
   end
 
   defp entry({"turn-item", _, %{"type" => "command_execution", "input" => input} = item})
@@ -560,6 +555,25 @@ defmodule HalC2.Orchestration.Handoff do
   end
 
   defp entry(_row), do: []
+
+  defp maintenance?(%{"role" => "user", "text" => text} = message) when is_binary(text),
+    do:
+      (message["attachments"] || []) == [] and
+        String.downcase(String.trim(text)) in ~w(/compact /logout)
+
+  defp maintenance?(_message), do: false
+
+  defp message_entry(message) do
+    case String.trim(message["text"] || "") do
+      "" ->
+        []
+
+      text ->
+        role = if message["role"] == "user", do: :user, else: :assistant
+        label = if role == :user, do: "User", else: "Assistant"
+        [{message["runId"], message["createdAt"] || "", role, "#{label}: #{text}"}]
+    end
+  end
 
   defp command(item) do
     output = String.trim(item["output"] || "")

@@ -76,6 +76,51 @@ defmodule HalC2.ProviderUpdatesTest do
     refute HalC2.ProviderUpdates.advisory("codex", brew, "0.1.0")["canInstallVersion"]
   end
 
+  test "a WinGet Claude install is updated by hand, with the winget command shown",
+       %{tmp_dir: dir} do
+    path =
+      install(
+        dir,
+        "Microsoft/WinGet/Packages/Anthropic.ClaudeCode/claude.exe",
+        "Microsoft/WinGet/Links/claude.exe"
+      )
+
+    assert %{
+             "status" => "behind_latest",
+             "canUpdate" => false,
+             "updateCommand" => "winget upgrade Anthropic.ClaudeCode"
+           } = HalC2.ProviderUpdates.advisory("claudeAgent", path, "2.1.0")
+  end
+
+  test "a native Claude install is compared with its release channel, not npm",
+       %{tmp_dir: dir} do
+    # The channel is read from the instance's Claude settings; none here, so latest.
+    System.put_env("CLAUDE_CONFIG_DIR", Path.join(dir, "claude-config"))
+    on_exit(fn -> System.delete_env("CLAUDE_CONFIG_DIR") end)
+    path = install(dir, ".local/share/claude/versions/2.1.0/claude", ".local/bin/claude")
+
+    # npm is at 9.9.9 (setup), but the channel still offers the installed one.
+    assert %{"status" => "unknown", "latestVersion" => nil} =
+             HalC2.ProviderUpdates.advisory("claudeAgent", path, "2.1.0")
+
+    :persistent_term.put(
+      {HalC2.ProviderUpdates, :claude_channel, "latest"},
+      {"2.1.0", System.monotonic_time(:millisecond)}
+    )
+
+    on_exit(fn -> :persistent_term.erase({HalC2.ProviderUpdates, :claude_channel, "latest"}) end)
+
+    assert %{"status" => "current", "latestVersion" => "2.1.0"} =
+             HalC2.ProviderUpdates.advisory("claudeAgent", path, "2.1.0")
+  end
+
+  test "a release channel's answer is a plain version or nothing" do
+    assert HalC2.ProviderUpdates.parse_channel_version("2.1.300\n") == "2.1.300"
+    assert HalC2.ProviderUpdates.parse_channel_version("v2.1.300") == "2.1.300"
+    assert HalC2.ProviderUpdates.parse_channel_version("<html>nope</html>") == nil
+    assert HalC2.ProviderUpdates.parse_channel_version("") == nil
+  end
+
   test "a version to install must be a plain release", %{tmp_dir: dir} do
     path = install(dir, "lib/node_modules/@openai/codex/bin/codex.js", "bin/codex")
     File.chmod!(path, 0o755)
