@@ -1078,6 +1078,15 @@ Feature: ACP registry agents
     Then "acme" is asked to switch its session to the mode "code"
     And its "Mode" option now holds "code"
 
+  # An agent that leaves plan mode on its own says so with current_mode_update.
+  Scenario: An agent that changes its older session mode by itself is followed
+    Given "acme" offers the modes "ask" and "code" and no session options
+    When "acme" switches its session to the mode "code" by itself
+    Then its "Mode" option now holds "code"
+    When the user sends "acme" a message in the mode "ask"
+    Then "acme" is asked to switch its session to the mode "ask"
+    And its "Mode" option now holds "ask"
+
   Scenario: Session options are bounded
     Given "acme" offers more than 16 session options, one of them with more than 64 choices
     When the MC reads the options
@@ -1291,6 +1300,11 @@ Feature: ACP registry agents
   Scenario: Content of a kind HAL-C2 does not know is shown as unsupported
     When "acme" sends content of the unknown kind "hologram"
     Then the thread shows "[Unsupported ACP content: hologram]"
+
+  Scenario: A text part without text is dropped
+    When "acme" sends a text part whose text is null, then the text "Done."
+    Then the thread shows "Done."
+    And the thread does not show "[Unsupported ACP content: text]"
 
   @backlog
   Scenario Outline: Context compaction by an agent is shown as a work item

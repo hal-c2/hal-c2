@@ -1560,6 +1560,19 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     context
   end
 
+  step "{string} sends a text part whose text is null, then the text {string}",
+       %{args: [_, text]} = context do
+    send_updates(context, [
+      message_chunk(%{"type" => "text", "text" => nil}),
+      message_chunk(%{"type" => "text", "text" => text})
+    ])
+  end
+
+  step "the thread does not show {string}", %{args: [text]} = context do
+    refute Acp.assistant_text(thread(context)) =~ text
+    context
+  end
+
   step "{string} sends a session update of the unknown kind {string}",
        %{args: [_, kind]} = context do
     send_updates(context, [%{"sessionUpdate" => kind, "data" => "3d"}])
@@ -5063,6 +5076,14 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
   step "no separate {string} option is added", %{args: [name]} = context do
     refute Enum.any?(context.descriptors, &(&1["label"] == name or &1["id"] == "mode"))
     context
+  end
+
+  step "{string} switches its session to the mode {string} by itself",
+       %{args: [_, mode]} = context do
+    ctx = run_on_acme(context, "switch yourself to #{mode}")
+    assert %{"status" => "completed"} = List.last(Acp.await_runs(thread(ctx), 1))
+    assert Acp.assistant_text(thread(ctx)) =~ "mode: #{mode}"
+    ctx
   end
 
   step "the user sends {string} a message in the mode {string}", %{args: [_, mode]} = context do

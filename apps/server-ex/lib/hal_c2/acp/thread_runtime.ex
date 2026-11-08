@@ -335,7 +335,8 @@ defmodule HalC2.Acp.ThreadRuntime do
   def handle_call({:start_turn, turn}, _from, state) do
     driver = turn.ids.driver
     ids = Map.put(turn.ids, :provider_turn, "provider-turn:#{driver}:#{turn.ids.run}")
-    turn = carried(%{turn | ids: ids})
+    # Its messages start in segment 0; a tool starts the next (`next_segment/2`).
+    turn = carried(%{turn | ids: ids}) |> Map.put(:segment, 0)
     # Subagents still working in the background carry over; the rest were this turn's.
     subagents = Map.filter(state.subagents, fn {_, e} -> background?(e) and not e.done end)
 
@@ -657,6 +658,9 @@ defmodule HalC2.Acp.ThreadRuntime do
 
       commands = available_commands(update) ->
         {:noreply, offer(state, commands)}
+
+      update["sessionUpdate"] == "current_mode_update" ->
+        {:noreply, mode_changed(state, update)}
 
       state.turn == nil ->
         {:noreply, state}
@@ -1980,6 +1984,26 @@ defmodule HalC2.Acp.ThreadRuntime do
     |> Enum.find_value(&(&1["value"] in ["plan", "architect"] && &1["value"]))
   end
 
+  # An agent with older ACP modes says when it changes mode itself, leaving plan mode
+  # for one, in or between turns. The "mode" option follows, so picking the mode it
+  # left sends `session/set_mode` again.
+  defp mode_changed(%{legacy_modes: %{} = modes} = state, %{"currentModeId" => id})
+       when is_binary(id) and is_map_key(state.config, "mode") do
+    if Enum.any?(List.wrap(modes["availableModes"]), &(is_map(&1) and &1["id"] == id)) do
+      HalC2.Acp.put_option(state.agent, "mode", id)
+
+      %{
+        state
+        | legacy_modes: Map.put(modes, "currentModeId", id),
+          config: Map.put(state.config, "mode", id)
+      }
+    else
+      state
+    end
+  end
+
+  defp mode_changed(state, _update), do: state
+
   # A mode of the session's older ACP modes is set through `session/set_mode`.
   defp set_config(%{legacy_modes: %{} = modes} = state, "mode", value)
        when is_binary(value) and is_map_key(state.config, "mode") do
@@ -3298,8 +3322,7 @@ defmodule HalC2.Acp.ThreadRuntime do
     # gets its own messages rather than overwriting an earlier turn's.
     # What the agent writes after a tool starts a new message, so the text, the tool
     # and the later text keep their order.
-    segment = Map.get(state.turn, :segment, 0)
-    key = "#{kind}:#{state.turn.ids.run}:#{segment}:#{u["messageId"] || "current"}"
+    key = message_key(state.turn, kind, u["messageId"])
 
     state =
       if kind == :assistant, do: %{state | turn: Antigravity.reply(state.turn, text)}, else: state
@@ -3315,12 +3338,23 @@ defmodule HalC2.Acp.ThreadRuntime do
     chunk(state, %{u | "content" => %{"type" => "text", "text" => placeholder(content)}}, kind)
   end
 
-  defp chunk(state, %{"content" => %{"type" => type}} = u, kind) when is_binary(type) do
+  # A text part without text is dropped below, not named as an unknown kind.
+  defp chunk(state, %{"content" => %{"type" => type}} = u, kind)
+       when is_binary(type) and type != "text" do
     text = "[Unsupported ACP content: #{meta(type, "unknown")}]"
     chunk(state, %{u | "content" => %{"type" => "text", "text" => text}}, kind)
   end
 
   defp chunk(state, _u, _kind), do: state
+
+  @doc false
+  # The item key of a turn's message. A turn begun before v19 has no segment and
+  # keeps the key it started with, so an upgrade does not split its message.
+  def message_key(%{segment: segment} = turn, kind, message_id),
+    do: "#{kind}:#{turn.ids.run}:#{segment}:#{message_id || "current"}"
+
+  def message_key(turn, kind, message_id),
+    do: "#{kind}:#{turn.ids.run}:#{message_id || "current"}"
 
   defp placeholder(%{"type" => "image"} = content),
     do: "[ACP image (#{meta(content["mimeType"], "unknown type")})#{uri(content["uri"])}]"

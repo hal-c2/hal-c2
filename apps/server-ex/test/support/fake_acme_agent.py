@@ -166,7 +166,7 @@ def title_json(text):
     return json.dumps({k: (False if k == "needsRefinement" else "%s %s" % (NAME, k)) for k in keys})
 
 def prompt(pid, sid, text):
-    global held
+    global held, legacy_mode
     # Closes its output and keeps running, deaf to its input (upstream #21323).
     if "close output" in text and "<conversation_history>" not in text:
         log({"event": "closed", "at": time.time()})
@@ -185,6 +185,15 @@ def prompt(pid, sid, text):
         os._exit(CONTROL.get("exitCode", 1))
     if "Return a JSON object" in text or "Return JSON with keys" in text:
         return finish(pid, sid, "Here it is: " + title_json(text))
+    # "switch yourself to MODE": changes its older session mode on its own, as an agent
+    # leaving plan mode does, and says so. "say your mode" names the mode it is in.
+    m = re.search(r"switch yourself to (\S+)", text)
+    if m and legacy_modes and "<conversation_history>" not in text:
+        legacy_mode = m.group(1)
+        update(sid, {"sessionUpdate": "current_mode_update", "currentModeId": legacy_mode})
+        return finish(pid, sid, "mode: " + legacy_mode)
+    if "say your mode" in text:
+        return finish(pid, sid, "mode: %s" % legacy_mode)
     # "start a helper": runs a helper that exits at once, so its pid is free for reuse.
     if "start a helper" in text and "<conversation_history>" not in text:
         helper = subprocess.Popen(["true"])
