@@ -65,6 +65,8 @@ defmodule HalC2.PluginsProofTest do
       "HalC2.Plugins.observing?/0" => @hooks,
       "HalC2.Plugins.observe/1" => @hooks,
       "HalC2.Plugins.shape_run/1" => @hooks,
+      "HalC2.Plugins.settings_now/2" =>
+        "reads a plugin's saved settings, as its feed starts and as it is asked to shape",
       "HalC2.Plugins.turn_finished/3" => "tells the plugins of a finished turn, in a task",
       "HalC2.Plugins.slack_event/2" =>
         "hands a Slack event to the plugins granted slack:read, each in a task after the last",
