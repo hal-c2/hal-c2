@@ -7,7 +7,9 @@
 #include <QMap>
 #include <QObject>
 #include <QPointer>
+#include <QSet>
 #include <QString>
+#include <QStringList>
 #include <QVariantList>
 
 #include <functional>
@@ -89,6 +91,10 @@ class ThreadDiff : public QObject {
   Q_PROPERTY(bool ignoreWhitespace READ ignoreWhitespace WRITE setIgnoreWhitespace NOTIFY optionsChanged)
   Q_PROPERTY(bool wrap READ wrap WRITE setWrap NOTIFY optionsChanged)
   // A turn can be reverted to: the thread is not working and has a checkpoint.
+  // The files of the selection shown the user has marked viewed, remembered
+  // per thread and diff source for as long as the app runs. A viewed file is
+  // collapsed; unmarking it expands it again (the panel's Viewed box).
+  Q_PROPERTY(QStringList viewedPaths READ viewedPaths NOTIFY viewedChanged)
   Q_PROPERTY(bool canRevert READ canRevert NOTIFY revertChanged)
   // The turn the user is asked to confirm reverting to, or 0.
   Q_PROPERTY(int revertTurn READ revertTurn NOTIFY revertChanged)
@@ -173,6 +179,11 @@ public:
   // False when the diff shows no such lines or the note is blank.
   Q_INVOKABLE bool comment(const QString& path, const QString& side, int first, int last, const QString& note);
 
+  QStringList viewedPaths() const;
+  // Marks `path` of the selection shown viewed or not: viewed collapses it,
+  // not viewed expands it. A path the diff does not show changes nothing.
+  Q_INVOKABLE void setViewed(const QString& path, bool viewed);
+
   bool canRevert() const;
   int revertTurn() const { return m_revertTurn; }
   bool reverting() const { return m_reverting; }
@@ -191,6 +202,7 @@ signals:
   void reviewChanged();
   void basesChanged();
   void revertChanged();
+  void viewedChanged();
   // The view should show `row` of the model at its top.
   void revealRow(int row);
 
@@ -216,6 +228,7 @@ private:
     bool canRevert = false;
     int revertTurn = 0;
     bool reverting = false;
+    QStringList viewed;
   };
   Facts facts() const;
   void tell(const Facts& before);
@@ -239,6 +252,11 @@ private:
   void setStatus(const QString& status, const QString& message = {});
   // Puts the loaded patch, or its focused file, in the model.
   void present();
+  // The viewed files' key: the thread and the diff source shown (the
+  // selection, and the branch's base), so each source remembers its own.
+  QString viewedKey() const;
+  // Collapses the shown selection's viewed files in the model.
+  void applyViewed();
   QString loadKey() const;
 
   McClient* m_client;
@@ -295,6 +313,9 @@ private:
   QString m_message;
   // What `model` shows (or is loading), so a repeat asks nothing.
   QString m_loaded;
+  // The load key of what `model` last showed whole: a failed reload of the
+  // same selection keeps it on screen (a failed other selection does not).
+  QString m_shownKey;
   int m_request = 0;
   QString m_pendingReveal;
   // The selection's whole patch, and the one file of it shown.
@@ -303,4 +324,6 @@ private:
   int m_fileTotal = 0;
   int m_revertTurn = 0;
   bool m_reverting = false;
+  // Viewed files by viewedKey(), kept across threads and selections.
+  QHash<QString, QSet<QString>> m_viewed;
 };
