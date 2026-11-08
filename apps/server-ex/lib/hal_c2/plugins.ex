@@ -58,6 +58,8 @@ defmodule HalC2.Plugins do
   @max_seconds 5
 
   @providers __MODULE__.Providers
+  # The ids whose loaded manifest declares `threadsStay`; see `threads_stay?/1`.
+  @stays __MODULE__.Stays
   # `{{:list, pid}, ref}`, `{{:topic, id, topic, pid}, ref}` and `{{:last, id, topic}, value}`.
   @watchers __MODULE__.Watchers
   @heir __MODULE__.Heir
@@ -287,18 +289,17 @@ defmodule HalC2.Plugins do
   Whether plugin `id` declares that its threads never leave the machine
   (`"threadsStay"`): the version loaded here says so, running or not, or the package
   on disk does (`Package.threads_stay?/1`). The version loaded answers while a reload
-  that failed leaves it running and the manifest on disk cannot be read; the disk
-  answers with no host here, or one too busy to answer in `timeout`.
-  """
-  def threads_stay?(id, timeout \\ 5_000) do
-    loaded =
-      try do
-        GenServer.call(__MODULE__, {:threads_stay?, id}, timeout)
-      catch
-        :exit, _ -> false
-      end
+  that failed leaves it running and the manifest on disk does not declare it.
 
-    loaded or Package.threads_stay?(id)
+  The loaded versions' declarations are in a table the host keeps (`sync/1`), so this
+  never waits on the host, however busy it is compiling a package. With no host here,
+  or one that has not scanned yet, the table says nothing and the disk answers.
+  """
+  def threads_stay?(id) do
+    (:ets.whereis(@stays) != :undefined and :ets.member(@stays, id)) or Package.threads_stay?(id)
+  rescue
+    # The host went away between looking for the table and reading it.
+    ArgumentError -> Package.threads_stay?(id)
   end
 
   @doc "Whether `id` is a running text-generation backend."
@@ -674,6 +675,7 @@ defmodule HalC2.Plugins do
   def init(nil) do
     {:ok, supervisor} = DynamicSupervisor.start_link(strategy: :one_for_one)
     :ets.new(@providers, [:named_table, :protected, :set, read_concurrency: true])
+    :ets.new(@stays, [:named_table, :protected, :set, read_concurrency: true])
     :ok = HalC2.Settings.watch(self())
     dir = Path.join(HalC2.Paths.data_dir(), "plugins")
 
@@ -714,11 +716,6 @@ defmodule HalC2.Plugins do
 
   def handle_call({:running?, id}, _from, state),
     do: {:reply, match?(%{sup: sup} when sup != nil, state.plugins[id]), state}
-
-  def handle_call({:threads_stay?, id}, _from, state),
-    do:
-      {:reply, match?(%{manifest: %{package: %{"threadsStay" => true}}}, state.plugins[id]),
-       state}
 
   def handle_call({:set_enabled, id, enabled, accepted}, _from, state) do
     case state.plugins[id] do
@@ -1460,8 +1457,15 @@ defmodule HalC2.Plugins do
     |> sync()
   end
 
-  # The running provider adapters, by the driver they serve, for `provider/1`.
+  # The running provider adapters, by the driver they serve, for `provider/1`, and the
+  # plugins whose loaded manifest declares `threadsStay`, for `threads_stay?/1`. The
+  # second follows the loaded versions (a scan, so an uninstall, drops a plugin from
+  # it) and is rebuilt as the plugins load when the host starts again.
   defp sync(state) do
+    stays = for {id, %{manifest: %{package: %{"threadsStay" => true}}}} <- state.plugins, do: {id}
+    for {id} <- :ets.tab2list(@stays), {id} not in stays, do: :ets.delete(@stays, id)
+    :ets.insert(@stays, stays)
+
     bundled = HalC2.Plugins.Bundled.modules()
 
     rows =

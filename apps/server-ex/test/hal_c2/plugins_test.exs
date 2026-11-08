@@ -231,6 +231,65 @@ defmodule HalC2.PluginsTest do
     assert "3" = busy(:version, [])
   end
 
+  # The version that still runs declares `threadsStay`; the update that failed to load
+  # does not, and its manifest is what the disk says. The declaration of the version
+  # loaded is read from a table, so a host too busy to answer (suspended here) cannot
+  # make it read false and let the plugin's threads leave.
+  test "the declaration of the version loaded is read without waiting on the host" do
+    code_package("busy", "1", [{"a.ex", busy_source("1")}])
+    manifest = Path.join(plugins_dir(), "busy/plugin.json")
+
+    File.write!(
+      manifest,
+      manifest |> File.read!() |> JSON.decode!() |> declare() |> JSON.encode!()
+    )
+
+    Plugins.handle("rescan", %{})
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => "busy", "acceptPermissions" => []})
+    assert Plugins.threads_stay?("busy")
+
+    code_package("busy", "2", [
+      {"a.ex", busy_source("2")},
+      {"b.ex", "defmodule HalC2PluginsTest.Broken do\n  def broken(, do: :x\nend\n"}
+    ])
+
+    Plugins.handle("rescan", %{})
+    assert %{"version" => "1", "reloadError" => error} = listed("busy")
+    assert error =~ "b.ex"
+    refute HalC2.Plugins.Package.threads_stay?("busy")
+    assert Plugins.threads_stay?("busy")
+
+    :ok = :sys.suspend(Plugins)
+    assert Plugins.threads_stay?("busy")
+    refute Plugins.threads_stay?("other")
+    :ok = :sys.resume(Plugins)
+
+    # The host starting again loses the version that ran, and the table with it: the
+    # disk answers, and the table fills as the plugins load.
+    :ok = Supervisor.terminate_child(HalC2.Plugins.Supervisor, Plugins)
+    {:ok, _} = Supervisor.restart_child(HalC2.Plugins.Supervisor, Plugins)
+    refute Plugins.threads_stay?("busy")
+
+    code_package("busy", "3", [{"a.ex", busy_source("3")}])
+
+    manifest
+    |> File.read!()
+    |> JSON.decode!()
+    |> declare()
+    |> JSON.encode!()
+    |> then(&File.write!(manifest, &1))
+
+    Plugins.handle("rescan", %{})
+    assert Plugins.threads_stay?("busy")
+
+    # Uninstalling frees the threads.
+    File.rm_rf!(Path.join(plugins_dir(), "busy"))
+    Plugins.handle("rescan", %{})
+    refute Plugins.threads_stay?("busy")
+  end
+
+  defp declare(manifest), do: Map.put(manifest, "threadsStay", true)
+
   # What a peer answers for a plugin: only a function the running version has, so a
   # machine on an older version or without the plugin is left out rather than failing.
   test "a peer answers for a function its plugin has, and leaves out what it lacks" do
