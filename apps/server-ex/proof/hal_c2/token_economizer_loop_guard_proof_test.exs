@@ -1,22 +1,26 @@
 # The plugin's MC modules are compiled when the plugin starts, not with the MC: compiled
 # here to beams of their own, which keep the docs and source the coverage reads. The
-# plugin's proofs share them, so the compile is locked: test files load in parallel,
-# and two compiles of one module at once fail.
+# plugin's proofs share them, so they are compiled once per run, under a lock: test
+# files load in parallel, and a second compile would remove the beams under the other
+# file's tests.
 beams = Path.join(Mix.Project.build_path(), "plugins/token-economizer")
 
 :global.trans({:token_economizer_beams, self()}, fn ->
-  File.rm_rf!(beams)
-  File.mkdir_p!(beams)
-  docs = Code.get_compiler_option(:docs)
-  Code.put_compiler_option(:docs, true)
+  unless :persistent_term.get(:token_economizer_beams, false) do
+    File.rm_rf!(beams)
+    File.mkdir_p!(beams)
+    docs = Code.get_compiler_option(:docs)
+    Code.put_compiler_option(:docs, true)
 
-  {:ok, _, _} =
-    "../../../../plugins/token-economizer/mc/*.ex"
-    |> Path.expand(__DIR__)
-    |> Path.wildcard()
-    |> Kernel.ParallelCompiler.compile_to_path(beams, return_diagnostics: true)
+    {:ok, _, _} =
+      "../../../../plugins/token-economizer/mc/*.ex"
+      |> Path.expand(__DIR__)
+      |> Path.wildcard()
+      |> Kernel.ParallelCompiler.compile_to_path(beams, return_diagnostics: true)
 
-  Code.put_compiler_option(:docs, docs)
+    Code.put_compiler_option(:docs, docs)
+    :persistent_term.put(:token_economizer_beams, true)
+  end
 end)
 
 Code.prepend_path(beams)

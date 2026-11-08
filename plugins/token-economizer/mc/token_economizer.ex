@@ -236,16 +236,9 @@ defmodule HalC2Plugins.TokenEconomizer do
   end
 
   def handle_call({:observe, event}, _from, state) do
-    state = state |> missed_prune(event["dropped"]) |> hear_prune(event)
-
-    state =
-      if on?(state) do
-        state |> missed(event["dropped"]) |> hear(event) |> suspect(event)
-      else
-        state
-      end
-
-    {:reply, :ok, state}
+    state = state |> missed(event["dropped"]) |> hear_prune(event)
+    state = if on?(state), do: hear(state, event), else: state
+    {:reply, :ok, suspect(state, event)}
   end
 
   @impl GenServer
@@ -383,21 +376,6 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   defp prune_targets(state, _input), do: {:ok, Map.keys(state.prunes), state}
 
-  # Events the feed missed taint the conversations under way, as they mark the loop
-  # guard's turns partial: what was used in them still counts, but nothing in them
-  # may grow an unused streak -- a missed item may be the very use that would have
-  # reset it. They also stop counting as active, since a missed turn end would
-  # otherwise hold a project active (and `auto` stalled) until its next turn.
-  defp missed_prune(state, n) when is_integer(n) and n > 0 do
-    %{
-      state
-      | convs:
-          Map.new(state.convs, fn {id, conv} -> {id, %{conv | partial: true, active: false}} end)
-    }
-  end
-
-  defp missed_prune(state, _), do: state
-
   # The turns as tool pruning hears them, whatever the loop guard's mode: a new
   # conversation closes the thread's last one, a turn's items say what it used, and
   # a finished turn leaves the project idle for the quiet timer to fold.
@@ -411,7 +389,7 @@ defmodule HalC2Plugins.TokenEconomizer do
     if unit == nil or not is_binary(event["projectId"]) do
       state
     else
-      state = seed_history(state, thread_id, project, unit, event["instanceId"])
+      state = seed_history(state, thread_id, project, unit)
       {prune, state} = prune(state, project, unit)
       state = touch(state, project, prune)
 
@@ -506,7 +484,7 @@ defmodule HalC2Plugins.TokenEconomizer do
   defp fold_conv(state, conv, imported \\ false) do
     unit = Prune.unit_for_provider(elem(conv.project, 1))
     {prune, state} = prune(state, conv.project, unit)
-    # A segment heard only in part (`missed_prune/2`) folds as no evidence: its
+    # A segment heard only in part (`missed/2`) folds as no evidence: its
     # uses are still noted, its silences grow no streak.
     prompts = if Map.get(conv, :partial, false), do: 0, else: conv.prompts
 
@@ -589,71 +567,53 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   # Turns a thread ran while the plugin was not running, read back once per run of
   # the plugin and folded as one imported session: what they used for good, and
-  # their prompts as evidence `auto` alone does not act on. Only this instance's
-  # runs count (a thread's earlier runs on another provider are that provider's
-  # evidence), and only those after the last run already folded for the thread
+  # their prompts as evidence `auto` alone does not act on. Read once per thread and
+  # provider, and only the runs after the last already folded for the thread
   # (`Prune.note_thread/3`'s watermark, advanced by every live turn's end), so a
-  # restart never folds a turn twice.
-  defp seed_history(state, thread_id, project, unit, instance) do
-    if MapSet.member?(state.seeded, thread_id) do
+  # restart never folds a turn twice. Only the provider's own runs count: a thread's
+  # runs on another are that provider's evidence.
+  defp seed_history(state, thread_id, {_, provider} = project, unit) do
+    if MapSet.member?(state.seeded, {thread_id, project}) do
       state
     else
-      state = update_in(state.seeded, &MapSet.put(&1, thread_id))
-
+      state = update_in(state.seeded, &MapSet.put(&1, {thread_id, project}))
       {prune, state} = prune(state, project, unit)
-      watermark = Prune.seeded_run(prune, thread_id)
+      drivers = instance_drivers()
 
-      runs =
-        thread_id
-        |> history()
-        |> Enum.filter(&(instance == nil or &1["instanceId"] in [nil, instance]))
-        |> after_watermark(watermark)
+      {watermark, runs} =
+        Prune.unseen_runs(history(thread_id), Prune.seeded_run(prune, thread_id), fn run ->
+          run["instanceId"] == nil or drivers[run["instanceId"]] == provider
+        end)
 
-      case runs do
-        [] ->
-          state
+      state = put_in(state.prunes[project], Prune.note_thread(prune, thread_id, watermark))
 
-        runs ->
-          state =
-            put_in(
-              state.prunes[project],
-              Prune.note_thread(
-                state.prunes[project],
-                thread_id,
-                runs |> List.last() |> Map.get("runId")
-              )
-            )
+      if runs == [] do
+        state
+      else
+        used =
+          runs
+          |> Enum.flat_map(& &1["items"])
+          |> Enum.flat_map(&Prune.used_in_item(&1, unit))
+          |> Enum.uniq()
 
-          used =
-            runs
-            |> Enum.flat_map(& &1["items"])
-            |> Enum.flat_map(&Prune.used_in_item(&1, unit))
-            |> Enum.uniq()
-
-          fold_conv(
-            state,
-            %{
-              project: project,
-              loaded: Prune.candidate_tools(unit),
-              used: used,
-              prompts: length(runs)
-            },
-            true
-          )
+        fold_conv(
+          state,
+          %{
+            project: project,
+            loaded: Prune.candidate_tools(unit),
+            used: used,
+            prompts: length(runs)
+          },
+          true
+        )
       end
     end
   end
 
-  # The runs after the thread's watermark. A watermark no longer in the window
-  # read back is older than all of it (it names the last run folded), so the
-  # whole window is new.
-  defp after_watermark(runs, nil), do: runs
-
-  defp after_watermark(runs, watermark) do
-    case Enum.find_index(runs, &(&1["runId"] == watermark)) do
-      nil -> runs
-      index -> Enum.drop(runs, index + 1)
-    end
+  # Each provider instance's driver, which is what a project's evidence is kept by.
+  defp instance_drivers do
+    {:ok, providers} = Host.providers(@id)
+    Map.new(providers, &{&1["instanceId"], &1["driverKind"]})
   end
 
   defp history(thread_id) do
@@ -724,25 +684,42 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   # The feed says what it missed on the next event it delivers, which it queued before
   # the missed ones: up to a full queue of events still to come were too, and a turn
-  # that starts in them may have lost what was missed. So the turns under way are
-  # partial, and so is each turn heard until that queue has been heard.
+  # that starts in them may have lost what was missed. So the turns and conversations
+  # under way are partial, and so is each one heard until that queue has been heard.
+  #
+  # A partial turn teaches the envelope nothing. In a partial conversation what was
+  # used still counts, but nothing may grow an unused streak (a missed item may be the
+  # very use that would have reset it), and it stops counting as active: a missed turn
+  # end would otherwise hold its project active, and `auto` stalled, until its next turn.
   defp missed(state, n) when is_integer(n) and n > 0 do
-    turns = Map.new(state.turns, fn {id, turn} -> {id, %{turn | partial: true}} end)
-    %{state | turns: turns, missing: HalC2.Plugins.Feed.max_queue()}
+    %{
+      state
+      | turns: Map.new(state.turns, fn {id, turn} -> {id, %{turn | partial: true}} end),
+        convs: Map.new(state.convs, fn {id, conv} -> {id, suspect_conv(conv)} end),
+        missing: HalC2.Plugins.Feed.max_queue()
+    }
   end
 
   defp missed(state, _), do: state
 
   defp suspect(%{missing: 0} = state, _event), do: state
 
-  defp suspect(state, event) do
+  defp suspect(state, %{"threadId" => thread_id}) do
     state = %{state | missing: state.missing - 1}
 
-    case state.turns[event["threadId"]] do
-      nil -> state
-      _turn -> put_in(state.turns[event["threadId"]].partial, true)
-    end
+    state =
+      if state.turns[thread_id],
+        do: put_in(state.turns[thread_id].partial, true),
+        else: state
+
+    if state.convs[thread_id],
+      do: update_in(state.convs[thread_id], &suspect_conv/1),
+      else: state
   end
+
+  defp suspect(state, _event), do: %{state | missing: state.missing - 1}
+
+  defp suspect_conv(conv), do: %{conv | partial: true, active: false}
 
   defp hear(
          state,

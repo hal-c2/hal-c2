@@ -446,11 +446,14 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       # Reported on an event queued before the missed ones: "b" may have lost them.
       state = state |> observe(started("b", %{"dropped" => 3})) |> observe(started("c"))
       assert state.turns["a"].partial and state.turns["b"].partial and state.turns["c"].partial
+      # Tool pruning's conversations too, which no longer hold their project active.
+      assert Enum.all?(~w(a b c), &match?(%{partial: true, active: false}, state.convs[&1]))
 
       queued = HalC2.Plugins.Feed.max_queue() - 2
       state = Enum.reduce(1..queued, state, fn _, s -> observe(s, %{"type" => "noop"}) end)
       state = observe(state, started("d"))
       refute state.turns["d"].partial
+      assert %{partial: false, active: true} = state.convs["d"]
     end
   end
 

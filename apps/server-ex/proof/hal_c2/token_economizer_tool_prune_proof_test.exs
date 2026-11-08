@@ -1,22 +1,26 @@
 # The plugin's MC modules are compiled when the plugin starts, not with the MC: compiled
 # here to beams of their own, which keep the docs and source the coverage reads. The
-# plugin's proofs share them, so the compile is locked: test files load in parallel,
-# and two compiles of one module at once fail.
+# plugin's proofs share them, so they are compiled once per run, under a lock: test
+# files load in parallel, and a second compile would remove the beams under the other
+# file's tests.
 beams = Path.join(Mix.Project.build_path(), "plugins/token-economizer")
 
 :global.trans({:token_economizer_beams, self()}, fn ->
-  File.rm_rf!(beams)
-  File.mkdir_p!(beams)
-  docs = Code.get_compiler_option(:docs)
-  Code.put_compiler_option(:docs, true)
+  unless :persistent_term.get(:token_economizer_beams, false) do
+    File.rm_rf!(beams)
+    File.mkdir_p!(beams)
+    docs = Code.get_compiler_option(:docs)
+    Code.put_compiler_option(:docs, true)
 
-  {:ok, _, _} =
-    "../../../../plugins/token-economizer/mc/*.ex"
-    |> Path.expand(__DIR__)
-    |> Path.wildcard()
-    |> Kernel.ParallelCompiler.compile_to_path(beams, return_diagnostics: true)
+    {:ok, _, _} =
+      "../../../../plugins/token-economizer/mc/*.ex"
+      |> Path.expand(__DIR__)
+      |> Path.wildcard()
+      |> Kernel.ParallelCompiler.compile_to_path(beams, return_diagnostics: true)
 
-  Code.put_compiler_option(:docs, docs)
+    Code.put_compiler_option(:docs, docs)
+    :persistent_term.put(:token_economizer_beams, true)
+  end
 end)
 
 Code.prepend_path(beams)
@@ -26,16 +30,16 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
   # tool by tool; the exact counters are the property test's in
   # prop/hal_c2/token_economizer_tool_prune_prop_test.exs, upstream's cases the plain
   # test's). Conversations start shaped, use the tool or not, and fold into the
-  # evidence; the person applies and restores and changes the mode; the plugin
-  # restarts; the project goes quiet.
+  # evidence; the person applies, restores or refuses, and changes the mode; the
+  # plugin restarts; the feed misses a use; the project goes quiet.
   #
   # Each part of the design is a switch in the model, and turning one off finds the
   # flaw it closes (each search takes well under a second):
   #
   #   - Without Safe, a protected tool, or one an agent used, is proposed and
   #     turned off by name.
-  #   - Without Kept, a tool the person gave back is proposed again at the next
-  #     fold and auto takes it away again.
+  #   - Without Kept, a tool the person gave back, or refused while it was only
+  #     proposed or held, is proposed again at the next fold and auto takes it away.
   #   - Without Frozen, applying a tool while a conversation runs changes that
   #     conversation's tools under way, and its prompt cache with them.
   #   - Without Gated, what auto held is applied under propose too, with nobody's
@@ -46,6 +50,8 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
   #   - Without Evid, a tool is proposed after a single unused conversation.
   #   - Without Persist, a restart forgets the tool was ever used (or given back),
   #     and it can be turned off after all.
+  #   - Without Partial, a conversation whose use of the tool the feed missed folds
+  #     as one that left it unused, and grows the streak that proposes it.
   @counts "the exact prompt and session counters and thresholds: prop/hal_c2/token_economizer_tool_prune_prop_test.exs and test/hal_c2/token_economizer_tool_prune_test.exs"
   @guard "the loop guard's, modelled in proof/hal_c2/token_economizer_loop_guard_proof_test.exs"
 
@@ -81,7 +87,8 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
       "HalC2Plugins.TokenEconomizer handle_call {:shape, _}" => "shape-start",
       "HalC2Plugins.TokenEconomizer handle_call {:toolprune, _, _}" =>
         ~w(apply apply-name restore),
-      "HalC2Plugins.TokenEconomizer handle_call {:observe, _}" => ~w(use prompt finish),
+      "HalC2Plugins.TokenEconomizer handle_call {:observe, _}" => ~w(use prompt finish seg),
+      "HalC2Plugins.TokenEconomizer state :missing" => "seg",
       "HalC2Plugins.TokenEconomizer handle_info {:toolprune_tick, _}" => ~w(auto-apply finish),
       "HalC2Plugins.TokenEconomizer state :settings" => ~w(cfg mode),
       "HalC2Plugins.TokenEconomizer state :prunes" => "tool",
@@ -94,6 +101,8 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.high_risk?/1" => @counts,
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.note_thread/3" =>
         "remembering each thread's last folded run so a restart folds only the runs after it; a restart stands for the missed turns here",
+      "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.unseen_runs/3" =>
+        "which of a thread's earlier runs a restart folds; a restart stands for the missed turns here, and the plain test covers the watermark",
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.seeded_run/2" =>
         "reading that watermark, which decides nothing here",
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.dump/1" =>
@@ -121,7 +130,8 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
     },
     environment: %{
       "wait" => "no conversation under way and time passes, so the project has been quiet",
-      "restart" => "the plugin's process stops and starts again with its saved settings"
+      "restart" => "the plugin's process stops and starts again with its saved settings",
+      "miss" => "the feed misses a use of the tool, and says so with a later event"
     },
     scenarios: %{
       "plugins/token-economizer-tool-prune.feature" => [
@@ -132,28 +142,28 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
       ]
     }
 
-  # Safe, Kept, Frozen, Gated, Quiet, Capped, Evid, Persist.
-  @design "true, true, true, true, true, true, true, true"
+  # Safe, Kept, Frozen, Gated, Quiet, Capped, Evid, Persist, Partial.
+  @design "true, true, true, true, true, true, true, true, true"
 
-  test "under auto, over three conversations and two of the person's actions, no law is broken",
+  test "under auto, over three conversations, two of the person's actions and a use missed, no law is broken",
        %{proof: proof} do
-    refute_reachable(proof, "start(#{@design}, auto, false, 3, 2)", "unsafe", [])
+    refute_reachable(proof, "start(#{@design}, auto, false, 3, 2, 1)", "unsafe", [])
   end
 
   test "under propose the same holds", %{proof: proof} do
-    refute_reachable(proof, "start(#{@design}, propose, false, 3, 2)", "unsafe", [])
+    refute_reachable(proof, "start(#{@design}, propose, false, 3, 2, 1)", "unsafe", [])
   end
 
   test "a protected tool is never turned off", %{proof: proof} do
-    refute_reachable(proof, "start(#{@design}, auto, true, 2, 2)", "unsafe", [])
+    refute_reachable(proof, "start(#{@design}, auto, true, 2, 2, 0)", "unsafe", [])
   end
 
   test "conversations never get stuck", %{proof: proof} do
-    refute_deadlock(proof, "start(#{@design}, auto, false, 2, 1)", "over", [])
+    refute_deadlock(proof, "start(#{@design}, auto, false, 2, 1, 1)", "over", [])
   end
 
   test "every conversation ends in the end", %{proof: proof} do
-    assert_ltl(proof, "start(#{@design}, auto, false, 2, 1)", "<> finished",
+    assert_ltl(proof, "start(#{@design}, auto, false, 2, 1, 1)", "<> finished",
       fair: ~w(shape-start finish)
     )
   end

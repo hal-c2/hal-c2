@@ -363,6 +363,23 @@ defmodule HalC2.TokenEconomizerToolPruneTest do
     assert Prune.seeded_run(state, "thread-b") == "run-9"
   end
 
+  test "a restart folds a thread's runs after its watermark, whoever's that was, and only its provider's" do
+    runs =
+      for {id, instance} <- [a: "codex", b: "claudeAgent", c: "codex", d: nil],
+          do: %{"runId" => "#{id}", "instanceId" => instance}
+
+    claude? = &(&1["instanceId"] in [nil, "claudeAgent"])
+
+    # The watermark is a Codex run: the Claude runs before it are not folded again.
+    assert {"d", [%{"runId" => "d"}]} = Prune.unseen_runs(runs, "c", claude?)
+    assert {"d", [%{"runId" => "b"}, %{"runId" => "d"}]} = Prune.unseen_runs(runs, nil, claude?)
+    # One no longer read back is older than all of them.
+    assert {"d", [_, _]} = Prune.unseen_runs(runs, "gone", claude?)
+    # Nothing new keeps the watermark, and nothing of the provider's still moves it.
+    assert {"d", []} = Prune.unseen_runs(runs, "d", claude?)
+    assert {"c", []} = Prune.unseen_runs(Enum.take(runs, 3), "b", claude?)
+  end
+
   test "restore refuses a proposed tool before it ever applies" do
     auto = cfg(%{"toolPrune" => "auto", "toolPruneQuietMinutes" => 0})
     state = Prune.new("tool") |> sessions([1, 1, 1, 1, 1], [], auto)

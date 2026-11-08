@@ -489,6 +489,23 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
 
   defp seeded_threads(_), do: %{}
 
+  @doc """
+  What a thread's history, oldest first, still has to fold: `{watermark, runs}`, the
+  runs after the thread's watermark (`seeded_run/2`) that `mine?` keeps, and the
+  watermark past all of them, whoever's they were. A watermark not among them is
+  older than all of them (it names the last run folded), so all are new.
+  """
+  def unseen_runs(history, watermark, mine?) do
+    new =
+      case watermark && Enum.find_index(history, &(&1["runId"] == watermark)) do
+        nil -> history
+        index -> Enum.drop(history, index + 1)
+      end
+
+    last = if new == [], do: watermark, else: List.last(new)["runId"]
+    {last, Enum.filter(new, mine?)}
+  end
+
   @doc "The last run of `thread_id` already folded, live or read back, or nil."
   def seeded_run(state, thread_id), do: state["seededThreads"][thread_id]
 
