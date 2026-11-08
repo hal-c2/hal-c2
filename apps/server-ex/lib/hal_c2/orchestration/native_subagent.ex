@@ -418,8 +418,11 @@ defmodule HalC2.Orchestration.NativeSubagent do
         # What the subagent said (`item/5`) is in its thread, the latest its answer,
         # which the provider's result repeats with more around it (Claude adds the
         # agent's id and usage); a result that does not repeat it follows as its answer.
+        # A summary that only repeats the end of what was said (a message per message
+        # id keeps all of it in one) is already in the thread.
         said != nil and result != nil and not Keyword.get(opts, :summary, false) and
-            not String.contains?(result, String.trim(said)) ->
+          not String.contains?(result, String.trim(said)) and
+            not String.contains?(said, String.trim(result)) ->
           item(sub, "#{sub.native}:message:result", "assistant_message", "completed", %{
             "text" => result
           })
@@ -547,6 +550,18 @@ defmodule HalC2.Orchestration.NativeSubagent do
     [{"message", message_id, message}, {"turn-item", item_id, item}]
   end
 
+  # A subagent on its own model keeps the parent's instance but not its options:
+  # the parent's reasoning effort belongs to the parent's model.
+  defp subagent_selection(parent, nil), do: parent
+
+  defp subagent_selection(parent, model) do
+    parent = parent || %{}
+
+    if parent["model"] in [nil, model],
+      do: Map.put(parent, "model", model),
+      else: parent |> Map.put("model", model) |> Map.delete("options")
+  end
+
   # The child's title (upstream `subagentThreadTitle`): its given title, else its
   # prompt, cut to 72 characters; with neither, it is named after its parent. The
   # cut counts UTF-16 units as upstream's did, and never falls through a character
@@ -612,8 +627,8 @@ defmodule HalC2.Orchestration.NativeSubagent do
     Map.put(selection, "options", options)
   end
 
-  defp child_selection(selection, %{"model" => model}) when is_binary(model),
-    do: Map.put(selection || %{}, "model", model)
+  defp child_selection(selection, %{"model" => model}),
+    do: subagent_selection(selection, model)
 
   defp child_selection(selection, _task), do: selection
 end

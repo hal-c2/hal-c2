@@ -231,7 +231,6 @@ Traversal.FileModule: Directory Traversal in `File.read!` | lib/hal_c2/upgrade.e
 Traversal.FileModule: Directory Traversal in `File.read!` | lib/hal_c2/upgrade/appup.ex | file
 Traversal.FileModule: Directory Traversal in `File.read!` | lib/hal_c2/upgrade/code.ex | config
 Traversal.FileModule: Directory Traversal in `File.read!` | lib/hal_c2/upgrade/source.ex | Elixir.Path
-Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/acp.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/acp/antigravity.ex | account_path
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/acp/antigravity.ex | path
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/acp/antigravity.ex | path
