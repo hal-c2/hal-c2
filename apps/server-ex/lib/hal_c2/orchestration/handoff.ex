@@ -614,30 +614,48 @@ defmodule HalC2.Orchestration.Handoff do
       first = newest_pair ++ [Enum.find(indexed, role.(:user))]
       latest = for {_entry, index} <- newest_pair |> Enum.reject(&is_nil/1), do: index
 
-      {kept, _left} =
+      # The first request outranks the rest of a cut newest message, so its room
+      # is held back while the newest are cut to fit.
+      first_user = Enum.find(indexed, role.(:user))
+
+      reserve =
+        case first_user do
+          {{_role, text}, index} -> if index in latest, do: 0, else: String.length(text) + 2
+          nil -> 0
+        end
+
+      {kept, _left, cut} =
         (Enum.reject(first, &is_nil/1) ++ newest)
-        |> Enum.reduce({%{}, max_chars - @omitted_note}, fn {{_role, text}, index},
-                                                            {kept, left} ->
-          text = if index in latest, do: tail_to_fit(text, left), else: text
+        |> Enum.reduce({%{}, max_chars - @omitted_note, 0}, fn {{_role, original}, index},
+                                                               {kept, left, cut} ->
+          text = if index in latest, do: tail_to_fit(original, left - reserve), else: original
           cost = String.length(text) + 2
 
           if Map.has_key?(kept, index) or cost > left,
-            do: {kept, left},
-            else: {Map.put(kept, index, text), left - cost}
+            do: {kept, left, cut},
+            else:
+              {Map.put(kept, index, text), left - cost,
+               cut + if(text == original, do: 0, else: 1)}
         end)
 
       selected = for {{_role, _text}, index} <- indexed, is_map_key(kept, index), do: kept[index]
       left_out = length(entries) - length(selected)
 
-      note =
-        "[earlier messages omitted: #{length(selected)} items kept whole, #{left_out} left out]"
+      # A newest message cut to its end is not "whole"; the note says so, so the
+      # next agent does not read a cut answer as complete.
+      kept_note =
+        if cut == 0,
+          do: "#{length(selected)} items kept whole",
+          else: "#{length(selected)} items kept, #{cut} of them cut to their end"
+
+      note = "[earlier messages omitted: #{kept_note}, #{left_out} left out]"
 
       Enum.join([note | selected], "\n\n")
     end
   end
 
   # The newest request and answer are what the next agent must see; one too long
-  # for what is left keeps its end, capped like a command's output, instead of
+  # for what is left keeps as much of its end as the budget allows, instead of
   # being left out whole.
   defp tail_to_fit(text, left) do
     if String.length(text) + 2 <= left do
@@ -645,7 +663,7 @@ defmodule HalC2.Orchestration.Handoff do
     else
       [label | _] = String.split(text, ": ", parts: 2)
       body = String.slice(text, (String.length(label) + 2)..-1//1)
-      keep = min(left - String.length(label) - 8, @max_output_chars)
+      keep = left - String.length(label) - 8
       if keep > 0, do: "#{label}: ... " <> String.slice(body, -keep, keep), else: text
     end
   end

@@ -314,6 +314,23 @@ defmodule HalC2.Orchestration.HandoffTest do
     refute transcript =~ String.duplicate("a", 8_000)
   end
 
+  test "a newest message just over the budget keeps all the end that fits, and the note says it was cut" do
+    answer = String.duplicate("a", 1_000) <> String.duplicate("z", 8_000)
+
+    state = state(turn(1, "first request", "ok") ++ turn(2, "second request", answer))
+
+    transcript = Handoff.transcript(state, 3, 0, 8_000)
+
+    assert String.length(transcript) <= 8_000
+    assert transcript =~ String.duplicate("z", 7_000)
+    refute transcript =~ String.duplicate("a", 1_000)
+
+    assert transcript =~
+             ~r/^\[earlier messages omitted: \d+ items kept, 1 of them cut to their end, \d+ left out\]/
+
+    refute transcript =~ "kept whole"
+  end
+
   # A thread a restart left a note on, about the background work its last turn left.
   defp noted do
     state([
