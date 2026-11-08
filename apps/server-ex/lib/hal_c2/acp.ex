@@ -410,7 +410,7 @@ defmodule HalC2.Acp do
   # instead of vanishing.
   defp base_entry(id, "grok", instance) do
     cond do
-      System.find_executable(binary("grok", instance, "grok")) ->
+      found?(id) ->
         {:ok, %{}}
 
       enabled?(id, "grok", instance) and
@@ -419,6 +419,15 @@ defmodule HalC2.Acp do
 
       true ->
         :error
+    end
+  end
+
+  # Whether the command that would start the instance's agent resolves, so a
+  # test's `:acp_commands` override counts the same as the configured binary.
+  defp found?(id) do
+    case command(id) do
+      {:ok, [executable | _], _env} -> System.find_executable(executable) != nil
+      _ -> false
     end
   end
 
