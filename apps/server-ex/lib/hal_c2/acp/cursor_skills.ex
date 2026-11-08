@@ -55,6 +55,8 @@ defmodule HalC2.Acp.CursorSkills do
   leaves a partial skill list behind.
   """
   def refresh_workspace(id, cwd) do
+    epoch = HalC2.Acp.workspaces_epoch(id)
+
     case probe(cwd) do
       {:ok, found} ->
         snapshot = %{
@@ -63,10 +65,13 @@ defmodule HalC2.Acp.CursorSkills do
           "skills" => found
         }
 
-        workspaces = :persistent_term.get({HalC2.Acp, id, :workspaces}, %{})
-        :persistent_term.put({HalC2.Acp, id, :workspaces}, Map.put(workspaces, cwd, snapshot))
-        HalC2.Settings.notify_providers()
-        :ok
+        # The scan and the notification stay outside the instance's lock.
+        with :ok <- HalC2.Acp.put_workspace(id, cwd, snapshot, epoch) do
+          HalC2.Settings.notify_providers()
+          :ok
+        else
+          :dropped -> {:error, "The instance was removed while its skills were read."}
+        end
 
       {:error, _detail} = error ->
         error
@@ -233,7 +238,7 @@ defmodule HalC2.Acp.CursorSkills do
             true ->
               case File.read(path) do
                 {:ok, body} -> {parse_frontmatter(body), %{budget | bytes: budget.bytes - size}}
-                _ -> {%{cli_visible: true}, budget}
+                _ -> {nil, budget}
               end
           end
 

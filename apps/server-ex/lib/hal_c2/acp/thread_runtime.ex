@@ -3122,6 +3122,13 @@ defmodule HalC2.Acp.ThreadRuntime do
   # A subagent's own tool call, in its child thread, in the same item shapes
   # the parent thread's calls take.
   defp child_tool(sub, call_id, call, state) do
+    {type, status, fields} = child_item(call, state)
+    NativeSubagent.item(sub, "cursor-task-tool:#{call_id}", type, status, fields)
+  end
+
+  @doc false
+  # The item type, status and fields a subagent's tool call is shown with.
+  def child_item(call, state) do
     {kind, fields} = tool_shape(call, state)
 
     type =
@@ -3134,10 +3141,12 @@ defmodule HalC2.Acp.ThreadRuntime do
       end
 
     status =
-      case call["status"] do
-        "completed" -> "completed"
-        "failed" -> "failed"
-        _ -> "running"
+      cond do
+        # A tool the agent itself closed as never finished when its run ended.
+        get_in(call, ["_meta", "interrupted"]) == true -> "interrupted"
+        call["status"] == "completed" -> "completed"
+        call["status"] == "failed" -> "failed"
+        true -> "running"
       end
 
     output = content_text(call["content"]) || raw_output(call["rawOutput"])
@@ -3157,12 +3166,22 @@ defmodule HalC2.Acp.ThreadRuntime do
           %{"results" => results} when is_list(results) and kind == :search ->
             Map.put(fields, "results", results)
 
+          %{"linesAdded" => added, "linesRemoved" => removed}
+          when is_integer(added) and is_integer(removed) and kind == :file ->
+            Map.merge(fields, %{"additions" => added, "deletions" => removed})
+
           _ ->
             fields
         end
       end)
+      |> then(fn fields ->
+        case kind == :command && reported_exit(call["rawOutput"]) do
+          code when is_integer(code) -> Map.put(fields, "exitCode", code)
+          _ -> fields
+        end
+      end)
 
-    NativeSubagent.item(sub, "cursor-task-tool:#{call_id}", type, status, fields)
+    {type, status, fields}
   end
 
   # Kimi Code creates its Agent call before its input has streamed in, so its subagent

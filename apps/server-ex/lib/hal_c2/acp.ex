@@ -2235,7 +2235,32 @@ defmodule HalC2.Acp do
     locked(id, fn ->
       forget_now(id)
       :persistent_term.erase({__MODULE__, id, :workspaces})
+      :persistent_term.put({__MODULE__, id, :workspaces_epoch}, workspaces_epoch(id) + 1)
       :ok
+    end)
+  end
+
+  @doc """
+  The count of times `drop/1` has erased the instance's workspace snapshots. A refresh
+  reads it before scanning and hands it to `put_workspace/4`, so a scan that outlived
+  its instance cannot write a snapshot back.
+  """
+  def workspaces_epoch(id), do: :persistent_term.get({__MODULE__, id, :workspaces_epoch}, 0)
+
+  @doc """
+  Keeps `snapshot` as the instance's snapshot for `cwd`, under the instance's lock so
+  two refreshes of different folders both stay. `:dropped` (nothing kept) when the
+  instance was dropped since `epoch` was read. Callers scan and notify outside it.
+  """
+  def put_workspace(id, cwd, snapshot, epoch) do
+    locked(id, fn ->
+      if workspaces_epoch(id) == epoch do
+        key = {__MODULE__, id, :workspaces}
+        :persistent_term.put(key, Map.put(:persistent_term.get(key, %{}), cwd, snapshot))
+        :ok
+      else
+        :dropped
+      end
     end)
   end
 

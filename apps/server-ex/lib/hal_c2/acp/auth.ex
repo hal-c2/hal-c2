@@ -357,11 +357,23 @@ defmodule HalC2.Acp.Auth do
   # from our own Cursor sidecar, whose error is written for the user (see moduledoc).
   defp refused(instance, fixed, reason) do
     with "cursor" <- HalC2.Acp.driver(instance),
-         %{"message" => text} when is_binary(text) and text != "" <- reason do
-      fail(text, reason)
+         %{"message" => text} when is_binary(text) and text != "" <- reason,
+         {:ok, said} <- user_words(text) do
+      Logger.warning("ACP sign-in failed: #{said}")
+      fail(said)
     else
       _ -> refused(fixed, reason)
     end
+  end
+
+  # Cursor's own wording goes through the same redaction, sign-in-secret suppression and
+  # length limit as any agent's reason; only the fixed message in front of it is dropped.
+  defp user_words(text) do
+    said = text |> HalC2.Acp.Stderr.redact() |> String.trim()
+
+    if said == "" or sign_in_secret?(said),
+      do: :error,
+      else: {:ok, String.slice(said, 0, @reason_chars)}
   end
 
   defp refused(message, reason) do

@@ -147,6 +147,43 @@ defmodule HalC2.AcpTest do
              "run /deploy now"
   end
 
+  # Review of #1284: two refreshes of different folders each read the snapshots, added
+  # theirs and wrote them back, so one overwrote the other's; and a scan that began
+  # before the instance was dropped wrote its snapshot back after it.
+  test "Cursor workspace refreshes keep each other's snapshots and not a dropped one's",
+       %{tmp_dir: dir} do
+    previous = System.get_env("HOME")
+    System.put_env("HOME", Path.join(dir, "home"))
+
+    on_exit(fn ->
+      if previous, do: System.put_env("HOME", previous), else: System.delete_env("HOME")
+      :persistent_term.erase({HalC2.Acp, "cursor", :workspaces})
+    end)
+
+    folders =
+      for n <- 1..8 do
+        work = Path.join(dir, "work#{n}")
+        File.mkdir_p!(Path.join([work, ".cursor", "skills", "s#{n}"]))
+        File.write!(Path.join([work, ".cursor", "skills", "s#{n}", "SKILL.md"]), "---\n---\nx\n")
+        work
+      end
+
+    folders
+    |> Task.async_stream(&HalC2.Acp.CursorSkills.refresh_workspace("cursor", &1),
+      max_concurrency: 8
+    )
+    |> Enum.each(&assert {:ok, :ok} = &1)
+
+    assert Enum.sort(Enum.map(HalC2.Acp.CursorSkills.workspaces("cursor"), & &1["cwd"])) ==
+             Enum.sort(folders)
+
+    epoch = HalC2.Acp.workspaces_epoch("cursor")
+    HalC2.Acp.drop("cursor")
+    assert HalC2.Acp.CursorSkills.workspaces("cursor") == []
+    assert :dropped = HalC2.Acp.put_workspace("cursor", hd(folders), %{}, epoch)
+    assert HalC2.Acp.CursorSkills.workspaces("cursor") == []
+  end
+
   test "an enabled Pi whose binary is missing stays listed as unavailable" do
     {:ok, version} =
       HalC2.Settings.put(

@@ -126,6 +126,46 @@ defmodule HalC2.Acp.ThreadRuntimeTest do
     assert output =~ "boom"
   end
 
+  # Review of #1284: a subagent's tool call dropped what the parent's calls keep.
+  describe "a subagent's tool call" do
+    alias HalC2.Acp.ThreadRuntime
+
+    test "the agent closed as never finished is interrupted, not failed" do
+      call = %{
+        "kind" => "execute",
+        "status" => "failed",
+        "rawInput" => %{"command" => "sleep 9"},
+        "_meta" => %{"interrupted" => true}
+      }
+
+      assert {"command_execution", "interrupted", _} = ThreadRuntime.child_item(call, %{})
+      assert {_, "failed", _} = ThreadRuntime.child_item(Map.delete(call, "_meta"), %{})
+    end
+
+    test "a command keeps its exit code and a file change its line counts" do
+      command = %{
+        "kind" => "execute",
+        "status" => "completed",
+        "rawInput" => %{"command" => "make test"},
+        "rawOutput" => %{"output" => "boom\n", "exitCode" => 2}
+      }
+
+      assert {"command_execution", "completed", %{"exitCode" => 2}} =
+               ThreadRuntime.child_item(command, %{})
+
+      edit = %{
+        "kind" => "edit",
+        "status" => "completed",
+        "title" => "Edit a.ex",
+        "locations" => [%{"path" => "a.ex"}],
+        "rawOutput" => %{"linesAdded" => 4, "linesRemoved" => 1}
+      }
+
+      assert {"file_change", "completed", %{"additions" => 4, "deletions" => 1}} =
+               ThreadRuntime.child_item(edit, %{})
+    end
+  end
+
   test "an OpenCode config from the instance keeps its settings when its task tool is denied",
        %{work: work, dir: dir, config_log: config_log} do
     start_supervised!(HalC2.Mcp)

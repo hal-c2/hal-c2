@@ -7,7 +7,8 @@ defmodule HalC2.CursorSkillsPropTest do
   reports the failure, one workspace's refresh never touches another's,
   and forgetting what was probed (`HalC2.Acp.forget/1`) leaves snapshots
   alone — only the next workspace refresh replaces them — while dropping a
-  removed instance (`HalC2.Acp.drop/1`) erases them.
+  removed instance (`HalC2.Acp.drop/1`) erases them, and a refresh whose scan
+  began before a drop cannot write its snapshot back after it.
   """
 
   use ExUnit.Case, async: false
@@ -52,7 +53,8 @@ defmodule HalC2.CursorSkillsPropTest do
       {4, {:call, __MODULE__, :refresh, [oneof(@cwds)]}},
       {3, {:call, __MODULE__, :read, []}},
       {1, {:call, __MODULE__, :forget, []}},
-      {1, {:call, __MODULE__, :drop, []}}
+      {1, {:call, __MODULE__, :drop, []}},
+      {1, {:call, __MODULE__, :refresh_across_drop, [oneof(@cwds)]}}
     ])
   end
 
@@ -82,6 +84,9 @@ defmodule HalC2.CursorSkillsPropTest do
 
   def next_state(state, _result, {:call, _, :drop, []}), do: %{state | snapshots: %{}}
 
+  def next_state(state, _result, {:call, _, :refresh_across_drop, [_cwd]}),
+    do: %{state | snapshots: %{}}
+
   def next_state(state, _result, _call), do: state
 
   def postcondition(state, {:call, _, :refresh, [cwd]}, result) do
@@ -102,6 +107,10 @@ defmodule HalC2.CursorSkillsPropTest do
 
   def postcondition(state, {:call, _, :drop, []}, result),
     do: result == %{} and model_snapshots(%{state | snapshots: %{}}) == %{}
+
+  # The refresh outlived the instance: it reports the drop and keeps nothing.
+  def postcondition(_state, {:call, _, :refresh_across_drop, [_cwd]}, result),
+    do: result == {{:error, :dropped}, %{}}
 
   def postcondition(_state, _call, result), do: result == :ok
 
@@ -145,6 +154,22 @@ defmodule HalC2.CursorSkillsPropTest do
   def drop do
     HalC2.Acp.drop(@instance)
     snapshots_now()
+  end
+
+  # A refresh that read the epoch, scanned, and met a drop before it could write.
+  def refresh_across_drop(cwd) do
+    epoch = HalC2.Acp.workspaces_epoch(@instance)
+    HalC2.Acp.drop(@instance)
+
+    snapshot = %{"checkedAt" => "t", "slashCommands" => [], "skills" => []}
+
+    result =
+      case HalC2.Acp.put_workspace(@instance, dir_of(cwd), snapshot, epoch) do
+        :dropped -> {:error, :dropped}
+        other -> other
+      end
+
+    {result, snapshots_now()}
   end
 
   # The snapshots the entry would show, keyed back to this model's cwd names.

@@ -161,13 +161,14 @@ defmodule HalC2.ProviderUsageLimits.Acp do
     store = env["AGENT_CLI_CREDENTIAL_STORE"]
 
     cond do
-      token = present(env["CURSOR_AUTH_TOKEN"]) ->
-        cursor_read(instance, env, token, checked_at)
-
-      # An API key (`CURSOR_API_KEY` or the MC's own Cursor sign-in) names the account the
-      # agent runs on, which can be another than the CLI login's.
+      # The sidecar runs on an API key (`CURSOR_API_KEY` or the MC's own Cursor sign-in), so it
+      # names the account the agent runs on, which can be another than the CLI login's; the
+      # token is the fallback when neither exists.
       key = present(env["CURSOR_API_KEY"]) || cursor_api_key(instance, env) ->
         cursor_key_read(instance, env, key, checked_at)
+
+      token = present(env["CURSOR_AUTH_TOKEN"]) ->
+        cursor_read(instance, env, token, checked_at)
 
       store == "memory" or (match?({:unix, :darwin}, :os.type()) and store != "file") ->
         unavailable(

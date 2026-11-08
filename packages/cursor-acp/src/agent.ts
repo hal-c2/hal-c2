@@ -472,12 +472,8 @@ export function makeCursorAcp(input: {
       // than keeping credentials every later run refuses. The next status
       // check is what discards them (see `catalog`), so it can say why too.
       const key = (await loadStore())?.apiKey;
-      if (key !== undefined) {
-        await sdk.listModels(key).catch((cause: unknown) => {
-          if (freePlanError(cause)) throw paidPlan();
-          return [];
-        });
-      }
+      // Time-boxed like every catalog read; a hang or a failure is the catalog's, not the sign-in's.
+      if (key !== undefined) await catalog(key, true, false);
       return {};
     },
     logout: async () => {
@@ -590,13 +586,19 @@ export function makeUpdateTranslator(
   const childTranslators = new Map<string, ReturnType<typeof makeUpdateTranslator>>();
   const shellOutput = new Map<string, string>();
 
+  // Compaction's own reply is classified like any other (a transport failure still fails
+  // the turn) but never shown: only the presentation is suppressed.
+  const shown = options.suppressText !== true;
+
   const flushPending = () => {
     if (pending !== "" && pendingId !== undefined) {
-      emit({
-        sessionUpdate: "agent_message_chunk",
-        messageId: pendingId,
-        content: { type: "text", text: pending },
-      });
+      if (shown) {
+        emit({
+          sessionUpdate: "agent_message_chunk",
+          messageId: pendingId,
+          content: { type: "text", text: pending },
+        });
+      }
       if (pending.trim() !== "") streamedText = true;
     }
     pending = "";
@@ -618,11 +620,13 @@ export function makeUpdateTranslator(
   };
 
   const emitText = (text: string) => {
-    emit({
-      sessionUpdate: "agent_message_chunk",
-      messageId: nextSegment("text"),
-      content: { type: "text", text },
-    });
+    if (shown) {
+      emit({
+        sessionUpdate: "agent_message_chunk",
+        messageId: nextSegment("text"),
+        content: { type: "text", text },
+      });
+    }
     if (text.trim() !== "") streamedText = true;
   };
 
@@ -675,7 +679,6 @@ export function makeUpdateTranslator(
     }
     switch (update.type) {
       case "text-delta": {
-        if (options.suppressText === true) return;
         const id = nextSegment("text");
         if (pendingId !== undefined && pendingId !== id) endTextSegment();
         if (tracker.disqualified) {
@@ -974,6 +977,9 @@ function lsResults(node: {
   ];
 }
 
+/** The most of a search's text kept as a result's preview. */
+const previewChars = 2_000;
+
 /** A finished tool's structured results, for the thread's item shapes. */
 function toolRawOutput(toolCall: ToolCall): Record<string, unknown> | undefined {
   if (toolCall.result?.status !== "success") return undefined;
@@ -992,7 +998,9 @@ function toolRawOutput(toolCall: ToolCall): Record<string, unknown> | undefined 
     case "read":
       return {
         pattern: toolCall.args.path,
-        results: [{ fileName: toolCall.args.path, preview: toolCall.result.value.content }],
+        // The file's reference only: its content would ride the wire and the thread's
+        // storage whole, once per read.
+        results: [{ fileName: toolCall.args.path }],
       };
     case "glob":
       return {
@@ -1051,7 +1059,12 @@ function toolRawOutput(toolCall: ToolCall): Record<string, unknown> | undefined 
     case "semSearch":
       return {
         pattern: toolCall.args.query,
-        results: [{ fileName: "semantic-search", preview: toolCall.result.value.results }],
+        results: [
+          {
+            fileName: "semantic-search",
+            preview: toolCall.result.value.results.slice(0, previewChars),
+          },
+        ],
       };
     default:
       return undefined;

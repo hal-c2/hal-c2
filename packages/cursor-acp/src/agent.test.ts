@@ -246,6 +246,76 @@ describe("Cursor over ACP", () => {
     });
   });
 
+  // Review of #1284.
+  it("keeps only a file's reference as a read's result, not its content", () => {
+    const sent: Array<Record<string, unknown>> = [];
+    const updates = makeUpdateTranslator((update) => sent.push(update as never));
+    const toolCall = (result: unknown) => ({
+      type: "read",
+      args: { path: "/work/big.txt" },
+      result,
+    });
+    updates({
+      type: "tool-call-completed",
+      callId: "r1",
+      toolCall: toolCall({ status: "success", value: { content: "x".repeat(50_000) } }),
+    } as unknown as InteractionUpdate);
+    const done = sent.find((u) => u.sessionUpdate === "tool_call_update") as any;
+    expect(done.rawOutput.results).toEqual([{ fileName: "/work/big.txt" }]);
+  });
+
+  it("still fails the turn on a transport error while /compact hides the reply", () => {
+    const sent: Array<Record<string, unknown>> = [];
+    const updates = makeUpdateTranslator(
+      (update) => sent.push(update as never),
+      () => {},
+      { suppressText: true },
+    );
+    updates({
+      type: "text-delta",
+      text: "Something went wrong communicating with the server. Please try again.",
+    } as unknown as InteractionUpdate);
+    expect(updates.finish({ status: "finished" })).toMatchObject({
+      message: "Provider turn failed.",
+    });
+    expect(sent).toEqual([]);
+  });
+
+  it("shows nothing of a late-resumed /compact reply either", () => {
+    const sent: Array<Record<string, unknown>> = [];
+    const updates = makeUpdateTranslator(
+      (update) => sent.push(update as never),
+      () => {},
+      { suppressText: true },
+    );
+    updates({ type: "turn-ended" } as unknown as InteractionUpdate);
+    expect(
+      updates.finish({
+        status: "error",
+        result: "Compacted.",
+        error: { message: "repeated resume attempts made no progress" },
+      }),
+    ).toBeUndefined();
+    expect(sent).toEqual([]);
+  });
+
+  it("times out the post-login catalog request instead of hanging the sign-in", async () => {
+    const { sdk, finishLogin } = fakeSdk([]);
+    const hanging: CursorSdk = { ...sdk, listModels: () => new Promise(() => {}) };
+    const out: Array<Record<string, unknown>> = [];
+    const acp = makeCursorAcp({
+      sdk: hanging,
+      mode: "full-access",
+      catalogTimeoutMs: 20,
+      write: (m) => out.push(m as never),
+    });
+    const signingIn = acp.receive({ id: 100, method: "authenticate", params: {} });
+    await settle();
+    finishLogin();
+    await signingIn;
+    expect(out.find((m) => m.id === 100)).toMatchObject({ result: {} });
+  });
+
   it("sends only a bounded tail of a running shell's output per delta", () => {
     const texts: Array<string> = [];
     const updates = makeUpdateTranslator((update) => {

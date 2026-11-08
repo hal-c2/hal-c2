@@ -311,7 +311,7 @@ for line in sys.stdin:
             open(AUTH_FILE, "w").write("signed in")
             send({"id": authenticating, "result": {}})
         else:
-            send({"id": authenticating, "error": {"code": -32000, "message": "declined"}})
+            send({"id": authenticating, "error": {"code": -32000, "message": (open(AUTH_FILE + ".decline").read() if os.path.exists(AUTH_FILE + ".decline") else "declined")}})
         continue
     if method == "authenticate":
         authenticating = mid

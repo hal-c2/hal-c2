@@ -90,6 +90,18 @@ defmodule HalC2.Acp.CursorSkillsTest do
     assert names(CursorSkills.discover(project, Path.join(dir, "home"))) == ["cli-too"]
   end
 
+  # Review of #1284: a SKILL.md that cannot be read was offered, enabled, with no header.
+  test "a skill file that cannot be read is not offered", %{tmp_dir: dir} do
+    project = Path.join(dir, "project")
+    skill!(Path.join([project, ".cursor", "skills", "readable"]))
+    hidden = skill!(Path.join([project, ".cursor", "skills", "hidden"]))
+    file = Path.join(hidden, "SKILL.md")
+    File.chmod!(file, 0o000)
+    on_exit(fn -> File.chmod(file, 0o644) end)
+
+    assert names(CursorSkills.discover(project, Path.join(dir, "home"))) == ["readable"]
+  end
+
   test "an unreadable header drops only its own skill", %{tmp_dir: dir} do
     project = Path.join(dir, "project")
     skill!(Path.join([project, ".cursor", "skills", "broken"]), "name: \"unclosed\n")
