@@ -50,6 +50,28 @@ defmodule HalC2.PreviewTest do
     assert {:ok, %{"sessions" => []}} = HalC2.Preview.list(%{"threadId" => "t1"})
   end
 
+  test "going back after a failure takes a success for the page it left" do
+    {:ok, %{"tabId" => tab}} = HalC2.Preview.open(%{"threadId" => "t1", "url" => "http://a/"})
+    report = &HalC2.Preview.report_status(Map.merge(%{"threadId" => "t1", "tabId" => tab}, &1))
+    status = fn tag, url -> %{"navStatus" => %{"_tag" => tag, "url" => url, "title" => ""}} end
+
+    {:ok, nil} = report.(status.("Success", "http://a/"))
+    {:ok, nil} = report.(status.("LoadFailed", "http://b/"))
+    # Late: the page the failure left.
+    {:ok, nil} = report.(status.("Success", "http://a/"))
+
+    assert {:ok, %{"sessions" => [%{"navStatus" => %{"_tag" => "LoadFailed"}}]}} =
+             HalC2.Preview.list(%{"threadId" => "t1"})
+
+    # Going back starts a navigation; its success is real.
+    {:ok, nil} = report.(status.("Loading", "http://a/"))
+    {:ok, nil} = report.(status.("Success", "http://a/"))
+
+    assert {:ok,
+            %{"sessions" => [%{"navStatus" => %{"_tag" => "Success", "url" => "http://a/"}}]}} =
+             HalC2.Preview.list(%{"threadId" => "t1"})
+  end
+
   test "an unknown tab is a lookup error" do
     assert {:error, %{"_tag" => "PreviewSessionLookupError"}} =
              HalC2.Preview.refresh(%{"threadId" => "t1", "tabId" => "nope"})

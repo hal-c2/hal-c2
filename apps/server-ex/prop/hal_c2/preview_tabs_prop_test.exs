@@ -3,10 +3,11 @@ defmodule HalC2.PreviewTabsPropTest do
   `HalC2.Preview`'s tabs against a model of what they promise: a thread's tabs
   are listed exactly while open, closing a thread closes all of its tabs and
   no one else's, and a late success report for the page a failed navigation
-  left never turns the failure back into a success.
+  left never turns the failure back into a success, unless a new navigation has
+  started since (a `Loading` report, or the MC's own navigate).
 
-  Commands open tabs, report navigation outcomes (`Success` or `LoadFailed`
-  at one of two pages), close one tab, close a whole thread, and restart the
+  Commands open tabs, report navigation outcomes (`Loading`, `Success` or
+  `LoadFailed` at one of two pages), navigate from the MC, close one tab, close a whole thread, and restart the
   service.
   """
 
@@ -57,7 +58,8 @@ defmodule HalC2.PreviewTabsPropTest do
           else: [
             {6,
              {:call, __MODULE__, :report,
-              [oneof(Map.keys(state.tabs)), oneof([:ok, :failed]), oneof(@pages)]}},
+              [oneof(Map.keys(state.tabs)), oneof([:ok, :failed, :loading]), oneof(@pages)]}},
+            {1, {:call, __MODULE__, :navigate, [oneof(Map.keys(state.tabs)), oneof(@pages)]}},
             {2, {:call, __MODULE__, :close_tab, [oneof(Map.keys(state.tabs))]}}
           ]
         )
@@ -66,6 +68,7 @@ defmodule HalC2.PreviewTabsPropTest do
 
   def precondition(state, {:call, _, :open_tab, [slot, _, _]}), do: slot == state.next
   def precondition(state, {:call, _, :report, [slot, _, _]}), do: is_map_key(state.tabs, slot)
+  def precondition(state, {:call, _, :navigate, [slot, _]}), do: is_map_key(state.tabs, slot)
   def precondition(state, {:call, _, :close_tab, [slot]}), do: is_map_key(state.tabs, slot)
   def precondition(_, _), do: true
 
@@ -84,10 +87,19 @@ defmodule HalC2.PreviewTabsPropTest do
         state
 
       true ->
-        left = if current != page, do: current, else: tab.left
+        left =
+          cond do
+            kind == :loading and elem(tab.status, 0) == :failed -> nil
+            current != page -> current
+            true -> tab.left
+          end
+
         put_in(state.tabs[slot], %{tab | status: {kind, page}, left: left})
     end
   end
+
+  def next_state(state, _, {:call, _, :navigate, [slot, page]}),
+    do: put_in(state.tabs[slot], %{state.tabs[slot] | status: {:ok, page}, left: nil})
 
   def next_state(state, _, {:call, _, :close_tab, [slot]}),
     do: %{state | tabs: Map.delete(state.tabs, slot)}
@@ -126,6 +138,7 @@ defmodule HalC2.PreviewTabsPropTest do
       case kind do
         :ok -> %{"_tag" => "Success", "url" => page, "title" => ""}
         :failed -> %{"_tag" => "LoadFailed", "url" => page, "title" => "", "code" => -1}
+        :loading -> %{"_tag" => "Loading", "url" => page, "title" => ""}
       end
 
     {:ok, _} =
@@ -137,6 +150,12 @@ defmodule HalC2.PreviewTabsPropTest do
         "canGoForward" => false
       })
 
+    :ok
+  end
+
+  def navigate(slot, page) do
+    tab = Process.get({:tab, slot})
+    {:ok, _} = Preview.navigate(%{"threadId" => thread_of(tab), "tabId" => tab, "url" => page})
     :ok
   end
 

@@ -1193,8 +1193,7 @@ defmodule HalC2.Steps.Preview.Surfaces do
         "configuredUrls" => urls
       })
 
-    {frame, client} =
-      Mc.await(client, &(&1["t"] == "localServers" and &1["id"] == @servers), 10_000)
+    {frame, client} = Mc.await_local_servers(client, @servers)
 
     servers = frame["list"]["servers"]
     context = World.put_client(context, name, client)

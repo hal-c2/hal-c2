@@ -20,14 +20,20 @@ defmodule HalC2.LocalServers do
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
   @doc """
-  Watches the list. `urls` are the client's configured preview addresses: the ones on
-  this machine are asked for a page as written and join that client's list.
+  Watches the list under `ref` (nil for none). The arity every MC has.
   """
-  def subscribe(pid, urls \\ [], ref \\ nil),
-    do: GenServer.call(__MODULE__, {:subscribe, pid, urls, ref})
+  def subscribe(pid, ref \\ nil), do: subscribe_urls(pid, [], ref)
 
-  def unsubscribe(pid, urls \\ [], ref \\ nil),
-    do: GenServer.cast(__MODULE__, {:unsubscribe, pid, urls, ref})
+  @doc """
+  `subscribe/2` for a client that names its configured preview addresses: the ones on
+  this machine are asked for a page as written and join that client's list. A separate
+  function so `subscribe(pid, ref)` keeps its meaning for a cluster member that is
+  still on the older code.
+  """
+  def subscribe_urls(pid, urls, ref \\ nil),
+    do: GenServer.call(__MODULE__, {:subscribe, pid, List.wrap(urls), ref})
+
+  def unsubscribe(pid, ref \\ nil), do: GenServer.cast(__MODULE__, {:unsubscribe, pid, ref})
 
   @impl true
   def init(nil) do
@@ -46,20 +52,22 @@ defmodule HalC2.LocalServers do
   defp fresh,
     do: %{watchers: %{}, configured: %{}, base: nil, cache: %{}, sent: %{}, timer: nil}
 
+  # Answers from what the last scan found; the addresses it has not asked yet are
+  # probed by a scan started at once, whose result reaches the watcher as a change.
   @impl true
   def handle_call({:subscribe, pid, urls, ref}, _from, state) do
+    urls = if is_list(urls), do: urls, else: []
     watchers = HalC2.Watchers.add(state.watchers, pid, ref)
 
     configured =
       Map.update(state.configured, pid, %{ref => urls}, &Map.put(&1, ref, urls))
 
-    state = scan(%{state | watchers: watchers, configured: configured})
-    {:reply, {:ok, list_for(state, pid)}, schedule(remember(state, pid))}
+    state = %{state | watchers: watchers, configured: configured}
+    {:reply, {:ok, list_for(state, pid)}, scan_soon(remember(state, pid))}
   end
 
   @impl true
-  def handle_cast({:unsubscribe, pid, urls, ref}, state) do
-    _ = urls
+  def handle_cast({:unsubscribe, pid, ref}, state) do
     watchers = HalC2.Watchers.remove(state.watchers, pid, ref)
     state = %{state | watchers: watchers}
 
@@ -113,6 +121,12 @@ defmodule HalC2.LocalServers do
   defp remember(state, pid),
     do: %{state | sent: Map.put(state.sent, pid, list_for(state, pid)["servers"])}
 
+  # A scan now, in place of the one a few seconds off.
+  defp scan_soon(state) do
+    if state.timer, do: Process.cancel_timer(state.timer)
+    %{state | timer: Process.send_after(self(), :scan, 0)}
+  end
+
   defp schedule(%{timer: nil} = state),
     do: %{state | timer: Process.send_after(self(), :scan, @interval)}
 
@@ -127,13 +141,14 @@ defmodule HalC2.LocalServers do
       end
 
     ports = MapSet.new(configured, & &1["port"])
+    base = state.base || %{"servers" => [], "scannedAt" => nil}
 
     servers =
-      (Enum.reject(state.base["servers"], &(&1["port"] in ports)) ++ configured)
+      (Enum.reject(base["servers"], &(&1["port"] in ports)) ++ configured)
       |> Enum.uniq_by(& &1["url"])
       |> Enum.sort_by(& &1["port"])
 
-    list = %{"servers" => servers, "scannedAt" => state.base["scannedAt"]}
+    list = %{"servers" => servers, "scannedAt" => base["scannedAt"]}
 
     if configured_urls(state, pid) == [],
       do: list,
@@ -229,8 +244,15 @@ defmodule HalC2.LocalServers do
   defp key_of({:url, url}), do: {:url, url}
 
   # The scheme a listener answers on, or false; whether a configured address serves a page.
-  defp ask({:listener, {port, _, _, ipv6}}), do: probe_listener(port, ipv6)
-  defp ask({:url, url}), do: web_page?(url)
+  defp ask(target) do
+    case Application.get_env(:hal_c2, :local_servers_probe) do
+      nil -> probe(target)
+      stub -> stub.(target)
+    end
+  end
+
+  defp probe({:listener, {port, _, _, ipv6}}), do: probe_listener(port, ipv6)
+  defp probe({:url, url}), do: web_page?(url)
 
   # A listener is asked over plain HTTP, then over HTTPS unless it did not answer at all.
   defp probe_listener(port, ipv6) do
@@ -247,6 +269,13 @@ defmodule HalC2.LocalServers do
 
   # `{port, pid, command, ipv6_only}` for every loopback or wildcard TCP listener.
   defp listeners do
+    case Application.get_env(:hal_c2, :local_servers_listeners) do
+      nil -> lsof_listeners()
+      stub -> stub
+    end
+  end
+
+  defp lsof_listeners do
     with path when is_binary(path) <- System.find_executable("lsof"),
          {out, _} <-
            System.cmd(path, ~w(-iTCP -sTCP:LISTEN -P -n -F pcn), stderr_to_stdout: false) do
