@@ -2437,6 +2437,9 @@ defmodule HalC2.Claude.ThreadRuntime do
   # best effort, and Claude's internal tasks are not the user's.
   defp stored_tasks(_state, nil), do: nil
 
+  # Reads only `<n>.json` files in Claude's own tasks folder; the list id is reduced to
+  # `[a-zA-Z0-9_-]` first, so it cannot leave that folder.
+  # sobelow_skip ["Traversal.FileModule"]
   defp stored_tasks(state, list_id) do
     instance = Entities.instance(state.turn.ids)
 

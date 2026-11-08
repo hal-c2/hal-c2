@@ -129,6 +129,9 @@ defmodule HalC2.Claude.Skills do
   # The skills of each installed plugin that the layered settings' `enabledPlugins`
   # turn on, from its install's `skills` folder, named `<plugin>:<skill>` as Claude
   # offers them (Upstream #15662). An install for another project is not this one's.
+  # Reads only Claude's own plugin index under its config dir and the install folders
+  # Claude recorded there, never a path a client sent.
+  # sobelow_skip ["Traversal.FileModule"]
   defp plugin_skills(config_dir, cwd, overrides) do
     enabled =
       Enum.reduce(settings_paths(config_dir, cwd), %{}, &Map.merge(&2, read_enabled(&1)))
@@ -157,6 +160,8 @@ defmodule HalC2.Claude.Skills do
 
   defp install_here?(_install, _cwd), do: false
 
+  # Reads only Claude's own settings files (`settings_paths/2`), never a client's path.
+  # sobelow_skip ["Traversal.FileModule"]
   defp read_enabled(path) do
     with {:ok, text} <- File.read(path),
          {:ok, %{"enabledPlugins" => enabled}} when is_map(enabled) <- decode_lenient(text) do
