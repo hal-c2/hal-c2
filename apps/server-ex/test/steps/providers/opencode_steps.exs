@@ -3672,7 +3672,7 @@ defmodule HalC2.Steps.Providers.Opencode do
   @child "3c1e2b34-5a67-4b89-9c0d-1e2f3a4b5c6d"
 
   # A `task` call that names a subagent session, as OpenCode reports it.
-  defp task_call(id, output) do
+  defp task_call(id, output, status \\ "completed") do
     [
       %{
         "update" => %{
@@ -3688,7 +3688,7 @@ defmodule HalC2.Steps.Providers.Opencode do
         "update" => %{
           "sessionUpdate" => "tool_call_update",
           "toolCallId" => id,
-          "status" => "completed",
+          "status" => status,
           "content" => [
             %{"type" => "content", "content" => %{"type" => "text", "text" => output}}
           ]
@@ -4683,14 +4683,41 @@ defmodule HalC2.Steps.Providers.Opencode do
 
   step(~r/^the OpenCode 2 subagent "A" runs in the background$/, context, do: started_a(context))
 
-  step ~r/^OpenCode reports the run of "A" failed$/, context do
-    context
-    |> says(Map.put(report(@child, "failed"), "sessionId", root_session(context)))
+  # The child's own turn fails and nothing reports back to the parent.
+  step ~r/^the turn of "A" fails without reporting back$/, context do
+    says(context, %{
+      "sessionId" => @child,
+      "update" => %{"sessionUpdate" => "turn_failed"}
+    })
   end
 
   step ~r/^the call to "A" ends as failed$/, context do
     await_no_background(context)
     assert [%{"status" => "failed"}] = subagents(context)
+    context
+  end
+
+  step "both the subagent call and the steer end as failed", context do
+    await_no_background(context)
+    assert [%{"status" => "failed"}, %{"status" => "failed"}] = subagents(context)
+    context
+  end
+
+  step ~r/^an OpenCode 2 background subagent "A" is running and a steer of it fails$/, context do
+    failed = %{
+      "match" => "steer it",
+      "steps" =>
+        task_call("task-2", "Steer failed.\nsubagent_id: #{@child}", "failed") ++
+          [%{"text" => "Steered."}]
+    }
+
+    started_a(context, [failed])
+  end
+
+  step(~r/^the agent steers "A" and the steer fails$/, context, do: steer(context))
+
+  step "the steer ends as failed while \"A\" keeps running", context do
+    assert [%{"status" => "running"}, %{"status" => "failed"}] = subagents(context)
     context
   end
 

@@ -1296,9 +1296,24 @@ Feature: OpenCode
   @priority-low
   Scenario: A failed OpenCode 2 background subagent stops counting as background work
     Given the OpenCode 2 subagent "A" runs in the background
-    When OpenCode reports the run of "A" failed
+    When the turn of "A" fails without reporting back
     Then the call to "A" ends as failed
     And the thread no longer shows an agent working in the background
+
+  # Upstream #21979: the child's failure settles every call attached to it, a joined steer included.
+  @mc @plugin-opencode @priority-low
+  Scenario: A failed OpenCode 2 subagent ends the steer that joined its run as well
+    Given an OpenCode 2 turn started the background subagent "A"
+    When the agent steers "A" while it is still running
+    And the turn of "A" fails without reporting back
+    Then both the subagent call and the steer end as failed
+
+  # Upstream #21979: a steer that fails ends with its own error; only a completed steer joins the run.
+  @mc @plugin-opencode @priority-low
+  Scenario: A failed steer of a running OpenCode 2 subagent ends with its own error
+    Given an OpenCode 2 background subagent "A" is running and a steer of it fails
+    When the agent steers "A" and the steer fails
+    Then the steer ends as failed while "A" keeps running
 
   # Upstream #21460: background work an OpenCode 2 subagent queued while the root turn ended was
   # lost behind the session's newer idle state.

@@ -2243,6 +2243,15 @@ defmodule HalC2.Acp.ThreadRuntime do
       is_binary(session) and state.subagents != %{} and state.session_id != nil and
         session != state.session_id
 
+  # A background child whose own turn failed never reports back to its parent (upstream
+  # pingdotgg/t3code#21979): every call attached to its session ends failed, not only
+  # the last one that joined it.
+  defp child_update(
+         %{"sessionId" => session, "update" => %{"sessionUpdate" => "turn_failed"}},
+         state
+       ),
+       do: end_task(state, session, "failed")
+
   defp child_update(%{"sessionId" => session, "update" => update}, state) do
     case Enum.find(state.subagents, fn {_id, entry} -> entry.session == session end) do
       {id, %{sub: sub} = entry} ->
@@ -2353,15 +2362,17 @@ defmodule HalC2.Acp.ThreadRuntime do
     entry = state.subagents[id]
 
     # A background spawn's acknowledgement ends the tool call, not the subagent. So
-    # does a call that joins the run of a subagent still working, a steer: OpenCode
-    # sends one report for both.
+    # does a completed call that joins the run of a subagent still working, a steer:
+    # OpenCode sends one report for both. A failed or stopped steer ends with its own
+    # error or interruption.
     joined =
       Enum.any?(state.subagents, fn {other, e} ->
         other != id and not e.done and entry.session != nil and e.session == entry.session
       end)
 
     cond do
-      call["status"] in ["completed", "failed"] and (spawn_ack?(output) or joined) ->
+      call["status"] in ["completed", "failed"] and
+          ((call["status"] == "completed" and joined) or spawn_ack?(output)) ->
         %{state | subagents: Map.put(state.subagents, id, Map.put(entry, :background, true))}
 
       # A task the user's stop cut off was stopped, though OpenCode 1 reports it failed
