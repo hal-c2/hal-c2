@@ -56,6 +56,21 @@ Feature: TokenEconomizer's micro-skills
     Then Claude is not told anything about "pytest"
 
   @mc
+  Scenario: A turn the plugin partly missed is learned from the thread's history
+    Given micro-skills are off
+    And Claude has repaired the test command in 1 turns in the thread "Learning"
+    Then TokenEconomizer has learned nothing on the project
+    When micro-skills are on
+    And the plugin is told it partly missed the thread "Learning"'s last turn
+    Then TokenEconomizer still counts the fact about "pytest" as forming
+
+  @mc
+  Scenario: A missed turn that cannot be read back teaches nothing
+    Given Claude starts the thread "Quiet" with "hello"
+    When the plugin is told it partly missed a turn the thread "Quiet" never ran
+    Then TokenEconomizer has learned nothing on the project
+
+  @mc
   Scenario: A cap that is not a whole number is refused
     When the person sets the micro-skills' most facts to 1.5
     Then the settings are refused, naming the most facts

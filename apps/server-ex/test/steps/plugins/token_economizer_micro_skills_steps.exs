@@ -6,9 +6,9 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerMicroSkills do
 
   Threads run on the fake Claude, whose "repair the test command" turn finds
   the bare `pytest` missing and runs the tests through `python -m pytest`.
-  What was learned is read through the plugin's own `microSkills` call, and
-  the steps wait on its `microSkills` topic, which is published as each turn
-  is folded.
+  What was learned is read through the plugin's own `microSkills` call; the
+  steps wait for a turn to be folded on the `loopGuard` topic, published in
+  the same close that folds it, before the plugin answers anything else.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
@@ -53,7 +53,57 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerMicroSkills do
   end
 
   step "micro-skills are off", context do
-    context |> save(%{"microSkills" => "off"}) |> Map.put(:skills_off, true)
+    save(context, %{"microSkills" => "off"})
+  end
+
+  step "micro-skills are on", context do
+    save(context, %{"microSkills" => "envfacts"})
+  end
+
+  # A turn the plugin is told it half heard: its start, then its end marked
+  # with what the feed dropped in between. Sent through the plugin as the
+  # feed would, against a run the thread really ran (learned whole from
+  # history) or one it never did (nothing to learn).
+  step "the plugin is told it partly missed the thread {string}'s last turn",
+       %{args: [title]} = context do
+    run = context |> World.runs(title) |> List.last()
+    replay_missed(context, title, run["id"])
+  end
+
+  step "the plugin is told it partly missed a turn the thread {string} never ran",
+       %{args: [title]} = context do
+    replay_missed(context, title, "run-never-ran")
+  end
+
+  defp replay_missed(context, title, run_id) do
+    plugin = Module.concat(HalC2Plugins, TokenEconomizer)
+    thread_id = World.thread_id(context, title)
+
+    :ok =
+      plugin.observe(
+        %{
+          "type" => "turn.started",
+          "threadId" => thread_id,
+          "runId" => run_id,
+          "projectId" => project_id(context),
+          "instanceId" => @instance
+        },
+        %{}
+      )
+
+    :ok =
+      plugin.observe(
+        %{
+          "type" => "turn.finished",
+          "threadId" => thread_id,
+          "runId" => run_id,
+          "status" => "completed",
+          "dropped" => 2
+        },
+        %{}
+      )
+
+    context
   end
 
   # --- turns --------------------------------------------------------------------------------
@@ -75,13 +125,9 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerMicroSkills do
 
     # This turn folds too, once it ends: stay in step with the count the
     # repair steps wait on.
-    if context[:skills_off] do
-      context
-    else
-      expected = context.folded + 1
-      {_, context} = await_skills(context, &(&1["turns"] >= expected))
-      Map.put(context, :folded, expected)
-    end
+    expected = context.folded + 1
+    {_, context} = await_turns(context, expected)
+    Map.put(context, :folded, expected)
   end
 
   # --- what was learned, dropped and staged ------------------------------------------------------
@@ -201,14 +247,8 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerMicroSkills do
         end
       end)
 
-    if context[:skills_off] do
-      # Nothing folds, so the topic never says the turns ended: the runs do.
-      World.await_runs(context, title, List.duplicate("completed", turns))
-      context
-    else
-      {_, context} = await_skills(context, &(&1["turns"] >= expected))
-      Map.put(context, :folded, expected)
-    end
+    {_, context} = await_turns(context, expected)
+    Map.put(context, :folded, expected)
   end
 
   defp project_id(context), do: World.project(context).id
@@ -250,8 +290,10 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerMicroSkills do
 
   defp text(_content), do: ""
 
-  # Watches the plugin's `microSkills` topic; `await_skills/2` waits on the
-  # project's entry in it.
+  # Watches the plugin's `loopGuard` topic, published as each turn the
+  # plugin heard closes: the receipt a folded turn's fold is reached by, the
+  # micro-skills folding in the same close before the plugin answers anything
+  # else. (`await_turns/2`.)
   defp watch(context) do
     sub = System.unique_integer([:positive])
 
@@ -259,7 +301,7 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerMicroSkills do
       "type" => "plugin",
       "environment" => context.mc.environment,
       "id" => @id,
-      "topic" => "microSkills"
+      "topic" => "loopGuard"
     }
 
     client = context |> World.client("token-economizer-skills") |> Mc.sub(sub, shape)
@@ -269,22 +311,17 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerMicroSkills do
     |> Map.put(:skills_watched, {sub, nil})
   end
 
-  defp await_skills(context, fun) do
+  defp await_turns(context, expected) do
     {sub, last} = context.skills_watched
-    project = fn value -> project_view(value, project_id(context)) end
-    found = last && project.(last)
 
-    if found && fun.(found) do
-      {found, context}
+    if is_map(last) && last["turns"] >= expected do
+      {last, context}
     else
       {frame, client} =
         Mc.await(
           World.client(context, "token-economizer-skills"),
-          fn frame ->
-            frame["t"] == "plugin" and frame["id"] == sub and
-              !!(project_view(frame["value"], project_id(context)) &&
-                   fun.(project_view(frame["value"], project_id(context))))
-          end,
+          &(&1["t"] == "plugin" and &1["id"] == sub and is_map(&1["value"]) and
+              &1["value"]["turns"] >= expected),
           15_000
         )
 
@@ -293,12 +330,7 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerMicroSkills do
         |> World.put_client("token-economizer-skills", client)
         |> Map.put(:skills_watched, {sub, frame["value"]})
 
-      {project.(frame["value"]), context}
+      {frame["value"], context}
     end
   end
-
-  defp project_view(%{"projects" => projects}, project_id),
-    do: Enum.find(projects, &(&1["projectId"] == project_id))
-
-  defp project_view(_value, _project_id), do: nil
 end

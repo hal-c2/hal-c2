@@ -152,7 +152,10 @@ defmodule HalC2Plugins.TokenEconomizer do
   # Asked as a conversation starts, and never allowed to hold it back: answers
   # from the facts already learned, or nothing.
   def shape_run(run, _context) do
-    GenServer.call(__MODULE__, {:shape_run, run}, 250)
+    # The deadline travels with the ask: handled after it, the answer would
+    # never reach the conversation, so nothing may be staged on its behalf.
+    deadline = System.monotonic_time(:millisecond) + 250
+    GenServer.call(__MODULE__, {:shape_run, run, deadline}, 250)
   catch
     :exit, _ -> nil
   end
@@ -170,8 +173,16 @@ defmodule HalC2Plugins.TokenEconomizer do
        trackers: %{},
        # project id => micro-skills state, loaded on first use
        skills: %{},
-       # thread id => the fact ids staged for its conversation
+       # The projects with micro-skills of their own, read from disk once
+       # (nil until then) and added to as facts are saved.
+       known_skills: nil,
+       # The shape of the listing last published, turn counts aside: the
+       # topic is republished only when what a person would see changes.
+       published_skills: nil,
+       # thread id => the fact ids staged for its conversation, oldest
+       # first in staged_order and capped, so it cannot grow for good.
        staged: %{},
+       staged_order: [],
        stats: %{"turns" => 0, "nudges" => 0, "aborts" => 0, "judgeCalls" => 0, "judgeTokens" => 0},
        # The latest redirects and stop offers, newest first.
        recent: []
@@ -196,7 +207,7 @@ defmodule HalC2Plugins.TokenEconomizer do
   def handle_call({:settings, settings}, _from, state) do
     # The level and pinned thresholds shape each tracker, and the micro-skills'
     # caps shape what is staged: read them afresh.
-    state = %{state | settings: settings, trackers: %{}, skills: %{}}
+    state = %{state | settings: settings, trackers: %{}, skills: %{}, published_skills: nil}
     state = if on?(state) or micro_on?(state), do: state, else: %{state | turns: %{}}
     {:reply, :ok, state |> publish() |> publish_skills()}
   end
@@ -214,12 +225,13 @@ defmodule HalC2Plugins.TokenEconomizer do
   def handle_call({:micro_skill_restore, input}, _from, state),
     do: drop_or_restore(state, input, :restore)
 
-  def handle_call({:shape_run, run}, _from, state) do
-    if micro_on?(state) and is_binary(run["projectId"]) do
+  def handle_call({:shape_run, run, deadline}, _from, state) do
+    if micro_on?(state) and is_binary(run["projectId"]) and
+         System.monotonic_time(:millisecond) <= deadline do
       {skills, state} = skills_for(state, run["projectId"])
       {text, skills} = EnvFacts.render(skills)
       state = put_in(state.skills[run["projectId"]], skills)
-      state = put_in(state.staged[run["threadId"]], EnvFacts.injected_ids(skills))
+      state = stage(state, run["threadId"], EnvFacts.injected_ids(skills))
       {:reply, if(text == "", do: nil, else: %{"context" => text}), state}
     else
       {:reply, nil, state}
@@ -235,6 +247,28 @@ defmodule HalC2Plugins.TokenEconomizer do
       end
 
     {:reply, :ok, state}
+  end
+
+  @staged_kept 128
+
+  # Remembers what a thread's conversation was staged, keeping the latest
+  # conversations only: an evicted thread's later turns count no prevented
+  # waste, and learn from failures as an unstaged conversation does.
+  defp stage(state, thread_id, ids) do
+    order = (state.staged_order -- [thread_id]) ++ [thread_id]
+    staged = Map.put(state.staged, thread_id, ids)
+
+    {order, staged} =
+      Enum.reduce_while(order, {order, staged}, fn _oldest, {order, staged} ->
+        if length(order) > @staged_kept do
+          [oldest | rest] = order
+          {:cont, {rest, Map.delete(staged, oldest)}}
+        else
+          {:halt, {order, staged}}
+        end
+      end)
+
+    %{state | staged: staged, staged_order: order}
   end
 
   @impl GenServer
@@ -365,7 +399,11 @@ defmodule HalC2Plugins.TokenEconomizer do
             |> EnvFacts.update_turn(calls, turn.run)
 
           save_skills(project_id, skills)
-          state |> put_in([:skills, project_id], skills) |> publish_skills()
+
+          state
+          |> know_skill(project_id)
+          |> put_in([:skills, project_id], skills)
+          |> publish_skills()
       end
     else
       state
@@ -568,6 +606,25 @@ defmodule HalC2Plugins.TokenEconomizer do
     File.rename!(tmp, path)
   end
 
+  # The projects with micro-skills of their own: from disk once, then as
+  # state remembers them (a save adds its project), so no turn ever re-reads
+  # every project's file to build the listing.
+  defp known_skills(state) do
+    case state.known_skills do
+      nil ->
+        known = MapSet.new(saved_project_ids())
+        {known, %{state | known_skills: known}}
+
+      known ->
+        {known, state}
+    end
+  end
+
+  defp know_skill(state, project_id) do
+    {known, state} = known_skills(state)
+    %{state | known_skills: MapSet.put(known, project_id)}
+  end
+
   # The projects with micro-skills files of their own, beside those loaded.
   defp saved_project_ids do
     case Path.join([Host.data_dir(@id), "micro-skills"]) |> File.ls() do
@@ -595,7 +652,8 @@ defmodule HalC2Plugins.TokenEconomizer do
   # What the `microSkills` call and topic carry: one project's facts when it is
   # named, else every project's, each in `EnvFacts.view/1`'s shape.
   defp micro_skills_view(state, nil) do
-    ids = Enum.uniq(Map.keys(state.skills) ++ saved_project_ids())
+    {known, state} = known_skills(state)
+    ids = known |> MapSet.union(MapSet.new(Map.keys(state.skills))) |> Enum.sort()
 
     {projects, state} =
       Enum.map_reduce(ids, state, fn project_id, state ->
@@ -615,10 +673,25 @@ defmodule HalC2Plugins.TokenEconomizer do
      }, state}
   end
 
+  # Publishes the listing when what a person would see in it changed: a
+  # turn that taught nothing new only moves a turn count, and clients are
+  # not sent every project's facts again for that.
   defp publish_skills(state) do
     {view, state} = micro_skills_view(state, nil)
-    Host.publish(@id, @skills_topic, view)
-    state
+    shape = listing_shape(view)
+
+    if shape == state.published_skills do
+      state
+    else
+      Host.publish(@id, @skills_topic, view)
+      %{state | published_skills: shape}
+    end
+  end
+
+  defp listing_shape(view) do
+    Map.update!(view, "projects", fn projects ->
+      Enum.map(projects, &Map.delete(&1, "turns"))
+    end)
   end
 
   defp drop_or_restore(state, input, action) do
@@ -629,7 +702,13 @@ defmodule HalC2Plugins.TokenEconomizer do
       case if(action == :drop, do: EnvFacts.drop(skills, id), else: EnvFacts.restore(skills, id)) do
         {:ok, skills} ->
           save_skills(project_id, skills)
-          state = state |> put_in([:skills, project_id], skills) |> publish_skills()
+
+          state =
+            state
+            |> know_skill(project_id)
+            |> put_in([:skills, project_id], skills)
+            |> publish_skills()
+
           {view, state} = micro_skills_view(state, project_id)
           {:reply, {:ok, view}, state}
 
