@@ -134,6 +134,7 @@ Feature: Permission modes
     Given a Codex thread waiting on a command approval
     When the user interrupts the turn
     Then the approval is closed as cancelled
+    And the running turn is interrupted
 
   Scenario: Dismissing a Claude question tells Claude it was dismissed
     Given Claude asked the user a question

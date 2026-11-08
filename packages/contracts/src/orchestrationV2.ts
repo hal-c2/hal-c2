@@ -516,6 +516,8 @@ export const OrchestrationV2Run = Schema.Struct({
     }),
   ),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
+  /** A failed run's own failure text, as its provider gave it. */
+  failure: Schema.optional(Schema.String),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
@@ -1235,6 +1237,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("run_interrupt_request"),
     message: Schema.String,
+    // Who asked for the stop, so its outcome can say so; absent on older items.
+    stoppedBy: Schema.optional(Schema.Literals(["user", "agent"])),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1988,6 +1992,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("run_interrupt_request"),
     message: Schema.String,
+    stoppedBy: Schema.optional(Schema.Literals(["user", "agent"])),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
