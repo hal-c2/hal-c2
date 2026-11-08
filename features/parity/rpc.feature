@@ -9,7 +9,7 @@
 #   apps/server-ex/lib/hal_c2/machine_files.ex (files.localPath)
 #   apps/server-ex/lib/hal_c2/cluster.ex (cluster.*; the TypeScript server answers them as unsupported)
 #   packages/contracts/src/environmentHttp.ts, apps/server-ex/lib/hal_c2/web/router.ex (/api/auth/*, twinned by hal-c2.* access methods)
-#   Counts: 175 contract methods; 172 aligned, 3 dropped. cloud.getRelayClientStatus and
+#   Counts: 179 contract methods; 176 aligned, 3 dropped. cloud.getRelayClientStatus and
 #   cloud.installRelayClient left the contract with HAL-C2 Connect (connections/hal-c2-connect.feature).
 #   WS_METHODS also names projects.add, projects.list and projects.remove with no Rpc.make
 #   behind them; neither server routes them, so they are recorded as dropped names.
@@ -30,7 +30,7 @@ Feature: RPC parity with the TypeScript server
     When the client calls <method> through its <via>
     Then the MC answers with the contract's response shape for <method>
 
-    Examples: 172 aligned methods
+    Examples: 176 aligned methods
       | method                                   | domain            | via                                                                       |
       | server.upsertKeybinding                  | server            | rpc as hal-c2.upsertKeybinding                                                |
       | server.removeKeybinding                  | server            | rpc as hal-c2.removeKeybinding                                                |
@@ -129,6 +129,10 @@ Feature: RPC parity with the TypeScript server
       | assets.persistChatAttachments            | assets            | rpc                                                                       |
       | attachments.createUploadUrl              | attachments       | rpc                                                                       |
       | attachments.delete                       | attachments       | rpc                                                                       |
+      | mcpApps.callTool                         | mcpApps           | rpc                                                                       |
+      | mcpApps.toolInfo                         | mcpApps           | rpc                                                                       |
+      | mcpApps.readResource                     | mcpApps           | rpc                                                                       |
+      | mcpApps.updateModelContext               | mcpApps           | rpc                                                                       |
       | provider.uploadFeedback                  | provider          | rpc                                                                       |
       | subscribeVcsStatus                       | vcs               | shape vcs                                                                 |
       | vcs.pull                                 | vcs               | rpc                                                                       |

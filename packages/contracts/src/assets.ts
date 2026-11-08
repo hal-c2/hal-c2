@@ -46,6 +46,10 @@ export const AssetResource = Schema.Union([
     /** Generic attachments download by default. Document viewers opt into an
         inline response after deciding the file type is safe to preview. */
     disposition: Schema.optionalKey(Schema.Literals(["inline", "attachment"])),
+    /** An MCP app's document shown inline: served in its own sandbox with the
+        host's bootstraps (theme, cookies). The MC serves an app document so
+        whether or not this is set. */
+    renderIntent: Schema.optionalKey(Schema.Literal("mcp-app")),
   }),
   Schema.TaggedStruct("project-favicon", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),

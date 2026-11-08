@@ -12,6 +12,9 @@
 # "answer" and replies with its contents, or with no message when it is empty; a steer
 # with "hold ..." writes "steer.held" and waits for the gate file "steer" before it answers.
 import glob, json, os, re, signal, string, sys, threading, time, uuid
+sys.dont_write_bytecode = True  # importing the helper below must leave no __pycache__ in test/support
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fake_codex_mcp_apps  # MCP Apps: tool calls that return a ui:// app, and the app's requests
 
 # A "will-not-exit" file in the working directory has the process ignore SIGTERM and a
 # closed stdin, as a wedged app-server does: only SIGKILL ends it.
@@ -266,6 +269,8 @@ for line in sys.stdin:
             text = "received " + json.dumps(msg.get("result"), sort_keys=True)
             send({"method": "item/completed", "params": {**ctx, "item": {**item, "text": text}}})
         continue
+    if fake_codex_mcp_apps.answer(method, params, mid, send):
+        continue
     if method == "initialize":
         # FAKE_CODEX_PROBE_ERROR is answered as the initialize call's error, and
         # FAKE_CODEX_PROBE_HANG leaves it unanswered: a status check's two failures.
@@ -351,6 +356,8 @@ for line in sys.stdin:
         send({"id": mid, "result": {"turn": {"id": turn_id, "status": "inProgress"}}})
         ctx = {"threadId": thread_id, "turnId": turn_id}
         send({"method": "turn/started", "params": {**ctx, "turn": {"id": turn_id, "status": "inProgress"}}})
+        if fake_codex_mcp_apps.play(text, ctx, turn_id, send):
+            continue
         if "stream paragraphs" in text or "stream a reply" in text:
             stream_reply(ctx, text)
             continue

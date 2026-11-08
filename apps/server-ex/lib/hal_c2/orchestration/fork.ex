@@ -13,7 +13,7 @@ defmodule HalC2.Orchestration.Fork do
   alias HalC2.Orchestration.Entities
 
   # What a thread's history is made of; each belongs to a run.
-  @history ~w(run-attempt node message turn-item plan checkpoint)
+  @history ~w(run-attempt node message turn-item plan checkpoint mcp-app-context)
 
   @spec fork(map) :: :ok | {:error, String.t()}
   def fork(%{"sourceThreadId" => source_id, "targetThreadId" => target_id} = command) do
