@@ -1560,7 +1560,7 @@ Feature: Claude
 
   # Upstream #23561: a nested subagent's completion that arrived during a user turn, before its
   # start was registered, was lost when the start was replayed later.
-  @backlog @priority-high
+  @priority-high
   Scenario: A nested Claude subagent that finished during a user turn stays finished
     Given a background Claude subagent launched a subagent of its own while the thread was idle
     And the nested subagent finished during a later user turn

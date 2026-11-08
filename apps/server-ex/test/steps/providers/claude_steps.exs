@@ -4503,6 +4503,118 @@ defmodule HalC2.Steps.Providers.Claude do
 
   defp alive?(os_pid), do: File.exists?("/proc/#{os_pid}")
 
+  # --- a nested subagent that finishes before its wake's run (Upstream #23561) ----------
+
+  # Claude reacts to the survey by itself and the survey launches a subagent of its
+  # own, all while the runtime is held: the wake ends, and the user's message is sent
+  # before the runtime is let go, so the user's run comes first and the wake's run,
+  # which replays the nested launch, queues behind it.
+  step "a background Claude subagent launched a subagent of its own while the thread was idle",
+       context do
+    context = background_subagent(context)
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+
+    [survey] =
+      for {tool, %{sub: %{}}} <- :sys.get_state(pid).work, do: tool
+
+    :ok = :sys.suspend(pid)
+    session = :sys.get_state(pid).session
+    says = &send(pid, {:claude, session, {:message, &1}})
+
+    says.(%{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-wake",
+        "content" => [%{"type" => "text", "text" => "The survey is under way"}]
+      }
+    })
+
+    says.(%{
+      "type" => "assistant",
+      "parent_tool_use_id" => survey,
+      "message" => %{
+        "id" => "s-nested",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "agent-nested",
+            "name" => "Agent",
+            "input" => %{
+              "description" => "Count the files",
+              "prompt" => "Count the files",
+              "run_in_background" => true
+            }
+          }
+        ]
+      }
+    })
+
+    says.(%{
+      "type" => "system",
+      "subtype" => "task_started",
+      "task_id" => "task-agent-nested",
+      "tool_use_id" => "agent-nested",
+      "description" => "Count the files",
+      "task_type" => "local_agent",
+      "is_backgrounded" => true
+    })
+
+    says.(%{"type" => "result", "subtype" => "success", "is_error" => false})
+    Map.merge(context, %{runtime: pid, survey: survey})
+  end
+
+  step "the nested subagent finished during a later user turn", context do
+    done = length(World.runs(context, @thread))
+    send = Task.async(fn -> World.post_message(context, @thread, "wait for the survey") end)
+    World.await_value(context, @thread, &(length(StreamState.list(&1, "run")) == done + 1))
+    :ok = :sys.resume(context.runtime)
+    Task.await(send, 10_000)
+    assert %{turn: %{}, wake: %{open: false, buffer: [_ | _]}} = :sys.get_state(context.runtime)
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-agent-nested",
+      "tool_use_id" => "agent-nested",
+      "status" => "completed",
+      "summary" => "There are 3 files"
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed", "completed", "completed"], 10_000)
+    context
+  end
+
+  step "another subagent finishing wakes the thread", context do
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-#{context.survey}",
+      "tool_use_id" => context.survey,
+      "status" => "completed",
+      "summary" => "The repo holds a server"
+    })
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-survey-done",
+        "content" => [%{"type" => "text", "text" => "The survey is done"}]
+      }
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, List.duplicate("completed", 4), 10_000)
+    context
+  end
+
+  step "the nested subagent is shown as completed", context do
+    subagents = StreamState.list(World.stream(context, @thread), "subagent")
+    assert %{"status" => "completed"} = Enum.find(subagents, &(&1["title"] == "Count the files"))
+    assert Enum.all?(subagents, &(&1["status"] == "completed")), inspect(subagents)
+    context
+  end
+
   step "Claude launches a subagent in the background and the launch returns at once",
        context do
     context =

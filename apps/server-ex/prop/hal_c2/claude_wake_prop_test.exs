@@ -6,11 +6,13 @@ defmodule HalC2.ClaudeWakePropTest do
   its run started), and a wake the user's next turn takes over, where Claude answers
   the user's message as a turn of its own after the wake's result ("steer"), or folds
   it into the wake turn so that one result answers both ("fold", Upstream #28010),
-  or had already ended the wake before the user's turn started.
+  or had already ended the wake before the user's turn started, where a subagent the
+  wake launched in the background may finish during the user's turn, before the wake's
+  run has replayed its launch (Upstream #23561).
 
   The promise: every run ends once Claude has said all it will, with no run left
-  running or queued and the runtime holding no turn and no wake; each user message
-  reaches Claude once, and a wake's run sends Claude nothing.
+  running or queued, no subagent left running, and the runtime holding no turn and no
+  wake; each user message reaches Claude once, and a wake's run sends Claude nothing.
   """
 
   use ExUnit.Case, async: false
@@ -107,7 +109,8 @@ defmodule HalC2.ClaudeWakePropTest do
     frequency([
       {2, {:call, __MODULE__, :user_turn, [n]}},
       {2, {:call, __MODULE__, :wake, [oneof([:at_once, :after_its_run_started])]}},
-      {3, {:call, __MODULE__, :take_over, [n, oneof([:steer, :fold, :ended])]}}
+      {3,
+       {:call, __MODULE__, :take_over, [n, oneof([:steer, :fold, :ended, :ended_with_subagent])]}}
     ])
   end
 
@@ -128,7 +131,7 @@ defmodule HalC2.ClaudeWakePropTest do
     next = next_state(state, seen, call)
 
     seen.statuses == List.duplicate("completed", next.runs) and seen.prompts == next.prompts and
-      seen.runtime == {nil, nil}
+      seen.subagents == [] and seen.runtime == {nil, nil}
   end
 
   # --- commands -------------------------------------------------------------------
@@ -155,20 +158,48 @@ defmodule HalC2.ClaudeWakePropTest do
 
   # Claude opens a wake while the runtime is held, and the user's message is sent
   # before it is let go: the user's run comes first and the wake's queues behind it.
-  # `:ended` ends the wake before the user's turn starts.
+  # `:ended` ends the wake before the user's turn starts; `:ended_with_subagent` also
+  # has the wake launch a subagent in the background, which finishes once the user's
+  # turn has started.
   def take_over(n, how) do
     runs = run_count()
     pid = runtime_pid()
     :ok = :sys.suspend(pid)
     claude_says(assistant("m-wake-#{runs}", "The build passed"))
+    agent = "agent-wake-#{runs}"
+    if how == :ended_with_subagent, do: Enum.each(launch(agent), &claude_says/1)
 
-    if how == :ended,
+    if how in [:ended, :ended_with_subagent],
       do: claude_says(%{"type" => "result", "subtype" => "success", "is_error" => false})
 
     text = if how == :fold, do: "fold this in", else: "hello"
+    # The runtime receiving the turn's start is traced, to send after it.
+    if how == :ended_with_subagent, do: :erlang.trace(pid, true, [:receive])
     # The send starts its turn inline, on the held runtime.
     send_task = Task.async(fn -> send_message(n, text) end)
     await(fn -> run_count() == runs + 1 end)
+
+    if how == :ended_with_subagent do
+      # Behind the turn's start in the runtime's mailbox, ahead of Claude's answer.
+      receive do
+        {:trace, ^pid, :receive, {:"$gen_call", _, {:start_turn, _}}} -> :ok
+      after
+        @wait_ms -> raise "the turn never started"
+      end
+
+      :erlang.trace(pid, false, [:receive])
+      flush_traces(pid)
+
+      claude_says(%{
+        "type" => "system",
+        "subtype" => "task_notification",
+        "task_id" => "task-#{agent}",
+        "tool_use_id" => agent,
+        "status" => "completed",
+        "summary" => "Done"
+      })
+    end
+
     :ok = :sys.resume(pid)
     Task.await(send_task, @wait_ms)
     settled(runs + 2)
@@ -195,6 +226,8 @@ defmodule HalC2.ClaudeWakePropTest do
 
     %{
       statuses: current() |> StreamState.list("run") |> Enum.map(& &1["status"]),
+      subagents:
+        for(%{"status" => "running"} = sub <- StreamState.list(current(), "subagent"), do: sub),
       prompts: prompts(),
       runtime: runtime
     }
@@ -212,6 +245,46 @@ defmodule HalC2.ClaudeWakePropTest do
       "type" => "assistant",
       "message" => %{"id" => id, "content" => [%{"type" => "text", "text" => text}]}
     }
+
+  # Claude launching a subagent in the background, and registering its task.
+  defp launch(agent),
+    do: [
+      %{
+        "type" => "assistant",
+        "message" => %{
+          "id" => "m-#{agent}",
+          "content" => [
+            %{
+              "type" => "tool_use",
+              "id" => agent,
+              "name" => "Agent",
+              "input" => %{
+                "description" => "Check",
+                "prompt" => "Check",
+                "run_in_background" => true
+              }
+            }
+          ]
+        }
+      },
+      %{
+        "type" => "system",
+        "subtype" => "task_started",
+        "task_id" => "task-#{agent}",
+        "tool_use_id" => agent,
+        "description" => "Check",
+        "task_type" => "local_agent",
+        "is_backgrounded" => true
+      }
+    ]
+
+  defp flush_traces(pid) do
+    receive do
+      {:trace, ^pid, _, _} -> flush_traces(pid)
+    after
+      0 -> :ok
+    end
+  end
 
   defp claude_says(message) do
     pid = runtime_pid()

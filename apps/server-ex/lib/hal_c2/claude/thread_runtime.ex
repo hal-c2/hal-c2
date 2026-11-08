@@ -1812,21 +1812,14 @@ defmodule HalC2.Claude.ThreadRuntime do
     rate_limit(info, state)
   end
 
-  # Background work reports its progress and end after its turn is over.
+  # Background work reports its progress and end after its turn is over. A task whose
+  # start still waits with an ended wake for its run (`take_wake/2`) ends after that
+  # start, when the run replays it, rather than before this runtime knows it
+  # (Upstream #23561).
   defp message(%{"type" => "system", "subtype" => "task_notification"} = task, state) do
-    tool = state.tasks[task["task_id"]] || task["tool_use_id"]
-    status = Map.get(@task_status, task["status"], "failed")
-
-    state =
-      if state.work[tool],
-        do: end_work(state, tool, status, task["summary"], summary: true),
-        else: state
-
-    %{
-      state
-      | tasks: Map.delete(state.tasks, task["task_id"]),
-        finished_tasks: MapSet.put(Map.get(state, :finished_tasks, MapSet.new()), task["task_id"])
-    }
+    if buffered_task?(state.wake, task["task_id"]),
+      do: put_in(state.wake.buffer, [task | state.wake.buffer]),
+      else: task_notification(task, state)
   end
 
   # A task Claude started without telling this runtime (between turns, or before it
@@ -3227,6 +3220,33 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     {Enum.with_index(content, from), {id, from + length(content)}}
   end
+
+  # Claude says a task ended: its work ends with the task's summary.
+  defp task_notification(task, state) do
+    tool = state.tasks[task["task_id"]] || task["tool_use_id"]
+    status = Map.get(@task_status, task["status"], "failed")
+
+    state =
+      if state.work[tool],
+        do: end_work(state, tool, status, task["summary"], summary: true),
+        else: state
+
+    %{
+      state
+      | tasks: Map.delete(state.tasks, task["task_id"]),
+        finished_tasks: MapSet.put(Map.get(state, :finished_tasks, MapSet.new()), task["task_id"])
+    }
+  end
+
+  # The wake waiting for its run holds the task's start (`receive_message/2`).
+  defp buffered_task?(%{buffer: buffer}, task_id) when is_list(buffer) do
+    Enum.any?(
+      buffer,
+      &match?(%{"type" => "system", "subtype" => "task_started", "task_id" => ^task_id}, &1)
+    )
+  end
+
+  defp buffered_task?(_wake, _task_id), do: false
 
   # Claude registered a task for a tool call: a subagent's or a command's, which says
   # whether it runs in the background. Other tasks (a workflow, say) show as subagents.
