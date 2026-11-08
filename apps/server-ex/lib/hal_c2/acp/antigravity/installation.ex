@@ -26,6 +26,7 @@ defmodule HalC2.Acp.Antigravity.Installation do
   require Logger
 
   alias HalC2.Acp.Antigravity
+  alias HalC2.ProviderInstall
 
   @margin 256 * 1024 * 1024
 
@@ -136,14 +137,8 @@ defmodule HalC2.Acp.Antigravity.Installation do
   def handle_call(:state, _from, state), do: {:reply, state.state, state}
 
   # Watchers are `{pid, instance} => HalC2.Watchers` entry.
-  def handle_call({:subscribe, instance, pid, ref}, _from, state) do
-    key = {pid, instance}
-
-    watchers =
-      Map.put(state.watchers, key, HalC2.Watchers.add_entry(state.watchers[key], pid, ref))
-
-    {:reply, {:ok, state.state}, %{state | watchers: watchers}}
-  end
+  def handle_call({:subscribe, instance, pid, ref}, _from, state),
+    do: {:reply, {:ok, state.state}, ProviderInstall.subscribe(state, instance, pid, ref)}
 
   def handle_call({:start, _instance}, _from, %{op: %{}} = state),
     do: {:reply, {:ok, state.state}, state}
@@ -245,23 +240,8 @@ defmodule HalC2.Acp.Antigravity.Installation do
   end
 
   @impl true
-  def handle_cast({:unsubscribe, instance, pid, ref}, state) do
-    key = {pid, instance}
-
-    watchers =
-      case state.watchers do
-        %{^key => entry} ->
-          case HalC2.Watchers.remove_entry(entry, ref) do
-            nil -> Map.delete(state.watchers, key)
-            entry -> Map.put(state.watchers, key, entry)
-          end
-
-        _ ->
-          state.watchers
-      end
-
-    {:noreply, %{state | watchers: watchers}}
-  end
+  def handle_cast({:unsubscribe, instance, pid, ref}, state),
+    do: {:noreply, ProviderInstall.unsubscribe(state, instance, pid, ref)}
 
   @impl true
   def handle_info({:install_progress, op, patch}, %{op: %{id: op}} = state),
@@ -327,9 +307,8 @@ defmodule HalC2.Acp.Antigravity.Installation do
     {:noreply, %{state | seen: seen}}
   end
 
-  def handle_info({:DOWN, _ref, :process, pid, _}, state) do
-    {:noreply, %{state | watchers: Map.reject(state.watchers, &match?({{^pid, _}, _}, &1))}}
-  end
+  def handle_info({:DOWN, _ref, :process, pid, _}, state),
+    do: {:noreply, ProviderInstall.down(state, pid)}
 
   def handle_info(_message, state), do: {:noreply, state}
 
@@ -423,76 +402,36 @@ defmodule HalC2.Acp.Antigravity.Installation do
   end
 
   defp download(release, archive, report) do
-    fetch = Application.get_env(:hal_c2, :antigravity_fetch, &http_fetch/3)
-    # Monotonic time can be negative: start far enough back that the first call reports.
-    last = :atomics.new(1, [])
-    :atomics.put(last, 1, System.monotonic_time(:millisecond) - 1_000)
+    progress = &report.(%{"downloadedBytes" => &1})
 
-    progress = fn bytes ->
-      now = System.monotonic_time(:millisecond)
+    case Application.get_env(:hal_c2, :antigravity_fetch) do
+      nil ->
+        case ProviderInstall.fetch(release.url, archive, release.archive_bytes, progress) do
+          :ok ->
+            :ok
 
-      if bytes >= release.archive_bytes or now - :atomics.get(last, 1) > 250 do
-        :atomics.put(last, 1, now)
-        report.(%{"downloadedBytes" => min(bytes, release.archive_bytes)})
-      end
-    end
+          {:error, {:status, status}} ->
+            {:error, "The Antigravity download failed (HTTP #{status})."}
 
-    fetch.(release.url, archive, progress)
-  end
+          {:error, :stalled} ->
+            {:error, "The Antigravity download stalled. Try again."}
 
-  # Google's download, streamed to disk.
-  defp http_fetch(url, dest, progress) do
-    {:ok, file} = File.open(dest, [:write, :binary])
+          {:error, _} ->
+            {:error, "The Antigravity download failed. Check the connection and try again."}
+        end
 
-    try do
-      {:ok, ref} =
-        :httpc.request(:get, {String.to_charlist(url), []}, [timeout: :infinity], [
-          {:sync, false},
-          {:stream, :self}
-        ])
-
-      receive_body(ref, file, 0, progress)
-    after
-      File.close(file)
-    end
-  end
-
-  defp receive_body(ref, file, bytes, progress) do
-    receive do
-      {:http, {^ref, :stream_start, _headers}} ->
-        receive_body(ref, file, bytes, progress)
-
-      {:http, {^ref, :stream, chunk}} ->
-        IO.binwrite(file, chunk)
-        bytes = bytes + byte_size(chunk)
-        progress.(bytes)
-        receive_body(ref, file, bytes, progress)
-
-      {:http, {^ref, :stream_end, _headers}} ->
-        :ok
-
-      {:http, {^ref, {{_, status, _}, _headers, _body}}} ->
-        {:error, "The Antigravity download failed (HTTP #{status})."}
-
-      {:http, {^ref, {:error, _reason}}} ->
-        {:error, "The Antigravity download failed. Check the connection and try again."}
-    after
-      120_000 -> {:error, "The Antigravity download stalled. Try again."}
+      fetch ->
+        fetch.(release.url, archive, ProviderInstall.throttled(release.archive_bytes, progress))
     end
   end
 
   defp verify(archive, release) do
-    hash =
-      File.stream!(archive, 1024 * 1024)
-      |> Enum.reduce(:crypto.hash_init(:sha256), &:crypto.hash_update(&2, &1))
-      |> :crypto.hash_final()
-      |> Base.encode16(case: :lower)
-
-    if File.stat!(archive).size == release.archive_bytes and hash == release.sha256,
-      do: :ok,
-      else:
-        {:error,
-         "The Antigravity download failed its size or SHA-256 check. Nothing was installed."}
+    if File.stat!(archive).size == release.archive_bytes and
+         ProviderInstall.sha256(archive) == release.sha256,
+       do: :ok,
+       else:
+         {:error,
+          "The Antigravity download failed its size or SHA-256 check. Nothing was installed."}
   end
 
   defp extract(archive, dir, release) do
@@ -607,23 +546,7 @@ defmodule HalC2.Acp.Antigravity.Installation do
     end)
   end
 
-  defp publish(state, patch) do
-    state = %{state | state: Map.merge(state.state, patch)}
+  defp publish(state, patch), do: ProviderInstall.publish(state, patch)
 
-    for {{pid, instance}, entry} <- state.watchers,
-        do: HalC2.Watchers.tell(pid, entry, {:hal_c2_provider_install, instance, state.state})
-
-    state
-  end
-
-  defp error(instance, operation, detail) do
-    {:error,
-     %{
-       "_tag" => "ProviderSetupError",
-       "instanceId" => instance,
-       "operation" => operation,
-       "detail" => detail,
-       "message" => detail
-     }}
-  end
+  defp error(instance, operation, detail), do: ProviderInstall.error(instance, operation, detail)
 end

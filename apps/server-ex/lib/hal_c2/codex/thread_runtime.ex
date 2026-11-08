@@ -1149,11 +1149,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp connect(%{conn: nil} = state, %{ids: ids} = turn) do
     instance = Entities.instance(ids)
 
-    cmd =
-      HalC2.Settings.instance_command(
-        instance,
-        Application.get_env(:hal_c2, :codex_command, ["codex", "app-server"])
-      )
+    cmd = HalC2.Codex.Installation.command(instance)
 
     # The instance's variables in settings (such as CODEX_HOME) reach Codex, over the
     # home its settings name (`HalC2.Codex.Home`), and both over the project's

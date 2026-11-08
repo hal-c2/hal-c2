@@ -3,7 +3,8 @@ defmodule HalC2.Test.FakeHttp do
   A loopback HTTP service standing in for a provider's web API (Grok's billing,
   OpenCode Go's usage, an OpenCode server). `start/1` serves `routes`, a map from
   request path to `{status, json_body}` or to `fun.(conn) -> {status, json_body}`,
-  and returns its base URL; `requests/1` lists what it was asked.
+  and returns its base URL; `requests/1` lists what it was asked. A `fun` that
+  answers itself (a file's bytes, a body cut off) returns the sent `Plug.Conn`.
   """
   @behaviour Plug
 
@@ -47,15 +48,21 @@ defmodule HalC2.Test.FakeHttp do
       ]
     end)
 
-    {status, reply} =
+    reply =
       case routes[conn.request_path] do
         nil -> {404, %{"error" => "not found"}}
         fun when is_function(fun, 1) -> fun.(conn)
         {status, reply} -> {status, reply}
       end
 
-    conn
-    |> put_resp_content_type("application/json")
-    |> send_resp(status, JSON.encode!(reply))
+    case reply do
+      %Plug.Conn{} = sent ->
+        sent
+
+      {status, reply} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(status, JSON.encode!(reply))
+    end
   end
 end

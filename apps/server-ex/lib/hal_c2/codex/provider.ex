@@ -639,12 +639,7 @@ defmodule HalC2.Codex.Provider do
     end
   end
 
-  defp command(id),
-    do:
-      HalC2.Settings.instance_command(
-        id,
-        Application.get_env(:hal_c2, :codex_command, ["codex", "app-server"])
-      )
+  defp command(id), do: HalC2.Codex.Installation.command(id)
 
   # Read once per executable, so each instance's binary path has its own. A read that
   # missed its deadline is "unknown" until `:codex_version_retry_ms` (a minute) has

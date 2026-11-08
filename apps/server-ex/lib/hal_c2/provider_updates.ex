@@ -78,6 +78,14 @@ defmodule HalC2.ProviderUpdates do
     do: channel_latest(claude_channel(instance))
 
   defp latest_for("grok", path, _update, _instance) when is_binary(path), do: grok_latest(path)
+
+  # The MC's managed Codex follows the release the MC pins, and updates itself to it.
+  defp latest_for("codex", path, _update, _instance) when is_binary(path) do
+    if HalC2.Codex.Installation.managed?(path),
+      do: HalC2.Codex.Installation.release()[:version],
+      else: latest("codex")
+  end
+
   defp latest_for(driver, _path, _update, _instance), do: latest(driver)
 
   # The channel a native Claude install follows, from the `autoUpdatesChannel`
@@ -438,10 +446,16 @@ defmodule HalC2.ProviderUpdates do
   def executable(driver, instance)
 
   def executable(driver, instance) when driver in ["codex", "claudeAgent"] do
-    key = if driver == "codex", do: :codex_command, else: :claude_command
-    default = [if(driver == "codex", do: "codex", else: "claude")]
+    command =
+      if driver == "codex",
+        do: HalC2.Codex.Installation.command(instance),
+        else:
+          HalC2.Settings.instance_command(
+            instance,
+            Application.get_env(:hal_c2, :claude_command, ["claude"])
+          )
 
-    case HalC2.Settings.instance_command(instance, Application.get_env(:hal_c2, key, default)) do
+    case command do
       [command | _] -> System.find_executable(command)
       _ -> nil
     end

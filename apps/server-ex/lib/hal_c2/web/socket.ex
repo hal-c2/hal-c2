@@ -1810,8 +1810,11 @@ defmodule HalC2.Web.Socket do
 
   defp watch_spec({:provider_install, mc, instance}),
     do:
-      {{:provider_install, instance}, mc, HalC2.Acp.Antigravity.Installation, :subscribe,
-       :unsubscribe, [instance, self()]}
+      {{:provider_install, instance}, mc,
+       if(HalC2.Codex.Installation.instance?(instance),
+         do: HalC2.Codex.Installation,
+         else: HalC2.Acp.Antigravity.Installation
+       ), :subscribe, :unsubscribe, [instance, self()]}
 
   defp watch_spec({kind, mc} = shape) when is_map_key(@services, kind),
     do: {shape, mc, Map.fetch!(@services, kind), :subscribe, :unsubscribe, [self()]}
