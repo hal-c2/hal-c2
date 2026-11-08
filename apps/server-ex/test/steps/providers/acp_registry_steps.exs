@@ -1058,19 +1058,14 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
       {:ok, status, resp_headers}
     end
 
-    {:ok, bridge} =
-      HalC2.Mcp.Bridge.start_link(
-        endpoint: HalC2.Mcp.endpoint(),
-        authorization: HalC2.Mcp.server(thread(ctx), "acme").authorization,
-        post: post,
-        out: fn line -> Agent.update(lines, &[line | &1]) end
-      )
-
-    ExUnit.Callbacks.on_exit(fn ->
-      if Process.alive?(bridge), do: GenServer.stop(bridge)
-    end)
-
-    Map.merge(ctx, %{mcp_bridge: bridge, mcp_bridge_lines: lines})
+    Map.merge(ctx, %{
+      mcp_bridge_lines: lines,
+      mcp_bridge_run: {
+        HalC2.Mcp.endpoint(),
+        HalC2.Mcp.server(thread(ctx), "acme").authorization,
+        post
+      }
+    })
   end
 
   step ~r/^the agent sends a tool call whose arguments hold a (?:line|paragraph) separator \(U\+(?<code>2028|2029)\)$/,
@@ -1085,10 +1080,21 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
       ~s({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}) <>
         "\n" <> call <> "\n"
 
-    # Read as the bridge's stdio entry reads it: one line at a time.
+    # Read as the bridge's stdio entry reads it: one line at a time, through
+    # the same line loop the release runs.
     {:ok, io} = StringIO.open(raw)
-    io |> IO.stream(:line) |> Enum.each(&HalC2.Mcp.Bridge.line(context.mcp_bridge, &1))
-    HalC2.Mcp.Bridge.flush(context.mcp_bridge)
+    {endpoint, authorization, post} = context.mcp_bridge_run
+    lines = context.mcp_bridge_lines
+
+    :ok =
+      HalC2.Mcp.BridgeCli.run_bridge(
+        endpoint,
+        authorization,
+        IO.stream(io, :line),
+        fn line -> Agent.update(lines, &[line | &1]) end,
+        post: post
+      )
+
     context
   end
 
