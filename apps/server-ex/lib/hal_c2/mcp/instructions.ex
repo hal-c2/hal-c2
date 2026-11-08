@@ -21,7 +21,7 @@ defmodule HalC2.Mcp.Instructions do
 
   For browser work, first call `preview_status`. If no automation-capable preview is attached, call `preview_open` before concluding that the browser is unavailable. Then use `preview_navigate`, `preview_snapshot`, and the focused interaction tools. Prefer snapshot-provided locators over coordinates.
 
-  Do not switch to global browser skills, Chrome, Node REPL browser automation, standalone Playwright, or agent-browser merely because the preview is initially closed or a first call fails. Use an alternative browser system only when the HAL-C2 preview tools are absent, the user explicitly requests another browser, or `preview_open` returns an explicit unsupported/unavailable error. A failed HAL-C2 preview tool call should be inspected and retried with corrected arguments when the error is actionable.
+  Do not switch to global browser skills, Chrome, Node REPL browser automation, standalone Playwright, or agent-browser merely because the preview is initially closed or a first call fails: while the preview works it stays the default, and a failed HAL-C2 preview tool call should be inspected and retried with corrected arguments when the error is actionable. Use another browser only when the preview cannot do the job: when the user invokes a skill or written workflow that names another browser (report any missing prerequisite instead of silently falling back), when the HAL-C2 preview tools are absent or `preview_open` returns an explicit unsupported/unavailable error, or when the preview fails twice on the same step of an open tab, in which case quote the error and switch without asking.
   """
 
   @pull_request_linking """

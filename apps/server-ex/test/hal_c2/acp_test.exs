@@ -336,6 +336,17 @@ defmodule HalC2.AcpTest do
     assert %{"models" => [%{"slug" => "fresh"}]} = HalC2.Acp.entry("grok")
   end
 
+  # One macOS refuses (quarantine) dies before it answers: its connection may stop
+  # before `initialize` is sent, while it is written, or while it waits. Each of
+  # those is a closed connection, never an exit that leaves the read unpublished.
+  test "an agent that dies at once fails as closed", %{tmp_dir: dir} do
+    Application.put_env(:hal_c2, :acp_commands, %{"dying" => ["sh", "-c", "exit 137"]})
+    on_exit(fn -> Application.delete_env(:hal_c2, :acp_commands) end)
+
+    assert HalC2.Acp.with_agent("dying", dir, fn _conn, _init -> :answered end) ==
+             {:error, :closed}
+  end
+
   test "a read that was forgotten while it ran leaves no failure behind", %{tmp_dir: dir} do
     # The agent refuses `initialize` once the instance is forgotten.
     forgotten_mid_read(dir, """
@@ -554,6 +565,26 @@ defmodule HalC2.AcpTest do
 
     assert :persistent_term.get({HalC2.Acp, "gone", :generation}, :none) == :none
     assert :persistent_term.get({HalC2.Acp, "gone", :models}, :none) == :none
+  end
+
+  test "an instance's commands and skills are its own and are forgotten with it" do
+    HalC2.Acp.put_commands("opencode", [
+      %{"name" => "review", "description" => "Review"},
+      %{"name" => "$deploy", "description" => "Deploy"}
+    ])
+
+    on_exit(fn -> HalC2.Acp.forget("opencode") end)
+
+    assert :persistent_term.get({HalC2.Acp, "opencode", :commands}) ==
+             [%{"name" => "review", "description" => "Review"}]
+
+    assert [%{"name" => "deploy"}] = :persistent_term.get({HalC2.Acp, "opencode", :skills})
+    assert :persistent_term.get({HalC2.Acp, "grok", :commands}, :none) == :none
+
+    HalC2.Acp.forget("opencode")
+
+    assert :persistent_term.get({HalC2.Acp, "opencode", :commands}, :none) == :none
+    assert :persistent_term.get({HalC2.Acp, "opencode", :skills}, :none) == :none
   end
 
   # Other services broadcast `providers_changed` too. The read's own broadcast follows
