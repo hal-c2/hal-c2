@@ -20,6 +20,12 @@ const QString kMc = QStringLiteral("mc-a");
 const QString kThread = QStringLiteral("t1");
 const QString kPageA = QStringLiteral("http://localhost:3000/");
 const QString kPageB = QStringLiteral("http://localhost:3000/b");
+const QString kPageC = QStringLiteral("http://localhost:3000/c");
+
+QJsonObject phone() {
+  return {{QStringLiteral("_tag"), QStringLiteral("preset")}, {QStringLiteral("width"), 375}, {QStringLiteral("height"), 667},
+          {QStringLiteral("presetId"), QStringLiteral("iphone-se")}};
+}
 
 QJsonObject loadedAt(const QString& url) {
   return {{QStringLiteral("_tag"), QStringLiteral("Success")}, {QStringLiteral("url"), url}};
@@ -45,7 +51,8 @@ struct Fixture {
     mc.name = kMc;
     mc.onShape(QStringLiteral("preview"), [](int, const QJsonObject&) {});
     mc.onShape(QStringLiteral("localServers"), [](int, const QJsonObject&) {});
-    for (const QString& method : {QStringLiteral("preview.list"), QStringLiteral("preview.close"), QStringLiteral("preview.open")}) {
+    for (const QString& method : {QStringLiteral("preview.list"), QStringLiteral("preview.close"), QStringLiteral("preview.open"),
+                                  QStringLiteral("preview.resize"), QStringLiteral("preview.reportStatus")}) {
       mc.onRpc(method, [this, method](const FakeMc::Rpc& rpc) { held[method].append(rpc); });
     }
     client = std::make_unique<McClient>();
@@ -318,6 +325,125 @@ private slots:
     QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"), loadedAt(kPageA))}, 3)));
     QCOMPARE(loads.count(), 1);
     QCOMPARE(loads.constFirst().constFirst().toString(), kPageA);
+  }
+
+  // A tab the user closed while its size was on its way came back with the
+  // size's answer, read as the tab's latest snapshot.
+  void aSizeAnsweredWhileTheTabClosesLeavesItClosed() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"))}, 1)));
+    BrowserPage page;
+    page.setPreviews(f.previews.get());
+    page.setTabId(QStringLiteral("tab-1"));
+    page.setViewport(phone().toVariantMap());
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.resize")).isEmpty(); }));
+    f.previews->close(QStringLiteral("tab-1"));
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.close")).isEmpty(); }));
+    QJsonObject sized = tab(QStringLiteral("tab-1"));
+    sized.insert(QStringLiteral("viewport"), phone());
+    f.mc.reply(f.held[QStringLiteral("preview.resize")].takeFirst(), sized);
+    QVERIFY(f.barrier());
+    QCOMPARE(f.tabIds(), QStringList());
+  }
+
+  // A size the MC took stops waiting on the answer alone: the tab's `resized`
+  // event may never reach a client (one still listing drops it).
+  void aSizeTakenStopsWaitingOnTheAnswer() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"))}, 1)));
+    BrowserPage page;
+    page.setPreviews(f.previews.get());
+    page.setTabId(QStringLiteral("tab-1"));
+    page.setViewport(phone().toVariantMap());
+    QVERIFY(page.resizing());
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.resize")).isEmpty(); }));
+    QJsonObject sized = tab(QStringLiteral("tab-1"));
+    sized.insert(QStringLiteral("viewport"), phone());
+    f.mc.reply(f.held[QStringLiteral("preview.resize")].takeFirst(), sized);
+    QVERIFY(f.barrier());
+    QVERIFY(!page.resizing());
+    QCOMPARE(QJsonObject::fromVariantMap(page.viewport()), phone());
+  }
+
+  // The tab resized while the page's new address was on its way to the MC:
+  // the old address in the resized tab took the page back there.
+  void aResizedTabLeavesThePageWhereItWent() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"), loadedAt(kPageA))}, 1)));
+    BrowserPage page;
+    page.setPreviews(f.previews.get());
+    page.setTabId(QStringLiteral("tab-1"));
+    QSignalSpy loads(&page, &BrowserPage::loadRequested);
+    page.report(QStringLiteral("loaded"), kPageB, QString(), 0, QString(), true, false);
+    QJsonObject sized = tab(QStringLiteral("tab-1"), loadedAt(kPageA));
+    sized.insert(QStringLiteral("viewport"), phone());
+    f.emitEvent(QStringLiteral("resized"), QStringLiteral("tab-1"), 2, {{QStringLiteral("snapshot"), sized}});
+    QVERIFY(f.barrier());
+    QCOMPARE(loads.count(), 0);
+  }
+
+  // The MC said back the page's first address while a later one was on its
+  // way: the page took itself to be at the first, so when the MC never heard
+  // the later one the page stayed where the MC's tab is not.
+  void aPageTheMcDidNotHearFollowsItsTab() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"), loadedAt(kPageA))}, 1)));
+    BrowserPage page;
+    page.setPreviews(f.previews.get());
+    page.setTabId(QStringLiteral("tab-1"));
+    QSignalSpy loads(&page, &BrowserPage::loadRequested);
+    page.report(QStringLiteral("loaded"), kPageB, QString(), 0, QString(), true, false);
+    page.report(QStringLiteral("loaded"), kPageC, QString(), 0, QString(), true, false);
+    QVERIFY(QTest::qWaitFor([&f] { return f.held.value(QStringLiteral("preview.reportStatus")).size() == 2; }));
+    f.emitEvent(QStringLiteral("navigated"), QStringLiteral("tab-1"), 2, {{QStringLiteral("snapshot"), tab(QStringLiteral("tab-1"), loadedAt(kPageB))}});
+    f.mc.reply(f.held[QStringLiteral("preview.reportStatus")].takeFirst(), QJsonValue::Null);
+    f.mc.refuse(f.held[QStringLiteral("preview.reportStatus")].takeFirst(), QStringLiteral("no"));
+    QVERIFY(f.barrier());
+    QCOMPARE(loads.count(), 1);
+    QCOMPARE(loads.constFirst().constFirst().toString(), kPageB);
+  }
+
+  // The MC said back the page's second report from where its tab already was,
+  // which left that echo waiting: an agent taking the tab back there later
+  // was taken for it, and the page stayed put.
+  void aPageFollowsAnAgentToWhereItSaidItWas() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"), loadedAt(kPageA))}, 1)));
+    BrowserPage page;
+    page.setPreviews(f.previews.get());
+    page.setTabId(QStringLiteral("tab-1"));
+    QSignalSpy loads(&page, &BrowserPage::loadRequested);
+    const QJsonObject loadingB{{QStringLiteral("_tag"), QStringLiteral("Loading")}, {QStringLiteral("url"), kPageB}};
+    page.report(QStringLiteral("loading"), kPageB, QString(), 0, QString(), true, false);
+    f.emitEvent(QStringLiteral("navigated"), QStringLiteral("tab-1"), 2, {{QStringLiteral("snapshot"), tab(QStringLiteral("tab-1"), loadingB)}});
+    QVERIFY(f.barrier());
+    page.report(QStringLiteral("loaded"), kPageB, QString(), 0, QString(), true, false);
+    f.emitEvent(QStringLiteral("navigated"), QStringLiteral("tab-1"), 3, {{QStringLiteral("snapshot"), tab(QStringLiteral("tab-1"), loadedAt(kPageB))}});
+    f.emitEvent(QStringLiteral("navigated"), QStringLiteral("tab-1"), 4, {{QStringLiteral("snapshot"), tab(QStringLiteral("tab-1"), loadedAt(kPageC))}});
+    f.emitEvent(QStringLiteral("navigated"), QStringLiteral("tab-1"), 5, {{QStringLiteral("snapshot"), tab(QStringLiteral("tab-1"), loadedAt(kPageB))}});
+    QVERIFY(f.barrier());
+    QCOMPARE(loads.count(), 2);
+    QCOMPARE(loads.at(0).constFirst().toString(), kPageC);
+    QCOMPARE(loads.at(1).constFirst().toString(), kPageB);
+  }
+
+  // A tab the MC closed while the user's close of it was on its way came back
+  // when the MC refused that close.
+  void aTabTheMcClosedStaysClosedThoughTheUsersCloseIsRefused() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"))}, 1)));
+    f.previews->close(QStringLiteral("tab-1"));
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.close")).isEmpty(); }));
+    f.emitEvent(QStringLiteral("closed"), QStringLiteral("tab-1"), 2);
+    f.mc.refuse(f.held[QStringLiteral("preview.close")].takeFirst(), QStringLiteral("no such tab"));
+    QVERIFY(f.barrier());
+    QCOMPARE(f.tabIds(), QStringList());
   }
 };
 

@@ -459,6 +459,12 @@ struct Sut {
     }
     // The page reads its tab's row, and once every answer is in its view is
     // where the MC says (only embedded do pages show, and follow the MC).
+    // A page waits on a size only while the MC holds it.
+    if (page->resizing()) {
+      RC_ASSERT(std::any_of(held.cbegin(), held.cend(), [&](const Held& call) {
+        return call.rpc.method == QLatin1String("preview.resize") && call.rpc.payload.value(QLatin1String("tabId")).toString() == page->tabId();
+      }));
+    }
     if (model.embedded && !page->tabId().isEmpty()) {
       const auto row = std::find_if(now.cbegin(), now.cend(), [&](const Row& shown) { return shown.tabId == page->tabId(); });
       RC_ASSERT(page->exists() == (row != now.cend()));
@@ -510,9 +516,12 @@ struct SetPage : Step {
   void show(std::ostream& os) const override { os << "SetPage(" << tab.toStdString() << ")"; }
 };
 
-// The user picks a device size for the page: it shows at once, waiting on the MC.
+// The user picks a device size for the page (showing one of the thread's
+// tabs first if it shows none): it shows at once, waiting on the MC. The size
+// may be the one the tab has, which the MC answers without a change.
 struct PageResize : Step {
   int size = *rc::gen::inRange(0, 3);
+  int row = *rc::gen::inRange(0, 4);
   QJsonObject viewport() const {
     switch (size) {
     case 0:
@@ -526,7 +535,13 @@ struct PageResize : Step {
   }
   void apply(Model&) const override {}
   void act(const Model&, Sut& sut) const override {
-    if (!sut.page->exists()) return;
+    if (!sut.page->exists()) {
+      const QList<Row> rows = sut.rows();
+      if (rows.isEmpty()) return;
+      sut.page->setTabId(rows.at(row % int(rows.size())).tabId);
+      sut.viewUrl = sut.page->url();
+      if (!sut.page->exists()) return;
+    }
     sut.page->setViewport(viewport().toVariantMap());
     RC_ASSERT(sut.page->resizing());
     RC_ASSERT(QJsonObject::fromVariantMap(sut.page->viewport()) == viewport());
