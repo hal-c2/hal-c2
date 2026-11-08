@@ -507,30 +507,35 @@ defmodule HalC2.Claude.Provider do
   defp refresh_auth(key, id, path) do
     token = System.unique_integer([:positive, :monotonic])
 
-    if auth_claim(key, token) do
-      Task.start(fn ->
-        try do
-          result = run_auth_status(id, path)
-          previous = auth_lookup(key)
-          landed? = auth_land(key, token, result, System.monotonic_time(:millisecond))
-
-          # Announce only a landing that changes what the entry shows: a first
-          # signed-in read confirms the authenticated entry already served
-          # (unless it was shown unverified), and re-announcing it would make
-          # every provider check echo itself.
-          if landed? and elem(previous || {:unreadable, 0}, 0) != result and
-               not (result == :signed_in and previous == nil and
-                      not auth_unverified?(id, path)),
-             do: HalC2.Settings.notify_providers()
-        after
-          # A read that raised before landing gives its claim back, so the key
-          # is not stranded showing whatever it last read (or unknown).
-          auth_release(key, token)
-        end
-      end)
-    end
+    if auth_claim(key, token),
+      do: Task.start(fn -> land_auth_read(key, id, path, token) end)
 
     :ok
+  end
+
+  @doc false
+  # Reads the sign-in for a claimed key and lands it (or gives the claim
+  # back). Synchronous, so a test can drive a whole read without waiting on
+  # the background task `refresh_auth/3` starts.
+  def land_auth_read(key, id, path, token) do
+    try do
+      result = run_auth_status(id, path)
+      previous = auth_lookup(key)
+      landed? = auth_land(key, token, result, System.monotonic_time(:millisecond))
+
+      # Announce only a landing that changes what the entry shows: a first
+      # signed-in read confirms the authenticated entry already served
+      # (unless it was shown unverified), and re-announcing it would make
+      # every provider check echo itself.
+      if landed? and elem(previous || {:unreadable, 0}, 0) != result and
+           not (result == :signed_in and previous == nil and
+                  not auth_unverified?(id, path)),
+         do: HalC2.Settings.notify_providers()
+    after
+      # A read that raised before landing gives its claim back, so the key
+      # is not stranded showing whatever it last read (or unknown).
+      auth_release(key, token)
+    end
   end
 
   @doc """
