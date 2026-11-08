@@ -1599,6 +1599,8 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     assert fresh == false
     at = System.system_time(:millisecond) - 60_000
     :persistent_term.put({HalC2.Acp.Catalog, :index}, {at, agents, false})
+    # The failure itself is a minute old too, past the backoff a search honours.
+    :persistent_term.put({HalC2.Acp.Catalog, :fetch_failed_at}, at)
     Application.put_env(:hal_c2, :acp_registry_url, "#{ctx.acp.base}/registry.json")
     Map.put(ctx, :fetches_before, fetches(ctx))
   end
@@ -2162,6 +2164,36 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     publish_archive(context, id, bytes)
   end
 
+  step "the registry entry or archive for {string} links its command through another link to a file outside the install folder",
+       %{args: [id]} = context do
+    bytes =
+      tar_bytes(context, fn src ->
+        File.mkdir_p!(Path.join(src, "bin"))
+        File.mkdir_p!(Path.join(src, "lib"))
+        File.ln_s!("/bin/true", Path.join([src, "lib", "out"]))
+        File.ln_s!("../lib/out", Path.join([src, "bin", id]))
+      end)
+
+    publish_archive(context, id, bytes)
+  end
+
+  step "the archive for {string} links its command to a file inside its own folder",
+       %{args: [id]} = context do
+    ctx = Acp.serve_registry(context)
+    script = Acp.wrapper(ctx, Path.join([ctx.mc.home, "rel-src", id]), id)
+
+    bytes =
+      tar_bytes(ctx, fn src ->
+        File.mkdir_p!(Path.join(src, "bin"))
+        File.mkdir_p!(Path.join(src, "lib"))
+        File.cp!(script, Path.join([src, "lib", "real-#{id}"]))
+        File.chmod!(Path.join([src, "lib", "real-#{id}"]), 0o755)
+        File.ln_s!("../lib/real-#{id}", Path.join([src, "bin", id]))
+      end)
+
+    publish_archive(ctx, id, bytes)
+  end
+
   step "the registry entry or archive for {string} names a command that is not an executable file",
        %{args: [id]} = context do
     bytes = tar_bytes(context, fn src -> File.mkdir_p!(Path.join([src, "bin", id])) end)
@@ -2650,9 +2682,25 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     Map.put(ctx, :npm_before, length(manager_calls(ctx, "npm")))
   end
 
-  step "its command was since deleted or its package replaced by another version", context do
+  step "its command was since deleted", context do
     [exe] = Path.wildcard(Path.join([tools(context), "**", "npm", "bin", "*"]))
     File.rm!(exe)
+    context
+  end
+
+  step "its package was replaced by another version", context do
+    [manifest] =
+      Path.wildcard(
+        Path.join([tools(context), "**", "npm", "lib", "node_modules", "**", "package.json"])
+      )
+
+    manifest
+    |> File.read!()
+    |> JSON.decode!()
+    |> Map.put("version", "0.0.1")
+    |> JSON.encode!()
+    |> then(&File.write!(manifest, &1))
+
     context
   end
 
@@ -2666,8 +2714,15 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
 
   step "npm on the MC is set to install global packages into a folder the MC may not write",
        context do
+    previous = System.get_env("npm_config_prefix")
     System.put_env("npm_config_prefix", "/usr/lib/node_modules")
-    ExUnit.Callbacks.on_exit(fn -> System.delete_env("npm_config_prefix") end)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if previous,
+        do: System.put_env("npm_config_prefix", previous),
+        else: System.delete_env("npm_config_prefix")
+    end)
+
     context
   end
 

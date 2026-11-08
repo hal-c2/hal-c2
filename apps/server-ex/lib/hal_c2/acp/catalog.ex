@@ -22,6 +22,10 @@ defmodule HalC2.Acp.Catalog do
   @max_results 20
   @stale_ms 24 * 60 * 60 * 1000
   @search_stale_ms 5 * 60 * 1000
+  # After a failed fetch, searches serve the cached copy for this long instead
+  # of each queueing on the fetch lock and fetching again (under the minute the
+  # search-reuse scenario allows before a search tries again).
+  @failed_fetch_backoff_ms 30_000
   @install_timeout 20 * 60 * 1000
   @id ~r/^[a-z0-9][a-z0-9._-]{0,127}$/
   @version ~r/^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/
@@ -33,10 +37,15 @@ defmodule HalC2.Acp.Catalog do
     query = input["query"] |> to_string() |> String.trim() |> String.downcase()
 
     with {:ok, agents} <- index(:search) do
+      runners = %{
+        "npx" => System.find_executable("npm") != nil,
+        "uvx" => System.find_executable("uv") != nil
+      }
+
       found =
         for agent <- agents,
             dist = distribution(agent, "auto"),
-            runner_available?(dist),
+            runner_available?(dist, runners),
             rank = rank(agent, query),
             do: {rank, String.downcase(agent["name"]), agent, dist}
 
@@ -135,7 +144,14 @@ defmodule HalC2.Acp.Catalog do
       # The installed command's own folder leads its PATH, so helpers the
       # package installed beside it win over same-named commands elsewhere.
       rest = dist.env["PATH"] || System.get_env("PATH") || ""
-      env = Map.put(dist.env, "PATH", Enum.join([Path.dirname(exe), rest], ":"))
+
+      env =
+        Map.put(
+          dist.env,
+          "PATH",
+          Enum.join(Enum.reject([Path.dirname(exe), rest], &(&1 == "")), ":")
+        )
+
       {:ok, [exe | dist.args], Enum.to_list(env)}
     end
   end
@@ -200,8 +216,23 @@ defmodule HalC2.Acp.Catalog do
     age = System.system_time(:millisecond) - at
 
     case mode do
-      :search -> fresh and age >= 0 and age < @search_stale_ms
+      :search -> (fresh and age >= 0 and age < @search_stale_ms) or failed_recently?(at)
       _ -> age >= 0 and age < @stale_ms
+    end
+  end
+
+  # A fetch that failed a moment ago is not retried by every search that
+  # queued behind it: the cached copy it fell back to serves until the
+  # backoff passes. Only a failure recorded after this copy was fetched
+  # counts, so a stale record cannot hold a newer copy back.
+  defp failed_recently?(fetched_at) do
+    case :persistent_term.get({__MODULE__, :fetch_failed_at}, nil) do
+      failed_at when is_integer(failed_at) and failed_at >= fetched_at ->
+        age = System.system_time(:millisecond) - failed_at
+        age >= 0 and age < @failed_fetch_backoff_ms
+
+      _ ->
+        false
     end
   end
 
@@ -237,6 +268,7 @@ defmodule HalC2.Acp.Catalog do
     case fetch() do
       {:ok, text, agents} ->
         write_cache(text)
+        :persistent_term.erase({__MODULE__, :fetch_failed_at})
 
         :persistent_term.put(
           {__MODULE__, :index},
@@ -248,6 +280,7 @@ defmodule HalC2.Acp.Catalog do
       {:error, _} = error ->
         case cached do
           {at, agents, _} ->
+            :persistent_term.put({__MODULE__, :fetch_failed_at}, System.system_time(:millisecond))
             :persistent_term.put({__MODULE__, :index}, {at, agents, false})
             {:ok, agents}
 
@@ -335,7 +368,11 @@ defmodule HalC2.Acp.Catalog do
 
   # A package distribution the registry lists must pin the exact version to
   # install: `name@1.2.3` for npx, `name==1.2.3` (or `name@1.2.3`) for uvx.
-  @exact_version ~r/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/
+  # The whole spec must be that and nothing else: `pkg@https://…/pkg-1.2.3`,
+  # `pkg@git+https://…#1.2.3` and `pkg@npm:other@1.2.3` only end in a version.
+  @exact_version ~r/^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/
+  @package_name ~r/^[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[A-Za-z0-9._,-]+\])?$/
+  @scoped_name ~r/^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/
 
   defp pinned?(agent, kind) do
     case get_in(agent, ["distribution", kind]) do
@@ -346,7 +383,7 @@ defmodule HalC2.Acp.Catalog do
         not String.contains?(package, [" ", "^", "~", "*", ">", "<"]) and
           case kind do
             "npx" -> not String.contains?(package, "==") and at_pinned?(package)
-            "uvx" -> Regex.match?(~r/==\d/, package) or at_pinned?(package)
+            "uvx" -> eq_pinned?(package) or at_pinned?(package)
           end
 
       _ ->
@@ -356,10 +393,20 @@ defmodule HalC2.Acp.Catalog do
 
   defp at_pinned?(package) do
     case String.split(package, "@") do
-      [_] -> false
-      parts -> Regex.match?(@exact_version, List.last(parts))
+      [name, version] -> Regex.match?(@package_name, name) and exact_version?(version)
+      ["", scoped, version] -> Regex.match?(@scoped_name, scoped) and exact_version?(version)
+      _ -> false
     end
   end
+
+  defp eq_pinned?(package) do
+    case String.split(package, "==") do
+      [name, version] -> Regex.match?(@package_name, name) and exact_version?(version)
+      _ -> false
+    end
+  end
+
+  defp exact_version?(version), do: Regex.match?(@exact_version, version)
 
   defp registry(agents), do: Enum.filter(agents, &valid?/1)
 
@@ -483,9 +530,10 @@ defmodule HalC2.Acp.Catalog do
 
   # Search only offers agents this machine can run: a package agent whose
   # package manager is missing cannot be installed here.
-  defp runner_available?(%{kind: "npx"}), do: System.find_executable("npm") != nil
-  defp runner_available?(%{kind: "uvx"}), do: System.find_executable("uv") != nil
-  defp runner_available?(_dist), do: true
+  defp runner_available?(%{kind: kind}, runners) when kind in ["npx", "uvx"],
+    do: Map.fetch!(runners, kind)
+
+  defp runner_available?(_dist, _runners), do: true
 
   @doc "The registry's name for this machine, such as `darwin-aarch64`."
   def platform do
@@ -604,15 +652,28 @@ defmodule HalC2.Acp.Catalog do
     end
   end
 
-  defp resolved_inside?(exe, root) do
-    with {:ok, resolved} <- :file.read_link_all(to_charlist(exe)) do
-      resolved = Path.expand(to_string(resolved))
-      root = Path.expand(root)
-      (resolved == root or String.starts_with?(resolved, root <> "/")) and File.regular?(resolved)
-    else
-      _ -> false
+  # Follow the whole link chain, each target against its own link's folder:
+  # a relative target is not relative to the MC's cwd, and a first link that
+  # lands inside says nothing about where the next one goes.
+  defp resolved_inside?(exe, root), do: resolve_link(Path.expand(exe), Path.expand(root), 40)
+
+  defp resolve_link(path, root, hops) when hops >= 0 do
+    case File.lstat(path) do
+      {:ok, %File.Stat{type: :symlink}} ->
+        case File.read_link(path) do
+          {:ok, target} -> resolve_link(Path.expand(target, Path.dirname(path)), root, hops - 1)
+          _ -> false
+        end
+
+      {:ok, %File.Stat{type: :regular}} ->
+        path == root or String.starts_with?(path, root <> "/")
+
+      _ ->
+        false
     end
   end
+
+  defp resolve_link(_path, _root, _hops), do: false
 
   defp archive_error(message), do: error("archive_invalid", message)
 
@@ -880,21 +941,43 @@ defmodule HalC2.Acp.Catalog do
 
   # --- processes and HTTP ----------------------------------------------------------
 
+  # Unlinked and monitored, so the caller's exit trapping and mailbox are
+  # never touched, however the install ends.
   defp run(cmd, env) do
-    trapping = Process.flag(:trap_exit, true)
+    me = self()
+    ref = make_ref()
 
-    task =
-      Task.async(fn ->
-        Exile.stream(cmd, env: env, stderr: :redirect_to_stdout, ignore_epipe: true)
-        |> Enum.reduce({[], nil}, fn
-          {:exit, status}, {out, _} -> {out, status}
-          data, {out, status} when is_binary(data) -> {[out, data], status}
-          _, acc -> acc
-        end)
+    {pid, monitor} =
+      spawn_monitor(fn ->
+        result =
+          try do
+            Exile.stream(cmd, env: env, stderr: :redirect_to_stdout, ignore_epipe: true)
+            |> Enum.reduce({[], nil}, fn
+              {:exit, status}, {out, _} -> {out, status}
+              data, {out, status} when is_binary(data) -> {[out, data], status}
+              _, acc -> acc
+            end)
+          rescue
+            _ in Exile.Stream.AbnormalExit -> :abnormal
+          end
+
+        send(me, {ref, result})
       end)
 
-    result = Task.yield(task, @install_timeout) || Task.shutdown(task, :brutal_kill)
-    Process.flag(:trap_exit, trapping)
+    result =
+      receive do
+        {^ref, result} ->
+          Process.demonitor(monitor, [:flush])
+          {:ok, result}
+
+        {:DOWN, ^monitor, :process, _, _reason} ->
+          :exit
+      after
+        @install_timeout ->
+          Process.exit(pid, :kill)
+          Process.demonitor(monitor, [:flush])
+          :timeout
+      end
 
     case result do
       {:ok, {out, {:status, 0}}} ->
@@ -915,18 +998,12 @@ defmodule HalC2.Acp.Catalog do
           )
         end
 
-      {:ok, {_out, _other}} ->
-        error("install_failed", "Could not run ACP Registry install command '#{hd(cmd)}'.")
-
-      {:exit, _reason} ->
-        error("install_failed", "Could not run ACP Registry install command '#{hd(cmd)}'.")
-
-      nil ->
+      :timeout ->
         error("install_failed", "Timed out running ACP Registry install command '#{hd(cmd)}'.")
+
+      _ ->
+        error("install_failed", "Could not run ACP Registry install command '#{hd(cmd)}'.")
     end
-  rescue
-    _ in Exile.Stream.AbnormalExit ->
-      error("install_failed", "Could not run ACP Registry install command '#{hd(cmd)}'.")
   end
 
   defp get(url, timeout) do

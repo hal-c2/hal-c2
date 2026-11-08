@@ -726,7 +726,13 @@ Feature: ACP registry agents
       | holds a file path that leaves the install folder       | ACP Registry agent acme archive contains an unsafe path.                  |
       | does not hold the command the registry names           | ACP Registry archive for acme did not contain 'bin/acme'.                 |
       | links its command to a file outside the install folder | ACP Registry archive command resolves outside its installation directory. |
+      | links its command through another link to a file outside the install folder | ACP Registry archive command resolves outside its installation directory. |
       | names a command that is not an executable file         | ACP Registry archive command is not a regular executable file.            |
+
+  Scenario: An archive whose command links to a file beside it installs
+    Given the archive for "acme" links its command to a file inside its own folder
+    When the user installs "acme"
+    Then "acme" is installed
 
   @backlog
   Scenario: An unsafe command path is refused before anything is downloaded
@@ -2275,11 +2281,16 @@ Feature: ACP registry agents
       | acme-cli | acme-acp |
       | other    | acme     |
 
-  Scenario: A package agent whose installed files are gone or changed is installed again
+  Scenario Outline: A package agent whose installed files are gone or changed is installed again
     Given the package of "acme" was installed at the registry's version
-    And its command was since deleted or its package replaced by another version
+    And <change>
     When the MC prepares "acme"
     Then the package is installed again at the registry's exact version
+
+    Examples:
+      | change                                      |
+      | its command was since deleted               |
+      | its package was replaced by another version |
 
   Scenario: A package agent is installed the same way when npm's own global folder belongs to the system
     Given npm on the MC is set to install global packages into a folder the MC may not write
