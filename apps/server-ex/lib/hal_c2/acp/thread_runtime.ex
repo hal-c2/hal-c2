@@ -1471,7 +1471,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp check_model(state, driver, model) do
     case Antigravity.check_model(driver, model, state.options) do
-      :ok -> {:ok, state}
+      :ok -> offered(state, driver, model)
       {:error, message} -> {:error, message, state}
     end
   end
@@ -1679,9 +1679,48 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
-  # "Pi default" leaves the model to the user's own Pi settings.
+  # A registry agent's session lists the models its account may use: a model it does
+  # not offer, and the user did not add (`config.customModels`), is refused rather than
+  # skipped for the agent's own default (upstream #26623). The default alias, and an
+  # agent that lists no models, leave the choice to the agent.
+  defp offered(state, instance, model) do
+    offered = for %{"slug" => slug} <- state.options || [], do: slug
+
+    if HalC2.Acp.driver(instance) == "acpRegistry" and is_binary(model) and
+         model not in ["", "default"] and offered != [] and model not in offered and
+         not custom_model?(instance, model) do
+      {:error,
+       "the model #{model} is not available to this account. Pick another model and try again.",
+       state}
+    else
+      {:ok, state}
+    end
+  end
+
+  defp custom_model?(instance, model) do
+    case HalC2.Acp.entry(instance) do
+      %{"models" => models} when is_list(models) ->
+        Enum.any?(models, &(&1["isCustom"] == true and &1["slug"] == model))
+
+      _ ->
+        false
+    end
+  end
+
+  # "Pi default" leaves the model to the user's own Pi settings, and a registry agent's
+  # default to the agent when its session offers no model of that name.
   defp set_model(%{agent: agent} = state, "default") when agent != nil do
-    if HalC2.Acp.driver(agent) == "pi", do: state, else: set_model_now(state, "default")
+    case HalC2.Acp.driver(agent) do
+      "pi" ->
+        state
+
+      "acpRegistry" ->
+        offered = for %{"slug" => slug} <- state.options || [], do: slug
+        if offered == [] or "default" in offered, do: set_model_now(state, "default"), else: state
+
+      _ ->
+        set_model_now(state, "default")
+    end
   end
 
   defp set_model(state, model), do: set_model_now(state, model)

@@ -70,6 +70,17 @@ def crash(*_):
         os._exit(3)
 signal.signal(signal.SIGUSR1, crash)
 
+# SIGUSR2: the background agent of a held prompt finishes, and so does the prompt.
+def background_done(*_):
+    global held
+    if held:
+        pid, sid = held
+        held = None
+        log({"event": "background done"})
+        update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "bg-1", "status": "completed"})
+        finish(pid, sid, "background done")
+signal.signal(signal.SIGUSR2, background_done)
+
 def send(msg):
     msg["jsonrpc"] = "2.0"
     sys.stdout.write(json.dumps(msg) + "\n")
@@ -156,6 +167,12 @@ def prompt(pid, sid, text):
         os._exit(CONTROL.get("exitCode", 1))
     if "Return a JSON object" in text or "Return JSON with keys" in text:
         return finish(pid, sid, "Here it is: " + title_json(text))
+    # "start a background agent": one works on, holding the prompt until SIGUSR2.
+    if "start a background agent" in text and "<conversation_history>" not in text:
+        update(sid, {"sessionUpdate": "tool_call", "toolCallId": "bg-1", "title": "Background agent",
+                     "kind": "other", "status": "in_progress"})
+        held = (pid, sid)
+        return
     if "wait" in text:
         held = (pid, sid)
         return

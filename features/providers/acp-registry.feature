@@ -363,7 +363,7 @@ Feature: ACP registry agents
 
   # Upstream #26623: a saved model the session's account could not use was skipped silently, and
   # the turn ran on the agent's own default.
-  @backlog @priority-high
+  @priority-high
   Scenario: A chosen model the agent's session does not offer is refused
     Given the thread is set to the model "acme-pro"
     And "acme" offers only "acme-lite" to the signed-in account
@@ -478,7 +478,6 @@ Feature: ACP registry agents
     Then "acme-large" is offered with low and high reasoning
 
   # Upstream #19313: Cline accepts "cline-free/*" models it does not advertise.
-  @backlog
   Scenario: A turn on a registry agent's custom model reaches the agent
     Given "acme" does not advertise the model "acme-free/large"
     And the user added "acme-free/large" as a custom model
@@ -557,7 +556,7 @@ Feature: ACP registry agents
       | line separator (U+2028)      |
       | paragraph separator (U+2029) |
   # Upstream #26715: steering a Copilot thread interrupted its prompt and killed its background agents.
-  @backlog @priority-high
+  @priority-high
   Scenario: A follow-up to a Copilot thread waits for the prompt instead of interrupting it
     Given Copilot CLI runs over ACP and a Copilot background agent is still working in the thread
     When the user sends "After the background agent completes, reply FOLLOWUP_DONE."
@@ -2615,13 +2614,13 @@ Feature: ACP registry agents
     When the MC restarts
     Then "acme" is not shown as signed in until it is checked again
 
-  @backlog @priority-high
+  @priority-high
   Scenario: Signing in to one instance does not sign in another instance of the same agent
     Given two instances of "acme"
     When the user signs in to the first from HAL-C2
     Then the second is not shown as signed in
 
-  @backlog @priority-high
+  @priority-high
   Scenario: The record of a confirmed sign-in holds none of the instance's secrets
     Given an instance of "acme" with a secret environment variable
     When the user signs in to it from HAL-C2

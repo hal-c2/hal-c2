@@ -87,6 +87,17 @@ defmodule HalC2.Acp do
   end
 
   @doc """
+  Whether `instance` runs GitHub Copilot CLI from the registry. Cancelling its prompt
+  also kills the background agents it started (upstream #26715).
+  """
+  def copilot?(instance) do
+    case instance(instance) do
+      {@registry, entry} -> get_in(entry, ["config", "agentId"]) == "github-copilot-cli"
+      _ -> false
+    end
+  end
+
+  @doc """
   A driver setting of an instance: its own `config` value, else the driver's in
   `providers.<driver>`; blank strings count as unset.
   """

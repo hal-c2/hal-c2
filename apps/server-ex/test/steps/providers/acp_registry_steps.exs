@@ -3326,4 +3326,282 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
 
     context
   end
+
+  # --- one instance's sign-in --------------------------------------------------------
+
+  # The second instance runs its own fake ("acme-two"), with its own sign-in on disk.
+  step "two instances of {string}", %{args: ["acme"]} = context do
+    ctx = signed_out_acme(context, [@browser])
+    Acp.run_as(ctx, "acme-two", "acme-two")
+    Acp.control(ctx, "acme-two", %{"auth" => "file", "methods" => [@browser]})
+    Acp.add_registry_instance("acme-two", "acme")
+    assert Acp.check("acme-two")["auth"]["status"] == "unauthenticated"
+    ctx
+  end
+
+  step "the user signs in to the first from HAL-C2", context do
+    ctx = start_sign_in(context, "acme-login")
+    {state, ctx} = await_phase(ctx, "waiting")
+    ctx = respond(ctx, state["interaction"], %{"type" => "browser", "action" => "accept"})
+    {_, ctx} = await_phase(ctx, "succeeded")
+    assert Acp.check("acme")["auth"]["status"] == "authenticated"
+    ctx
+  end
+
+  step "the second is not shown as signed in", context do
+    assert Acp.provider("acme-two")["auth"]["status"] == "unauthenticated"
+    # Nor once it is checked: its own agent is still signed out.
+    assert Acp.check("acme-two")["auth"]["status"] == "unauthenticated"
+    context
+  end
+
+  @secret_key "sk-acme-0123456789-secret"
+
+  step "an instance of {string} with a secret environment variable",
+       %{args: ["acme"]} = context do
+    ctx = acme(context, %{"auth" => "env:ACME_API_KEY", "methods" => [@api_key]})
+
+    Acp.write_settings(ctx, fn settings ->
+      put_in(settings, ["providerInstances", "acme", "environment"], [
+        %{"name" => "ACME_API_KEY", "value" => @secret_key, "sensitive" => true}
+      ])
+    end)
+  end
+
+  step "the user signs in to it from HAL-C2", context do
+    ctx = start_sign_in(context, "acme-key")
+    {_, ctx} = await_phase(ctx, "succeeded")
+    assert %{"env" => %{"ACME_API_KEY" => @secret_key}} = List.last(Acp.launches(ctx, "acme"))
+    ctx
+  end
+
+  # The MC keeps no record of a sign-in: whether "acme" is signed in is asked of the
+  # agent. Only the secret store holds the value, where the instance's settings put it
+  # (the fake agents' own files are theirs, not the MC's).
+  step "what the MC keeps on disk about the sign-in does not contain the variable's value",
+       context do
+    assert Acp.check("acme")["auth"]["status"] == "authenticated"
+    secrets = Path.join(HalC2.Paths.data_dir(), "secrets")
+
+    holding =
+      for path <- Path.wildcard(Path.join(context.mc.home, "**"), match_dot: true),
+          File.regular?(path),
+          not String.starts_with?(path, secrets <> "/"),
+          not String.starts_with?(path, Acp.dir(context) <> "/"),
+          File.read!(path) =~ @secret_key,
+          do: Path.relative_to(path, context.mc.home)
+
+    assert holding == []
+    context
+  end
+
+  # --- models the account is not offered -----------------------------------------------
+
+  defp session_error_of(thread_id) do
+    thread_id
+    |> Acp.stream()
+    |> HalC2.StreamState.list("provider-session")
+    |> Enum.map(& &1["lastError"])
+    |> Enum.reject(&is_nil/1)
+    |> List.last()
+  end
+
+  # The user's own prompts to "acme", without title generation's.
+  defp user_prompts(ctx), do: user_prompts_of(ctx, "acme")
+
+  defp add_custom_model(ctx, slug) do
+    Acp.write_settings(
+      ctx,
+      &update_in(&1, ["providerInstances", "acme"], fn instance ->
+        config = instance["config"] || %{}
+        Map.put(instance, "config", Map.put(config, "customModels", [slug]))
+      end),
+      "ops"
+    )
+  end
+
+  defp refused?(thread_id, model) do
+    assert [%{"status" => "failed"}] = Acp.await_runs(thread_id, 1)
+    assert session_error_of(thread_id) =~ "the model #{model} is not available to this account"
+    true
+  end
+
+  step "the thread is set to the model {string}", %{args: [model]} = context do
+    Map.put(context, :pending_launch, %{instance: "acme", fields: %{"model" => model}})
+  end
+
+  step "{string} offers only {string} to the signed-in account",
+       %{args: [_, model]} = context do
+    acme(context, %{"models" => [[model, "Lite"]]})
+  end
+
+  step "the turn does not start and the thread says {string} is not available",
+       %{args: [model]} = context do
+    assert refused?(thread(context), model)
+    assert user_prompts(context) == []
+
+    refute Enum.any?(
+             Acp.requests(context, "acme", "session/set_config_option"),
+             &(&1["params"]["value"] == model)
+           )
+
+    context
+  end
+
+  step "a thread on the agent's default model still runs on whatever the agent picks",
+       context do
+    ctx = Acp.launch(context, "Default", "acme", "which model")
+    assert [%{"status" => "completed"}] = Acp.await_runs(ctx.threads["Default"], 1)
+    assert Acp.assistant_text(ctx.threads["Default"]) =~ "model: acme-lite"
+    ctx
+  end
+
+  step "{string} does not advertise the model {string}", %{args: [_, model]} = context do
+    ctx = acme(context)
+    refute Enum.any?(Acp.check("acme")["models"], &(&1["slug"] == model))
+    ctx
+  end
+
+  step "the user added {string} as a custom model", %{args: [slug]} = context do
+    add_custom_model(context, slug)
+  end
+
+  step "the user sends a message with {string}", %{args: [model]} = context do
+    run_on_acme(context, "which model", model: model)
+  end
+
+  step "the session opens and {string} is asked to use {string}",
+       %{args: [_, model]} = context do
+    assert [%{"status" => "completed"}] = Acp.await_runs(thread(context), 1)
+    assert Acp.assistant_text(thread(context)) =~ "model: #{model}"
+
+    assert %{"params" => %{"configId" => "model", "value" => ^model}} =
+             List.last(Acp.requests(context, "acme", "session/set_config_option"))
+
+    context
+  end
+
+  step "a model id that is neither advertised nor added is still refused", context do
+    ctx = Acp.launch(context, "Other", "acme", "hello", model: "acme-free/other")
+    assert refused?(ctx.threads["Other"], "acme-free/other")
+    ctx
+  end
+
+  # --- Copilot ------------------------------------------------------------------------
+
+  # The registry instance "copilot" (GitHub Copilot CLI), run as the fake agent "copilot".
+  defp copilot(ctx, control \\ %{}) do
+    ctx = ctx |> ops() |> Acp.serve_registry()
+    ctx = Acp.publish(ctx, [Acp.acme_agent(ctx), Acp.acme_agent(ctx, id: "github-copilot-cli")])
+    Acp.run_as(ctx, "copilot", "copilot")
+    Acp.control(ctx, "copilot", control)
+    Acp.add_registry_instance("copilot", "github-copilot-cli")
+    ctx
+  end
+
+  # The id of the thread's running run, once one runs.
+  defp running?(thread_id) do
+    Acp.await_stream(thread_id, fn state ->
+      Enum.find_value(
+        HalC2.StreamState.list(state, "run"),
+        &(&1["status"] == "running" && &1["id"])
+      )
+    end)
+  end
+
+  defp user_prompts_of(ctx, name) do
+    for %{"params" => %{"prompt" => prompt}} <- Acp.requests(ctx, name, "session/prompt"),
+        not Enum.any?(prompt, &((&1["text"] || "") =~ "Return a JSON object")),
+        do: prompt
+  end
+
+  step "Copilot CLI runs over ACP and a Copilot background agent is still working in the thread",
+       context do
+    ctx = context |> copilot() |> Acp.launch("Copilot", "copilot", "start a background agent")
+    ctx = Map.merge(ctx, %{thread: "Copilot", send_message: &send_auto/2})
+    running?(thread(ctx))
+
+    Acp.await_stream(thread(ctx), fn _ -> Acp.requests(ctx, "copilot", "session/prompt") != [] end)
+
+    ctx
+  end
+
+  # As the composer sends it: the MC picks how the message goes. The shared step
+  # "the user sends {string}" calls this through `context.send_message`.
+  defp send_auto(context, text) do
+    message = "msg-#{System.unique_integer([:positive])}"
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => thread(context),
+        "messageId" => message,
+        "text" => text,
+        "attachments" => [],
+        "deliveryIntent" => "auto",
+        "dispatchMode" => %{"type" => "start_immediately"}
+      })
+
+    Map.put(context, :followup, text)
+  end
+
+  step "the message waits in the thread's queue and the background agent keeps running",
+       context do
+    Acp.await_stream(thread(context), fn state ->
+      Enum.any?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "queued"))
+    end)
+
+    assert Acp.requests(context, "copilot", "session/cancel") == []
+    assert length(Acp.launches(context, "copilot")) == 1
+    assert [_] = user_prompts_of(context, "copilot")
+    context
+  end
+
+  step "the message is sent once Copilot's current prompt finishes", context do
+    [%{"pid" => pid}] = Acp.launches(context, "copilot")
+    {_, 0} = System.cmd("kill", ["-USR2", "#{pid}"])
+
+    assert [%{"status" => "completed"}, %{"status" => "completed"}] =
+             Acp.await_runs(thread(context), 2)
+
+    assert [_, followup] = user_prompts_of(context, "copilot")
+    assert Enum.any?(followup, &((&1["text"] || "") =~ context.followup))
+    assert Acp.requests(context, "copilot", "session/cancel") == []
+    context
+  end
+
+  step "Stop still stops the turn, while a restart from an agent's send is refused as not supported",
+       context do
+    Acp.follow_up(context, context.thread, "wait")
+    active = running?(thread(context))
+
+    assert {:error, refusal} =
+             HalC2.Orchestration.dispatch(%{
+               "type" => "message.dispatch",
+               "commandId" => "cmd-#{System.unique_integer([:positive])}",
+               "threadId" => thread(context),
+               "messageId" => "msg-#{System.unique_integer([:positive])}",
+               "text" => "start over",
+               "attachments" => [],
+               "dispatchMode" => %{"type" => "restart_active", "targetRunId" => active},
+               "createdBy" => "agent",
+               "creationSource" => "mcp"
+             })
+
+    assert refusal =~ "cannot redirect an active run"
+    assert Acp.requests(context, "copilot", "session/cancel") == []
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => thread(context)
+      })
+
+    assert [_, _, %{"status" => status}] = Acp.await_runs(thread(context), 3)
+    assert status in ["interrupted", "cancelled"]
+    assert [_] = Acp.requests(context, "copilot", "session/cancel")
+    context
+  end
 end
