@@ -11,7 +11,15 @@ defmodule HalC2.PreviewAutomation do
   one browser, or else to the host showing — failing that, with a live page
   for — the tab asked about, then the most capable, focused, most recently
   focused host. A host that holds only a browser snapshot is never offered to
-  a new session. The tab a session last touched is its current tab.
+  a new session. The tab a session last touched is its current tab; a status
+  or snapshot with neither reads the thread's tab its host is showing.
+
+  Hosts also report the tabs a person is using and their browser profiles. A
+  session changes a tab only if it opened it, or no agent did and no person is
+  using it; reads always go ahead, and an open naming no tab whose current tab
+  it may not change opens a new one. An open names a profile by name or id,
+  matched across every host's profiles and sent to a host that has it; without
+  one the new tab opens in the host's default profile.
 
   A tab an agent session's `open` created is that session's to close
   (`tab_ownership/2`): one that was not in `HalC2.Preview` before the open and
@@ -58,6 +66,17 @@ defmodule HalC2.PreviewAutomation do
     :exit, {:noproc, _} -> :not_agent
   end
 
+  @doc """
+  For each of `tabs`, as `scope` sees it: `owner` (as `tab_ownership/2`),
+  `in_use` (`"person"` when a host reports a person using it, `"agent"` while
+  an agent's action on it runs, else nil) and `shown` (a host shows it).
+  """
+  def tab_states(scope, tabs) do
+    GenServer.call(__MODULE__, {:tab_states, scope, tabs})
+  catch
+    :exit, {:noproc, _} -> Map.new(tabs, &{&1, %{owner: :not_agent, in_use: nil, shown: false}})
+  end
+
   @doc "Forgets that `scope` opened `tab_id`, as when it closed the tab."
   def forget_tab(scope, tab_id), do: GenServer.cast(__MODULE__, {:forget_tab, scope, tab_id})
 
@@ -85,6 +104,21 @@ defmodule HalC2.PreviewAutomation do
 
       "PreviewAutomationUnsupportedClientError" ->
         "Preview automation client #{client} does not support #{op}."
+
+      "PreviewAutomationTabOtherAgentError" ->
+        "Preview tab #{error["tabId"]} belongs to another agent session; open your own tab with preview_open."
+
+      "PreviewAutomationTabInUseError" ->
+        "A person is in control of preview tab #{error["tabId"]}; wait until they stop, or open your own tab with preview_open."
+
+      "PreviewAutomationUnknownProfileError" ->
+        case error["profiles"] do
+          [] ->
+            "There is no browser profile named \"#{error["profile"]}\": no desktop reports its browser profiles."
+
+          names ->
+            "There is no browser profile named \"#{error["profile"]}\". Use one of: #{Enum.join(names, ", ")}."
+        end
 
       "PreviewAutomationTabNotFoundError" ->
         if error["tabId"],
@@ -149,7 +183,10 @@ defmodule HalC2.PreviewAutomation do
       focus_order: focus_seq,
       visible_tabs: MapSet.new(host["visibleTabIds"] || []),
       live_tabs: MapSet.new(host["liveTabIds"] || []),
-      snapshot_only: host["snapshotOnly"] == true
+      snapshot_only: host["snapshotOnly"] == true,
+      controlled_tabs: MapSet.new(host["controlledTabIds"] || []),
+      profiles: profiles(host["browserProfiles"]) || [],
+      default_profile: host["defaultBrowserProfileId"]
     }
 
     send(pid, {:hal_c2_preview_automation, node(), client_id, connected(connection_id)})
@@ -162,23 +199,62 @@ defmodule HalC2.PreviewAutomation do
     key = {scope.thread_id, scope.instance}
     assigned = live_assignment(state, key)
 
+    current =
+      case assigned do
+        {_, _, %{tab_id: tab}} -> tab
+        _ -> nil
+      end
+
+    {current, input} = own_open(state, key, operation, opts[:tab_id], current, input)
+
+    with :ok <- may_act(state, key, operation, opts[:tab_id] || current),
+         {:ok, input, profile} <- named_profile(state, scope, operation, input) do
+      dispatch(state, scope, {key, assigned, current}, operation, input, profile, opts, from)
+    else
+      {:error, error} -> {:reply, {:error, error}, state}
+    end
+  end
+
+  def handle_call({:tab_states, scope, tabs}, _from, state) do
+    key = {scope.thread_id, scope.instance}
+    clients = Map.values(state.clients)
+    running = MapSet.new(Map.values(state.pending), &pending_tab(state, &1))
+
+    states =
+      Map.new(tabs, fn tab ->
+        in_use =
+          cond do
+            Enum.any?(clients, &MapSet.member?(tab_set(&1, :controlled_tabs), tab)) -> "person"
+            MapSet.member?(running, tab) -> "agent"
+            true -> nil
+          end
+
+        {tab,
+         %{
+           owner: ownership(state, key, tab),
+           in_use: in_use,
+           shown: Enum.any?(clients, &MapSet.member?(tab_set(&1, :visible_tabs), tab))
+         }}
+      end)
+
+    {:reply, states, state}
+  end
+
+  def handle_call({:tab_ownership, scope, tab_id}, _from, state),
+    do: {:reply, ownership(state, {scope.thread_id, scope.instance}, tab_id), state}
+
+  defp dispatch(state, scope, {key, assigned, tab}, operation, input, profile, opts, from) do
     host =
       case assigned do
         {client_id, client, _tab} ->
-          if MapSet.member?(client.operations, operation), do: {client_id, client}
+          cond do
+            not MapSet.member?(client.operations, operation) -> nil
+            offers?(client, profile) -> {client_id, client}
+            true -> route(state, operation, profile, opts)
+          end
 
         nil ->
-          state.clients
-          |> Enum.filter(fn {_id, client} ->
-            MapSet.member?(client.operations, operation) and
-              Map.get(client, :snapshot_only) != true
-          end)
-          |> Enum.max_by(
-            fn {_id, c} ->
-              {tab_tier(c, opts[:tab_id]), MapSet.size(c.operations), c.focused, c.focus_order}
-            end,
-            fn -> nil end
-          )
+          route(state, operation, profile, opts)
       end
 
     case host do
@@ -191,15 +267,10 @@ defmodule HalC2.PreviewAutomation do
          }}
 
       {client_id, client} ->
-        tab =
-          case assigned do
-            {_, _, %{tab_id: tab}} -> tab
-            _ -> nil
-          end
-
         timeout = opts[:timeout_ms] || @default_timeout
         request_id = "preview-#{state.seq}"
-        tab_id = opts[:tab_id] || tab
+        tab_id = opts[:tab_id] || tab || shown_tab(client, scope.thread_id, operation)
+        input = with_default_profile(input, client, operation, profile)
 
         context =
           %{
@@ -241,6 +312,7 @@ defmodule HalC2.PreviewAutomation do
           key: key,
           seq: state.seq,
           explicit_tab: opts[:tab_id],
+          tab: tab_id,
           tabs_before: tabs_before,
           update_tab: Keyword.get(opts, :update_current_tab, true),
           timer: Process.send_after(self(), {:timeout, request_id}, timeout)
@@ -261,19 +333,6 @@ defmodule HalC2.PreviewAutomation do
              seq: state.seq + 1
          }}
     end
-  end
-
-  def handle_call({:tab_ownership, scope, tab_id}, _from, state) do
-    key = {scope.thread_id, scope.instance}
-
-    ownership =
-      case state.owners[tab_id] do
-        nil -> :not_agent
-        ^key -> :own
-        _ -> :other_agent
-      end
-
-    {:reply, ownership, state}
   end
 
   @impl true
@@ -300,8 +359,13 @@ defmodule HalC2.PreviewAutomation do
           client
           | focused: focused,
             focus_order: if(focused, do: focus_seq, else: client.focus_order),
-            visible_tabs: tab_set(host, "visibleTabIds", Map.get(client, :visible_tabs)),
-            live_tabs: tab_set(host, "liveTabIds", Map.get(client, :live_tabs)),
+            visible_tabs: reported(host, "visibleTabIds", Map.get(client, :visible_tabs)),
+            live_tabs: reported(host, "liveTabIds", Map.get(client, :live_tabs)),
+            controlled_tabs:
+              reported(host, "controlledTabIds", Map.get(client, :controlled_tabs)),
+            profiles: profiles(host["browserProfiles"]) || Map.get(client, :profiles, []),
+            default_profile:
+              Map.get(host, "defaultBrowserProfileId", Map.get(client, :default_profile)),
             snapshot_only:
               if(is_boolean(host["snapshotOnly"]),
                 do: host["snapshotOnly"],
@@ -422,6 +486,140 @@ defmodule HalC2.PreviewAutomation do
     end
   end
 
+  # The host a session with no live assignment goes to: one that can do
+  # `operation` and has the named profile, never a snapshot-only one, best
+  # serving the tab asked about, then the most capable, focused, latest.
+  defp route(state, operation, profile, opts) do
+    state.clients
+    |> Enum.filter(fn {_id, client} ->
+      MapSet.member?(client.operations, operation) and
+        Map.get(client, :snapshot_only) != true and offers?(client, profile)
+    end)
+    |> Enum.max_by(
+      fn {_id, c} ->
+        {tab_tier(c, opts[:tab_id]), MapSet.size(c.operations), c.focused, c.focus_order}
+      end,
+      fn -> nil end
+    )
+  end
+
+  defp offers?(_client, nil), do: true
+
+  defp offers?(client, profile),
+    do: Enum.any?(Map.get(client, :profiles, []), &(&1["id"] == profile))
+
+  # Changing a tab is refused when another agent session opened it, or when it
+  # is not this session's and a person is using it. Reads always go ahead.
+  @reads ~w(status snapshot waitFor recordingStart recordingStop)
+
+  defp may_act(_state, _key, operation, _tab) when operation in @reads, do: :ok
+  defp may_act(_state, _key, _operation, nil), do: :ok
+
+  defp may_act(state, {thread, instance} = key, operation, tab) do
+    fields = %{
+      "operation" => operation,
+      "threadId" => thread,
+      "providerInstanceId" => instance,
+      "tabId" => tab
+    }
+
+    case ownership(state, key, tab) do
+      :own ->
+        :ok
+
+      :other_agent ->
+        {:error, tagged("PreviewAutomationTabOtherAgentError", fields)}
+
+      :not_agent ->
+        if Enum.any?(
+             Map.values(state.clients),
+             &MapSet.member?(tab_set(&1, :controlled_tabs), tab)
+           ),
+           do: {:error, tagged("PreviewAutomationTabInUseError", fields)},
+           else: :ok
+    end
+  end
+
+  # An open naming no tab, whose current tab this session may not change (a
+  # read made it current), opens a new tab rather than being refused.
+  defp own_open(state, key, "open", nil, current, input) when is_binary(current) do
+    case may_act(state, key, "open", current) do
+      :ok -> {current, input}
+      {:error, _} -> {nil, Map.put(input, "reuseExistingTab", false)}
+    end
+  end
+
+  defp own_open(_state, _key, _operation, _tab, current, input), do: {current, input}
+
+  defp ownership(state, key, tab) do
+    case state.owners[tab] do
+      nil -> :not_agent
+      ^key -> :own
+      _ -> :other_agent
+    end
+  end
+
+  # An open naming a browser profile, by id or name in any case, among those
+  # the hosts report: the input carries its id. Any other is refused.
+  defp named_profile(state, scope, "open", %{"profile" => name} = input) when is_binary(name) do
+    profiles =
+      state.clients
+      |> Map.values()
+      |> Enum.flat_map(&Map.get(&1, :profiles, []))
+      |> Enum.uniq_by(& &1["id"])
+
+    wanted = String.downcase(name)
+
+    case Enum.find(profiles, &(String.downcase(&1["id"]) == wanted)) ||
+           Enum.find(profiles, &(String.downcase(&1["name"]) == wanted)) do
+      %{"id" => id} ->
+        {:ok, input |> Map.delete("profile") |> Map.put("profileId", id), id}
+
+      nil ->
+        {:error,
+         tagged("PreviewAutomationUnknownProfileError", %{
+           "operation" => "open",
+           "threadId" => scope.thread_id,
+           "providerInstanceId" => scope.instance,
+           "profile" => name,
+           "profiles" => Enum.map(profiles, & &1["name"])
+         })}
+    end
+  end
+
+  defp named_profile(_state, _scope, _operation, input),
+    do: {:ok, Map.delete(input, "profile"), nil}
+
+  # An open naming no profile opens a new tab in the host's default one.
+  defp with_default_profile(input, client, "open", nil) do
+    case Map.get(client, :default_profile) do
+      nil -> input
+      id -> Map.put(input, "profileId", id)
+    end
+  end
+
+  defp with_default_profile(input, _client, _operation, _profile), do: input
+
+  # A read with no tab of its own reads the thread's tab the host is showing.
+  defp shown_tab(client, thread, operation) when operation in ~w(status snapshot) do
+    visible = tab_set(client, :visible_tabs)
+
+    with false <- MapSet.size(visible) == 0,
+         {:ok, tabs} <- thread_tabs(thread) do
+      visible |> MapSet.intersection(tabs) |> Enum.min(fn -> nil end)
+    else
+      _ -> nil
+    end
+  end
+
+  defp shown_tab(_client, _thread, _operation), do: nil
+
+  defp pending_tab(state, pending),
+    do: Map.get(pending, :tab) || get_in(state.assignments, [pending.key, :tab_id])
+
+  # A host's tab set, empty for one registered by older code.
+  defp tab_set(client, key), do: Map.get(client, key) || MapSet.new()
+
   # The tab a result names (or the explicit tab) becomes the session's current tab,
   # unless a later request already moved it.
   defp track_tab(state, %{update_tab: false}, _result), do: state
@@ -450,7 +648,9 @@ defmodule HalC2.PreviewAutomation do
   # tabs before, present after. Reusing a tab someone else opened never makes
   # it the agent's to close. Two sessions of a thread opening at once can both
   # see the new tab that way, when the desktop serves the second on the tab the
-  # first made; the first reply, the one that made it, keeps it. The thread's
+  # first made; the first reply, the one that made it, keeps it. That holds
+  # because PreviewAutomationHost queues an open that reuses a tab behind the
+  # open that made it, and answers them in that order. The thread's
   # owners of tabs since closed go too. Without a tab list, nothing changes.
   defp claim_tab(state, %{tabs_before: {:ok, before}} = pending, %{"tabId" => tab})
        when is_binary(tab) do
@@ -501,9 +701,14 @@ defmodule HalC2.PreviewAutomation do
     end
   end
 
-  defp tab_set(host, key, current) do
+  defp reported(host, key, current) do
     if is_list(host[key]), do: MapSet.new(host[key]), else: current || MapSet.new()
   end
+
+  defp profiles(list) when is_list(list),
+    do: for(%{"id" => id, "name" => name} = p <- list, is_binary(id) and is_binary(name), do: p)
+
+  defp profiles(_), do: nil
 
   @passthrough ~w(PreviewAutomationRecordingDesktopUpdateRequiredError PreviewAutomationRecordingTooLargeError PreviewAutomationRecordingDeadlineExpiredError PreviewAutomationRecordingTransferError PreviewAutomationNoAvailableHostError PreviewAutomationUnsupportedClientError PreviewAutomationTabNotFoundError PreviewAutomationTimeoutError PreviewAutomationNavigationTimeoutError PreviewAutomationControlInterruptedError PreviewAutomationInvalidSelectorError PreviewAutomationTargetNotEditableError PreviewAutomationResultTooLargeError)
 

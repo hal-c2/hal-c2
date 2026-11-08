@@ -20,6 +20,13 @@ defmodule HalC2.PreviewAutomationPropTest do
   whose opens both go out before either is answered; the desktop makes a tab
   for the first and serves the second on it, its current tab. The tab is the
   first session's, and the second's is the other agent's.
+
+  Hosts also report the tabs a person is using and whether they offer the
+  "Work" browser profile. A click on a named tab goes ahead when the session
+  opened it, or when no agent did and no person is using it; it is refused
+  as the other agent's tab or as in use otherwise. An open in the "Work"
+  profile goes to the best host offering it, carrying its id, and is refused
+  when no host reports it.
   """
 
   use ExUnit.Case, async: false
@@ -77,13 +84,24 @@ defmodule HalC2.PreviewAutomationPropTest do
   end
 
   defp host(order),
-    do: %{focused: false, order: order, visible: [], live: [], snapshot: false}
+    do: %{
+      focused: false,
+      order: order,
+      visible: [],
+      live: [],
+      snapshot: false,
+      controlled: [],
+      work: false
+    }
 
   def command(state) do
     frequency(
       [
-        {4, {:call, __MODULE__, :report, [oneof(@hosts), bool(), tabs(), tabs(), snapshot()]}},
+        {4,
+         {:call, __MODULE__, :report,
+          [oneof(@hosts), bool(), tabs(), tabs(), snapshot(), list(any_tab(state)), bool()]}},
         {4, {:call, __MODULE__, :session, [state.next, maybe_tab(), state.made]}},
+        {1, {:call, __MODULE__, :profiled, [state.next, state.made]}},
         {1, {:call, __MODULE__, :race, [state.next, state.made]}},
         {1, {:call, __MODULE__, :reconnect, [oneof(@hosts)]}},
         {2, {:call, __MODULE__, :ownership, [session_slot(state), any_tab(state)]}}
@@ -92,10 +110,13 @@ defmodule HalC2.PreviewAutomationPropTest do
           do: [],
           else: [
             {3, {:call, __MODULE__, :reopen, [started(state), state.made]}},
+            {3, {:call, __MODULE__, :act, [started(state), any_tab(state)]}},
             {2, {:call, __MODULE__, :forget, [session_slot(state), any_tab(state)]}}
           ]
         ) ++
-        case for {slot, %{host: h}} <- state.sessions, h != nil, do: slot do
+        case for {slot, %{host: h, current: t}} <- state.sessions,
+                 h != nil and refusal(state, slot, t) == nil,
+                 do: slot do
           [] -> []
           hosted -> [{1, {:call, __MODULE__, :evict, [oneof(hosted)]}}]
         end
@@ -114,18 +135,30 @@ defmodule HalC2.PreviewAutomationPropTest do
   def precondition(state, {:call, _, :session, [slot, _, made]}),
     do: slot == state.next and made == state.made
 
+  def precondition(state, {:call, _, :profiled, [slot, made]}),
+    do: slot == state.next and made == state.made
+
+  def precondition(state, {:call, _, :act, [slot, _tab]}), do: slot < state.next
+
   def precondition(state, {:call, _, :race, [slot, made]}),
     do: slot == state.next and made == state.made
 
   def precondition(state, {:call, _, :reopen, [slot, made]}),
     do: slot < state.next and made == state.made
 
+  # Its click goes to its current tab, which it must be allowed to change.
   def precondition(state, {:call, _, :evict, [slot]}),
-    do: state.sessions[slot][:host] != nil
+    do:
+      state.sessions[slot][:host] != nil and
+        refusal(state, slot, state.sessions[slot].current) == nil
 
   def precondition(_state, _call), do: true
 
-  def next_state(state, _result, {:call, _, :report, [id, focused, visible, live, snapshot]}) do
+  def next_state(
+        state,
+        _result,
+        {:call, _, :report, [id, focused, visible, live, snapshot, controlled, work]}
+      ) do
     order = if focused, do: state.order + 1, else: state.order
     old = state.hosts[id]
 
@@ -135,25 +168,57 @@ defmodule HalC2.PreviewAutomationPropTest do
         order: if(focused, do: order, else: old.order),
         visible: Enum.uniq(visible),
         live: Enum.uniq(live),
-        snapshot: snapshot
+        snapshot: snapshot,
+        controlled: Enum.uniq(controlled),
+        work: work
     }
 
     %{state | order: order, hosts: Map.put(state.hosts, id, updated)}
   end
 
-  def next_state(state, _result, {:call, _, :session, [slot, tab, _made]}),
-    do: state |> Map.put(:next, slot + 1) |> opened(slot, expected_host(state, tab), tab)
+  def next_state(state, _result, {:call, _, :session, [slot, tab, _made]}) do
+    state = Map.put(state, :next, slot + 1)
+
+    if refusal(state, slot, tab),
+      do: opened(state, slot, nil, nil),
+      else: opened(state, slot, expected_host(state, tab), tab)
+  end
 
   # The first session's open makes the tab; the second one's assignment is not
   # modelled, as nothing later asks for it.
   def next_state(state, _result, {:call, _, :race, [slot, _made]}),
     do: state |> Map.put(:next, slot + 1) |> opened(slot, expected_host(state, nil), nil)
 
+  def next_state(state, _result, {:call, _, :profiled, [slot, _made]}) do
+    state = Map.put(state, :next, slot + 1)
+
+    case expected_profiled(state) do
+      {id, _profile} -> opened(state, slot, id, nil)
+      _ -> opened(state, slot, nil, nil)
+    end
+  end
+
+  # A click that goes ahead makes its tab the session's current one, on the
+  # host it reached.
+  def next_state(state, _result, {:call, _, :act, [slot, tab]}) do
+    case expected_act(state, slot, tab) do
+      id when id in @hosts ->
+        %{state | sessions: Map.put(state.sessions, slot, %{host: id, current: tab})}
+
+      _ ->
+        state
+    end
+  end
+
   # With a live host, its current tab is reused; without one it routes afresh.
+  # (A current tab the session may not change gives way to a new one.)
   def next_state(state, _result, {:call, _, :reopen, [slot, _made]}) do
     case state.sessions[slot] do
-      %{host: id, current: current} when id != nil -> opened(state, slot, id, current)
-      _ -> opened(state, slot, expected_host(state, nil), nil)
+      %{host: id, current: current} when id != nil ->
+        opened(state, slot, id, if(refusal(state, slot, current), do: nil, else: current))
+
+      _ ->
+        opened(state, slot, expected_host(state, nil), nil)
     end
   end
 
@@ -202,10 +267,51 @@ defmodule HalC2.PreviewAutomationPropTest do
     %{state | order: order, sessions: sessions, hosts: Map.put(state.hosts, id, host(order))}
   end
 
+  # A click by `slot` on `tab`: its host's id, or the error it is refused with.
+  defp expected_act(state, slot, tab),
+    do: refusal(state, slot, tab) || acting_host(state, slot, tab)
+
+  # Why `slot` may not change `tab`, or nil when it may.
+  defp refusal(_state, _slot, nil), do: nil
+
+  defp refusal(state, slot, tab) do
+    cond do
+      state.owners[tab] == slot ->
+        nil
+
+      state.owners[tab] != nil ->
+        "PreviewAutomationTabOtherAgentError"
+
+      Enum.any?(state.hosts, fn {_, h} -> tab in h.controlled end) ->
+        "PreviewAutomationTabInUseError"
+
+      true ->
+        nil
+    end
+  end
+
+  defp acting_host(state, slot, tab),
+    do:
+      state.sessions[slot][:host] || expected_host(state, tab) ||
+        "PreviewAutomationNoAvailableHostError"
+
+  # A fresh open in "Work": the host offering it and the id the request
+  # carries, nil with none able to take it, or refused when no host reports it.
+  defp expected_profiled(state) do
+    if Enum.any?(state.hosts, fn {_, h} -> h.work end) do
+      case expected_host(state, nil, & &1.work) do
+        nil -> nil
+        id -> {id, "work"}
+      end
+    else
+      "PreviewAutomationUnknownProfileError"
+    end
+  end
+
   # The host a fresh session asking about `tab` should reach.
-  defp expected_host(state, tab) do
+  defp expected_host(state, tab, offers \\ fn _ -> true end) do
     state.hosts
-    |> Enum.reject(fn {_id, h} -> h.snapshot end)
+    |> Enum.reject(fn {_id, h} -> h.snapshot or not offers.(h) end)
     |> Enum.max_by(
       fn {_id, h} -> {tier(h, tab), h.focused, h.order} end,
       fn -> nil end
@@ -226,8 +332,14 @@ defmodule HalC2.PreviewAutomationPropTest do
     end
   end
 
-  def postcondition(state, {:call, _, :session, [_slot, tab, _made]}, result),
-    do: result == expected_host(state, tab)
+  def postcondition(state, {:call, _, :session, [slot, tab, _made]}, result),
+    do: result == (refusal(state, slot, tab) || expected_host(state, tab))
+
+  def postcondition(state, {:call, _, :profiled, _}, result),
+    do: result == expected_profiled(state)
+
+  def postcondition(state, {:call, _, :act, [slot, tab]}, result),
+    do: result == expected_act(state, slot, tab)
 
   def postcondition(state, {:call, _, :race, _}, result) do
     case expected_host(state, nil) do
@@ -257,7 +369,7 @@ defmodule HalC2.PreviewAutomationPropTest do
 
   # --- calls -----------------------------------------------------------------
 
-  def report(id, focused, visible, live, snapshot) do
+  def report(id, focused, visible, live, snapshot, controlled, work) do
     PreviewAutomation.focus_host(%{
       "clientId" => id,
       "environmentId" => "env",
@@ -265,7 +377,10 @@ defmodule HalC2.PreviewAutomationPropTest do
       "focused" => focused,
       "visibleTabIds" => Enum.uniq(visible),
       "liveTabIds" => Enum.uniq(live),
-      "snapshotOnly" => snapshot
+      "snapshotOnly" => snapshot,
+      "controlledTabIds" => controlled |> Enum.map(&real/1) |> Enum.uniq(),
+      "browserProfiles" =>
+        if(work, do: [%{"id" => "work", "name" => "Work", "kind" => "persistent"}], else: [])
     })
 
     :ok
@@ -278,14 +393,53 @@ defmodule HalC2.PreviewAutomationPropTest do
   # An open in a session that already acted, naming no tab.
   def reopen(slot, made), do: open(slot, [], made)
 
-  # Answered by whichever desktop got it as the desktop does: the tab the
-  # request names, else a new tab of the thread, recorded as `{:made, made}`.
-  defp open(slot, opts, made) do
-    task = Task.async(fn -> PreviewAutomation.invoke(scope(slot), "open", %{}, opts) end)
+  # A fresh session's open in the profile "Work", named in another case: the
+  # host's id and the profile id its request carried, nil when no host would
+  # take it, or the error it is refused with.
+  def profiled(slot, made) do
+    case open(slot, [], made, %{"profile" => "WORK"}) do
+      id when id in @hosts -> {id, Process.get(:last_input)["profileId"]}
+      other -> other
+    end
+  end
+
+  # A session's click on `tab` by its id: the host that carried it out, or the
+  # error it was refused with.
+  def act(slot, tab) do
+    # The process dictionary holds the made tabs, so resolve before the task.
+    opts = [tab_id: real(tab)]
+    task = Task.async(fn -> PreviewAutomation.invoke(scope(slot), "click", %{}, opts) end)
 
     receive do
       {:hal_c2_preview_automation, _, id,
        %{"type" => "request", "connectionId" => connection, "request" => request}} ->
+        PreviewAutomation.respond(%{
+          "clientId" => id,
+          "connectionId" => connection,
+          "requestId" => request["requestId"],
+          "ok" => true,
+          "result" => %{"tabId" => request["tabId"]}
+        })
+
+        {:ok, _} = Task.await(task)
+        id
+
+      {ref, {:error, %{"_tag" => tag}}} when ref == task.ref ->
+        Process.demonitor(ref, [:flush])
+        tag
+    end
+  end
+
+  # Answered by whichever desktop got it as the desktop does: the tab the
+  # request names, else a new tab of the thread, recorded as `{:made, made}`.
+  defp open(slot, opts, made, input \\ %{}) do
+    task = Task.async(fn -> PreviewAutomation.invoke(scope(slot), "open", input, opts) end)
+
+    receive do
+      {:hal_c2_preview_automation, _, id,
+       %{"type" => "request", "connectionId" => connection, "request" => request}} ->
+        Process.put(:last_input, request["input"])
+
         tab =
           request["tabId"] ||
             then(HalC2.Preview.open(%{"threadId" => scope(slot).thread_id}), fn {:ok, s} ->
@@ -304,10 +458,10 @@ defmodule HalC2.PreviewAutomationPropTest do
         {:ok, _} = Task.await(task)
         id
 
-      {ref, {:error, _}} when ref == task.ref ->
-        # No request was sent: the call answered at once with no host.
+      {ref, {:error, error}} when ref == task.ref ->
+        # No request was sent: the call answered at once, with no host or refused.
         Process.demonitor(ref, [:flush])
-        nil
+        if error["_tag"] == "PreviewAutomationNoAvailableHostError", do: nil, else: error["_tag"]
     end
   end
 

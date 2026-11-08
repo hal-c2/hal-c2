@@ -272,7 +272,7 @@ Feature: Agents drive the preview browser
         | CSS selector | preview_click with an invalid CSS selector   | how to write a CSS selector or use a locator instead                    |
 
     # Upstream #16956: agents saw only the tabs they opened, so "what is on this page?" failed.
-    @backlog @mc
+    @mc
     Scenario: An agent sees every browser tab of its thread and who has each
       Given the thread has a tab the user opened, a tab this agent opened and a tab another agent session opened
       When the agent asks for the preview status
@@ -306,19 +306,19 @@ Feature: Agents drive the preview browser
       When the agent in "Docs" lists its browser tabs
       Then "Checkout" is not listed
 
-    @backlog @mc
+    @mc
     Scenario: An agent reads the user's tab while the user is using it
       Given the user is typing in a tab the user opened
       When an agent takes a snapshot of that tab by its id
       Then the tool returns the page without waiting for the user's input to finish
 
-    @backlog @mc
+    @mc
     Scenario: An agent with no tab of its own reads the one the user is looking at
       Given the agent has opened no tab and the user is looking at "http://localhost:5173/cart"
       When the agent takes a snapshot without naming a tab
       Then the tool returns "http://localhost:5173/cart"
 
-    @backlog @mc
+    @mc
     Scenario Outline: An agent acts on a tab it did not open only while no one else has it
       Given a tab <tab>
       When an agent clicks on that tab by its id
@@ -365,13 +365,13 @@ Feature: Agents drive the preview browser
       When an agent asks to close "Checkout"
       Then the agent is told the tab belongs to another agent session
 
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario: An agent's new tab opens in the user's default browser profile
       Given the desktop reports the profiles "Default" and "Work", with "Work" the default
       When an agent opens a preview without naming a profile
       Then the tab opens in the profile "Work"
 
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario Outline: An agent can name the profile a new tab opens in
       Given the desktop reports the profiles "Default" and "Work"
       When an agent opens a preview in the profile "<named>"
@@ -383,7 +383,7 @@ Feature: Agents drive the preview browser
         | personal | the tool fails and lists "Default" and "Work" as the profiles to use |
 
     # Upstream #21745: the MC kept only the last client's profiles, so other clients' profiles vanished.
-    @backlog @mc
+    @mc
     Scenario: Browser profiles reported by several clients are all offered to agents
       Given one desktop reports the profiles "Default" and "Work"
       And another desktop connected to the same MC reports only "Default"

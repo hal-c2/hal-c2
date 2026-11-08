@@ -1219,6 +1219,239 @@ defmodule HalC2.Steps.Preview.Automation do
     context
   end
 
+  # --- who has a tab --------------------------------------------------------------------------
+
+  # A person using a tab is what its desktop reports in `controlledTabIds`.
+  step ~r/^a tab (?<who>the user opened and is not using|the user opened and is using|another agent session opened)$/,
+       %{args: [who]} = context do
+    case who do
+      "another agent session opened" ->
+        context |> connect_desktop("desktop-1") |> other_agent_tab()
+
+      "the user opened and is using" ->
+        context = context |> connect_desktop("desktop-1") |> user_tab(@page)
+        report_tabs(context, "desktop-1", %{"controlledTabIds" => [context.tab]})
+
+      "the user opened and is not using" ->
+        context |> connect_desktop("desktop-1") |> user_tab(@page)
+    end
+  end
+
+  step "an agent clicks on that tab by its id", context do
+    act(context, "click a button", %{"tabId" => context.tab})
+  end
+
+  step "the click happens", context do
+    tab = context.tab
+    assert {:ok, %{"done" => "click"}} = context.result
+    assert [{"desktop-1", %{"tabId" => ^tab}}] = requests(context, "click")
+    context
+  end
+
+  step "the tool fails saying a person is in control of the tab", context do
+    assert {:error, "PreviewAutomationTabInUseError", message} = context.result
+    assert message =~ "A person is in control of preview tab #{context.tab}"
+    assert requests(context, "click") == []
+    context
+  end
+
+  step "the tool fails saying the tab belongs to another agent", context do
+    assert {:error, "PreviewAutomationTabOtherAgentError", message} = context.result
+    assert message =~ "belongs to another agent session"
+    assert requests(context, "click") == []
+    context
+  end
+
+  step "the user is typing in a tab the user opened", context do
+    context = context |> connect_desktop("desktop-1") |> user_tab(@page)
+    report_tabs(context, "desktop-1", %{"controlledTabIds" => [context.tab]})
+  end
+
+  step "an agent takes a snapshot of that tab by its id", context do
+    tool(context, "preview_snapshot", %{"tabId" => context.tab})
+  end
+
+  # The read went straight to the desktop: nothing waits on the person.
+  step "the tool returns the page without waiting for the user's input to finish", context do
+    tab = context.tab
+    assert {:ok, _metadata, [_url | _]} = context.result
+    assert [{"desktop-1", %{"tabId" => ^tab}}] = requests(context, "snapshot")
+    context
+  end
+
+  # The desktop answers a snapshot of the shown tab with the user's page, and
+  # anything else with no tab.
+  step "the agent has opened no tab and the user is looking at {string}",
+       %{args: [url]} = context do
+    context = context |> connect_desktop("desktop-1") |> user_tab(url)
+    tab = context.tab
+    context = report_tabs(context, "desktop-1", %{"visibleTabIds" => [tab]})
+
+    answer(context, "snapshot", fn
+      %{"tabId" => ^tab}, context ->
+        {:ok, Map.merge(page(context), %{"tabId" => tab, "url" => url})}
+
+      request, _context ->
+        {:error,
+         %{"_tag" => "PreviewAutomationTabNotFoundError", "operation" => request["operation"]}}
+    end)
+  end
+
+  step "the tool returns {string}", %{args: [url]} = context do
+    assert {:ok, _metadata, [address | _]} = context.result
+    assert JSON.decode!(address["text"]) == %{"url" => url}
+    context
+  end
+
+  # One tab each: the user's (in use), this session's (shown) and another
+  # session's.
+  step "the thread has a tab the user opened, a tab this agent opened and a tab another agent session opened",
+       context do
+    context = context |> connect_desktop("desktop-1") |> user_tab(@page)
+    user = context.tab
+
+    context =
+      context
+      |> desktop_makes_tabs()
+      |> tool("preview_open", %{"url" => @page, "reuseExistingTab" => false})
+
+    assert {:ok, %{"tabId" => mine}} = context.result
+    context = other_agent_tab(context)
+    other = context.tab
+
+    context
+    |> report_tabs("desktop-1", %{"controlledTabIds" => [user], "visibleTabIds" => [mine]})
+    |> Map.put(:tabs, %{user: user, mine: mine, other: other})
+  end
+
+  step "the agent asks for the preview status", context do
+    tool(context, "preview_status", %{})
+  end
+
+  step "every tab is listed with whether a person, an agent or nobody has it, whether it is this agent's, whether it is shown and its profile",
+       context do
+    assert {:ok, %{"tabs" => tabs}} = context.result
+
+    listed =
+      Map.new(tabs, &{&1["tabId"], Map.take(&1, ~w(openedBy mine inUseBy shown profileId))})
+
+    %{user: user, mine: mine, other: other} = context.tabs
+
+    assert listed == %{
+             user => %{
+               "openedBy" => "user",
+               "mine" => false,
+               "inUseBy" => "person",
+               "shown" => false,
+               "profileId" => "default"
+             },
+             mine => %{
+               "openedBy" => "agent",
+               "mine" => true,
+               "inUseBy" => nil,
+               "shown" => true,
+               "profileId" => "default"
+             },
+             other => %{
+               "openedBy" => "agent",
+               "mine" => false,
+               "inUseBy" => nil,
+               "shown" => false,
+               "profileId" => "default"
+             }
+           }
+
+    context
+  end
+
+  # --- browser profiles ------------------------------------------------------------------------
+
+  step "the desktop reports the profiles {string} and {string}, with {string} the default",
+       %{args: [a, b, default]} = context do
+    context |> agent_thread() |> report_profiles("desktop-1", [a, b], default)
+  end
+
+  step "the desktop reports the profiles {string} and {string}", %{args: [a, b]} = context do
+    context |> agent_thread() |> report_profiles("desktop-1", [a, b])
+  end
+
+  step "one desktop reports the profiles {string} and {string}", %{args: [a, b]} = context do
+    context |> agent_thread() |> report_profiles("desktop-1", [a, b])
+  end
+
+  # Focused, so without the profile it is where a new session would go.
+  step "another desktop connected to the same MC reports only {string}",
+       %{args: [name]} = context do
+    context |> report_profiles("desktop-2", [name]) |> focus("desktop-2")
+  end
+
+  step "an agent opens a preview without naming a profile", context do
+    context |> desktop_makes_tabs() |> tool("preview_open", %{"url" => @page})
+  end
+
+  step "an agent opens a preview in the profile {string}", %{args: [named]} = context do
+    context |> desktop_makes_tabs() |> tool("preview_open", %{"url" => @page, "profile" => named})
+  end
+
+  step "the tab opens in the profile {string}", %{args: [name]} = context do
+    id = profile_id(name)
+    assert {:ok, %{"tabId" => tab}} = context.result
+    assert [{"desktop-1", %{"input" => %{"profileId" => ^id}}}] = requests(context, "open")
+    {:ok, listed} = HalC2.Preview.list(%{"threadId" => caller(context).thread_id})
+    assert [%{"profileId" => ^id}] = Enum.filter(listed["sessions"], &(&1["tabId"] == tab))
+    context
+  end
+
+  step "the tool fails and lists {string} and {string} as the profiles to use",
+       %{args: [a, b]} = context do
+    assert {:error, "PreviewAutomationUnknownProfileError", message} = context.result
+    assert message =~ "Use one of: #{a}, #{b}."
+    assert requests(context, "open") == []
+    context
+  end
+
+  defp report_profiles(context, name, names, default \\ nil) do
+    profiles = for n <- names, do: %{"id" => profile_id(n), "name" => n, "kind" => "persistent"}
+    fields = %{"browserProfiles" => profiles}
+
+    fields =
+      if default,
+        do: Map.put(fields, "defaultBrowserProfileId", profile_id(default)),
+        else: fields
+
+    context |> connect_desktop(name) |> report_tabs(name, fields)
+  end
+
+  defp profile_id(name), do: String.downcase(name)
+
+  # A tab the user opened on the agent's thread, as `context.tab`.
+  defp user_tab(context, url) do
+    context = if context[:agent_thread], do: context, else: agent_thread(context)
+
+    {tab, context} =
+      World.call!(context, "preview.open", %{
+        "threadId" => caller(context).thread_id,
+        "url" => url
+      })
+
+    Map.put(context, :tab, tab["tabId"])
+  end
+
+  # A tab the same thread's session under another provider instance opened, as `context.tab`.
+  defp other_agent_tab(context) do
+    context = if context[:agent_thread], do: context, else: agent_thread(context)
+
+    context =
+      context
+      |> desktop_makes_tabs()
+      |> Map.put(:agent_instance, "claude")
+      |> tool("preview_open", %{"url" => @page, "reuseExistingTab" => false})
+      |> Map.delete(:agent_instance)
+
+    assert {:ok, %{"tabId" => tab}} = context.result
+    Map.put(context, :tab, tab)
+  end
+
   # --- desktops --------------------------------------------------------------------------------
 
   defp services do
@@ -1275,12 +1508,13 @@ defmodule HalC2.Steps.Preview.Automation do
   # one), else a new tab of the thread made with `preview.open`.
   defp desktop_makes_tabs(context) do
     answer(context, "open", fn request, _context ->
+      open =
+        %{"threadId" => request["threadId"], "url" => @page}
+        |> Map.merge(Map.take(request["input"] || %{}, ["profileId"]))
+
       tab =
         request["tabId"] ||
-          then(
-            HalC2.Preview.open(%{"threadId" => request["threadId"], "url" => @page}),
-            fn {:ok, snapshot} -> snapshot["tabId"] end
-          )
+          then(HalC2.Preview.open(open), fn {:ok, snapshot} -> snapshot["tabId"] end)
 
       {:ok, %{"tabId" => tab, "done" => "open"}}
     end)

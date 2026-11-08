@@ -255,6 +255,103 @@ defmodule HalC2.PreviewAutomationTest do
     assert HalC2.PreviewAutomation.tab_ownership(other, tab) == :other_agent
   end
 
+  defp report(client_id, connection_id, fields) do
+    HalC2.PreviewAutomation.focus_host(
+      Map.merge(fields, %{
+        "clientId" => client_id,
+        "environmentId" => "env",
+        "connectionId" => connection_id,
+        "focused" => true
+      })
+    )
+  end
+
+  test "a tab a person is using or another session opened is read, never changed" do
+    start_supervised!(HalC2.Preview)
+    connection_id = host("desk")
+    other = %{@caller | instance: "claude"}
+    {:ok, %{"tabId" => user_tab}} = HalC2.Preview.open(%{"threadId" => "th-1"})
+    report("desk", connection_id, %{"controlledTabIds" => [user_tab]})
+
+    assert {:error, %{"_tag" => "PreviewAutomationTabInUseError", "tabId" => ^user_tab}} =
+             HalC2.PreviewAutomation.invoke(@caller, "click", %{}, tab_id: user_tab)
+
+    call =
+      Task.async(fn ->
+        HalC2.PreviewAutomation.invoke(@caller, "snapshot", %{}, tab_id: user_tab)
+      end)
+
+    {_, request} = next_request("desk")
+    answer("desk", connection_id, request, %{"tabId" => user_tab})
+    assert {:ok, _} = Task.await(call)
+
+    {_, _, mine} = open("desk", [])
+
+    assert {:error, %{"_tag" => "PreviewAutomationTabOtherAgentError", "tabId" => ^mine}} =
+             HalC2.PreviewAutomation.invoke(other, "type", %{}, tab_id: mine)
+  end
+
+  # Regression (found by the property): an open naming no tab reused the
+  # current tab a read had made the user's, and was refused as in use.
+  test "an open after reading a tab a person is now using makes a new tab" do
+    start_supervised!(HalC2.Preview)
+    connection_id = host("desk")
+    {:ok, %{"tabId" => user_tab}} = HalC2.Preview.open(%{"threadId" => "th-1"})
+
+    call =
+      Task.async(fn ->
+        HalC2.PreviewAutomation.invoke(@caller, "status", %{}, tab_id: user_tab)
+      end)
+
+    {_, request} = next_request("desk")
+    answer("desk", connection_id, request, %{"tabId" => user_tab})
+    assert {:ok, _} = Task.await(call)
+    report("desk", connection_id, %{"controlledTabIds" => [user_tab]})
+
+    {_, request, tab} = open("desk", [])
+    refute Map.has_key?(request, "tabId")
+    assert request["input"]["reuseExistingTab"] == false
+    assert tab != user_tab
+    assert HalC2.PreviewAutomation.tab_ownership(@caller, tab) == :own
+  end
+
+  test "an open names a reported profile by name or id in any case, or the host's default" do
+    start_supervised!(HalC2.Preview)
+    work = %{"id" => "work", "name" => "Work", "kind" => "persistent"}
+    default = %{"id" => "default", "name" => "Default", "kind" => "persistent"}
+    desk = host("desk")
+
+    report("desk", desk, %{"browserProfiles" => [default], "defaultBrowserProfileId" => "default"})
+
+    laptop = host("laptop")
+    report("laptop", laptop, %{"browserProfiles" => [default, work]})
+    # The focused desk would take a session that names no profile.
+    report("desk", desk, %{})
+
+    call =
+      Task.async(fn ->
+        HalC2.PreviewAutomation.invoke(@caller, "open", %{"profile" => "WORK"}, [])
+      end)
+
+    {connection_id, request} = next_request("laptop")
+    assert request["input"] == %{"profileId" => "work"}
+    answer("laptop", connection_id, request, %{"tabId" => "tab-w"})
+    assert {:ok, _} = Task.await(call)
+
+    other = %{@caller | thread_id: "th-2"}
+    call = Task.async(fn -> HalC2.PreviewAutomation.invoke(other, "open", %{}, []) end)
+    {connection_id, request} = next_request("desk")
+    assert request["input"] == %{"profileId" => "default"}
+    answer("desk", connection_id, request, %{"tabId" => "tab-d"})
+    assert {:ok, _} = Task.await(call)
+
+    assert {:error, %{"_tag" => "PreviewAutomationUnknownProfileError"} = error} =
+             HalC2.PreviewAutomation.invoke(@caller, "open", %{"profile" => "Personal"}, [])
+
+    assert HalC2.PreviewAutomation.message(error) ==
+             "There is no browser profile named \"Personal\". Use one of: Default, Work."
+  end
+
   test "an unanswered request fails and drops the host, whose stream ends" do
     host("desk")
 
