@@ -124,7 +124,19 @@ const Steps steps([] {
   });
 
   step(S("the question allows several answers"), [](World& world, const Captures&, const Table&) {
-    reask(world, [](QJsonObject& question) { question.insert(S("multiSelect"), true); });
+    // The question on screen (this file's, or ApprovalSteps' in
+    // approvals-and-questions.feature), asked again allowing several
+    // answers, its options kept.
+    const QVariantMap shown = shownQuestion(world);
+    const QVariantMap one = shown.value(S("questions")).toList().first().toMap();
+    QStringList labels;
+    for (const QVariant& option : one.value(S("options")).toList()) labels.append(option.toMap().value(S("label")).toString());
+    setEntity(world.mc, world.thread, S("runtime-request"), shown.value(S("requestId")).toString(), {{S("status"), S("resolved")}});
+    // Past the shown request's number, whoever asked it: ask() numbers its
+    // own from here, and reusing the shown id would ask it twice.
+    const QString shownId = shown.value(S("requestId")).toString();
+    asks = std::max(asks, shownId.section(QLatin1Char('-'), 1).toInt());
+    ask(world, {asked(one.value(S("question")).toString(), labels, true)});
   });
 
   step(S("the question allows only its listed options"), [](World& world, const Captures&, const Table&) {

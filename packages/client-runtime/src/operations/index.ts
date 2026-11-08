@@ -5,6 +5,7 @@ export {
   deleteThread,
   interruptThreadTurn,
   respondToThreadApproval,
+  resumeThreadQueue,
   respondToThreadUserInput,
   revertThreadCheckpoint,
   setThreadInteractionMode,

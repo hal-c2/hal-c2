@@ -601,6 +601,11 @@ export interface TuiThreadExtras {
     readonly description?: string;
     readonly taskType?: string;
   }>;
+  /**
+   * The MC holds the queue (a Stop, an MC restart, a usage limit) and something waits in
+   * it, provider wakes included: it starts again on `queue.resume` or the user's next message.
+   */
+  readonly queueHeld?: true;
 }
 
 /** A queued run's place in line, on its user message. */
@@ -884,6 +889,9 @@ export function presentTuiThread(projection: OrchestrationV2ThreadProjection): O
         : []),
     ],
     ...(pendingBackgroundTasks.length > 0 ? { pendingBackgroundTasks } : {}),
+    ...([...queuedRuns.values()].some((run) => run.queueHeld === true)
+      ? { queueHeld: true as const }
+      : {}),
     checkpoints: deriveThreadCheckpointSummaries(projection).flatMap((checkpoint) =>
       checkpoint.status === "stale"
         ? []

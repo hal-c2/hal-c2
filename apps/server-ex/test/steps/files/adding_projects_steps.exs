@@ -278,7 +278,10 @@ defmodule HalC2.Steps.Files.AddingProjects do
   end
 
   step "the folder {string} still exists and is empty", %{args: [path]} = context do
-    assert File.ls!(Host.path(context, path)) == []
+    dir =
+      if base = context[:folder_base], do: Path.join(base, path), else: Host.path(context, path)
+
+    assert File.ls!(dir) == []
     context
   end
 
