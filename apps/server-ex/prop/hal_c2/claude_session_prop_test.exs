@@ -81,7 +81,7 @@ defmodule HalC2.ClaudeSessionPropTest do
         System.delete_env("FAKE_CLAUDE_MCP_HOLD")
         System.delete_env("CLAUDE_CONFIG_DIR")
         System.delete_env("FAKE_CLAUDE_INPUT_LOG")
-        Enum.each(~w(FAKE_SESSIONS FAKE_CLAUDE_TRACE), &System.delete_env/1)
+        Enum.each(~w(FAKE_SESSIONS FAKE_CLAUDE_TRACE FAKE_CLAUDE_USAGE), &System.delete_env/1)
         Application.put_env(:hal_c2, :durable_programs, false)
         Application.delete_env(:hal_c2, :claude_interrupt_timeout_ms)
 
@@ -107,6 +107,9 @@ defmodule HalC2.ClaudeSessionPropTest do
     # The fake keeps transcripts as Claude does, in that home, and traces its argv.
     System.put_env("FAKE_SESSIONS", "1")
     System.put_env("FAKE_CLAUDE_TRACE", Path.join(home, "claude-trace.jsonl"))
+    # Each answer reports its usage, as Claude's do: without, the handoff's room counts
+    # every turn's reserve as spent and soon refuses the history refused turns leave.
+    System.put_env("FAKE_CLAUDE_USAGE", "1")
     Application.put_env(:hal_c2, :claude_command, ["python3", "-u", @fake_claude])
     # Durable, so a process outlives the MC that started it (`adopt/0`).
     Application.put_env(:hal_c2, :durable_programs, true)
@@ -267,10 +270,22 @@ defmodule HalC2.ClaudeSessionPropTest do
           state.background or text == :background or
             (text != :never_start and carries?(state, :background, text)),
         tools: if(reused?(state, model, fast), do: state.tools, else: not state.refusing),
-        missed: if(text == :compact, do: state.missed, else: []),
+        missed: missed(state, text),
         lost: false,
-        marked: handed?(state) and text == :never_start
+        marked: marks?(state, text)
     }
+
+  # A turn handed history that Claude never started leaves the handoff unconfirmed: the
+  # next turn is handed it again, its own message too.
+  defp marks?(state, text), do: history?(state, text) and text == :never_start
+
+  defp missed(state, text) do
+    cond do
+      text == :compact -> state.missed
+      marks?(state, text) -> state.missed ++ [text]
+      true -> []
+    end
+  end
 
   def next_state(state, _result, {:call, _, :refuse_tools, [refusing]}),
     do: %{state | refusing: refusing}
@@ -305,9 +320,13 @@ defmodule HalC2.ClaudeSessionPropTest do
   defp carries?(state, missed, text), do: text != :compact and missed in state.missed
 
   # A turn runs on the same process when its selection is, and no handoff went
-  # unconfirmed.
+  # unconfirmed, or background work keeps the conversation it went to.
   defp reused?(state, model, fast),
-    do: state.session and state.launch == {model, fast == true} and not state.marked
+    do: state.session and state.launch == {model, fast == true} and not starts_over?(state)
+
+  # An unconfirmed handoff starts a new session, handed the whole thread, unless
+  # background work runs in the conversation: what it may lack goes into it again.
+  defp starts_over?(state), do: state.marked and not state.background
 
   defp refused?(state, model, fast),
     do: state.background and state.launch != {model, fast == true}
@@ -317,7 +336,7 @@ defmodule HalC2.ClaudeSessionPropTest do
 
   # Whether a turn's Claude starts a new session rather than resume one.
   defp fresh?(state),
-    do: state.launch == nil or state.marked or (state.lost and not state.session)
+    do: state.launch == nil or starts_over?(state) or (state.lost and not state.session)
 
   # Whether it is handed the thread: a new session after earlier turns.
   defp handed?(state), do: fresh?(state) and state.launch != nil

@@ -35,7 +35,12 @@ def trace(entry):
 
 # A held MCP answer is sent from its own thread (answer_mcp_servers).
 sending = threading.Lock()
+# With FAKE_CLAUDE_USAGE set, every successful result reports token usage, as Claude's do.
+USAGE = os.environ.get("FAKE_CLAUDE_USAGE")
+
 def send(msg):
+    if USAGE and msg.get("type") == "result" and msg.get("subtype") == "success" and "usage" not in msg:
+        msg = {**msg, "usage": {"input_tokens": 1000, "output_tokens": 50}}
     with sending:
         sys.stdout.write(json.dumps(msg) + "\n")
         sys.stdout.flush()

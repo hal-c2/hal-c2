@@ -81,7 +81,15 @@ defmodule HalC2.HandoffDeltaPropTest do
       provider_thread: thread
     }
 
-    plan = Handoff.plan(stream, StreamState.get(stream, "provider-thread")[thread], ids, n, at(n))
+    plan =
+      Handoff.plan(
+        stream,
+        StreamState.get(stream, "provider-thread")[thread],
+        ids,
+        n,
+        at(n),
+        %{text: text(n), attachments: []}
+      )
 
     run = %{
       "id" => "run-#{n}",
