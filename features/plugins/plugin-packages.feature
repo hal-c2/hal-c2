@@ -348,7 +348,8 @@ Feature: Plugin packages
       And once "code-review" is removed, the move is still refused
 
     # A reload that fails keeps the version before it running, and the threads it starts take
-    # their mark from the version that runs: a manifest on disk that cannot be read says nothing.
+    # their mark from the version that runs; a manifest on disk that cannot be read is taken to declare it
+    # (threads/moving-between-machines.feature), so the thread stays either way.
     @mc
     Scenario: A plugin whose new version failed to load still keeps the threads it starts
       Given "code-review" declares that its threads stay on their machine

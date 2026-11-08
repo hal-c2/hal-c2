@@ -135,6 +135,60 @@ defmodule HalC2.ThreadArchiveTest do
     assert ThreadArchive.stays(%{"title" => "X", "plugin" => escape}) == :ok
   end
 
+  # The plugin host never loaded a version of this package (it started, or the package
+  # was dropped in, with the manifest broken), so only the disk can speak for it: a
+  # package that is there with a manifest that says nothing keeps its threads (#1432).
+  test "a thread from before its plugin's mark is kept while the plugin's manifest cannot be read",
+       %{context: context, tmp_dir: dir} do
+    context = World.create_thread(context, "Review")
+    mark = %{"id" => "broken-keeper", "kind" => "review", "listed" => false}
+    context = World.patch_thread(context, "Review", %{"plugin" => mark})
+    review = World.thread(context, "Review")
+    kept = {:error, "Review was started by broken-keeper, which keeps it on this machine."}
+
+    # Not installed: an ordinary thread.
+    assert ThreadArchive.stays(review) == :ok
+
+    package = Path.join(HalC2.Paths.data_dir(), "plugins/broken-keeper")
+    File.mkdir_p!(package)
+
+    # The manifest is missing, not valid JSON, not an object or unreadable (a directory).
+    for manifest <- [:missing, "{ \"id\": ", "[]", "\"threadsStay\"", :directory] do
+      File.rm_rf!(Path.join(package, "plugin.json"))
+
+      case manifest do
+        :missing -> :ok
+        :directory -> File.mkdir_p!(Path.join(package, "plugin.json"))
+        text -> File.write!(Path.join(package, "plugin.json"), text)
+      end
+
+      refute HalC2.Plugins.running?("broken-keeper")
+      assert ThreadArchive.stays(review) == kept, "manifest #{inspect(manifest)}"
+
+      assert ThreadArchive.export_file("Review", Path.join(dir, "review.hal-c2-thread")) == kept
+      refute File.exists?(Path.join(dir, "review.hal-c2-thread"))
+    end
+
+    # The copy `mix hal_c2.plugins.install` set aside speaks the same way.
+    plugins = Path.dirname(package)
+    aside = HalC2.Plugins.Package.aside_dir(plugins, "broken-keeper")
+    File.rename!(package, aside)
+    assert ThreadArchive.stays(review) == kept
+
+    # A readable manifest says what it says again, and removing the package frees the thread.
+    File.rm_rf!(Path.join(aside, "plugin.json"))
+    File.write!(Path.join(aside, "plugin.json"), JSON.encode!(%{"id" => "broken-keeper"}))
+    assert ThreadArchive.stays(review) == :ok
+    File.write!(Path.join(aside, "plugin.json"), "{ \"id\": ")
+    File.rm_rf!(aside)
+    assert ThreadArchive.stays(review) == :ok
+
+    # A name that is no package id reads nothing, however it is spelled.
+    for id <- ["", ".", "..", "a/b"] do
+      assert HalC2.Plugins.Package.threads_stay?(id) == false
+    end
+  end
+
   test "a failed import takes back the worktree branch it made", %{context: context, root: root} do
     {bundle, carried} = feature_bundle(context, root)
     branches = World.git!(root, ~w(for-each-ref refs/heads))

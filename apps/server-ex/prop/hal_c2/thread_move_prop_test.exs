@@ -21,7 +21,10 @@ defmodule HalC2.ThreadMovePropTest do
   That plugin also starts threads, which take the mark from its manifest, and a case
   breaks its manifest (a reload that fails, leaving the version before it loaded) or
   moves it aside as an install does between its two renames: neither lets a thread it
-  keeps go, nor one it starts then leave without the mark.
+  keeps go, nor one it starts then leave without the mark. The plugin host may also start
+  again while the manifest is broken, loading no version of it: a package that is there
+  with a manifest that cannot be read is taken to keep its threads (#1432), so the ones
+  from before the mark still stay, and so do the ones it starts then.
 
   The promises checked after every step: once a move settles, a thread lives on exactly
   one machine (the model's) with all its history and its attachment intact, the machines
@@ -110,12 +113,18 @@ defmodule HalC2.ThreadMovePropTest do
     holdable = Enum.reject(free, &pinned?(state, &1, state.threads[&1].at))
 
     frequency(
+      # The plugin host starting again with the manifest broken (#1432): it loads no
+      # version of the package, so only the disk speaks for it.
       [
         {1,
          {:call, __MODULE__, :restart, [oneof(@mcs), oneof([:thread_move, :store, :plugins])]}},
         {2, {:call, __MODULE__, :plugin, [oneof(@mcs), boolean()]}},
         {2, {:call, __MODULE__, :keeper, [oneof(@mcs), oneof([:installed, :broken, :replacing])]}}
       ] ++
+        for(
+          {mc, :broken} <- state.keeper,
+          do: {4, {:call, __MODULE__, :restart, [mc, :plugins]}}
+        ) ++
         if(fresh != [],
           do: [{2, {:call, __MODULE__, :create_kept, [oneof(fresh), oneof(@mcs)]}}],
           else: []
@@ -246,11 +255,6 @@ defmodule HalC2.ThreadMovePropTest do
   # aside has no version loaded to speak for it.
   def precondition(state, {:call, _, :keeper, [mc, how]}),
     do: how == :installed or not is_map_key(state.keeper, mc)
-
-  # A plugin host that starts again with the manifest broken loads no version of it,
-  # and nothing on disk says it keeps its threads (#1432).
-  def precondition(state, {:call, _, :restart, [mc, :plugins]}),
-    do: state.keeper[mc] != :broken
 
   def precondition(state, {:call, _, :destinations, [t, at]}),
     do: t in staying(state) and state.threads[t].at == at

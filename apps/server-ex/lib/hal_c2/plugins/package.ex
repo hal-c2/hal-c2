@@ -104,10 +104,16 @@ defmodule HalC2.Plugins.Package do
   command line); a plugin that is not installed declares nothing. `HalC2.Plugins.threads_stay?/1`
   also asks the version loaded.
 
+  It fails closed: a package that is there (its directory, or the copy set aside) but
+  whose `plugin.json` is missing, unreadable, not valid JSON or not a JSON object is
+  taken to declare it, since the declaration cannot be read and a thread from before
+  the mark would otherwise leave when the plugin host starts with the manifest broken.
+  Its threads stay until the manifest is fixed or the package is uninstalled.
+
   While `mix hal_c2.plugins.install` replaces the package, which takes two renames
-  (`aside_dir/2`), the manifest moved aside speaks for it. The installed manifest is
-  read, then the one aside, then the installed one again: missing at the first read,
-  the package was aside then, and missing aside too, the replacement is in place by
+  (`aside_dir/2`), the manifest moved aside speaks for it. The installed package is
+  read, then the one aside, then the installed one again: absent at the first read,
+  the package was aside then, and absent aside too, the replacement is in place by
   the next read. A few rounds cover installs one after another.
   """
   def threads_stay?(id) when is_binary(id) do
@@ -122,18 +128,34 @@ defmodule HalC2.Plugins.Package do
   def threads_stay?(_id), do: false
 
   defp declared(installed, aside, rounds) do
-    case manifest_at(installed) || manifest_at(aside) do
-      nil when rounds > 1 -> declared(installed, aside, rounds - 1)
-      nil -> false
-      json -> json["threadsStay"] == true
+    case manifest_at(installed) do
+      :absent -> declared_aside(installed, aside, rounds)
+      found -> stays?(found)
     end
   end
 
+  defp declared_aside(installed, aside, rounds) do
+    case manifest_at(aside) do
+      :absent when rounds > 1 -> declared(installed, aside, rounds - 1)
+      :absent -> false
+      found -> stays?(found)
+    end
+  end
+
+  defp stays?({:ok, json}), do: json["threadsStay"] == true
+  defp stays?(:unreadable), do: true
+
+  # The manifest of the package at `dir`: `:absent` when there is no such package, and
+  # `:unreadable` when there is one whose manifest says nothing.
   defp manifest_at(dir) do
-    with {:ok, text} <- File.read(Path.join(dir, "plugin.json")),
-         {:ok, %{} = json} <- JSON.decode(text),
-         do: json,
-         else: (_ -> nil)
+    if File.exists?(dir) do
+      with {:ok, text} <- File.read(Path.join(dir, "plugin.json")),
+           {:ok, %{} = json} <- JSON.decode(text),
+           do: {:ok, json},
+           else: (_ -> if File.exists?(dir), do: :unreadable, else: :absent)
+    else
+      :absent
+    end
   end
 
   @doc """

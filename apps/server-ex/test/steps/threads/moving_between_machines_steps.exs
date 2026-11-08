@@ -1157,6 +1157,23 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     context
   end
 
+  # The plugin host never loads it: nothing rescans after the manifest is written.
+  step "the plugin {string} is installed on {string} with a manifest that is not valid JSON, so the plugin host loaded no version of it",
+       %{args: [plugin, machine]} = context do
+    assert Machines.machine(context, machine) == :local
+    dir = Path.join([HalC2.Paths.data_dir(), "plugins", plugin])
+    File.mkdir_p!(dir)
+    File.write!(Path.join(dir, "plugin.json"), "{ \"id\": ")
+    refute HalC2.Plugins.running?(plugin)
+    context
+  end
+
+  step "the plugin {string} is uninstalled from {string}", %{args: [plugin, machine]} = context do
+    assert Machines.machine(context, machine) == :local
+    File.rm_rf!(Path.join([HalC2.Paths.data_dir(), "plugins", plugin]))
+    context
+  end
+
   # Where `mix hal_c2.plugins.install` stands between its two renames: the installed
   # package moved aside, its replacement staged beside the plugins directory.
   step "a new version of {string} is being installed on {string}, the old one moved aside and the new one not yet in place",

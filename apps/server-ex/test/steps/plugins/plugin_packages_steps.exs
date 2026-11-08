@@ -1106,7 +1106,6 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     context = Fixtures.rescan(context)
     assert %{"status" => "running", "reloadError" => error} = Fixtures.entry(id)
     assert error =~ "plugin.json"
-    refute HalC2.Plugins.Package.threads_stay?(id)
     context
   end
 

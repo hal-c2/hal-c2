@@ -527,6 +527,25 @@ Feature: Moving a thread and its agent to another machine
       When the user moves "Alpha" to "desktop"
       Then the user is told "Alpha was started by code-review, which keeps it on this machine."
 
+    # The MC starts (or its plugin host does) while the installed plugin's manifest cannot be
+    # parsed, so no version of the plugin loads and nothing says whether it keeps its threads. A
+    # package that is there but unreadable is taken to keep them: a review thread from before the
+    # mark, and its fork, are not let go until the manifest is fixed or the package is removed.
+    @mc
+    Scenario: A thread its plugin keeps is kept while the plugin's manifest cannot be read
+      Given "Alpha" was started by the plugin "code-review" before it kept its threads on the machine
+      And "Beta" on "laptop" is a fork of "Alpha"
+      And the plugin "code-review" is installed on "laptop" with a manifest that is not valid JSON, so the plugin host loaded no version of it
+      When the user moves "Alpha" to "desktop"
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+      When the user moves "Beta" to "desktop"
+      Then the user is told "Alpha fork was started by code-review, which keeps it on this machine."
+      When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+      And no file is written
+      When the plugin "code-review" is uninstalled from "laptop"
+      Then "Alpha" moves to "desktop"
+
     @mc
     Scenario Outline: A move the destination cannot take is refused before anything is copied
       Given <situation>
