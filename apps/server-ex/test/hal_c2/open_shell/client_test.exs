@@ -238,6 +238,44 @@ defmodule HalC2.OpenShell.ClientTest do
       assert :ok = Client.delete_sandbox(conn, "mine")
       assert {:error, %{status: :not_found}} = Client.get_sandbox(conn, "mine")
     end
+
+    # OpenShell's ACCEPTED means the record still exists: `:ok` waits until it is gone.
+    @tag gateway: [delete: {:accepted, 2}]
+    test "an accepted deletion is :ok only once the sandbox is gone", %{conn: conn, gateway: g} do
+      {:ok, _} = Client.create_sandbox(conn, "mine")
+      assert :ok = Client.delete_sandbox(conn, "mine")
+      assert_received {:openshell_request, "DeleteSandbox", _}
+      assert_received {:openshell_request, "GetSandbox", %{name: "mine"}}
+      assert_received {:openshell_request, "GetSandbox", %{name: "mine"}}
+      refute Map.has_key?(FakeOpenShell.sandboxes(g), "mine")
+    end
+
+    @tag gateway: [delete: {:accepted, :never}]
+    test "an accepted deletion that never finishes is still pending at the deadline", %{
+      conn: conn,
+      gateway: g
+    } do
+      {:ok, _} = Client.create_sandbox(conn, "mine")
+
+      assert {:error, {:delete_pending, "id-mine"}} =
+               Client.delete_sandbox(conn, "mine", delete_timeout: 300)
+
+      assert Map.has_key?(FakeOpenShell.sandboxes(g), "mine")
+    end
+
+    @tag gateway: [delete: :replaced]
+    test "an accepted deletion is done once the name holds another sandbox", %{conn: conn} do
+      {:ok, _} = Client.create_sandbox(conn, "mine")
+      assert :ok = Client.delete_sandbox(conn, "mine")
+    end
+
+    @tag gateway: [delete: :unspecified]
+    test "an unspecified deletion outcome is not taken for done", %{conn: conn} do
+      {:ok, _} = Client.create_sandbox(conn, "mine")
+
+      assert {:error, {:deletion_outcome, :DELETION_OUTCOME_UNSPECIFIED}} =
+               Client.delete_sandbox(conn, "mine")
+    end
   end
 
   describe "exec" do

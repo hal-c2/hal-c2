@@ -348,12 +348,17 @@ defmodule HalC2.OpenShell.Client do
   end
 
   @doc """
-  Deletes sandbox `name` if this MC owns it. `:ok` once the gateway took it, or when
-  it is already gone; `{:error, :not_owned}` for one this MC did not create.
+  Deletes sandbox `name` if this MC owns it, and returns once it is gone: `:ok`
+  when the gateway deleted it, when it was already gone, or, for a deletion the
+  gateway only accepted, once GetSandbox no longer finds it (or finds another
+  sandbox under its name). Waiting gives up after `:delete_timeout` ms (#{120_000})
+  with `{:error, {:delete_pending, id}}`. `{:error, :not_owned}` for a sandbox this
+  MC did not create; `{:error, {:deletion_outcome, outcome}}` for an outcome that
+  does not say it was deleted.
   """
   def delete_sandbox(%__MODULE__{} = conn, name, opts \\ []) do
     case get_sandbox(conn, name, opts) do
-      {:ok, _} ->
+      {:ok, %{id: id}} ->
         request = %Pb.DeleteSandboxRequest{
           workspace_scope: scope(),
           name: name,
@@ -361,8 +366,9 @@ defmodule HalC2.OpenShell.Client do
           request_id: request_id()
         }
 
-        with {:ok, %Pb.DeleteSandboxResponse{}} <- call(conn, :delete_sandbox, request, opts),
-             do: :ok
+        with {:ok, %Pb.DeleteSandboxResponse{} = response} <-
+               call(conn, :delete_sandbox, request, opts),
+             do: deleted(conn, name, id, response, opts)
 
       {:error, %{status: :not_found}} ->
         :ok
@@ -371,6 +377,48 @@ defmodule HalC2.OpenShell.Client do
         error
     end
   end
+
+  defp deleted(_conn, _name, _id, %{outcome: outcome}, _opts)
+       when outcome in [:DELETION_OUTCOME_COMPLETED, :DELETION_OUTCOME_ALREADY_ABSENT],
+       do: :ok
+
+  # The gateway's record still exists: watch for it to go, as OpenShell's own
+  # `wait_deleted` does (250 ms, doubling to 2 s).
+  defp deleted(conn, name, id, %{outcome: :DELETION_OUTCOME_ACCEPTED} = response, opts) do
+    id = if response.sandbox_id in [nil, ""], do: id, else: response.sandbox_id
+    deadline = now() + Keyword.get(opts, :delete_timeout, 120_000)
+    await_deleted(conn, name, id, deadline, 250, opts)
+  end
+
+  defp deleted(_conn, _name, _id, %{outcome: outcome}, _opts),
+    do: {:error, {:deletion_outcome, outcome}}
+
+  defp await_deleted(conn, name, id, deadline, delay, opts) do
+    request = %Pb.GetSandboxRequest{workspace_scope: scope(), name: name}
+
+    case call(conn, :get_sandbox, request, opts) do
+      {:error, %{status: :not_found}} ->
+        :ok
+
+      {:ok, %Pb.SandboxResponse{sandbox: %Pb.Sandbox{metadata: %{id: other}}}} when other != id ->
+        :ok
+
+      {:ok, _} ->
+        case deadline - now() do
+          left when left <= 0 ->
+            {:error, {:delete_pending, id}}
+
+          left ->
+            Process.sleep(min(delay, left))
+            await_deleted(conn, name, id, deadline, min(delay * 2, 2_000), opts)
+        end
+
+      error ->
+        error
+    end
+  end
+
+  defp now, do: System.monotonic_time(:millisecond)
 
   @doc """
   Starts `command` in sandbox `name` on a full-duplex stream owned by the caller,

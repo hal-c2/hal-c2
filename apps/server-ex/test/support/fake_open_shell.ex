@@ -24,11 +24,16 @@ defmodule HalC2.Test.FakeOpenShell do
   @doc """
   Starts the fake and returns `%{port, endpoint, credentials, server, store}`.
   Options: `:version` ("0.1.7"), `:roles` (["openshell-user"]), `:exec`,
-  `:notify`.
+  `:notify`, and `:delete`: how DeleteSandbox answers, `:completed` (the default),
+  `:unspecified`, `{:accepted, n}` (the sandbox goes after `n` more GetSandbox
+  calls, or never for `:never`) or `:replaced` (another sandbox takes its name).
   """
   def start(dir, opts \\ []) do
     credentials = issue(dir)
-    {:ok, store} = Agent.start_link(fn -> %{sandboxes: %{}, workspaces: MapSet.new()} end)
+
+    {:ok, store} =
+      Agent.start_link(fn -> %{sandboxes: %{}, deleting: %{}, workspaces: MapSet.new()} end)
+
     config = Map.new(opts) |> Map.put(:store, store)
 
     {:ok, server} =
@@ -333,6 +338,8 @@ defmodule HalC2.Test.FakeOpenShell do
 
     defp unary(conn, "GetSandbox", body, config) do
       %{name: name} = Pb.GetSandboxRequest.decode(body)
+      notify(config, "GetSandbox", %{name: name})
+      settle_deletion(config.store, name)
 
       case Agent.get(config.store, & &1.sandboxes[name]) do
         nil -> error(conn, 5, "sandbox not found")
@@ -367,15 +374,65 @@ defmodule HalC2.Test.FakeOpenShell do
       request = Pb.DeleteSandboxRequest.decode(body)
       notify(config, "DeleteSandbox", request)
 
-      Agent.update(
-        config.store,
-        &Map.update!(&1, :sandboxes, fn s -> Map.delete(s, request.name) end)
-      )
+      case Map.get(config, :delete, :completed) do
+        :completed ->
+          Agent.update(
+            config.store,
+            &update_in(&1.sandboxes, fn s -> Map.delete(s, request.name) end)
+          )
 
-      reply(conn, %Pb.DeleteSandboxResponse{outcome: :DELETION_OUTCOME_COMPLETED})
+          reply(conn, %Pb.DeleteSandboxResponse{outcome: :DELETION_OUTCOME_COMPLETED})
+
+        :unspecified ->
+          reply(conn, %Pb.DeleteSandboxResponse{})
+
+        # The gateway took the request; the sandbox goes after `n` more GetSandbox
+        # calls (never, for `:never`).
+        {:accepted, n} ->
+          id = Agent.get(config.store, & &1.sandboxes[request.name].metadata.id)
+          Agent.update(config.store, &put_in(&1, [:deleting, request.name], n))
+
+          reply(conn, %Pb.DeleteSandboxResponse{
+            outcome: :DELETION_OUTCOME_ACCEPTED,
+            sandbox_id: id
+          })
+
+        # The old sandbox went at once and another one took its name.
+        :replaced ->
+          id = Agent.get(config.store, & &1.sandboxes[request.name].metadata.id)
+          new = FakeOpenShell.sandbox(request.name, %{})
+          new = put_in(new.metadata.id, "id-new-" <> request.name)
+          Agent.update(config.store, &put_in(&1, [:sandboxes, request.name], new))
+
+          reply(conn, %Pb.DeleteSandboxResponse{
+            outcome: :DELETION_OUTCOME_ACCEPTED,
+            sandbox_id: id
+          })
+      end
     end
 
     defp unary(conn, _method, _body, _config), do: error(conn, 12, "unimplemented")
+
+    defp settle_deletion(store, name) do
+      Agent.update(store, fn state ->
+        case state.deleting[name] do
+          nil ->
+            state
+
+          :never ->
+            state
+
+          n when n <= 1 ->
+            %{
+              update_in(state.sandboxes, &Map.delete(&1, name))
+              | deleting: Map.delete(state.deleting, name)
+            }
+
+          n ->
+            put_in(state, [:deleting, name], n - 1)
+        end
+      end)
+    end
 
     # --- exec -----------------------------------------------------------------------
 
