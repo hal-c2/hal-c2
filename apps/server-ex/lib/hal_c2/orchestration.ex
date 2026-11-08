@@ -1506,15 +1506,36 @@ defmodule HalC2.Orchestration do
   end
 
   defp respond_now(thread_id, request_id, response) do
-    Enum.find_value(
-      runtimes(:respond, 3),
-      {:error, "no pending request"},
-      fn runtime ->
-        if session_call(fn -> runtime.respond(thread_id, request_id, response) end, :gone) ==
-             :ok,
-           do: :ok
+    # A Pi thread answers for itself: its refusal names the request, where the
+    # generic answer would only say there is none.
+    if pi_thread?(thread_id) do
+      case session_call(
+             fn -> HalC2.Pi.ThreadRuntime.respond(thread_id, request_id, response) end,
+             :gone
+           ) do
+        :ok -> :ok
+        {:error, message} -> {:error, message}
+        _gone -> {:error, "No pending Pi extension request #{request_id}"}
       end
-    )
+    else
+      Enum.find_value(
+        runtimes(:respond, 3),
+        {:error, "no pending request"},
+        fn runtime ->
+          if session_call(fn -> runtime.respond(thread_id, request_id, response) end, :gone) ==
+               :ok,
+             do: :ok
+        end
+      )
+    end
+  end
+
+  defp pi_thread?(thread_id) do
+    thread =
+      HalC2.Streams.read(thread_id, &StreamState.get(&1, "thread")[thread_id]) || %{}
+
+    instance = thread["providerInstanceId"] || get_in(thread, ["modelSelection", "instanceId"])
+    is_binary(instance) and HalC2.Acp.driver(instance) == "pi"
   end
 
   # The checkout is ready and its baseline taken before the runtime starts the turn.
@@ -4702,12 +4723,15 @@ defmodule HalC2.Orchestration do
 
   # Why `message` cannot be steered into the active run `run`, or nil: `/compact` and
   # `/logout` sent by themselves run as turns of their own, neither steered with nor
-  # steered into.
+  # steered into. Pi is the exception for `/compact`: steering it compacts the
+  # running session in place (`HalC2.Pi.ThreadRuntime`), so it may be steered.
   defp steer_refusal(state, run, message) do
     target = StreamState.get(state, "message")[run["userMessageId"]]
+    instance = run["providerInstanceId"] || get_in(run, ["modelSelection", "instanceId"])
+    pi? = is_binary(instance) and HalC2.Acp.driver(instance) == "pi"
 
     case {maintenance(message), target && maintenance(target)} do
-      {"/compact", _} ->
+      {"/compact", _} when not pi? ->
         "Context compaction must run as a separate turn. Queue it or wait for the active turn to finish."
 
       {"/logout", _} ->

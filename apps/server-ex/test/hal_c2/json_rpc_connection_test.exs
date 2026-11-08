@@ -74,6 +74,19 @@ defmodule HalC2.JsonRpc.ConnectionTest do
     assert said == "noise\nERROR config is not trusted"
   end
 
+  test "stopping a connection whose program already exited is not an error" do
+    conn =
+      start_supervised!({Connection, cmd: @dies, handler: self(), program: "Peer"},
+        id: :gone,
+        restart: :temporary
+      )
+
+    ref = Process.monitor(conn)
+    assert {:error, %{"exitCode" => 1}} = Connection.call(conn, "start", %{})
+    assert_receive {:DOWN, ^ref, :process, ^conn, _}
+    assert Connection.stop(conn) == :ok
+  end
+
   test "a program's exit carries no stderr unless asked" do
     conn =
       start_supervised!({Connection, cmd: @dies, handler: self(), program: "Peer"},
@@ -82,7 +95,12 @@ defmodule HalC2.JsonRpc.ConnectionTest do
       )
 
     assert {:error, error} = Connection.call(conn, "start", %{})
-    assert error == %{"message" => "Peer process exited with code 1", "ended" => true}
+
+    assert error == %{
+             "message" => "Peer process exited with code 1",
+             "exitCode" => 1,
+             "ended" => true
+           }
   end
 
   # Reads the call, closes its output and sleeps on without answering.
@@ -124,7 +142,6 @@ defmodule HalC2.JsonRpc.ConnectionTest do
   test "stopping a connection whose subprocess already closed it is a no-op" do
     {:ok, conn} = GenServer.start(Connection, cmd: ["sh", "-c", "exit 137"], handler: self())
     ref = Process.monitor(conn)
-
     # The subprocess can exit and the connection stop before the monitor is set, in
     # which case the DOWN reason is :noproc rather than :normal.
     assert_receive {:DOWN, ^ref, :process, ^conn, reason}, 5_000
