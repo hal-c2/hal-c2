@@ -304,6 +304,17 @@ defmodule HalC2.AcpTest do
     assert %{"models" => [%{"slug" => "fresh"}]} = HalC2.Acp.entry("grok")
   end
 
+  # One macOS refuses (quarantine) dies before it answers: its connection may stop
+  # before `initialize` is sent, while it is written, or while it waits. Each of
+  # those is a closed connection, never an exit that leaves the read unpublished.
+  test "an agent that dies at once fails as closed", %{tmp_dir: dir} do
+    Application.put_env(:hal_c2, :acp_commands, %{"dying" => ["sh", "-c", "exit 137"]})
+    on_exit(fn -> Application.delete_env(:hal_c2, :acp_commands) end)
+
+    assert HalC2.Acp.with_agent("dying", dir, fn _conn, _init -> :answered end) ==
+             {:error, :closed}
+  end
+
   test "a read that was forgotten while it ran leaves no failure behind", %{tmp_dir: dir} do
     # The agent refuses `initialize` once the instance is forgotten.
     forgotten_mid_read(dir, """
