@@ -640,7 +640,7 @@ Feature: Repository status and working tree changes
     Then the status still carries the new pull request
 
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (maybeAutoPull)
-  @mc @backlog
+  @mc
   Scenario Outline: A watched checkout that falls behind is pulled when it is safe to
     Given "shop" has automatic pull on
     And "shop" <state>

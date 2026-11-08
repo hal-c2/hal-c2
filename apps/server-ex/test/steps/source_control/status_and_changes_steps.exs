@@ -1333,4 +1333,29 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
     assert_receive {:DOWN, ^down, :process, _, _}, 10_000
     context
   end
+
+  # --- automatic pull of a watched checkout ----------------------------------------------------------------
+
+  # The steps for the other states are in files/removing-and-listing-projects.
+  step ~r/^"(?<title>[^"]+)" (?<state>is a clean checkout of its default branch with commits the upstream lacks|is a clean checkout of its default branch)$/,
+       %{args: [_title, state]} = context do
+    if state =~ "with commits", do: World.commit!(context.cwd, %{"mine.ts" => "1\n"}, "Only here")
+    Map.put(context, :head_before, git(context, ~w(rev-parse HEAD)))
+  end
+
+  step "the fetch finds the upstream has new commits", context do
+    context = context |> shared_answers() |> show(true) |> upstream_moves()
+    context = Map.put(context, :upstream_head, World.git!(context.bare, ~w(rev-parse main)))
+    assert {:fetch, _} = elapse(context)
+    # The watcher has handled the fetch (and any pull) once it answers.
+    _ = :sys.get_state(watcher(context))
+    context
+  end
+
+  step "{string} is fast-forwarded", %{args: [_title]} = context do
+    head = git(context, ~w(rev-parse HEAD))
+    assert head == git(context, ~w(rev-parse origin/main))
+    refute head == context.head_before
+    context
+  end
 end
