@@ -419,7 +419,10 @@ defmodule HalC2.OpenShell.Review do
   def handle_info({:EXIT, pid, _reason}, %{listener: pid} = state),
     do: {:noreply, %{state | broker: nil, listener: nil}}
 
-  # The gRPC connection went: the next call connects again.
+  # Calls and streams end normally all the time; anything else may be the gRPC
+  # connection going, so the next call connects again.
+  def handle_info({:EXIT, _pid, :normal}, state), do: {:noreply, state}
+
   def handle_info({:EXIT, _pid, _reason}, state) do
     if state.conn, do: Client.disconnect(state.conn)
     {:noreply, %{state | conn: nil}}
