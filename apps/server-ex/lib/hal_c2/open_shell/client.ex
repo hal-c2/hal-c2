@@ -439,11 +439,15 @@ defmodule HalC2.OpenShell.Client do
   `:tty` (false), `:timeout_seconds` (none). See `HalC2.OpenShell.Exec` for the
   messages it sends and how to write to it.
 
+  The sandbox must be this MC's (`get_sandbox/3`): one it does not own, or that
+  does not exist, is `{:error, :not_owned}` or the gateway's error, with no stream
+  opened. The gateway takes an exec by name, so this is a check before the call.
+
   Each exec has a connection of its own, closed when it ends: a write still
   waiting on a command that stopped reading is queued on its connection, and must
   not hold up, or outlive, anything else on the gateway.
   """
-  def exec(%__MODULE__{dial: dial}, name, command, opts \\ []) do
+  def exec(%__MODULE__{dial: dial} = conn, name, command, opts \\ []) do
     start = %Pb.ExecSandboxRequest{
       workspace_scope: scope(),
       sandbox: name,
@@ -459,7 +463,8 @@ defmodule HalC2.OpenShell.Client do
       request_id: request_id()
     }
 
-    with {:ok, channel} <- dial(dial) do
+    with {:ok, _sandbox} <- get_sandbox(conn, name, opts),
+         {:ok, channel} <- dial(dial) do
       case Exec.start(channel, start, Keyword.get(opts, :owner, self())) do
         {:ok, exec} ->
           {:ok, exec}

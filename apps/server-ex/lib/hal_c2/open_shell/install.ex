@@ -761,7 +761,9 @@ defmodule HalC2.OpenShell.Install do
     try do
       with {:ok, _} <- Client.create_sandbox(conn, name) |> labelled("creating a sandbox"),
            :ok <- await_ready(conn, name, System.monotonic_time(:millisecond) + @sandbox_timeout),
-           {:ok, exec} <- Client.exec(conn, name, ["bash", "-c", isolation_probe(state)]) do
+           {:ok, exec} <-
+             Client.exec(conn, name, ["bash", "-c", isolation_probe(state)])
+             |> labelled("isolation check") do
         case collect(exec, [], 60_000) do
           {:exit, 0, _out} ->
             :ok

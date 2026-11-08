@@ -366,9 +366,24 @@ defmodule HalC2.OpenShell.ClientTest do
       assert_receive {:DOWN, ^ref, :process, ^exec, :normal}
     end
 
-    test "a sandbox that does not exist ends the stream with the gateway's error", %{conn: conn} do
-      {:ok, exec} = Client.exec(conn, "missing", ["true"])
-      assert_receive {:openshell_exec, ^exec, {:error, %{status: :not_found}}}
+    test "a sandbox that does not exist is the gateway's error, with no stream", %{conn: conn} do
+      assert {:error, %{status: :not_found}} = Client.exec(conn, "missing", ["true"])
+      refute_received {:openshell_request, "ExecSandboxInteractive", _}
+    end
+
+    test "a sandbox this MC does not own runs nothing, and takes no upload", %{
+      gateway: g,
+      conn: conn
+    } do
+      FakeOpenShell.put_sandbox(g, "theirs", %{OpenShell.owner_label() => "env-b"})
+      FakeOpenShell.put_sandbox(g, "unlabelled", %{"team" => "x"})
+
+      for name <- ["theirs", "unlabelled"] do
+        assert {:error, :not_owned} = Client.exec(conn, name, ["true"])
+        assert {:error, :not_owned} = Client.upload(conn, name, "/sandbox", "archive")
+      end
+
+      refute_received {:openshell_request, "ExecSandboxInteractive", _}
     end
   end
 

@@ -13,13 +13,16 @@ defmodule HalC2.OpenShellExecPropTest do
     * exactly one ending reaches the owner, and nothing after it;
     * however a command ends, its process and its connection are gone;
     * nothing that happens to one command (a writer stuck on it, its cancel, its
-      owner's exit) stops another, or the client's own calls, from working.
+      owner's exit) stops another, or the client's own calls, from working;
+    * a command in a sandbox this MC does not own is refused before any stream or
+      connection is opened.
   """
 
   use ExUnit.Case, async: false
   use PropCheck
   use PropCheck.StateM
 
+  alias HalC2.OpenShell
   alias HalC2.OpenShell.Client
   alias HalC2.OpenShell.Exec
   alias HalC2.Test.FakeOpenShell
@@ -39,7 +42,8 @@ defmodule HalC2.OpenShellExecPropTest do
         # A stream the MC closes under a handler logs on the fake's side.
         Logger.configure(level: :none)
         gateway = FakeOpenShell.start(Path.join(home, "pki"), exec: &gateway_exec/2)
-        FakeOpenShell.put_sandbox(gateway, "box", %{})
+        FakeOpenShell.put_sandbox(gateway, "box", %{OpenShell.owner_label() => OpenShell.owner()})
+        FakeOpenShell.put_sandbox(gateway, "theirs", %{OpenShell.owner_label() => "env-b"})
         {:ok, conn} = Client.connect(gateway.endpoint, gateway.credentials)
         Process.put(:exec_prop, %{conn: conn, execs: %{}})
 
@@ -96,7 +100,8 @@ defmodule HalC2.OpenShellExecPropTest do
     frequency(
       [
         {3, {:call, __MODULE__, :start, [state.next, oneof([:cat, :stall])]}},
-        {1, {:call, __MODULE__, :health, []}}
+        {1, {:call, __MODULE__, :health, []}},
+        {1, {:call, __MODULE__, :foreign, []}}
       ] ++
         if(cats == [],
           do: [],
@@ -148,6 +153,7 @@ defmodule HalC2.OpenShellExecPropTest do
 
   def postcondition(_state, {:call, _, :start, _}, result), do: result == :ok
   def postcondition(_state, {:call, _, :health, _}, result), do: match?({:ok, _}, result)
+  def postcondition(_state, {:call, _, :foreign, _}, result), do: result == :refused
   def postcondition(_state, {:call, _, :write, _}, result), do: result == :ok
   def postcondition(_state, {:call, _, :flood, _}, result), do: result == :ok
 
@@ -198,6 +204,19 @@ defmodule HalC2.OpenShellExecPropTest do
   end
 
   def health, do: Client.health(Process.get(:exec_prop).conn)
+
+  # Refused, with no connection opened and no stream asked of the gateway.
+  def foreign do
+    before = connections()
+    result = Client.exec(Process.get(:exec_prop).conn, "theirs", ["cat"])
+    opened = connections() -- before
+
+    cond do
+      result != {:error, :not_owned} -> {:ran, result}
+      opened != [] -> {:opened, opened}
+      true -> :refused
+    end
+  end
 
   def write(i, data), do: Exec.send_stdin(exec(i).exec, data)
 
