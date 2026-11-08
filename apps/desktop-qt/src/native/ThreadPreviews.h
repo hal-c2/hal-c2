@@ -200,7 +200,7 @@ private:
   History m_readHistory;
   Keep m_writeHistory;
   QString m_project;
-  // The newest `updatedAt` the MC sent, ms: when a page taken off was taken off.
+  // The newest `updatedAt` the thread's MC sent, ms: when a page taken off was taken off.
   qint64 m_newestStamp = 0;
   QString m_status = QStringLiteral("idle");
   QString m_message;

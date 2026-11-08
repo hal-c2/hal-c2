@@ -593,5 +593,6 @@ void emitEvent(FakeMc& mc, const QJsonObject& tab, const QString& type, const QJ
 ThreadPreviews& model(World& world) { return ::model(world); }
 QString describe(World& world) { return ::describe(world); }
 void showPreviews(World& world) { ::showPreviews(world); }
+void lookAtPeerThread(World& world) { ::lookAtPeerThread(world); }
 
 }  // namespace preview

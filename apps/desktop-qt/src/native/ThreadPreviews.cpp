@@ -123,6 +123,8 @@ ThreadPreviews::~ThreadPreviews() {
 void ThreadPreviews::setThread(const QString& environmentId, const QString& threadId, const QString& mc) {
   if (environmentId == m_environment && threadId == m_thread && mc == m_mc) return;
   const bool threadMoved = environmentId != m_environment || threadId != m_thread;
+  // Another MC's clock: a removal falls back to the kept page's time until this one's stamps arrive.
+  if (environmentId != m_environment || mc != m_mc) m_newestStamp = 0;
   m_environment = environmentId;
   m_thread = threadId;
   if (mc != m_mc) {

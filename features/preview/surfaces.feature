@@ -1969,6 +1969,15 @@ Feature: In-app preview browser
       When "http://localhost:5173" is visited again on an MC whose clock is behind this device's
       Then a new tab lists "http://localhost:5173" again
 
+    @desktop
+    Scenario: A page taken off is timed by its own MC's clock, not another MC's
+      Given a new browser tab lists the recent page "http://localhost:5173"
+      And a thread on another MC, whose clock is ahead, has a page open
+      When the user goes back to the thread
+      And the user removes "http://localhost:5173" from the recent pages
+      And "http://localhost:5173" is visited again on an MC whose clock is behind this device's
+      Then a new tab lists "http://localhost:5173" again
+
     # Dropped: contradicts the passing "A new browser tab offers local servers and recent pages"
     # (apps/desktop-qt/src/native/ThreadPreviews.h maxRecents = 10). The web's empty state showed
     # eight (apps/web/src/components/preview/PreviewEmptyState.tsx); revive this if eight is wanted.

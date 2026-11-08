@@ -300,6 +300,23 @@ const Steps steps([] {
     expect(world.now().toMSecsSinceEpoch() < QDateTime::currentMSecsSinceEpoch(), QStringLiteral("the MC's clock is not behind this device's"));
     load(world, kThread, c[0]);
   });
+  step(QStringLiteral("a thread on another MC, whose clock is ahead, has a page open"), [](World& world, const Captures&, const Table&) {
+    FakePreviews& fake = world.mc.part<FakePreviews>();
+    QJsonObject tab = preview::tabAt(QStringLiteral("http://localhost:4000/ahead"), int(fake.tabs.size()) + 1);
+    tab.insert(QStringLiteral("threadId"), stream::kPeerThread);
+    tab.insert(QStringLiteral("updatedAt"), QStringLiteral("2031-01-01T00:00:00Z"));
+    fake.tabs.append(tab);
+    ++fake.revision;
+    world.mc.join(stream::kPeer, stream::kPeerEnvironment);
+    world.sync();
+    preview::lookAtPeerThread(world);
+    world.waitFor([&] { return model(world).threadId() == stream::kPeerThread && model(world).status() == QLatin1String("ready") && model(world).rowCount() == 1; },
+                  [&] { return preview::describe(world); });
+  });
+  step(QStringLiteral("the user goes back to the thread"), [](World& world, const Captures&, const Table&) {
+    lookAt(world, kThread);
+    startPage(world);
+  });
   step(QStringLiteral("a new tab lists %1 again").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return history(world).pages(projectKey(world)).value(0).url == c[0]; }, [&] { return show(history(world).toVariant()); });
     openNewTab(world);
