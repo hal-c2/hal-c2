@@ -52,7 +52,7 @@ defmodule HalC2.Acp.Auth do
         {:ok, methods}
 
       {:error, reason} ->
-        Logger.warning("#{instance} sign-in methods: #{message(reason)}")
+        Logger.warning("#{instance} sign-in methods: #{redacted(reason)}")
         {:error, "Could not discover this agent's sign-in methods."}
     end
   end
@@ -297,19 +297,18 @@ defmodule HalC2.Acp.Auth do
   defp fail(message), do: exit({:shutdown, {:failed, message}})
 
   defp fail(message, reason) do
-    Logger.warning("ACP sign-in failed: #{message} #{message(reason)}")
+    Logger.warning("ACP sign-in failed: #{message} #{redacted(reason)}")
     fail(message)
   end
 
   @reason_chars 500
 
   defp refused(message, reason) do
-    Logger.warning("ACP sign-in failed: #{message} #{message(reason)}")
-
-    said = message(reason)
+    said = redacted(reason)
+    Logger.warning("ACP sign-in failed: #{message} #{said}")
 
     # Redacted whole, then its start kept: the start of an error page says what it is.
-    case said |> HalC2.Acp.Stderr.redact() |> String.trim() do
+    case String.trim(said) do
       "" ->
         fail(message)
 
@@ -318,6 +317,9 @@ defmodule HalC2.Acp.Auth do
         fail(message <> " " <> if(said =~ ~r/[.!?]$/, do: said, else: said <> "."))
     end
   end
+
+  # An agent's reason as the MC's log keeps it: the log is no place for its secrets.
+  defp redacted(reason), do: reason |> message() |> HalC2.Acp.Stderr.redact()
 
   defp message(%{"message" => message}) when is_binary(message), do: message
   defp message(reason) when is_binary(reason), do: reason

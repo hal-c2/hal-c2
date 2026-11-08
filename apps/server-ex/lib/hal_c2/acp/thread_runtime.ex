@@ -321,7 +321,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
       {:error, reason, state} ->
         reason = Antigravity.failure(driver, reason)
-        Logger.warning("#{driver} turn failed to start: #{inspect(reason)}")
+        Logger.warning("#{driver} turn failed to start: #{redacted(reason)}")
         failure = if reason == :closed, do: reason, else: format(reason)
         finish(state, "failed", start_failure(HalC2.Acp.label(driver), failure))
         {:reply, :ok, %{state | turn: nil}}
@@ -883,7 +883,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         # 4,096 characters a thread keeps of one (`HalC2.Orchestration.UserFacingErrors`).
         {:error, %{"message" => message, "stderr" => stderr}} ->
           Logger.warning(
-            "#{HalC2.Acp.label(state.agent)} failed: #{message}\n#{HalC2.Acp.Stderr.sanitize(stderr)}"
+            "#{HalC2.Acp.label(state.agent)} failed: #{message}\n#{HalC2.Acp.Stderr.redact(stderr)}"
           )
 
           room = HalC2.Acp.Stderr.max() - String.length(message) - 1
@@ -1634,7 +1634,7 @@ defmodule HalC2.Acp.ThreadRuntime do
           %{state | model: model}
 
         {:error, reason} ->
-          Logger.warning("could not set Cursor's model options: #{inspect(reason)}")
+          Logger.warning("could not set Cursor's model options: #{redacted(reason)}")
           state
       end
     else
@@ -1684,6 +1684,10 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp set_session_options(state, _turn), do: {:ok, state}
 
+  # An agent's error as the MC's log keeps it, its secrets redacted.
+  defp redacted(reason) when is_binary(reason), do: HalC2.Acp.Stderr.redact(reason)
+  defp redacted(reason), do: reason |> inspect() |> HalC2.Acp.Stderr.redact()
+
   # The choice of a select option (flat or grouped) that plans, if it has one.
   defp plan_choice(option) do
     option["options"]
@@ -1712,7 +1716,7 @@ defmodule HalC2.Acp.ThreadRuntime do
           }
 
         {:error, reason} ->
-          Logger.warning("could not set the mode to #{value}: #{inspect(reason)}")
+          Logger.warning("could not set the mode to #{value}: #{redacted(reason)}")
           state
       end
     end
@@ -1734,7 +1738,7 @@ defmodule HalC2.Acp.ThreadRuntime do
           %{state | config: Map.put(state.config, id, value)}
 
         {:error, reason} ->
-          Logger.warning("could not set #{id} to #{value}: #{inspect(reason)}")
+          Logger.warning("could not set #{id} to #{value}: #{redacted(reason)}")
           state
       end
     end
@@ -1839,12 +1843,12 @@ defmodule HalC2.Acp.ThreadRuntime do
             %{state | model: model, model_method: "session/set_model"}
 
           {:error, reason} ->
-            Logger.warning("could not select #{model}: #{inspect(reason)}")
+            Logger.warning("could not select #{model}: #{redacted(reason)}")
             state
         end
 
       {:error, reason} ->
-        Logger.warning("could not select #{model}: #{inspect(reason)}")
+        Logger.warning("could not select #{model}: #{redacted(reason)}")
         state
     end
   end
@@ -1899,7 +1903,7 @@ defmodule HalC2.Acp.ThreadRuntime do
             %{state | titled: {session, title}}
 
           {:error, reason} ->
-            Logger.warning("could not name the OpenCode session: #{reason}")
+            Logger.warning("could not name the OpenCode session: #{redacted(reason)}")
             state
         end
     end
@@ -1914,7 +1918,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         {:ok, leaf}
 
       {:error, reason} ->
-        Logger.warning("could not read the OpenCode session: #{reason}")
+        Logger.warning("could not read the OpenCode session: #{redacted(reason)}")
         :unknown
     end
   end

@@ -945,6 +945,7 @@ Feature: ACP registry agents
     Given "acme" answers its sign-in with the error "Bearer abc123 rejected by the proxy"
     When the user signs in to "acme"
     Then the user is told "The ACP agent could not complete sign-in. Bearer [redacted] rejected by the proxy."
+    And the MC's log holds the reason without "abc123"
 
   # Upstream #30295: a proxy's HTML error page would otherwise fill the sign-in panel.
   @priority-low
