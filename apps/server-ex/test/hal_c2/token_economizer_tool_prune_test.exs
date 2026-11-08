@@ -420,10 +420,10 @@ defmodule HalC2.TokenEconomizerToolPruneTest do
 
   test "a restart folds a thread's runs after its watermark, whoever's that was, and only its provider's" do
     runs =
-      for {id, instance} <- [a: "codex", b: "claudeAgent", c: "codex", d: nil],
-          do: %{"runId" => "#{id}", "instanceId" => instance}
+      for {id, provider} <- [a: "codex", b: "claudeAgent", c: "codex", d: "claudeAgent"],
+          do: %{"runId" => "#{id}", "provider" => provider}
 
-    claude? = &(&1["instanceId"] in [nil, "claudeAgent"])
+    claude? = &(&1["provider"] == "claudeAgent")
 
     # The watermark is a Codex run: the Claude runs before it are not folded again.
     assert {"d", [%{"runId" => "d"}]} = Prune.unseen_runs(runs, "c", nil, claude?)

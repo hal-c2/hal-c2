@@ -600,8 +600,9 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
   end
 
   describe "tool pruning's conversations" do
-    # A project of its own: what earlier runs of the test saved is never read back.
-    defp project, do: "p#{System.unique_integer([:positive])}"
+    # A project of its own: what earlier runs of the test saved is never read back. The
+    # files outlive the run, and `System.unique_integer/1` starts over with each VM.
+    defp project, do: "p" <> Base.url_encode64(:crypto.strong_rand_bytes(9))
 
     defp finished(thread, run),
       do: %{

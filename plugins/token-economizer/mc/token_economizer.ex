@@ -660,13 +660,12 @@ defmodule HalC2Plugins.TokenEconomizer do
     else
       state = update_in(state.seeded, &MapSet.put(&1, {thread_id, project}))
       {prune, state} = prune(state, project, unit)
-      drivers = instance_drivers()
 
       {watermark, runs} =
         thread_id
-        |> history()
+        |> history(run_id)
         |> Prune.unseen_runs(Prune.seeded_run(prune, thread_id), run_id, fn run ->
-          run["instanceId"] == nil or drivers[run["instanceId"]] == provider
+          run["provider"] == provider
         end)
 
       state = put_in(state.prunes[project], Prune.note_thread(prune, thread_id, watermark))
@@ -695,14 +694,11 @@ defmodule HalC2Plugins.TokenEconomizer do
     end
   end
 
-  # Each provider instance's driver, which is what a project's evidence is kept by.
-  defp instance_drivers do
-    {:ok, providers} = Host.providers(@id)
-    Map.new(providers, &{&1["instanceId"], &1["driverKind"]})
-  end
-
-  defp history(thread_id) do
-    case Host.history(@id, thread_id, limit: 50) do
+  # The 50 runs that ended before `run_id` started, however late the feed tells of it.
+  # Each names the driver it ran on, which is what a project's evidence is kept by, even
+  # once its instance is deleted.
+  defp history(thread_id, run_id) do
+    case Host.history(@id, thread_id, limit: 50, before: run_id) do
       {:ok, runs} when is_list(runs) -> runs
       _ -> []
     end
