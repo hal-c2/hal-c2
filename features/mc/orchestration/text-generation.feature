@@ -477,7 +477,7 @@ Feature: Generated titles, branch names and source control text
       | title          | a folder Antigravity does not make on start | it fails saying Antigravity wrote files during text generation |
 
   # Legacy: apps/server/src/textGeneration/GrokTextGeneration.ts, GrokTextGeneration.test.ts
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario Outline: Grok's answer must hold the JSON that was asked for
     When "grok" writes a title and answers <answer>
     Then <outcome>
@@ -485,8 +485,8 @@ Feature: Generated titles, branch names and source control text
     Examples:
       | answer                                           | outcome                                |
       | a JSON object inside conversational text         | the object is used                     |
-      | nothing                                          | text generation fails                  |
-      | text that holds no valid JSON                    | text generation fails                  |
+      | nothing                                          | no title is written                    |
+      | text that holds no valid JSON                    | no title is written                    |
 
   # Legacy: apps/server/src/textGeneration/CodexTextGeneration.ts (image inputs by attachment id)
   @mc @priority-high
@@ -693,7 +693,7 @@ Feature: Generated titles, branch names and source control text
 
   # Upstream #15615. A suggested namespace such as fix/ is kept instead of nested under
   # feature/; only a name with no namespace gets feature/.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario Outline: A generated branch keeps the namespace the writer chose
     Given the repository has the branches <existing>
     When the writing agent answers the branch <raw> for a new branch

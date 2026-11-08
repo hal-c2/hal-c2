@@ -902,14 +902,14 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
   end
 
   step "the project's remote is on Forgejo, Azure DevOps or Bitbucket", context do
-    Map.put(context, :forge, "forgejo")
+    Map.put(context, :forge, "https://bitbucket.org/acme/shop.git")
   end
 
   # Another template sits in the folder, so a default is told apart from "the only one".
   step "the project's remote is on GitLab", context do
     context
     |> commit_files(%{".gitlab/merge_request_templates/other.md" => "## Other template\n"})
-    |> Map.put(:forge, "gitlab")
+    |> Map.put(:forge, "https://gitlab.com/acme/shop.git")
   end
 
   step "no other template in {string} is used in its place", context do
@@ -1321,6 +1321,78 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
       "textGenerationModelSelection" => selection("cursor-work", @defaults["cursor"])
     })
     |> title("Fix the login redirect loop")
+  end
+
+  # --- the branch a commit moves to ---------------------------------------------------------
+
+  step "the repository has the branches {string}", %{args: [branch]} = context do
+    ensure_branches(context, [branch])
+  end
+
+  step "the repository has the branches {string} and {string}",
+       %{args: [first, second]} = context do
+    ensure_branches(context, [first, second])
+  end
+
+  defp ensure_branches(context, branches) do
+    context = install(context)
+    root = root(context)
+
+    for branch <- branches, branch != "main" do
+      World.git!(root, ["branch", branch])
+    end
+
+    Map.put(context, :cwd, root)
+  end
+
+  step "the writing agent answers the branch {string} for a new branch",
+       %{args: [raw]} = context do
+    World.put_env(
+      "FAKE_TEXT_ANSWER",
+      JSON.encode!(%{"subject" => "Add a login page", "body" => "", "branch" => raw})
+    )
+
+    File.write!(Path.join(context.cwd, "login.txt"), "login\n")
+
+    {events, context} =
+      World.git_action(context, context.cwd, "commit", %{"featureBranch" => true})
+
+    Map.put(context, :git_events, events)
+  end
+
+  # --- Grok's answer ---------------------------------------------------------------------
+
+  # One step per answer: a `for` over the steps shares the first row's value.
+  step "{string} writes a title and answers a JSON object inside conversational text",
+       %{args: [provider]} = context do
+    grok_answer(
+      context,
+      provider,
+      ~s(Sure! Here you go: {"title":"Fix the login loop","needsRefinement":false} Hope it helps.)
+    )
+  end
+
+  step "{string} writes a title and answers nothing", %{args: [provider]} = context do
+    grok_answer(context, provider, "")
+  end
+
+  step "{string} writes a title and answers text that holds no valid JSON",
+       %{args: [provider]} = context do
+    grok_answer(context, provider, "I could not think of a title.")
+  end
+
+  defp grok_answer(context, provider, raw) do
+    context = install(context, [provider])
+    World.put_env("FAKE_TEXT_RAW", JSON.encode!(raw))
+
+    context
+    |> World.update_settings(%{"textGenerationModelSelection" => selection(provider)})
+    |> title("Fix the login redirect loop")
+  end
+
+  step "the object is used", context do
+    assert {:ok, %{"title" => "Fix the login loop"}} = context.reply
+    context
   end
 
   defp ended_title(context, provider, ending) do
@@ -1799,6 +1871,30 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     )
   end
 
+  # A pull request's text as the "Create PR" action asks for it. A project whose remote is on
+  # another host (`context.forge`, its URL) pushes to a local bare repository but names the
+  # host in its URL, and `gh` is the fake: the host kind reaches the template the real way.
+  defp pull_request(%{forge: url} = context) do
+    context =
+      github(context, [
+        %{"args" => ["pr list"], "stdout" => "[]"},
+        %{"args" => ["pr create"], "stdout" => "https://example.test/acme/shop/pull/7\n"}
+      ])
+
+    root = root(context)
+    bare = HalC2.Test.Mc.tmp_dir(context.mc, "remote")
+    World.git!(bare, ["init", "-q", "--bare"])
+    World.git!(root, ["checkout", "-q", "-b", "feature/login"])
+    File.write!(Path.join(root, "login.txt"), "login\n")
+    World.git!(root, ["add", "login.txt"])
+    World.git!(root, ["commit", "-q", "-m", "Add login"])
+    World.git!(root, ["remote", "add", "origin", url])
+    World.git!(root, ["config", "remote.origin.pushurl", bare])
+
+    {events, context} = World.git_action(context, root, "create_pr")
+    context |> Map.put(:cwd, root) |> Map.put(:git_events, events)
+  end
+
   # As `HalC2.GitActions` asks for a new pull request's text, with the base's template.
   defp pull_request(context) do
     context = install(context)
@@ -1814,7 +1910,7 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
         "1 file",
         "diff",
         policy: Style.policy(cwd),
-        template: Style.pr_template(cwd, "main", Map.get(context, :forge, "github"))
+        template: Style.pr_template(cwd, "main")
       )
     )
   end

@@ -59,7 +59,7 @@ defmodule HalC2.TextGeneration do
 
   @doc """
   A commit message for the staged changes: `%{"subject", "body"}`, and a
-  `feature/…` `"branch"` when asked for. Options: `:policy` (`HalC2.TextGeneration.Style`).
+  branch name (under the namespace the writer chose, else `feature/`) when asked for. Options: `:policy` (`HalC2.TextGeneration.Style`).
   """
   def commit_message(
         cwd,
@@ -82,7 +82,7 @@ defmodule HalC2.TextGeneration do
 
       {:ok,
        if(include_branch,
-         do: Map.put(result, "branch", "feature/" <> feature_fragment(out["branch"])),
+         do: Map.put(result, "branch", namespaced_branch(out["branch"])),
          else: result
        )}
     end
@@ -1239,9 +1239,11 @@ defmodule HalC2.TextGeneration do
     |> then(&if(&1 == "", do: "update", else: &1))
   end
 
-  # A fragment for `feature/…`, keeping a `feature/` prefix the model already gave.
-  defp feature_fragment(raw),
-    do: raw |> branch_fragment() |> String.replace_prefix("feature/", "")
+  # A name under the namespace the model chose (`fix/…`); `feature/` only when it chose none.
+  defp namespaced_branch(raw) do
+    fragment = branch_fragment(raw)
+    if String.contains?(fragment, "/"), do: fragment, else: "feature/" <> fragment
+  end
 
   # Prompts ask for under 40 characters; 120 only stops a runaway model.
   defp title(raw) do

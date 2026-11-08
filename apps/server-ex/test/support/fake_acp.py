@@ -262,8 +262,12 @@ def answer_title():
                             "images": titling_images}) + "\n")
     out = {"title": "%s title" % INSTANCE, "needsRefinement": False}
     out.update(json.loads(os.environ.get("FAKE_TEXT_ANSWER") or "{}"))
-    update(sid, {"sessionUpdate": "agent_message_chunk", "messageId": "msg-1",
-                 "content": {"type": "text", "text": json.dumps(out)}})
+    # $FAKE_TEXT_RAW (a JSON string) is what the agent says instead of the keys; "" says nothing.
+    raw = os.environ.get("FAKE_TEXT_RAW")
+    said = json.loads(raw) if raw is not None else json.dumps(out)
+    if said != "":
+        update(sid, {"sessionUpdate": "agent_message_chunk", "messageId": "msg-1",
+                     "content": {"type": "text", "text": said}})
     # $FAKE_TEXT_STOP ends the run badly after the answer: "cancelled", or "error".
     ending = os.environ.get("FAKE_TEXT_STOP")
     if ending == "error":
