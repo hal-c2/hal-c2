@@ -373,6 +373,9 @@ Feature: Codex
 
   # Upstream #27924: when a write to the app-server failed while its output stayed open, pending
   # and later requests waited forever and the session was never retired.
+  # Only an app-server the MC owns directly is fixed. A durable one (the default off Windows) still
+  # waits: a write to its input FIFO never fails (hal-c2#1379).
+  @backlog @priority-high
   Scenario: Codex requests fail at once when the app-server stops taking input
     Given a Codex turn is running
     When the Codex app-server stops accepting input but keeps its output open
@@ -1466,6 +1469,9 @@ Feature: Codex
     Then the provider status and the failed turn both end with "Error: Missing optional dependency @openai/codex-darwin-arm64"
 
   # Upstream #24600: requests hung when Codex closed its output but kept running.
+  # Only a Codex the MC owns directly is fixed. A durable one (the default off Windows) writes its
+  # output to a file, whose end the MC sees only once Codex exits (hal-c2#1379).
+  @backlog @priority-high
   Scenario: A request to Codex fails soon after Codex closes its output while still running
     Given the MC is waiting on Codex for an answer
     When Codex closes its output and keeps running
