@@ -12,8 +12,8 @@ defmodule HalC2.Acp.Auth do
   Failures reach clients as fixed messages. One the agent refused, its sign-in or the
   session after it, also names the agent's reason (upstream #30295), redacted as its
   error output is (`HalC2.Acp.Stderr`) and cut to 500 characters, so a proxy's error
-  page cannot fill the panel. What else the agent said goes to the log only, since it
-  can hold a device code or a sign-in URL.
+  page cannot fill the panel. A reason holding an address or a device code is left
+  out of the message altogether; it and what else the agent said goes to the log only.
   """
 
   alias HalC2.JsonRpc.Connection
@@ -303,16 +303,26 @@ defmodule HalC2.Acp.Auth do
 
   @reason_chars 500
 
+  # Any address, or a device code (`WXYZ-9876`: upper-case groups joined by `-`).
+  @sign_in_secret ~r/https?:\/\/|\b(?=[A-Z0-9-]*\d)[A-Z0-9]{3,10}(?:-[A-Z0-9]{3,10})+\b/
+
   defp refused(message, reason) do
     said = redacted(reason)
     Logger.warning("ACP sign-in failed: #{message} #{said}")
 
     # Redacted whole, then its start kept: the start of an error page says what it is.
-    case String.trim(said) do
-      "" ->
+    said = String.trim(said)
+
+    cond do
+      said == "" ->
         fail(message)
 
-      said ->
+      # A device code or a sign-in address in the reason is for the user's eyes only
+      # through the sign-in interaction, never in a failure shown or stored with it.
+      Regex.match?(@sign_in_secret, said) ->
+        fail(message)
+
+      true ->
         said = String.slice(said, 0, @reason_chars)
         fail(message <> " " <> if(said =~ ~r/[.!?]$/, do: said, else: said <> "."))
     end
