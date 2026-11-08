@@ -50,10 +50,13 @@ defmodule HalC2.AcpTest do
   test "agent commands follow the runtime mode and the configured binary" do
     assert {:ok, ["opencode", "acp"], []} = HalC2.Acp.command("opencode", "full-access")
 
-    assert {:ok, ["grok", "agent", "--always-approve", "stdio"], []} =
+    # Grok is told HAL-C2 started it.
+    referrer = [{"GROK_OAUTH2_REFERRER", "hal-c2"}]
+
+    assert {:ok, ["grok", "agent", "--always-approve", "stdio"], ^referrer} =
              HalC2.Acp.command("grok", "full-access")
 
-    assert {:ok, ["grok", "--permission-mode", "default", "agent", "stdio"], []} =
+    assert {:ok, ["grok", "--permission-mode", "default", "agent", "stdio"], ^referrer} =
              HalC2.Acp.command("grok", "approval-required")
 
     {:ok, _} =
@@ -221,6 +224,10 @@ defmodule HalC2.AcpTest do
 
     File.write!(grok, """
     #!/usr/bin/env python3
+    import sys
+    if sys.argv[1:] == ["--version"]:
+        print("grok 9.9.9")
+        sys.exit(0)
     import json, sys
     def answer(request, result):
         print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
@@ -264,6 +271,10 @@ defmodule HalC2.AcpTest do
     # The first launch answers `session/new` with what no read can take.
     File.write!(grok, """
     #!/usr/bin/env python3
+    import sys
+    if sys.argv[1:] == ["--version"]:
+        print("grok 9.9.9")
+        sys.exit(0)
     import json, os, sys
     def answer(request, result):
         print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
@@ -304,6 +315,17 @@ defmodule HalC2.AcpTest do
     assert %{"models" => [%{"slug" => "fresh"}]} = HalC2.Acp.entry("grok")
   end
 
+  # One macOS refuses (quarantine) dies before it answers: its connection may stop
+  # before `initialize` is sent, while it is written, or while it waits. Each of
+  # those is a closed connection, never an exit that leaves the read unpublished.
+  test "an agent that dies at once fails as closed", %{tmp_dir: dir} do
+    Application.put_env(:hal_c2, :acp_commands, %{"dying" => ["sh", "-c", "exit 137"]})
+    on_exit(fn -> Application.delete_env(:hal_c2, :acp_commands) end)
+
+    assert HalC2.Acp.with_agent("dying", dir, fn _conn, _init -> :answered end) ==
+             {:error, :closed}
+  end
+
   test "a read that was forgotten while it ran leaves no failure behind", %{tmp_dir: dir} do
     # The agent refuses `initialize` once the instance is forgotten.
     forgotten_mid_read(dir, """
@@ -341,6 +363,10 @@ defmodule HalC2.AcpTest do
     # let the first read overwrite the second.
     File.write!(grok, """
     #!/usr/bin/env python3
+    import sys
+    if sys.argv[1:] == ["--version"]:
+        print("grok 9.9.9")
+        sys.exit(0)
     import json, os, sys
     request = json.loads(sys.stdin.readline())
     def answer(request, result):
@@ -406,6 +432,10 @@ defmodule HalC2.AcpTest do
     # never answers, so a read started beside the reload cannot stand in for it.
     File.write!(grok, """
     #!/usr/bin/env python3
+    import sys
+    if sys.argv[1:] == ["--version"]:
+        print("grok 9.9.9")
+        sys.exit(0)
     import json, os, sys
     request = json.loads(sys.stdin.readline())
     first = not os.path.exists("#{probes}")
@@ -465,6 +495,10 @@ defmodule HalC2.AcpTest do
 
     File.write!(grok, """
     #!/usr/bin/env python3
+    import sys
+    if sys.argv[1:] == ["--version"]:
+        print("grok 9.9.9")
+        sys.exit(0)
     import json, os, sys
     request = json.loads(sys.stdin.readline())
     open("#{started}", "w").write(os.getcwd() + "\\n")
@@ -510,6 +544,26 @@ defmodule HalC2.AcpTest do
 
     assert :persistent_term.get({HalC2.Acp, "gone", :generation}, :none) == :none
     assert :persistent_term.get({HalC2.Acp, "gone", :models}, :none) == :none
+  end
+
+  test "an instance's commands and skills are its own and are forgotten with it" do
+    HalC2.Acp.put_commands("opencode", [
+      %{"name" => "review", "description" => "Review"},
+      %{"name" => "$deploy", "description" => "Deploy"}
+    ])
+
+    on_exit(fn -> HalC2.Acp.forget("opencode") end)
+
+    assert :persistent_term.get({HalC2.Acp, "opencode", :commands}) ==
+             [%{"name" => "review", "description" => "Review"}]
+
+    assert [%{"name" => "deploy"}] = :persistent_term.get({HalC2.Acp, "opencode", :skills})
+    assert :persistent_term.get({HalC2.Acp, "grok", :commands}, :none) == :none
+
+    HalC2.Acp.forget("opencode")
+
+    assert :persistent_term.get({HalC2.Acp, "opencode", :commands}, :none) == :none
+    assert :persistent_term.get({HalC2.Acp, "opencode", :skills}, :none) == :none
   end
 
   # Other services broadcast `providers_changed` too. The read's own broadcast follows

@@ -224,6 +224,27 @@ defmodule HalC2.TextGenerationTest do
       assert {:ok, %{"branch" => branch}} = TextGeneration.branch_name(repo, "Add login")
       assert branch =~ ~r{^acp-branch-fake/two-in-hal-c2-text-\d+-\d+$}
     end
+
+    test "an ACP agent dying mid-generation fails it, not as a cancellation", %{repo: repo} do
+      install([])
+      dying = Path.expand("../support/fake_acp_dying.py", __DIR__)
+      Application.put_env(:hal_c2, :acp_commands, %{"opencode" => ["python3", "-u", dying]})
+
+      settings!(%{
+        "providers" => %{"opencode" => %{"enabled" => true}},
+        "sourceControlWriterModelSelection" => %{
+          "instanceId" => "opencode",
+          "model" => "fake/one"
+        }
+      })
+
+      # The connection's exit and the prompt's error answer race to the
+      # collector; whichever lands first, the answer is the failure.
+      for _ <- 1..5 do
+        assert {:error, message} = TextGeneration.branch_name(repo, "Add login")
+        assert message =~ "request failed"
+      end
+    end
   end
 
   describe "a project's switch on an ACP agent configured only under providers" do

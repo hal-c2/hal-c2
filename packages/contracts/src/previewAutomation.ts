@@ -77,11 +77,47 @@ export const PreviewAutomationStatus = Schema.Struct({
 });
 export type PreviewAutomationStatus = typeof PreviewAutomationStatus.Type;
 
+export const BrowserNavigationTarget = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("url").annotate({
+      description: "Selects direct URL navigation.",
+    }),
+    url: BoundedUrl.annotate({
+      description: `Direct website URL. ${URL_GUIDANCE}`,
+    }),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("environment-port").annotate({
+      description: "Selects a dev-server port relative to the current execution environment.",
+    }),
+    port: Schema.Int.check(Schema.isGreaterThan(0))
+      .check(Schema.isLessThan(65_536))
+      .annotate({ description: "Dev-server TCP port inside the current environment." }),
+    protocol: Schema.optional(
+      Schema.Literals(["http", "https"]).annotate({
+        description: "Dev-server protocol. Defaults to http.",
+      }),
+    ),
+    path: Schema.optional(
+      Schema.String.annotate({
+        description: "Optional path, query, and fragment, for example /settings?tab=account.",
+      }),
+    ),
+  }),
+]);
+export type BrowserNavigationTarget = typeof BrowserNavigationTarget.Type;
+
 export const PreviewAutomationOpenInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
   url: Schema.optional(BoundedUrl).annotate({
     description: `Optional initial page URL. ${URL_GUIDANCE} Omit to open a blank tab.`,
   }),
+  target: Schema.optional(
+    BrowserNavigationTarget.annotate({
+      description:
+        "Environment-relative target. Prefer {kind:'environment-port',port:5173} for a dev server in the current environment. Wins over url when both are given.",
+    }),
+  ),
   open: Schema.optional(
     Schema.Boolean.annotate({
       description:
@@ -113,36 +149,6 @@ export const PreviewAutomationOpenInput = Schema.Struct({
       "Opens the collaborative browser for the current thread. Use preview_navigate afterward when readiness waiting matters.",
   });
 export type PreviewAutomationOpenInput = typeof PreviewAutomationOpenInput.Type;
-
-export const BrowserNavigationTarget = Schema.Union([
-  Schema.Struct({
-    kind: Schema.Literal("url").annotate({
-      description: "Selects direct URL navigation.",
-    }),
-    url: BoundedUrl.annotate({
-      description: `Direct website URL. ${URL_GUIDANCE}`,
-    }),
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("environment-port").annotate({
-      description: "Selects a dev-server port relative to the current execution environment.",
-    }),
-    port: Schema.Int.check(Schema.isGreaterThan(0))
-      .check(Schema.isLessThan(65_536))
-      .annotate({ description: "Dev-server TCP port inside the current environment." }),
-    protocol: Schema.optional(
-      Schema.Literals(["http", "https"]).annotate({
-        description: "Dev-server protocol. Defaults to http.",
-      }),
-    ),
-    path: Schema.optional(
-      Schema.String.annotate({
-        description: "Optional path, query, and fragment, for example /settings?tab=account.",
-      }),
-    ),
-  }),
-]);
-export type BrowserNavigationTarget = typeof BrowserNavigationTarget.Type;
 
 export const PreviewAutomationNavigateInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
@@ -583,6 +589,12 @@ export const PreviewAutomationHost = Schema.Struct({
    * a newer server safely coexist with an older desktop during rollout.
    */
   supportedOperations: Schema.optional(Schema.Array(PreviewAutomationOperation)),
+  /** Tabs this host is showing now; missing means it reports none. */
+  visibleTabIds: Schema.optional(Schema.Array(PreviewTabId)),
+  /** Tabs this host holds a live page for, shown or not. */
+  liveTabIds: Schema.optional(Schema.Array(PreviewTabId)),
+  /** This host holds only a snapshot of its browser, so no new agent session starts on it. */
+  snapshotOnly: Schema.optional(Schema.Boolean),
 });
 export type PreviewAutomationHost = typeof PreviewAutomationHost.Type;
 
@@ -590,6 +602,10 @@ export const PreviewAutomationHostFocus = Schema.Struct({
   ...PreviewAutomationHostIdentity.fields,
   connectionId: PreviewAutomationConnectionId,
   focused: Schema.Boolean,
+  /** Updated tab sets, as in PreviewAutomationHost, when they changed with the focus. */
+  visibleTabIds: Schema.optional(Schema.Array(PreviewTabId)),
+  liveTabIds: Schema.optional(Schema.Array(PreviewTabId)),
+  snapshotOnly: Schema.optional(Schema.Boolean),
 });
 export type PreviewAutomationHostFocus = typeof PreviewAutomationHostFocus.Type;
 
@@ -755,6 +771,18 @@ export class PreviewAutomationTimeoutError extends Schema.TaggedError<PreviewAut
   override get message(): string {
     const summary = `Preview automation ${this.operation} timed out after ${this.timeoutMs}ms.`;
     return summary;
+  }
+}
+
+export class PreviewAutomationNavigationTimeoutError extends Schema.TaggedError<PreviewAutomationNavigationTimeoutError>()(
+  "PreviewAutomationNavigationTimeoutError",
+  {
+    ...PreviewAutomationRequestErrorFields,
+    ...PreviewAutomationOptionalRemoteDiagnosticFields,
+  },
+) {
+  override get message(): string {
+    return `Preview automation navigation timed out after ${this.timeoutMs}ms.`;
   }
 }
 
@@ -924,6 +952,7 @@ export const PreviewAutomationError = Schema.Union([
   PreviewAutomationUnsupportedClientError,
   PreviewAutomationTabNotFoundError,
   PreviewAutomationTimeoutError,
+  PreviewAutomationNavigationTimeoutError,
   PreviewAutomationControlInterruptedError,
   PreviewAutomationExecutionError,
   PreviewAutomationInvalidSelectorError,

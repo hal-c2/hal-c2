@@ -1525,25 +1525,36 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     ended_title(context, provider, "cancelled")
   end
 
-  # A second, renamed Cursor instance: told apart by its driver, not by its name.
+  # A second, renamed Cursor instance: told apart by its driver, not by its name. It is
+  # the only writer on, so a run that fell back to the built-in Cursor (the real SDK
+  # sidecar, which has no fake here) cannot pass for it.
   step "the Cursor instance {string} writes a title and the run ends with an error after printing a valid title",
        %{args: [name]} = context do
-    context = install(context, ["cursor"])
+    context = install(context, [])
 
     World.put_app_env(:acp_commands, %{
-      "cursor-work" => ["python3", "-u", @fake_acp, "--instance", "cursor"]
+      "cursor-work" => ["python3", "-u", @fake_acp, "--instance", "cursor-work"]
     })
 
     World.put_env("FAKE_TEXT_STOP", "error")
 
+    context =
+      context
+      |> World.update_settings(%{
+        "providerInstances" => %{
+          "cursor-work" => %{
+            "driver" => "cursor",
+            "displayName" => name,
+            "enabled" => true,
+            "config" => %{}
+          }
+        },
+        "textGenerationModelSelection" => selection("cursor-work", @defaults["cursor"])
+      })
+      |> title("Fix the login redirect loop")
+
+    assert [%{"acp" => "cursor-work"}] = calls(context)
     context
-    |> World.update_settings(%{
-      "providerInstances" => %{
-        "cursor-work" => %{"driver" => "cursor", "displayName" => name, "config" => %{}}
-      },
-      "textGenerationModelSelection" => selection("cursor-work", @defaults["cursor"])
-    })
-    |> title("Fix the login redirect loop")
   end
 
   # --- the branch a commit moves to ---------------------------------------------------------

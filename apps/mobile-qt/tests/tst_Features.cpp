@@ -27,6 +27,9 @@ namespace {
 
 const QStringList kDefaultGlobs{
     QStringLiteral("composer/question-answers.feature"),
+    QStringLiteral("composer/model-and-mode.feature:The composer names the permissions only when they differ*"),
+    QStringLiteral("composer/model-and-mode.feature:A new thread says which permissions*"),
+    QStringLiteral("composer/model-and-mode.feature:The phone's back leaves the permissions menu*"),
     QStringLiteral("files/adding-projects.feature"),
     QStringLiteral("files/file-viewer-and-editing.feature"),
     QStringLiteral("mobile/pairing-and-environments.feature"),

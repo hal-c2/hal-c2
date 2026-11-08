@@ -91,8 +91,12 @@ defmodule HalC2.Acp.ThreadRuntimeTest do
 
       await_statuses(thread_id, ["failed"])
 
+      # Grok's failures name their JSON-RPC code; other agents' do not.
+      expected =
+        if unquote(instance) == "grok", do: "Internal error (-32603)", else: "Internal error"
+
       sessions = StreamState.list(current(thread_id), "provider-session")
-      assert Enum.any?(sessions, &(&1["lastError"] == "Internal error"))
+      assert Enum.any?(sessions, &(&1["lastError"] == expected))
       refute Enum.any?(sessions, &(&1["lastErrorClass"] == "usage_limit"))
 
       # The runtime survived the error and runs the next turn.
