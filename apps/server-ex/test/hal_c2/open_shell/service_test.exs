@@ -72,6 +72,10 @@ defmodule HalC2.OpenShell.ServiceTest do
       assert File.read!(path) == Service.render(:systemd, @state)
 
       assert Storage.service_calls(log) == [
+               # The reaper and then the gateway stop before their units are written.
+               "systemctl --user stop #{Service.reap_name(:timer)}",
+               "systemctl --user stop #{Service.reap_name(:systemd)}",
+               "systemctl --user stop #{Service.name(:systemd)}",
                "systemctl --user daemon-reload",
                "systemctl --user enable #{Service.name(:systemd)}",
                "systemctl --user restart #{Service.name(:systemd)}",
@@ -92,8 +96,10 @@ defmodule HalC2.OpenShell.ServiceTest do
       refute File.exists?(path)
 
       assert Storage.service_calls(log) == [
+               "systemctl --user stop #{Service.reap_name(:timer)}",
+               "systemctl --user stop #{Service.reap_name(:systemd)}",
                "systemctl --user stop #{Service.name(:systemd)}",
-               "systemctl --user disable --now #{Service.reap_name(:timer)}",
+               "systemctl --user disable #{Service.reap_name(:timer)}",
                "systemctl --user disable #{Service.name(:systemd)}",
                "systemctl --user daemon-reload"
              ]
@@ -146,13 +152,43 @@ defmodule HalC2.OpenShell.ServiceTest do
       assert :ok = Service.uninstall()
     end
 
-    test "a stop that fails leaves the unit in place", %{log: log} do
+    test "a stop that fails leaves the unit in place, as it was", %{log: log} do
       assert :ok = Service.install(@state)
+      unit = File.read!(Service.unit_path(:systemd))
       Storage.service_state(log, "stop-fails", true)
+      File.rm!(log)
 
       assert {:error, _} = Service.stop()
       assert {:error, _} = Service.uninstall()
-      assert File.exists?(Service.unit_path(:systemd))
+      # The next version's unit is not written over a gateway that did not stop.
+      assert {:error, _} = Service.install(%{@state | "version" => "0.1.8", "driver" => "docker"})
+      assert File.read!(Service.unit_path(:systemd)) == unit
+      refute Enum.any?(Storage.service_calls(log), &(&1 =~ ~r/daemon-reload|restart/))
+      assert %{"running" => true, "current" => true} = Service.status(@state)
+      # The gateway runs on, and so does its reaper.
+      assert "systemctl --user start #{Service.reap_name(:timer)}" in Storage.service_calls(log)
+      assert File.exists?(Path.join(Path.dirname(log), "reap-active"))
+    end
+
+    test "a reaper that does not stop keeps its units and the gateway's", %{log: log} do
+      assert :ok = Service.install(@state)
+
+      units =
+        for path <- [Service.unit_path(:systemd) | Service.reaper_paths(:systemd)],
+            do: {path, File.read!(path)}
+
+      Storage.service_state(log, "reap-stop-fails", true)
+      File.rm!(log)
+
+      assert {:error, _} = Service.stop()
+      assert {:error, _} = Service.install(%{@state | "version" => "0.1.8", "driver" => "docker"})
+      assert {:error, _} = Service.uninstall()
+      for {path, text} <- units, do: assert(File.read!(path) == text)
+      calls = Storage.service_calls(log)
+      refute Enum.any?(calls, &(&1 =~ ~r/daemon-reload|restart|disable/))
+      # The gateway was never asked to stop, and runs on.
+      refute "systemctl --user stop #{Service.name(:systemd)}" in calls
+      assert %{"running" => true, "current" => true} = Service.status(@state)
     end
 
     test "uninstall stops a gateway whose unit file is already gone", %{log: log} do
@@ -163,8 +199,10 @@ defmodule HalC2.OpenShell.ServiceTest do
       assert :ok = Service.uninstall()
 
       assert Storage.service_calls(log) == [
+               "systemctl --user stop #{Service.reap_name(:timer)}",
+               "systemctl --user stop #{Service.reap_name(:systemd)}",
                "systemctl --user stop #{Service.name(:systemd)}",
-               "systemctl --user disable --now #{Service.reap_name(:timer)}"
+               "systemctl --user disable #{Service.reap_name(:timer)}"
              ]
 
       refute File.exists?(Path.join(Path.dirname(log), "active"))
@@ -213,9 +251,10 @@ defmodule HalC2.OpenShell.ServiceTest do
       [{reaper, plist}] = Service.reaper(:launchd)
 
       assert Storage.service_calls(log) == [
+               # Both booted out before either plist is written.
+               "launchctl bootout gui/#{uid}/#{Service.reap_name(:launchd)}",
                "launchctl bootout gui/#{uid}/#{Service.name(:launchd)}",
                "launchctl bootstrap gui/#{uid} #{path}",
-               "launchctl bootout gui/#{uid}/#{Service.reap_name(:launchd)}",
                "launchctl bootstrap gui/#{uid} #{reaper}"
              ]
 
@@ -238,8 +277,8 @@ defmodule HalC2.OpenShell.ServiceTest do
       refute File.exists?(reaper)
 
       assert Storage.service_calls(log) == [
-               "launchctl bootout gui/#{uid}/#{Service.name(:launchd)}",
-               "launchctl bootout gui/#{uid}/#{Service.reap_name(:launchd)}"
+               "launchctl bootout gui/#{uid}/#{Service.reap_name(:launchd)}",
+               "launchctl bootout gui/#{uid}/#{Service.name(:launchd)}"
              ]
 
       refute File.exists?(Path.join(Path.dirname(log), "loaded"))
@@ -250,16 +289,48 @@ defmodule HalC2.OpenShell.ServiceTest do
       assert :ok = Service.uninstall()
     end
 
-    test "a bootout that fails is an error, and leaves the agent and its plist", %{log: log} do
+    test "a bootout that fails is an error, and leaves the agent and its plist as they were",
+         %{log: log} do
       assert :ok = Service.install(@state)
+      plist = File.read!(Service.unit_path(:launchd))
       Storage.service_state(log, "stop-fails", true)
+      File.rm!(log)
 
       assert {:error, message} = Service.stop()
       assert message =~ "Boot-out failed: 5"
       assert {:error, _} = Service.uninstall()
-      assert {:error, _} = Service.install(@state)
-      assert File.exists?(Service.unit_path(:launchd))
-      assert %{"running" => true} = Service.status(@state)
+      # The next version's plist is not written over an agent that did not stop.
+      assert {:error, _} = Service.install(%{@state | "version" => "0.1.8", "driver" => "docker"})
+      assert File.read!(Service.unit_path(:launchd)) == plist
+      calls = Storage.service_calls(log)
+      refute Enum.any?(calls, &String.ends_with?(&1, Service.unit_path(:launchd)))
+      assert %{"running" => true, "current" => true} = Service.status(@state)
+      # The gateway runs on, and so does its reaper.
+      [reaper] = Service.reaper_paths(:launchd)
+      assert "launchctl bootstrap gui/#{HalC2.Service.uid()} #{reaper}" in calls
+      assert File.exists?(Path.join(Path.dirname(log), "reap-loaded"))
+    end
+
+    test "a reaper that does not boot out keeps both plists as they were", %{log: log} do
+      assert :ok = Service.install(@state)
+
+      units =
+        for path <- [Service.unit_path(:launchd) | Service.reaper_paths(:launchd)],
+            do: {path, File.read!(path)}
+
+      Storage.service_state(log, "reap-stop-fails", true)
+      File.rm!(log)
+
+      assert {:error, _} = Service.install(%{@state | "version" => "0.1.8", "driver" => "docker"})
+      assert {:error, _} = Service.stop()
+      assert {:error, _} = Service.start()
+      assert {:error, _} = Service.uninstall()
+      for {path, text} <- units, do: assert(File.read!(path) == text)
+      calls = Storage.service_calls(log)
+      refute Enum.any?(calls, &(&1 =~ "bootstrap"))
+      # The gateway was never booted out, and runs on.
+      refute Enum.any?(calls, &String.ends_with?(&1, "/" <> Service.name(:launchd)))
+      assert %{"running" => true, "current" => true} = Service.status(@state)
     end
 
     test "uninstall boots out an agent whose plist is already gone", %{log: log} do
@@ -270,8 +341,8 @@ defmodule HalC2.OpenShell.ServiceTest do
       assert :ok = Service.uninstall()
 
       assert Storage.service_calls(log) == [
-               "launchctl bootout gui/#{HalC2.Service.uid()}/#{Service.name(:launchd)}",
-               "launchctl bootout gui/#{HalC2.Service.uid()}/#{Service.reap_name(:launchd)}"
+               "launchctl bootout gui/#{HalC2.Service.uid()}/#{Service.reap_name(:launchd)}",
+               "launchctl bootout gui/#{HalC2.Service.uid()}/#{Service.name(:launchd)}"
              ]
 
       refute File.exists?(Path.join(Path.dirname(log), "loaded"))

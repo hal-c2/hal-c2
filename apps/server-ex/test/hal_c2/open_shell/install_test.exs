@@ -160,6 +160,10 @@ defmodule HalC2.OpenShell.InstallTest do
       assert File.read!(Service.unit_path(:systemd)) == Service.render(:systemd, state)
 
       assert Storage.service_calls(ctx.log) == [
+               # The reaper and then the gateway stop before their units are written.
+               "systemctl --user stop #{Service.reap_name(:timer)}",
+               "systemctl --user stop #{Service.reap_name(:systemd)}",
+               "systemctl --user stop #{Service.name(:systemd)}",
                "systemctl --user daemon-reload",
                "systemctl --user enable #{Service.name(:systemd)}",
                "systemctl --user restart #{Service.name(:systemd)}",
@@ -281,6 +285,7 @@ defmodule HalC2.OpenShell.InstallTest do
         File.mkdir_p!(Path.dirname(OpenShell.db_path()))
         File.write!(OpenShell.db_path(), "old database")
         old_ca = File.read!(Path.join(OpenShell.pki_dir(), "ca.crt"))
+        unit = File.read!(Service.unit_path(Service.manager()))
         File.write!(Path.join(ctx.bin, "stop-fails"), "")
 
         assert {:error, "[gateway-stop-failed]" <> _} = install(ctx, "0.1.7")
@@ -292,7 +297,7 @@ defmodule HalC2.OpenShell.InstallTest do
         assert File.read!(Path.join(OpenShell.pki_dir(), "ca.crt")) == old_ca
         assert File.read!(OpenShell.db_path()) == "old database"
         assert File.exists?(OpenShell.gateway_bin("0.1.6"))
-        assert File.exists?(Service.unit_path(Service.manager()))
+        assert File.read!(Service.unit_path(Service.manager())) == unit
       end
     end
 
@@ -415,6 +420,95 @@ defmodule HalC2.OpenShell.InstallTest do
       assert OpenShell.state() == state
       assert "service-not-ours" in Install.status()["problems"]
       refute "service-outdated" in Install.status()["problems"]
+    end
+  end
+
+  describe "one home by two spellings" do
+    # The home `ctx.tmp_dir/mc` reached through a link to it, or through a link to
+    # its parent.
+    defp spelling(dir, :home) do
+      File.ln_s!(Path.join(dir, "mc"), Path.join(dir, "mc-link"))
+      Path.join(dir, "mc-link")
+    end
+
+    defp spelling(dir, :parent) do
+      File.ln_s!(dir, Path.join(dir, "up"))
+      Path.join([dir, "up", "mc"])
+    end
+
+    for how <- [:home, :parent] do
+      test "is one gateway, and the alias updates and uninstalls the real one (linked #{how})",
+           ctx do
+        alias_home = spelling(ctx.tmp_dir, unquote(how))
+        # Before the home exists, the alias already resolves to it.
+        FakeOpenShell.put_env(home: alias_home)
+        unborn = OpenShell.root()
+        FakeOpenShell.put_env(home: Path.join(ctx.tmp_dir, "mc"))
+
+        assert {:ok, state} = install(ctx, "0.1.6")
+        name = Service.name(:systemd)
+        unit = Service.unit_path(:systemd)
+        root = OpenShell.root()
+        assert root == unborn
+
+        FakeOpenShell.put_env(home: alias_home)
+        assert OpenShell.root() == root
+        assert Service.name(:systemd) == name
+        assert OpenShell.state() == state
+        assert Service.status(state)["current"]
+        assert Install.status()["problems"] -- ["update-available", "gateway-unreachable"] == []
+
+        File.write!(ctx.log, "")
+        FakeOpenShell.queue_certificates(ctx.control)
+        assert {:ok, _} = install(ctx, "0.1.7")
+        assert "systemctl --user stop #{name}" in Storage.service_calls(ctx.log)
+
+        File.write!(ctx.log, "")
+        assert :ok = Install.uninstall()
+        calls = Storage.service_calls(ctx.log)
+        assert "systemctl --user stop #{name}" in calls
+        assert "systemctl --user disable #{name}" in calls
+        refute File.exists?(unit)
+        refute File.exists?(root)
+      end
+    end
+
+    test "a home whose path changed leaves the service it was installed under alone", ctx do
+      assert {:ok, state} = install(ctx, "0.1.7")
+      old_unit = Service.unit_path(:systemd)
+      text = File.read!(old_unit)
+
+      # The same files, now at another path that is not a link to the old one.
+      File.rename!(Path.join(ctx.tmp_dir, "mc"), Path.join(ctx.tmp_dir, "moved"))
+      FakeOpenShell.put_env(home: Path.join(ctx.tmp_dir, "moved"))
+      assert OpenShell.state() == state
+      File.write!(ctx.log, "")
+
+      FakeOpenShell.queue_certificates(ctx.control)
+
+      for result <- [install(ctx, "0.1.7"), Install.rotate(), Install.uninstall(force: true)] do
+        assert {:error, "[home-moved] " <> message} = result
+        assert message =~ old_unit
+      end
+
+      assert "home-moved" in Install.status()["problems"]
+      refute Enum.any?(Storage.service_calls(ctx.log), &(&1 =~ ~r/ (stop|restart|disable) /))
+      assert File.read!(old_unit) == text
+
+      # Its reaper alone still holds the old name.
+      File.rm!(old_unit)
+      File.rm!(Path.join(ctx.bin, "active"))
+      reapers = Service.reaper_paths(:systemd, state["instance"])
+      assert reapers != [] and Enum.all?(reapers, &File.exists?/1)
+      assert {:error, "[home-moved] " <> message} = install(ctx, "0.1.7")
+      assert message =~ Service.reap_name(:timer, state["instance"])
+
+      # Once that service and its reaper are gone, the home installs under its new name.
+      Enum.each(reapers, &File.rm!/1)
+      assert {:ok, %{"instance" => instance}} = install(ctx, "0.1.7")
+      assert instance == OpenShell.instance()
+      refute instance == state["instance"]
+      refute "home-moved" in Install.status()["problems"]
     end
   end
 

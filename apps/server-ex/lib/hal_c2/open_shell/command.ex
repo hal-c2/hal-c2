@@ -124,7 +124,7 @@ defmodule HalC2.OpenShell.Command do
   defp reaps_here(nil), do: :ok
 
   defp reaps_here(root) do
-    if Path.expand(root) == Path.expand(OpenShell.root()),
+    if (HalC2.Paths.canonical(root) || Path.expand(root)) == OpenShell.root(),
       do: :ok,
       else:
         {:error,
@@ -197,6 +197,10 @@ defmodule HalC2.OpenShell.Command do
   def problem_message("service-not-ours"),
     do:
       "The service under this home's name runs another HAL-C2 home's gateway, so this MC leaves it alone. If no HAL-C2 home uses it, remove its unit, then run `hal-c2-service openshell install`."
+
+  def problem_message("home-moved"),
+    do:
+      "OpenShell was installed when this HAL-C2 home was at another path, and that path's gateway service is still there. Stop and remove it, or run the MC from the path it was installed at, then run `hal-c2-service openshell install`."
 
   def problem_message("service-outdated"),
     do:

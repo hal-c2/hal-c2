@@ -396,9 +396,12 @@ defmodule HalC2.Test.Storage do
   files beside them and not logged: `enabled`, `active` and `linger` follow what
   the service manager was asked to do, and `service_state/3` can set or clear
   them, or `no-user-manager` and `no-logind` to make those questions fail.
-  `stop-fails` makes a stop (or a loaded agent's bootout) fail, and `not-loaded` makes
-  systemd answer a stop as a unit it does not have. launchctl's agent is `loaded`
-  between a bootstrap and a bootout.
+  `stop-fails` makes the stop of an active unit (or a loaded agent's bootout) fail,
+  `reap-stop-fails` makes the reaper's stop or bootout fail while it runs, and
+  `not-loaded` makes systemd answer a stop as a unit it does not have. launchctl's
+  agent is `loaded` between a bootstrap and a bootout. The reaper's state is its
+  own, `reap-active` (systemd's timer, from `enable --now` or `start` to a stop or disable) and
+  `reap-loaded` (launchd's agent).
   """
   def fake_service_manager(bin) do
     log = Path.join(bin, "calls.log")
@@ -412,11 +415,21 @@ defmodule HalC2.Test.Storage do
       is-active) [ -f "$state/active" ] && { echo active; exit 0; }; echo inactive; exit 3 ;;
     esac
     echo "systemctl $*" >> "#{log}"
+    case "$*" in
+      *-reap.*)
+        case "$2" in
+          enable|start) touch "$state/reap-active" ;;
+          stop) [ -f "$state/reap-stop-fails" ] && [ -f "$state/reap-active" ] && exit 1
+                rm -f "$state/reap-active" ;;
+          disable) rm -f "$state/reap-active" ;;
+        esac
+        exit 0 ;;
+    esac
     case "$2" in
       enable) touch "$state/enabled" ;;
       restart) touch "$state/active" ;;
       stop)
-        [ -f "$state/stop-fails" ] && exit 1
+        [ -f "$state/stop-fails" ] && [ -f "$state/active" ] && exit 1
         [ -f "$state/not-loaded" ] && [ ! -f "$state/active" ] && { echo "Unit $3 not loaded."; exit 5; }
         rm -f "$state/active" ;;
       disable) rm -f "$state/enabled" "$state/active" ;;
@@ -445,16 +458,23 @@ defmodule HalC2.Test.Storage do
     File.write!(Path.join(bin, "launchctl"), """
     #!/bin/sh
     state="#{bin}"
+    agent=loaded
+    case "$*" in *.reap|*.reap.plist) agent=reap-loaded ;; esac
     case "$1" in
-      print) [ -f "$state/loaded" ] && exit 0; echo "Could not find service"; exit 113 ;;
+      print) [ -f "$state/$agent" ] && exit 0; echo "Could not find service"; exit 113 ;;
     esac
     echo "launchctl $*" >> "#{log}"
     case "$1" in
       bootout)
+        if [ "$agent" = reap-loaded ]; then
+          [ -f "$state/reap-loaded" ] || { echo "Boot-out failed: 3: No such process"; exit 3; }
+          [ -f "$state/reap-stop-fails" ] && { echo "Boot-out failed: 5: Input/output error"; exit 5; }
+          rm -f "$state/reap-loaded"; exit 0
+        fi
         [ -f "$state/loaded" ] || { echo "Boot-out failed: 3: No such process"; exit 3; }
         [ -f "$state/stop-fails" ] && { echo "Boot-out failed: 5: Input/output error"; exit 5; }
         rm -f "$state/loaded" ;;
-      bootstrap) touch "$state/loaded" ;;
+      bootstrap) touch "$state/$agent" ;;
     esac
     exit 0
     """)

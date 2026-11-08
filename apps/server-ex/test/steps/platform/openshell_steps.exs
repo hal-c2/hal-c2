@@ -193,6 +193,21 @@ defmodule HalC2.Steps.Platform.OpenShell do
     context
   end
 
+  step "the gateway's reaper will not stop", context do
+    File.write!(Path.join(context.openshell.bin, "reap-stop-fails"), "")
+    context
+  end
+
+  # The service manager stand-in's reaper: systemd's timer active, launchd's agent loaded.
+  step "its reaper runs", context do
+    assert Enum.any?(
+             ["reap-active", "reap-loaded"],
+             &File.exists?(Path.join(context.openshell.bin, &1))
+           )
+
+    context
+  end
+
   step "the user updates to OpenShell 0.1.7", context do
     installed(context, install(context, "0.1.7"))
   end
@@ -228,6 +243,9 @@ defmodule HalC2.Steps.Platform.OpenShell do
     for {path, unit} <- Service.reaper(:systemd), do: assert(File.read!(path) == unit)
 
     assert Storage.service_calls(context.openshell.log) == [
+             "systemctl --user stop #{Service.reap_name(:timer)}",
+             "systemctl --user stop #{Service.reap_name(:systemd)}",
+             "systemctl --user stop #{Service.name(:systemd)}",
              "systemctl --user daemon-reload",
              "systemctl --user enable #{Service.name(:systemd)}",
              "systemctl --user restart #{Service.name(:systemd)}",
@@ -658,6 +676,52 @@ defmodule HalC2.Steps.Platform.OpenShell do
 
   step "the service manager was asked nothing", context do
     assert Storage.service_calls(context.openshell.log) == []
+    context
+  end
+
+  # --- one home by two spellings -----------------------------------------------------
+
+  step ~r/^the MC reaches its home through a link to (?<link>its home|its home's parent)$/,
+       %{args: [link]} = context do
+    home = Application.get_env(:hal_c2, :home)
+    installed_as = %{name: Service.name(:systemd), unit: Service.unit_path(:systemd)}
+
+    spelled =
+      case link do
+        "its home" ->
+          File.ln_s!(home, Path.join(context.openshell.dir, "home-link"))
+          Path.join(context.openshell.dir, "home-link")
+
+        "its home's parent" ->
+          File.ln_s!(Path.dirname(home), Path.join(context.openshell.dir, "parent-link"))
+          Path.join([context.openshell.dir, "parent-link", Path.basename(home)])
+      end
+
+    FakeOpenShell.put_env(home: spelled)
+    Map.put(context, :installed_as, installed_as)
+  end
+
+  step "the gateway's service is the one OpenShell was installed under", context do
+    assert Service.name(:systemd) == context.installed_as.name
+    assert %{"current" => true, "running" => true} = Service.status(OpenShell.state())
+    context
+  end
+
+  step "the service OpenShell was installed under is stopped and removed", context do
+    assert :ok = context.result
+    calls = Storage.service_calls(context.openshell.log)
+    assert "systemctl --user stop #{context.installed_as.name}" in calls
+    assert "systemctl --user disable #{context.installed_as.name}" in calls
+    refute File.exists?(context.installed_as.unit)
+    context
+  end
+
+  step "OpenShell was installed when this home was at another path, whose service is still there",
+       context do
+    elsewhere = "0123456789ab"
+    OpenShell.put_state(Map.put(OpenShell.state(), "instance", elsewhere))
+    File.write!(Service.unit_path(:systemd, elsewhere), File.read!(Service.unit_path(:systemd)))
+    reset_calls(context)
     context
   end
 
