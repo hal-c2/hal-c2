@@ -229,8 +229,8 @@ defmodule HalC2.PullRequests.GitHub do
   @permissions_query """
   query($owner: String!, $name: String!, $number: Int!) {
     repository(owner: $owner, name: $name) {
-      mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission
-      pullRequest(number: $number) { viewerCanUpdate viewerDidAuthor }
+      mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed viewerPermission
+      pullRequest(number: $number) { mergeStateStatus viewerCanUpdate viewerDidAuthor }
     }
   }
   """
@@ -1376,7 +1376,14 @@ defmodule HalC2.PullRequests.GitHub do
       with {:ok, data} <- graphql(ctx, @permissions_query, vars(ctx)),
            %{} = repo <- data["repository"] do
         pr = repo["pullRequest"] || %{}
-        {:ok, permissions(access(repo, pr["viewerCanUpdate"], pr["viewerDidAuthor"]))}
+
+        # The detail's own answer, so `runAction` refuses what the detail does not offer.
+        access =
+          repo
+          |> access(pr["viewerCanUpdate"], pr["viewerDidAuthor"])
+          |> Map.put(:auto_merge_waits, auto_merge_waits?(repo, pr))
+
+        {:ok, permissions(access)}
       else
         {:error, _} = error -> error
         _ -> not_found(ctx)

@@ -398,6 +398,11 @@ defmodule HalC2.Steps.SourceControl.PullRequestActions do
     assert number == context.pr_number
     viewer = Shared.pr_detail!(context)["viewerPermissions"]
     refute "enable-auto-merge" in viewer["actions"]
+
+    # Nor done when asked anyway: the MC refuses it before GitHub is.
+    context = act(context, number, "enable-auto-merge")
+    assert World.failure(context) =~ "Auto-merge is not available here"
+    assert World.cli_calls(context, "pr merge") == []
     Map.put(context, :viewer, viewer)
   end
 
@@ -447,6 +452,169 @@ defmodule HalC2.Steps.SourceControl.PullRequestActions do
     removed = World.cli_calls(context, "--method DELETE repos/acme/shop/issues/#{number}/labels/")
     assert [%{"args" => args}] = removed
     assert List.last(args -- ["--include"]) == "repos/acme/shop/issues/#{number}/labels/bug"
+    context
+  end
+
+  # --- checking out ----------------------------------------------------------------------
+
+  step "the checkout's {string} is on github.com", %{args: [repository]} = context do
+    context = World.github_project(context, repository)
+    Map.merge(context, %{cwd: World.project(context, repository).root, checkout: repository})
+  end
+
+  # The pull request's branch on `host` holds a commit of its own, and github.com has a
+  # same-named repository whose same-named branch and pull request ref hold another.
+  step ~r/^pull request 42 of "(?<repository>[^"]+)" is on (?<forgejo>a Forgejo at |)(?<host>\S+)$/,
+       %{args: [repository, forgejo, host]} = context do
+    root = context.cwd
+    branch = "feature/web"
+    remotes = System.get_env("HAL_C2_FAKE_REMOTES")
+    bare = Path.join([remotes, "@#{host}", "#{repository}.git"])
+    File.mkdir_p!(Path.dirname(bare))
+    World.git!(remotes, ["init", "-q", "--bare", "-b", "main", bare])
+    World.git!(root, ["push", "-q", bare, "main"])
+
+    World.git!(root, ["checkout", "-q", "-b", branch])
+    World.commit!(root, %{"web.txt" => "github.com\n"}, "Same-named branch on github.com")
+
+    World.git!(root, [
+      "push",
+      "-q",
+      "origin",
+      "HEAD:refs/heads/#{branch}",
+      "HEAD:refs/pull/42/head"
+    ])
+
+    World.git!(root, ~w(checkout -q main))
+    World.git!(root, ["checkout", "-q", "-B", branch])
+    head = World.commit!(root, %{"web.txt" => "#{host}\n"}, "The pull request on #{host}")
+    World.git!(root, ["push", "-q", bare, "HEAD:refs/heads/#{branch}", "HEAD:refs/pull/42/head"])
+    World.git!(root, ~w(checkout -q main))
+    World.git!(root, ["branch", "-q", "-D", branch])
+
+    context =
+      if forgejo != "" do
+        url = "https://#{host}/#{repository}/pulls/42"
+
+        pr = %{
+          "number" => 42,
+          "title" => "Web work",
+          "html_url" => url,
+          "state" => "open",
+          "merged" => false,
+          "base" => %{"ref" => "main", "repo" => %{"full_name" => repository}},
+          "head" => %{"ref" => branch, "sha" => head, "repo" => %{"full_name" => repository}}
+        }
+
+        context
+        |> Shared.forgejo_api(%{"/api/v1/repos/#{repository}/pulls/42" => {200, pr}}, host)
+        |> Map.put(:reference, url)
+      else
+        url = "https://#{host}/#{repository}/pull/42"
+        [owner, name] = String.split(repository, "/")
+
+        context
+        |> World.cli_rules(%{
+          "args" => ["pr view #{url} "],
+          "stdout" => %{
+            "number" => 42,
+            "title" => "Web work",
+            "url" => url,
+            "baseRefName" => "main",
+            "headRefName" => branch,
+            "state" => "OPEN",
+            "isCrossRepository" => false,
+            "headRepository" => %{"name" => name, "nameWithOwner" => repository},
+            "headRepositoryOwner" => %{"login" => owner},
+            "headRefOid" => head
+          }
+        })
+        |> Map.put(:reference, url)
+      end
+
+    Map.merge(context, %{pr_head: head, pr_host: host})
+  end
+
+  step ~r/^the user checks out pull request 42 (?<where>in this repository|in a separate worktree)(?: from its review)?$/,
+       %{args: [where]} = context do
+    context = if context[:reference], do: context, else: context |> Map.put(:reference, "42")
+
+    {reply, context} =
+      World.call(context, "git.preparePullRequestThread", %{
+        "cwd" => context.cwd,
+        "reference" => context.reference,
+        "mode" => if(where == "in this repository", do: "local", else: "worktree")
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  step ~r/^the branch holds the pull request's commit from (?:a Forgejo at )?\S+$/, context do
+    assert {:ok, %{"isOnPullRequestHead" => true} = prepared} = context.reply
+    path = prepared["worktreePath"] || context.cwd
+    assert World.git!(path, ~w(branch --show-current)) == prepared["branch"]
+    assert World.git!(path, ~w(rev-parse HEAD)) == context.pr_head
+    Map.put(context, :prepared, prepared)
+  end
+
+  step ~r/^it tracks the repository on (?:a Forgejo at )?(?<host>\S+)$/,
+       %{args: [host]} = context do
+    path = context.prepared["worktreePath"] || context.cwd
+    branch = context.prepared["branch"]
+    remote = World.git!(path, ["config", "branch.#{branch}.remote"])
+
+    assert World.git!(path, ["config", "remote.#{remote}.url"]) ==
+             "git@#{host}:#{context.checkout}.git"
+
+    assert World.git!(path, ~w(rev-parse @{upstream})) == context.pr_head
+    context
+  end
+
+  step ~r/^the repository has (?<state>uncommitted changes to tracked files|the pull request's branch (?:with commits not yet pushed|behind the pull request))$/,
+       %{args: [state]} = context do
+    context = HalC2.Steps.SourceControl.PullRequestThreads.answer_view(context)
+    root = context.cwd
+
+    case state do
+      "uncommitted changes to tracked files" ->
+        [file | _] = String.split(World.git!(root, ~w(ls-files)), "\n")
+        path = Path.join(root, file)
+        edited = File.read!(path) <> "my edit\n"
+        File.write!(path, edited)
+        Map.put(context, :edited, {path, edited})
+
+      "the pull request's branch with commits not yet pushed" ->
+        World.git!(root, ["checkout", "-q", "-b", "feature/tax", context.pr_head])
+        mine = World.commit!(root, %{"mine.txt" => "mine\n"}, "Not pushed yet")
+        World.git!(root, ~w(checkout -q main))
+        Map.put(context, :mine, mine)
+
+      "the pull request's branch behind the pull request" ->
+        World.git!(root, ~w(branch feature/tax main))
+        context
+    end
+  end
+
+  step "the checkout is refused and the changes are kept", context do
+    assert World.failure(context) =~ "This repository has uncommitted changes."
+    {path, edited} = context.edited
+    assert File.read!(path) == edited
+    assert World.git!(context.cwd, ~w(branch --show-current)) == "main"
+    assert World.cli_calls(context, "pr checkout") == []
+    context
+  end
+
+  step "the commits are kept and the user is told it is not on the latest commits", context do
+    assert {:ok, %{"branch" => "feature/tax", "isOnPullRequestHead" => false}} = context.reply
+    assert World.git!(context.cwd, ~w(branch --show-current)) == "feature/tax"
+    assert World.git!(context.cwd, ~w(rev-parse HEAD)) == context.mine
+    context
+  end
+
+  step "the branch moves forward to the pull request's latest commit", context do
+    assert {:ok, %{"branch" => "feature/tax", "isOnPullRequestHead" => true}} = context.reply
+    assert World.git!(context.cwd, ~w(branch --show-current)) == "feature/tax"
+    assert World.git!(context.cwd, ~w(rev-parse HEAD)) == context.pr_head
     context
   end
 

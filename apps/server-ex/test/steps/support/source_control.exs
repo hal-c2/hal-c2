@@ -165,26 +165,30 @@ defmodule HalC2.Steps.SourceControl.Shared do
   first: the user's `permission` on the repository (`"WRITE"`, `"READ"`, ...), and
   `pull_request` fields such as `viewerDidAuthor` over the defaults.
   """
-  def permissions_rule(permission, pull_request \\ %{}) do
+  def permissions_rule(permission, pull_request \\ %{}, repository \\ %{}) do
     %{
       "args" => ["api graphql"],
       "stdin" => ["viewerCanUpdate viewerDidAuthor }"],
       "stdout" => %{
         "data" => %{
-          "repository" => %{
-            "mergeCommitAllowed" => true,
-            "squashMergeAllowed" => true,
-            "rebaseMergeAllowed" => true,
-            "viewerPermission" => permission,
-            "pullRequest" =>
-              Map.merge(
-                %{
-                  "viewerCanUpdate" => permission in ["WRITE", "MAINTAIN", "ADMIN"],
-                  "viewerDidAuthor" => false
-                },
-                pull_request
-              )
-          }
+          "repository" =>
+            Map.merge(
+              %{
+                "mergeCommitAllowed" => true,
+                "squashMergeAllowed" => true,
+                "rebaseMergeAllowed" => true,
+                "viewerPermission" => permission,
+                "pullRequest" =>
+                  Map.merge(
+                    %{
+                      "viewerCanUpdate" => permission in ["WRITE", "MAINTAIN", "ADMIN"],
+                      "viewerDidAuthor" => false
+                    },
+                    pull_request
+                  )
+              },
+              repository
+            )
         }
       }
     }
@@ -270,7 +274,10 @@ defmodule HalC2.Steps.SourceControl.Shared do
     permissions =
       permissions_rule(
         context.permission,
-        fields |> Map.take(["viewerDidAuthor"]) |> Map.put("viewerCanUpdate", can_update)
+        fields
+        |> Map.take(["viewerDidAuthor", "mergeStateStatus"])
+        |> Map.put("viewerCanUpdate", can_update),
+        context[:pr_repository_fields] || %{}
       )
 
     World.cli_rules(context, [permissions, core_rule(context, can_update)])
@@ -476,6 +483,37 @@ defmodule HalC2.Steps.SourceControl.Shared do
     put_env("HAL_C2_BITBUCKET_API_BASE_URL", "http://127.0.0.1:#{port}/2.0")
     put_env("HAL_C2_BITBUCKET_ACCESS_TOKEN", HalC2.Steps.SourceControl.FakeBitbucket.token())
     context
+  end
+
+  @doc """
+  fj signed in to `host`, whose API is a `HalC2.Test.FakeHttp` serving `routes`
+  (`HAL_C2_FORGEJO_API_BASE_URL`); its log is the context's `:forgejo`.
+  """
+  def forgejo_api(context, routes, host \\ "codeberg.org") do
+    keys = Path.join(Mc.tmp_dir(context.mc, "forgejo-cli"), "keys.json")
+
+    File.write!(
+      keys,
+      JSON.encode!(%{
+        "hosts" => %{host => %{"type" => "Application", "token" => "fj-token"}},
+        "aliases" => %{}
+      })
+    )
+
+    previous = Application.get_env(:hal_c2, :fj_keys_paths)
+    Application.put_env(:hal_c2, :fj_keys_paths, [keys])
+    ExUnit.Callbacks.on_exit(fn -> Application.put_env(:hal_c2, :fj_keys_paths, previous) end)
+
+    {base, log} = HalC2.Test.FakeHttp.start(routes)
+    put_env("HAL_C2_FORGEJO_API_BASE_URL", base)
+
+    context
+    |> World.fake_cli(["fj"])
+    |> World.cli_rules([
+      %{"cmd" => "fj", "args" => ["version"], "stdout" => "fj v0.6.0\n"},
+      %{"cmd" => "fj", "args" => ["whoami"], "stdout" => "octocat\n"}
+    ])
+    |> Map.put(:forgejo, log)
   end
 
   @doc "Sets an OS environment variable until the scenario ends."
