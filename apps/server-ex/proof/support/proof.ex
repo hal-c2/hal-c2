@@ -287,6 +287,32 @@ defmodule HalC2.Proof do
 
   # --- coverage ----------------------------------------------------------------------
 
+  @doc """
+  Compiles a plugin's MC sources to `dir`, docs included, and puts `dir` on the code
+  path. The plugin host compiles them at run time, so the coverage has no beams of them
+  otherwise. `:docs` is a compiler option of the whole VM and the proof files load and
+  run at once, so each compile holds a lock: one file's restore would otherwise leave
+  another's plugin without the docs its coverage reads.
+  """
+  def compile_plugin(files, dir) do
+    File.rm_rf!(dir)
+    File.mkdir_p!(dir)
+
+    :global.trans({__MODULE__.Docs, self()}, fn ->
+      docs = Code.get_compiler_option(:docs)
+      Code.put_compiler_option(:docs, true)
+
+      try do
+        {:ok, _, _} =
+          Kernel.ParallelCompiler.compile_to_path(files, dir, return_diagnostics: true)
+      after
+        Code.put_compiler_option(:docs, docs)
+      end
+    end)
+
+    Code.prepend_path(dir)
+  end
+
   @doc "Fails, naming each, if the code and the model's mapping have drifted apart."
   def assert_covers(proof) do
     facts = proof.code |> Enum.flat_map(&facts/1) |> Enum.uniq()

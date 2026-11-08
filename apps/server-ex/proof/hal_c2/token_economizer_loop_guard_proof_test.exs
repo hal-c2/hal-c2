@@ -1,19 +1,9 @@
 # The plugin's MC modules are compiled when the plugin starts, not with the MC: compiled
 # here to beams of their own, which keep the docs and source the coverage reads.
-beams = Path.join(Mix.Project.build_path(), "plugins/token-economizer")
-File.rm_rf!(beams)
-File.mkdir_p!(beams)
-docs = Code.get_compiler_option(:docs)
-Code.put_compiler_option(:docs, true)
-
-{:ok, _, _} =
-  "../../../../plugins/token-economizer/mc/*.ex"
-  |> Path.expand(__DIR__)
-  |> Path.wildcard()
-  |> Kernel.ParallelCompiler.compile_to_path(beams, return_diagnostics: true)
-
-Code.put_compiler_option(:docs, docs)
-Code.prepend_path(beams)
+"../../../../plugins/token-economizer/mc/*.ex"
+|> Path.expand(__DIR__)
+|> Path.wildcard()
+|> HalC2.Proof.compile_plugin(Path.join(Mix.Project.build_path(), "plugins/token-economizer"))
 
 defmodule HalC2.TokenEconomizerLoopGuardProofTest do
   # TokenEconomizer's loop guard: one thread's turns, heard by the plugin through a feed

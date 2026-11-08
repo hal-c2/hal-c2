@@ -141,18 +141,8 @@ defmodule HalC2.CodeReviewClaimsProofTest do
   setup_all do
     plugin = Path.expand("../../../../plugins/code-review/mc", __DIR__)
     dir = Path.join(Mix.Project.build_path(), "proof-plugins/code-review")
-    File.mkdir_p!(dir)
     files = Enum.map(~w(checkout.ex code_review.ex), &Path.join(plugin, &1))
-    docs = Code.get_compiler_option(:docs)
-    Code.put_compiler_option(:docs, true)
-
-    try do
-      {:ok, _, _} = Kernel.ParallelCompiler.compile_to_path(files, dir, return_diagnostics: true)
-    after
-      Code.put_compiler_option(:docs, docs)
-    end
-
-    Code.prepend_path(dir)
+    HalC2.Proof.compile_plugin(files, dir)
     Enum.each([HalC2Plugins.CodeReview, HalC2Plugins.CodeReview.Checkout], &Code.ensure_loaded!/1)
     :ok
   end
