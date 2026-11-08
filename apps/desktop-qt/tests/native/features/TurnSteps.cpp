@@ -1313,6 +1313,16 @@ const Steps steps([] {
     expect(command.value(QLatin1String("runId")) == QStringLiteral("run-queued-") + c[0] && commandsOf(world, QStringLiteral("queued-message.promote-to-steer")).isEmpty(),
            QStringLiteral("the MC has %1").arg(world.describeCommands()));
   });
+  step(QStringLiteral("the user presses the shortcut that steers the queued message"), [](World& world, const Captures&, const Table&) {
+    setKeyFocus(world, {});
+    pressKey(world, QStringLiteral("mod+shift+enter"));
+    world.sync();
+  });
+  step(QStringLiteral("a turn starts with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QJsonObject command = lastCommand(world, QStringLiteral("queued-run.start"));
+    expect(command.value(QLatin1String("runId")) == QStringLiteral("run-queued-") + c[0] && commandsOf(world, QStringLiteral("queued-message.promote-to-steer")).isEmpty(),
+           QStringLiteral("the MC has %1").arg(world.describeCommands()));
+  });
   step(QStringLiteral("the user removes %1 and the MC has not answered yet").arg(q), [requestsBrick, rowPart](World& world, const Captures& c, const Table&) {
     world.mc.hold(QStringLiteral("answers"));
     requestsBrick(world).click(rowPart(world, QStringLiteral("queueRemove"), c[0])->objectName());

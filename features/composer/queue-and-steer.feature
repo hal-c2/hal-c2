@@ -557,15 +557,14 @@ Feature: Follow-ups while the agent is working
     Then "b" stays queued
     And no second turn is started
 
-  # Upstream #22790: the steer-queued-message shortcut acts on the selected message whether or
-  # not a turn is running.
-  # Upstream #24248: the keybindings guide now says mod+Shift+Enter sends the first queued message when the thread is stopped.
-  @backlog @desktop
-  Scenario: The steer shortcut sends the selected queued message now on a stopped thread
+  # Upstream #22790: the steer-queued-message shortcut works whether or not a turn is running.
+  # Upstream #24248: the keybindings guide now says mod+Shift+Enter sends the first queued
+  # message when the thread is stopped; the queue has no selection to act on.
+  @desktop
+  Scenario: The steer shortcut sends the first queued message now on a stopped thread
     Given "a" and "b" are queued and held, and the turn is no longer running
-    And "b" is selected in the queue
     When the user presses the shortcut that steers the queued message
-    Then a turn starts with "b"
+    Then a turn starts with "a"
 
   @desktop @priority-high
   Scenario: One queue action at a time
