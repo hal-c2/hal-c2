@@ -3406,18 +3406,32 @@ defmodule HalC2.Codex.ThreadRuntime do
       item
       |> tool_fields()
       |> HalC2.Codex.ToolImages.store(state.thread_id)
-      |> Map.merge(
-        HalC2.Codex.McpApps.capture(state.conn, state.native_thread_id, state.thread_id, item)
-      )
 
     status = if item["status"] == "failed", do: "failed", else: "completed"
 
     state
     |> ensure_item(native, :tool, fields)
     |> finish_item(native, status, &Map.merge(&1, fields))
+    |> capture_app(native, item)
   end
 
   defp complete_item(state, _item), do: state
+
+  # The MCP app a tool item names is read from its server off the runtime: a slow
+  # server must not hold a Stop, an approval or the turn's streamed text behind
+  # it. The app lands on the finished item when the read returns.
+  defp capture_app(state, native, item) do
+    if HalC2.Codex.McpApps.resource_uri(item) do
+      %{conn: conn, native_thread_id: native_thread, thread_id: thread_id} = state
+      item_id = state.items[native].id
+
+      Task.start(fn ->
+        HalC2.Codex.McpApps.attach(conn, native_thread, thread_id, item_id, item)
+      end)
+    end
+
+    state
+  end
 
   # Codex sends each change's `diff` without file headers: bare `@@` hunks for
   # an update, the file's content for an add or delete. The clients split a

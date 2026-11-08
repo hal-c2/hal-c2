@@ -2,7 +2,8 @@
 # "mcp app" calls the "weather" server's get_forecast tool, which returns the app
 # ui://weather/forecast.html ("cookies": ui://weather/cookies.html, a page that reads
 # document.cookie); "failed" marks the result an error, as a tool that reports a
-# failure does, and "broken" fails the call before it returns a result. The server's
+# failure does, and "broken" fails the call before it returns a result. The read of
+# ui://weather/slow.html is never answered, as a hung server's. The server's
 # tools: get_forecast (read only), save_city (not read only) and admin_reset (for
 # the model only). mcpServer/tool/call answers "called TOOL with ARGS".
 import json
@@ -29,6 +30,9 @@ PAGES = {
     "ui://weather/cookies.html": "<html><body><script>document.title = document.cookie || 'no cookies'</script></body></html>",
 }
 
+# An app whose server never answers the read of its document.
+SLOW = "ui://weather/slow.html"
+
 UI_META = {
     "csp": {
         "connectDomains": ["https://api.weather.example", "javascript:alert(1)"],
@@ -43,6 +47,8 @@ def answer(method, params, mid, send):
     """Answers the MCP requests an app makes through Codex; True when it did."""
     if method == "mcpServer/resource/read":
         uri = params.get("uri")
+        if uri == SLOW:
+            return True
         if params.get("server") != SERVER or uri not in PAGES:
             send({"id": mid, "error": {"code": -32002, "message": f"no resource {uri}"}})
         else:

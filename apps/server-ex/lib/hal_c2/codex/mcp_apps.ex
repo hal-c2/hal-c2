@@ -6,9 +6,11 @@ defmodule HalC2.Codex.McpApps do
   """
 
   alias HalC2.JsonRpc.Connection
+  alias HalC2.Orchestration
+  alias HalC2.Orchestration.Entities
 
-  # Reading an app's resource is one MCP round trip; a server that hangs must not
-  # hold the item, and the turn after it, open.
+  # Reading an app's resource is one MCP round trip; a server that hangs gives up
+  # its app after this long and leaves a plain tool row.
   @capture_timeout 20_000
   @request_timeout 60_000
 
@@ -46,6 +48,30 @@ defmodule HalC2.Codex.McpApps do
     else
       _ -> %{}
     end
+  end
+
+  @doc """
+  Puts the app `capture/4` reads for a completed tool item onto that item,
+  `item_id` in `thread_id`'s stream, once the read returns: `:ok` either way.
+  ThreadRuntime runs it in a process of its own, as the read may take its server's time.
+  """
+  def attach(conn, native_thread_id, thread_id, item_id, item) do
+    with %{"mcpApp" => _} = fields <- capture(conn, native_thread_id, thread_id, item) do
+      HalC2.Streams.transact(thread_id, :thread, fn stream ->
+        update = fn
+          nil -> nil
+          current -> current |> Map.merge(fields) |> Map.put("updatedAt", Entities.now())
+        end
+
+        {Enum.reject([Orchestration.upsert(stream, "turn-item", item_id, update)], &is_nil/1),
+         :ok}
+      end)
+    end
+
+    :ok
+  catch
+    # The thread went away while its server answered: there is no item to put it on.
+    :exit, _ -> :ok
   end
 
   # --- `HalC2.McpApps` adapter ---------------------------------------------------
