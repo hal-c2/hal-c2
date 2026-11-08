@@ -999,7 +999,6 @@ Feature: ACP registry agents
       | the agent refuses or cannot sign out      | This ACP agent could not sign out. It may not advertise logout support. |
       | the agent does not finish in 60 seconds   | The ACP agent did not finish signing out in time.                       |
 
-  @backlog
   Scenario Outline: A session or model provider request the agent does not answer in a minute times out
     When the user <action> and "acme" does not answer within 60 seconds
     Then the user is told "<message>"
@@ -1012,7 +1011,6 @@ Feature: ACP registry agents
       | changes a model provider         | The ACP provider configuration request timed out. |
       | disables a model provider        | The ACP provider disable request timed out.       |
 
-  @backlog
   Scenario Outline: An agent that cannot manage model providers or sign out says so
     Given "acme" does not offer <feature>
     When the user <action>
@@ -1370,7 +1368,6 @@ Feature: ACP registry agents
     When Hermes calls it with the title "delegate_task: summarise the logs"
     Then the call is shown as Hermes' own tool, not as HAL-C2's delegation
 
-  @backlog
   Scenario: A file request with a relative path is refused
     When "acme" asks the client for the file "src/app.ts" without a full path
     Then the request is refused with "ACP fs requests require an absolute path, received 'src/app.ts'."
@@ -1442,7 +1439,6 @@ Feature: ACP registry agents
     When the command writes the first byte of "€", then "X" as error output, then the rest of "€"
     Then the agent receives "€" and "X" whole
 
-  @backlog
   Scenario: A request for a terminal the client does not know is refused
     When "acme" asks for the output of the terminal "t-404" that was never created
     Then it is refused with "ACP terminal/output received an unknown terminal ID 't-404'."
@@ -1947,7 +1943,6 @@ Feature: ACP registry agents
     When the MC checks "acme"
     Then "acme" is shown with "Could not inspect ACP Registry agent: registry unreadable"
 
-  @backlog
   Scenario: Asking a registry instance for a title or commit message anyway is refused
     When a thread title or a commit message is asked of the registry instance "acme"
     Then it is refused with "ACP Registry instances do not provide application text generation."
@@ -2101,7 +2096,6 @@ Feature: ACP registry agents
     Then the method names the first 16 variables
     And it carries no link
 
-  @backlog
   Scenario Outline: A session or model provider request the agent fails says what could not be done
     When the user <action> and "acme" answers with an error
     Then the user is told "<message>"
@@ -2113,7 +2107,6 @@ Feature: ACP registry agents
       | changes a model provider         | Could not update the ACP provider configuration. |
       | disables a model provider        | Could not update the ACP provider configuration. |
 
-  @backlog
   Scenario: A sign-out from session settings the agent does not answer in a minute times out
     When the user signs out from session settings and "acme" does not answer within 60 seconds
     Then the user is told "The ACP logout request timed out."

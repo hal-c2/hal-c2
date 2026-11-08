@@ -49,6 +49,12 @@ defmodule HalC2.Acp.ThreadRuntime do
   # Grok's own requests (`x.ai/...`), bare or wrapped in `{method, params}`.
   @xai_questions ["x.ai/ask_user_question", "_x.ai/ask_user_question"]
   @xai_plan ["x.ai/exit_plan_mode", "_x.ai/exit_plan_mode"]
+  @terminal_requests [
+    "terminal/output",
+    "terminal/wait_for_exit",
+    "terminal/kill",
+    "terminal/release"
+  ]
   @empty_plan "# No plan written yet\n\n(The agent exited plan mode without writing a plan.)"
   @plan_captured "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn."
 
@@ -757,6 +763,25 @@ defmodule HalC2.Acp.ThreadRuntime do
 
       {:noreply, state}
     end
+  end
+
+  # No client terminal is ever created, so every terminal an agent names is unknown.
+  def handle_info(
+        {:json_rpc, conn, {:request, id, method, %{"terminalId" => terminal}}},
+        state
+      )
+      when method in @terminal_requests and is_binary(terminal) do
+    Connection.respond(
+      conn,
+      id,
+      {:error,
+       %{
+         "code" => -32602,
+         "message" => "ACP #{method} received an unknown terminal ID '#{terminal}'."
+       }}
+    )
+
+    {:noreply, state}
   end
 
   # This client writes no files and runs no terminal; say so rather than hang.
@@ -3191,8 +3216,21 @@ defmodule HalC2.Acp.ThreadRuntime do
   # ACP's `fs/read_text_file`: an absolute path that stays, once symlinks resolve,
   # in the workspace or among the uploads, from `line` (1-based) for `limit` lines.
   defp read_text_file(cwd, %{"path" => path} = params) when is_binary(path) do
-    with true <- Path.type(path) == :absolute,
-         {:ok, real} <- HalC2.Paths.real(path),
+    if Path.type(path) == :absolute,
+      do: read_absolute(cwd, path, params),
+      else:
+        {:error,
+         %{
+           "code" => -32602,
+           "message" => "ACP fs requests require an absolute path, received '#{path}'."
+         }}
+  end
+
+  defp read_text_file(_cwd, _params),
+    do: {:error, %{"code" => -32602, "message" => "fs/read_text_file needs a path"}}
+
+  defp read_absolute(cwd, path, params) do
+    with {:ok, real} <- HalC2.Paths.real(path),
          true <- Enum.any?([cwd, HalC2.Attachments.dir()], &inside?(real, &1)),
          {:ok, %File.Stat{type: :regular, size: size}} when size <= @max_read_bytes <-
            File.stat(real),
@@ -3204,9 +3242,6 @@ defmodule HalC2.Acp.ThreadRuntime do
         {:error, %{"code" => -32002, "message" => "#{path} cannot be read from this workspace"}}
     end
   end
-
-  defp read_text_file(_cwd, _params),
-    do: {:error, %{"code" => -32602, "message" => "fs/read_text_file needs a path"}}
 
   defp inside?(real, root) do
     case HalC2.Paths.real(root) do

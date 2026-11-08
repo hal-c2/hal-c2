@@ -215,6 +215,8 @@ defmodule HalC2.TextGeneration do
     cond do
       kind == :writer and is_map(writer) and usable?(settings, writer) -> writer
       usable?(settings, text) -> text
+      # Never written by another provider in its place; `usable_selection/2` says why.
+      registry?(text) -> text
       true -> fallback(settings) || text
     end
   end
@@ -274,12 +276,22 @@ defmodule HalC2.TextGeneration do
   defp usable_selection(cwd, kind) do
     selection = model_selection(cwd, kind)
 
-    if usable?(settings(cwd), selection),
-      do: {:ok, selection},
-      else:
+    cond do
+      usable?(settings(cwd), selection) ->
+        {:ok, selection}
+
+      registry?(selection) ->
+        {:error, "ACP Registry instances do not provide application text generation."}
+
+      true ->
         {:error,
          "No text generation provider is available. Install Claude Code or Codex, or enable another provider."}
+    end
   end
+
+  # A registry agent only runs threads (`HalC2.Acp`'s `supportsTextGeneration`).
+  defp registry?(%{"instanceId" => id}) when is_binary(id), do: driver(id) == "acpRegistry"
+  defp registry?(_selection), do: false
 
   # --- running ----------------------------------------------------------------------
 

@@ -223,6 +223,13 @@ def prompt(pid, sid, text):
         send({"id": "url-" + m.group(1), "method": "elicitation/create", "params": {"mode": "url",
               "url": "https://acme.test/" + m.group(1), "elicitationId": m.group(1), "message": "Sign in to Acme"}})
         return finish(pid, sid, "asked for " + m.group(1))
+    m = re.search(r"ask (\S+) (\{.*\})", text)
+    if m:
+        # One client request; the turn ends with its answer.
+        asked["ask-%s" % pid] = ("ask", pid, sid)
+        send({"id": "ask-%s" % pid, "method": m.group(1),
+              "params": dict(json.loads(m.group(2)), sessionId=sid)})
+        return
     if "read file" in text:
         # A file outside the workspace, and a terminal.
         answers[pid] = {}
@@ -290,8 +297,9 @@ def prompt(pid, sid, text):
     finish(pid, sid, "Hello from %s" % NAME)
 
 def initialize_result():
-    caps = {"loadSession": True, "sessionCapabilities": {"resume": {}, "list": {}, "delete": {}},
-            "providers": {}}
+    caps = {"loadSession": True, "sessionCapabilities": {"resume": {}, "list": {}, "delete": {}}}
+    if CONTROL.get("providerConfig", True):
+        caps["providers"] = {}
     if CONTROL.get("logout", True):
         caps["auth"] = {"logout": {}}
     return {"protocolVersion": 1, "agentInfo": {"name": NAME, "version": CONTROL.get("version", "1.2.3")},
@@ -302,6 +310,13 @@ for line in sys.stdin:
     method, params, mid = msg.get("method"), msg.get("params") or {}, msg.get("id")
     log({"event": "request" if method else "response", "method": method, "id": mid,
          "params": params, "result": msg.get("result"), "error": msg.get("error")})
+
+    # Requests left unanswered, or answered with an error.
+    if method in CONTROL.get("silent", []):
+        continue
+    if method in CONTROL.get("fail", []):
+        send({"id": mid, "error": {"code": -32603, "message": "acme could not do " + method}})
+        continue
 
     if method is None:
         kind, pid, sid = asked.pop(mid, (None, None, None))
@@ -314,6 +329,8 @@ for line in sys.stdin:
         elif kind == "permission":
             allowed = msg["result"]["outcome"].get("optionId") == "allow"
             finish(pid, sid, "allowed" if allowed else "denied")
+        elif kind == "ask":
+            finish(pid, sid, "answer: %s" % json.dumps(msg.get("result") or msg.get("error")))
         elif kind == "read":
             say(sid, "read: %s\n\n" % json.dumps(msg.get("result") or msg.get("error")), "read-%s" % pid)
         elif kind in ("fs", "terminal"):

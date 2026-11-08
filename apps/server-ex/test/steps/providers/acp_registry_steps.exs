@@ -1381,6 +1381,34 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     ctx
   end
 
+  step "{string} asks the client for the file {string} without a full path",
+       %{args: [_, path]} = context do
+    {error, ctx} = ask_client(context, "fs/read_text_file", %{"path" => path})
+    # Read by the shared "the request is refused with {string}".
+    Map.put(ctx, :reply, {:error, error["message"], error})
+  end
+
+  step "{string} asks for the output of the terminal {string} that was never created",
+       %{args: [_, terminal]} = context do
+    {error, ctx} = ask_client(context, "terminal/output", %{"terminalId" => terminal})
+
+    Map.put(ctx, :refused_with, fn ctx, message ->
+      assert error["message"] == message
+      ctx
+    end)
+  end
+
+  # The fake sends one client request and ends its turn; what the MC answered, from its log.
+  defp ask_client(context, method, params) do
+    ctx = context |> acme() |> run_on_acme("ask #{method} #{JSON.encode!(params)}")
+    Acp.await_runs(thread(ctx), 1)
+
+    %{"error" => error} =
+      Enum.find(Acp.log(ctx, "acme"), &(&1["event"] == "response" and &1["id"] =~ "ask-"))
+
+    {error, ctx}
+  end
+
   step "the request is refused rather than left waiting", context do
     text = Acp.assistant_text(thread(context))
     assert text =~ "fs: -32002"
@@ -1570,6 +1598,29 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
              Enum.find(context.providers, &(&1["instanceId"] == "acme"))
 
     context
+  end
+
+  step "a thread title or a commit message is asked of the registry instance {string}",
+       %{args: [id]} = context do
+    ctx = acme(context)
+
+    World.update_settings(ctx, %{
+      "textGenerationModelSelection" => %{"instanceId" => id, "model" => "default"}
+    })
+
+    cwd = ctx.mc.home
+
+    asked = [
+      HalC2.TextGeneration.thread_title(cwd, "Fix the parser"),
+      HalC2.TextGeneration.commit_message(cwd, "main", "M README.md", "diff")
+    ]
+
+    Map.put(ctx, :refused_with, fn ctx, message ->
+      assert Enum.all?(asked, &(&1 == {:error, message}))
+      # Nothing was asked of the agent, nor of another provider in its place.
+      assert Acp.requests(ctx, "acme", "session/prompt") == []
+      ctx
+    end)
   end
 
   # --- model providers -------------------------------------------------------------------
@@ -3727,8 +3778,77 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
   end
 
   step "the user lists its model providers", context do
-    {providers, ctx} = model_providers(context)
-    Map.put(ctx, :listed, providers)
+    ctx = session_settings(context, "lists its model providers")
+
+    case ctx.reply do
+      {:ok, %{"providers" => providers}} -> Map.put(ctx, :listed, providers)
+      _ -> ctx
+    end
+  end
+
+  # --- session settings ------------------------------------------------------------------
+
+  # The session settings' requests of an agent: the RPC and the method it sends.
+  @session_settings %{
+    "lists the agent's sessions" => {"server.listAcpRegistrySessions", %{}},
+    "deletes one of its sessions" => {"server.deleteAcpRegistrySession", %{"sessionId" => "s-1"}},
+    "lists its model providers" => {"server.listAcpRegistryProviders", %{}},
+    "changes a model provider" =>
+      {"server.setAcpRegistryProvider",
+       %{"providerId" => "openai", "apiType" => "openai", "baseUrl" => "https://p.acme.test/v1"}},
+    "disables a model provider" =>
+      {"server.disableAcpRegistryProvider", %{"providerId" => "openai"}},
+    "signs out from session settings" => {"server.logoutAcpRegistry", %{}}
+  }
+
+  @session_methods %{
+    "lists the agent's sessions" => "session/list",
+    "deletes one of its sessions" => "session/delete",
+    "lists its model providers" => "providers/list",
+    "changes a model provider" => "providers/set",
+    "disables a model provider" => "providers/disable",
+    "signs out from session settings" => "logout"
+  }
+
+  # Read by the shared "the user is told {string}".
+  defp session_settings(context, action) do
+    {rpc, input} = Map.fetch!(@session_settings, action)
+    ctx = if Map.has_key?(context, :auth_instance), do: context, else: acme(context)
+    input = Map.put(input, "instanceId", "acme")
+
+    input =
+      if rpc == "server.logoutAcpRegistry",
+        do: input,
+        else: Map.put(input, "projectId", World.project(ctx).id)
+
+    {reply, ctx} = World.call(ops(ctx), rpc, input, "ops")
+    Map.put(ctx, :reply, reply)
+  end
+
+  step ~r/^the user (?<action>lists the agent's sessions|deletes one of its sessions|lists its model providers|changes a model provider|disables a model provider|signs out from session settings) and "acme" (?<how>does not answer within 60 seconds|answers with an error)$/,
+       %{args: [action, how]} = context do
+    method = Map.fetch!(@session_methods, action)
+
+    control =
+      if how =~ "answers", do: %{"fail" => [method]}, else: %{"silent" => [method]}
+
+    Application.put_env(:hal_c2, :acp_session_timeout_ms, 300)
+    ctx = context |> acme(control) |> session_settings(action)
+    # The agent was asked, and gave up on.
+    assert [_] = Acp.requests(ctx, "acme", method)
+    ctx
+  end
+
+  step "{string} does not offer model provider configuration", %{args: [_]} = context do
+    acme(context, %{"providerConfig" => false})
+  end
+
+  step "{string} does not offer signing out", %{args: [_]} = context do
+    acme(context, %{"logout" => false})
+  end
+
+  step "the user signs out from session settings", context do
+    session_settings(context, "signs out from session settings")
   end
 
   step "the first 64 are listed", context do
