@@ -612,8 +612,11 @@ export function makeUpdateTranslator(
       pending = "";
       tailFailure = true;
     } else {
+      // Only a segment with real text proves the run recovered: a whitespace-only
+      // one (streamedText is cumulative for the run) must not clear an earlier failure.
+      const ordinary = pending.trim() !== "";
       flushPending();
-      if (streamedText) tailFailure = false;
+      if (ordinary) tailFailure = false;
     }
     pendingId = undefined;
     tracker = new TransportFailure();
@@ -638,8 +641,13 @@ export function makeUpdateTranslator(
     if (update.type === "tool-call-started" || update.type === "tool-call-completed") {
       endTextSegment();
       const toolCall = update.toolCall;
-      if (update.type === "tool-call-started") openTools.set(update.callId, toolCall);
-      else openTools.delete(update.callId);
+      // The plan and the todos are translated apart (no tool_call precedes them), so
+      // the stop cleanup must not close them as ordinary tools.
+      const ordinaryTool = toolCall.type !== "createPlan" && toolCall.type !== "updateTodos";
+      if (ordinaryTool) {
+        if (update.type === "tool-call-started") openTools.set(update.callId, toolCall);
+        else openTools.delete(update.callId);
+      }
       if (toolCall.type === "createPlan") {
         nextSegment("tool");
         emit({
@@ -806,7 +814,8 @@ export function makeUpdateTranslator(
       if (
         /repeated resume attempts made no progress/.test(message) &&
         turnEnded &&
-        !afterTurnEnded
+        !afterTurnEnded &&
+        !tailFailure
       ) {
         if (!streamedText && result.result) emitText(result.result);
         return undefined;

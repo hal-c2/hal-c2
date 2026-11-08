@@ -102,6 +102,31 @@ defmodule HalC2.Acp.CursorChildThreadTest do
              Enum.filter(items(state), &(&1["type"] == "command_execution"))
   end
 
+  test "the cached call keeps the bounded output, not the whole one", %{state: state} do
+    big = String.duplicate("x", HalC2.Orchestration.CommandTail.kept() * 3)
+
+    state =
+      state
+      |> update(%{
+        "sessionUpdate" => "tool_call",
+        "toolCallId" => "c1",
+        "kind" => "execute",
+        "rawInput" => %{"command" => "yes"}
+      })
+      |> update(%{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => "c1",
+        "status" => "completed",
+        "content" => [%{"type" => "content", "content" => %{"type" => "text", "text" => big}}],
+        "rawOutput" => %{"output" => big, "exitCode" => 0}
+      })
+
+    call = state.subagents["task-1"].sub.calls["c1"]
+    assert byte_size(:erlang.term_to_binary(call)) < HalC2.Orchestration.CommandTail.kept() * 2
+    assert call["rawOutput"]["exitCode"] == 0
+    assert call["rawInput"] == %{"command" => "yes"}
+  end
+
   test "a child's command output is cut to what a thread keeps", %{state: state} do
     big = String.duplicate("x", HalC2.Orchestration.CommandTail.kept() * 3)
 

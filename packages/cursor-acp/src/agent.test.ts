@@ -315,6 +315,55 @@ describe("Cursor over ACP", () => {
     expect(sent).toEqual([]);
   });
 
+  const failure = "Something went wrong communicating with the server. Please try again.";
+  const translator = () => {
+    const sent: Array<Record<string, any>> = [];
+    const updates = makeUpdateTranslator((update) => sent.push(update as never));
+    const push = (update: object) => updates(update as unknown as InteractionUpdate);
+    return { sent, updates, push };
+  };
+
+  it("keeps an earlier transport failure through a whitespace-only segment", () => {
+    const { updates, push } = translator();
+    push({ type: "text-delta", text: "Commentary" });
+    push({ type: "thinking-delta", text: "hm" });
+    push({ type: "text-delta", text: failure });
+    push({ type: "thinking-delta", text: "hm" });
+    push({ type: "text-delta", text: "  \n" });
+    push({ type: "turn-ended" });
+    expect(updates.finish({ status: "finished" })).toMatchObject({
+      message: "Provider turn failed.",
+    });
+  });
+
+  it("does not turn a transport failure into a late-resumed success", () => {
+    const { updates, push } = translator();
+    push({ type: "text-delta", text: failure });
+    push({ type: "turn-ended" });
+    expect(
+      updates.finish({
+        status: "error",
+        error: { message: "repeated resume attempts made no progress" },
+      }),
+    ).toMatchObject({ message: "repeated resume attempts made no progress" });
+  });
+
+  it("does not close an unfinished plan or todo list as an interrupted tool", () => {
+    const { sent, updates, push } = translator();
+    push({
+      type: "tool-call-started",
+      callId: "p1",
+      toolCall: { type: "createPlan", args: { plan: "Do it" } },
+    });
+    push({
+      type: "tool-call-started",
+      callId: "t1",
+      toolCall: { type: "updateTodos", args: { todos: [] } },
+    });
+    updates.finish({ status: "cancelled" });
+    expect(sent.map((update) => update.sessionUpdate)).toEqual(["proposed_plan", "plan"]);
+  });
+
   it("times out the post-login catalog request instead of hanging the sign-in", async () => {
     const { sdk, finishLogin } = fakeSdk([]);
     const hanging: CursorSdk = { ...sdk, listModels: () => new Promise(() => {}) };

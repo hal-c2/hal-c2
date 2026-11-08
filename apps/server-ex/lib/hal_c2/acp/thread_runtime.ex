@@ -3136,8 +3136,36 @@ defmodule HalC2.Acp.ThreadRuntime do
     {type, status, fields} = child_item(call, state)
 
     sub
-    |> Map.merge(%{calls: Map.put(calls, call_id, call), segment: Map.get(sub, :segment, 0) + 1})
+    |> Map.merge(%{
+      calls: Map.put(calls, call_id, compact_child_call(call, fields)),
+      segment: Map.get(sub, :segment, 0) + 1
+    })
     |> NativeSubagent.item("cursor-task-tool:#{call_id}", type, status, fields)
+  end
+
+  # What the next sparse update needs of a call, and no more: the output is kept as the
+  # bounded text the item shows (the cache lives in memory and in the durable checkpoint),
+  # beside the raw fields `child_item/2` reads the exit code, line counts and results from.
+  defp compact_child_call(call, fields) do
+    output = fields["output"] || fields["diffStr"]
+
+    raw =
+      with %{} = raw <- call["rawOutput"] do
+        raw
+        |> Map.take(["results", "linesAdded", "linesRemoved", "exitCode", "metadata"])
+        |> Map.update("metadata", nil, &Map.take(&1 || %{}, ["exit"]))
+        |> Map.reject(fn {_key, value} -> is_nil(value) end)
+      end
+
+    call
+    |> Map.put(
+      "content",
+      if(is_binary(output),
+        do: [%{"type" => "content", "content" => %{"type" => "text", "text" => output}}]
+      )
+    )
+    |> Map.put("rawOutput", raw)
+    |> Map.reject(fn {_key, value} -> is_nil(value) end)
   end
 
   # The child's text, one message per message id (one per stretch between tool calls
@@ -3172,10 +3200,26 @@ defmodule HalC2.Acp.ThreadRuntime do
     status =
       cond do
         # A tool the agent itself closed as never finished when its run ended.
-        get_in(call, ["_meta", "interrupted"]) == true -> "interrupted"
-        call["status"] == "completed" -> "completed"
-        call["status"] == "failed" -> "failed"
-        true -> "running"
+        get_in(call, ["_meta", "interrupted"]) == true ->
+          "interrupted"
+
+        # OpenCode reports a shell command's non-zero exit in its metadata alone, on a
+        # call it completes; Cursor's plain `exitCode` is not a failed tool by itself.
+        call["status"] == "completed" and kind == :command and
+            match?(
+              %{"metadata" => %{"exit" => code}} when is_integer(code) and code != 0,
+              call["rawOutput"]
+            ) ->
+          "failed"
+
+        call["status"] == "completed" ->
+          "completed"
+
+        call["status"] == "failed" ->
+          "failed"
+
+        true ->
+          "running"
       end
 
     # The child thread keeps the last `CommandTail.kept/0` bytes, as the parent's does.

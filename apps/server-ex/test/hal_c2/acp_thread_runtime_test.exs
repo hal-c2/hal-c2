@@ -142,6 +142,20 @@ defmodule HalC2.Acp.ThreadRuntimeTest do
       assert {_, "failed", _} = ThreadRuntime.child_item(Map.delete(call, "_meta"), %{})
     end
 
+    test "an OpenCode command completed with a non-zero metadata exit failed; a plain exitCode did not" do
+      call = %{
+        "kind" => "execute",
+        "status" => "completed",
+        "rawInput" => %{"command" => "false"},
+        "rawOutput" => %{"output" => "", "metadata" => %{"exit" => 1}}
+      }
+
+      assert {"command_execution", "failed", _} = ThreadRuntime.child_item(call, %{})
+
+      plain = Map.put(call, "rawOutput", %{"output" => "", "exitCode" => 1})
+      assert {"command_execution", "completed", _} = ThreadRuntime.child_item(plain, %{})
+    end
+
     test "a command keeps its exit code and a file change its line counts" do
       command = %{
         "kind" => "execute",
