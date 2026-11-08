@@ -21,10 +21,12 @@ defmodule HalC2.CodexTurnEndPropTest do
   on Codex's next event, which the runtime then stops the turn for, on that stop being
   ignored past its deadline, or on the turn's own end. Until the store takes writes
   again the thread shows the run running as it was. Then the run is failed, at the
-  time it failed, its subagents left running fail with it, the work in their own
-  threads too, and its provider turn reads
-  as it ended: stopped, as Codex ended it, or still running when Codex ignored the
-  stop, until Codex ends it late or its app-server goes. The store may refuse the
+  time it failed, and its provider turn reads as it ended: stopped, as Codex ended it,
+  or still running when Codex ignored the stop, until Codex ends it late or its
+  app-server goes. Subagents still running fail with it, the work in their own threads
+  too, but for a turn Codex reported completed or failed: those carry on as after a
+  recorded end. An app-server that dies before the store recovers takes them all with
+  it, and a provider turn left running reads as interrupted. The store may refuse the
   subagents' threads as well, which changes none of that (#1398). A message sent while
   the provider turn is left over first stops it, and runs only once Codex reports it
   ended: when Codex acknowledges that stop and goes on, the message's run fails and the
@@ -75,6 +77,7 @@ defmodule HalC2.CodexTurnEndPropTest do
   end
 
   defp start do
+    Process.delete(:lost)
     home = HalC2.Prop.scratch_home("codex-turn-end")
     work = Path.join(home, "work")
     File.mkdir_p!(work)
@@ -172,9 +175,18 @@ defmodule HalC2.CodexTurnEndPropTest do
   # recorded, its provider turn still running). subs: each spawned subagent's shown
   # status, in spawn order. held: how the provider turn of an unrecorded run ended;
   # pt: its provider turn's status, once the run is recorded (nil: not compared).
-  # follows: how each later message's run ended, in order.
+  # follows: how each later message's run ended, in order. lost: the app-server died
+  # while the store refused the run's end.
   def initial_state,
-    do: %{phase: :running, run: "running", subs: [], held: nil, pt: nil, follows: []}
+    do: %{
+      phase: :running,
+      run: "running",
+      subs: [],
+      held: nil,
+      pt: nil,
+      follows: [],
+      lost: false
+    }
 
   def command(state) do
     reports =
@@ -196,7 +208,7 @@ defmodule HalC2.CodexTurnEndPropTest do
             {2, {:call, __MODULE__, :end_turn, [:interrupted]}},
             {2, {:call, __MODULE__, :end_turn, [:stream]}},
             {2, {:call, __MODULE__, :fail_write, [oneof([:stopped, :ignored]), scope()]}},
-            {1,
+            {2,
              {:call, __MODULE__, :fail_end, [oneof([:completed, :failed, :interrupted]), scope()]}},
             {2, {:call, __MODULE__, :end_turn, [:deaf]}},
             {2, {:call, __MODULE__, :end_turn, [:mute]}}
@@ -204,10 +216,12 @@ defmodule HalC2.CodexTurnEndPropTest do
         )
 
       :unrecorded ->
-        frequency([
-          {1, {:call, __MODULE__, :observe, []}},
-          {3, {:call, __MODULE__, :recover, []}}
-        ])
+        frequency(
+          [
+            {1, {:call, __MODULE__, :observe, []}},
+            {3, {:call, __MODULE__, :recover, []}}
+          ] ++ if(state.lost, do: [], else: [{2, {:call, __MODULE__, :end_held_stream, []}}])
+        )
 
       :leftover ->
         oneof([
@@ -246,6 +260,10 @@ defmodule HalC2.CodexTurnEndPropTest do
   def precondition(state, {:call, _, :follow_up, [_how]}), do: state.phase == :leftover
   def precondition(state, {:call, _, :recover, []}), do: state.phase == :unrecorded
   def precondition(state, {:call, _, :end_stream, []}), do: state.phase == :reported
+
+  def precondition(state, {:call, _, :end_held_stream, []}),
+    do: state.phase == :unrecorded and not state.lost
+
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :spawn, _}),
@@ -312,9 +330,27 @@ defmodule HalC2.CodexTurnEndPropTest do
   def next_state(state, _result, {:call, _, :follow_up, [:ignored]}),
     do: %{state | follows: state.follows ++ ["failed"]}
 
+  def next_state(state, _result, {:call, _, :end_held_stream, []}), do: %{state | lost: true}
+
+  # The run fails. A turn Codex reported completed or failed leaves its subagents
+  # carrying on, reports of them still to come; an app-server gone took them with it.
   def next_state(state, _result, {:call, _, :recover, []}) do
-    phase = if state.held == "running", do: :leftover, else: :ended
-    %{state | phase: phase, run: "failed", subs: settle(state, "failed"), pt: state.held}
+    failed = %{state | run: "failed", subs: settle(state, "failed"), pt: state.held}
+
+    cond do
+      state.lost ->
+        pt = if state.held == "running", do: "interrupted", else: state.held
+        %{failed | phase: :ended, pt: pt}
+
+      state.held in ~w(completed failed) ->
+        %{state | phase: :reported, run: "failed", pt: state.held}
+
+      state.held == "running" ->
+        %{failed | phase: :leftover}
+
+      true ->
+        %{failed | phase: :ended}
+    end
   end
 
   def next_state(state, _result, _call), do: state
@@ -453,11 +489,20 @@ defmodule HalC2.CodexTurnEndPropTest do
     unrecorded()
   end
 
-  # The store takes writes again; TurnWatch's next try records the run.
+  # The store takes writes again; TurnWatch's next try records the run, and with its
+  # app-server gone, the runtime's (if it lives) the provider turn it left running.
   def recover do
     HalC2.Test.Machines.refuse_changes(nil)
     File.rm(Process.get(:ignore_interrupt))
-    await_until(fn -> observed().run != "running" end, "the run was never recorded")
+
+    await_until(
+      fn ->
+        observed().run != "running" and
+          not (Process.get(:lost, false) and observed().pt == "running")
+      end,
+      "the run was never recorded"
+    )
+
     settle_runtime()
     run = current(@tid) |> StreamState.list("run") |> List.first()
     Map.put(observed(), :on_time, run["completedAt"] == Process.get(:failed_at))
@@ -531,6 +576,24 @@ defmodule HalC2.CodexTurnEndPropTest do
     observed()
   end
 
+  # The app-server dies while the store still refuses the run's end: the runtime,
+  # failing to record what went with it, may go too.
+  def end_held_stream do
+    {_, runtime} = runtime()
+    ref = Process.monitor(runtime.conn)
+    kill_app_server()
+
+    receive do
+      {:DOWN, ^ref, :process, _, _} -> :ok
+    after
+      @wait_ms -> :ok
+    end
+
+    Process.put(:lost, true)
+    settle_runtime()
+    observed()
+  end
+
   def observe, do: observed()
 
   # --- the real side ---------------------------------------------------------------
@@ -579,11 +642,14 @@ defmodule HalC2.CodexTurnEndPropTest do
     {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
   end
 
+  # A runtime going as it is asked has nothing left to settle.
   defp settle_runtime do
-    case runtime() do
-      {pid, _} -> GenServer.call(pid, :settle)
-      nil -> :ok
+    case Registry.lookup(HalC2.Codex.Registry, @tid) do
+      [{pid, _}] -> GenServer.call(pid, :settle)
+      [] -> :ok
     end
+  catch
+    :exit, _ -> :ok
   end
 
   defp runtime do

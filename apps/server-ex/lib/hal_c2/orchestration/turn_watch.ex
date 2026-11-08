@@ -15,7 +15,10 @@ defmodule HalC2.Orchestration.TurnWatch do
   again until the store takes it, with the time the run failed
   (`unrecorded/3`): a provider runtime hands over the end of a turn whose events it
   could not record (`HalC2.Orchestration.Unrecorded`), and a crash's end is kept the
-  same way. Until it is recorded the run reads as running and nothing else ends it.
+  same way. Until it is recorded the run reads as running and nothing else ends it,
+  and the runtime stays watched: one that goes first took its app-server with it, so
+  the work it kept running ends with the run, and a provider turn it could not stop
+  reads as interrupted.
   An MC that stops first loses it: the next boot settles the run
   (`HalC2.Orchestration.Recovery`), with its own time.
   """
@@ -123,7 +126,8 @@ defmodule HalC2.Orchestration.TurnWatch do
         state = %{state | claims: Map.delete(state.claims, run_id)}
 
         # A runtime that went after the store failed its turn keeps that failure,
-        # whatever it went by; its provider turn went with it.
+        # whatever it went by; its provider turn went with it, and so did the work
+        # it kept running (`lost`).
         if (crashed?(reason) or Map.has_key?(state.pending, run_id)) and
              not HalC2.Orchestration.Recovery.stopping?() do
           Logger.warning("run #{run_id} lost its runtime: #{inspect(reason)}")
@@ -136,7 +140,7 @@ defmodule HalC2.Orchestration.TurnWatch do
               at: Entities.now(),
               failure: "The provider's session ended unexpectedly."
             })
-            |> Map.update(:provider_turn, nil, &if(&1 == :pending, do: nil, else: &1))
+            |> gone()
 
           {:noreply, try_record(put_in(state.pending[run_id], ending), run_id)}
         else
@@ -155,7 +159,7 @@ defmodule HalC2.Orchestration.TurnWatch do
       {:ok, %{^run_id => ending}} ->
         {waiters, state} = pop_in(state.waiters[run_id])
         for from <- waiters || [], do: GenServer.reply(from, {:recorded, ending.at})
-        {:noreply, %{state | pending: Map.delete(state.pending, run_id)}}
+        {:noreply, forget(%{state | pending: Map.delete(state.pending, run_id)}, run_id)}
 
       {{:error, error}, %{^run_id => ending}} ->
         failures = ending.failures + 1
@@ -185,14 +189,19 @@ defmodule HalC2.Orchestration.TurnWatch do
       %{^run_id => %{trying: false, provider_turn: provider_turn} = ending}
       when provider_turn != :pending ->
         watch = self()
+        claim = state.claims[run_id]
 
         Task.start(fn ->
+          # A runtime that went before its `:DOWN` reached here went as one that had.
+          ending = if claim && lost?(elem(claim, 1)), do: gone(ending), else: ending
+
           result =
             try do
               TurnWriter.abandon(ending.thread, run_id, "failed", ending.failure,
                 at: ending.at,
-                provider_turn: provider_turn,
+                provider_turn: ending.provider_turn,
                 ended: ending[:ended],
+                lost: ending[:lost],
                 leftover: ending[:leftover]
               )
 
@@ -218,6 +227,19 @@ defmodule HalC2.Orchestration.TurnWatch do
     if claim, do: Process.demonitor(elem(claim, 0), [:flush])
     %{state | claims: claims}
   end
+
+  defp lost?(pid),
+    do: not Process.alive?(pid) and not HalC2.Orchestration.Recovery.stopping?()
+
+  # A run whose runtime went: its app-server went too, and the work it kept running.
+  defp gone(ending),
+    do: ending |> Map.update(:provider_turn, nil, &gone_turn/1) |> Map.put(:lost, true)
+
+  # How a runtime's provider turn reads once the runtime went: as the run, if it had not
+  # said; one it could not stop went with its app-server.
+  defp gone_turn(:pending), do: nil
+  defp gone_turn("running"), do: "interrupted"
+  defp gone_turn(provider_turn), do: provider_turn
 
   defp crashed?(reason),
     do: not (reason in [:normal, :shutdown] or match?({:shutdown, _}, reason))

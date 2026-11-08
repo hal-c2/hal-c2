@@ -79,7 +79,7 @@ defmodule HalC2.UnrecordedTurnsProofTest do
       "HalC2.Orchestration.TurnWatch.start_link/1" =>
         "starts the process TurnWatch's rules run in",
       "HalC2.Codex.ThreadRuntime handle_info {:EXIT, _, _}" =>
-        "the app-server exiting under a turn is turns.maude's; one left over goes with it, its provider turn recorded as interrupted, and a turn held for it fails, as [crash] kills it",
+        "the app-server exiting under a turn is turns.maude's; one left over goes with it, its provider turn recorded as interrupted, and a turn held for it fails, as [crash] kills it; one whose writes the store refuses takes the runtime with it, an idle one's [crash]",
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:invalid, _}}" =>
         "closes the app-server, as it exiting does (turns.maude)",
       "HalC2.Codex.ThreadRuntime handle_call {:steer, _, _}" => @steer,
@@ -211,7 +211,8 @@ defmodule HalC2.UnrecordedTurnsProofTest do
         {"keepMark", "misfiled", "the failure going with its turn when a call ends it"},
         {"goalStop goals", "overwritten", "a dry goal hold handing over its completed turn"},
         {"reend goals", "overwritten", "the run's end leaving a provider turn that ended"},
-        {"noLeftoverRetry", "stale", "a left-over turn's refused end being tried again"}
+        {"noLeftoverRetry", "stale", "a left-over turn's refused end being tried again"},
+        {"noWatchHeld", "stale", "TurnWatch watching a runtime whose end it holds"}
       ] do
     [part | with] = String.split(part)
 

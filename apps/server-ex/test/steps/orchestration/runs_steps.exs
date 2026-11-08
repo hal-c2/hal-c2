@@ -670,7 +670,7 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
-  step ~r/^the turn ends because (?<cause>the user interrupts it|its provider process exits|its thread is deleted|the MC cannot record it or its subagent's thread until storage recovers)$/,
+  step ~r/^the turn ends because (?<cause>the user interrupts it|its provider process exits|its thread is deleted|the MC cannot record it or its subagent's thread until storage recovers|it completes while the MC cannot record it and its provider process exits before storage recovers)$/,
        %{args: [cause]} = context do
     {context, status} =
       case cause do
@@ -703,6 +703,21 @@ defmodule HalC2.Steps.Orchestration.Runs do
           World.put_app_env(:store_hook, {__MODULE__, :refuse_every, []})
           context = deliver(context, :item)
           assert {:unrecorded, _} = HalC2.Orchestration.TurnWatch.attempted(context.running)
+          HalC2.Test.Machines.refuse_changes(nil)
+          {context, "failed"}
+
+        # The app-server takes the subagent with it, and the runtime, unable to record
+        # that, goes too; TurnWatch, holding the run's end, ends them with it.
+        "it completes while the MC cannot record it and its provider process exits before storage recovers" ->
+          World.put_app_env(:unrecorded_retry_ms, 20)
+          World.put_app_env(:store_hook, {__MODULE__, :refuse_every, []})
+          context = deliver(context, {:turn, "completed"})
+          assert {:unrecorded, _} = HalC2.Orchestration.TurnWatch.attempted(context.running)
+          {pid, runtime} = World.codex_runtime(context, context.thread)
+          ref = Process.monitor(pid)
+          os_pid = HalC2.Subprocess.os_pid(:sys.get_state(runtime.conn).sub)
+          {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+          assert_receive {:DOWN, ^ref, :process, ^pid, _}, 5_000
           HalC2.Test.Machines.refuse_changes(nil)
           {context, "failed"}
       end

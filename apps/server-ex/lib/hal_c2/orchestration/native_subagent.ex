@@ -487,13 +487,14 @@ defmodule HalC2.Orchestration.NativeSubagent do
   ended from the thread's record (`TurnWriter.abandon/5`), whose runtime's own end of
   them the store refused or that crashed before it. With `ended`, the `{kind, id}`s
   that runtime ended, the subagents it ended are settled whichever run they are of
-  (one it resumed), and the run's it keeps running are left to it. A child thread the
-  store refuses raises.
+  (one it resumed), and the run's it keeps running are left to it, unless `keep?` is
+  false (the runtime went, and its app-server with them). A child thread the store
+  refuses raises.
   """
-  def settle_run_children(thread_id, run_id, status, at, ended \\ nil) do
+  def settle_run_children(thread_id, run_id, status, at, ended \\ nil, keep? \\ true) do
     for subagent <- StreamState.list(stream(thread_id), "subagent"),
         subagent["origin"] == "provider_native" and is_binary(subagent["childThreadId"]),
-        settles?(subagent, run_id, ended) do
+        settles?(subagent, run_id, ended, keep?) do
       ended = if subagent["status"] in @terminal, do: subagent["status"], else: status
       settle_child(%{child: subagent["childThreadId"]}, ended, at)
     end
@@ -501,12 +502,12 @@ defmodule HalC2.Orchestration.NativeSubagent do
     :ok
   end
 
-  defp settles?(subagent, run_id, nil), do: subagent["runId"] == run_id
+  defp settles?(subagent, run_id, nil, _keep?), do: subagent["runId"] == run_id
 
-  defp settles?(%{"id" => id} = subagent, run_id, ended),
+  defp settles?(%{"id" => id} = subagent, run_id, ended, keep?),
     do:
       {"subagent", id} in ended or
-        (subagent["runId"] == run_id and subagent["status"] in @terminal)
+        (subagent["runId"] == run_id and (not keep? or subagent["status"] in @terminal))
 
   # Work still open in the child thread (a tool call, the progress) ends with it.
   defp settle_child(sub, status, at) do

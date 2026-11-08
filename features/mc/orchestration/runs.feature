@@ -682,7 +682,8 @@ Feature: Runs and turns
   # own threads (providers/codex.feature, "A failed Codex turn does not hold the thread for its
   # subagents"). Here the provider process is gone, so nothing can report the subagent again.
   # A store that refused the runtime's own end of the subagent leaves it to the run's end recorded
-  # once storage recovers (hal-c2#1398).
+  # once storage recovers (hal-c2#1398), as does a provider process that exits before then, even
+  # after the turn completed.
   @mc
   Scenario Outline: A turn that does not complete ends the provider subagents it left open
     Given "t1" has a running turn with a provider subagent still at work
@@ -691,11 +692,12 @@ Feature: Runs and turns
     And nothing of the subagent is left streaming
 
     Examples:
-      | cause                                                                   | status      |
-      | the user interrupts it                                                  | interrupted |
-      | its provider process exits                                              | failed      |
-      | its thread is deleted                                                   | cancelled   |
-      | the MC cannot record it or its subagent's thread until storage recovers | failed      |
+      | cause                                                                                             | status      |
+      | the user interrupts it                                                                            | interrupted |
+      | its provider process exits                                                                        | failed      |
+      | its thread is deleted                                                                             | cancelled   |
+      | the MC cannot record it or its subagent's thread until storage recovers                           | failed      |
+      | it completes while the MC cannot record it and its provider process exits before storage recovers | failed      |
 
   # hal-c2#1398: a completed Codex turn leaves its subagents at work in their own threads, and
   # the run's end recorded once storage recovered ended them anyway.

@@ -62,10 +62,11 @@ mod UNRECORDED-TURNS is
   --- store failed, the run TurnWatch holds counting as driven, abandon/5's check that
   --- the run is still active, the failure going with its turn however it ended, a dry
   --- goal hold handing its completed turn over as completed, and the run's end leaving
-  --- a provider turn recorded as ended as it is (TurnWriter.ended/7), and a left-over
-  --- turn's end the store refused being tried again.
+  --- a provider turn recorded as ended as it is (TurnWriter.ended/7), a left-over
+  --- turn's end the store refused being tried again, and TurnWatch watching the runtime
+  --- of every end it holds.
   ops noRetry nowTime overwrite noLeftoverStop noLeftoverWait noInterrupt notDriven noActiveCheck
-    keepMark goalStop reend noLeftoverRetry : -> Sw [ctor] .
+    keepMark goalStop reend noLeftoverRetry noWatchHeld : -> Sw [ctor] .
   op off : Sw -> Item [ctor] .
 
   --- Codex pursues a goal.
@@ -154,11 +155,14 @@ mod UNRECORDED-TURNS is
   eq killed(late(R) C) = killed(C) .
   eq killed(endmsg(R, S) C) = killed(C) .
   --- Its terminate/2 records a left-over turn as interrupted; one the store refuses,
-  --- or one it was still trying again, is lost with it.
+  --- or one it was still trying again, is lost with it, unless TurnWatch holds the end
+  --- of its run, which it then records as interrupted ([gone]).
   eq killed(store(true) lo(R) rpt(R, X) C) =
     store(true) rpt(R, (if X == running then interrupted else X fi)) killed(C) .
-  eq killed(store(false) lo(R) C) = store(false) cut(R) killed(C) .
-  eq killed(lend(R, S, false) C) = cut(R) killed(C) .
+  eq killed(store(false) lo(R) pend(R, T, P, B) C) = store(false) pend(R, T, P, B) killed(C) .
+  ceq killed(store(false) lo(R) C) = store(false) cut(R) killed(C) if not pends(C, R) .
+  eq killed(lend(R, S, false) pend(R, T, P, B) C) = pend(R, T, P, B) killed(C) .
+  ceq killed(lend(R, S, false) C) = cut(R) killed(C) if not pends(C, R) .
   eq killed(mark(R, T) C) = killed(C) .
   eq killed(C) = C [owise] .
 
@@ -221,6 +225,29 @@ mod UNRECORDED-TURNS is
   op pends : Conf Rid -> Bool .
   eq pends(pend(R, T, P, B) C, R) = true .
   eq pends(C, R) = false [owise] .
+  --- How a held end reads once its runtime went: as the run, if it had not said; a
+  --- provider turn it could not stop went with its app-server.
+  op went : Pv -> Pv .
+  eq went(pending) = asrun .
+  eq went(running) = interrupted .
+  eq went(P) = P [owise] .
+  op downs? : Conf Rid -> Bool .
+  eq downs?(downed(R) C, R) = true .
+  eq downs?(C, R) = false [owise] .
+  op holds : Conf -> Bool .
+  eq holds(pend(R, T, P, B) C) = true .
+  eq holds(C) = false [owise] .
+
+  --- A runtime's `:DOWN` for the ends TurnWatch holds besides run R's: it watches the
+  --- runtime until each records (TurnWriter.finish/3). One already gone is harmless to
+  --- hear again, [gone] being idempotent.
+  op downs : Conf Rid -> Conf .
+  eq downs(pend(R', T, P, B) C, R) =
+    (if R' == R or has(C, noWatchHeld) then empty else downed(R') fi) downs(C, R) .
+  eq downs(C, R) = empty [owise] .
+  op downs : Conf -> Conf .
+  eq downs(pend(R, T, P, B) C) = (if has(C, noWatchHeld) then empty else downed(R) fi) downs(C) .
+  eq downs(C) = empty [owise] .
 
   op booting : Conf -> Bool .
   eq booting(settling C) = true .
@@ -242,10 +269,18 @@ mod UNRECORDED-TURNS is
   rl [stop] : { asked(R) pt(R, live) C } => { pt(R, gone) endmsg(R, interrupted) C } .
   rl [stop] : { asked(R) pt(R, gone) C } => { pt(R, gone) C } .
   rl [ignore] : { asked(R) pt(R, live) C } => { pt(R, live) late(R) C } .
-  rl [crash] : { faults(s F) rt(drive(R)) C } => { faults(F) rt(down) downed(R) killed(C) } .
-  rl [crash] : { faults(s F) rt(dry(R, T)) C } => { faults(F) rt(down) downed(R) killed(C) } .
-  rl [crash] : { faults(s F) rt(hold(R)) C } => { faults(F) rt(down) downed(R) killed(C) } .
-  rl [crash] : { faults(s F) rt(goal(R)) C } => { faults(F) rt(down) downed(R) crashed(R) killed(C) } .
+  rl [crash] : { faults(s F) rt(drive(R)) C } =>
+    { faults(F) rt(down) downed(R) downs(C, R) killed(C) } .
+  rl [crash] : { faults(s F) rt(dry(R, T)) C } =>
+    { faults(F) rt(down) downed(R) downs(C, R) killed(C) } .
+  rl [crash] : { faults(s F) rt(hold(R)) C } =>
+    { faults(F) rt(down) downed(R) downs(C, R) killed(C) } .
+  rl [crash] : { faults(s F) rt(goal(R)) C } =>
+    { faults(F) rt(down) downed(R) crashed(R) downs(C, R) killed(C) } .
+  --- An idle runtime goes too, as one does whose app-server exits while the store refuses
+  --- what went with it.
+  crl [crash] : { faults(s F) rt(idle) C } => { faults(F) rt(down) downs(C) killed(C) }
+    if holds(C) .
   rl [restart] : { faults(s F) clock(N) C } => { faults(F) clock(s N) settling wiped(C) } .
 
   --- Unrecorded.handle_info/4: what the runtime writes for its turn the store refuses.
@@ -346,10 +381,14 @@ mod UNRECORDED-TURNS is
 
   --- TurnWatch's try at a held end, once the provider turn's end is known, in
   --- try_record/2 and TurnWriter.abandon/5: the run fails at the time it failed, its
-  --- provider turn as it ended. A run already ended is left as it is.
+  --- provider turn as it ended. A run already ended is left as it is. A runtime that went
+  --- before its `:DOWN` reached TurnWatch is gone to the try as to [gone].
   crl [record] : { store(true) clock(N) pend(R, T, P, B) run(R, active) ends(R, K) rpt(R, X) C }
     => { store(true) clock(N) run(R, over(failed, (if has(C, nowTime) then N else T fi)))
-         ends(R, s K) rpt(R, written(has(C, overwrite), has(C, reend), P, X)) watched(R) C }
+         ends(R, s K)
+         rpt(R, written(has(C, overwrite), has(C, reend),
+           (if downs?(C, R) and not has(C, noWatchHeld) then went(P) else P fi), X))
+         watched(R) C }
     if P =/= pending .
   crl [record] : { store(true) pend(R, T, P, B) run(R, over(S, M)) ends(R, K) C }
     => { store(true) run(R, over(failed, T)) ends(R, s K) watched(R) C }
@@ -364,9 +403,9 @@ mod UNRECORDED-TURNS is
     if P =/= pending .
 
   --- TurnWatch's `:DOWN` of a crashed runtime: the end it held keeps its time, or the
-  --- run fails now; the provider turn went with the runtime.
-  rl [gone] : { downed(R) pend(R, T, P, B) C }
-    => { pend(R, T, (if P == pending then asrun else P fi), B) C } .
+  --- run fails now; the provider turn went with the runtime, one it could not stop
+  --- interrupted with its app-server.
+  rl [gone] : { downed(R) pend(R, T, P, B) C } => { pend(R, T, went(P), B) C } .
   crl [gone] : { downed(R) clock(N) C } => { clock(N) pend(R, N, asrun, false) stamp(C, R, N) }
     if not pends(C, R) .
 
