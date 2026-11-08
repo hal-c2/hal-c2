@@ -84,8 +84,12 @@ defmodule HalC2.PreviewForwardTest do
     end
 
     test "on another free port when this machine's is taken" do
-      {port, _} = DevServer.echo(@dev, 0, self())
-      {:ok, busy} = :gen_tcp.listen(port, ip: {127, 0, 0, 1})
+      # Held from before the dev server starts, so no other socket takes the
+      # port first.
+      {{port, _}, %{v4: busy} = held} =
+        DevServer.holding_free_port(&DevServer.echo(@dev, &1, self()))
+
+      DevServer.release(%{held | v4: nil})
       tab(port)
       assert {:ok, other} = PreviewForward.forward(node(), @thread, port)
       assert other != port

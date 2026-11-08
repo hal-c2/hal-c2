@@ -47,22 +47,46 @@ defmodule HalC2.Test.DevServer do
   there may already be taken at 127.0.0.1, by any socket of this machine.
   """
   def on_free_port(start) do
+    {result, held} = holding_free_port(start)
+    release(held)
+    result
+  end
+
+  @doc """
+  `on_free_port/1`, but the port stays held by the caller after `start`
+  returns: gives `{result, held}`. A test hands `held` to `release/1` once
+  something must listen there, or keeps its 127.0.0.1 socket as one that has
+  the port in use. Closing and binding again would leave a gap any socket of
+  this machine can take the port in.
+  """
+  def holding_free_port(start) do
     {:ok, v4} = :gen_tcp.listen(0, ip: {127, 0, 0, 1})
     {:ok, port} = :inet.port(v4)
 
     case :gen_tcp.listen(port, [:inet6, ip: {0, 0, 0, 0, 0, 0, 0, 1}, ipv6_v6only: true]) do
       {:error, :eaddrinuse} ->
         :gen_tcp.close(v4)
-        on_free_port(start)
+        holding_free_port(start)
 
       v6 ->
+        held = %{v4: v4, v6: with({:ok, socket} <- v6, do: socket, else: (_ -> nil))}
+
         try do
-          start.(port)
-        after
-          :gen_tcp.close(v4)
-          with {:ok, socket} <- v6, do: :gen_tcp.close(socket)
+          {start.(port), held}
+        catch
+          kind, reason ->
+            release(held)
+            :erlang.raise(kind, reason, __STACKTRACE__)
         end
     end
+  end
+
+  @doc "Closes the sockets `holding_free_port/1` holds; `nil` holds none."
+  def release(nil), do: :ok
+
+  def release(held) do
+    for socket <- Map.values(held), socket, do: :gen_tcp.close(socket)
+    :ok
   end
 
   @doc """
