@@ -410,7 +410,6 @@ Feature: Provider setup, updates and sign-in
     Then Codex's update waits for the Claude update to finish
 
   # Upstream #24763: an update of a provider already on the latest version still ran its installer.
-  @backlog @mc
   Scenario: Updating a provider already on its latest version does not run the installer
     Given a fresh check finds Claude installed at its latest version
     When the user updates Claude
@@ -435,14 +434,12 @@ Feature: Provider setup, updates and sign-in
     When the user updates Codex
     Then the update fails asking the user to refresh and try again
 
-  @backlog @mc
   Scenario: An update that runs too long is stopped
     Given Codex is behind the latest version
     And its update command does not finish within five minutes
     When the user updates Codex
     Then the update fails as timed out
 
-  @backlog @mc
   Scenario: A failed update command reports its exit code and output
     Given Codex is behind the latest version
     And its update command exits with code 1 and prints an error
@@ -450,14 +447,13 @@ Feature: Provider setup, updates and sign-in
     Then the update fails naming exit code 1
     And the update's result carries the command's error output
 
-  @backlog @mc @priority-low
+  @priority-low
   Scenario: An update's output is capped
     Given Codex is behind the latest version
     And its update command prints far more than ten thousand characters
     When the user updates Codex
     Then the update's result carries only the first ten thousand characters of that output
 
-  @backlog @mc
   Scenario: An update to a version that is no longer recommended is refused
     Given the user asked to install the recommended "0.1.5" of Codex
     And "0.1.5" stopped being the recommended version before the update ran
@@ -465,7 +461,6 @@ Feature: Provider setup, updates and sign-in
     Then the update fails telling the user to refresh provider settings
     And no update command is run
 
-  @backlog @mc
   Scenario Outline: An update to a latest release that turned incompatible is refused when it runs
     Given Codex is behind the latest version
     And that latest release was marked <status> for this HAL-C2 release after the last check
@@ -478,14 +473,12 @@ Feature: Provider setup, updates and sign-in
       | unsupported |
       | broken      |
 
-  @backlog @mc
   Scenario: An update that cannot be verified is reported as unchanged
     Given Codex is behind the latest version
     And its update command succeeds but the provider's version cannot be read afterwards
     When the user updates Codex
     Then the user is told the update finished but the version could not be verified
 
-  @backlog @mc
   Scenario: A second update for the same provider is refused while one runs
     Given a Codex update is running
     When the user updates Codex again

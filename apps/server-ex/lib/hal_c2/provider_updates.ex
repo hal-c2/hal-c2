@@ -188,9 +188,17 @@ defmodule HalC2.ProviderUpdates do
     try do
       with {:path, path} when is_binary(path) <- {:path, executable(driver, instance)},
            {:command, [_ | _] = command} <- {:command, update_command(driver, path)},
-           {:target, true} <- {:target, target == nil or targeted(command, target) != nil} do
-        locked(lock_key(command), instance, fn -> run(driver, instance, target) end)
+           {:target, true} <- {:target, target == nil or targeted(command, target) != nil},
+           {:idle, true} <- {:idle, claim(instance)} do
+        try do
+          locked(lock_key(command), instance, fn -> run(driver, instance, target) end)
+        after
+          release(instance)
+        end
       else
+        {:idle, false} ->
+          error(driver, "An update is already running for this provider.")
+
         {:path, _} ->
           error(driver, "#{@names[driver] || driver} is not installed on this machine.")
 
@@ -212,6 +220,14 @@ defmodule HalC2.ProviderUpdates do
       state -> Map.put(entry, "updateState", state)
     end
   end
+
+  # One update per instance at a time, held from the request to its end, queued or
+  # running; a second is refused, not queued behind it.
+  defp claim(instance),
+    do: :global.set_lock({{__MODULE__, :instance, instance}, self()}, [node()], 0)
+
+  defp release(instance),
+    do: :global.del_lock({{__MODULE__, :instance, instance}, self()}, [node()])
 
   # One installer runs one update at a time; the others wait their turn, queued.
   defp locked(key, instance, fun) do
@@ -256,19 +272,116 @@ defmodule HalC2.ProviderUpdates do
       command == nil or (offered != nil and offered != command) ->
         failed(driver, instance, started, "Provider installation changed. Refresh and try again.")
 
-      true ->
-        [program | args] = if target, do: targeted(command, target), else: command
+      refusal = refusal(driver, instance, path, command, target) ->
+        failed(driver, instance, started, refusal)
 
-        case System.cmd(program, args,
-               stderr_to_stdout: true,
-               env: update_env(driver, instance, command)
-             ) do
-          {output, 0} ->
+      # Upstream #24763: a provider a fresh probe finds current needs no installer.
+      target == nil and current?(driver, instance) ->
+        put_state(instance, "succeeded", started, "Already up to date.")
+        {:ok, %{"providers" => HalC2.Environment.providers()}}
+
+      true ->
+        argv = if target, do: targeted(command, target), else: command
+
+        case command(argv, update_env(driver, instance, command)) do
+          {0, output} ->
             verify(driver, instance, started, output, target)
 
-          {output, _} ->
-            failed(driver, instance, started, output |> String.trim() |> String.slice(-500, 500))
+          {:timeout, output} ->
+            failed(driver, instance, started, "Update timed out.", output)
+
+          {status, output} when is_integer(status) ->
+            failed(
+              driver,
+              instance,
+              started,
+              "Update command exited with code #{status}.",
+              output
+            )
+
+          {:error, reason} ->
+            failed(driver, instance, started, "Failed to run update command: #{reason}")
         end
+    end
+  end
+
+  # Why the release an update would install may not be installed here, or nil. A
+  # chosen version must still be the one the provider's compatibility policy
+  # recommends, and supported; the latest must not be broken or unsupported. The
+  # policy may have changed since the user was offered the update.
+  defp refusal(driver, instance, path, command, target) do
+    candidate = target || latest_for(driver, path, command, instance)
+    advisory = candidate && HalC2.ProviderCompatibility.for_version(driver, candidate)
+
+    cond do
+      target != nil and
+          (advisory == nil or advisory["recommendedVersion"] != target or
+             advisory["status"] != "supported") ->
+        "This version is no longer recommended or this installer cannot install a specific version. Refresh provider settings."
+
+      target == nil and advisory != nil and advisory["status"] in ["broken", "unsupported"] ->
+        "The latest provider version is incompatible with this HAL-C2 release. Review provider settings."
+
+      true ->
+        nil
+    end
+  end
+
+  # Whether the instance, its version read afresh, is installed at the latest release.
+  defp current?(driver, instance) do
+    forget_version(driver, instance, executable(driver, instance))
+    entry = Enum.find(HalC2.Environment.providers(), &(&1["instanceId"] == instance))
+
+    entry != nil and entry["installed"] != false and
+      entry["versionAdvisory"]["status"] == "current"
+  end
+
+  # Runs an update's argv, for at most `:provider_update_timeout` (five minutes),
+  # and answers its exit status (or `:timeout`) and what it printed: stderr then
+  # stdout, each read up to 10,000 bytes, and of that the first 10,000 characters.
+  # A command that runs too long is killed with the task that owns it.
+  defp command(argv, env) do
+    timeout = Application.get_env(:hal_c2, :provider_update_timeout, :timer.minutes(5))
+
+    task =
+      Task.async(fn ->
+        try do
+          argv
+          |> Exile.stream(stderr: :consume, ignore_epipe: true, env: env)
+          |> Enum.reduce({nil, "", ""}, fn
+            {:stdout, data}, {status, out, err} -> {status, cap(out, data), err}
+            {:stderr, data}, {status, out, err} -> {status, out, cap(err, data)}
+            {:exit, {:status, status}}, {_, out, err} -> {status, out, err}
+            {:exit, _}, {_, out, err} -> {1, out, err}
+          end)
+          |> then(fn {status, out, err} -> {status, output(out, err)} end)
+        rescue
+          exception -> {:error, Exception.message(exception)}
+        end
+      end)
+
+    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> result
+      _ -> {:timeout, nil}
+    end
+  end
+
+  defp cap(text, _data) when byte_size(text) >= 10_000, do: text
+
+  defp cap(text, data) do
+    text = text <> IO.iodata_to_binary(data)
+    binary_part(text, 0, min(byte_size(text), 10_000))
+  end
+
+  defp output(out, err) do
+    [err, out]
+    |> Enum.map(&String.replace_invalid/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join("\n\n")
+    |> String.trim()
+    |> case do
+      "" -> nil
+      text -> String.slice(text, 0, 10_000)
     end
   end
 
@@ -299,9 +412,9 @@ defmodule HalC2.ProviderUpdates do
     {:ok, %{"providers" => HalC2.Environment.providers()}}
   end
 
-  defp failed(driver, instance, started, reason) do
+  defp failed(driver, instance, started, reason, output \\ nil) do
     message = if reason == "", do: "The update failed.", else: reason
-    put_state(instance, "failed", started, message)
+    put_state(instance, "failed", started, message, output)
     error(driver, reason)
   end
 
@@ -314,7 +427,7 @@ defmodule HalC2.ProviderUpdates do
       "startedAt" => started,
       "finishedAt" => finished,
       "message" => message,
-      "output" => output && String.slice(output, -10_000, 10_000)
+      "output" => output
     })
 
     HalC2.Settings.notify_providers()

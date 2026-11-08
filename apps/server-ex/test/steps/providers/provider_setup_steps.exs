@@ -63,7 +63,8 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
     {frame["config"]["providers"], World.put_client(ctx, name, client)}
   end
 
-  # Codex 0.1.0 installed by Homebrew, behind the latest release 0.2.0.
+  # Codex 0.1.0 installed by Homebrew, behind the latest release 0.2.0, under no
+  # compatibility policy unless the scenario set one.
   defp homebrew_codex(ctx) do
     ctx = Acp.ready(ctx)
     homebrew(ctx, "codex", :codex_command, "fake_codex.py", "codex-cli %s", "0.1.0")
@@ -87,6 +88,11 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
   # `homebrew/<name>.upgrade` when that exists; `npm` logs it ran.
   defp homebrew(ctx, name, app_key, fake, format, version) do
     home = ctx.mc.home
+    # Its versions are made up: the bundled manifest's policies would call them
+    # broken or unsupported, and an update to one is refused. A scenario sets its own.
+    unless Application.get_env(:hal_c2, :provider_compatibility),
+      do: World.put_app_env(:provider_compatibility, [])
+
     brew = Path.join(home, "homebrew")
     fake = Path.expand("../../support/#{fake}", __DIR__)
     version_file = Path.join(brew, "#{name}.version")
@@ -1152,4 +1158,265 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
       version -> version
     end
   end
+
+  # --- how an update runs ---------------------------------------------------------------
+
+  # Codex's update command, the npm at its global prefix (`Codex is behind the latest
+  # version`), replaced with `script`.
+  defp npm_update(context, script) do
+    npm = Path.join([context.mc.home, "npm", "bin", "npm"])
+    File.write!(npm, "#!/bin/sh\n" <> script <> "\n")
+    File.chmod!(npm, 0o755)
+    context
+  end
+
+  defp update_ran?(context),
+    do: File.exists?(Path.join([context.mc.home, "npm", "npm.log"])) or brew_log(context) != []
+
+  defp codex_update_state, do: Acp.provider("codex")["updateState"]
+
+  # Claude 1.0.0 from Homebrew, reported behind 1.1.0; then, before the MC reads
+  # its version again, it is at 1.1.0 already.
+  step "a fresh check finds Claude installed at its latest version", context do
+    ctx = Acp.ready(context)
+    homebrew(ctx, "claude-code", :claude_command, "fake_claude.py", "%s (Claude Code)", "1.0.0")
+    key = {HalC2.ProviderUpdates, "claudeAgent"}
+    :persistent_term.put(key, {"1.1.0", System.monotonic_time(:millisecond)})
+    ExUnit.Callbacks.on_exit(fn -> :persistent_term.erase(key) end)
+    assert Acp.provider("claudeAgent")["versionAdvisory"]["status"] == "behind_latest"
+    File.write!(Path.join(ctx.mc.home, "homebrew/claude-code.version"), "1.1.0")
+    ctx
+  end
+
+  step "the update finishes with {string}", %{args: [message]} = context do
+    assert {:ok, %{"providers" => providers}} = context.reply
+    claude = Enum.find(providers, &(&1["instanceId"] == "claudeAgent"))
+    assert %{"status" => "succeeded", "message" => ^message} = claude["updateState"]
+    assert claude["versionAdvisory"]["status"] == "current"
+    context
+  end
+
+  step "Claude's installer is not run", context do
+    assert brew_log(context) == []
+    context
+  end
+
+  # It runs until it is killed, and says which process it is.
+  step "its update command does not finish within five minutes", context do
+    World.put_app_env(:provider_update_timeout, 200)
+    pid = Path.join(context.mc.home, "npm/update.pid")
+    context |> npm_update(~s(echo $$ > #{pid}\nexec sleep 600)) |> Map.put(:update_pid, pid)
+  end
+
+  step "the update fails as timed out", context do
+    assert {:error, "Update timed out.", _} = context.reply
+    assert %{"status" => "failed", "message" => "Update timed out."} = codex_update_state()
+    # The command was stopped: `tail --pid` returns once that process is gone.
+    pid = context.update_pid |> File.read!() |> String.trim()
+
+    waiter =
+      Task.async(fn -> System.cmd("tail", ["-s", "0.05", "--pid=#{pid}", "-f", "/dev/null"]) end)
+
+    assert {_, 0} = Task.await(waiter, 5_000)
+    context
+  end
+
+  step "its update command exits with code 1 and prints an error", context do
+    npm_update(context, ~s(echo "fetching @openai/codex"\necho "npm error code E404" >&2\nexit 1))
+  end
+
+  step "the update fails naming exit code 1", context do
+    assert {:error, "Update command exited with code 1.", _} = context.reply
+    context
+  end
+
+  # Upstream joins stderr then stdout, a blank line between.
+  step "the update's result carries the command's error output", context do
+    assert %{"status" => "failed", "message" => "Update command exited with code 1."} =
+             state = codex_update_state()
+
+    assert state["output"] =~ ~r/\Anpm error code E404\n\n+fetching @openai\/codex\z/
+    context
+  end
+
+  step "its update command prints far more than ten thousand characters", context do
+    npm_update(context, ~s(printf begin\nhead -c 30000 /dev/zero | tr '\\0' x\necho end\nexit 1))
+  end
+
+  step "the update's result carries only the first ten thousand characters of that output",
+       context do
+    assert {:error, _, _} = context.reply
+    output = codex_update_state()["output"]
+    assert String.length(output) == 10_000
+    assert output == "begin" <> String.duplicate("x", 9_995)
+    context
+  end
+
+  # Codex 0.1.0 at a global npm prefix under a policy that recommends 0.1.5.
+  step "the user asked to install the recommended {string} of Codex",
+       %{args: [version]} = context do
+    context =
+      context
+      |> HalC2.Steps.Settings.Updates.install("Codex", "a global npm install")
+      |> HalC2.Steps.Settings.Updates.check()
+
+    World.put_app_env(:provider_compatibility, [recommending("codex", version)])
+    Map.put(context, :target_version, version)
+  end
+
+  step "{string} stopped being the recommended version before the update ran",
+       %{args: [version]} = context do
+    [policy] = Application.get_env(:hal_c2, :provider_compatibility)
+    assert policy["recommendedVersion"] == version
+    World.put_app_env(:provider_compatibility, [%{policy | "recommendedVersion" => "0.1.6"}])
+    context
+  end
+
+  step "the update starts", context do
+    {reply, context} =
+      World.call(context, "server.updateProvider", %{
+        "provider" => "codex",
+        "targetVersion" => context.target_version
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "the update fails telling the user to refresh provider settings", context do
+    message =
+      "This version is no longer recommended or this installer cannot install a specific version. Refresh provider settings."
+
+    assert {:error, ^message, _} = context.reply
+    assert %{"status" => "failed", "message" => ^message} = codex_update_state()
+    context
+  end
+
+  step "no update command is run", context do
+    refute update_ran?(context)
+    context
+  end
+
+  # Codex's latest release is 9.9.9; the policy now gives it `status`.
+  step ~r/^that latest release was marked (?<status>unsupported|broken) for this HAL-C2 release after the last check$/,
+       %{args: [status]} = context do
+    assert HalC2.Steps.Settings.Updates.advisory(context, "Codex")["latestVersion"] == "9.9.9"
+
+    World.put_app_env(:provider_compatibility, [
+      %{
+        "driver" => "codex",
+        "halC2Range" => ">=0",
+        "recommendedRange" => "<9",
+        "ranges" => [
+          %{"range" => "<9", "status" => "supported"},
+          %{"range" => ">=9", "status" => status}
+        ]
+      }
+    ])
+
+    context
+  end
+
+  step "the update fails saying the latest version is incompatible with this HAL-C2 release",
+       context do
+    message =
+      "The latest provider version is incompatible with this HAL-C2 release. Review provider settings."
+
+    assert {:error, ^message, _} = context.reply
+    assert %{"status" => "failed", "message" => ^message} = codex_update_state()
+    context
+  end
+
+  # npm installs, but the Codex it leaves cannot say its version.
+  step "its update command succeeds but the provider's version cannot be read afterwards",
+       context do
+    codex = Path.join(context.mc.home, "npm/lib/node_modules/@openai/codex/bin/codex.js")
+    npm_update(context, ~s(printf '#!/bin/sh\\nexit 1\\n' > #{codex}))
+  end
+
+  step "the user is told the update finished but the version could not be verified", context do
+    assert {:ok, _} = context.reply
+
+    assert %{
+             "status" => "unchanged",
+             "message" =>
+               "Update command completed, but HAL-C2 could not verify the provider version."
+           } = codex_update_state()
+
+    context
+  end
+
+  # Codex's npm holds until the scenario lets it go; the update is seen running.
+  step "a Codex update is running", context do
+    context = context |> HalC2.Steps.Settings.Updates.install("Codex", "a global npm install")
+    context = HalC2.Steps.Settings.Updates.check(context)
+    hold = Path.join(context.mc.home, "npm/update.hold")
+    {_, 0} = System.cmd("mkfifo", [hold])
+    ExUnit.Callbacks.on_exit(fn -> release(hold) end)
+    npm = Path.join(context.mc.home, "npm")
+
+    npm_update(
+      context,
+      ~s(read line < #{hold}\necho "$@" >> #{npm}/npm.log\necho 9.9.9 > #{npm}/lib/node_modules/@openai/codex/bin/version)
+    )
+
+    test = self()
+
+    watcher =
+      spawn_link(fn ->
+        :ok = HalC2.Settings.watch(self())
+        send(test, :watching)
+        watch_codex(test)
+      end)
+
+    assert_receive :watching
+    ExUnit.Callbacks.on_exit(fn -> Process.exit(watcher, :kill) end)
+    update = Task.async(fn -> HalC2.ProviderUpdates.update(%{"provider" => "codex"}) end)
+    assert_receive {:codex_update, %{"status" => "running"}}, 5_000
+    context |> Map.put(:first_update, update) |> Map.put(:hold, hold)
+  end
+
+  step "the user updates Codex again", context do
+    {reply, context} = World.call(context, "server.updateProvider", %{"provider" => "codex"})
+    Map.put(context, :reply, reply)
+  end
+
+  step "the second update is refused saying an update is already running for that provider",
+       context do
+    assert {:error, "An update is already running for this provider.", _} = context.reply
+    # The first goes on, and ends as its own.
+    assert %{"status" => "running"} = codex_update_state()
+    release_to_reader(context.hold)
+    assert {:ok, _} = Task.await(context.first_update)
+    assert %{"status" => "succeeded"} = codex_update_state()
+
+    assert [_] =
+             context.mc.home
+             |> Path.join("npm/npm.log")
+             |> File.read!()
+             |> String.split("\n", trim: true)
+
+    context
+  end
+
+  defp watch_codex(test) do
+    receive do
+      {:hal_c2_providers_changed, _} ->
+        if state = :persistent_term.get({HalC2.ProviderUpdates, "codex", :state}, nil),
+          do: send(test, {:codex_update, state})
+
+        watch_codex(test)
+
+      _ ->
+        watch_codex(test)
+    end
+  end
+
+  # A policy for `driver` that supports every release and recommends `version`.
+  defp recommending(driver, version),
+    do: %{
+      "driver" => driver,
+      "halC2Range" => ">=0",
+      "recommendedVersion" => version,
+      "ranges" => [%{"range" => ">=0", "status" => "supported"}]
+    }
 end
