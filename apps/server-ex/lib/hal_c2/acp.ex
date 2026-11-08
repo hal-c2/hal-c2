@@ -364,14 +364,22 @@ defmodule HalC2.Acp do
 
     if legacy != target && !File.exists?(marker) && File.regular?(legacy) do
       try do
-        File.mkdir_p!(Path.dirname(target))
+        copied? =
+          if not cursor_credentials_valid?(target) && cursor_credentials_valid?(legacy) do
+            File.mkdir_p!(Path.dirname(target))
+            File.cp!(legacy, target)
+            File.chmod!(target, 0o600)
+            true
+          else
+            false
+          end
 
-        if not cursor_credentials_valid?(target) && cursor_credentials_valid?(legacy) do
-          File.cp!(legacy, target)
-          File.chmod!(target, 0o600)
+        # Remembered only once this instance holds a sign-in it can read: a
+        # legacy file that could not be copied is tried again next start.
+        if copied? || cursor_credentials_valid?(target) do
+          File.mkdir_p!(Path.dirname(target))
+          File.write!(marker, "")
         end
-
-        File.write!(marker, "")
       rescue
         error ->
           require Logger

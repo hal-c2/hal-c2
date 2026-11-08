@@ -85,6 +85,36 @@ defmodule HalC2.AcpTest do
     assert {"HAL_C2_CURSOR_CREDENTIALS", Path.join(dir, "provider-auth/cursor/cursor.json")} in env
   end
 
+  test "an invalid legacy Cursor login is retried on the next start", %{tmp_dir: dir} do
+    home = Path.join(dir, "home")
+    legacy = Path.join([home, ".cursor", "sdk", "auth.json"])
+    File.mkdir_p!(Path.dirname(legacy))
+
+    previous = System.get_env("HOME")
+    System.put_env("HOME", home)
+
+    on_exit(fn ->
+      if previous, do: System.put_env("HOME", previous), else: System.delete_env("HOME")
+    end)
+
+    target = HalC2.Acp.cursor_credentials("cursor")
+    marker = Path.join(Path.dirname(target), "legacy-migrated")
+
+    # Not a readable login: nothing is copied and nothing is remembered.
+    File.write!(legacy, "not json")
+    assert {:ok, _, _} = HalC2.Acp.command("cursor")
+    refute File.exists?(target)
+    refute File.exists?(marker)
+
+    # A readable login at the next start is copied, and only then remembered;
+    # the SDK's own file stays where it was.
+    File.write!(legacy, JSON.encode!(%{"apiKey" => "cursor-key"}))
+    assert {:ok, _, _} = HalC2.Acp.command("cursor")
+    assert JSON.decode!(File.read!(target))["apiKey"] == "cursor-key"
+    assert File.exists?(marker)
+    assert File.exists?(legacy)
+  end
+
   test "Pi is offered only where its binary is installed" do
     {:ok, _} =
       HalC2.Settings.put(
