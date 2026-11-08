@@ -199,8 +199,13 @@ defmodule HalC2.ClaudeProviderTest do
     :ok = Provider.load()
     assert model("opus")
 
-    # The same `claude`, now crashing at start.
-    File.write!(Path.join(dir, "claude"), "#!/bin/sh\nexit 1\n")
+    # The same `claude`, now crashing at start. The earlier load may still be
+    # executing the old script, which Linux won't let us open for writing
+    # (ETXTBSY), so swap a new file in by rename; the running one keeps its inode.
+    claude = Path.join(dir, "claude")
+    File.write!(claude <> ".new", "#!/bin/sh\nexit 1\n")
+    File.chmod!(claude <> ".new", 0o755)
+    File.rename!(claude <> ".new", claude)
     :ok = Provider.load()
     assert model("opus")
   end

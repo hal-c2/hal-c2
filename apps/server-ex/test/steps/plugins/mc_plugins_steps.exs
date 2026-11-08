@@ -422,9 +422,17 @@ defmodule HalC2.Steps.Plugins.NodePlugins do
   end
 
   step "the MC keeps running", context do
-    assert Process.whereis(HalC2.Plugins) == context.plugins_pid
-    {_, context} = World.call!(context, "server.getSettings")
-    context
+    if context[:cursor_world] do
+      # An ACP provider feature on the AcpFixtures world (Cursor): the MC's
+      # services are up and Cursor reads as enabled on a fresh probe.
+      assert is_pid(Process.whereis(HalC2.Settings))
+      assert HalC2.Test.AcpFixtures.check("cursor")["enabled"] == true
+      context
+    else
+      assert Process.whereis(HalC2.Plugins) == context.plugins_pid
+      {_, context} = World.call!(context, "server.getSettings")
+      context
+    end
   end
 
   step ~r/^"(?<id>[^"]+)" is listed as failed$/, %{args: [id]} = context do
