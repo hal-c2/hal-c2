@@ -416,12 +416,15 @@ defmodule HalC2.TokenEconomizerToolPruneTest do
     assert Prune.seeded_run(state, "thread-a") == nil
 
     state = Prune.note_thread(state, "thread-a", "run-1")
-    state = Prune.note_thread(state, "thread-b", "run-9")
-    state = Prune.note_thread(state, "thread-a", "run-2")
+    state = Prune.note_thread(state, "thread-b", %{"run" => "run-9", "ordinal" => 9})
+    state = Prune.note_thread(state, "thread-a", %{"run" => "run-2", "ordinal" => 2})
     state = Prune.note_thread(state, "thread-a", nil)
 
-    assert Prune.seeded_run(state, "thread-a") == "run-2"
-    assert Prune.seeded_run(state, "thread-b") == "run-9"
+    assert Prune.seeded_run(state, "thread-a") == %{"run" => "run-2", "ordinal" => 2}
+    assert Prune.seeded_run(state, "thread-b") == %{"run" => "run-9", "ordinal" => 9}
+    # A file saved before watermarks kept their ordinal reads as one without it.
+    old = Prune.new("tool", %{"seededThreads" => %{"thread-a" => "run-1", "thread-b" => 3}})
+    assert old["seededThreads"] == %{"thread-a" => %{"run" => "run-1", "ordinal" => nil}}
   end
 
   test "a restart folds a thread's runs after its watermark, whoever's that was, and only its provider's" do
@@ -430,20 +433,40 @@ defmodule HalC2.TokenEconomizerToolPruneTest do
           do: %{"runId" => "#{id}", "provider" => provider}
 
     claude? = &(&1["provider"] == "claudeAgent")
+    d = %{"run" => "d", "ordinal" => nil}
 
     # The watermark is a Codex run: the Claude runs before it are not folded again.
-    assert {"d", [%{"runId" => "d"}]} = Prune.unseen_runs(runs, "c", nil, claude?)
+    assert {^d, [%{"runId" => "d"}]} = Prune.unseen_runs(runs, "c", nil, claude?)
 
-    assert {"d", [%{"runId" => "b"}, %{"runId" => "d"}]} =
+    assert {^d, [%{"runId" => "b"}, %{"runId" => "d"}]} =
              Prune.unseen_runs(runs, nil, nil, claude?)
 
-    # One no longer read back is older than all of them.
-    assert {"d", [_, _]} = Prune.unseen_runs(runs, "gone", nil, claude?)
+    # One no longer read back, with no place to cut at, is older than all of them.
+    assert {^d, [_, _]} = Prune.unseen_runs(runs, "gone", nil, claude?)
     # Nothing new keeps the watermark, and nothing of the provider's still moves it.
-    assert {"d", []} = Prune.unseen_runs(runs, "d", nil, claude?)
-    assert {"c", []} = Prune.unseen_runs(Enum.take(runs, 3), "b", nil, claude?)
+    assert {^d, []} = Prune.unseen_runs(runs, d, nil, claude?)
+
+    assert {%{"run" => "c"}, []} =
+             Prune.unseen_runs(Enum.take(runs, 3), "b", nil, claude?)
+
     # The run starting, heard after it ended, and any after it are still to be heard.
-    assert {"b", [%{"runId" => "b"}]} = Prune.unseen_runs(runs, nil, "c", claude?)
+    assert {%{"run" => "b"}, [%{"runId" => "b"}]} = Prune.unseen_runs(runs, nil, "c", claude?)
+  end
+
+  test "a watermark run a rollback took out of the history still cuts at its place" do
+    # Runs 2 and 3 were folded, then rolled back; 4 and 5 ran after.
+    runs =
+      for {id, ordinal} <- [r1: 1, r4: 4, r5: 5],
+          do: %{"runId" => "#{id}", "ordinal" => ordinal, "provider" => "claudeAgent"}
+
+    claude? = &(&1["provider"] == "claudeAgent")
+
+    assert {%{"run" => "r5", "ordinal" => 5}, [%{"runId" => "r4"}, %{"runId" => "r5"}]} =
+             Prune.unseen_runs(runs, %{"run" => "r3", "ordinal" => 3}, nil, claude?)
+
+    # Nothing after it keeps it as it was.
+    assert {%{"run" => "r3", "ordinal" => 3}, []} =
+             Prune.unseen_runs(Enum.take(runs, 1), %{"run" => "r3", "ordinal" => 3}, nil, claude?)
   end
 
   test "a conversation counts as one session however many idle segments it folds" do

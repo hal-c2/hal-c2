@@ -638,7 +638,7 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert Prune.seeded_run(state.prunes[{p, "claudeAgent"}], "a") == nil
 
       state = observe(state, started("a", %{"projectId" => p, "newConversation" => true}))
-      assert Prune.seeded_run(state.prunes[{p, "claudeAgent"}], "a") == "r1"
+      assert Prune.seeded_run(state.prunes[{p, "claudeAgent"}], "a")["run"] == "r1"
     end
 
     test "a thread whose earlier turns could not be read keeps its watermark, to read them later" do

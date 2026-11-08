@@ -126,6 +126,7 @@ defmodule HalC2.PluginsTurnHooksTest do
 
     assert_receive {:observed, %{"type" => "turn.finished", "runId" => ^run_id} = finished}, 5_000
     assert finished["status"] == "completed"
+    assert is_integer(finished["ordinal"])
   end
 
   test "a plugin hears which file a file change wrote, and a long output's end" do

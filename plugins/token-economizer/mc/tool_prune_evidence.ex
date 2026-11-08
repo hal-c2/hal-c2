@@ -514,46 +514,77 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
     |> update_in(["liveThreads"], &List.delete(&1, thread_id))
   end
 
+  # A watermark is `%{"run" => id, "ordinal" => n}`; an older file kept the id alone.
   defp seeded_threads(map) when is_map(map) do
-    Map.new(map, fn {thread, run} -> {thread, if(is_binary(run), do: run)} end)
+    for {thread, mark} <- map, mark = mark(mark), into: %{}, do: {thread, mark}
   end
 
   defp seeded_threads(_), do: %{}
+
+  defp mark(run) when is_binary(run), do: %{"run" => run, "ordinal" => nil}
+
+  defp mark(%{"run" => run} = mark) when is_binary(run),
+    do: %{"run" => run, "ordinal" => if(is_integer(mark["ordinal"]), do: mark["ordinal"])}
+
+  defp mark(_), do: nil
 
   @doc """
   What a thread's history, oldest first, still has to fold as `run_id` starts:
   `{watermark, runs}`, the runs after the thread's watermark (`seeded_run/2`) and
   before `run_id` that `mine?` keeps, and the watermark past all of them, whoever's
   they were. `run_id` and any after it are still to be heard live, though the feed
-  may deliver its start after it ended. A watermark not among them is older than all
-  of them (it names the last run folded), so all are new.
+  may deliver its start after it ended.
+
+  The runs after the watermark are those of a higher ordinal, so one that left the
+  history (a rollback ended it as `rolled_back`) still cuts where it was. A watermark
+  kept without its ordinal is found by its id, and one not among them then is older
+  than all of them, so all are new.
   """
   def unseen_runs(history, watermark, run_id, mine?) do
     history = Enum.take_while(history, &(&1["runId"] != run_id))
 
     new =
-      case watermark && Enum.find_index(history, &(&1["runId"] == watermark)) do
-        nil -> history
-        index -> Enum.drop(history, index + 1)
+      case mark(watermark) do
+        nil ->
+          history
+
+        %{"ordinal" => ordinal} when is_integer(ordinal) ->
+          Enum.filter(history, &(is_integer(&1["ordinal"]) and &1["ordinal"] > ordinal))
+
+        %{"run" => run} ->
+          case Enum.find_index(history, &(&1["runId"] == run)) do
+            nil -> history
+            index -> Enum.drop(history, index + 1)
+          end
       end
 
-    last = if new == [], do: watermark, else: List.last(new)["runId"]
+    last =
+      case List.last(new) do
+        nil -> mark(watermark)
+        run -> mark(%{"run" => run["runId"], "ordinal" => run["ordinal"]})
+      end
+
     {last, Enum.filter(new, mine?)}
   end
 
-  @doc "The last run of `thread_id` already folded, live or read back, or nil."
+  @doc """
+  The last run of `thread_id` already folded, live or read back, as
+  `%{"run" => id, "ordinal" => n}` (the ordinal nil where it is not known), or nil.
+  """
   def seeded_run(state, thread_id), do: state["seededThreads"][thread_id]
 
   @doc """
-  Remembers `run_id` as the last run of `thread_id` already folded — a
-  per-thread watermark, so a restart folds only the runs after it, however many
-  turns the project ran live before it.
+  Remembers `watermark`, `%{"run" => id, "ordinal" => n}` or the run id alone, as
+  the last run of `thread_id` already folded — a per-thread watermark, so a restart
+  folds only the runs after it, however many turns the project ran live before it.
+  Nil, or a watermark without a run, leaves it as it was.
   """
-  def note_thread(state, thread_id, run_id) when is_binary(run_id) do
-    put_in(state["seededThreads"][thread_id], run_id)
+  def note_thread(state, thread_id, watermark) do
+    case mark(watermark) do
+      nil -> state
+      mark -> put_in(state["seededThreads"][thread_id], mark)
+    end
   end
-
-  def note_thread(state, _thread_id, _run_id), do: state
 
   @doc "Marks when the project last did anything (a turn starting, running, or ending)."
   def activity(state, now), do: put_in(state["lastActivity"], max(state["lastActivity"], now))

@@ -350,7 +350,8 @@ defmodule HalC2.Plugins.Extension do
       "itemType", "tool"`, the provider's own name for the tool where it has one, `"title",
       "status", "input", "output"`, cut to 4,000 characters, `"exitCode"` and, for a
       file change, the file's `"path"`) and
-      `turn.finished` (`"threadId", "runId", "status", "tokenUsage"`: the provider's
+      `turn.finished` (`"threadId", "runId", "ordinal"`, the run's place in its thread
+      as `HalC2.Plugins.Host.history/3` has it, `"status", "tokenUsage"`: the provider's
       last report of the conversation's context, `%{"usedTokens", "inputTokens",
       "cachedInputTokens", "outputTokens", "maxTokens"}` as far as it reports them, or
       nil when it has not). Events reach the plugin one at a time, in the order

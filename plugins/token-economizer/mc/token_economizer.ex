@@ -547,7 +547,13 @@ defmodule HalC2Plugins.TokenEconomizer do
           put_in(state.convs[thread_id], %{
             conv
             | active: false,
-              last_run: event["runId"] || conv.last_run
+              # The thread's watermark once the segment folds: its ordinal cuts the
+              # history read back at it, though a rollback took the run out of it.
+              last_run:
+                if(is_binary(event["runId"]),
+                  do: %{"run" => event["runId"], "ordinal" => event["ordinal"]},
+                  else: conv.last_run
+                )
           })
 
         unit = Prune.unit_for_provider(elem(conv.project, 1))

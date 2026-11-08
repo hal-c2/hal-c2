@@ -68,7 +68,7 @@ defmodule HalC2.TokenEconomizerToolPrunePropTest do
   # What a hand-edited or older file may hold under the keys the evidence reads.
   @fields ~w(used kept off demoted streaks liveStreaks loadedSessions seededThreads
              countedThreads liveThreads sessions prompts importedSessions pending
-             lastActivity items since)
+             lastActivity items since run ordinal)
 
   property "any saved file reads as evidence of the right shape, and reads back the same",
     numtests: HalC2.Prop.numtests(200) do

@@ -1055,8 +1055,9 @@ defmodule HalC2.Orchestration.TurnWriter do
   end
 
   # Plugins that hear turns hear this one end, from the process that drove it, after
-  # its items. The usage is the provider's last report of the conversation's context,
-  # as the turn keeps it (`with_usage/3`).
+  # its items, with the run's place in its thread (`Host.history/3`'s ordinals). The
+  # usage is the provider's last report of the conversation's context, as the turn
+  # keeps it (`with_usage/3`).
   defp observe_finished(state, status) do
     if HalC2.Plugins.observing?() do
       ids = state.turn.ids
@@ -1067,6 +1068,7 @@ defmodule HalC2.Orchestration.TurnWriter do
         "type" => "turn.finished",
         "threadId" => state.thread_id,
         "runId" => ids.run,
+        "ordinal" => Map.get(state.turn, :run_ordinal),
         "status" => status,
         "tokenUsage" => provider_turn["tokenUsage"]
       })
