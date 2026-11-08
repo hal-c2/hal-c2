@@ -18,8 +18,10 @@ Feature: Composer controls and new-thread drafts in the terminal
   Background:
     Given the terminal client is open on a thread with focus in the prompt
 
+  # The access level shows only when it is not the default (composer/model-and-mode.feature).
   @tui
   Scenario: Controls read model, effort, access and mode in that order
+    Given the open thread runs in Supervised
     Then the composer shows the model, then the effort, then the access level, then plan or build
 
   @tui
@@ -27,10 +29,12 @@ Feature: Composer controls and new-thread drafts in the terminal
     Then the composer is framed by a rounded border in the faint colour
     And the composer is centred under the conversation, one column in from each side
 
+  # The access level shows only when it is not the default (composer/model-and-mode.feature).
   @tui
   Scenario: The footer reads like the OpenTUI client
     Given the terminal is 140 columns wide
-    Then the composer footer reads "model gpt-5 ▾ │ effort medium ▾ │ ^O Full access ▾ │ ^B Build" with "▸ Send ⏎" at the right
+    And the open thread runs in Supervised
+    Then the composer footer reads "model gpt-5 ▾ │ effort medium ▾ │ ^O Supervised ▾ │ ^B Build" with "▸ Send ⏎" at the right
     And the footer's separators are faint, its captions dim and its values in the text colour
 
   @tui

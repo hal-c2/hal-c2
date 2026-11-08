@@ -247,6 +247,11 @@ export interface TuiComposerState {
   readonly runtimeMode: RuntimeMode;
   readonly runtimeModeLabel: string;
   readonly runtimeModes: ReadonlyArray<{ value: string; label: string; description: string }>;
+  /**
+   * The footer names the permissions: always for a new thread's first
+   * message, otherwise only when they differ from the project's default.
+   */
+  readonly namesAccess: boolean;
   /** The footer shows only the model and the primary action. */
   readonly compact: boolean;
   /** The composer box's width, centred in the conversation column. */
@@ -757,6 +762,13 @@ export function createComposer(options: ComposerOptions): Composer {
       : page
         ? pageRuntime(page)
         : (detail?.runtimeMode ?? "full-access");
+    const defaultRuntimeMode = page
+      ? pageDefaults(page).defaultRuntimeMode
+      : resolveProjectSettings(
+          settings,
+          (detail?.projectId ?? null) as never,
+          projects().find((candidate) => candidate.id === detail?.projectId),
+        ).settings.defaultRuntimeMode;
     const project = newProject();
     const placeholder = newDraft
       ? project
@@ -878,6 +890,7 @@ export function createComposer(options: ComposerOptions): Composer {
         label: RUNTIME_MODE_META[mode].label,
         description: RUNTIME_MODE_META[mode].description,
       })),
+      namesAccess: !!newDraft || runtimeMode !== defaultRuntimeMode,
       compact,
       rows: rowsOverride ?? autoRows(draft.text),
       surfaceWidth,
