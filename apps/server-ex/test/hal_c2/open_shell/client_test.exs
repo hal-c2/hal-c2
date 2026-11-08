@@ -91,6 +91,63 @@ defmodule HalC2.OpenShell.ClientTest do
     end
   end
 
+  describe "connecting to the gateway's own certificate" do
+    test "the gateway's certificate does not authenticate as a client", %{gateway: g} do
+      pki = Path.dirname(g.credentials[:ca])
+
+      as_server = [
+        ca: g.credentials[:ca],
+        cert: Path.join([pki, "server", "tls.crt"]),
+        key: Path.join([pki, "server", "tls.key"])
+      ]
+
+      refused =
+        case Client.connect(g.endpoint, as_server) do
+          {:error, _} -> true
+          {:ok, conn} -> match?({:error, _}, Client.current_user(conn))
+        end
+
+      assert refused
+      assert {:ok, _} = Client.connect(g.endpoint, g.credentials)
+    end
+  end
+
+  describe "other environments" do
+    test "are the owner labels on the gateway that are not this MC's, in any workspace",
+         %{conn: conn, gateway: g} do
+      assert {:ok, []} = Client.other_environments(conn)
+
+      FakeOpenShell.put_sandbox(g, "mine", %{OpenShell.owner_label() => OpenShell.owner()})
+      FakeOpenShell.put_sandbox(g, "not-halc2", %{"team" => "x"})
+      assert {:ok, []} = Client.other_environments(conn)
+
+      FakeOpenShell.put_sandbox(g, "theirs-1", %{OpenShell.owner_label() => "env-b"})
+      FakeOpenShell.put_sandbox(g, "theirs-2", %{OpenShell.owner_label() => "env-b"})
+      FakeOpenShell.put_sandbox(g, "theirs-3", %{OpenShell.owner_label() => "env-a"})
+      assert {:ok, ["env-a", "env-b"]} = Client.other_environments(conn)
+
+      # Looking leaves theirs alone, and the MC still lists and owns only its own.
+      assert Map.keys(FakeOpenShell.sandboxes(g)) |> length() == 5
+      assert {:ok, [%{name: "mine"}]} = Client.list_sandboxes(conn)
+    end
+
+    test "connecting to the installed gateway is refused once another environment is on it",
+         _context do
+      theirs = FakeOpenShell.start(OpenShell.pki_dir())
+      OpenShell.put_state(%{"mode" => "external", "endpoint" => theirs.endpoint})
+
+      assert {:ok, conn} = Client.connect()
+      Client.disconnect(conn)
+
+      FakeOpenShell.put_sandbox(theirs, "theirs", %{OpenShell.owner_label() => "env-b"})
+      assert {:error, {:shared_gateway, ["env-b"]}} = Client.connect()
+      # Managing it (status, draining, uninstalling) still connects.
+      assert {:ok, conn} = Client.connect_unchecked()
+      Client.disconnect(conn)
+      assert Map.keys(FakeOpenShell.sandboxes(theirs)) == ["theirs"]
+    end
+  end
+
   describe "sandboxes" do
     test "the workspace is created once", %{conn: conn} do
       assert :ok = Client.ensure_workspace(conn)

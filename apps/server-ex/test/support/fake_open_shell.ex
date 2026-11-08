@@ -51,7 +51,7 @@ defmodule HalC2.Test.FakeOpenShell do
             cert: der(Path.join([dir, "server", "tls.crt"])),
             key: der(Path.join([dir, "server", "tls.key"])),
             alpn_preferred_protocols: ["h2"],
-            cacerts: [der(credentials[:ca])],
+            cacerts: [der(Path.join(dir, "client-ca.crt"))],
             verify: :verify_peer,
             fail_if_no_peer_cert: false
           ]
@@ -67,6 +67,11 @@ defmodule HalC2.Test.FakeOpenShell do
       server: server,
       store: store
     }
+  end
+
+  @doc "Whether the certificate at `cert` was signed by the CA certificate at `ca`."
+  def signed_by?(cert, ca) do
+    match?({:ok, _}, :public_key.pkix_path_validation(der(ca), [der(cert)], []))
   end
 
   defp der(path) do
@@ -96,9 +101,10 @@ defmodule HalC2.Test.FakeOpenShell do
 
   @doc """
   A gateway release `{release, archive}` for `HalC2.OpenShell.Install.install/1`'s
-  `:release` and `:archive`, whose binary is a shell script. `generate-certs` copies
-  the certificates in `control/pki` (issue them with `stranger/1`) and adds a CA key
-  and the token key; `config preflight` exits with the number in
+  `:release` and `:archive`, whose binary is a shell script. Each `generate-certs`
+  copies the next certificate set queued in `control/sets` (`queue_certificates/1`;
+  a CA's certificate, the gateway's and a client certificate from it) and adds a CA
+  key and the token key, and fails when none is left; `config preflight` exits with the number in
   `control/preflight` (0 if there is none). Anything else prints its environment
   and arguments. Every call is appended to `control/calls`.
   """
@@ -110,8 +116,11 @@ defmodule HalC2.Test.FakeOpenShell do
     case "$1" in
       generate-certs)
         out="$3"
+        set=$(ls "$control/sets" 2>/dev/null | sort | head -n 1)
+        [ -n "$set" ] || { echo "no certificates queued" >&2; exit 1; }
         mkdir -p "$out/jwt"
-        cp -R "$control/pki/." "$out/"
+        cp -R "$control/sets/$set/." "$out/"
+        rm -rf "$control/sets/$set"
         echo key > "$out/ca.key"
         echo s > "$out/jwt/signing.pem"; echo p > "$out/jwt/public.pem"; echo k > "$out/jwt/kid"
         exit 0 ;;
@@ -132,6 +141,23 @@ defmodule HalC2.Test.FakeOpenShell do
        sha256: :crypto.hash(:sha256, File.read!(archive)) |> Base.encode16(case: :lower),
        version: version
      }, archive}
+  end
+
+  @doc """
+  Queues the certificate sets the next two `generate-certs` calls of a release in
+  `control` copy: an install or a rotation makes two, one for the gateway and one
+  for the CA of the MC's client certificate. Replaces what was queued; returns the
+  CA certificates in order.
+  """
+  def queue_certificates(control) do
+    sets = Path.join(control, "sets")
+    File.rm_rf!(sets)
+
+    for n <- 1..2 do
+      dir = Path.join(sets, Integer.to_string(n))
+      issue(dir, :one_ca)
+      File.read!(Path.join(dir, "ca.crt"))
+    end
   end
 
   @doc "A gzipped tar at `dir/name` holding `entries` (`{charlist name, contents}`)."
@@ -163,12 +189,16 @@ defmodule HalC2.Test.FakeOpenShell do
     ]
   end
 
-  defp issue(dir) do
-    root =
-      :public_key.pkix_test_root_cert(~c"fake openshell CA",
-        key: {:namedCurve, :secp256r1},
-        digest: :sha256
-      )
+  # `:two_cas` (the default) signs the client certificate with a CA of its own and
+  # keeps that CA as `client-ca.crt`, as the MC's installer arranges; `:one_ca` is
+  # what the real gateway's `generate-certs` writes.
+  defp issue(dir, cas \\ :two_cas) do
+    root = fn name ->
+      :public_key.pkix_test_root_cert(name, key: {:namedCurve, :secp256r1}, digest: :sha256)
+    end
+
+    server_root = root.(~c"fake openshell CA")
+    client_root = if cas == :one_ca, do: server_root, else: root.(~c"fake openshell client CA")
 
     # `pkix_test_data` names the peers itself ("server Peer cert", "client Peer cert").
     peer = fn ->
@@ -184,8 +214,8 @@ defmodule HalC2.Test.FakeOpenShell do
 
     %{server_config: server, client_config: client} =
       :public_key.pkix_test_data(%{
-        server_chain: %{root: root, intermediates: [], peer: peer.()},
-        client_chain: %{root: root, intermediates: [], peer: peer.()}
+        server_chain: %{root: server_root, intermediates: [], peer: peer.()},
+        client_chain: %{root: client_root, intermediates: [], peer: peer.()}
       })
 
     for {sub, config} <- [{"server", server}, {"client", client}] do
@@ -195,7 +225,13 @@ defmodule HalC2.Test.FakeOpenShell do
       write_pem(Path.join([dir, sub, "tls.key"]), [{type, der, :not_encrypted}])
     end
 
-    write_pem(Path.join(dir, "ca.crt"), [{:Certificate, root.cert, :not_encrypted}])
+    write_pem(Path.join(dir, "ca.crt"), [{:Certificate, server_root.cert, :not_encrypted}])
+
+    if cas == :two_cas,
+      do:
+        write_pem(Path.join(dir, "client-ca.crt"), [
+          {:Certificate, client_root.cert, :not_encrypted}
+        ])
 
     [
       ca: Path.join(dir, "ca.crt"),

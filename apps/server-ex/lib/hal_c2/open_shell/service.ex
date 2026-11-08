@@ -5,10 +5,9 @@ defmodule HalC2.OpenShell.Service do
   It is not part of the MC's unit, so the gateway and its sandboxes outlive an MC
   restart or crash, and the MC never holds the runtime socket itself.
 
-  The unit pins the gateway's environment (`HalC2.OpenShell.Config.environment/0`)
-  and, under systemd, unsets every variable that could switch its telemetry or
-  auth back on; a LaunchAgent starts with launchd's own environment, not the
-  user's shell, so it inherits none of them.
+  Either unit starts the gateway through `HalC2.OpenShell.Config.command/2`, in an
+  environment of its own: neither the systemd user manager's environment nor
+  launchd's (`launchctl setenv`) reaches it.
 
   The service manager is driven through the same seams as `HalC2.Service`
   (`:systemctl_command`, `:launchctl_command`, `:service_platform`,
@@ -159,7 +158,7 @@ defmodule HalC2.OpenShell.Service do
   def render(:systemd, state) do
     q = &Service.quote_value/1
     log = OpenShell.log_path()
-    argv = [OpenShell.gateway_bin(state["version"]) | Config.args()]
+    argv = Config.command(OpenShell.gateway_bin(state["version"]))
     podman = state["driver"] == "podman"
 
     Enum.join(
@@ -173,8 +172,6 @@ defmodule HalC2.OpenShell.Service do
         "[Service]",
         "Type=simple",
         "WorkingDirectory=#{q.(OpenShell.root())}",
-        "UnsetEnvironment=#{Enum.join(Config.unset_environment(), " ")}",
-        for({k, v} <- Config.environment(), do: "Environment=#{k}=#{q.(v)}"),
         "ExecStart=#{Enum.map_join(argv, " ", q)}",
         "UMask=0077",
         "NoNewPrivileges=yes",
@@ -198,13 +195,8 @@ defmodule HalC2.OpenShell.Service do
         |> String.replace("<", "&lt;")
         |> String.replace(">", "&gt;"))
 
-    argv = [OpenShell.gateway_bin(state["version"]) | Config.args()]
+    argv = Config.command(OpenShell.gateway_bin(state["version"]))
     log = x.(OpenShell.log_path())
-
-    env =
-      Enum.map_join(Config.environment(), "\n", fn {k, v} ->
-        "    <key>#{k}</key>\n    <string>#{x.(v)}</string>"
-      end)
 
     """
     <?xml version="1.0" encoding="UTF-8"?>
@@ -217,10 +209,6 @@ defmodule HalC2.OpenShell.Service do
       <array>
     #{Enum.map_join(argv, "\n", &"    <string>#{x.(&1)}</string>")}
       </array>
-      <key>EnvironmentVariables</key>
-      <dict>
-    #{env}
-      </dict>
       <key>WorkingDirectory</key>
       <string>#{x.(OpenShell.root())}</string>
       <key>Umask</key>

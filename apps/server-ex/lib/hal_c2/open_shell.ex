@@ -15,13 +15,21 @@ defmodule HalC2.OpenShell do
       openshell/
         installed.json        what is installed (`state/0`)
         releases/<version>/   the verified gateway binary
-        pki/                  ca.crt, server/, client/ (the MC's identity), jwt/
+        pki/                  ca.crt and server/ (the gateway's identity), client/ and
+                              client-ca.crt (the MC's, from a CA of its own), jwt/
         gateway.toml          the gateway's configuration (`HalC2.OpenShell.Config`)
         backups/<version>/    the matched state an update rolls back to
 
-  The CA's private key is deleted once the certificates are issued, so nothing can
-  mint another identity; rotating them (`HalC2.OpenShell.Install.rotate/0`) issues a
-  new CA and restarts the gateway, which closes every connection the old ones made.
+  The gateway trusts one client certificate: the MC's, issued by a CA that signed
+  nothing else, so the gateway's own certificate does not authenticate as a client.
+  Both CAs' private keys are deleted once the certificates are issued, so nothing can
+  mint another identity; rotating them (`HalC2.OpenShell.Install.rotate/0`) issues new
+  CAs and restarts the gateway, which closes every connection the old ones made.
+
+  A gateway belongs to one HAL-C2 environment. OpenShell 0.1.7 does not scope
+  workspaces by identity under mTLS, so two environments on one gateway would see
+  each other's sandboxes; the MC refuses to use a gateway that holds another
+  environment's (`HalC2.OpenShell.Client.other_environments/2`).
   """
 
   @doc "The workspace every MC request is scoped to."
@@ -38,6 +46,7 @@ defmodule HalC2.OpenShell do
   def release_dir(version), do: Path.join([root(), "releases", version])
   def gateway_bin(version), do: Path.join(release_dir(version), "openshell-gateway")
   def pki_dir, do: Path.join(root(), "pki")
+  def client_ca_path, do: Path.join(pki_dir(), "client-ca.crt")
   def config_path, do: Path.join(root(), "gateway.toml")
   def backup_dir(version), do: Path.join([root(), "backups", version])
   def db_path, do: Path.join([HalC2.Paths.state_dir(), "openshell", "openshell.db"])

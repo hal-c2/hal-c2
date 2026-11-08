@@ -11,7 +11,7 @@ defmodule HalC2.Steps.Platform.OpenShell do
   import ExUnit.Assertions
 
   alias HalC2.OpenShell
-  alias HalC2.OpenShell.{Config, Install, Manifest, Service}
+  alias HalC2.OpenShell.{Client, Config, Install, Manifest, Service}
   alias HalC2.Test.{FakeOpenShell, Mc, Storage}
 
   @podman %{
@@ -68,7 +68,7 @@ defmodule HalC2.Steps.Platform.OpenShell do
     )
 
     control = Path.join(dir, "control")
-    FakeOpenShell.stranger(Path.join(control, "pki"))
+    FakeOpenShell.queue_certificates(control)
 
     Map.put(context, :openshell, %{
       dir: dir,
@@ -207,10 +207,36 @@ defmodule HalC2.Steps.Platform.OpenShell do
 
   step "the gateway sends no telemetry", context do
     unit = File.read!(Service.unit_path(:systemd))
-    assert unit =~ "OPENSHELL_TELEMETRY_ENABLED=false"
-    assert unit =~ "UnsetEnvironment=#{Enum.join(Config.unset_environment(), " ")}"
-    assert "OTEL_EXPORTER_OTLP_ENDPOINT" in Config.unset_environment()
-    assert "OPENSHELL_OTLP_OCSF_ENDPOINT" in Config.unset_environment()
+    # It starts from an empty environment, so no OTLP or OCSF endpoint reaches it.
+    [exec] = for "ExecStart=" <> argv <- String.split(unit, "\n"), do: argv
+    assert exec =~ ~r{\A/usr/bin/env -i }
+    assert exec =~ " OPENSHELL_TELEMETRY_ENABLED=false "
+    context
+  end
+
+  step "the MC's client certificate comes from a CA that is not the gateway's", context do
+    assert_client_authority()
+    context
+  end
+
+  step "the gateway is set to trust only that CA's certificates as clients", context do
+    config = File.read!(OpenShell.config_path())
+    assert config =~ ~s(client_ca_path = #{inspect(OpenShell.client_ca_path())})
+    refute config =~ ~s(client_ca_path = #{inspect(Path.join(OpenShell.pki_dir(), "ca.crt"))})
+    context
+  end
+
+  step "no CA's key is left", context do
+    assert Path.wildcard(Path.join(OpenShell.root(), "**/ca.key"), match_dot: true) == []
+    refute File.exists?(OpenShell.pki_dir() <> ".client")
+    context
+  end
+
+  step "the MC's client certificate comes from a new CA of its own", context do
+    assert {:ok, _} = context.result
+    assert_client_authority()
+    refute ca() == context.old_ca
+    refute File.read!(OpenShell.client_ca_path()) == context.old_client_ca
     context
   end
 
@@ -366,7 +392,10 @@ defmodule HalC2.Steps.Platform.OpenShell do
 
   step "a gateway the user runs, with its CA and a client certificate", context do
     exec = fn _command, io -> io.exit.(0) end
-    gateway = FakeOpenShell.start(Path.join(context.openshell.dir, "theirs"), exec: exec)
+
+    gateway =
+      FakeOpenShell.start(Path.join(context.openshell.dir, "theirs"), exec: exec, notify: self())
+
     FakeOpenShell.put_sandbox(gateway, "theirs", %{"team" => "x"})
     Map.put(context, :gateway, gateway)
   end
@@ -391,6 +420,53 @@ defmodule HalC2.Steps.Platform.OpenShell do
     assert mode(Path.join([OpenShell.pki_dir(), "client", "tls.key"])) == 0o600
     refute File.exists?(Service.unit_path(:systemd))
     assert Storage.service_calls(context.openshell.log) == []
+    context
+  end
+
+  step "a gateway the user runs, with another HAL-C2 environment's sandbox on it", context do
+    {context, gateway} = other_gateway(context, "theirs")
+    Map.put(context, :gateway, gateway)
+  end
+
+  step "a second gateway with another HAL-C2 environment's sandbox on it", context do
+    {context, second} = other_gateway(context, "second")
+    Map.put(context, :second, second)
+  end
+
+  step "the user points the MC at the second gateway", context do
+    installed(context, Install.reuse(context.second.endpoint, context.second.credentials))
+  end
+
+  step "the MC still uses the first gateway", context do
+    assert OpenShell.state()["endpoint"] == context.gateway.endpoint
+    assert Map.keys(FakeOpenShell.sandboxes(context.second)) == ["elsewhere"]
+    context
+  end
+
+  step "the MC made no sandbox there and left the other environment's alone", context do
+    refute_received {:openshell_request, "CreateSandbox", _}
+    refute_received {:openshell_request, "DeleteSandbox", _}
+    assert Map.has_key?(FakeOpenShell.sandboxes(context.gateway), "elsewhere")
+    context
+  end
+
+  step "another HAL-C2 environment makes a sandbox on that gateway", context do
+    flush_requests()
+
+    FakeOpenShell.put_sandbox(context.gateway, "elsewhere", %{
+      OpenShell.owner_label() => "env-b"
+    })
+
+    context
+  end
+
+  step "the MC connects but makes no sandbox there, and leaves the other environment's alone",
+       context do
+    assert context.status["sharedWith"] == ["env-b"]
+    assert {:error, {:shared_gateway, ["env-b"]}} = Client.connect()
+    refute_received {:openshell_request, "CreateSandbox", _}
+    refute_received {:openshell_request, "DeleteSandbox", _}
+    assert Map.has_key?(FakeOpenShell.sandboxes(context.gateway), "elsewhere")
     context
   end
 
@@ -478,12 +554,46 @@ defmodule HalC2.Steps.Platform.OpenShell do
   defp reset_calls(context), do: File.write!(context.openshell.log, "")
 
   defp new_certificates(context) do
-    pki = Path.join(context.openshell.control, "pki")
     old = ca()
-    File.rm_rf!(pki)
-    FakeOpenShell.stranger(pki)
+    old_client = File.read!(OpenShell.client_ca_path())
+    FakeOpenShell.queue_certificates(context.openshell.control)
     reset_calls(context)
-    Map.put(context, :old_ca, old)
+    Map.merge(context, %{old_ca: old, old_client_ca: old_client})
+  end
+
+  # A gateway of the user's that holds a sandbox of another HAL-C2 environment.
+  defp other_gateway(context, name) do
+    exec = fn _command, io -> io.exit.(0) end
+
+    gateway =
+      FakeOpenShell.start(Path.join(context.openshell.dir, name), exec: exec, notify: self())
+
+    FakeOpenShell.put_sandbox(gateway, "elsewhere", %{OpenShell.owner_label() => "env-b"})
+    {context, gateway}
+  end
+
+  defp flush_requests do
+    receive do
+      {:openshell_request, _, _} -> flush_requests()
+    after
+      0 -> :ok
+    end
+  end
+
+  # The client certificate is signed by the CA that gateway trusts as a client, not
+  # by the gateway's own CA, and the gateway's certificate is the reverse.
+  defp assert_client_authority do
+    pki = OpenShell.pki_dir()
+    ca = Path.join(pki, "ca.crt")
+    client_ca = OpenShell.client_ca_path()
+    client = Path.join([pki, "client", "tls.crt"])
+    server = Path.join([pki, "server", "tls.crt"])
+
+    refute File.read!(ca) == File.read!(client_ca)
+    assert FakeOpenShell.signed_by?(client, client_ca)
+    refute FakeOpenShell.signed_by?(client, ca)
+    assert FakeOpenShell.signed_by?(server, ca)
+    refute FakeOpenShell.signed_by?(server, client_ca)
   end
 
   defp smoke_gateway(context, opts) do

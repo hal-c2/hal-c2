@@ -1,5 +1,7 @@
 # Sources:
 #   https://github.com/hal-c2/hal-c2/issues/1411
+#   https://github.com/hal-c2/hal-c2/issues/1417 (the MC's client certificate comes from a CA of its own)
+#   https://github.com/hal-c2/hal-c2/issues/1418 (one gateway per HAL-C2 environment)
 #   apps/server-ex/lib/hal_c2/open_shell.ex (where the gateway's files live, the owner label)
 #   apps/server-ex/lib/hal_c2/open_shell/install.ex (install, update, rollback, drain, rotate, reuse, smoke, status, uninstall)
 #   apps/server-ex/lib/hal_c2/open_shell/platform.ex (the support matrix, rootless runtimes only)
@@ -18,7 +20,8 @@ Feature: The OpenShell gateway review sandboxes run in
   user's own service on loopback, and talks to it only over mutual TLS with a client
   identity that is not an operator. It refuses machines it cannot run it safely on, puts
   the previous gateway back when an update fails its check, and touches only the
-  sandboxes it labelled as its own.
+  sandboxes it labelled as its own. A gateway belongs to one HAL-C2 environment: the MC
+  refuses one that holds another environment's sandboxes, and leaves those alone.
 
   Background:
     Given a Linux machine with rootless Podman
@@ -30,6 +33,13 @@ Feature: The OpenShell gateway review sandboxes run in
     And its keys are readable by the user alone, and the CA's key is gone
     And the gateway accepts only mutual TLS, with no operator identity
     And the gateway sends no telemetry
+
+  @mc
+  Scenario: The gateway trusts the MC's client certificate and not its own
+    When the user installs OpenShell
+    Then the MC's client certificate comes from a CA that is not the gateway's
+    And the gateway is set to trust only that CA's certificates as clients
+    And no CA's key is left
 
   @mc
   Scenario Outline: A machine OpenShell cannot run on safely is refused before anything is fetched
@@ -90,6 +100,13 @@ Feature: The OpenShell gateway review sandboxes run in
     And the gateway's service restarted
 
   @mc
+  Scenario: Rotating the certificates replaces the client certificate's CA too
+    Given OpenShell is installed
+    When the user rotates the gateway's certificates
+    Then the MC's client certificate comes from a new CA of its own
+    And no CA's key is left
+
+  @mc
   Scenario: A rotation whose gateway fails its check keeps the old certificates
     Given OpenShell is installed
     When the user rotates the gateway's certificates and the gateway fails its check
@@ -116,6 +133,32 @@ Feature: The OpenShell gateway review sandboxes run in
     Then the MC uses that gateway without running one of its own
     When the user uninstalls OpenShell
     Then the MC forgets the gateway and leaves its sandboxes alone
+
+  @mc
+  Scenario: A gateway that holds another HAL-C2 environment's sandboxes is refused
+    Given a gateway the user runs, with another HAL-C2 environment's sandbox on it
+    When the user points the MC at it
+    Then the MC refuses because "shared-gateway"
+    And no gateway is installed
+    And the MC made no sandbox there and left the other environment's alone
+
+  @mc
+  Scenario: A refused gateway leaves the one the MC already uses
+    Given a gateway the user runs, with its CA and a client certificate
+    And the user points the MC at it
+    And a second gateway with another HAL-C2 environment's sandbox on it
+    When the user points the MC at the second gateway
+    Then the MC refuses because "shared-gateway"
+    And the MC still uses the first gateway
+
+  @mc
+  Scenario: A gateway that becomes shared later is reported and gets no new sandboxes
+    Given a gateway the user runs, with its CA and a client certificate
+    And the user points the MC at it
+    When another HAL-C2 environment makes a sandbox on that gateway
+    And the user asks for OpenShell's status
+    Then the status says "gateway-shared"
+    And the MC connects but makes no sandbox there, and leaves the other environment's alone
 
   @mc
   Scenario: A gateway without TLS is never used

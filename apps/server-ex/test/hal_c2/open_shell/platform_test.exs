@@ -165,7 +165,9 @@ defmodule HalC2.OpenShell.PlatformTest do
       socket =
         serve(dir, %{
           "/version" => %{"Version" => "5.2.1"},
-          "/libpod/info" => %{"host" => %{"security" => %{"rootless" => true}}}
+          # Podman 5 serves its own API under a version only (`/info` is the
+          # Docker-compatible one); the unversioned path is a 404.
+          "/v5.0.0/libpod/info" => %{"host" => %{"security" => %{"rootless" => true}}}
         })
 
       assert %{kind: :podman, version: "5.2.1", rootless: true, reachable: true} =

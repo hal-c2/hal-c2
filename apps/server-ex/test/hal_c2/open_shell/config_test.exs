@@ -24,7 +24,9 @@ defmodule HalC2.OpenShell.ConfigTest do
     assert toml =~ "disable_tls = false\n"
     assert toml =~ "allow_unauthenticated_users = false\n"
     assert toml =~ "[openshell.gateway.mtls_auth]\nenabled = true\noperator_enabled = false\n"
-    assert toml =~ ~s(client_ca_path = "#{Path.join(OpenShell.pki_dir(), "ca.crt")}")
+    # Clients are trusted by a CA of their own, not the one that signed the gateway's certificate.
+    assert toml =~ ~s(client_ca_path = "#{Path.join(OpenShell.pki_dir(), "client-ca.crt")}")
+    assert toml =~ ~s(guest_tls_ca = "#{Path.join(OpenShell.pki_dir(), "ca.crt")}")
     assert toml =~ "[openshell.drivers.podman]\n"
     assert toml =~ "allow_driver_config = false\n"
     assert toml =~ "enable_bind_mounts = false\n"
@@ -46,19 +48,42 @@ defmodule HalC2.OpenShell.ConfigTest do
     assert toml =~ ~S(socket_path = "/run/a\"b\\c\u000Ad") <> "\n"
   end
 
-  test "telemetry is off and nothing it could be sent to is inherited" do
-    env = Map.new(Config.environment())
-    assert env["OPENSHELL_TELEMETRY_ENABLED"] == "false"
-    assert env["OPENSHELL_DISABLE_TLS"] == "false"
-    assert env["OPENSHELL_ENABLE_OPERATOR_AUTH"] == "false"
-    assert env["XDG_CONFIG_HOME"] |> String.starts_with?(OpenShell.root())
+  # OpenShell's `OPENSHELL_*` variables override `gateway.toml`, and its drivers read
+  # `DOCKER_HOST` and `CONTAINER_HOST`: the gateway inherits none of the caller's.
+  test "the gateway runs with its own environment and none of the caller's", %{tmp_dir: dir} do
+    bin = Path.join(dir, "gateway")
+    File.write!(bin, "#!/bin/sh\nenv\necho \"args: $*\"\n")
+    File.chmod!(bin, 0o755)
 
-    unset = Config.unset_environment()
+    inherited =
+      for var <- ~w(OPENSHELL_PODMAN_SOCKET OPENSHELL_BIND_ADDRESS OPENSHELL_SERVER_PORT
+                    OPENSHELL_SANDBOX_RUNTIME_IMAGE OPENSHELL_SUPERVISOR_IMAGE
+                    OPENSHELL_ENABLE_MTLS_AUTH OPENSHELL_OTLP_ENDPOINT OPENSHELL_OCSF_JSON
+                    OTEL_EXPORTER_OTLP_ENDPOINT DOCKER_HOST CONTAINER_HOST),
+          do: {var, "inherited"}
 
-    for var <- ~w(OPENSHELL_OTLP_ENDPOINT OPENSHELL_OTLP_OCSF_ENDPOINT OPENSHELL_OCSF_JSON
-                  OTEL_EXPORTER_OTLP_ENDPOINT OTEL_TRACES_EXPORTER OPENSHELL_TELEMETRY_ENDPOINT),
-        do: assert(var in unset, var)
+    [exe | args] = Config.command(bin, ["--x"])
 
-    assert MapSet.disjoint?(MapSet.new(unset), MapSet.new(Map.keys(env)))
+    {out, 0} =
+      System.cmd(exe, args,
+        env: [{"OPENSHELL_TELEMETRY_ENABLED", "true"}, {"HOME", "/elsewhere"} | inherited]
+      )
+
+    env =
+      for line <- String.split(out, "\n"),
+          [k, v] <- [String.split(line, "=", parts: 2)],
+          into: %{},
+          do: {k, v}
+
+    for {var, _} <- inherited, do: refute(Map.has_key?(env, var), var)
+
+    pinned = Map.new(Config.environment())
+    assert Map.take(env, Map.keys(pinned)) == pinned
+    assert pinned["OPENSHELL_TELEMETRY_ENABLED"] == "false"
+    assert pinned["OPENSHELL_DISABLE_TLS"] == "false"
+    assert pinned["OPENSHELL_ENABLE_OPERATOR_AUTH"] == "false"
+    assert pinned["HOME"] |> String.starts_with?(OpenShell.root())
+    assert pinned["XDG_CONFIG_HOME"] |> String.starts_with?(OpenShell.root())
+    assert out =~ "args: --x"
   end
 end

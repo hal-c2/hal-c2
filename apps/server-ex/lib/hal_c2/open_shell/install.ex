@@ -160,7 +160,9 @@ defmodule HalC2.OpenShell.Install do
     end
   end
 
-  defp smoke_fun(opts), do: Keyword.get(opts, :smoke, &smoke/1)
+  # An update or rotation of a gateway this MC runs is not rolled back for who else
+  # uses it; `status` and `check` report that.
+  defp smoke_fun(opts), do: Keyword.get(opts, :smoke, &smoke(&1, shared: false))
 
   # A foreground gateway is started, and checked, by whoever runs it.
   defp start(%{"mode" => "foreground"}, _opts), do: :ok
@@ -177,9 +179,7 @@ defmodule HalC2.OpenShell.Install do
   def foreground_command do
     case OpenShell.state() do
       %{"mode" => "foreground", "version" => version} ->
-        unset = Enum.flat_map(Config.unset_environment(), &["-u", &1])
-        set = for {k, v} <- Config.environment(), do: "#{k}=#{v}"
-        argv = ["env" | unset] ++ set ++ [OpenShell.gateway_bin(version) | Config.args()]
+        argv = Config.command(OpenShell.gateway_bin(version))
 
         {:ok,
          "cd #{shell_quote(OpenShell.root())} && exec #{Enum.map_join(argv, " ", &shell_quote/1)}"}
@@ -326,25 +326,38 @@ defmodule HalC2.OpenShell.Install do
   # --- certificates and configuration -----------------------------------------------
 
   defp ensure_pki(version) do
-    if File.regular?(Path.join([OpenShell.pki_dir(), "client", "tls.key"])) do
+    if File.regular?(Path.join([OpenShell.pki_dir(), "client", "tls.key"])) and
+         File.regular?(OpenShell.client_ca_path()) do
       :ok
     else
       HalC2.Paths.mkdir_private!(OpenShell.root())
       tmp = OpenShell.pki_dir() <> ".new"
       File.rm_rf!(tmp)
 
-      with :ok <- issue(version, tmp), do: replace_dir(tmp, OpenShell.pki_dir())
+      case issue(version, tmp) do
+        :ok ->
+          replace_dir(tmp, OpenShell.pki_dir())
+
+        error ->
+          # A refused issue must not leave a CA's key behind.
+          File.rm_rf!(tmp)
+          error
+      end
     end
   end
 
-  # The gateway's `generate-certs` issues a CA, the gateway's certificate, the MC's
-  # client certificate and the sandbox token key into `dir`. Every key is made
-  # owner-only and the CA's key deleted, so no further identity can be issued.
+  # The gateway's `generate-certs` issues a CA, the gateway's certificate, a client
+  # certificate and the sandbox token key into `dir`. It signs the client
+  # certificate with the CA that signed its own, and the gateway trusts whatever
+  # that CA signed, so the MC's client certificate comes from a second run: a CA of
+  # its own, which signs nothing else (`client_authority/2`). Every key is made
+  # owner-only and both CAs' keys deleted, so no further identity can be issued.
   # Every path is below this MC's own OpenShell directories, or an archive or
   # certificate the local user named on the command line.
   # sobelow_skip ["Traversal.FileModule"]
   defp issue(version, dir) do
-    with :ok <- gateway(version, ["generate-certs", "--output-dir", dir]) do
+    with :ok <- gateway(version, ["generate-certs", "--output-dir", dir]),
+         :ok <- client_authority(version, dir) do
       File.rm!(Path.join(dir, "ca.key"))
 
       for path <- Path.wildcard(Path.join(dir, "**"), match_dot: true) do
@@ -359,14 +372,48 @@ defmodule HalC2.OpenShell.Install do
 
       missing =
         Enum.reject(
-          ["ca.crt", "server/tls.crt", "server/tls.key", "client/tls.crt", "client/tls.key"] ++
-            ["jwt/signing.pem", "jwt/public.pem", "jwt/kid"],
+          [
+            "ca.crt",
+            "client-ca.crt",
+            "server/tls.crt",
+            "server/tls.key",
+            "client/tls.crt",
+            "client/tls.key"
+          ] ++ ["jwt/signing.pem", "jwt/public.pem", "jwt/kid"],
           &File.regular?(Path.join(dir, &1))
         )
 
       if missing == [],
         do: :ok,
         else: {:error, "The gateway did not issue #{Enum.join(missing, ", ")}."}
+    end
+  end
+
+  # Replaces the client certificate in `dir` with one from a CA of its own, and
+  # keeps that CA's certificate as `client-ca.crt`. Everything else the second run
+  # issues, its CA's key included, is deleted.
+  # Every path is below this MC's own OpenShell directories, or an archive or
+  # certificate the local user named on the command line.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp client_authority(version, dir) do
+    tmp = dir <> ".client"
+    File.rm_rf!(tmp)
+
+    try do
+      with :ok <- gateway(version, ["generate-certs", "--output-dir", tmp]),
+           :ok <- File.rename(Path.join(tmp, "ca.crt"), Path.join(dir, "client-ca.crt")),
+           _ <- File.rm_rf!(Path.join(dir, "client")),
+           :ok <- File.rename(Path.join(tmp, "client"), Path.join(dir, "client")) do
+        :ok
+      else
+        {:error, reason} when is_atom(reason) ->
+          {:error, "Keeping the MC's client certificate failed: #{:file.format_error(reason)}."}
+
+        error ->
+          error
+      end
+    after
+      File.rm_rf!(tmp)
     end
   end
 
@@ -380,11 +427,10 @@ defmodule HalC2.OpenShell.Install do
   # Runs the binary this MC verified and unpacked itself.
   # sobelow_skip ["CI.System"]
   defp gateway(version, args) do
-    env = Config.environment() ++ Enum.map(Config.unset_environment(), &{&1, nil})
+    [env | argv] = Config.command(OpenShell.gateway_bin(version), args)
     HalC2.Paths.mkdir_private!(Path.dirname(OpenShell.db_path()))
 
-    case System.cmd(OpenShell.gateway_bin(version), args,
-           env: env,
+    case System.cmd(env, argv,
            cd: OpenShell.root(),
            stderr_to_stdout: true
          ) do
@@ -471,7 +517,7 @@ defmodule HalC2.OpenShell.Install do
   # A running gateway with this MC's sandboxes on it is not stopped unless they go
   # first. A gateway that does not answer has none to save.
   defp drained(%{"mode" => mode}, opts) when mode in ["managed", "foreground"] do
-    with {:ok, conn} <- Client.connect() do
+    with {:ok, conn} <- Client.connect_unchecked() do
       try do
         case Client.list_sandboxes(conn, %{}, timeout: 5_000) do
           {:ok, []} ->
@@ -519,6 +565,8 @@ defmodule HalC2.OpenShell.Install do
     * it takes the MC's certificate for a user that is not an operator
     * it refuses a caller with no certificate, and refuses plaintext
     * the `hal-c2` workspace exists
+    * no other HAL-C2 environment has sandboxes on it (`shared: false` skips this,
+      for the check after an install or update of a gateway this MC runs)
     * a workload in a fresh sandbox can reach neither the gateway nor the runtime
       socket (`isolation: false` skips this, for a gateway with no runtime yet)
   """
@@ -530,6 +578,7 @@ defmodule HalC2.OpenShell.Install do
         with :ok <- check_gateway(conn, state),
              :ok <- check_refusals(state["endpoint"]),
              :ok <- Client.ensure_workspace(conn) |> labelled("workspace"),
+             :ok <- if(Keyword.get(opts, :shared, true), do: check_not_shared(conn), else: :ok),
              :ok <-
                if(Keyword.get(opts, :isolation, true),
                  do: check_isolation(conn, state),
@@ -603,6 +652,23 @@ defmodule HalC2.OpenShell.Install do
           :ok
       end
     end
+  end
+
+  # Before the isolation check, which would put a sandbox on the gateway.
+  defp check_not_shared(conn) do
+    case Client.other_environments(conn) do
+      {:ok, []} -> :ok
+      {:ok, others} -> {:error, shared_message(others)}
+      error -> labelled(error, "sandbox listing")
+    end
+  end
+
+  @doc false
+  def shared_message(others) do
+    "[shared-gateway] #{length(others)} other HAL-C2 environment(s) have sandboxes on this gateway. " <>
+      "OpenShell 0.1.7 does not keep one identity's sandboxes from another's, so HAL-C2 does not share a gateway: " <>
+      "it makes no sandboxes on this one. Give each environment a gateway of its own " <>
+      "(`hal-c2-service openshell install`); the other environment's sandboxes are left alone."
   end
 
   defp check_refusals(endpoint) do
@@ -792,7 +858,10 @@ defmodule HalC2.OpenShell.Install do
   Uses the gateway at `endpoint` (`https://host:port`), which the user runs, with
   the CA certificate and client certificate and key at `ca:`, `cert:` and `key:`.
   The credentials are copied in, owner-only. The gateway must pass `smoke/2` before
-  the MC records it. The MC will not start, stop or update it.
+  the MC records it, and must hold no other HAL-C2 environment's sandboxes: two
+  environments on one gateway would see each other's (`HalC2.OpenShell`). The MC
+  will not start, stop or update it. A gateway that is refused leaves what the MC
+  used before as it was.
   """
   # Every path is below this MC's own OpenShell directories, or an archive or
   # certificate the local user named on the command line.
@@ -800,9 +869,12 @@ defmodule HalC2.OpenShell.Install do
   def reuse(endpoint, credentials) do
     with :ok <- not_managed(OpenShell.state()),
          {:ok, _host, _port} <- Client.parse_endpoint(endpoint) |> endpoint_error() do
+      previous = OpenShell.state()
       state = %{"mode" => "external", "endpoint" => endpoint, "version" => Manifest.version()}
       tmp = OpenShell.pki_dir() <> ".new"
+      kept = OpenShell.pki_dir() <> ".previous"
       File.rm_rf!(tmp)
+      File.rm_rf!(kept)
       HalC2.Paths.mkdir_private!(Path.join(tmp, "client"))
 
       copied =
@@ -823,14 +895,31 @@ defmodule HalC2.OpenShell.Install do
         )
 
       with :ok <- copied,
+           _ <- if(previous, do: File.rename(OpenShell.pki_dir(), kept)),
            :ok <- replace_dir(tmp, OpenShell.pki_dir()),
            :ok <- OpenShell.put_state(state),
            :ok <- smoke(state) do
+        File.rm_rf!(kept)
         {:ok, state}
       else
         {:error, reason} ->
-          OpenShell.delete_state()
-          File.rm_rf!(OpenShell.pki_dir())
+          File.rm_rf!(tmp)
+
+          cond do
+            # The new credentials were put in place; the previous ones go back.
+            File.exists?(kept) ->
+              File.rm_rf!(OpenShell.pki_dir())
+              File.rename(kept, OpenShell.pki_dir())
+              OpenShell.put_state(previous)
+
+            previous == nil ->
+              File.rm_rf!(OpenShell.pki_dir())
+              OpenShell.delete_state()
+
+            true ->
+              :ok
+          end
+
           {:error, message(reason)}
       end
     end
@@ -855,7 +944,8 @@ defmodule HalC2.OpenShell.Install do
 
   @doc """
   What `hal-c2-service openshell status` shows: `%{"supported", "problems",
-  "mode", "version", "endpoint", "service", "health"}`. `problems` are codes
+  "mode", "version", "endpoint", "service", "health", "sharedWith"}`
+  (the other HAL-C2 environments with sandboxes on the gateway). `problems` are codes
   `HalC2.OpenShell.Command` explains; an empty list means it is ready.
   """
   def status do
@@ -869,23 +959,28 @@ defmodule HalC2.OpenShell.Install do
 
     service = if state && state["mode"] == "managed", do: Service.status(state)
 
-    health =
+    {health, others} =
       with %{} <- state,
-           {:ok, conn} <- Client.connect() do
+           {:ok, conn} <- Client.connect_unchecked() do
         try do
-          Client.health(conn, timeout: 3_000)
+          health = Client.health(conn, timeout: 3_000)
+          # Who else has sandboxes there is only asked of a gateway that answers.
+          {health,
+           if(match?({:ok, _}, health), do: Client.other_environments(conn, timeout: 5_000))}
         after
           Client.disconnect(conn)
         end
       else
-        _ -> nil
+        _ -> {nil, nil}
       end
+
+    others = with {:ok, ids} <- others, do: ids
 
     problems =
       cond do
         state == nil and platform != [] -> platform
         state == nil -> ["not-installed"]
-        true -> platform ++ state_problems(state, service, health)
+        true -> platform ++ state_problems(state, service, health, others)
       end
 
     %{
@@ -894,6 +989,7 @@ defmodule HalC2.OpenShell.Install do
       "mode" => state && state["mode"],
       "version" => state && state["version"],
       "manifestVersion" => Manifest.version(),
+      "sharedWith" => if(is_list(others), do: others, else: []),
       "endpoint" => state && state["endpoint"],
       "service" => service,
       "health" =>
@@ -907,7 +1003,7 @@ defmodule HalC2.OpenShell.Install do
     }
   end
 
-  defp state_problems(state, service, health) do
+  defp state_problems(state, service, health, others) do
     []
     |> add(
       state["mode"] != "external" and state["version"] != Manifest.version(),
@@ -923,6 +1019,7 @@ defmodule HalC2.OpenShell.Install do
         elem(health, 1).version != Manifest.version(),
       "version-mismatch"
     )
+    |> add(is_list(others) and others != [], "gateway-shared")
   end
 
   defp add(list, true, code), do: list ++ [code]

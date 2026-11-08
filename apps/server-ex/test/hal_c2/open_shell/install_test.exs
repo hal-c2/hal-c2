@@ -44,7 +44,7 @@ defmodule HalC2.OpenShell.InstallTest do
     )
 
     control = Path.join(dir, "control")
-    FakeOpenShell.stranger(Path.join(control, "pki"))
+    FakeOpenShell.queue_certificates(control)
     %{log: log, control: control, archives: Path.join(dir, "archives")}
   end
 
@@ -63,6 +63,22 @@ defmodule HalC2.OpenShell.InstallTest do
   defp mode(path), do: File.stat!(path).mode |> Bitwise.band(0o777)
 
   defp owned, do: %{OpenShell.owner_label() => OpenShell.owner()}
+
+  # The gateway trusts `client-ca.crt` for clients: the MC's certificate comes from
+  # it, and the gateway's own certificate does not.
+  defp assert_client_authority do
+    pki = OpenShell.pki_dir()
+    ca = Path.join(pki, "ca.crt")
+    client_ca = Path.join(pki, "client-ca.crt")
+
+    assert File.read!(client_ca) != File.read!(ca)
+    assert FakeOpenShell.signed_by?(Path.join([pki, "client", "tls.crt"]), client_ca)
+    refute FakeOpenShell.signed_by?(Path.join([pki, "client", "tls.crt"]), ca)
+    assert FakeOpenShell.signed_by?(Path.join([pki, "server", "tls.crt"]), ca)
+    refute FakeOpenShell.signed_by?(Path.join([pki, "server", "tls.crt"]), client_ca)
+    assert File.read!(OpenShell.config_path()) =~ ~s(client_ca_path = "#{client_ca}")
+    assert Path.wildcard(Path.join(OpenShell.root(), "**/ca.key"), match_dot: true) == []
+  end
 
   describe "extract/2" do
     test "takes an archive holding only the gateway binary", %{tmp_dir: dir} do
@@ -118,11 +134,13 @@ defmodule HalC2.OpenShell.InstallTest do
 
       pki = OpenShell.pki_dir()
       refute File.exists?(Path.join(pki, "ca.key"))
+      assert Path.wildcard(Path.join(OpenShell.root(), "**/ca.key"), match_dot: true) == []
       assert mode(pki) == 0o700
       assert mode(Path.join([pki, "client", "tls.key"])) == 0o600
       assert mode(Path.join([pki, "server", "tls.key"])) == 0o600
       assert mode(Path.join([pki, "jwt", "signing.pem"])) == 0o600
       assert mode(Path.join(pki, "ca.crt")) == 0o644
+      assert mode(Path.join(pki, "client-ca.crt")) == 0o644
       assert mode(OpenShell.config_path()) == 0o600
       assert mode(OpenShell.gateway_bin("0.1.7")) == 0o755
 
@@ -133,6 +151,8 @@ defmodule HalC2.OpenShell.InstallTest do
                "systemctl --user enable hal-c2-openshell.service",
                "systemctl --user restart hal-c2-openshell.service"
              ]
+
+      assert_client_authority()
 
       calls = File.read!(Path.join(ctx.control, "calls"))
       assert calls =~ "generate-certs --output-dir"
@@ -243,14 +263,16 @@ defmodule HalC2.OpenShell.InstallTest do
     test "issues new certificates and restarts the gateway on them", ctx do
       {:ok, _} = install(ctx, "0.1.7")
       old_ca = File.read!(Path.join(OpenShell.pki_dir(), "ca.crt"))
+      old_client_ca = File.read!(Path.join(OpenShell.pki_dir(), "client-ca.crt"))
 
-      File.rm_rf!(Path.join(ctx.control, "pki"))
-      FakeOpenShell.stranger(Path.join(ctx.control, "pki"))
+      FakeOpenShell.queue_certificates(ctx.control)
       File.write!(ctx.log, "")
 
       assert {:ok, _} = Install.rotate(smoke: fn _ -> :ok end)
       refute File.read!(Path.join(OpenShell.pki_dir(), "ca.crt")) == old_ca
+      refute File.read!(Path.join(OpenShell.pki_dir(), "client-ca.crt")) == old_client_ca
       refute File.exists?(Path.join(OpenShell.pki_dir(), "ca.key"))
+      assert_client_authority()
       assert mode(Path.join([OpenShell.pki_dir(), "client", "tls.key"])) == 0o600
       assert "systemctl --user restart hal-c2-openshell.service" in Storage.service_calls(ctx.log)
     end
@@ -258,8 +280,8 @@ defmodule HalC2.OpenShell.InstallTest do
     test "a failed check keeps the old certificates", ctx do
       {:ok, _} = install(ctx, "0.1.7")
       old_ca = File.read!(Path.join(OpenShell.pki_dir(), "ca.crt"))
-      File.rm_rf!(Path.join(ctx.control, "pki"))
-      FakeOpenShell.stranger(Path.join(ctx.control, "pki"))
+      old_client_ca = File.read!(Path.join(OpenShell.pki_dir(), "client-ca.crt"))
+      FakeOpenShell.queue_certificates(ctx.control)
 
       # The new certificates fail their check; the old ones pass it again.
       Process.put(:smoke_calls, 0)
@@ -272,6 +294,7 @@ defmodule HalC2.OpenShell.InstallTest do
       assert {:error, message} = Install.rotate(smoke: smoke)
       assert message =~ "back in place"
       assert File.read!(Path.join(OpenShell.pki_dir(), "ca.crt")) == old_ca
+      assert File.read!(Path.join(OpenShell.pki_dir(), "client-ca.crt")) == old_client_ca
     end
 
     test "there is nothing to rotate without a gateway this MC runs" do
@@ -293,13 +316,16 @@ defmodule HalC2.OpenShell.InstallTest do
         System.cmd("sh", ["-c", line],
           env: [
             {"OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector"},
-            {"OPENSHELL_DISABLE_TLS", "true"}
+            {"OPENSHELL_DISABLE_TLS", "true"},
+            {"OPENSHELL_PODMAN_SOCKET", "/run/elsewhere.sock"},
+            {"DOCKER_HOST", "unix:///run/elsewhere.sock"}
           ]
         )
 
       assert out =~ "OPENSHELL_TELEMETRY_ENABLED=false"
       assert out =~ "OPENSHELL_DISABLE_TLS=false"
       refute out =~ "OTEL_EXPORTER_OTLP_ENDPOINT"
+      refute out =~ "elsewhere"
       assert out =~ "args: --config #{OpenShell.config_path()} --db-url sqlite:"
     end
 
@@ -483,6 +509,63 @@ defmodule HalC2.OpenShell.InstallTest do
     test "is refused while this MC runs its own", ctx do
       {:ok, _} = install(ctx, "0.1.7")
       assert {:error, "[managed]" <> _} = Install.reuse("https://127.0.0.1:1", [])
+    end
+
+    test "a gateway that holds another environment's sandboxes is refused and left alone",
+         ctx do
+      exec = fn _command, io -> io.exit.(0) end
+      gateway = FakeOpenShell.start(Path.join(ctx.tmp_dir, "theirs"), exec: exec, notify: self())
+      FakeOpenShell.put_sandbox(gateway, "elsewhere", %{OpenShell.owner_label() => "env-b"})
+
+      assert {:error, "[shared-gateway] 1 other HAL-C2 environment(s)" <> _ = message} =
+               Install.reuse(gateway.endpoint, gateway.credentials)
+
+      assert message =~ "does not share a gateway"
+      assert OpenShell.state() == nil
+      refute File.exists?(OpenShell.pki_dir())
+      # It made no sandbox there and touched none.
+      refute_received {:openshell_request, "CreateSandbox", _}
+      refute_received {:openshell_request, "DeleteSandbox", _}
+      assert Map.keys(FakeOpenShell.sandboxes(gateway)) == ["elsewhere"]
+    end
+
+    test "a refused gateway leaves the gateway the MC already uses in place", ctx do
+      exec = fn _command, io -> io.exit.(0) end
+      mine = FakeOpenShell.start(Path.join(ctx.tmp_dir, "mine"), exec: exec)
+      assert {:ok, state} = Install.reuse(mine.endpoint, mine.credentials)
+      ca = File.read!(Path.join(OpenShell.pki_dir(), "ca.crt"))
+
+      shared = FakeOpenShell.start(Path.join(ctx.tmp_dir, "shared"), exec: exec)
+      FakeOpenShell.put_sandbox(shared, "elsewhere", %{OpenShell.owner_label() => "env-b"})
+
+      assert {:error, "[shared-gateway]" <> _} =
+               Install.reuse(shared.endpoint, shared.credentials)
+
+      assert OpenShell.state() == state
+      assert File.read!(Path.join(OpenShell.pki_dir(), "ca.crt")) == ca
+      refute File.exists?(OpenShell.pki_dir() <> ".previous")
+
+      # A bad file name leaves it too.
+      assert {:error, "Cannot read" <> _} = Install.reuse(shared.endpoint, [])
+      assert OpenShell.state() == state
+      assert File.read!(Path.join(OpenShell.pki_dir(), "ca.crt")) == ca
+    end
+
+    test "status reports a gateway that became shared, and check fails", ctx do
+      exec = fn _command, io -> io.exit.(0) end
+      gateway = FakeOpenShell.start(Path.join(ctx.tmp_dir, "theirs"), exec: exec)
+      assert {:ok, state} = Install.reuse(gateway.endpoint, gateway.credentials)
+
+      assert %{"problems" => [], "sharedWith" => []} = Install.status()
+      assert :ok = Install.smoke(state)
+
+      FakeOpenShell.put_sandbox(gateway, "elsewhere", %{OpenShell.owner_label() => "env-b"})
+      assert %{"problems" => ["gateway-shared"], "sharedWith" => ["env-b"]} = Install.status()
+      assert {:error, "[shared-gateway]" <> _} = Install.smoke(state)
+
+      # Forgetting it still works, and still leaves theirs alone.
+      assert :ok = Install.uninstall()
+      assert Map.keys(FakeOpenShell.sandboxes(gateway)) == ["elsewhere"]
     end
   end
 end
