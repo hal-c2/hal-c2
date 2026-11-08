@@ -1859,11 +1859,13 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     title = context.thread
     running = Enum.find(World.runs(context, title), &(&1["status"] == "running"))
 
+    # The turn ends, it is not the user's Stop: a Stop holds the queue behind it.
     {:ok, _} =
       HalC2.Orchestration.dispatch(%{
         "type" => "run.interrupt",
         "threadId" => World.thread_id(context, title),
-        "runId" => running["id"]
+        "runId" => running["id"],
+        "holdQueue" => false
       })
 
     context

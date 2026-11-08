@@ -203,6 +203,8 @@ export interface TimelineState {
     readonly lines: ReadonlyArray<StyledText>;
     readonly hint: string;
   } | null;
+  /** The MC holds the queue: what it says, and the keys that resume it (`composer.queue.resume`). */
+  readonly queueHeld: { readonly text: StyledText; readonly hint: string } | null;
 }
 
 export interface TimelineInput {
@@ -294,6 +296,7 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
       windowEnd: 0,
       working: null,
       plan: null,
+      queueHeld: null,
     };
   }
 
@@ -518,6 +521,17 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
           hint: "proposed plan · ^Y implement · ^B build mode to refine",
         }
       : null,
+    // As the desktop's queue card says it: nothing queued is lost while it waits.
+    queueHeld:
+      (detail as OrchestrationThread & TuiThreadExtras).queueHeld === true
+        ? {
+            text: styled(
+              chunk("⏸ Queue held", { fg: palette.warning, bold: true }),
+              chunk("  Messages stay saved until you resume.", { fg: palette.dim }),
+            ),
+            hint: "^X q resume",
+          }
+        : null,
   };
 }
 

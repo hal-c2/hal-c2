@@ -373,4 +373,24 @@ describe("orchestration V2 TUI presentation", () => {
       { taskId: "bg-1", description: "dev server" },
     ]);
   });
+
+  it("says the queue is held only while a held run waits in it", () => {
+    const base = projection();
+    const queued = (queueHeld: boolean) => ({
+      id: RunId.make("run-q"),
+      threadId,
+      ordinal: 2,
+      requestedAt: now,
+      startedAt: null,
+      completedAt: null,
+      status: "queued",
+      queuePosition: 1,
+      queueHeld,
+    });
+    const held = presentTuiThread({ ...base, runs: [queued(true)] } as never);
+    const flowing = presentTuiThread({ ...base, runs: [queued(false)] } as never);
+
+    expect((held as TuiThreadExtras).queueHeld).toBe(true);
+    expect((flowing as TuiThreadExtras).queueHeld).toBeUndefined();
+  });
 });

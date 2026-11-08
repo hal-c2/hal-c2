@@ -93,8 +93,19 @@ defmodule HalC2.ProviderUsageLimits.Codex do
 
   defp reset_credits(_), do: nil
 
-  @doc "The plan as the Codex provider labels it (`ChatGPT Pro 20x Subscription`), or nil."
+  @doc """
+  The plan as the Codex provider labels it (`ChatGPT Pro 200 Subscription`), by
+  the name OpenAI currently gives it. A plan a newer Codex names and this
+  release does not know keeps its own name, so its account still reads as
+  signed in on that plan; no plan at all labels nothing.
+  """
   def plan_label(plan) do
+    known_plan_label(plan) ||
+      if(is_binary(plan) and String.trim(plan) != "", do: plan)
+  end
+
+  @doc "The label of a plan this release knows, or nil (no plan, or an unknown one)."
+  def known_plan_label(plan) do
     case plan do
       "free" ->
         "ChatGPT Free Subscription"
@@ -106,15 +117,21 @@ defmodule HalC2.ProviderUsageLimits.Codex do
         "ChatGPT Plus Subscription"
 
       "pro" ->
-        "ChatGPT Pro 20x Subscription"
+        "ChatGPT Pro 200 Subscription"
 
       "prolite" ->
-        "ChatGPT Pro 5x Subscription"
+        "ChatGPT Pro 100 Subscription"
+
+      "promax" ->
+        "ChatGPT Pro 500 Subscription"
 
       "team" ->
-        "ChatGPT Team Subscription"
+        "ChatGPT Business Subscription"
 
-      p when p in ~w(self_serve_business_prolite self_serve_business_usage_based business) ->
+      "self_serve_business_prolite" ->
+        "ChatGPT Business Premium Subscription"
+
+      p when p in ~w(self_serve_business_usage_based business) ->
         "ChatGPT Business Subscription"
 
       p when p in ~w(ent26 enterprise_cbp_automation enterprise_cbp_usage_based enterprise) ->
@@ -162,11 +179,15 @@ defmodule HalC2.ProviderUsageLimits.Codex do
 
           Limits.unavailable(checked_at, "probeFailed")
 
-        {:ok, _} ->
+        {:ok, %{} = read_ok} ->
           # Usage is an enrichment with its own short deadline.
           case call(conn, "account/rateLimits/read", nil, 3_000) do
-            {:ok, %{} = response} -> limits(response, checked_at)
-            failure -> Limits.unavailable(checked_at, "probeFailed", failure(failure))
+            {:ok, %{} = response} ->
+              remember_usage_plan(instance, read_ok["account"] || %{}, response)
+              limits(response, checked_at)
+
+            failure ->
+              Limits.unavailable(checked_at, "probeFailed", failure(failure))
           end
 
         failure ->
@@ -175,6 +196,23 @@ defmodule HalC2.ProviderUsageLimits.Codex do
     end) ||
       Limits.unavailable(checked_at, "probeFailed", "Codex could not be started to read usage.")
   end
+
+  # The plan in Codex's cached login can lag a downgrade: a plan its usage read
+  # names (and this release knows) is the account's plan. A usage read naming
+  # none, or one unknown here, leaves the login's label as it was.
+  defp remember_usage_plan(instance, %{"type" => "chatgpt"} = acct, response) do
+    snapshot = get_in(response, ["rateLimitsByLimitId", "codex"]) || response["rateLimits"]
+
+    case snapshot && known_plan_label(snapshot["planType"]) do
+      label when is_binary(label) ->
+        Limits.remember_account(instance, Map.put(account(acct), "label", label))
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp remember_usage_plan(_instance, _account, _response), do: :ok
 
   @doc false
   # `auth` fields for the signed-in account.

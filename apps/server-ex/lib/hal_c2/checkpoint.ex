@@ -33,7 +33,13 @@ defmodule HalC2.Checkpoint do
   # Flush objects and refs before publishing them; an unclean restart must not leave
   # empty ref files that break every later fetch.
   @durable ~w(-c core.fsync=objects,reference -c core.fsyncMethod=fsync)
-  @index_config ~w(-c core.fsmonitor=false -c sparse.expectFilesOutsideOfPatterns=false)
+  # The private index is the capture's own: a split index stays the repository's
+  # (writing ours must not expire its shared index files), a `core.safecrlf`
+  # refusal must not cost the turn its checkpoint, and long paths work on
+  # Windows whatever the user's setting.
+  @index_config ~w(-c core.fsmonitor=false -c sparse.expectFilesOutsideOfPatterns=false
+                   -c core.splitIndex=false -c core.safecrlf=false -c core.longpaths=true)
+  @restore_config ~w(-c core.longpaths=true)
 
   @doc "The id of a thread's root checkpoint scope."
   def scope_id(thread_id), do: "checkpoint-scope:thread:#{uri(thread_id)}:name:root"
@@ -98,6 +104,9 @@ defmodule HalC2.Checkpoint do
         true ->
           case capture(cwd, ref) do
             :ok -> {"ready", changed_files(cwd, scope_id, ordinal, ref)}
+            # A workspace its repository ignores, holding nothing tracked, has
+            # nothing to capture: missing, not an error.
+            {:error, :ignored_workspace} -> {"missing", []}
             {:error, reason} -> capture_failed(cwd, ref, reason)
           end
       end
@@ -282,12 +291,18 @@ defmodule HalC2.Checkpoint do
          {:ok, _} <-
            if(tracked == "",
              do: {:ok, ""},
-             else: git(cwd, ~w(restore --source #{commit} --worktree --staged -- .))
+             else:
+               git(
+                 cwd,
+                 @restore_config ++ ~w(restore --source #{commit} --worktree --staged -- .)
+               )
            ),
          # Restoring away the last tracked file can remove a nested workspace directory.
          :ok <- File.mkdir_p(cwd),
-         :ok <- clean(cwd) do
-      if exists?(cwd, "HEAD"), do: git(cwd, ~w(reset --quiet -- .))
+         :ok <- clean(cwd),
+         # Cleaning an emptied workspace can take the folder itself with it.
+         :ok <- File.mkdir_p(cwd) do
+      unstage(cwd)
       :ok
     else
       {:error, _} = error -> error
@@ -295,8 +310,66 @@ defmodule HalC2.Checkpoint do
     end
   end
 
-  defp clean(cwd) do
-    case git(cwd, ~w(clean -fd -- .)) do
+  # The index is left at HEAD, so nothing the restore put back is staged. A
+  # repository with no commit yet has no HEAD to reset to: its index is simply
+  # emptied under the workspace, and the files are untracked again.
+  defp unstage(cwd) do
+    if exists?(cwd, "HEAD"),
+      do: git(cwd, ~w(reset --quiet -- .)),
+      else: git(cwd, ~w(rm -r --cached --quiet --ignore-unmatch -- .))
+
+    :ok
+  end
+
+  # A `.gitignore` the undone runs created hides files from the clean that
+  # removes the `.gitignore` itself, so one pass can leave them behind to
+  # creep into the next checkpoint. Clean again while something a further
+  # clean could remove is still there; past four passes (a chain of nested
+  # `.gitignore` files each hiding the next) the restore fails instead of
+  # reporting success with files left behind.
+  @clean_passes 4
+
+  defp clean(cwd, pass \\ 1) do
+    with :ok <- clean_once(cwd),
+         :ok <- File.mkdir_p(cwd),
+         {:ok, left} <- left_behind(cwd) do
+      cond do
+        left == [] -> :ok
+        pass < @clean_passes -> clean(cwd, pass + 1)
+        true -> {:error, {1, "git clean could not remove: #{Enum.join(left, "\n")}"}}
+      end
+    end
+  end
+
+  # What a clean left behind that a further clean could still remove, asked
+  # of the index rather than clean's own words: its dry run also reports the
+  # nested repositories it deliberately skips and, for an emptied workspace
+  # folder inside a repository, the folder itself, in prose no locale
+  # guarantees. A nested repository is listed as the folder holding its
+  # `.git`; clean without a second `-f` never touches one, so it is not
+  # left behind.
+  defp left_behind(cwd) do
+    case git(cwd, @restore_config ++ ~w(ls-files --others --exclude-standard -z -- .)) do
+      {:ok, out} ->
+        left =
+          out
+          |> String.split("\0", trim: true)
+          |> Enum.reject(&nested_repo?(cwd, &1))
+
+        {:ok, left}
+
+      error ->
+        error
+    end
+  end
+
+  defp nested_repo?(cwd, entry) do
+    path = Path.join(cwd, entry)
+    File.dir?(path) and File.exists?(Path.join(path, ".git"))
+  end
+
+  defp clean_once(cwd) do
+    case git(cwd, @restore_config ++ ~w(clean -fd -- .)) do
       {:ok, _} ->
         :ok
 
@@ -337,18 +410,33 @@ defmodule HalC2.Checkpoint do
     do:
       Regex.match?(@transient, message) and not (message =~ "does not have a commit checked out")
 
+  # A filesystem that refuses git's full flush (a macOS network mount) still
+  # takes a plain one: a capture refused for its flush is tried again without
+  # the durable settings, once.
+  @flush_refused ~r/fsync|flush/i
+
+  @doc false
+  def flush_refused?(message), do: Regex.match?(@flush_refused, message)
+
   @doc """
   Commits the whole worktree (tracked and untracked, minus ignored) to `ref`, trying
   again when git reports a lock or a file that vanished meanwhile.
   """
-  def capture(cwd, ref, attempt \\ 1) do
-    case capture_once(cwd, ref) do
-      {:error, {_status, err}} = error when is_binary(err) and attempt < @capture_attempts ->
-        if transient?(err) do
-          Process.sleep(Application.get_env(:hal_c2, :checkpoint_retry_ms, 100))
-          capture(cwd, ref, attempt + 1)
-        else
-          error
+  def capture(cwd, ref, attempt \\ 1), do: capture(cwd, ref, attempt, @durable)
+
+  defp capture(cwd, ref, attempt, durable) do
+    case capture_once(cwd, ref, durable) do
+      {:error, {_status, err}} = error when is_binary(err) ->
+        cond do
+          durable != [] and flush_refused?(err) ->
+            capture(cwd, ref, attempt, [])
+
+          attempt < @capture_attempts and transient?(err) ->
+            Process.sleep(Application.get_env(:hal_c2, :checkpoint_retry_ms, 100))
+            capture(cwd, ref, attempt + 1, durable)
+
+          true ->
+            error
         end
 
       result ->
@@ -356,7 +444,7 @@ defmodule HalC2.Checkpoint do
     end
   end
 
-  defp capture_once(cwd, ref) do
+  defp capture_once(cwd, ref, durable) do
     with {:ok, common} <- git(cwd, ~w(rev-parse --path-format=absolute --git-common-dir)) do
       index = Path.join(String.trim(common), "hal-c2-checkpoint-index-#{Entities.new_id("i")}")
       env = [{"GIT_INDEX_FILE", index} | @identity]
@@ -364,16 +452,16 @@ defmodule HalC2.Checkpoint do
 
       try do
         with :ok <- seed_index(cwd, index, env, sparse),
-             :ok <- stage(cwd, env, sparse),
-             {:ok, tree} <- git(cwd, @index_config ++ @durable ++ ["write-tree"], env: env),
+             :ok <- stage(cwd, env, sparse, durable),
+             {:ok, tree} <- git(cwd, @index_config ++ durable ++ ["write-tree"], env: env),
              {:ok, commit} <-
                git(
                  cwd,
-                 @durable ++
+                 durable ++
                    ["commit-tree", String.trim(tree), "-m", "hal-c2 checkpoint ref=#{ref}"],
                  env: env
                ),
-             {:ok, _} <- git(cwd, @durable ++ ["update-ref", ref, String.trim(commit)]) do
+             {:ok, _} <- git(cwd, durable ++ ["update-ref", ref, String.trim(commit)]) do
           :ok
         end
       after
@@ -399,18 +487,50 @@ defmodule HalC2.Checkpoint do
   # the cone. A repository inside the workspace with no commit yet cannot be
   # staged; when staging fails for one, name and leave out each such
   # repository and stage again (within the recovery limits above).
-  defp stage(cwd, env, sparse) do
-    case add_all(cwd, env, sparse, []) do
-      {:ok, _} -> :ok
-      {:error, _} = error -> recover_stage(cwd, env, sparse, error)
+  defp stage(cwd, env, sparse, durable) do
+    case add_all(cwd, env, sparse, durable, []) do
+      {:ok, _} ->
+        :ok
+
+      {:error, {_status, err}} = error when is_binary(err) ->
+        if err =~ "ignored by one of your .gitignore files",
+          do: recover_ignored(cwd, env, durable, error),
+          else: recover_stage(cwd, env, sparse, durable, error)
+
+      {:error, _} = error ->
+        recover_stage(cwd, env, sparse, durable, error)
     end
   end
 
-  defp add_all(cwd, env, sparse, exclusions) do
+  # The workspace folder itself is ignored by its repository, so `git add`
+  # refuses the pathspec wholesale. Tracked files in it are still captured
+  # (staged by update, which ignore rules do not refuse) and new files the
+  # repository ignores stay out; with nothing tracked there is no checkpoint
+  # to take.
+  defp recover_ignored(cwd, env, durable, error) do
+    with {:ok, tracked} <- git(cwd, @index_config ++ ~w(ls-files -z -- .), env: env),
+         true <- tracked != "",
+         {:ok, _} <- git(cwd, @index_config ++ durable ++ ~w(add -u -- .), env: env),
+         {:ok, others} <-
+           git(cwd, @index_config ++ ~w(ls-files --others --exclude-standard -z -- .), env: env) do
+      case String.split(others, <<0>>, trim: true) do
+        [] ->
+          :ok
+
+        files ->
+          git(cwd, @index_config ++ durable ++ ["add", "--" | files], env: env) |> ok()
+      end
+    else
+      false -> {:error, :ignored_workspace}
+      _ -> error
+    end
+  end
+
+  defp add_all(cwd, env, sparse, durable, exclusions) do
     git(
       cwd,
       @index_config ++
-        @durable ++
+        durable ++
         ["add"] ++
         if(sparse, do: ["--sparse"], else: []) ++ ["-A", "--", "." | exclusions],
       env: env
@@ -418,16 +538,16 @@ defmodule HalC2.Checkpoint do
   end
 
   # One budget covers discovery, the probes of each candidate, and the retry.
-  defp recover_stage(cwd, env, sparse, error) do
+  defp recover_stage(cwd, env, sparse, durable, error) do
     case HalC2.Git.within(@recovery_timeout_ms, fn ->
-           stage_without_unborn(cwd, env, sparse, error)
+           stage_without_unborn(cwd, env, sparse, durable, error)
          end) do
       {:ok, result} -> result
       _ -> error
     end
   end
 
-  defp stage_without_unborn(cwd, env, sparse, error) do
+  defp stage_without_unborn(cwd, env, sparse, durable, error) do
     with {:ok, %{status: 0, out: untracked, truncated: false}} <-
            HalC2.Git.run(cwd, ~w(ls-files --others --exclude-standard -z -- .),
              env: env,
@@ -452,7 +572,7 @@ defmodule HalC2.Checkpoint do
         end
 
       case exclusions do
-        [_ | _] -> add_all(cwd, env, sparse, exclusions) |> ok()
+        [_ | _] -> add_all(cwd, env, sparse, durable, exclusions) |> ok()
         _ -> error
       end
     else
@@ -506,31 +626,66 @@ defmodule HalC2.Checkpoint do
             do: {tag, name}
 
       # Assume-unchanged (lowercase tag) entries would hide real changes from
-      # `git add`. Skip-worktree (S) entries are a sparse checkout's own
-      # exclusions, but a manually skipped file the sparse rules select needs
-      # a fresh index too.
+      # `git add`, as would a manually set skip-worktree (S) flag. Clearing
+      # those flags in the private copy keeps the copied stat data usable, so
+      # one flagged file does not make the capture rehash the whole tree; the
+      # user's own index keeps its flags. Skip-worktree entries a sparse
+      # checkout's rules leave out are its exclusions, not manual flags, and
+      # keep theirs. A non-cone sparse checkout's exclusions cannot be told
+      # from manual flags this way, so it keeps the old answer (no reuse,
+      # which `seed_index/4` turns into the capture's error).
+      assumed = for {tag, name} <- records, tag in ?a..?z, do: name
+
       skipped =
         for {?S, name} <- records,
             not String.ends_with?(name, "/"),
             do: name
 
-      not Enum.any?(records, fn {tag, _} -> tag in ?a..?z or (tag == ?S and not sparse) end) and
-        (skipped == [] or
-           (Enum.all?(skipped, &String.valid?/1) and
-              not_sparse_selected?(cwd, env, skipped)))
+      cond do
+        assumed == [] and skipped == [] ->
+          true
+
+        sparse and not cone?(cwd) ->
+          assumed == [] and
+            (Enum.all?(skipped, &String.valid?/1) and sparse_selected(cwd, env, skipped) == [])
+
+        true ->
+          manual = if sparse, do: sparse_selected(cwd, env, skipped), else: skipped
+
+          is_list(manual) and
+            unflag(cwd, env, "--no-assume-unchanged", assumed) and
+            unflag(cwd, env, "--no-skip-worktree", manual)
+      end
     else
       _ -> false
     end
   end
 
-  # Whether none of the skipped files is selected by the sparse-checkout rules:
-  # any selected one carries a manual skip-worktree flag, not an exclusion.
-  defp not_sparse_selected?(cwd, env, skipped) do
+  defp cone?(cwd), do: git(cwd, ~w(config --bool core.sparseCheckoutCone)) == {:ok, "true\n"}
+
+  # The skipped files the sparse-checkout rules select: each carries a manual
+  # skip-worktree flag, not an exclusion. nil when git cannot say.
+  defp sparse_selected(_cwd, _env, []), do: []
+
+  defp sparse_selected(cwd, env, skipped) do
     case git(cwd, @index_config ++ ~w(sparse-checkout check-rules -z),
            env: env,
            input: Enum.join(skipped, <<0>>) <> <<0>>
          ) do
-      {:ok, ""} -> true
+      {:ok, out} -> String.split(out, <<0>>, trim: true)
+      _ -> nil
+    end
+  end
+
+  # Clears one index flag on `names` in the private index.
+  defp unflag(_cwd, _env, _flag, []), do: true
+
+  defp unflag(cwd, env, flag, names) do
+    case git(cwd, @index_config ++ ["update-index", flag, "-z", "--stdin"],
+           env: env,
+           input: Enum.join(names, <<0>>) <> <<0>>
+         ) do
+      {:ok, _} -> true
       _ -> false
     end
   end
