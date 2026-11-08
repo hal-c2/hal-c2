@@ -16,10 +16,12 @@
 #   turns            [{"match": substring, "steps": [...]}], first match wins
 #                    (a turn may also set "afterCompaction": true, to start only once a
 #                    running compaction ends, "startDelaySec": n, to start its agent late,
+#                    "startUntil": name, to start it once the file FAKE_DIR/<name> exists,
 #                    or "compactAfter": n, to compact for n seconds once it settled,
 #                    or "wake": {"text", "steps"[, "quiet": true]}: once it settled, Pi runs
 #                    that turn by itself, as when an extension wakes it, once per
-#                    process; a "quiet" one shows nothing until a prompt reaches Pi)
+#                    process; a "quiet" one shows nothing until a prompt reaches Pi, and
+#                    one with a "wake" of its own is followed by that one)
 #   startupUi        fire-and-forget extension UI requests (as a turn's `uiEmit`) Pi's
 #                    extensions send as an RPC Pi starts, before any command
 #   rejectWhileCompacting  as Pi 1.4: every prompt, steers included, sent while Pi
@@ -446,6 +448,10 @@ def run_turn(text, wake=None):
         # Pi starts a prompt sent while it compacts only once the compaction
         # is over: until then it shows nothing for it, and answers checks.
         serve_while(is_compacting)
+    if "startUntil" in turn:
+        # Pi starts its agent only once the file FAKE_DIR/<name> exists.
+        gate = os.path.join(DIR, turn["startUntil"])
+        serve_while(lambda: not os.path.exists(gate))
     if "startDelaySec" in turn:
         # Extension hooks that run before Pi's agent starts: nothing shows,
         # and Pi reads idle, for this long.
@@ -648,7 +654,8 @@ def run_turn(text, wake=None):
         settled_sent = True
         for event in config().get("settledEvents") or []:
             send(event)
-    if "wake" in turn and text not in woken:
+    # A wake may itself be followed by one (a "wake" in the wake), each time it runs.
+    if "wake" in turn and (wake is not None or text not in woken):
         woken.add(text)
         run_turn(turn["wake"].get("text", "Continue."), turn["wake"])
 

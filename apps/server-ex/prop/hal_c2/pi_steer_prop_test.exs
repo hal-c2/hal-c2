@@ -27,7 +27,10 @@ defmodule HalC2.PiSteerPropTest do
   held, which Pi must then never take; interrupt it. Send a message after whose turn
   a Pi extension wakes Pi, which runs as a turn of its own (or which settles before
   its run comes, and whose run is then cancelled from the queue, after which Pi's
-  next wake still gets a run); or one after which Pi
+  next wake still gets a run; or which settles while its run's delivery still tries,
+  after which Pi wakes again, and the first delivery is refused, so the second run
+  shows both; or which Pi exits at before its run comes, after which a new Pi wakes,
+  and the first run still ends failed); or one after which Pi
   resumes an extension's work without a word, so the next message Pi turns back as
   busy and HAL-C2 queues it behind that work, in the same turn. Send two messages,
   then an extension command that moves Pi's session back to before the second
@@ -220,6 +223,21 @@ defmodule HalC2.PiSteerPropTest do
         "steps" => [%{"text" => "Going on."}, %{"until" => "exit-now"}, %{"exit" => 1}]
       }
     },
+    # A turn after which a Pi extension wakes Pi twice, the second time once the
+    # first wake settled and the file "wake-again" exists.
+    %{
+      "match" => "twice",
+      "steps" => [%{"text" => "Done."}],
+      "wake" => %{
+        "text" => "Continue.",
+        "steps" => [%{"text" => "Woke up."}],
+        "wake" => %{
+          "text" => "Continue again.",
+          "startUntil" => "wake-again",
+          "steps" => [%{"text" => "Woke again."}]
+        }
+      }
+    },
     # A turn after which Pi resumes an extension's work, saying nothing until a
     # prompt reaches it.
     %{
@@ -371,7 +389,9 @@ defmodule HalC2.PiSteerPropTest do
       {1, {:call, __MODULE__, :send_rewound, [id(next), id(next + 1), id(next + 2)]}},
       {1, {:call, __MODULE__, :send_wake_taken, [id(next), id(next + 1), id(next + 2)]}},
       {1, {:call, __MODULE__, :send_wake_settled, [id(next), id(next + 1), id(next + 2)]}},
-      {1, {:call, __MODULE__, :send_wake_refused, [id(next), id(next + 1)]}}
+      {1, {:call, __MODULE__, :send_wake_refused, [id(next), id(next + 1)]}},
+      {1, {:call, __MODULE__, :send_wake_superseded, [id(next), id(next + 1)]}},
+      {1, {:call, __MODULE__, :send_wake_cut, [id(next), id(next + 1)]}}
     ])
   end
 
@@ -450,7 +470,9 @@ defmodule HalC2.PiSteerPropTest do
              :send_rewound,
              :send_wake_taken,
              :send_wake_settled,
-             :send_wake_refused
+             :send_wake_refused,
+             :send_wake_superseded,
+             :send_wake_cut
            ],
       do: state.turn == nil and state.abandoned == :none
 
@@ -552,6 +574,21 @@ defmodule HalC2.PiSteerPropTest do
   def next_state(state, _result, {:call, _, :send_wake_refused, [a, c]}) do
     runs = state.runs ++ [{a, "completed"}, {c, "completed"}, {:woken, "completed"}]
     %{state | next: state.next + 2, runs: runs}
+  end
+
+  # Pi woke twice after `a`, and the first wake's delivery was refused: the second's
+  # run shows both, and Pi's next wake, after `c`, runs as a turn of its own.
+  def next_state(state, _result, {:call, _, :send_wake_superseded, [a, c]}) do
+    woke = [{a, "completed"}, {:woken, "completed"}]
+    runs = state.runs ++ woke ++ [{c, "completed"}, {:woken, "completed"}]
+    %{state | next: state.next + 2, runs: runs}
+  end
+
+  # Pi exited at the wake after `a` before its run came: that run ends failed, though a
+  # new Pi woke after `c` meanwhile, whose wake runs as a turn of its own.
+  def next_state(state, _result, {:call, _, :send_wake_cut, [a, c]}) do
+    runs = [{a, "completed"}, {:woken, "failed"}, {c, "completed"}, {:woken, "completed"}]
+    %{state | next: state.next + 2, runs: state.runs ++ runs}
   end
 
   # Once its tool returned the image, a "shows" turn works as a "joins" turn.
@@ -1113,6 +1150,141 @@ defmodule HalC2.PiSteerPropTest do
       end
 
     {reply, projection}
+  end
+
+  # Sends `a`, after which Pi wakes, settles, and wakes again, each wake's delivery held
+  # at its first try. The first delivery is then refused at every try, and the second
+  # let go: its run must show the work of both wakes. Then `c`, after which Pi wakes
+  # again: that wake must get a run, and once it ended the idle runtime must let Pi go.
+  def send_wake_superseded(a, c) do
+    deadline = fn -> System.monotonic_time(:millisecond) + @wait_ms end
+    Application.put_env(:hal_c2, :wake_hook, {__MODULE__, :answer_wake, [self()]})
+    Application.put_env(:hal_c2, :wake_pause, {__MODULE__, :no_pause, []})
+    again = Path.join(Application.get_env(:hal_c2, :pi_prop_fake_dir), "wake-again")
+    woke = woken_runs(current())
+    first = Orchestration.dispatch(message(a, "twice #{a}", "queue_after_active", "auto"))
+    earlier = receive(do: ({:wake_try, task} -> task), after: (@wait_ms -> nil))
+    File.touch!(again)
+    later = receive(do: ({:wake_try, task} -> task), after: (@wait_ms -> nil))
+    File.rm(again)
+
+    refused =
+      case [earlier, later] do
+        [earlier, later] when is_pid(earlier) and is_pid(later) ->
+          refuse_every_try(earlier)
+          # The runtime has had the refusal.
+          [{runtime, _}] = Registry.lookup(HalC2.Pi.Registry, @tid)
+          :sys.get_state(runtime)
+          Kernel.send(later, {:answer, :ok})
+          :ok
+
+        _ ->
+          :timeout
+      end
+
+    Application.delete_env(:hal_c2, :wake_hook)
+    Application.delete_env(:hal_c2, :wake_pause)
+    shown = woken(woke + 1, deadline.())
+    state = current()
+
+    texts =
+      for run <- runs(state),
+          woken_id(run["userMessageId"]) == :woken,
+          message <- StreamState.list(state, "message"),
+          message["runId"] == run["id"],
+          do: message["text"]
+
+    {reply, projection} = wakes_again(c, deadline)
+
+    reply =
+      cond do
+        refused != :ok -> {:error, "Pi's two wakes after #{a} never asked the thread for runs"}
+        match?({:timeout, _}, shown) -> {:error, "the second wake after #{a} got no run"}
+        not Enum.any?(texts, &(&1 =~ "Woke up.")) -> {:error, "the run lost the first wake"}
+        not Enum.any?(texts, &(&1 =~ "Woke again.")) -> {:error, "the run lost the second wake"}
+        true -> answer(first) |> both(reply)
+      end
+
+    {reply, projection}
+  end
+
+  # Sends `a`, after which Pi works on by itself, and holds the wake's message while Pi
+  # exits at that work. Then `c`, whose turn a new Pi runs, after which it wakes: the
+  # first wake's run must end failed, and the second wake must get a run of its own,
+  # after which the idle runtime must let Pi go.
+  def send_wake_cut(a, c) do
+    deadline = fn -> System.monotonic_time(:millisecond) + @wait_ms end
+    exit_now = Path.join(Application.get_env(:hal_c2, :pi_prop_fake_dir), "exit-now")
+    Application.put_env(:hal_c2, :wake_hook, {__MODULE__, :answer_wake, [self()]})
+    woke = woken_runs(current())
+    first = Orchestration.dispatch(message(a, "strays #{a}", "queue_after_active", "auto"))
+    earlier = receive(do: ({:wake_try, task} -> task), after: (@wait_ms -> nil))
+
+    exited =
+      with true <- is_pid(earlier),
+           [{runtime, _}] <- Registry.lookup(HalC2.Pi.Registry, @tid),
+           %{conn: conn} when is_pid(conn) <- :sys.get_state(runtime) do
+        ref = Process.monitor(conn)
+        File.touch!(exit_now)
+        receive(do: ({:DOWN, ^ref, _, _, _} -> :ok))
+        # The runtime has had the connection's exit.
+        :sys.get_state(runtime)
+        :ok
+      end
+
+    File.rm(exit_now)
+    second = Orchestration.dispatch(message(c, "wakes #{c}", "queue_after_active", "auto"))
+    later = receive(do: ({:wake_try, task} -> task), after: (@wait_ms -> nil))
+    if earlier, do: Kernel.send(earlier, {:answer, :ok})
+    cut = woken(woke + 1, deadline.())
+    if later, do: Kernel.send(later, {:answer, :ok})
+    Application.delete_env(:hal_c2, :wake_hook)
+    projection = woken(woke + 2, deadline.())
+
+    released =
+      if match?({:timeout, _}, projection),
+        do: :skipped,
+        else: Orchestration.release_session(@tid)
+
+    reply =
+      cond do
+        exited != :ok -> {:error, "Pi never exited at the wake after #{a}"}
+        later == nil -> {:error, "the new Pi never woke after #{c}"}
+        match?({:timeout, _}, cut) -> {:error, "the wake after #{a} got no run"}
+        released == :skipped -> {:error, "Pi's wake after #{c} got no run"}
+        released != :ok -> {:error, "the idle runtime kept Pi: #{inspect(released)}"}
+        true -> answer(first) |> both(answer(second))
+      end
+
+    {reply, projection}
+  end
+
+  # The wake hook: each try waits for the test's answer (`{:answer, result}`).
+  def answer_wake(test, _command) do
+    Kernel.send(test, {:wake_try, self()})
+
+    receive do
+      {:answer, result} -> result
+    after
+      @wait_ms -> {:error, "no answer"}
+    end
+  end
+
+  # Refuses a delivery's every try; the runtime has heard (`on_dropped`) once it ends.
+  defp refuse_every_try(task) do
+    ref = Process.monitor(task)
+    refuse_tries(task, ref)
+  end
+
+  defp refuse_tries(task, ref) do
+    Kernel.send(task, {:answer, {:error, "refused"}})
+
+    receive do
+      {:wake_try, ^task} -> refuse_tries(task, ref)
+      {:DOWN, ^ref, _, _, _} -> :ok
+    after
+      @wait_ms -> :timeout
+    end
   end
 
   # Sends `c`, after whose turn Pi wakes: the wake must get a run of its own, and once it

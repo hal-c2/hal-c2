@@ -241,8 +241,9 @@ defmodule HalC2.Pi.ThreadRuntime do
        # unanswered as it exited, with their answers: they hear once the turn ends, or
        # runs on (`steered/3`).
        refused: [],
-       # Pi at work by itself between turns (`wake/3`): `%{open, buffer}`, the events
-       # (newest first) its run replays, or `buffer: nil` once the thread refused it.
+       # Pi at work by itself between turns (`wake/3`): `%{open, buffer, refs}`, the
+       # events (newest first) its run replays, or `buffer: nil` once the thread refused
+       # it, and the deliveries whose runs may show it.
        wake: nil
      }}
   end
@@ -272,7 +273,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   # The run of a wake: nothing is sent to Pi. What it did so far is replayed into the
   # run, which then follows it to its settle.
   def handle_call({:start_turn, %{wake: true} = turn}, _from, state) do
-    wake = state.wake || %{open: false, buffer: []}
+    wake = state.wake || %{open: false, buffer: [], refs: []}
     state = %{begin_turn(state, turn) | wake: nil, turn_active: true}
 
     case started(state) do
@@ -543,11 +544,18 @@ defmodule HalC2.Pi.ThreadRuntime do
     end
   end
 
-  # The thread would not run the wake (`wake/3`): the rest of Pi's work shows in no turn.
-  def handle_info(:wake_refused, %{turn: nil, wake: %{buffer: [_ | _]} = wake} = state),
-    do: {:noreply, %{state | wake: if(wake.open, do: %{wake | buffer: nil})}}
+  # The thread would not run a delivery of the wake (`wake/3`). Once none is left that
+  # could, the rest of Pi's work shows in no turn. A refusal of a wake already replaced
+  # or run is nobody's.
+  def handle_info({:wake_refused, ref}, %{turn: nil, wake: %{buffer: [_ | _]} = wake} = state) do
+    cond do
+      ref not in wake.refs -> {:noreply, state}
+      wake.refs == [ref] -> {:noreply, %{state | wake: if(wake.open, do: %{wake | buffer: nil})}}
+      true -> {:noreply, %{state | wake: %{wake | refs: List.delete(wake.refs, ref)}}}
+    end
+  end
 
-  def handle_info(:wake_refused, state), do: {:noreply, state}
+  def handle_info({:wake_refused, _ref}, state), do: {:noreply, state}
 
   # A `/compact` came back. One steered into a running turn only answers its
   # caller; the turn runs on and settles as it would have (a settle Pi sent
@@ -611,9 +619,7 @@ defmodule HalC2.Pi.ThreadRuntime do
      %{
        state
        | conn: nil,
-         # A wake waiting for its run ends there, cut short (`replay_wake/2`); one with
-         # nothing for its run to show is gone.
-         wake: if(match?(%{buffer: [_ | _]}, state.wake), do: %{state.wake | open: false}),
+         wake: exited_wake(state.wake),
          compact: nil,
          compact_steer: nil,
          abandoned_compacts: MapSet.new(),
@@ -1381,6 +1387,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   # this process, since starting the run calls back into it.
   defp wake(state, type, event) do
     runtime = self()
+    ref = make_ref()
 
     HalC2.Orchestration.Wake.deliver(
       state.thread_id,
@@ -1395,20 +1402,21 @@ defmodule HalC2.Pi.ThreadRuntime do
         }
       },
       instance: state.instance,
-      on_dropped: fn -> send(runtime, :wake_refused) end
+      on_dropped: fn -> send(runtime, {:wake_refused, ref}) end
     )
 
-    %{state | wake: %{open: true, buffer: [{type, event}]}}
+    %{state | wake: %{open: true, buffer: [{type, event}], refs: [ref]}}
   end
 
   # Pi at work by itself again after a wake that ended before its run came (which may
   # never come: the user can cancel it from the queue) is a wake of its own, with a run
-  # of its own. It keeps the earlier work, less its end, so whichever run comes first
-  # shows both up to Pi's next settle; the other shows nothing.
+  # of its own. It keeps the earlier work, less its settle, so whichever run comes first
+  # shows both up to Pi's next settle; the other shows nothing. Work Pi exiting cut
+  # short keeps its end (`exited_wake/1`), so its part of the run still fails.
   defp buffer_wake(%{wake: %{open: false} = earlier} = state, "agent_start", event) do
     kept = Enum.reject(earlier.buffer || [], &match?({"agent_settled", _}, &1))
     %{wake: wake} = state = wake(state, "agent_start", event)
-    %{state | wake: %{wake | buffer: wake.buffer ++ kept}}
+    %{state | wake: %{wake | buffer: wake.buffer ++ kept, refs: wake.refs ++ earlier.refs}}
   end
 
   # Pi's settle ends the work; a wake the thread refused keeps nothing of it.
@@ -1419,26 +1427,42 @@ defmodule HalC2.Pi.ThreadRuntime do
     do: %{
       state
       | wake: %{
-          open: wake.open and type != "agent_settled",
-          buffer: [{type, event} | wake.buffer]
+          wake
+          | open: wake.open and type != "agent_settled",
+            buffer: [{type, event} | wake.buffer]
         }
     }
 
+  # Pi exited: a wake it was at ends there, cut short (`replay_wake/2`); one with
+  # nothing for its run to show is gone.
+  defp exited_wake(%{open: true, buffer: [_ | _] = buffer} = wake),
+    do: %{wake | open: false, buffer: [:exited | buffer]}
+
+  defp exited_wake(%{buffer: [_ | _]} = wake), do: wake
+  defp exited_wake(_wake), do: nil
+
   # Replayed to its settle, or Pi is still at it. A wake cut short by Pi exiting
-  # fails; one a turn took over, or a rewind discarded, leaves its run nothing to show.
+  # fails, and work a new Pi started by itself after that waits for a run of its own;
+  # one a turn took over, or a rewind discarded, leaves its run nothing to show.
   defp replay_wake(state, wake) do
+    {shown, rest} = (wake.buffer || []) |> Enum.reverse() |> Enum.split_while(&(&1 != :exited))
+
     state =
-      (wake.buffer || [])
-      |> Enum.reverse()
-      |> Enum.reduce(state, fn {type, event}, state ->
+      Enum.reduce(shown, state, fn {type, event}, state ->
         if state.turn, do: event(type, event, state), else: state
       end)
 
-    cond do
-      state.turn == nil -> state
-      wake.open and state.conn != nil -> state
-      wake.buffer not in [nil, []] -> end_turn(state, "failed", "Pi process exited unexpectedly.")
-      true -> end_turn(state, "completed", nil)
+    state =
+      cond do
+        state.turn == nil -> state
+        rest != [] -> end_turn(state, "failed", "Pi process exited unexpectedly.")
+        wake.open and state.conn != nil -> state
+        true -> end_turn(state, "completed", nil)
+      end
+
+    case rest do
+      [:exited, _ | _] -> %{state | wake: %{wake | buffer: Enum.reverse(tl(rest))}}
+      _ -> state
     end
   end
 
@@ -1446,16 +1470,19 @@ defmodule HalC2.Pi.ThreadRuntime do
   # so far joins the turn, and its message follows the work (`send_prompt/3`). The
   # wake is gone: its own run, if it still comes, has nothing to show, and work Pi
   # starts by itself after the turn is a wake of its own. A wake that already settled
-  # keeps its events for its own run.
+  # keeps its events for its own run, and so does one Pi exiting cut short, which that
+  # run ends as failed (`replay_wake/2`).
   defp take_wake(%{wake: %{open: true} = wake} = state) do
+    {taken, cut} = Enum.split_while(wake.buffer || [], &(&1 != :exited))
+
     state =
-      (wake.buffer || [])
+      taken
       |> Enum.reverse()
       |> Enum.reduce(%{state | turn_active: true}, fn {type, event}, state ->
         event(type, event, state)
       end)
 
-    {%{state | wake: nil}, true}
+    {%{state | wake: if(cut != [], do: %{wake | open: false, buffer: cut})}, true}
   end
 
   defp take_wake(state), do: {state, false}
