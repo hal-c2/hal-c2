@@ -617,7 +617,8 @@ defmodule HalC2.TextGeneration do
           {:error, _} -> []
         end
 
-      {isolation, env, scratch_home} = codex_isolation(selection["instanceId"], launch, cwd)
+      {isolation, env, scratch_home, launch} =
+        codex_isolation(selection["instanceId"], launch, cwd)
 
       args =
         ["exec"] ++
@@ -654,8 +655,10 @@ defmodule HalC2.TextGeneration do
   # What keeps the user's tools out of a Codex that only writes text: each MCP server its
   # configuration enables is switched off, and plugins and apps are disabled. The servers
   # come from `codex mcp list`. When it cannot answer, the run gets a scratch Codex home
-  # with the account's login and no configuration, so no MCP server is enabled at all.
-  # Returns `{args, env, scratch_home}`; the caller removes `scratch_home` (nil when none).
+  # with the account's login and no configuration, and the launch arguments lose their
+  # `mcp_servers` overrides, so no MCP server is enabled at all.
+  # Returns `{args, env, scratch_home, launch}`; the caller removes `scratch_home` (nil
+  # when none) and runs with the returned `launch`.
   defp codex_isolation(instance, launch, cwd) do
     list = [codex_command(instance) | launch] ++ ["mcp", "list", "--json"]
 
@@ -665,13 +668,34 @@ defmodule HalC2.TextGeneration do
         for %{"name" => name} when is_binary(name) <- entries,
             do: ["--config", "mcp_servers.#{toml_key(name)}.enabled=false"]
 
-      {List.flatten(servers) ++ ~w(--disable plugins --disable apps), [], nil}
+      {List.flatten(servers) ++ ~w(--disable plugins --disable apps), [], nil, launch}
     else
       _ ->
         home = bare_codex_home(instance)
-        {~w(--disable plugins --disable apps), [{"CODEX_HOME", home}], home}
+
+        {~w(--disable plugins --disable apps), [{"CODEX_HOME", home}], home,
+         without_mcp_overrides(launch)}
     end
   end
+
+  # The launch arguments without the `--config mcp_servers...` overrides: a server the
+  # instance defines there would reach `codex exec` even from a home with no configuration.
+  defp without_mcp_overrides([flag, value | rest]) when flag in ~w(--config -c) do
+    if mcp_override?(value),
+      do: without_mcp_overrides(rest),
+      else: [flag, value | without_mcp_overrides(rest)]
+  end
+
+  defp without_mcp_overrides([arg | rest]) do
+    if String.starts_with?(arg, ["--config=", "-c="]) and
+         mcp_override?(arg |> String.split("=", parts: 2) |> List.last()),
+       do: without_mcp_overrides(rest),
+       else: [arg | without_mcp_overrides(rest)]
+  end
+
+  defp without_mcp_overrides([]), do: []
+
+  defp mcp_override?(value), do: String.trim_leading(value) =~ ~r/\Amcp_servers\b/
 
   defp remove_scratch(nil), do: :ok
 
@@ -679,13 +703,30 @@ defmodule HalC2.TextGeneration do
   # sobelow_skip ["Traversal.FileModule"]
   defp remove_scratch(dir), do: File.rm_rf(dir)
 
+  # The home whose login a run of `instance` uses, by the precedence a normal run has: a
+  # `CODEX_HOME` in the instance's environment, else its shadow home (or home setting),
+  # else the MC's own `CODEX_HOME`, else `~/.codex`. A shadow home that cannot be made
+  # leaves the shared home, the account's configured home.
+  defp account_home(instance) do
+    default = System.get_env("CODEX_HOME") || Path.join(HalC2.Paths.user_home(), ".codex")
+    env_home = HalC2.Settings.instance_env(instance)["CODEX_HOME"]
+
+    if is_binary(env_home) and env_home != "" do
+      HalC2.Codex.Home.shared(instance)
+    else
+      case HalC2.Codex.Home.env(instance) do
+        {:ok, [{"CODEX_HOME", home}]} -> home
+        {:ok, []} -> default
+        {:error, _} -> HalC2.Codex.Home.shared(instance) || default
+      end
+    end
+  end
+
   # A Codex home holding only the instance's login (`auth.json`) and an empty config.
   # The paths are the instance's own home setting and a fresh scratch folder.
   # sobelow_skip ["Traversal.FileModule"]
   defp bare_codex_home(instance) do
-    source =
-      HalC2.Codex.Home.shared(instance) || System.get_env("CODEX_HOME") ||
-        Path.join(HalC2.Paths.user_home(), ".codex")
+    source = account_home(instance)
 
     home = HalC2.Scratch.dir("hal-c2-codex-home")
     File.write!(Path.join(home, "config.toml"), "")

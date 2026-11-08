@@ -246,6 +246,67 @@ defmodule HalC2.TextGenerationTest do
       refute File.exists?(scratch)
     end
 
+    test "a Codex that cannot list its MCP servers drops the servers its launch arguments define",
+         %{repo: repo, log: log, tmp_dir: dir} do
+      install([:codex])
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex", "model" => "gpt-text"},
+        "providers" => %{
+          "codex" => %{
+            "launchArgs" =>
+              ~s(-c mcp_servers.launched.command="x" --config=mcp_servers.other.command="y" -c model_verbosity="low")
+          }
+        }
+      })
+
+      System.put_env("CODEX_HOME", dir)
+      System.put_env("FAKE_CODEX_MCP_FAIL", "1")
+
+      on_exit(fn ->
+        System.delete_env("CODEX_HOME")
+        System.delete_env("FAKE_CODEX_MCP_FAIL")
+      end)
+
+      assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
+
+      assert [%{"argv" => argv}] = calls(log)
+      refute Enum.any?(argv, &(&1 =~ "mcp_servers"))
+      assert "model_verbosity=low" in argv
+    end
+
+    test "a Codex that cannot list its MCP servers keeps the login of its shadow home", %{
+      repo: repo,
+      log: log,
+      tmp_dir: dir
+    } do
+      install([:codex])
+      shared = Path.join(dir, "shared-codex")
+      shadow = Path.join(dir, "shadow-codex")
+      File.mkdir_p!(shared)
+      File.write!(Path.join(shared, "auth.json"), ~s({"token":"shared"}))
+      File.mkdir_p!(shadow)
+      File.write!(Path.join(shadow, "auth.json"), ~s({"token":"shadow"}))
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex-work", "model" => "gpt-text"},
+        "providerInstances" => %{
+          "codex-work" => %{
+            "driver" => "codex",
+            "config" => %{"homePath" => shared, "shadowHomePath" => shadow}
+          }
+        }
+      })
+
+      System.put_env("FAKE_CODEX_MCP_FAIL", "1")
+      on_exit(fn -> System.delete_env("FAKE_CODEX_MCP_FAIL") end)
+
+      assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
+
+      assert [%{"codexFiles" => %{"auth.json" => ~s({"token":"shadow"}), "config.toml" => ""}}] =
+               calls(log)
+    end
+
     test "a writer whose check only warned keeps generating", %{repo: repo} do
       install([:claude, :codex])
 
