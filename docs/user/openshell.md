@@ -26,6 +26,9 @@ start Podman's socket with `systemctl --user enable --now podman.socket`.
 A Docker daemon that runs as root is always refused, even when you name its socket:
 whatever holds that socket controls the machine. Use rootless Podman, or set up
 rootless Docker (`dockerd-rootless-setuptool.sh`) and name its socket.
+`DOCKER_HOST` is not read; name the socket in `HAL_C2_OPENSHELL_DOCKER_SOCKET`. A
+socket that Podman answers on is used as Podman. Docker Desktop for Linux is refused,
+since its daemon runs as root in its VM.
 
 ## Set it up
 
@@ -98,15 +101,16 @@ environment a gateway of its own with `install`, or run a second gateway for it.
 
 `status` prints a code with each problem and what to do about it:
 
-| Code                                                                      | What to do                                                                   |
-| ------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `not-installed`                                                           | Run `install`.                                                               |
-| `update-available`, `version-mismatch`                                    | Run `install` to move to the version this MC pins.                           |
-| `service-missing`, `service-outdated`                                     | Run `install` to rewrite the gateway's service.                              |
-| `service-stopped`, `gateway-unreachable`                                  | Read the gateway's log (`status` prints where), then run `install`.          |
-| `gateway-shared`                                                          | Another HAL-C2 environment uses this gateway. Give each one its own.         |
-| `intel-mac`, `unsupported-os`, `unsupported-arch`                         | This machine cannot run OpenShell.                                           |
-| `glibc-too-old`, `kernel-too-old`, `landlock-missing`                     | Update the system, or enable Landlock in the kernel's `lsm=` boot parameter. |
-| `podman-missing`, `podman-too-old`, `runtime-not-rootless`, `root-docker` | Set up rootless Podman 5, or a rootless Docker daemon.                       |
-| `docker-desktop-missing`, `docker-too-old`                                | Install and start Docker Desktop 28 or later.                                |
-| `runtime-unreachable`                                                     | Start the container runtime.                                                 |
+| Code                                                                                                                       | What to do                                                                                              |
+| -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `not-installed`                                                                                                            | Run `install`.                                                                                          |
+| `update-available`, `version-mismatch`                                                                                     | Run `install` to move to the version this MC pins.                                                      |
+| `service-missing`, `service-outdated`                                                                                      | Run `install` to rewrite the gateway's service.                                                         |
+| `service-not-ours`                                                                                                         | The service under this home's name runs another HAL-C2 home's gateway. Uninstall OpenShell there first. |
+| `service-stopped`, `gateway-unreachable`                                                                                   | Read the gateway's log (`status` prints where), then run `install`.                                     |
+| `gateway-shared`                                                                                                           | Another HAL-C2 environment uses this gateway. Give each one its own.                                    |
+| `intel-mac`, `unsupported-os`, `unsupported-arch`                                                                          | This machine cannot run OpenShell.                                                                      |
+| `glibc-too-old`, `kernel-too-old`, `landlock-missing`                                                                      | Update the system, or enable Landlock in the kernel's `lsm=` boot parameter.                            |
+| `podman-missing`, `podman-too-old`, `runtime-not-rootless`, `root-docker`, `docker-desktop-linux`, `docker-socket-missing` | Set up rootless Podman 5, or a rootless Docker daemon.                                                  |
+| `docker-desktop-missing`, `docker-too-old`, `podman-on-mac`                                                                | Install and start Docker Desktop 28 or later.                                                           |
+| `runtime-unreachable`                                                                                                      | Start the container runtime.                                                                            |

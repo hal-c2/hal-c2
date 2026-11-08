@@ -56,6 +56,9 @@ backed up, and put back if the new gateway fails its check.
   as `gateway-shared`. The MC only reads those sandboxes (a listing across all workspaces).
 - OTP's `ssl` caches PEM files by path. The client hands certificates to `ssl` as DER, so a
   rotation that replaces the files in place takes effect on the next connection.
-- The service unit and launch agent are the gateway's own (`hal-c2-openshell.service`,
-  `io.github.halc2.openshell`), apart from the MC's, so the MC restarting does not restart
-  the gateway or its sandboxes.
+- The service unit and launch agent are the gateway's own, apart from the MC's, so the MC
+  restarting does not restart the gateway or its sandboxes. Their names, and the gateway's
+  Docker label or Podman network, carry the home's instance (`HalC2.OpenShell.instance/0`):
+  two HAL-C2 homes on one machine and user each run a gateway of their own, and a home
+  refuses (`unit-not-ours`) a unit under its name that another home wrote. Podman's driver
+  never removes its network, so uninstall leaves `hal-c2-<instance>` behind.
