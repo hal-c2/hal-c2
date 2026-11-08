@@ -1537,7 +1537,6 @@ Feature: Claude
 
   # Upstream #19464: a background subagent stayed running after Claude's process exited without
   # reporting it; the exit now settles it.
-  @backlog
   Scenario Outline: A Claude background subagent is settled when Claude's process ends
     Given Claude launched a subagent in the background and the launching turn completed
     When Claude's process <ends> without reporting the subagent finished
@@ -1550,7 +1549,7 @@ Feature: Claude
 
   # Upstream #28356: a Stop that closed a Claude process still running a background subagent,
   # followed by a new turn before the old process exited, left the subagent running for good.
-  @backlog @priority-high
+  @priority-high
   Scenario: A background subagent of a stopped Claude process ends when that process exits
     Given Claude launched a subagent in the background
     And the user stopped the turn

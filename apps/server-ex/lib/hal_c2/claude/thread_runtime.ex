@@ -489,10 +489,15 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # Between turns, stopping the thread stops the work it left running in the background,
-  # with the process that runs it; the next turn resumes the conversation.
+  # with the process that runs it; the next turn resumes the conversation. A subagent ends
+  # cancelled, as Claude reports a task it stopped; a command ends interrupted.
   def handle_call(:interrupt, _from, %{turn: nil, session: session} = state)
       when session != nil and state.work != %{} do
-    state = end_work(state, "interrupted")
+    state =
+      state
+      |> end_work(&match?(%{sub: %{}}, &1), "cancelled")
+      |> end_work("interrupted")
+
     GenServer.stop(session)
     {:reply, :ok, %{state | session: nil, permission_mode: nil}}
   end

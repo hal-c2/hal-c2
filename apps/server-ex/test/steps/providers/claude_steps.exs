@@ -4417,6 +4417,92 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- background work when Claude's process ends --------------------------------------
+
+  # Its process lingers a second once its stdin closes, as Claude finishing its
+  # background work does; a process reads that as it starts.
+  step "Claude launched a subagent in the background", context do
+    World.put_env("FAKE_CLAUDE_EXIT_DELAY", "1")
+    background_subagent(context)
+  end
+
+  step "Claude launched a subagent in the background and the launching turn completed",
+       context do
+    background_subagent(context)
+  end
+
+  # Between turns the stop closes the thread's process, which lingers.
+  step "the user stopped the turn", context do
+    stop = Task.async(fn -> stop_thread(context) end)
+    World.await_provider_log(context, "claude", &Map.has_key?(&1, "eof"))
+    Map.put(context, :stop, stop)
+  end
+
+  step "the next turn starts a new Claude process before the old one has exited", context do
+    [%{"pid" => old}] = claude_processes(context)
+    assert alive?(old)
+    context = World.post_message(context, @thread, "hello")
+    Task.await(context.stop, 10_000)
+    World.await_runs(context, @thread, ["completed", "completed"])
+    assert [_, _] = claude_processes(context)
+    Map.put(context, :old_process, old)
+  end
+
+  step "the old process exits", context do
+    refute alive?(context.old_process)
+    context
+  end
+
+  step "the thread can show that it is awaiting input", context do
+    assert Enum.all?(World.runs(context, @thread), &(&1["status"] == "completed"))
+    [{runtime, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    assert %{turn: nil, work: work} = :sys.get_state(runtime)
+    assert work == %{}
+    context
+  end
+
+  step ~r/^Claude's process (?<ends>exits unexpectedly|is stopped by the user) without reporting the subagent finished$/,
+       %{args: [ends]} = context do
+    case ends do
+      "exits unexpectedly" ->
+        [%{"pid" => pid}] = claude_processes(context)
+        {_, 0} = System.cmd("kill", ["-9", to_string(pid)])
+
+      "is stopped by the user" ->
+        stop_thread(context)
+    end
+
+    context
+  end
+
+  defp stop_thread(context),
+    do:
+      {:ok, _} =
+        HalC2.Orchestration.dispatch(%{
+          "type" => "run.interrupt",
+          "threadId" => World.thread_id(context, @thread)
+        })
+
+  defp background_subagent(context) do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "survey in the background")
+
+    World.await_runs(context, @thread, ["completed"])
+
+    assert [%{"status" => "running"}] =
+             StreamState.list(World.stream(context, @thread), "subagent")
+
+    context
+  end
+
+  # The fake Claude processes started in the scenario, oldest first: their OS pids.
+  defp claude_processes(context),
+    do: Enum.filter(World.provider_log(context, "claude"), &Map.has_key?(&1, "argv"))
+
+  defp alive?(os_pid), do: File.exists?("/proc/#{os_pid}")
+
   step "Claude launches a subagent in the background and the launch returns at once",
        context do
     context =

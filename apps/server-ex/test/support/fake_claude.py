@@ -161,7 +161,7 @@ if sys.argv[1:] == ["auth", "status"]:
                       "email": ACCOUNT_EMAIL}))
     sys.exit(0)
 # The start also traces where it was pointed: its config directory, its account and any router.
-trace({"argv": sys.argv[1:], "account": ACCOUNT_EMAIL, "env": {k: v for k, v in os.environ.items() if k.startswith("ANTHROPIC_") or k in ("CLAUDE_CONFIG_DIR", "HOME", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_TOOL_USE_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SHELL")}})
+trace({"argv": sys.argv[1:], "pid": os.getpid(), "account": ACCOUNT_EMAIL, "env": {k: v for k, v in os.environ.items() if k.startswith("ANTHROPIC_") or k in ("CLAUDE_CONFIG_DIR", "HOME", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_TOOL_USE_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SHELL")}})
 for line in sys.stdin:
     msg = json.loads(line)
     trace({"in": msg})
@@ -668,3 +668,8 @@ for line in sys.stdin:
     usage = {"usage": {"input_tokens": 1000, "output_tokens": 50}} if "report your usage" in text else {}
     send({"type": "result", "subtype": "success", "is_error": False, "result": "Hello from claude", "session_id": session, **usage})
     lifecycle("completed")
+# Its stdin closed, the process says so in its trace and, with FAKE_CLAUDE_EXIT_DELAY
+# (seconds), lingers that long before it exits, as one finishing its work does.
+trace({"eof": os.getpid()})
+if os.environ.get("FAKE_CLAUDE_EXIT_DELAY"):
+    time.sleep(float(os.environ["FAKE_CLAUDE_EXIT_DELAY"]))
