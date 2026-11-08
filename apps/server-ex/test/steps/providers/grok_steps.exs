@@ -329,6 +329,49 @@ defmodule HalC2.Steps.Providers.Grok do
     Map.merge(context, %{model: Enum.find(models, &(&1["slug"] == "grok-4")), models: models})
   end
 
+  step "Grok advertises a model's efforts from the strongest to the weakest", context do
+    config =
+      Map.put(signed_in_config(), "initMeta", %{
+        "modelState" => %{
+          "currentModelId" => "grok-4",
+          "availableModels" => [
+            %{
+              "modelId" => "grok-4",
+              "name" => "Grok 4",
+              "_meta" => %{
+                "reasoningEffort" => "medium",
+                "reasoningEfforts" => [
+                  %{"value" => "xhigh", "label" => "Extra High", "default" => true},
+                  %{"value" => "high", "label" => "High"},
+                  %{"value" => "medium", "label" => "Medium"}
+                ]
+              }
+            }
+          ]
+        }
+      })
+
+    context = FakeAcp.install(context, "grok", config, enabled: true)
+    # A Background that runs the agents plays Grok with the generic fake; this one is scripted.
+    commands = Application.get_env(:hal_c2, :acp_commands, %{})
+    World.put_app_env(:acp_commands, Map.delete(commands, "grok"))
+    HalC2.Acp.forget("grok")
+    context
+  end
+
+  step "the user opens the model control on a Grok model", context do
+    {_, context} = World.call!(context, "server.refreshProviders", %{})
+    {providers, context} = World.provider_list(context)
+    models = FakeAcp.find(providers, "grok")["models"]
+    Map.put(context, :model, Enum.find(models, &(&1["slug"] == "grok-4")))
+  end
+
+  step "its efforts run from the lowest to the highest", context do
+    assert %{"capabilities" => %{"optionDescriptors" => [descriptor]}} = context.model
+    assert Enum.map(descriptor["options"], & &1["id"]) == ["medium", "high", "xhigh"]
+    context
+  end
+
   step "the reasoning levels Grok offers for that model are shown", context do
     assert %{"capabilities" => %{"optionDescriptors" => [descriptor]}} = context.model
 

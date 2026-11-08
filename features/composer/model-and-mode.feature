@@ -737,8 +737,9 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the picker keeps one height while the user moves between providers
 
   # Upstream #28409: Grok listed its levels from strongest to weakest.
-  @backlog @shared @priority-low
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
   Scenario: Grok's efforts are listed from lowest to highest
+    Given Grok advertises a model's efforts from the strongest to the weakest
     When the user opens the model control on a Grok model
     Then its efforts run from the lowest to the highest
 
