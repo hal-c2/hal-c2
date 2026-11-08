@@ -19,6 +19,14 @@ defmodule HalC2.WorkspaceTest do
     File.write!(Path.join(root, "logo.png"), <<137, 80, 78, 71, 0, 0, 1>>)
     File.write!(Path.join(outside, "secret.txt"), "secret")
     File.ln_s!(Path.join(outside, "secret.txt"), Path.join(root, "link.txt"))
+
+    # An empty query orders entries by mtime, newest first, at one-second resolution.
+    # Setup writes into src/deep after src, so without pinning, a second boundary
+    # crossed during setup makes src/deep the newer one.
+    now = System.os_time(:second)
+    File.touch!(Path.join(root, "src/deep"), now - 60)
+    File.touch!(Path.join(root, "src"), now)
+
     start_supervised!(Workspace)
     %{root: root}
   end
