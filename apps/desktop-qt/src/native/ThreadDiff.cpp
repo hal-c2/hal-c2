@@ -37,7 +37,7 @@ ThreadDiff::ThreadDiff(McClient* client, Notify notify, QObject* parent)
 
 ThreadDiff::Facts ThreadDiff::facts() const {
   return {choices(), latestTurn(), latestCheckpoint(), selection(), shownTurn(), reviewing(), m_status, m_message, m_focus, m_fileTotal, m_baseRef, m_comparedBase,
-          m_comparedHead, m_truncated, canRevert(), m_revertTurn, m_reverting};
+          m_comparedHead, m_truncated, canRevert(), m_revertTurn, m_reverting, viewedPaths()};
 }
 
 void ThreadDiff::tell(const Facts& before) {
@@ -54,6 +54,7 @@ void ThreadDiff::tell(const Facts& before) {
   // The branch under review is left out of the bases.
   if (now.comparedHead != before.comparedHead) emit basesChanged();
   if (now.canRevert != before.canRevert || now.revertTurn != before.revertTurn || now.reverting != before.reverting) emit revertChanged();
+  if (now.viewed != before.viewed) emit viewedChanged();
 }
 
 void ThreadDiff::setThread(const QString& environmentId, const QString& threadId, TimelineModel* timeline, const QString& cwd) {
@@ -75,6 +76,7 @@ void ThreadDiff::setThread(const QString& environmentId, const QString& threadId
     m_focus.clear();
     m_fileTotal = 0;
     m_model.clear();
+    m_shownKey.clear();
     m_comparedBase.clear();
     m_comparedHead.clear();
     m_truncated = false;
@@ -358,18 +360,26 @@ void ThreadDiff::load() {
     payload.insert(QStringLiteral("toTurnCount"), turn);
   }
   setStatus(QStringLiteral("loading"), QStringLiteral("Loading checkpoint diff..."));
-  m_client->call(this, m_environment, method, payload, [this, request](const QJsonValue& result, const std::optional<QString>& error) {
+  m_client->call(this, m_environment, method, payload, [this, request, key](const QJsonValue& result, const std::optional<QString>& error) {
     if (request != m_request) return;
     const Facts before = facts();
     if (error) {
       // Asking again (reload, another turn) tries once more.
       m_loaded.clear();
+      const QString reason = error->isEmpty() ? QStringLiteral("Could not load the diff.") : *error;
+      if (m_model.fileCount() > 0 && key == m_shownKey) {
+        // A diff seen before stays on screen, named as possibly out of date
+        // (the panel's stale banner reads `message` while ready).
+        setStatus(QStringLiteral("ready"), reason);
+        tell(before);
+        return;
+      }
       m_patch.clear();
       m_lazy = false;
       m_sourceKey.clear();
       m_fileTotal = 0;
       m_model.clear();
-      setStatus(QStringLiteral("error"), error->isEmpty() ? QStringLiteral("Could not load the diff.") : *error);
+      setStatus(QStringLiteral("error"), reason);
       tell(before);
       return;
     }
@@ -383,6 +393,7 @@ void ThreadDiff::load() {
       setStatus(QStringLiteral("empty"), diff.trimmed().isEmpty() ? QStringLiteral("No net changes in this selection.")
                                                                   : QStringLiteral("No patch available for this selection."));
     } else {
+      m_shownKey = key;
       setStatus(QStringLiteral("ready"));
     }
     tell(before);
@@ -400,17 +411,25 @@ void ThreadDiff::loadReview(int selection) {
   if (selection == Branch && !m_baseRef.isEmpty()) payload.insert(QStringLiteral("baseRef"), m_baseRef);
   if (!m_quiet) setStatus(QStringLiteral("loading"), QStringLiteral("Loading changes..."));
   m_client->call(this, m_environment, QStringLiteral("review.getDiffPreview"), payload,
-                 [this, request, selection](const QJsonValue& result, const std::optional<QString>& error) {
+                 [this, request, selection, key](const QJsonValue& result, const std::optional<QString>& error) {
     if (request != m_request) return;
     const Facts before = facts();
     if (error) {
       m_loaded.clear();
+      const QString reason = error->isEmpty() ? QStringLiteral("Could not load the diff.") : *error;
+      if (m_model.fileCount() > 0 && key == m_shownKey) {
+        // A diff seen before stays on screen, named as possibly out of date
+        // (the panel's stale banner reads `message` while ready).
+        setStatus(QStringLiteral("ready"), reason);
+        tell(before);
+        return;
+      }
       m_patch.clear();
       m_sourceKey.clear();
       m_lazy = false;
       m_fileTotal = 0;
       m_model.clear();
-      setStatus(QStringLiteral("error"), error->isEmpty() ? QStringLiteral("Could not load the diff.") : *error);
+      setStatus(QStringLiteral("error"), reason);
       tell(before);
       return;
     }
@@ -445,6 +464,7 @@ void ThreadDiff::loadReview(int selection) {
       present();
     }
     if (m_model.fileCount() > 0) {
+      m_shownKey = key;
       setStatus(QStringLiteral("ready"));
     } else if (!found) {
       setStatus(QStringLiteral("empty"), QStringLiteral("No patch available for this selection."));
@@ -628,6 +648,46 @@ void ThreadDiff::present() {
     }
   }
   m_presented = m_focus;
+  if (m_focus.isEmpty()) applyViewed();
+}
+
+QString ThreadDiff::viewedKey() const {
+  const int selection = effectiveSelection();
+  return QStringLiteral("%1:%2 %3 %4").arg(m_environment, m_threadId).arg(selection).arg(selection == Branch ? m_baseRef : QString());
+}
+
+QStringList ThreadDiff::viewedPaths() const {
+  const QSet<QString> viewed = m_viewed.value(viewedKey());
+  QStringList paths(viewed.cbegin(), viewed.cend());
+  paths.sort();
+  return paths;
+}
+
+void ThreadDiff::applyViewed() {
+  for (const QString& path : viewedPaths()) {
+    const int file = m_model.fileOf(path);
+    if (file >= 0) m_model.setExpanded(file, false);
+  }
+}
+
+void ThreadDiff::setViewed(const QString& path, bool viewed) {
+  const int file = m_model.fileOf(path);
+  if (file < 0) return;
+  QSet<QString>& paths = m_viewed[viewedKey()];
+  if (viewed == paths.contains(path)) {
+    // The mark is already so; its collapse follows it either way.
+    m_model.setExpanded(file, !viewed);
+    return;
+  }
+  const Facts before = facts();
+  if (viewed) {
+    paths.insert(path);
+  } else {
+    paths.remove(path);
+  }
+  if (paths.isEmpty()) m_viewed.remove(viewedKey());
+  m_model.setExpanded(file, !viewed);
+  tell(before);
 }
 
 void ThreadDiff::focusFile(const QString& path) {
