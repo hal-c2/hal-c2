@@ -72,10 +72,11 @@ anything. The command is offered only for providers that appear under **Usage â†
 OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in
 the environment. HAL-C2 cannot report limits for external OpenCode servers because their credentials
 belong to the remote server. Cursor reports
-its monthly allowance, including separate Auto and API usage, using a file-based CLI login or
-`CURSOR_AUTH_TOKEN`. Cursor's default macOS keychain login does not currently report limits.
-On macOS, use `AGENT_CLI_CREDENTIAL_STORE=file` when signing in and in the provider's environment
-to use a file-based login.
+its monthly allowance, including separate Auto and API usage, for the account you signed in with
+(**Sign in with Cursor** or a `CURSOR_API_KEY`), as long as the instance uses Cursor's default API
+endpoint. Without either, it uses a file-based Cursor CLI login or `CURSOR_AUTH_TOKEN`. Cursor's
+default macOS keychain login does not report limits; on macOS, use `AGENT_CLI_CREDENTIAL_STORE=file`
+when signing in and in the provider's environment to use a file-based login.
 
 Grok reports the remaining subscription allowance and reset time for its current billing period
 after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication

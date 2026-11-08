@@ -188,6 +188,8 @@ defmodule HalC2.OrchestrationPropTest do
   #     when it starts it goes after every run that left the queue, with the runs still
   #     queued after it in queue order (`in_start_order/2`);
   #   queue: queued messages, first to start first;
+  #   recovery: %{msg, instance}, the limit stop the user chose to resume at its reset and
+  #     the agent the thread was on as they chose it, or nil;
   #   messages: msg -> %{text, run: the message whose run it joined, shown: in transcript,
   #     notice: the MC's own message to the agent}
   #   held_up: the thread whose last stop left a task held up, whose next commands favour it
@@ -853,21 +855,26 @@ defmodule HalC2.OrchestrationPropTest do
       else: update(state, tid, &%{&1 | instance: instance})
   end
 
-  # Resume at the reset: armed for the limit stop that is the thread's latest run.
+  # Resume at the reset: armed for the limit stop that is the thread's latest run, and
+  # for the agent the thread is on as the choice is made.
   defp step(state, _result, {:call, _, :recover, [tid]}) do
     case limited(state.threads[tid]) do
-      %{msg: msg} -> update(state, tid, &%{&1 | recovery: msg})
+      %{msg: msg} -> update(state, tid, &%{&1 | recovery: %{msg: msg, instance: &1.instance}})
       nil -> state
     end
   end
 
   # At the reset, a live thread armed for its current limit stop resumes the queue the
-  # stop held, or is sent a continuation (which completes) when it held none.
+  # stop held, or is sent a continuation (which completes) when it held none. A choice
+  # made for one agent waits while the thread is switched to another, and is carried
+  # out once it is back on that agent.
   defp step(state, _result, {:call, _, :sweep, []}) do
     threads =
       Map.new(state.threads, fn {tid, thread} ->
         case limited(thread) do
-          %{msg: msg} when thread.status == :live and thread.recovery == msg ->
+          %{msg: msg}
+          when thread.status == :live and
+                 thread.recovery == %{msg: msg, instance: thread.instance} ->
             {tid, recovered(thread, msg)}
 
           _ ->
