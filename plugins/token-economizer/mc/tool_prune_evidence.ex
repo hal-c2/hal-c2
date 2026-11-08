@@ -325,16 +325,14 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
 
   defp demote(state, _cfg), do: state
 
-  # `auto`: hold the proposal pending, from when it first waited. What rests only on
-  # imported turns waits for the person to apply it.
+  # `auto`: hold the proposal pending, from when it first waited. What rests on
+  # imported turns waits for the person to apply it: only live streaks count, as
+  # imported prompts of a conversation already counted add no imported session.
   defp hold(state, %{"mode" => "auto"} = cfg, now) do
     held =
       state
       |> proposal(cfg)
-      |> Enum.filter(fn tool ->
-        state["importedSessions"] == 0 or
-          enough?(state["liveStreaks"][tool], cfg, high_risk?(tool))
-      end)
+      |> Enum.filter(&enough?(state["liveStreaks"][&1], cfg, high_risk?(&1)))
 
     if held == [] do
       state
@@ -512,12 +510,16 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
   defp seeded_threads(_), do: %{}
 
   @doc """
-  What a thread's history, oldest first, still has to fold: `{watermark, runs}`, the
-  runs after the thread's watermark (`seeded_run/2`) that `mine?` keeps, and the
-  watermark past all of them, whoever's they were. A watermark not among them is
-  older than all of them (it names the last run folded), so all are new.
+  What a thread's history, oldest first, still has to fold as `run_id` starts:
+  `{watermark, runs}`, the runs after the thread's watermark (`seeded_run/2`) and
+  before `run_id` that `mine?` keeps, and the watermark past all of them, whoever's
+  they were. `run_id` and any after it are still to be heard live, though the feed
+  may deliver its start after it ended. A watermark not among them is older than all
+  of them (it names the last run folded), so all are new.
   """
-  def unseen_runs(history, watermark, mine?) do
+  def unseen_runs(history, watermark, run_id, mine?) do
+    history = Enum.take_while(history, &(&1["runId"] != run_id))
+
     new =
       case watermark && Enum.find_index(history, &(&1["runId"] == watermark)) do
         nil -> history

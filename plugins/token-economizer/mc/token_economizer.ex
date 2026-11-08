@@ -293,8 +293,10 @@ defmodule HalC2Plugins.TokenEconomizer do
     state
   end
 
-  # A new conversation: apply whatever `auto` held once the quiet has passed, then
-  # answer what it runs without, and remember what it had loaded for its evidence.
+  # A new conversation: read back what the thread ran while the plugin was not
+  # running, so a tool it used then is not denied now, apply whatever `auto` held once
+  # the quiet has passed, then answer what it runs without, and remember what it had
+  # loaded for its evidence.
   defp shape(state, run) do
     unit = run["toolUnit"] || Prune.unit_for_provider(run["provider"])
     project = {run["projectId"], run["provider"]}
@@ -302,6 +304,7 @@ defmodule HalC2Plugins.TokenEconomizer do
     if unit in ["tool", "capability"] and is_binary(run["projectId"]) and
          is_binary(run["provider"]) do
       cfg = prune_cfg(state)
+      state = seed_history(state, run["threadId"], run["runId"], project, unit)
       {prune, state} = prune(state, project, unit)
       {prune, applied} = Prune.apply_pending(prune, cfg, now_s(), active?(state, project))
       state = put_prune(state, project, prune, applied != [])
@@ -400,7 +403,7 @@ defmodule HalC2Plugins.TokenEconomizer do
     if unit == nil or not is_binary(event["projectId"]) do
       state
     else
-      state = seed_history(state, thread_id, project, unit)
+      state = seed_history(state, thread_id, event["runId"], project, unit)
       {prune, state} = prune(state, project, unit)
       state = touch(state, project, prune)
       new? = event["newConversation"] == true
@@ -583,9 +586,10 @@ defmodule HalC2Plugins.TokenEconomizer do
   # their prompts as evidence `auto` alone does not act on. Read once per thread and
   # provider, and only the runs after the last already folded for the thread
   # (`Prune.note_thread/3`'s watermark, advanced as each live segment folds), so a
-  # restart never folds a turn twice nor loses one heard but not yet folded. Only the provider's own runs count: a thread's
-  # runs on another are that provider's evidence.
-  defp seed_history(state, thread_id, {_, provider} = project, unit) do
+  # restart never folds a turn twice nor loses one heard but not yet folded. Only the
+  # provider's own runs count: a thread's runs on another are that provider's evidence.
+  # Read as `run_id` starts, and only the runs before it.
+  defp seed_history(state, thread_id, run_id, {_, provider} = project, unit) do
     if MapSet.member?(state.seeded, {thread_id, project}) do
       state
     else
@@ -594,7 +598,9 @@ defmodule HalC2Plugins.TokenEconomizer do
       drivers = instance_drivers()
 
       {watermark, runs} =
-        Prune.unseen_runs(history(thread_id), Prune.seeded_run(prune, thread_id), fn run ->
+        thread_id
+        |> history()
+        |> Prune.unseen_runs(Prune.seeded_run(prune, thread_id), run_id, fn run ->
           run["instanceId"] == nil or drivers[run["instanceId"]] == provider
         end)
 

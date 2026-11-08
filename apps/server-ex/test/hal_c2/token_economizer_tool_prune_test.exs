@@ -268,6 +268,17 @@ defmodule HalC2.TokenEconomizerToolPruneTest do
     assert "Workflow" in state["pending"]["items"]
   end
 
+  test "imported prompts of a conversation already counted are no live evidence auto acts on" do
+    auto = cfg(%{"toolPrune" => "auto"})
+    live = &segment(&1, 1, [], auto, thread: &2)
+    state = Prune.new("tool") |> live.("a") |> live.("b")
+    state = segment(state, 20, [], auto, imported: true, thread: "a")
+
+    assert state["importedSessions"] == 0
+    assert "Workflow" in Prune.proposal(state, auto)
+    assert state["pending"] == nil
+  end
+
   test "codex proposes the packages it never saw used, after the full evidence" do
     propose = cfg(%{"toolPrune" => "propose"})
     state = Prune.new("capability")
@@ -371,13 +382,18 @@ defmodule HalC2.TokenEconomizerToolPruneTest do
     claude? = &(&1["instanceId"] in [nil, "claudeAgent"])
 
     # The watermark is a Codex run: the Claude runs before it are not folded again.
-    assert {"d", [%{"runId" => "d"}]} = Prune.unseen_runs(runs, "c", claude?)
-    assert {"d", [%{"runId" => "b"}, %{"runId" => "d"}]} = Prune.unseen_runs(runs, nil, claude?)
+    assert {"d", [%{"runId" => "d"}]} = Prune.unseen_runs(runs, "c", nil, claude?)
+
+    assert {"d", [%{"runId" => "b"}, %{"runId" => "d"}]} =
+             Prune.unseen_runs(runs, nil, nil, claude?)
+
     # One no longer read back is older than all of them.
-    assert {"d", [_, _]} = Prune.unseen_runs(runs, "gone", claude?)
+    assert {"d", [_, _]} = Prune.unseen_runs(runs, "gone", nil, claude?)
     # Nothing new keeps the watermark, and nothing of the provider's still moves it.
-    assert {"d", []} = Prune.unseen_runs(runs, "d", claude?)
-    assert {"c", []} = Prune.unseen_runs(Enum.take(runs, 3), "b", claude?)
+    assert {"d", []} = Prune.unseen_runs(runs, "d", nil, claude?)
+    assert {"c", []} = Prune.unseen_runs(Enum.take(runs, 3), "b", nil, claude?)
+    # The run starting, heard after it ended, and any after it are still to be heard.
+    assert {"b", [%{"runId" => "b"}]} = Prune.unseen_runs(runs, nil, "c", claude?)
   end
 
   test "a conversation counts as one session however many idle segments it folds" do
