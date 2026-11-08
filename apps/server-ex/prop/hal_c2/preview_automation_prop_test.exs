@@ -52,12 +52,15 @@ defmodule HalC2.PreviewAutomationPropTest do
     forall cmds <- commands(__MODULE__) do
       trap_exit do
         HalC2.Prop.scratch_home("preview-automation")
+        # The tab limits have their own property; here they never bind.
+        Application.put_env(:hal_c2, :preview_tab_limits, session: 1000, mc: 1000)
         HalC2.Prop.start_services([HalC2.Preview, PreviewAutomation])
         Process.put(:connections, %{})
         Process.put(:made, %{})
         Enum.each(@hosts, &register/1)
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
+        Application.delete_env(:hal_c2, :preview_tab_limits)
         flush()
 
         (result == :ok)

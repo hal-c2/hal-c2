@@ -29,6 +29,13 @@ defmodule HalC2.PreviewAutomation do
   being dropped, and lives in memory like the tabs themselves: an MC restart
   forgets both.
 
+  An agent session keeps at most 8 tabs of its own open, and agents 32 across
+  the MC, counting opens on their way. At the MC's limit an open closes the
+  agent tab idle longest, if one has gone 30 minutes without an action and no
+  host shows it or reports a person using it; otherwise the open is refused.
+  The limits are `config :hal_c2, :preview_tab_limits` (`session`, `mc`,
+  `idle_ms`).
+
   A request unanswered within its timeout drops that host's connection, whose
   stream then ends so the desktop registers again; actions are never replayed.
   A host that registers again under the same client id replaces its old
@@ -39,6 +46,7 @@ defmodule HalC2.PreviewAutomation do
 
   @v1_operations ~w(status open navigate snapshot click type press scroll evaluate waitFor recordingStart recordingStop)
   @default_timeout 15_000
+  @tab_limits %{session: 8, mc: 32, idle_ms: 30 * 60_000}
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -120,6 +128,13 @@ defmodule HalC2.PreviewAutomation do
             "There is no browser profile named \"#{error["profile"]}\". Use one of: #{Enum.join(names, ", ")}."
         end
 
+      "PreviewAutomationTabLimitError" ->
+        if error["within"] == "session",
+          do:
+            "This agent session already has #{error["limit"]} preview tabs open; close one with preview_close before opening another.",
+          else:
+            "#{error["limit"]} agent preview tabs are open across HAL-C2; close one with preview_close before opening another."
+
       "PreviewAutomationTabNotFoundError" ->
         if error["tabId"],
           do: "Preview tab #{error["tabId"]} was not found for #{op}.",
@@ -152,7 +167,16 @@ defmodule HalC2.PreviewAutomation do
 
   @impl true
   def init(nil) do
-    {:ok, %{clients: %{}, assignments: %{}, owners: %{}, pending: %{}, seq: 0, focus_seq: 0}}
+    {:ok,
+     %{
+       clients: %{},
+       assignments: %{},
+       owners: %{},
+       used: %{},
+       pending: %{},
+       seq: 0,
+       focus_seq: 0
+     }}
   end
 
   # An older broker kept the tabs a session opened on its assignment.
@@ -164,7 +188,9 @@ defmodule HalC2.PreviewAutomation do
     assignments = Map.new(state.assignments, fn {key, a} -> {key, Map.delete(a, :opened)} end)
 
     {:ok,
-     %{state | assignments: assignments} |> Map.update(:owners, owners, &Map.merge(owners, &1))}
+     %{state | assignments: assignments}
+     |> Map.update(:owners, owners, &Map.merge(owners, &1))
+     |> Map.put_new(:used, %{})}
   end
 
   @impl true
@@ -257,7 +283,10 @@ defmodule HalC2.PreviewAutomation do
           route(state, operation, profile, opts)
       end
 
-    case host do
+    makes_tab = makes_tab?(operation, opts, input, tab)
+    room = host && tab_room(state, key, operation, makes_tab)
+
+    case room do
       nil ->
         {:reply, {:error, no_host(scope, operation)},
          %{
@@ -266,7 +295,11 @@ defmodule HalC2.PreviewAutomation do
                if(assigned, do: state.assignments, else: Map.delete(state.assignments, key))
          }}
 
-      {client_id, client} ->
+      {:error, error} ->
+        {:reply, {:error, error}, state}
+
+      {:ok, state} ->
+        {client_id, client} = host
         timeout = opts[:timeout_ms] || @default_timeout
         request_id = "preview-#{state.seq}"
         tab_id = opts[:tab_id] || tab || shown_tab(client, scope.thread_id, operation)
@@ -314,6 +347,7 @@ defmodule HalC2.PreviewAutomation do
           explicit_tab: opts[:tab_id],
           tab: tab_id,
           tabs_before: tabs_before,
+          makes_tab: makes_tab,
           update_tab: Keyword.get(opts, :update_current_tab, true),
           timer: Process.send_after(self(), {:timeout, request_id}, timeout)
         }
@@ -331,14 +365,15 @@ defmodule HalC2.PreviewAutomation do
            | pending: Map.put(state.pending, request_id, pending),
              assignments: Map.put(state.assignments, key, assignment),
              seq: state.seq + 1
-         }}
+         }
+         |> then(&if(makes_tab, do: &1, else: touch(&1, tab_id)))}
     end
   end
 
   @impl true
   def handle_cast({:forget_tab, scope, tab_id}, state) do
     if state.owners[tab_id] == {scope.thread_id, scope.instance},
-      do: {:noreply, %{state | owners: Map.delete(state.owners, tab_id)}},
+      do: {:noreply, drop_owned(state, [tab_id])},
       else: {:noreply, state}
   end
 
@@ -666,12 +701,10 @@ defmodule HalC2.PreviewAutomation do
             th == thread and not MapSet.member?(now, t)
           end)
 
-        owners =
-          if MapSet.member?(now, tab) and not MapSet.member?(before, tab),
-            do: Map.put_new(owners, tab, pending.key),
-            else: owners
-
-        %{state | owners: owners}
+        claimed = MapSet.member?(now, tab) and not MapSet.member?(before, tab)
+        owners = if claimed, do: Map.put_new(owners, tab, pending.key), else: owners
+        state = %{state | owners: owners}
+        if claimed and owners[tab] == pending.key, do: touch(state, tab), else: state
 
       :error ->
         state
@@ -679,6 +712,128 @@ defmodule HalC2.PreviewAutomation do
   end
 
   defp claim_tab(state, _pending, _result), do: state
+
+  # An open makes a tab when it names none and has no current tab to reuse, or
+  # asks for another.
+  defp makes_tab?("open", opts, input, tab),
+    do: opts[:tab_id] == nil and (tab == nil or input["reuseExistingTab"] == false)
+
+  defp makes_tab?(_operation, _opts, _input, _tab), do: false
+
+  # Whether an open that makes a tab fits the limits, counting the agent tabs
+  # still open and the opens on their way: `{:ok, state}`, having closed an
+  # idle tab to make room at the MC's limit, or the refusal.
+  defp tab_room(state, _key, _operation, false), do: {:ok, state}
+
+  defp tab_room(state, {thread, instance} = key, operation, true) do
+    limits = tab_limits()
+    state = prune_owners(state)
+    making = for {_, %{makes_tab: true} = p} <- state.pending, do: p.key
+    mine = Enum.count(state.owners, &(elem(&1, 1) == key)) + Enum.count(making, &(&1 == key))
+
+    fields = %{"operation" => operation, "threadId" => thread, "providerInstanceId" => instance}
+
+    cond do
+      mine >= limits.session ->
+        {:error, tagged("PreviewAutomationTabLimitError", tab_limit(fields, "session", limits))}
+
+      map_size(state.owners) + length(making) < limits.mc ->
+        {:ok, state}
+
+      idle = idle_tab(state, limits.idle_ms) ->
+        {owner_thread, _} = state.owners[idle]
+        HalC2.Preview.close(%{"threadId" => owner_thread, "tabId" => idle})
+        {:ok, drop_owned(state, [idle])}
+
+      true ->
+        {:error, tagged("PreviewAutomationTabLimitError", tab_limit(fields, "mc", limits))}
+    end
+  catch
+    :exit, _ -> {:ok, state}
+  end
+
+  defp tab_limit(fields, within, limits),
+    do:
+      Map.merge(fields, %{
+        "within" => within,
+        "limit" => Map.fetch!(limits, String.to_atom(within))
+      })
+
+  defp tab_limits,
+    do: Map.merge(@tab_limits, Map.new(Application.get_env(:hal_c2, :preview_tab_limits, [])))
+
+  # Forgets the agent tabs since closed, a thread at a time.
+  defp prune_owners(state) do
+    gone =
+      state.owners
+      |> Enum.group_by(fn {_tab, {thread, _}} -> thread end, &elem(&1, 0))
+      |> Enum.flat_map(fn {thread, tabs} ->
+        case thread_tabs(thread) do
+          {:ok, now} -> Enum.reject(tabs, &MapSet.member?(now, &1))
+          :error -> []
+        end
+      end)
+
+    drop_owned(state, gone)
+  end
+
+  # The agent tab idle longest, past `idle_ms`, that no host shows, no person
+  # uses and no action is running on; nil if none.
+  defp idle_tab(state, idle_ms) do
+    now = System.monotonic_time(:millisecond)
+    clients = Map.values(state.clients)
+
+    busy =
+      for(
+        c <- clients,
+        set <- [tab_set(c, :visible_tabs), tab_set(c, :controlled_tabs)],
+        tab <- set,
+        do: tab
+      )
+      |> Enum.concat(
+        for {_, p} <- state.pending, not Map.get(p, :makes_tab, false), do: pending_tab(state, p)
+      )
+      |> MapSet.new()
+
+    used = Map.get(state, :used, %{})
+
+    state.owners
+    |> Map.keys()
+    |> Enum.filter(fn tab ->
+      case used[tab] do
+        {at, _} -> now - at > idle_ms and not MapSet.member?(busy, tab)
+        _ -> false
+      end
+    end)
+    |> Enum.min_by(&used[&1], fn -> nil end)
+  end
+
+  # When an agent tab was last opened or acted on, in order within a millisecond.
+  defp touch(state, tab) do
+    at = {System.monotonic_time(:millisecond), System.unique_integer([:monotonic])}
+
+    if Map.has_key?(state.owners, tab),
+      do: put_in(state, [:used, tab], at),
+      else: state
+  end
+
+  # Tabs that are no longer an agent's: their owner and idle time go, and a
+  # session whose current tab one was has none.
+  defp drop_owned(state, []), do: state
+
+  defp drop_owned(state, tabs) do
+    assignments =
+      Map.new(state.assignments, fn {key, a} ->
+        {key, if(a.tab_id in tabs, do: %{a | tab_id: nil}, else: a)}
+      end)
+
+    %{
+      state
+      | owners: Map.drop(state.owners, tabs),
+        used: Map.drop(Map.get(state, :used, %{}), tabs),
+        assignments: assignments
+    }
+  end
 
   # A failed open closes the tabs it made, so the agent is not left a hidden
   # tab it never heard of: those absent before and present now that no open

@@ -1219,6 +1219,119 @@ defmodule HalC2.Steps.Preview.Automation do
     context
   end
 
+  # --- tab limits ----------------------------------------------------------------------------
+
+  step "an agent has {int} browser tabs open", %{args: [n]} = context do
+    context = context |> agent_thread() |> connect_desktop("desktop-1") |> desktop_makes_tabs()
+    Enum.reduce(1..n, context, fn _, context -> new_tab(context) end)
+  end
+
+  step "the agent opens two more tabs at the same moment", context do
+    context = hold_tool(context, "preview_open", new_tab_args(), "open")
+    scope = caller(context)
+    other = Task.async(fn -> HalC2.Mcp.Tools.call("preview_open", new_tab_args(), scope) end)
+    second = Task.await(other, 20_000)
+    context = finish(context)
+    Map.put(context, :results, [context.result, second])
+  end
+
+  step "one tab opens and the other is refused for the tab limit", context do
+    assert [{:ok, %{"tabId" => _}}, {:error, "PreviewAutomationTabLimitError", message}] =
+             context.results
+
+    assert message =~ "already has 8 preview tabs open"
+    assert length(agent_tabs(context)) == 8
+    context
+  end
+
+  step "no more than {int} agent tabs are open across the MC", %{args: [n]} = context do
+    assert map_size(broker().owners) <= n
+    context
+  end
+
+  step "an agent opens a tab and the browser fails to launch it", context do
+    context = context |> agent_thread() |> connect_desktop("desktop-1") |> desktop_makes_tabs()
+    made = context.answers["open"]
+
+    context
+    |> answer("open", fn request, context ->
+      {:ok, %{"tabId" => tab}} = made.(request, context)
+
+      {:error,
+       %{
+         "_tag" => "PreviewAutomationExecutionError",
+         "message" => "The browser failed to launch the tab #{tab}."
+       }}
+    end)
+    |> tool("preview_open", new_tab_args())
+  end
+
+  step "the open fails", context do
+    assert {:error, _tag, message} = context.result
+    assert message =~ "failed to launch"
+    context
+  end
+
+  # Room for the whole limit afterwards shows the failed open took none of it.
+  step "the tab is not listed and does not count toward the tab limit", context do
+    assert agent_tabs(context) == []
+    context = context |> desktop_makes_tabs()
+    context = Enum.reduce(1..8, context, fn _, context -> new_tab(context) end)
+    assert length(agent_tabs(context)) == 8
+    context = tool(context, "preview_open", new_tab_args())
+    assert {:error, "PreviewAutomationTabLimitError", _} = context.result
+    context
+  end
+
+  step "{int} agent tabs are open across the MC and the newest agent has fewer than {int}",
+       %{args: [n, per]} = context do
+    context = context |> agent_thread() |> connect_desktop("desktop-1") |> desktop_makes_tabs()
+
+    context =
+      for session <- 1..div(n, per), _ <- 1..per, reduce: context do
+        context -> context |> Map.put(:agent_instance, "agent-#{session}") |> new_tab()
+      end
+
+    assert map_size(broker().owners) == n
+    Map.put(context, :agent_instance, "agent-new")
+  end
+
+  step ~r/^the longest idle agent tab, idle for over (?<minutes>\d+) minutes, (?<state>.+)$/,
+       %{args: [minutes, state]} = context do
+    case state do
+      "is hidden and agent-owned" ->
+        Map.put(context, :idle, idle_agent_tab(String.to_integer(minutes)))
+
+      "is shown to the user" ->
+        tab = idle_agent_tab(String.to_integer(minutes))
+        context |> report_tabs("desktop-1", %{"visibleTabIds" => [tab]}) |> Map.put(:idle, tab)
+
+      "is the user's own" ->
+        {:ok, %{"tabId" => tab}} = HalC2.Preview.open(%{"threadId" => context.agent_thread})
+        Map.put(context, :idle, tab)
+    end
+  end
+
+  step "the newest agent opens a tab", context do
+    tool(context, "preview_open", new_tab_args())
+  end
+
+  step "that tab is closed and the new tab opens", context do
+    assert {:ok, %{"tabId" => tab}} = context.result
+    tabs = all_tabs(context)
+    assert tab in tabs
+    refute context.idle in tabs
+    assert map_size(broker().owners) == 32
+    context
+  end
+
+  step "that tab stays and the open is refused for the tab limit", context do
+    assert {:error, "PreviewAutomationTabLimitError", message} = context.result
+    assert message =~ "32 agent preview tabs are open across HAL-C2"
+    assert context.idle in all_tabs(context)
+    context
+  end
+
   # --- a failed first load -------------------------------------------------------------------
 
   # Until it starts, the desktop makes the new tab and then answers that its
@@ -1572,8 +1685,10 @@ defmodule HalC2.Steps.Preview.Automation do
         %{"threadId" => request["threadId"], "url" => @page}
         |> Map.merge(Map.take(request["input"] || %{}, ["profileId"]))
 
+      reuse = request["tabIdExplicit"] or request["input"]["reuseExistingTab"] != false
+
       tab =
-        request["tabId"] ||
+        (reuse && request["tabId"]) ||
           then(HalC2.Preview.open(open), fn {:ok, snapshot} -> snapshot["tabId"] end)
 
       {:ok, %{"tabId" => tab, "done" => "open"}}
@@ -1822,6 +1937,52 @@ defmodule HalC2.Steps.Preview.Automation do
       Mc.rpc(desktop.client, context.mc.environment, id, "previewAutomation.respond", payload)
 
     put_in(context, [:desktops, name, :client], client)
+  end
+
+  defp new_tab_args, do: %{"url" => @page, "reuseExistingTab" => false}
+
+  defp new_tab(context) do
+    context = tool(context, "preview_open", new_tab_args())
+    assert {:ok, %{"tabId" => _}} = context.result
+    context
+  end
+
+  # The thread's tabs the agent session opened.
+  defp agent_tabs(context) do
+    scope = caller(context)
+
+    for tab <- all_tabs(context),
+        HalC2.PreviewAutomation.tab_ownership(scope, tab) == :own,
+        do: tab
+  end
+
+  defp all_tabs(context) do
+    {:ok, listed} = HalC2.Preview.list(%{"threadId" => caller(context).thread_id})
+    Enum.map(listed["sessions"], & &1["tabId"])
+  end
+
+  # The agent tab used first, last used `minutes` and a bit ago.
+  defp idle_agent_tab(minutes) do
+    {tab, _} = Enum.min_by(broker().used, &elem(&1, 1))
+    ago = (minutes + 1) * 60_000
+
+    :sys.replace_state(HalC2.PreviewAutomation, fn state ->
+      update_in(state, [:used, tab], fn {at, seq} -> {at - ago, seq} end)
+    end)
+
+    tab
+  end
+
+  # Like `hold`, for any tool call.
+  defp hold_tool(context, tool, args, operation) do
+    context = default_desktop(context)
+    scope = caller(context)
+    task = Task.async(fn -> HalC2.Mcp.Tools.call(tool, args, scope) end)
+
+    case loop(Map.put(context, :task, task), &(&1["operation"] == operation)) do
+      %{held: _} = context -> context
+      context -> flunk("the call finished without waiting: #{inspect(context.result)}")
+    end
   end
 
   defp requests(context, operation),

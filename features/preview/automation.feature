@@ -855,7 +855,7 @@ Feature: Agents drive the preview browser
       Then the tab is gone for every client
 
     # Upstream #25028: concurrent opens could pass the tab limits, and a failed launch left a session behind.
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario: Opens racing each other stay within the agent's tab limit
       Given an agent has 7 browser tabs open
       When the agent opens two more tabs at the same moment
@@ -863,7 +863,7 @@ Feature: Agents drive the preview browser
       And no more than 32 agent tabs are open across the MC
 
     # Upstream #25028
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario: A browser tab that fails to launch leaves nothing behind
       When an agent opens a tab and the browser fails to launch it
       Then the open fails
@@ -879,7 +879,7 @@ Feature: Agents drive the preview browser
 
     # Upstream #24186: with every slot held by idle agent tabs, a new agent's open was refused until
     # tabs were closed by hand or the app restarted.
-    @backlog @mc @desktop
+    @mc @desktop @backlog-desktop
     Scenario Outline: An agent's open at the 32-tab limit reclaims the longest idle agent tab nobody sees
       Given 32 agent tabs are open across the MC and the newest agent has fewer than 8
       And the longest idle agent tab, idle for over 30 minutes, <state>

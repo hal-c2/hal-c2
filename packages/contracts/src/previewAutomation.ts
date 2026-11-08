@@ -997,6 +997,21 @@ export class PreviewAutomationTabInUseError extends Schema.TaggedError<PreviewAu
   }
 }
 
+export class PreviewAutomationTabLimitError extends Schema.TaggedError<PreviewAutomationTabLimitError>()(
+  "PreviewAutomationTabLimitError",
+  {
+    ...PreviewAutomationScopeErrorFields,
+    within: Schema.Literals(["session", "mc"]),
+    limit: Schema.Int,
+  },
+) {
+  override get message(): string {
+    return this.within === "session"
+      ? `This agent session already has ${this.limit} preview tabs open; close one with preview_close before opening another.`
+      : `${this.limit} agent preview tabs are open across HAL-C2; close one with preview_close before opening another.`;
+  }
+}
+
 export class PreviewAutomationUnknownProfileError extends Schema.TaggedError<PreviewAutomationUnknownProfileError>()(
   "PreviewAutomationUnknownProfileError",
   {
@@ -1015,6 +1030,7 @@ export class PreviewAutomationUnknownProfileError extends Schema.TaggedError<Pre
 export const PreviewAutomationError = Schema.Union([
   PreviewAutomationTabOtherAgentError,
   PreviewAutomationTabInUseError,
+  PreviewAutomationTabLimitError,
   PreviewAutomationUnknownProfileError,
   PreviewAutomationRecordingTransferError,
   PreviewAutomationRecordingDesktopUpdateRequiredError,
