@@ -294,6 +294,18 @@ const Steps steps([] {
     expect(rows(world).isEmpty() && recent(world).isEmpty(), describeRows(world));
     expect(history(world).pages(projectKey(world)).isEmpty(), QStringLiteral("the device still keeps the page"));
   });
+  step(QStringLiteral("%1 is visited again on an MC whose clock is behind this device's").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The MC stamps the load just after the scenario's now, weeks before this device's clock.
+    world.mc.part<Visits>().clock = world.now().toMSecsSinceEpoch();
+    expect(world.now().toMSecsSinceEpoch() < QDateTime::currentMSecsSinceEpoch(), QStringLiteral("the MC's clock is not behind this device's"));
+    load(world, kThread, c[0]);
+  });
+  step(QStringLiteral("a new tab lists %1 again").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return history(world).pages(projectKey(world)).value(0).url == c[0]; }, [&] { return show(history(world).toVariant()); });
+    openNewTab(world);
+    startPage(world);
+    world.waitFor([&] { return rowFor(world, c[0]).has_value(); }, [&] { return describeRows(world); });
+  });
   step(QStringLiteral("the project configures %1 and %1 as preview addresses").arg(q), [](World& world, const Captures& c, const Table&) {
     QJsonArray scripts;
     for (const QString& url : {c[0], c[1]}) {

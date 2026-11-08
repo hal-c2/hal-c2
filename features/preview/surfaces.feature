@@ -1966,6 +1966,8 @@ Feature: In-app preview browser
       When the user removes "http://localhost:5173" from the recent pages
       Then the page is no longer listed
       And it does not come back when the user opens another new tab
+      When "http://localhost:5173" is visited again on an MC whose clock is behind this device's
+      Then a new tab lists "http://localhost:5173" again
 
     # Dropped: contradicts the passing "A new browser tab offers local servers and recent pages"
     # (apps/desktop-qt/src/native/ThreadPreviews.h maxRecents = 10). The web's empty state showed
