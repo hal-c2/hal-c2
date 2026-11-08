@@ -321,6 +321,9 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert one["provider"] == "codex"
     assert %{"usedTokens" => 1000} = one["tokenUsage"]
     assert %{"usedTokens" => 2000} = two["tokenUsage"]
+    # A turn's usage carries its time, as the contract has it; Codex's report has none.
+    assert two["tokenUsage"]["updatedAt"] == two["completedAt"]
+    assert is_binary(finished["tokenUsage"]["updatedAt"])
     assert Enum.any?(one["items"], &(&1["itemType"] == "file_change"))
   end
 

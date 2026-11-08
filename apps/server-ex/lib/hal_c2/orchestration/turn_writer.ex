@@ -894,7 +894,9 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   # A provider that reports the context's usage on its provider thread alone (Codex,
   # ACP) leaves its turn the report the turn ended with: what reads the turn later (a
-  # plugin's `HalC2.Plugins.Host.history/2`) gets what plugins heard as it ended.
+  # plugin's `HalC2.Plugins.Host.history/2`) gets what plugins heard as it ended. Those
+  # reports carry no time, which a turn's usage must (`OrchestrationV2ProviderTurnTokenUsage`):
+  # it is stamped with the turn's end.
   defp with_usage(stream, ids, done) do
     with %{} = turn <- StreamState.get(stream, "provider-turn")[ids.provider_turn],
          nil <- turn["tokenUsage"],
@@ -902,7 +904,7 @@ defmodule HalC2.Orchestration.TurnWriter do
            (StreamState.get(stream, "provider-thread")[ids[:provider_thread]] || %{})[
              "contextUsage"
            ] do
-      Map.put(done, "tokenUsage", usage)
+      Map.put(done, "tokenUsage", Map.put_new(usage, "updatedAt", done["completedAt"]))
     else
       _ -> done
     end
