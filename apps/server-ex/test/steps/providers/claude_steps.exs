@@ -2337,16 +2337,24 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   step "the user compacts the thread", context do
-    context = World.post_message(context, @thread, "/compact")
+    # A Cursor thread on the AcpFixtures world (features/providers/cursor.feature)
+    # compacts the same way, through its own launch helpers.
+    if context[:cursor_world] do
+      ctx = HalC2.Test.AcpFixtures.follow_up(context, "Cursor", "/compact")
+      HalC2.Test.AcpFixtures.await_runs(ctx.threads["Cursor"], 2)
+      ctx
+    else
+      context = World.post_message(context, @thread, "/compact")
 
-    World.await_value(context, @thread, fn state ->
-      runs = StreamState.list(state, "run")
+      World.await_value(context, @thread, fn state ->
+        runs = StreamState.list(state, "run")
 
-      length(runs) >= 2 and Enum.all?(runs, &(&1["status"] in ["completed", "failed"])) and
-        Enum.any?(StreamState.list(state, "turn-item"), &(&1["type"] == "compaction"))
-    end)
+        length(runs) >= 2 and Enum.all?(runs, &(&1["status"] in ["completed", "failed"])) and
+          Enum.any?(StreamState.list(state, "turn-item"), &(&1["type"] == "compaction"))
+      end)
 
-    context
+      context
+    end
   end
 
   step "the turn completes once, after the real compaction", context do
@@ -7641,9 +7649,17 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # Codex's "a new Codex app-server is started" names the thread whose turn ran.
   step "the turn runs", context do
-    World.await_runs(context, @thread, ["completed"])
-    assert "Hello from claude" in World.replies(context, @thread)
+    case context[:turn_thread] do
+      nil ->
+        World.await_runs(context, @thread, ["completed"])
+        assert "Hello from claude" in World.replies(context, @thread)
+
+      title ->
+        assert "Hello from codex" in World.replies(context, title)
+    end
+
     context
   end
 

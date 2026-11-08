@@ -312,7 +312,7 @@ for line in sys.stdin:
             open(AUTH_FILE, "w").write("signed in")
             send({"id": authenticating, "result": {}})
         else:
-            send({"id": authenticating, "error": {"code": -32000, "message": "declined"}})
+            send({"id": authenticating, "error": {"code": -32000, "message": (open(AUTH_FILE + ".decline").read() if os.path.exists(AUTH_FILE + ".decline") else "declined")}})
         continue
     if method == "authenticate":
         authenticating = mid
@@ -439,6 +439,16 @@ for line in sys.stdin:
                     "rawInput": {"plan": "# Plan\n\n1. Add the form"}}
             update(sid, dict(call, sessionUpdate="tool_call", status="pending"))
             update(sid, dict(call, sessionUpdate="tool_call_update", status="completed"))
+            finish_turn(mid, sid)
+        elif "run a failing command" in text:
+            # A shell command the agent reports completed, with its non-zero exit
+            # only in the raw output: the MC decides what that says about the tool.
+            update(sid, {"sessionUpdate": "tool_call", "toolCallId": "sh-fail", "title": "make test",
+                         "kind": "execute", "status": "in_progress", "rawInput": {"command": "make test"}})
+            update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "sh-fail", "status": "completed",
+                         "kind": "execute", "title": "make test", "rawInput": {"command": "make test"},
+                         "content": [{"type": "content", "content": {"type": "text", "text": "boom\n"}}],
+                         "rawOutput": {"output": "boom\n", "exitCode": 1}})
             finish_turn(mid, sid)
         elif "hand it to a subagent" in text:
             # The agent's task tool: a subagent it runs to the end inside the turn.
