@@ -616,14 +616,22 @@ defmodule HalC2.Steps.SourceControl.PullRequestActions do
     Map.merge(context, %{pr_head: head, pr_host: host})
   end
 
-  # `ssh -G <alias>` answers from `aliases/<alias>` of the fake remotes (test/support/mc.ex).
+  # `ssh -G <alias>` answers from the scenario's own fake `ssh` rules (on its PATH), never a
+  # global `:ssh_command`, which concurrent scenarios would share.
   step ~r/^the checkout's "(?<repository>[^"]+)" is reached as the (?<userless>userless|user-named) ssh alias "(?<alias>[^"]+)" for github.com$/,
        %{args: [repository, userless, alias_name]} = context do
     context = World.github_project(context, repository)
     root = World.project(context, repository).root
-    aliases = Path.join(System.get_env("HAL_C2_FAKE_REMOTES"), "aliases")
-    File.mkdir_p!(aliases)
-    File.write!(Path.join(aliases, alias_name), "github.com\n")
+
+    context =
+      context
+      |> World.fake_cli(["ssh"])
+      |> World.cli_rules(%{
+        "cmd" => "ssh",
+        "args" => ["-G", alias_name],
+        "stdout" => "hostname github.com\n"
+      })
+
     user = if userless == "user-named", do: "git@", else: ""
     World.git!(root, ["remote", "set-url", "origin", "#{user}#{alias_name}:#{repository}.git"])
 
