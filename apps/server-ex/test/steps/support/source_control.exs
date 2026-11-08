@@ -252,6 +252,11 @@ defmodule HalC2.Steps.SourceControl.Shared do
     context |> Map.update!(:pr_fields, &Map.merge(&1, fields)) |> answer_pr()
   end
 
+  @doc "Merges GitHub repository `fields` (GraphQL names, such as `autoMergeAllowed`) into the detail read's answer."
+  def reshape_repository(context, fields) do
+    context |> Map.update(:pr_repository_fields, fields, &Map.merge(&1, fields)) |> answer_pr()
+  end
+
   @doc """
   Answers GitHub's permission read (every action makes it first) and detail read for
   the pull request as `context.pr_fields` and `context.permission` now describe it.
@@ -310,20 +315,22 @@ defmodule HalC2.Steps.SourceControl.Shared do
       )
       |> Map.put("viewerCanUpdate", can_update)
 
+    repository =
+      Map.merge(
+        %{
+          "mergeCommitAllowed" => true,
+          "squashMergeAllowed" => true,
+          "rebaseMergeAllowed" => true,
+          "autoMergeAllowed" => true,
+          "viewerPermission" => context.permission
+        },
+        context[:pr_repository_fields] || %{}
+      )
+
     %{
       "args" => ["api graphql"],
       "stdin" => ["viewerCanUpdateBranch"],
-      "stdout" => %{
-        "data" => %{
-          "repository" => %{
-            "mergeCommitAllowed" => true,
-            "squashMergeAllowed" => true,
-            "rebaseMergeAllowed" => true,
-            "viewerPermission" => context.permission,
-            "pullRequest" => pr
-          }
-        }
-      }
+      "stdout" => %{"data" => %{"repository" => Map.put(repository, "pullRequest", pr)}}
     }
   end
 

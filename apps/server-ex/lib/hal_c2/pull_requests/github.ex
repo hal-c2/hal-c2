@@ -70,9 +70,9 @@ defmodule HalC2.PullRequests.GitHub do
   @core_query """
   query($owner: String!, $name: String!, $number: Int!, $headRef: String!) {
     repository(owner: $owner, name: $name) {
-      mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission
+      mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed viewerPermission
       pullRequest(number: $number) {
-        number title url body state isDraft mergeable reviewDecision
+        number title url body state isDraft mergeable mergeStateStatus reviewDecision
         additions deletions changedFiles createdAt updatedAt mergedAt closedAt
         headRefName baseRefName headRefOid isCrossRepository
         headRepositoryOwner { login }
@@ -1139,6 +1139,7 @@ defmodule HalC2.PullRequests.GitHub do
         repo
         |> access(pr["viewerCanUpdate"], pr["viewerDidAuthor"])
         |> Map.put(:can_update_branch, comparison != nil and pr["viewerCanUpdateBranch"] == true)
+        |> Map.put(:auto_merge_waits, auto_merge_waits?(repo, pr))
 
       method = merge_method(get_in(pr, ["autoMergeRequest", "mergeMethod"]))
       {checks, approvals} = with_approvals(ctx, pr, checks(raw_checks))
@@ -1322,6 +1323,14 @@ defmodule HalC2.PullRequests.GitHub do
     }
   end
 
+  # Auto-merge is worth arming only where GitHub would wait: the repository allows it,
+  # and the pull request is not mergeable this moment (`CLEAN`, or `UNSTABLE` with only
+  # optional checks failing, or `HAS_HOOKS`), which GitHub refuses to arm.
+  defp auto_merge_waits?(repo, pr),
+    do:
+      repo["autoMergeAllowed"] != false and
+        up(pr["mergeStateStatus"]) not in ~w(CLEAN UNSTABLE HAS_HOOKS)
+
   defp merge_capabilities(repo),
     do: %{
       "merge" => repo["mergeCommitAllowed"] == true,
@@ -1337,7 +1346,11 @@ defmodule HalC2.PullRequests.GitHub do
     %{
       "actions" =>
         if(access.can_write,
-          do: ~w(merge enable-auto-merge disable-auto-merge revert approve-workflows),
+          do:
+            if(Map.get(access, :auto_merge_waits, true),
+              do: ~w(merge enable-auto-merge disable-auto-merge revert approve-workflows),
+              else: ~w(merge disable-auto-merge revert approve-workflows)
+            ),
           else: []
         ) ++
           if(access.can_update, do: ~w(ready draft close reopen), else: []) ++

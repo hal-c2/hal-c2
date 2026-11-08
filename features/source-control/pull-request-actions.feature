@@ -137,7 +137,7 @@ Feature: Acting on a pull request
     Then GitHub will merge pull request 42 once it is ready
 
   # Upstream #19947: auto-merge was offered where GitHub would merge at once or had it switched off.
-  @backlog @mc @priority-high
+  @mc
   Scenario Outline: Auto-merge is offered only when GitHub would wait
     Given <state>
     Then enabling auto-merge on pull request 42 is not offered

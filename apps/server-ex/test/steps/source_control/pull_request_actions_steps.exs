@@ -217,6 +217,17 @@ defmodule HalC2.Steps.SourceControl.PullRequestActions do
     context
   end
 
+  step "the repository has auto-merge switched off", context do
+    Shared.reshape_repository(context, %{"autoMergeAllowed" => false})
+  end
+
+  step ~r/^pull request (?<number>\d+) can be merged (?<how>right now|now with failing optional checks)$/,
+       %{args: [number, how]} = context do
+    assert String.to_integer(number) == context.pr_number
+    status = if how == "right now", do: "CLEAN", else: "UNSTABLE"
+    Shared.reshape_pr(context, %{"mergeStateStatus" => status})
+  end
+
   # --- actions ---------------------------------------------------------------------------
 
   step ~r/^the user merges pull request (?<number>\d+) with the (?<method>merge|squash|rebase) method$/,
@@ -380,6 +391,22 @@ defmodule HalC2.Steps.SourceControl.PullRequestActions do
 
     assert [%{"args" => args}] = World.cli_calls(context, "actions/runs/991/approve")
     assert ["--method", "POST"] -- args == []
+    context
+  end
+
+  step "enabling auto-merge on pull request {int} is not offered", %{args: [number]} = context do
+    assert number == context.pr_number
+    viewer = Shared.pr_detail!(context)["viewerPermissions"]
+    refute "enable-auto-merge" in viewer["actions"]
+    Map.put(context, :viewer, viewer)
+  end
+
+  step "merging it directly still is, when the user may merge", context do
+    assert "merge" in context.viewer["actions"]
+
+    # A reader still may not.
+    context = context |> Map.put(:permission, "READ") |> Shared.answer_pr()
+    refute "merge" in Shared.pr_detail!(context)["viewerPermissions"]["actions"]
     context
   end
 
