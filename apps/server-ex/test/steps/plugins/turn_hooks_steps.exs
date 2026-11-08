@@ -83,6 +83,17 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
     Map.merge(context, %{events: events, run_id: started["runId"]})
   end
 
+  step "the plugin hears a new {word} conversation start, then the turn end",
+       %{args: [provider]} = context do
+    assert [%{"type" => "turn.started"} = started | _] = events = heard([])
+    assert %{"type" => "turn.finished", "runId" => run_id} = List.last(events)
+
+    assert %{"newConversation" => true, "runId" => ^run_id} = started
+    assert started["provider"] == Map.fetch!(@instances, provider)
+    assert started["threadId"] == World.thread_id(context, @thread)
+    context
+  end
+
   step "it hears the tool call by Claude's own name for the tool, with what it returned",
        context do
     assert %{"itemType" => "command_execution"} =

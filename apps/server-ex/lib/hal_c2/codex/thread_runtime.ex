@@ -1038,7 +1038,9 @@ defmodule HalC2.Codex.ThreadRuntime do
     end)
     |> case do
       :ok ->
-        {:ok, state |> Map.put(:last_turn, native_turn) |> Map.put(:turn, turn)}
+        state = state |> Map.put(:last_turn, native_turn) |> Map.put(:turn, turn)
+        observe_started(state)
+        {:ok, state}
 
       # The run ended while Codex started its turn: nothing wants the turn now.
       :ended ->
@@ -2690,8 +2692,13 @@ defmodule HalC2.Codex.ThreadRuntime do
       ]
     end)
     |> case do
-      :ok -> {:ok, %{state | turn: turn}}
-      :ended -> {:ended, %{state | turn: nil}}
+      :ok ->
+        state = %{state | turn: turn}
+        observe_started(state)
+        {:ok, state}
+
+      :ended ->
+        {:ended, %{state | turn: nil}}
     end
   end
 
