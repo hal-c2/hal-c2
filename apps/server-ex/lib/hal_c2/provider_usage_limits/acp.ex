@@ -298,8 +298,13 @@ defmodule HalC2.ProviderUsageLimits.Acp do
           unavailable(checked_at, "unsupported")
 
         # A Zen key without a Go subscription.
-        :refused ->
+        {:refused, 403} ->
           unavailable(checked_at, "unsupported")
+
+        # Every key refused as expired or unknown: the read failed, it is
+        # not that the account has no Go subscription.
+        {:refused, 401} ->
+          unavailable(checked_at, "probeFailed", "OpenCode Go could not read usage.")
 
         {:ok, %{"usage" => usage}} ->
           opencode_limits(usage, checked_at)
@@ -319,7 +324,7 @@ defmodule HalC2.ProviderUsageLimits.Acp do
     case http(:get, opencode_url(), key) do
       {:error, status} when status in [401, 403] ->
         case read_go(rest) do
-          :none -> :refused
+          :none -> {:refused, status}
           other -> other
         end
 

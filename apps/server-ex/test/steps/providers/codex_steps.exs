@@ -4268,7 +4268,9 @@ Red"} <- StreamState.get(state, "message")[message],
     Map.put(context, :compaction_status, item["status"])
   end
 
-  step "it reads {string}", %{args: [label]} = context do
+  # Narrowed to this outline's labels: other providers have their own
+  # "it reads ..." steps (OpenCode's to-do numbering).
+  step ~r/^it reads "(?<label>Stopped|Failed)"$/, %{args: [label]} = context do
     assert context.compaction_status == %{"Stopped" => "interrupted", "Failed" => "failed"}[label]
     context
   end

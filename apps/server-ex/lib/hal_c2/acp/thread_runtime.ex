@@ -55,6 +55,9 @@ defmodule HalC2.Acp.ThreadRuntime do
   # Agents that ask HAL-C2 about every tool: HAL-C2 applies the access mode for them.
   @gated ~w(opencode pi)
 
+  # The most plain text a prompt carries inline instead of by path (`acp_prompt/3`).
+  @max_embedded_text_bytes 256 * 1024
+
   @spec start_turn(String.t(), map) :: :ok
   def start_turn(thread_id, turn),
     do: thread_id |> ensure() |> GenServer.call({:start_turn, turn}, 120_000)
@@ -1451,10 +1454,14 @@ defmodule HalC2.Acp.ThreadRuntime do
   # (`canSwitchModel`), which outlives the process and its session record: a new
   # session's answer says so, a continued one only when it names its model.
   defp opened(state, result, turn, new? \\ false) do
-    # What the session as it opened offers is the agent's settled list: an
-    # instance first read while its agent was still starting is completed by
-    # it, without a provider refresh.
-    if result["configOptions"], do: HalC2.Acp.put_models(state.agent, result["configOptions"])
+    # What a local OpenCode session as it opened offers is its settled list:
+    # an instance first read while its server was still starting is completed
+    # by it, without a provider refresh. An external server's own read names
+    # its providers (the billing names), and other drivers' catalogs are
+    # their reads' business; neither is rewritten from a session open.
+    if is_list(result["configOptions"]) and HalC2.Acp.driver(state.agent) == "opencode" and
+         HalC2.Acp.setting(state.agent, "serverUrl") == nil,
+       do: HalC2.Acp.put_models(state.agent, result["configOptions"])
 
     named? =
       Enum.any?(result["configOptions"] || [], &(&1["id"] == "model")) or is_map(result["models"])
@@ -3471,14 +3478,18 @@ defmodule HalC2.Acp.ThreadRuntime do
             []
           end
 
-        # Plain text rides as embedded context where the agent takes it; any
-        # other text file (a page, a sheet, a stylesheet) would be refused by
-        # the model API behind OpenCode, so it stays the path the prompt names.
+        # Plain text rides as embedded context for OpenCode, whose model APIs
+        # refuse other text files (a page, a sheet, a stylesheet): those stay
+        # the path the prompt names. So does a plain file past the cap, which
+        # the agent can still read selectively by path instead of taking it
+        # all into its context at once. Other agents keep path-only text.
         embedded =
-          if get_in(capabilities || %{}, ["promptCapabilities", "embeddedContext"]) == true do
+          if HalC2.Acp.driver(Entities.instance(turn.ids)) == "opencode" and
+               get_in(capabilities || %{}, ["promptCapabilities", "embeddedContext"]) == true do
             for %{mime_type: "text/plain", path: path} <- attachments,
                 is_binary(path),
                 {:ok, body} <- [File.read(path)],
+                byte_size(body) <= @max_embedded_text_bytes,
                 String.valid?(body) do
               %{
                 "type" => "resource",

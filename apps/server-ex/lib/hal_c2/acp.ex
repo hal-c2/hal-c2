@@ -597,8 +597,10 @@ defmodule HalC2.Acp do
   defp error_message(_id, {:error, :antigravity_health_failed}),
     do: "Antigravity could not complete its local health check."
 
+  # Any of the read's waits can be the one that timed out (the version run,
+  # `initialize`, a held `session/new`); the message does not name one.
   defp error_message(id, {:error, :probe_timeout}),
-    do: "#{label(id)} CLI version probe timed out."
+    do: "#{label(id)} did not answer in time."
 
   defp error_message(id, {:error, :unauthenticated}), do: signed_out_message(id)
   defp error_message(_id, {:error, reason}), do: describe(reason)
@@ -861,35 +863,58 @@ defmodule HalC2.Acp do
     end
   end
 
-  # Why an agent that would not start would not start, when its own version
+  # Why an OpenCode that would not start would not start, when its own version
   # run says: macOS refusing the binary (a bad code signature, quarantine)
-  # leaves nothing over ACP but a closed connection.
+  # leaves nothing over ACP but a closed connection. Only a process that died
+  # before answering is diagnosed, and only OpenCode's: an auth refusal or an
+  # error the agent itself sent means it started. (Diagnosing every driver's
+  # failed read would run `--version` on binaries that serve ACP on stdin,
+  # which then wait out the whole diagnosis deadline — a signed-out Grok read
+  # took five seconds that way and starved the providers frame.)
   defp start_failure(id, reason) do
-    started? =
-      case reason do
-        :closed ->
-          false
+    if driver(id) == "opencode" and not started?(reason),
+      do: diagnose_start(id, reason),
+      else: reason
+  end
 
-        %{"message" => message} when is_binary(message) ->
-          not String.contains?(message, "exited with code")
+  defp started?(:closed), do: false
 
-        %{} ->
-          true
+  defp started?(%{"message" => message}) when is_binary(message),
+    do: not String.contains?(message, "exited with code")
 
-        _ ->
-          false
-      end
+  defp started?(_reason), do: true
 
-    if started?, do: reason, else: diagnose_start(id, reason)
+  # The answer is kept for that binary as last modified, so a health-interval
+  # read does not run it again while the binary stands unchanged.
+  defp diagnose_start(id, reason) do
+    with {:ok, [executable | _], _env} <- command(id),
+         path when is_binary(path) <- System.find_executable(executable) do
+      diagnosis(id, path) || reason
+    else
+      _ -> reason
+    end
+  end
+
+  defp diagnosis(id, path) do
+    key = {__MODULE__, :start_diagnosis, id}
+    mtime = with {:ok, %{mtime: mtime}} <- File.stat(path), do: mtime
+
+    case :persistent_term.get(key, nil) do
+      {^path, ^mtime, diagnosis} ->
+        diagnosis
+
+      _ ->
+        diagnosis = run_version(id, path)
+        :persistent_term.put(key, {path, mtime, diagnosis})
+        diagnosis
+    end
   end
 
   # Runs only the agent's own configured binary, found on PATH, with a fixed argument.
   # sobelow_skip ["CI.System"]
-  defp diagnose_start(id, reason) do
+  defp run_version(id, path) do
     output =
-      with {:ok, [executable | _], _env} <- command(id),
-           path when is_binary(path) <- System.find_executable(executable),
-           task = Task.async(fn -> System.cmd(path, ["--version"], stderr_to_stdout: true) end),
+      with task = Task.async(fn -> System.cmd(path, ["--version"], stderr_to_stdout: true) end),
            {:ok, {out, _status}} <- Task.yield(task, 5_000) || Task.shutdown(task) do
         String.downcase(out)
       else
@@ -907,7 +932,7 @@ defmodule HalC2.Acp do
         "macOS is blocking the #{name} binary (quarantine). Run `xattr -d com.apple.quarantine $(which #{binary})` to fix this."
 
       true ->
-        reason
+        nil
     end
   end
 
@@ -1622,9 +1647,18 @@ defmodule HalC2.Acp do
     if Enum.any?(config_options, &(&1["id"] == "model")) do
       models = models(%{"configOptions" => config_options})
 
-      locked(id, fn -> :persistent_term.put({__MODULE__, id, :models}, models) end)
+      # As in `put_commands/2`: an unchanged list neither rewrites the
+      # catalog (a `:persistent_term` put is a global GC pass) nor
+      # rebroadcasts the provider list to every client.
+      changed =
+        :persistent_term.get({__MODULE__, id, :models}, nil) != models and
+          locked(id, fn ->
+            changed = :persistent_term.get({__MODULE__, id, :models}, nil) != models
+            if changed, do: :persistent_term.put({__MODULE__, id, :models}, models)
+            changed
+          end)
 
-      HalC2.Settings.notify_providers()
+      if changed, do: HalC2.Settings.notify_providers()
     end
 
     :ok
