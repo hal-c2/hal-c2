@@ -292,6 +292,44 @@ defmodule HalC2.Steps.Providers.ModelsManifest do
     context
   end
 
+  # --- the new-model mark ------------------------------------------------------------------
+
+  @day 24 * 60 * 60 * 1000
+  @now 1_800_000_000_000
+
+  step "{string} was released {word} days ago in the model manifest",
+       %{args: [slug, days]} = context do
+    ago = %{"six" => 6, "eight" => 8}[days] || flunk("no such age: #{days}")
+    World.put_app_env(:model_manifest_now_ms, @now)
+    released = DateTime.from_unix!(@now - ago * @day, :millisecond) |> DateTime.to_iso8601()
+
+    model = %{"slug" => slug, "name" => "GPT-6", "status" => "current", "releasedAt" => released}
+    manifest = newer()
+
+    manifest =
+      update_in(manifest, ["providers", "claudeAgent", "models"], &[model | &1])
+      |> update_in(["currentModels", "claudeAgent"], &[slug | &1])
+
+    context = context |> World.fake_providers() |> publish(JSON.encode!(manifest)) |> refresh()
+    Map.put(context, :new_slug, slug)
+  end
+
+  step "the user looks through the manifest's models", context do
+    {models, context} = claude_models(context)
+    Map.put(context, :models, models)
+  end
+
+  step "{string} is marked as new", %{args: [slug]} = context do
+    assert Enum.find(context.models, &(&1["slug"] == slug))["badge"] == "new"
+    context
+  end
+
+  step "{string} is not marked as new", %{args: [slug]} = context do
+    model = Enum.find(context.models, &(&1["slug"] == slug)) || flunk("#{slug} is not offered")
+    refute Map.has_key?(model, "badge")
+    context
+  end
+
   # --- older model names -------------------------------------------------------------------
 
   @alias "gpt-5-codex"
