@@ -142,6 +142,21 @@ says how far they reach:
 - **Use your text model** lets it ask the **Text generation model** (**Settings
   → General**) to write for it, on your account with that provider.
 
+### TokenEconomizer's micro-skills
+
+TokenEconomizer's micro-skills learn short facts about each project's
+environment from its turns: if agents in a project keep finding `pytest`
+missing and running the tests through `python -m pytest`, that becomes one
+line ("`pytest …` fails here with command not found; `python -m pytest …`
+works"). Once a fact has recurred often enough, a new conversation in the
+project is told it up front, so its agent skips the failing first attempt. A
+fact the evidence turns against -- the plain command starts working -- stops
+being stated on its own.
+
+Learning is per project and needs no model. Under the plugin's **Settings**,
+**Micro-skills** can turn learning off, and two settings bound what a new
+conversation is told: **Most facts stated** and the facts' **token budget**.
+
 ## Connect Slack for plugins
 
 Plugins on an MC reach Slack through that MC's one Slack connection, and only

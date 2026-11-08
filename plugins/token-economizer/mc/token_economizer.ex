@@ -1,13 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: The TokenEconomizer authors (microsoft/TokenEconomizer); HAL-C2 contributors
-# Ported from tokeneconomizer/plugin/controller.py and tokeneconomizer/plugin/hosts.py
-# (microsoft/TokenEconomizer@cb42207e3e09), into Elixir for HAL-C2's MC. Changed: the
-# guard hears the MC's turns (`observe/2`) instead of an agent's hooks, steers a turn
-# through the MC instead of answering a hook, and keeps its state in one process.
+# Ported from tokeneconomizer/plugin/controller.py and tokeneconomizer/plugin/hosts.py,
+# with the micro-skills' staging from tokeneconomizer/microskills/stage.py and
+# tokeneconomizer/plugin/fold.py (microsoft/TokenEconomizer@cb42207e3e09), into Elixir
+# for HAL-C2's MC. Changed: the guard hears the MC's turns (`observe/2`) instead of an
+# agent's hooks, steers a turn through the MC instead of answering a hook, stages its
+# facts through `shape_run/2` instead of a session-start hook, and keeps its state in
+# one process.
 
 defmodule HalC2Plugins.TokenEconomizer do
   @moduledoc """
-  TokenEconomizer's MC part: the loop guard.
+  TokenEconomizer's MC part: the loop guard and the micro-skills.
 
   It hears every thread's turns. Each turn gets a guard (`LoopGuard.Turn`) that folds its
   tool calls as they end. When the guard finds the turn stuck in a loop, the plugin
@@ -21,8 +24,20 @@ defmodule HalC2Plugins.TokenEconomizer do
   generation model, runs only when the free gate opens, in a process of its own; its
   verdict is read at the turn's next call.
 
+  The micro-skills learn short environment facts per project from the same
+  turns (`MicroSkills.EnvFacts`), kept in the data directory: which way of
+  running the tests works here, which tool is not installed, which hosts
+  refuse connections. A fact that has earned its place goes ahead of the
+  first message of a new provider conversation (`shape_run/2`), never into
+  one under way. The `microSkills` call lists a project's facts with the
+  evidence behind them; `microSkills.drop` drops one for good (it is not
+  learned again) and `microSkills.restore` lets it be learned again. The
+  `microSkills` topic carries the same listing, published as facts change.
+
   A turn whose start the plugin missed is not watched. Missed events (`"dropped"`) mark
-  the turns under way as partial, and a partial turn does not teach the envelope.
+  the turns under way as partial, and a partial turn does not teach the envelope. The
+  micro-skills read a partial turn back from the thread (`Host.history/3`) so a missed
+  event in the middle of it teaches nothing half-seen; a turn never folded twice.
 
   The topic `loopGuard` carries `status/1`: counts since the MC started and the latest
   redirects and stop offers. It is published when a turn ends and when the guard acts,
@@ -35,9 +50,11 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   alias HalC2.Plugins.Host
   alias HalC2Plugins.TokenEconomizer.LoopGuard.{Envelope, Judge, Turn}
+  alias HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts
 
   @id "token-economizer"
   @topic "loopGuard"
+  @skills_topic "microSkills"
   @recent 20
   # The thresholds a person may pin, after upstream's `LOOPGUARD_KEYS`: `{kind, least,
   # most}`. A count takes a whole number, so 12.5 calls is refused rather than truncated.
@@ -69,10 +86,20 @@ defmodule HalC2Plugins.TokenEconomizer do
   def validate_settings(settings) do
     nudges = settings["loopGuardNudges"] || 1
     thresholds = settings["loopGuardThresholds"] || %{}
+    max_facts = settings["microSkillsMaxFacts"]
+    max_tokens = settings["microSkillsMaxTokens"]
 
     cond do
       not (is_number(nudges) and nudges >= 0 and nudges == trunc(nudges)) ->
         {:error, "loopGuardNudges: give a whole number, 0 or more."}
+
+      max_facts != nil and
+          not (is_number(max_facts) and max_facts >= 1 and max_facts == trunc(max_facts)) ->
+        {:error, "microSkillsMaxFacts: give a whole number, 1 or more."}
+
+      max_tokens != nil and
+          not (is_number(max_tokens) and max_tokens >= 1 and max_tokens == trunc(max_tokens)) ->
+        {:error, "microSkillsMaxTokens: give a whole number, 1 or more."}
 
       not is_map(thresholds) ->
         {:error, "loopGuardThresholds: give an object of threshold names and values."}
@@ -105,12 +132,30 @@ defmodule HalC2Plugins.TokenEconomizer do
   @impl HalC2.Plugins.Extension
   def call("status", _input, _context), do: {:ok, GenServer.call(__MODULE__, :status)}
 
+  def call("microSkills", input, _context),
+    do: GenServer.call(__MODULE__, {:micro_skills, input})
+
+  def call("microSkills.drop", input, _context),
+    do: GenServer.call(__MODULE__, {:micro_skill_drop, input})
+
+  def call("microSkills.restore", input, _context),
+    do: GenServer.call(__MODULE__, {:micro_skill_restore, input})
+
   def call(method, _input, _context), do: {:error, "Unknown method #{method}."}
 
   @impl HalC2.Plugins.Extension
   # The feed waits for each event, so a guard is never folded out of order and missed
   # events are counted where they were missed.
   def observe(event, _context), do: GenServer.call(__MODULE__, {:observe, event}, 15_000)
+
+  @impl HalC2.Plugins.Extension
+  # Asked as a conversation starts, and never allowed to hold it back: answers
+  # from the facts already learned, or nothing.
+  def shape_run(run, _context) do
+    GenServer.call(__MODULE__, {:shape_run, run}, 250)
+  catch
+    :exit, _ -> nil
+  end
 
   # --- server ---------------------------------------------------------------------------
 
@@ -123,6 +168,10 @@ defmodule HalC2Plugins.TokenEconomizer do
        turns: %{},
        # {project id, provider} => tracker
        trackers: %{},
+       # project id => micro-skills state, loaded on first use
+       skills: %{},
+       # thread id => the fact ids staged for its conversation
+       staged: %{},
        stats: %{"turns" => 0, "nudges" => 0, "aborts" => 0, "judgeCalls" => 0, "judgeTokens" => 0},
        # The latest redirects and stop offers, newest first.
        recent: []
@@ -145,17 +194,41 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   @impl GenServer
   def handle_call({:settings, settings}, _from, state) do
-    # The level and pinned thresholds shape each tracker: read them afresh.
-    state = %{state | settings: settings, trackers: %{}}
-    state = if on?(state), do: state, else: %{state | turns: %{}}
-    {:reply, :ok, publish(state)}
+    # The level and pinned thresholds shape each tracker, and the micro-skills'
+    # caps shape what is staged: read them afresh.
+    state = %{state | settings: settings, trackers: %{}, skills: %{}}
+    state = if on?(state) or micro_on?(state), do: state, else: %{state | turns: %{}}
+    {:reply, :ok, state |> publish() |> publish_skills()}
   end
 
   def handle_call(:status, _from, state), do: {:reply, status(state), state}
 
+  def handle_call({:micro_skills, input}, _from, state) do
+    {view, state} = micro_skills_view(state, project_id(input))
+    {:reply, {:ok, view}, state}
+  end
+
+  def handle_call({:micro_skill_drop, input}, _from, state),
+    do: drop_or_restore(state, input, :drop)
+
+  def handle_call({:micro_skill_restore, input}, _from, state),
+    do: drop_or_restore(state, input, :restore)
+
+  def handle_call({:shape_run, run}, _from, state) do
+    if micro_on?(state) and is_binary(run["projectId"]) do
+      {skills, state} = skills_for(state, run["projectId"])
+      {text, skills} = EnvFacts.render(skills)
+      state = put_in(state.skills[run["projectId"]], skills)
+      state = put_in(state.staged[run["threadId"]], EnvFacts.injected_ids(skills))
+      {:reply, if(text == "", do: nil, else: %{"context" => text}), state}
+    else
+      {:reply, nil, state}
+    end
+  end
+
   def handle_call({:observe, event}, _from, state) do
     state =
-      if on?(state) do
+      if on?(state) or micro_on?(state) do
         state |> missed(event["dropped"]) |> hear(event)
       else
         state
@@ -200,6 +273,8 @@ defmodule HalC2Plugins.TokenEconomizer do
       run: run_id,
       project: project,
       guard: Turn.new("#{thread_id}:#{run_id}"),
+      # The turn's calls, newest first, for the micro-skills to fold at its end.
+      calls: [],
       partial: false
     }
 
@@ -209,8 +284,13 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   defp hear(state, %{"type" => "turn.item", "threadId" => thread_id, "runId" => run_id} = item) do
     case {state.turns[thread_id], call_of(item)} do
-      {%{run: ^run_id} = turn, {name, args, result, code}} ->
-        fold(state, thread_id, turn, name, args, result, code)
+      {%{run: ^run_id} = turn, {name, args, result, code} = call} ->
+        state =
+          if micro_on?(state),
+            do: update_in(state.turns[thread_id].calls, &[call | &1]),
+            else: state
+
+        if on?(state), do: fold(state, thread_id, turn, name, args, result, code), else: state
 
       _ ->
         state
@@ -238,22 +318,75 @@ defmodule HalC2Plugins.TokenEconomizer do
 
       {turn, turns} ->
         state = %{state | turns: turns}
-        state = update_in(state.stats["turns"], &(&1 + 1))
-        summary = Turn.summary(turn.guard, stopped_normally)
 
-        Logger.debug(
-          "token-economizer: turn #{inspect(Map.put(summary, "partial", turn.partial))}"
-        )
+        state =
+          if on?(state) do
+            state = update_in(state.stats["turns"], &(&1 + 1))
+            summary = Turn.summary(turn.guard, stopped_normally)
 
-        if not turn.partial and Turn.resolved_proxy(turn.guard, stopped_normally) do
-          {tracker, state} = tracker(state, turn.project)
-          tracker = Envelope.record_turn(tracker, turn.guard, stopped_normally)
-          save_tracker(turn.project, tracker)
-          publish(put_in(state.trackers[turn.project], tracker))
-        else
-          publish(state)
-        end
+            Logger.debug(
+              "token-economizer: turn #{inspect(Map.put(summary, "partial", turn.partial))}"
+            )
+
+            if not turn.partial and Turn.resolved_proxy(turn.guard, stopped_normally) do
+              {tracker, state} = tracker(state, turn.project)
+              tracker = Envelope.record_turn(tracker, turn.guard, stopped_normally)
+              save_tracker(turn.project, tracker)
+              publish(put_in(state.trackers[turn.project], tracker))
+            else
+              publish(state)
+            end
+          else
+            state
+          end
+
+        fold_skills(state, thread_id, turn)
     end
+  end
+
+  # A finished turn folds into its project's micro-skills, once. A partial one
+  # (the feed missed events in it) is read back whole from the thread, so what
+  # was half heard is never half learned; if it cannot be read back, it is not
+  # learned from at all.
+  defp fold_skills(state, thread_id, turn) do
+    {project_id, _provider} = turn.project
+
+    if micro_on?(state) and is_binary(project_id) do
+      case fold_calls(thread_id, turn) do
+        nil ->
+          state
+
+        calls ->
+          {skills, state} = skills_for(state, project_id)
+
+          skills =
+            skills
+            |> EnvFacts.seed_injected(Map.get(state.staged, thread_id, []))
+            |> EnvFacts.update_turn(calls, turn.run)
+
+          save_skills(project_id, skills)
+          state |> put_in([:skills, project_id], skills) |> publish_skills()
+      end
+    else
+      state
+    end
+  end
+
+  defp fold_calls(_thread_id, %{partial: false} = turn), do: Enum.reverse(turn.calls)
+
+  defp fold_calls(thread_id, turn) do
+    case Host.history(@id, thread_id, limit: 10) do
+      {:ok, turns} ->
+        case Enum.find(turns, &(&1["runId"] == turn.run)) do
+          nil -> nil
+          found -> found["items"] |> Enum.map(&call_of/1) |> Enum.reject(&is_nil/1)
+        end
+
+      _ ->
+        nil
+    end
+  rescue
+    _ -> nil
   end
 
   defp fold(state, thread_id, turn, name, args, result, code) do
@@ -379,6 +512,134 @@ defmodule HalC2Plugins.TokenEconomizer do
   end
 
   # --- settings and the envelope's files ----------------------------------------------
+
+  # The micro-skills' mode: upstream's `on` gains the paid proposer in a later
+  # version; today it and `envfacts` both learn the free environment facts.
+  defp micro_mode(state), do: state.settings["microSkills"] || "envfacts"
+  defp micro_on?(state), do: micro_mode(state) != "off"
+
+  defp skills_caps(state) do
+    cap = fn key ->
+      case state.settings[key] do
+        value when is_number(value) and value >= 1 -> trunc(value)
+        _ -> nil
+      end
+    end
+
+    [max_facts: cap.("microSkillsMaxFacts"), max_tokens: cap.("microSkillsMaxTokens")]
+  end
+
+  defp skills_for(state, project_id) do
+    case state.skills[project_id] do
+      nil ->
+        skills = EnvFacts.load(read_skills(project_id), skills_caps(state))
+        {skills, put_in(state.skills[project_id], skills)}
+
+      skills ->
+        {skills, state}
+    end
+  end
+
+  @doc "The file that keeps a project's micro-skills."
+  def micro_skills_path(project_id) do
+    key =
+      :crypto.hash(:sha256, to_string(project_id))
+      |> Base.encode16(case: :lower)
+      |> binary_part(0, 24)
+
+    Path.join([Host.data_dir(@id), "micro-skills", key <> ".json"])
+  end
+
+  defp read_skills(project_id) do
+    with {:ok, text} <- File.read(micro_skills_path(project_id)),
+         {:ok, %{} = saved} <- JSON.decode(text) do
+      saved
+    else
+      _ -> %{}
+    end
+  end
+
+  defp save_skills(project_id, skills) do
+    path = micro_skills_path(project_id)
+    File.mkdir_p!(Path.dirname(path))
+    saved = Map.merge(EnvFacts.dump(skills), %{"projectId" => project_id})
+    tmp = path <> ".tmp"
+    File.write!(tmp, JSON.encode!(saved))
+    File.rename!(tmp, path)
+  end
+
+  # The projects with micro-skills files of their own, beside those loaded.
+  defp saved_project_ids do
+    case Path.join([Host.data_dir(@id), "micro-skills"]) |> File.ls() do
+      {:ok, names} ->
+        Enum.flat_map(names, fn name ->
+          with true <- String.ends_with?(name, ".json"),
+               {:ok, text} <-
+                 File.read(Path.join([Host.data_dir(@id), "micro-skills", name])),
+               {:ok, %{"projectId" => project_id}} when is_binary(project_id) <-
+                 JSON.decode(text) do
+            [project_id]
+          else
+            _ -> []
+          end
+        end)
+
+      _ ->
+        []
+    end
+  end
+
+  defp project_id(%{"projectId" => project_id}) when is_binary(project_id), do: project_id
+  defp project_id(_input), do: nil
+
+  # What the `microSkills` call and topic carry: one project's facts when it is
+  # named, else every project's, each in `EnvFacts.view/1`'s shape.
+  defp micro_skills_view(state, nil) do
+    ids = Enum.uniq(Map.keys(state.skills) ++ saved_project_ids())
+
+    {projects, state} =
+      Enum.map_reduce(ids, state, fn project_id, state ->
+        {skills, state} = skills_for(state, project_id)
+        {Map.merge(%{"projectId" => project_id}, EnvFacts.view(skills)), state}
+      end)
+
+    {%{"mode" => micro_mode(state), "projects" => projects}, state}
+  end
+
+  defp micro_skills_view(state, project_id) do
+    {skills, state} = skills_for(state, project_id)
+
+    {%{
+       "mode" => micro_mode(state),
+       "projects" => [Map.merge(%{"projectId" => project_id}, EnvFacts.view(skills))]
+     }, state}
+  end
+
+  defp publish_skills(state) do
+    {view, state} = micro_skills_view(state, nil)
+    Host.publish(@id, @skills_topic, view)
+    state
+  end
+
+  defp drop_or_restore(state, input, action) do
+    with %{"projectId" => project_id, "id" => id} when is_binary(project_id) and is_binary(id) <-
+           input || %{} do
+      {skills, state} = skills_for(state, project_id)
+
+      case if(action == :drop, do: EnvFacts.drop(skills, id), else: EnvFacts.restore(skills, id)) do
+        {:ok, skills} ->
+          save_skills(project_id, skills)
+          state = state |> put_in([:skills, project_id], skills) |> publish_skills()
+          {view, state} = micro_skills_view(state, project_id)
+          {:reply, {:ok, view}, state}
+
+        {:error, message} ->
+          {:reply, {:error, message}, state}
+      end
+    else
+      _ -> {:reply, {:error, "Give a projectId and an id."}, state}
+    end
+  end
 
   defp on?(state), do: state.settings["loopGuard"] != "off"
   # Watching decides as the guard would, and delivers nothing: what it would have done

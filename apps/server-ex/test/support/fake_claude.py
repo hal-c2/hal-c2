@@ -471,6 +471,23 @@ for line in sys.stdin:
         send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}l", "role": "assistant", "content": [{"type": "text", "text": "Still failing"}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "Still failing", "session_id": session})
         continue
+    # "repair the test command": Claude edits a.py, finds the bare `pytest`
+    # missing, and runs the tests through `python -m pytest` instead: what a
+    # plugin's micro-skills learn an environment fact from.
+    if "repair the test command" in text.split("</conversation_history>")[-1]:
+        for call, name, given, said, failed in (
+                ("edit", "Edit", {"file_path": "a.py", "old_string": "x", "new_string": "y"},
+                 "The file a.py has been updated.", False),
+                ("bare", "Bash", {"command": "pytest -q"},
+                 "bash: pytest: command not found", True),
+                ("fixed", "Bash", {"command": "python -m pytest -q"}, "4 passed in 0.01s", False)):
+            tool_id = f"repair-{turn}-{call}"
+            send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}r{call}", "role": "assistant", "content": [{"type": "tool_use", "id": tool_id, "name": name, "input": given}]}})
+            send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_id,
+                  "content": said, "is_error": failed}]}})
+        send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}rd", "role": "assistant", "content": [{"type": "text", "text": "The tests pass"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "The tests pass", "session_id": session})
+        continue
     # "answer halfway": Claude writes part of its answer (message half-uuid-N) and stays open,
     # as a turn the user stops mid-answer.
     if "answer halfway" in text.split("</conversation_history>")[-1]:
