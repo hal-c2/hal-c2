@@ -17,6 +17,7 @@ import { step } from "../../steps.ts";
 import { startFakeClusterMc, type FakeClusterMc, type FakeMember } from "../fakeClusterMc.ts";
 import { runClient, runningMc, type LaunchWorld } from "../launchWorld.ts";
 import { connected } from "../settingsWorld.ts";
+import { openSavedThread } from "./fallback-accounts.steps.ts";
 import { settle } from "../world.ts";
 
 interface Following {
@@ -322,7 +323,9 @@ step("the MC takes 12 seconds to load a thread", async (ctx: HealthWorld) => {
 });
 
 step("the user opens the thread", async (ctx: HealthWorld) => {
-  const state = ctx.following!;
+  // Outside a followed MC the thread is one a composer scenario saved.
+  if (!ctx.following) return openSavedThread(ctx);
+  const state = ctx.following;
   await open(state, "thread-slow", ctx);
   await holdThroughPings(state);
 });

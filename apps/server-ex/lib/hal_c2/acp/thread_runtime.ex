@@ -46,6 +46,12 @@ defmodule HalC2.Acp.ThreadRuntime do
   @xai_backgrounded ["x.ai/task_backgrounded", "_x.ai/task_backgrounded"]
   @xai_completed ["x.ai/task_completed", "_x.ai/task_completed"]
 
+  # The conversation a `session/load` replays (Grok's turn ends, as `turn_completed`,
+  # with it), history rather than the turn's; the commands, options and mode the agent
+  # sends meanwhile are the session's state now.
+  @replayed ~w(user_message_chunk agent_message_chunk agent_thought_chunk tool_call tool_call_update
+                plan turn_completed)
+
   # OpenCode 2's report of a child session (`opencode_child/2`).
   @opencode_child ["opencode/session/child_update", "_opencode/session/child_update"]
 
@@ -630,7 +636,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         else: update
 
     cond do
-      state.replaying ->
+      state.replaying and update["sessionUpdate"] in @replayed ->
         {:noreply, state}
 
       child_session?(params["sessionId"], state) ->
@@ -1622,12 +1628,12 @@ defmodule HalC2.Acp.ThreadRuntime do
         end
 
       caps["loadSession"] == true ->
-        state = %{state | replaying: true}
-        result = Connection.call(state.conn, "session/load", params, 120_000)
-        state = %{state | replaying: false}
+        {result, state} = load_session(state, params)
 
         case result do
           {:ok, result} -> {:ok, native, opened(state, result || %{}, turn)}
+          # A fresh session needs a live connection; this one is gone.
+          {:error, :closed} -> {:error, :closed, state}
           {:error, _} -> fresh_session(state, turn)
         end
 
@@ -1637,6 +1643,36 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp open_session(state, turn), do: new_session(state, turn)
+
+  # What the agent replays of the session while it loads is history, not this turn. It
+  # all comes ahead of the load's reply, so the agent's messages are handled as they come
+  # until then, as replayed (`replaying`); the runtime's other messages wait their turn.
+  defp load_session(state, params) do
+    tag = make_ref()
+    Connection.ask(state.conn, "session/load", params, tag)
+    deadline = System.monotonic_time(:millisecond) + 120_000
+    await_load(%{state | replaying: true}, tag, deadline)
+  end
+
+  defp await_load(%{conn: conn} = state, tag, deadline) do
+    receive do
+      {:json_rpc, ^conn, {:reply, ^tag, reply}} ->
+        {reply, %{state | replaying: false}}
+
+      {:json_rpc, ^conn, _} = message ->
+        {:noreply, state} = handle_info(message, state)
+        await_load(state, tag, deadline)
+
+      # A connection killed without a goodbye ends the wait at once; the exit goes back
+      # to the mailbox so `handle_info({:EXIT, ...})` still ends the turn and the work.
+      {:EXIT, ^conn, _} = exit ->
+        send(self(), exit)
+        {{:error, :closed}, %{state | replaying: false}}
+    after
+      max(deadline - System.monotonic_time(:millisecond), 0) ->
+        {{:error, :timeout}, %{state | replaying: false}}
+    end
+  end
 
   # A new session in place of the recorded one the agent could not open.
   defp fresh_session(state, turn) do
@@ -2946,7 +2982,8 @@ defmodule HalC2.Acp.ThreadRuntime do
   # ended. That end is the only word of a background child that fails: it never
   # reports back to its parent (upstream pingdotgg/t3code#21979), so every call
   # attached to the child ends with it, a steer that joined its run included. A
-  # grandchild's updates are its parent subagent's work, not a call the MC names.
+  # grandchild's updates and end are its parent subagent's work, not a call the MC
+  # names, and a report replayed while a session loads was settled when it first came.
   defp opencode_child(%{"type" => "update", "update" => %{} = update} = params, state) do
     session = params["childSessionId"]
 
@@ -2957,10 +2994,16 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp opencode_child(
-         %{"type" => "status", "childSessionId" => session, "status" => status},
-         state
+         %{
+           "type" => "status",
+           "childSessionId" => session,
+           "parentSessionId" => parent,
+           "status" => status
+         },
+         %{replaying: false, session_id: parent} = state
        )
-       when is_binary(session) and status in ["completed", "failed", "interrupted"],
+       when is_binary(session) and is_binary(parent) and
+              status in ["completed", "failed", "interrupted"],
        do: end_task(state, session, status)
 
   defp opencode_child(_params, state), do: state
@@ -4054,9 +4097,12 @@ defmodule HalC2.Acp.ThreadRuntime do
     # A subagent's session keeps its own limit of not delegating further:
     # its ask to start a subagent is refused where it stands, never raised
     # to the user (its other asks follow the thread's access mode as usual).
-    if HalC2.Acp.driver(state.agent) == "opencode" and is_binary(params["sessionId"]) and
-         params["sessionId"] != state.session_id and
-         String.downcase(call["name"] || call["title"] || "") == "task" do
+    # OpenCode 2 asks for a child on the thread's own session and names the
+    # child in `_meta` (only past its default depth limit, which fails the
+    # call without asking).
+    if HalC2.Acp.driver(state.agent) == "opencode" and
+         is_map(get_in(call, ["_meta", "opencode/child-session"])) and
+         String.downcase(call["name"] || "") == "subagent" do
       Connection.respond(conn, id, {:ok, %{"outcome" => outcome(options, "decline")}})
       state
     else

@@ -37,6 +37,12 @@ import { createComposer } from "./composerState.ts";
 import { detailCommands } from "./detailCommands.ts";
 import { memoryMutedThreads, type MutedThreadsStore } from "./mutedThreads.ts";
 import { memoryTimestampFormat, type TimestampFormatStore } from "./timestampFormatSetting.ts";
+import {
+  EFFORT_DISPLAY_LABELS,
+  EFFORT_DISPLAYS,
+  memoryEffortDisplay,
+  type EffortDisplayStore,
+} from "./effortDisplaySetting.ts";
 import { TIMESTAMP_FORMAT_LABELS, TIMESTAMP_FORMATS } from "../timestampFormat.ts";
 import { createFilesController, type TuiFilesState } from "./filesState.ts";
 import { createCodeColours } from "./codeColours.ts";
@@ -173,6 +179,8 @@ export interface HostOptions {
   readonly mutedThreads?: MutedThreadsStore;
   /** Where this device keeps how it writes times (default: this run only). */
   readonly timestampFormat?: TimestampFormatStore;
+  /** Where this device keeps how the composer names the effort (default: this run only). */
+  readonly effortDisplay?: EffortDisplayStore;
   /** Where this device keeps the Space pane's expanded project sections (default: this run only). */
   readonly projectSections?: MutedThreadsStore;
   /**
@@ -410,6 +418,8 @@ export function createHost(options: HostOptions): Host {
   const codeColours = createCodeColours();
   const timestampFormats = options.timestampFormat ?? memoryTimestampFormat();
   let timestampFormat = timestampFormats.load();
+  const effortDisplays = options.effortDisplay ?? memoryEffortDisplay();
+  let effortDisplay = effortDisplays.load();
   const threadView = createThreadView({
     store,
     client,
@@ -1014,6 +1024,7 @@ export function createHost(options: HostOptions): Host {
     client,
     store,
     state,
+    effortDisplay: () => effortDisplay,
     page: () => space.prompt(),
     mode: () => mode,
     setMode,
@@ -1499,6 +1510,30 @@ export function createHost(options: HostOptions): Host {
         timestampFormats.save(format);
         threadView.dispatch("timeline.tick", null);
         store.setStatus(`Times → ${TIMESTAMP_FORMAT_LABELS[format]}`, "success");
+        return true;
+      }
+      case "effortDisplay.pick":
+        composer!.pick({
+          title: "effort display",
+          options: EFFORT_DISPLAYS.map((display) => ({
+            label: EFFORT_DISPLAY_LABELS[display],
+            description:
+              display === "bars"
+                ? "Rising bars; Max, Ultracode and Ultrathink stay words."
+                : "The level's name, such as Extra High.",
+            value: display,
+          })),
+          index: EFFORT_DISPLAYS.indexOf(effortDisplay),
+          onChoose: (value) => handle("effortDisplay.set", { display: value }),
+        });
+        return true;
+      case "effortDisplay.set": {
+        const display = EFFORT_DISPLAYS.find((entry) => entry === payloadField(payload, "display"));
+        if (!display) return true;
+        effortDisplay = display;
+        effortDisplays.save(display);
+        // The status change republishes the composer, whose effort follows.
+        store.setStatus(`Effort display → ${EFFORT_DISPLAY_LABELS[display]}`, "success");
         return true;
       }
       case "theme.set": {

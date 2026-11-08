@@ -1753,6 +1753,7 @@ defmodule HalC2.Acp do
           []
       end)
       |> Enum.uniq_by(&elem(&1, 0))
+      |> sort_efforts()
 
     current =
       if Enum.any?(options, &(elem(&1, 0) == meta["reasoningEffort"])),
@@ -1786,6 +1787,16 @@ defmodule HalC2.Acp do
         &if(current || default, do: Map.put(&1, "currentValue", current || default), else: &1)
       )
     end
+  end
+
+  @effort_rank ~w(none minimal low medium high xhigh max)
+
+  # Grok advertises its strongest level first; the pickers and effort bars read lowest
+  # to highest. Levels outside the known rank keep the order Grok gave.
+  defp sort_efforts(options) do
+    if Enum.all?(options, &(elem(&1, 0) in @effort_rank)),
+      do: Enum.sort_by(options, &Enum.find_index(@effort_rank, fn r -> r == elem(&1, 0) end)),
+      else: options
   end
 
   defp stable_version(version) when is_binary(version) do
@@ -1992,6 +2003,10 @@ defmodule HalC2.Acp do
     locked(id, fn -> :persistent_term.put({__MODULE__, id, :unauthenticated}, true) end)
     HalC2.Settings.notify_providers()
   end
+
+  @doc "Whether instance `id` is recorded signed out, as its entry's auth says."
+  def unauthenticated?(id),
+    do: :persistent_term.get({__MODULE__, id, :unauthenticated}, false) == true
 
   @doc """
   Replaces an instance's models with those of a session's `configOptions`, as an

@@ -42,7 +42,9 @@ defmodule HalC2.Claude.Provider do
   # A fetched manifest may leave Claude out; the release's own catalog then stands.
   defp catalog do
     HalC2.ModelManifest.catalog("claudeAgent") ||
-      get_in(HalC2.ModelManifest.bundled(), ["providers", "claudeAgent"]) ||
+      HalC2.ModelManifest.badged(
+        get_in(HalC2.ModelManifest.bundled(), ["providers", "claudeAgent"])
+      ) ||
       %{"defaults" => %{}, "profiles" => %{}, "models" => []}
   end
 
@@ -601,6 +603,41 @@ defmodule HalC2.Claude.Provider do
     case cached_capabilities(id, path) do
       nil -> false
       reply -> reply["account"] in [nil, ""]
+    end
+  end
+
+  @doc """
+  What instance `id`'s last version check found, without starting a new one:
+  `:ok`, `:failed`, or `:pending` when none has finished. Text generation
+  reads it so a writer that failed its check is not asked to write.
+  """
+  def health_state(id) do
+    case executable(id) do
+      nil ->
+        :pending
+
+      path ->
+        case Map.get(:persistent_term.get(@health, %{}), {id, path}) do
+          {:done, {:ok, _version}} -> :ok
+          {:done, {:error, _message, _version}} -> :failed
+          _ -> :pending
+        end
+    end
+  end
+
+  @doc """
+  Records what a version check of instance `id` found, as `version_health/2`
+  does when its probe answers.
+  """
+  def record_health(id, health) do
+    case executable(id) do
+      nil ->
+        :ok
+
+      path ->
+        records = :persistent_term.get(@health, %{})
+        :persistent_term.put(@health, Map.put(records, {id, path}, {:done, health}))
+        :ok
     end
   end
 

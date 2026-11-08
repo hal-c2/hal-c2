@@ -228,6 +228,113 @@ defmodule HalC2.Steps.SourceControl.PullRequestActions do
     Shared.reshape_pr(context, %{"mergeStateStatus" => status})
   end
 
+  # --- maintainer edits --------------------------------------------------------------------
+
+  step "the user opened pull request {int} from their fork of {string}",
+       %{args: [number, @repository]} = context do
+    assert number == context.pr_number
+
+    context
+    |> Map.put(:permission, "READ")
+    |> Shared.reshape_pr(%{
+      "isCrossRepository" => true,
+      "state" => "OPEN",
+      "viewerDidAuthor" => true,
+      "viewerCanUpdate" => true
+    })
+    |> World.cli_rules([
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["maintainerCanModify: $allow"],
+        "stdout" => %{"data" => %{}}
+      }
+    ])
+  end
+
+  step ~r/^maintainer edits are (?<state>on|off)(?: for pull request 42)?$/,
+       %{args: [state]} = context do
+    # Only the author of a fork's pull request is given the choice.
+    context
+    |> Map.put(:permission, "READ")
+    |> Shared.reshape_pr(%{
+      "isCrossRepository" => true,
+      "state" => "OPEN",
+      "viewerDidAuthor" => true,
+      "viewerCanUpdate" => true,
+      "maintainerCanModify" => state == "on"
+    })
+  end
+
+  step "pull request {int} comes from a branch of {string} itself",
+       %{args: [number, @repository]} = context do
+    assert number == context.pr_number
+
+    context
+    |> Map.put(:permission, "READ")
+    |> Shared.reshape_pr(%{
+      "isCrossRepository" => false,
+      "viewerDidAuthor" => true,
+      "viewerCanUpdate" => true,
+      "maintainerCanModify" => false
+    })
+  end
+
+  step "GitHub refuses the change", context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["maintainerCanModify: $allow"],
+        "stderr" => "GraphQL: Something went wrong.\n",
+        "exit" => 1
+      }
+    ])
+  end
+
+  step ~r/^the user (?<action>allows|stops) edits from maintainers$/,
+       %{args: [action]} = context do
+    act(
+      context,
+      42,
+      if(action == "allows", do: "allow-maintainer-edits", else: "stop-maintainer-edits")
+    )
+  end
+
+  step ~r{^maintainers of "acme/shop" (?<after>can|can no longer) push to the branch of pull request 42$},
+       %{args: [can]} = context do
+    assert {:ok, _} = context.reply
+
+    assert [call] =
+             context
+             |> World.cli_calls("api graphql")
+             |> Enum.filter(&(&1["stdin"] =~ "maintainerCanModify: $allow"))
+
+    assert JSON.decode!(call["stdin"])["variables"]["allow"] == (can == "can")
+    context
+  end
+
+  step "the user is told this also gives the branch's workflows access to the repository's secrets",
+       context do
+    notice = Shared.pr_detail!(context)["maintainerEdits"]["notice"]
+    assert notice =~ "access to the repository's secrets"
+    context
+  end
+
+  step "allowing edits from maintainers is not offered", context do
+    refute "allow-maintainer-edits" in context.viewer["actions"]
+    refute Map.has_key?(Shared.pr_detail!(context), "maintainerEdits")
+    context
+  end
+
+  step "the user is told the change failed", context do
+    assert is_binary(World.failure(context))
+    context
+  end
+
+  step "maintainer edits read as off again", context do
+    assert Shared.pr_detail!(context)["maintainerEdits"]["allowed"] == false
+    context
+  end
+
   # --- access ----------------------------------------------------------------------------
 
   step "pull request {int} was opened by someone else", %{args: [number]} = context do

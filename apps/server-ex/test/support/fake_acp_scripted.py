@@ -24,6 +24,8 @@
 #   settleOptions      configOptions sent as a `config_option_update` just before
 #                      session/new answers (a catalog still settling)
 #   availableCommands  sent as an `available_commands_update` when a session opens
+#   loadReplay         raw messages session/load sends before it answers (the history
+#                      an agent replays)
 #   googleAuth         Antigravity's Google sign-in (see fake_google_auth.py)
 #   versionDelayMs / versionHang / versionExit
 #                      how a `--version` invocation answers (Grok's health probe)
@@ -39,9 +41,11 @@
 # with allow_once/allow_always/reject_once), {"waitCancel": true[, "after": [sessionUpdate]]}
 # (the updates are sent once the cancel came, before the prompt ends), {"exit": code},
 # {"error": {code, message}} (ends the prompt with it), {"stop": reason},
+# {"send": message} (a raw message, such as OpenCode's `opencode/session/child_update`),
 # {"hang": true} (never answers the prompt, even to a cancel),
 # {"waitFile": name} (waits until that file appears in FAKE_DIR),
-# {"writeFile": name} (leaves a file in the working folder), {"writeSession": true}
+# {"writeFile": name} (leaves a file in the working folder), {"writeDir": name}
+# (leaves an empty folder there), {"writeSession": true}
 # (records a conversation for the working folder in $GEMINI_HOME, as Antigravity keeps one),
 # {"kimiWire": {"agent": "main" | subagent id, "records": [record]}} (appends to an
 # agent's record as Kimi Code keeps it:
@@ -217,8 +221,13 @@ def run_turn(mid, sid, text):
             wait_file(step["waitFile"])
         elif "writeFile" in step:
             # Leaves a file in the session's working folder.
-            with open(os.path.join(os.getcwd(), step["writeFile"]), "w") as f:
+            path = os.path.join(os.getcwd(), step["writeFile"])
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
                 f.write("left behind\n")
+        elif "writeDir" in step:
+            # Leaves an empty folder in the session's working folder.
+            os.makedirs(os.path.join(os.getcwd(), step["writeDir"]), exist_ok=True)
         elif "writeSession" in step:
             # Records a conversation in Antigravity's profile, as the CLI does for its cwd.
             conversations = os.path.join(os.environ["GEMINI_HOME"], "antigravity-acp", "conversations")
@@ -227,6 +236,8 @@ def run_turn(mid, sid, text):
             with open(base + ".meta", "w") as f:
                 json.dump({"cwd": os.getcwd()}, f)
             open(base + ".db", "w").close()
+        elif "send" in step:
+            send(dict(step["send"]))
         elif "exit" in step:
             sys.stdout.flush()
             os._exit(step["exit"])
@@ -309,6 +320,10 @@ while True:
         if cfg.get("settleOptions") is not None:
             update(sid, {"sessionUpdate": "config_option_update",
                          "configOptions": cfg["settleOptions"]})
+        # What a load replays of the session, as raw messages, ahead of its reply.
+        if method == "session/load":
+            for m in cfg.get("loadReplay") or []:
+                send(m)
         send({"id": mid, "result": result})
         if cfg.get("availableCommands") is not None:
             update(sid, {"sessionUpdate": "available_commands_update",

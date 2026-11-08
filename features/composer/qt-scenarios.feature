@@ -97,13 +97,14 @@ Feature: Desktop shell scenarios: composer
     And the shell has chosen "Claude Opus" on Claude
     Then the model picker shows "Claude Opus" marked as a Claude model
 
+  # Upstream #28057: a model with efforts keeps the picker open on them.
   @desktop
   Scenario: Choosing a model in the picker asks the shell to switch
     Given the shell lists models from Codex and Claude
     When the shell asks to toggle the model picker
     And the user chooses "Claude Opus"
     Then the shell is asked to switch to "opus" on Claude
-    And the model picker is closed
+    And the model picker closes, or stays open on the model's efforts
 
   @desktop
   Scenario: Searching the model picker matches provider and model names

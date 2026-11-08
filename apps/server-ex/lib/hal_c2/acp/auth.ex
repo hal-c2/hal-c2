@@ -95,6 +95,18 @@ defmodule HalC2.Acp.Auth do
     end
   end
 
+  @doc "Signs the instance out through its agent, stopping its sessions (`HalC2.ProviderAuth`)."
+  def logout(instance, _session) do
+    case HalC2.Acp.Sessions.logout(%{"instanceId" => instance}) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("#{instance} sign-out failed: #{message(reason)}")
+        {:error, "Could not sign out. Try again."}
+    end
+  end
+
   defp start(command, env, cwd),
     do: Connection.start_link(cmd: command, handler: self(), cd: cwd, env: env, dialect: :v2)
 

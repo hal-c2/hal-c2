@@ -212,10 +212,14 @@ defmodule HalC2.Environment do
     if claude != [], do: HalC2.Claude.Provider.forget_auth(claude)
     if models? and claude != [], do: HalC2.Claude.Provider.load(claude)
 
-    ids
-    |> Enum.filter(&HalC2.Acp.agent?/1)
+    agents = Enum.filter(ids, &HalC2.Acp.agent?/1)
+
+    agents
     |> Task.async_stream(&HalC2.Acp.reload/1, timeout: :infinity, max_concurrency: 4)
     |> Stream.run()
+
+    # A sign-in a client has open lists the agent's methods anew.
+    Enum.each(agents, &HalC2.ProviderAuth.refresh/1)
 
     HalC2.Settings.notify_providers()
   end
