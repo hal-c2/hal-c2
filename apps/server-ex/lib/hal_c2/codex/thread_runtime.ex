@@ -3313,6 +3313,8 @@ defmodule HalC2.Codex.ThreadRuntime do
       |> Enum.map(fn {change, detail} -> file_diff(change, detail) end)
       |> Enum.join()
 
+    fields = %{"fileName" => hd(details)["path"], "diffStr" => diff, "changes" => details}
+
     commit(state, fn stream ->
       [
         Orchestration.create(
@@ -3325,15 +3327,18 @@ defmodule HalC2.Codex.ThreadRuntime do
             Orchestration.next_ordinal(stream),
             "completed",
             at,
-            %{
-              "fileName" => hd(details)["path"],
-              "diffStr" => diff,
-              "changes" => details
-            }
+            fields
           )
         )
       ]
     end)
+
+    # Written ended, never through `finish_item/5`: plugins that hear turns hear it here.
+    observe_item(
+      state,
+      "completed",
+      Map.merge(fields, %{"id" => item_id, "type" => "file_change", "status" => "completed"})
+    )
 
     Map.put(
       state,

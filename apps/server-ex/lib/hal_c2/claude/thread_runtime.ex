@@ -3756,9 +3756,17 @@ defmodule HalC2.Claude.ThreadRuntime do
         status = result_status(result)
         output = result_text(result["content"])
 
-        finish_item(state, tool_id, status, fn entity ->
-          if field = result_field(kind), do: Map.put(entity, field, output), else: entity
-        end)
+        # A web call's result is not kept on the thread, which shows what it searched
+        # for or fetched; plugins that hear turns hear it.
+        finish_item(
+          state,
+          tool_id,
+          status,
+          fn entity ->
+            if field = result_field(kind), do: Map.put(entity, field, output), else: entity
+          end,
+          if(kind == :web, do: %{"output" => output}, else: %{})
+        )
     end
   end
 
