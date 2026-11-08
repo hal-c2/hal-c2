@@ -143,6 +143,32 @@ defmodule HalC2.Codex.Provider do
 
   defp check(id), do: :persistent_term.get(@status, %{})[id]
 
+  @doc """
+  What instance `id`'s last check found, without starting a new one: `:ok`,
+  `:failed`, or `:pending` when no check has finished this session. Text
+  generation reads it so a writer that failed its check is not asked to write.
+  """
+  def check_state(id) do
+    case check(id) do
+      nil -> :pending
+      :ok -> :ok
+      # A check that only warned (a slow model list) still found a usable Codex.
+      %{"warning" => _} -> :ok
+      %{} -> :failed
+    end
+  end
+
+  @doc """
+  Records what a check of instance `id` found (`:ok`, a failure map as
+  `probe/1` writes, or `nil` for no finished check), as the probe does.
+  """
+  def record_check(id, nil) do
+    :persistent_term.put(@status, Map.delete(:persistent_term.get(@status, %{}), id))
+    :ok
+  end
+
+  def record_check(id, value), do: put_check(id, value)
+
   defp put_check(id, value) do
     :persistent_term.put(@status, Map.put(:persistent_term.get(@status, %{}), id, value))
     :ok
@@ -213,20 +239,18 @@ defmodule HalC2.Codex.Provider do
         result =
           case model_list(conn, timeout) do
             {:ok, %{"data" => [_ | _] = models}} ->
-              if id == "codex" do
-                :persistent_term.put(
-                  @key,
-                  for(
-                    m <- models,
-                    do: %{
-                      "slug" => m["model"] || m["id"],
-                      "name" => m["displayName"] || m["model"] || m["id"],
-                      "isDefault" => m["isDefault"] == true,
-                      "capabilities" => capabilities(m)
-                    }
-                  )
+              record_models(
+                id,
+                for(
+                  m <- models,
+                  do: %{
+                    "slug" => m["model"] || m["id"],
+                    "name" => m["displayName"] || m["model"] || m["id"],
+                    "isDefault" => m["isDefault"] == true,
+                    "capabilities" => capabilities(m)
+                  }
                 )
-              end
+              )
 
               :ok
 
@@ -534,6 +558,33 @@ defmodule HalC2.Codex.Provider do
 
     :ok
   end
+
+  @doc """
+  The models the last check of Codex instance `id` read from `codex app-server`
+  (`model/list`), or nil when no check has read them this session. Each instance
+  is on its own account, so each has its own list. Text generation resolves the
+  model it asks for against the writing instance's list.
+  """
+  def listed_models(id \\ "codex"), do: :persistent_term.get(models_key(id), nil)
+
+  @doc """
+  Records the models a check of instance `id` read, as `probe/1` does; `nil`
+  forgets them. The `codex` instance's list is also the catalog clients are shown.
+  """
+  def record_models(id \\ "codex", models)
+
+  def record_models(id, nil) do
+    :persistent_term.erase(models_key(id))
+    :ok
+  end
+
+  def record_models(id, models) when is_list(models) do
+    :persistent_term.put(models_key(id), models)
+    :ok
+  end
+
+  defp models_key("codex"), do: @key
+  defp models_key(id), do: {@key, id}
 
   @doc "The name Codex's model list gives `slug`, or nil when the list does not have it."
   def model_name(slug) do
