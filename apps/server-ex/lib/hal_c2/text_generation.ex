@@ -1165,13 +1165,9 @@ defmodule HalC2.TextGeneration do
       # it (upstream #29656): "…/pull/12: the tests fail", "**…/pull/12**".
       |> Enum.map(fn [url] -> URI.parse(String.replace(url, ~r/[.,;!?:*]+$/, "")) end)
       |> Enum.flat_map(fn uri ->
-        with %URI{host: "github.com", userinfo: nil, path: path} when is_binary(path) <- uri,
-             [_, owner, repo, number] <-
-               Regex.run(~r{^/([\w.-]+)/([\w.-]+)/(?:pull|issues)/([1-9]\d*)(?:/.*)?$}, path) do
-          [
-            {URI.to_string(%{uri | query: nil, fragment: nil}),
-             "repos/#{owner}/#{repo}/issues/#{number}"}
-          ]
+        with %URI{host: host, userinfo: nil, path: path} when is_binary(path) <- uri,
+             {:ok, endpoint} <- link_endpoint(host, path) do
+          [{URI.to_string(%{uri | query: nil, fragment: nil}), endpoint}]
         else
           _ -> []
         end
@@ -1194,8 +1190,46 @@ defmodule HalC2.TextGeneration do
     if subjects != [], do: Enum.join(subjects, "\n\n")
   end
 
-  # Only github.com: ambient `gh` credentials never go to a host named in message text.
-  defp subject(cwd, url, endpoint) do
+  # What a link looks up: a GitHub pull request or issue, or a GitLab merge request or
+  # issue (in a group of any depth). Only these two hosts: ambient credentials never go
+  # to a host named in message text.
+  defp link_endpoint("github.com", path) do
+    case Regex.run(~r{^/([\w.-]+)/([\w.-]+)/(?:pull|issues)/([1-9]\d*)(?:/.*)?$}, path) do
+      [_, owner, repo, number] -> {:ok, {:github, "repos/#{owner}/#{repo}/issues/#{number}"}}
+      _ -> :error
+    end
+  end
+
+  defp link_endpoint("gitlab.com", path) do
+    case Regex.run(
+           ~r{^/([\w.-]+(?:/[\w.-]+)+)/-/(merge_requests|issues)/([1-9]\d*)(?:/.*)?$},
+           path
+         ) do
+      [_, project, kind, number] ->
+        {:ok, {:gitlab, "projects/#{URI.encode_www_form(project)}/#{kind}/#{number}"}}
+
+      _ ->
+        :error
+    end
+  end
+
+  defp link_endpoint(_host, _path), do: :error
+
+  defp subject(cwd, url, {:gitlab, endpoint}) do
+    with {:ok, out, _} <-
+           HalC2.SourceControl.Cli.run("glab", ["api", "--hostname", "gitlab.com", endpoint],
+             cd: cwd,
+             timeout: 3_000
+           ),
+         {:ok, %{"title" => title} = subject} when is_binary(title) <- JSON.decode(out) do
+      body = if is_binary(subject["description"]), do: subject["description"], else: ""
+      subject_text(url, title, body)
+    else
+      _ -> "#{url}: unavailable"
+    end
+  end
+
+  defp subject(cwd, url, {:github, endpoint}) do
     with {:ok, out} <-
            HalC2.GitHub.gh(
              cwd,
@@ -1203,15 +1237,18 @@ defmodule HalC2.TextGeneration do
            ),
          {:ok, %{"title" => title} = subject} when is_binary(title) <- JSON.decode(out) do
       body = if is_binary(subject["body"]), do: subject["body"], else: ""
-
-      "#{url}\n" <>
-        ~s({"title":#{JSON.encode!(String.slice(title, 0, 300))},"body":#{JSON.encode!(String.slice(body, 0, 1_200))}})
+      subject_text(url, title, body)
     else
       _ -> "#{url}: unavailable"
     end
   rescue
     _ -> "#{url}: unavailable"
   end
+
+  defp subject_text(url, title, body),
+    do:
+      "#{url}\n" <>
+        ~s({"title":#{JSON.encode!(String.slice(title, 0, 300))},"body":#{JSON.encode!(String.slice(body, 0, 1_200))}})
 
   # --- output ----------------------------------------------------------------------
 

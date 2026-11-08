@@ -66,7 +66,7 @@ Feature: Generated titles, branch names and source control text
     And with no instructions set the title request is unchanged
 
   # Upstream #21882: thread title instructions are set in the text generation settings.
-  @backlog @desktop @tui
+  @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: Thread title instructions are set under text generation
     When the user sets thread title instructions in the text generation settings
     Then new and regenerated titles follow them
@@ -653,7 +653,7 @@ Feature: Generated titles, branch names and source control text
 
   # Legacy: apps/server/src/sourceControl/SourceControlProviderRegistry.ts (resolveLink), GitHubSourceControlProvider.ts, GitLabSourceControlProvider.ts (resolveLink)
   # Legacy: apps/server/src/textGeneration/ThreadTitleLinks.ts (resolveThreadTitleLinks)
-  @mc @backlog
+  @mc
   Scenario Outline: Only a link to a pull request, merge request or issue is looked up
     When a title is generated for a message linking <link>
     Then <outcome>

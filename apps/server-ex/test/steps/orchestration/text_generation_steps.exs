@@ -1773,6 +1773,87 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     )
   end
 
+  # --- which links are looked up ------------------------------------------------------------
+
+  @links %{
+    "a github.com repository page" => "https://github.com/acme/app",
+    "a gitlab.com merge request or issue in a nested group" =>
+      "https://gitlab.com/acme/platform/app/-/merge_requests/12",
+    "a github.com pull request over plain http" => "http://github.com/acme/app/pull/12",
+    "a github.com pull request whose link carries a user name" =>
+      "https://someone@github.com/acme/app/pull/12",
+    "a github.com pull request number that is zero" => "https://github.com/acme/app/pull/0"
+  }
+
+  # One step per link (a `for` over steps would share the first link's value).
+  step("a title is generated for a message linking a github.com repository page", context,
+    do: linking(context, "a github.com repository page")
+  )
+
+  step(
+    "a title is generated for a message linking a gitlab.com merge request or issue in a nested group",
+    context,
+    do: linking(context, "a gitlab.com merge request or issue in a nested group")
+  )
+
+  step(
+    "a title is generated for a message linking a github.com pull request over plain http",
+    context,
+    do: linking(context, "a github.com pull request over plain http")
+  )
+
+  step(
+    "a title is generated for a message linking a github.com pull request whose link carries a user name",
+    context,
+    do: linking(context, "a github.com pull request whose link carries a user name")
+  )
+
+  step(
+    "a title is generated for a message linking a github.com pull request number that is zero",
+    context,
+    do: linking(context, "a github.com pull request number that is zero")
+  )
+
+  defp linking(context, link) do
+    url = Map.fetch!(@links, link)
+    context = github(context, [%{"args" => ["repos/acme"], "stdout" => %{"title" => "T"}}])
+    glab = Path.join(HalC2.Test.Mc.tmp_dir(context.mc, "glab"), "glab")
+    File.ln_s!(@fake_gh, glab)
+    World.put_app_env(:glab_command, glab)
+
+    rules = [
+      %{
+        "cmd" => "glab",
+        "args" => ["projects/acme%2Fplatform%2Fapp/merge_requests/12"],
+        "stdout" => %{"title" => "Login redirect loops", "description" => "It loops forever."}
+      },
+      %{"args" => ["repos/acme"], "stdout" => %{"title" => "T"}}
+    ]
+
+    File.write!(System.get_env("FAKE_GH_RULES"), JSON.encode!(rules))
+    title(context, "Look at #{url} please")
+  end
+
+  step "nothing is looked up", context do
+    assert {:ok, _} = context.reply
+    assert File.read!(context.gh_log) == ""
+    refute prompt(context) =~ "Login redirect loops"
+    context
+  end
+
+  step "its title and description are looked up", context do
+    assert [%{"cmd" => "glab", "args" => args}] =
+             context.gh_log
+             |> File.read!()
+             |> String.split("\n", trim: true)
+             |> Enum.map(&JSON.decode!/1)
+
+    assert "gitlab.com" in args
+    assert prompt(context) =~ JSON.encode!("Login redirect loops")
+    assert prompt(context) =~ "It loops forever."
+    context
+  end
+
   step "both issues are looked up", context do
     assert gh_endpoints(context) == ["repos/hal-c2/code/issues/1", "repos/hal-c2/code/issues/2"]
     context
