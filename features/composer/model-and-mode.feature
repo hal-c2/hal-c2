@@ -79,7 +79,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #25511: a second instance showed the default instance's draft model, whose slug its
   # own catalog lacks, so its effort control vanished and sending asked for a model it had disabled.
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario: A second instance with no draft model of its own uses its own default
     Given the draft picked "Kimi K3.1 Pro" on the default OpenCode instance
     When the user switches the draft to a second OpenCode instance "Kimi" without picking a model
@@ -93,7 +93,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #24205: the model button repeated what the provider icon says ("Claude Opus 5.5" beside
   # the Claude icon), and aggregator catalogs added a vendor ("NVIDIA: Nemotron 3 Super").
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario Outline: The model button shows the name the user would say
     When the user chooses the <provider> model "<full>"
     Then the model button reads "<short>"
@@ -102,11 +102,15 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Examples:
       | provider | full                     | short            |
       | Claude   | Claude Opus 5.5          | Opus 5.5         |
-      | Codex    | GPT-5.5                  | 5.5              |
+      | Codex    | GPT-5.5                  | GPT-5.5          |
       | OpenCode | NVIDIA: Nemotron 3 Super | Nemotron 3 Super |
 
+  # A bare version keeps its family prefix ("GPT-5.5" above): "5.5" alone would not say which
+  # family it belongs to. Upstream #24205's own modelShortName test pins this; an earlier row
+  # here said "5.5", which upstream never did.
+
   # Upstream #24205
-  @backlog @shared @priority-low
+  @shared @backlog-mobile @backlog-tui @priority-low
   Scenario: A short name the model manifest gives wins over the worked-out one
     Given the model manifest names "Claude Opus 5.5" "Opus" for short
     When the user chooses "Claude Opus 5.5"
@@ -125,7 +129,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | claude | sonnet      | gpt-5-codex |
       | codex  | gpt-5-codex | opus        |
 
-  @desktop @backlog @priority-low
+  @desktop @priority-low
   Scenario: Search results keep the provider's newest-first order
     Given Claude lists "Opus 5.5", "Opus 5", "Opus 4.8" and "Opus 4.5" in that order
     When the user searches the models for "opus"
@@ -439,7 +443,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | "server" is updating                       | Updating 1 machine                |
       | the update of "server" failed              | Could not update 1 machine        |
 
-  @backlog @desktop
+  @desktop
   Scenario: The model picker opens on the favourites when there are any
     Given the user has marked "claude-opus" as a favourite
     When the user opens the model picker
@@ -458,7 +462,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the section is already open when the thread runs on one of them
 
   # Upstream #11933: a favourited legacy model was hidden in the folded "Legacy models" section.
-  @backlog @desktop
+  @desktop
   Scenario: A favourite older model is listed outside the folded section
     Given Codex lists the legacy model "gpt-4.1" and the user marked it as a favourite
     When the user looks through Codex's models
@@ -466,13 +470,13 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user removes it from the favourites
     Then "gpt-4.1" is back among the older models behind "Show more"
 
-  @backlog @desktop
+  @desktop
   Scenario: Searching the models finds a provider's older models too
     Given Codex lists the legacy model "gpt-4.1"
     When the user searches the models for "4.1"
     Then "gpt-4.1" is listed without choosing "Show more"
 
-  @backlog @desktop
+  @desktop
   Scenario: A search that matches no model says so
     When the user searches the models for "zzz"
     Then the user is told "No models found"
@@ -485,7 +489,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the picker stays open with the search text as the input method left it
     But Enter outside composition still chooses the highlighted model, and Escape closes the picker
 
-  @backlog @desktop
+  @desktop
   Scenario: A model the provider has just added is marked as new
     Given Codex reports "gpt-6" as a new model
     When the user looks through Codex's models
@@ -503,7 +507,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | six days ago      | is marked as new      |
       | eight days ago    | is not marked as new  |
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: A provider that cannot be used says why in the model picker
     Given the provider instance "Codex Work" <state>
     When the user rests on "Codex Work" in the model picker
@@ -516,7 +520,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | reports the warning "Signed out"              | Codex Work — Limited. Signed out         |
       | has not finished its check                    | Codex Work — Not ready.                  |
 
-  @backlog @desktop
+  @desktop
   Scenario: A provider that needs setting up offers its setup from the model picker
     Given Cursor is not installed and HAL-C2 can install it
     When the user looks through Cursor's models
@@ -533,20 +537,20 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user rests on Claude in the model picker
     Then the user reads "Claude is unavailable in this thread. Start a new thread to switch providers."
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: The model cannot be changed while a message is on its way
     Given the user has sent a message the MC has not taken yet
     Then the model picker cannot be opened
     And it can be opened again once the MC takes the message
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: The model picker waits for the provider list before it can be used
     Given the environment has not yet reported its providers
     Then the composer shows the thread's model and the model picker cannot be opened
     When the providers arrive
     Then the model picker can be opened
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: A composer with no usable provider says so in place of the model
     Given no provider can run a turn
     And <setup>
@@ -559,7 +563,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | one of the providers can be set up      | Open provider settings |
       | none of the providers can be set up     | No provider available  |
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: A saved model its provider no longer lists is kept and marked unavailable
     Given the thread runs on OpenCode with the model "kimi-k2"
     And OpenCode no longer lists "kimi-k2"
@@ -596,7 +600,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then that model replaces the thread's model
     And no second model is chosen
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: Planning and building are toggled on the desktop only when plan mode is on
     Given the plan mode setting is on
     Then the composer offers to switch between "Build" and "Plan"
@@ -604,19 +608,20 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the composer offers no such switch
     And the next turn builds
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: Only the permissions the provider supports are offered
     Given the thread's provider supports only Supervised and Full access
     When the user opens the permissions
     Then only Supervised and Full access are offered, each with a line saying what it allows
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: A thread whose saved permissions its provider no longer offers is shown as Supervised
     Given the thread was saved with Auto-accept edits
     And its provider now supports only Supervised and Full access
     When the user looks at the composer
     Then the permissions read "Supervised"
     And the thread's saved permissions are unchanged until the user chooses
+    And the next turn runs in Supervised
 
   # Upstream #21406: the phone sums the options up too, beside both model controls.
   @backlog @desktop @mobile
@@ -650,19 +655,30 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #25869: the composer names the permissions only when they are not the user's
   # default; they change from the effort menu or the permissions key.
-  @backlog @shared @priority-high
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: The composer names the permissions only when they differ from the default
     Given the default permissions are Supervised
-    And the thread runs in Supervised
+    And the open thread runs in Supervised
     When the user looks at the composer
     Then the composer does not name the permissions
     When the user sets the thread's permissions to Full access from the effort menu
     Then the composer names "Full access" beside the model
 
+  # The phone's system back steps out of the model control's permissions menu
+  # before it leaves the control (MobileShell.stepBack). The steps are in
+  # apps/mobile-qt/tests/features/ComposerPermissionsSteps.cpp, not yet run.
+  @backlog @mobile
+  Scenario: The phone's back leaves the permissions menu before the model control
+    When the user opens the permissions in the model control
+    And the user presses the system's back
+    Then the permissions menu closes and the model control stays open
+    When the user presses the system's back
+    Then the model control closes
+
   # Upstream #25869: a new thread always says which permissions its first message will use,
   # and choosing them there opens the permissions as the permissions key does.
   # Upstream #30275: choosing them opens the permissions menu directly, not the model list first.
-  @backlog @shared @priority-high
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: A new thread says which permissions its first message uses
     Given the default permissions are Full access
     When the user starts a new thread
@@ -740,12 +756,12 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Given the thread runs on a model set to high effort with fast mode on
     Then the summary of the model's options is marked as fast mode on
 
-  @backlog @desktop
+  @desktop
   Scenario: Each option's default is marked
     When the user opens the model's options
     Then the provider's default effort is marked "Default"
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: Choosing another effort takes Ultrathink off the prompt
     Given the thread runs on Claude
     And the user turned on Ultrathink and typed "design the cache"
@@ -753,7 +769,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the draft reads "design the cache" without "Ultrathink:"
     And the next turn runs with high effort
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: A prompt that says ultrathink in its own words fixes the effort
     Given the thread runs on Claude
     And the user has typed "please ultrathink about the cache"
@@ -762,7 +778,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the user is told "Your prompt contains "ultrathink" in the text. Remove it to change this option."
 
   # Upstream #19928: two commands step the composer's effort one level without opening the picker.
-  @backlog @desktop @tui
+  @desktop @tui @backlog-tui
   Scenario Outline: The user steps the effort from the keyboard without leaving the prompt
     Given the thread runs on a model whose efforts are low, medium and high
     And the effort is <from> and the user is typing a draft
@@ -777,6 +793,21 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | high   | up        | low  |
       | medium | down      | low  |
       | low    | down      | high |
+
+  # Ultrathink, put on the prompt, sits above the model's top level: a step
+  # leaves it from there, not from the level saved underneath.
+  @desktop @tui @backlog-tui
+  Scenario Outline: Stepping the effort leaves Ultrathink from above the top level
+    Given the thread runs on Claude
+    And the user turned on Ultrathink and typed "design the cache"
+    When the user steps the effort <direction>
+    Then the effort is <to>
+    And the draft reads "design the cache" without "Ultrathink:"
+
+    Examples:
+      | direction | to     |
+      | up        | medium |
+      | down      | high   |
 
   # Upstream #19928: stepping into Ultrathink follows the same rules as choosing it.
   # Upstream #28044: stepping no longer reaches Ultrathink, which is only typed.
@@ -800,7 +831,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the draft reads "/review the cache"
 
   # Upstream #19928: writing "ultrathink" in the prompt locks effort for the step as for the picker.
-  @backlog @desktop @tui @priority-low
+  @desktop @tui @backlog-tui @priority-low
   Scenario: Stepping the effort does nothing while the prompt says ultrathink in its own words
     Given the thread runs on Claude
     And the user has typed "please ultrathink about the cache"
@@ -809,7 +840,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #19928: a level the provider reports outside the model's list (OpenCode's "default")
   # steps from the model's default instead of doing nothing.
-  @backlog @desktop @tui @priority-low
+  @desktop @tui @backlog-tui @priority-low
   Scenario: An effort outside the model's levels steps from the model's default
     Given the provider reports an effort the model does not list
     And the model's default effort is medium
@@ -825,7 +856,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the next turn runs without Fast mode
 
   # Upstream #19928: the step stands down whenever something else owns the composer.
-  @backlog @desktop @tui
+  @desktop @tui @backlog-tui
   Scenario Outline: Stepping the effort does nothing while the composer is taken
     Given <situation>
     When the user steps the effort up
@@ -840,7 +871,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | the user is holding the step key down after one step |
 
   # Upstream #21406: the phone previewed different options from those it saved.
-  @backlog @desktop @mobile @priority-high
+  @desktop @backlog-mobile @priority-high
   Scenario: Each model keeps the options the user last gave it
     Given the user set "opus" to high effort and "sonnet" to low effort
     When the user switches from "opus" to "sonnet" and back
@@ -874,7 +905,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then it reads "High Fast" with the reasoning icon, and Fast off still shows the icon
 
   # Upstream #23957: a fallback to another instance of the same provider dropped the picked effort.
-  @backlog @shared @priority-high
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: A composer that falls back to another account keeps the effort picked for the model
     Given new threads default to Claude Opus at extra high effort on the account "Claude Personal"
     And "Claude Personal" is turned off and the account "Claude Team" is ready
@@ -883,7 +914,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the first turn is sent at extra high effort
 
   # Upstream #23957: options belong to the model they were picked with.
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario Outline: A fallback account takes no options that were not picked for what it shows
     Given new threads default to Claude Opus at extra high effort on the account "Claude Personal"
     And "Claude Personal" is turned off and <fallback> is ready
@@ -897,7 +928,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #27859: a thread saved under a model alias such as "5.4" lost its effort when the
   # composer fell back to another account.
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario: A fallback keeps the effort of a model saved under an alias
     Given a thread saved on the account "Codex Personal" with the model "5.4" at high effort
     And "Codex Personal" is turned off and the account "Codex Work" is ready
@@ -907,7 +938,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #29789: picking a custom model whose name matched a built-in Codex alias stored the
   # built-in model, and its effort was saved under the built-in model too.
-  @backlog @shared @priority-high
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: A custom model named like a Codex alias stays the model the user picked
     Given the Codex account "Codex Proxy" has the custom model "gpt-5-codex"
     When the user picks "gpt-5-codex" on "Codex Proxy" at high effort and sends a message

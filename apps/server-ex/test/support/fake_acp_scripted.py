@@ -20,7 +20,17 @@
 #   initError          initialize fails with this error object
 #   waitForFileOn      {method: file name}: that method is answered only once
 #                      the file appears in FAKE_DIR
+#   settleOptions      configOptions sent as a `config_option_update` just before
+#                      session/new answers (a catalog still settling)
+#   availableCommands  sent as an `available_commands_update` when a session opens
 #   googleAuth         Antigravity's Google sign-in (see fake_google_auth.py)
+#   versionDelayMs / versionHang / versionExit
+#                      how a `--version` invocation answers (Grok's health probe)
+#   updatedVersion     an `update` invocation installs this version; with
+#                      updateRequiresAllowScripts it does so only when
+#                      npm_config_allow_scripts names the Grok package
+#   delaysMs           {method: ms} a method is answered only after the delay
+#   failInitializeTimes  the first N initialize calls (across processes) fail
 #
 # Turn steps: {"text": s}, {"thought": s}, {"update": sessionUpdate[, "sessionId": child's
 # session, else the prompt's]}, {"request": {method,
@@ -69,7 +79,26 @@ def update(sid, u):
 
 log({"start": {"argv": sys.argv, "cwd": os.getcwd(), "pid": os.getpid(),
                "env": {k: v for k, v in os.environ.items()
-                       if k.startswith(ENV_PREFIXES) or k == "TMPDIR"}}})
+                       if k.startswith(ENV_PREFIXES) or k in (
+                           "TMPDIR", "npm_config_allow_scripts")}}})
+
+if len(sys.argv) > 1 and sys.argv[1] == "--version":
+    import time
+    cfg = config()
+    if cfg.get("versionHang"):
+        time.sleep(3600)
+    time.sleep((cfg.get("versionDelayMs") or 0) / 1000.0)
+    print("grok %s" % cfg.get("version", "1.0.0"))
+    sys.exit(cfg.get("versionExit") or 0)
+
+if len(sys.argv) > 1 and sys.argv[1] == "update":
+    cfg = config()
+    allowed = os.environ.get("npm_config_allow_scripts") == "@xai-official/grok"
+    if cfg.get("updatedVersion") and (allowed or not cfg.get("updateRequiresAllowScripts")):
+        cfg["version"] = cfg["updatedVersion"]
+        with open(CONFIG, "w") as f:
+            json.dump(cfg, f)
+    sys.exit(0)
 
 cancelled = False
 
@@ -163,10 +192,13 @@ def run_turn(mid, sid, text):
         elif "update" in step:
             update(step.get("sessionId", sid), step["update"])
         elif "request" in step:
-            request(step["request"]["method"], dict(step["request"].get("params") or {}, sessionId=sid))
+            params = dict(step["request"].get("params") or {})
+            params.setdefault("sessionId", sid)
+            request(step["request"]["method"], params)
         elif "permission" in step:
+            call = dict(step["permission"])
             request("session/request_permission", {
-                "sessionId": sid, "toolCall": step["permission"],
+                "sessionId": call.pop("sessionId", sid), "toolCall": call,
                 "options": [{"optionId": "once", "name": "Allow once", "kind": "allow_once"},
                             {"optionId": "always", "name": "Always allow", "kind": "allow_always"},
                             {"optionId": "reject", "name": "Reject", "kind": "reject_once"}]})
@@ -224,6 +256,23 @@ while True:
         import fake_google_auth
         if fake_google_auth.handle(msg, cfg, send):
             continue
+    delay = (cfg.get("delaysMs") or {}).get(method)
+    if delay:
+        import time
+        time.sleep(delay / 1000.0)
+    if method == "initialize" and cfg.get("failInitializeTimes"):
+        marker = os.path.join(DIR, "init-failures")
+        try:
+            with open(marker) as f:
+                seen = int(f.read().strip() or 0)
+        except OSError:
+            seen = 0
+        if seen < cfg["failInitializeTimes"]:
+            with open(marker, "w") as f:
+                f.write(str(seen + 1))
+            send({"id": mid, "error": cfg.get("initError") or
+                  {"code": -32002, "message": "initialize failed"}})
+            continue
     if method == "initialize" and cfg.get("initError"):
         send({"id": mid, "error": cfg["initError"]})
     elif method == "initialize":
@@ -253,7 +302,14 @@ while True:
             result["modes"] = cfg["modes"]
         if method == "session/new":
             result["sessionId"] = cfg.get("sessionId") or "fake-session-%d-%d" % (os.getpid(), sessions)
+        sid = result.get("sessionId") or params.get("sessionId")
+        if cfg.get("settleOptions") is not None:
+            update(sid, {"sessionUpdate": "config_option_update",
+                         "configOptions": cfg["settleOptions"]})
         send({"id": mid, "result": result})
+        if cfg.get("availableCommands") is not None:
+            update(sid, {"sessionUpdate": "available_commands_update",
+                         "availableCommands": cfg["availableCommands"]})
     elif (method == "session/set_config_option" and cfg.get("rejectUnknownModels")
           and params.get("configId") == "model"
           and params.get("value") not in [o["value"] for o in next(

@@ -332,6 +332,7 @@ const QStringList& commands() {
         QStringLiteral("projectSearch.toggle"), QStringLiteral("theme.select"), QStringLiteral("appearance.cycle"),
         QStringLiteral("themeEditor.toggle"), QStringLiteral("composer.stash"), QStringLiteral("composer.sendAlternate"),
         QStringLiteral("composer.sendBackground"), QStringLiteral("composer.host"), QStringLiteral("composer.effort"),
+        QStringLiteral("composer.increaseEffort"), QStringLiteral("composer.decreaseEffort"),
         QStringLiteral("composer.mode"), QStringLiteral("composer.workspace"),
         QStringLiteral("composer.previousWorktree"), QStringLiteral("composer.branch"), QStringLiteral("chat.new"),
         QStringLiteral("chat.newLocal"), QStringLiteral("editor.openFavorite"), QStringLiteral("modelPicker.toggle"),
@@ -531,6 +532,8 @@ QString commandLabel(const QString& command) {
   static const QHash<QString, QString> special{
       {QStringLiteral("composer.sendAlternate"), QStringLiteral("Composer: Opposite Queue or Steer Action")},
       {QStringLiteral("composer.sendBackground"), QStringLiteral("Composer: Start in Background")},
+      {QStringLiteral("composer.increaseEffort"), QStringLiteral("Composer: Increase Effort")},
+      {QStringLiteral("composer.decreaseEffort"), QStringLiteral("Composer: Decrease Effort")},
       {QStringLiteral("thread.steerQueuedMessage"), QStringLiteral("Queue: Send First Queued Message as Steer")},
       {QStringLiteral("thread.editQueuedMessage"), QStringLiteral("Queue: Edit Last Queued Message")},
       {QStringLiteral("thread.copyReference"), QStringLiteral("Pull Request: Copy Link or Thread ID")},
