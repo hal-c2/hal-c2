@@ -25,6 +25,20 @@ QVariantMap composer(World& world) {
   return world.state(QStringLiteral("composer")).toMap();
 }
 
+QString effortValue(World& world) {
+  for (const QVariant& option : composer(world).value(QStringLiteral("options")).toList()) {
+    if (option.toMap().value(QStringLiteral("type")) == QLatin1String("select")) return option.toMap().value(QStringLiteral("value")).toString();
+  }
+  return {};
+}
+
+// What the effort control offered, and what it read before a send.
+struct Offered {
+  QStringList listed;
+  QStringList stepped;
+  QString shown;
+};
+
 QJsonArray providers(World& world) {
   return fakeConfig(world.mc).config.value(QLatin1String("providers")).toArray();
 }
@@ -81,7 +95,7 @@ const Steps steps([] {
 
   // Ultrathink.
   step(QStringLiteral("the thread runs on Claude"), [](World& world, const Captures&, const Table&) {
-    // Claude's effort offers Ultrathink, which rides in the prompt.
+    // Claude lists Ultrathink among its efforts, though only the prompt carries it.
     changeProvider(world, QStringLiteral("claudeAgent"), [](QJsonObject& entry) {
       QJsonArray models = entry.value(QLatin1String("models")).toArray();
       for (qsizetype i = 0; i < models.size(); ++i) {
@@ -105,22 +119,53 @@ const Steps steps([] {
     world.waitFor([&] { return composer(world).value(QStringLiteral("selectedInstanceId")) == QLatin1String("claudeAgent"); },
                   [&] { return QStringLiteral("the composer on Claude; it shows %1").arg(show(composer(world))); });
   });
-  step(QStringLiteral("the user turns on Ultrathink and sends %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  // Ultrathink is typed, not picked: what the picker lists and the steps reach.
+  step(QStringLiteral("the user opens the effort choices or steps the effort"), [](World& world, const Captures&, const Table&) {
     Brick& brick = composerBrick(world);
-    typeInComposer(world, c[0]);
-    // From the effort picker's list, with the keyboard.
     QQuickItem* picker = composerPart(world, QStringLiteral("effortPicker"));
     expect(picker && picker->isVisible(), QStringLiteral("the composer shows no effort picker"));
     QObject* popup = picker->property("popup").value<QObject*>();
     QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(picker));
     world.waitFor([&] { return popup->property("opened").toBool(); }, QStringLiteral("the effort picker to open"));
-    const int last = picker->property("count").toInt() - 1;
-    for (int guard = 0; picker->property("highlightedIndex").toInt() != last && guard < 8; ++guard) QTest::keyClick(&brick.window(), Qt::Key_Down);
-    QTest::keyClick(&brick.window(), Qt::Key_Return);
-    world.waitFor([&] { return picker->property("displayText") == QLatin1String("Ultrathink"); },
-                  [&] { return QStringLiteral("the effort to read Ultrathink; it reads %1").arg(picker->property("displayText").toString()); });
+    Offered& offered = world.mc.part<Offered>();
+    offered.listed = picker->property("model").toStringList();
+    QTest::keyClick(&brick.window(), Qt::Key_Escape);
+    world.waitFor([&] { return !popup->property("opened").toBool(); }, QStringLiteral("the effort picker to close"));
+    // Once round the levels and one more, so a level the step reaches is seen.
+    for (int i = 0; i <= offered.listed.size(); ++i) {
+      const QString before = effortValue(world);
+      world.bridge().dispatch(QStringLiteral("composer.effort.step"), QVariantMap{{QStringLiteral("direction"), 1}});
+      world.waitFor([&] { return effortValue(world) != before; },
+                    [&] { return QStringLiteral("a step from %1 to change the effort").arg(before); });
+      offered.stepped.append(effortValue(world));
+    }
+  });
+  step(QStringLiteral("Ultrathink is not offered"), [](World& world, const Captures&, const Table&) {
+    const Offered& offered = world.mc.part<Offered>();
+    expect(!offered.listed.isEmpty() && !offered.listed.join(u'\n').contains(QLatin1String("Ultrathink"), Qt::CaseInsensitive),
+           QStringLiteral("the effort choices list %1").arg(offered.listed.join(QStringLiteral(", "))));
+    expect(!offered.stepped.contains(QStringLiteral("ultrathink")), QStringLiteral("the steps reach %1").arg(offered.stepped.join(QStringLiteral(", "))));
+  });
+  step(QStringLiteral("the user types %1 and sends it").arg(q), [](World& world, const Captures& c, const Table&) {
+    composerBrick(world);
+    QMetaObject::invokeMethod(composerItem(world), "focusInput");
+    typeInComposer(world, c[0]);
+    settleComposer(world);
+    QQuickItem* picker = composerPart(world, QStringLiteral("effortPicker"));
+    expect(picker != nullptr, QStringLiteral("the composer shows no effort picker"));
+    // The effort follows the typed prompt once the composer publishes it.
+    const QString typed = c[0];
+    world.waitFor([&] { return effortValue(world) == QLatin1String("ultrathink") || !typed.startsWith(QLatin1String("Ultrathink:")); },
+                  [&] { return QStringLiteral("the effort to follow the typed prompt; it is %1 under \"%2\"").arg(effortValue(world), composer(world).value(QStringLiteral("text")).toString()); });
+    world.sync();
+    world.mc.part<Offered>().shown = picker->property("displayText").toString();
     QMetaObject::invokeMethod(composerItem(world), "focusInput");
     pressInComposer(world, QStringLiteral("Enter"));
+  });
+  step(QStringLiteral("the effort reads %1 and the turn runs at Ultrathink").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString shown = world.mc.part<Offered>().shown;
+    expect(shown == c[0], QStringLiteral("the effort read %1 before the send").arg(shown));
+    expect(composerMessageReceived(world, QStringLiteral("Ultrathink: design the cache")), QStringLiteral("the agent did not receive the typed Ultrathink"));
   });
 
   // The model last used.
@@ -354,8 +399,7 @@ bool composerMessageReceived(World& world, const QString& text) {
   if (!composerBrickShown(world)) return false;
   const QJsonObject message = lastMessage(world);
   if (message.isEmpty()) return false;
-  // "Ultrathink:" leads the prompt on a line of its own.
   const QString sent = message.value(QLatin1String("text")).toString();
-  expect(sent.simplified() == text && sent.startsWith(QLatin1String("Ultrathink:\n")), QStringLiteral("the agent received \"%1\"").arg(sent));
+  expect(sent.simplified() == text, QStringLiteral("the agent received \"%1\"").arg(sent));
   return true;
 }

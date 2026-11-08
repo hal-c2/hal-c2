@@ -210,7 +210,8 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the next turn builds again
 
   # Upstream #21406: the phone hid Ultrathink and Ultracode.
-  @desktop @mobile @backlog-mobile
+  # Upstream #28044: replaced by "Ultrathink is typed, not picked"; the effort choices leave it out.
+  @dropped @desktop @mobile
   Scenario: Ultrathink prefixes the prompt
     Given the thread runs on Claude
     When the user turns on Ultrathink and sends "design the cache"
@@ -744,8 +745,8 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then its efforts run from the lowest to the highest
 
   # Upstream #28044: Ultrathink is a word in the prompt, not a setting, so the effort choices
-  # leave it out. Replaces turning on Ultrathink above once the clients carry it.
-  @backlog @shared @priority-low
+  # leave it out. Replaces turning on Ultrathink above.
+  @shared @backlog-mobile @backlog-tui @priority-low
   Scenario: Ultrathink is typed, not picked
     Given the thread runs on Claude
     When the user opens the effort choices or steps the effort
@@ -766,7 +767,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
   @desktop @priority-low
   Scenario: Choosing another effort takes Ultrathink off the prompt
     Given the thread runs on Claude
-    And the user turned on Ultrathink and typed "design the cache"
+    And the user has typed "Ultrathink: design the cache"
     When the user sets the effort to high
     Then the draft reads "design the cache" without "Ultrathink:"
     And the next turn runs with high effort
@@ -801,7 +802,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
   @desktop @tui @backlog-tui
   Scenario Outline: Stepping the effort leaves Ultrathink from above the top level
     Given the thread runs on Claude
-    And the user turned on Ultrathink and typed "design the cache"
+    And the user has typed "Ultrathink: design the cache"
     When the user steps the effort <direction>
     Then the effort is <to>
     And the draft reads "design the cache" without "Ultrathink:"

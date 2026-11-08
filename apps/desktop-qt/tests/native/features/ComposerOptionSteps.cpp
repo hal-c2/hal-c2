@@ -26,15 +26,6 @@ const Steps steps([] {
   const QString q = kQuoted;
 
   // Choosing another effort takes Ultrathink off the prompt.
-  step(QStringLiteral("the user turned on Ultrathink and typed %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    composerBrick(world);
-    typeInComposer(world, c[0]);
-    settleComposer(world);
-    world.bridge().dispatch(QStringLiteral("composer.option.set"),
-                            QVariantMap{{QStringLiteral("id"), QStringLiteral("effort")}, {QStringLiteral("value"), QStringLiteral("ultrathink")}});
-    world.waitFor([&] { return composerEditor(world)->property("text").toString().startsWith(QLatin1String("Ultrathink:")); },
-                  QStringLiteral("the draft to carry Ultrathink"));
-  });
   step(QStringLiteral("the draft reads %1 without %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return composerEditor(world)->property("text").toString() == c[0]; },
                   [&] { return QStringLiteral("the draft to read \"%1\"; it reads \"%2\"").arg(c[0], composerEditor(world)->property("text").toString()); });
