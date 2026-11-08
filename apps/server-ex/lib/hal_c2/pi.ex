@@ -234,6 +234,54 @@ defmodule HalC2.Pi do
     :exit, reason -> {:error, reason}
   end
 
+  @doc """
+  Reads the commands and skills Pi offers in `cwd` (its `.pi/skills` and
+  `.pi/prompts` with the user's own) from a throwaway session there, and keeps them
+  as that folder's workspace snapshot on instance `id`'s entry. A read that fails
+  keeps the snapshot the folder had: `{:error, detail}`.
+  """
+  def refresh_workspace(id, cwd) do
+    case workspace_commands(id, cwd) do
+      {:ok, {slash, skills}} ->
+        snapshot = %{
+          "checkedAt" => HalC2.Orchestration.Entities.now(),
+          "slashCommands" => [@compact | Enum.reject(slash, &(&1["name"] == "compact"))],
+          "skills" => skills
+        }
+
+        key = {HalC2.Acp, id, :workspaces}
+        :persistent_term.put(key, Map.put(:persistent_term.get(key, %{}), cwd, snapshot))
+        HalC2.Settings.notify_providers()
+        :ok
+
+      {:error, _reason} ->
+        {:error, "Could not read Pi's commands and skills for this workspace."}
+    end
+  end
+
+  @doc "Instance `id`'s workspace snapshots (`refresh_workspace/2`), each with its `cwd`."
+  def workspaces(id) do
+    for {cwd, snapshot} <- :persistent_term.get({HalC2.Acp, id, :workspaces}, %{}),
+        do: Map.put(snapshot, "cwd", cwd)
+  end
+
+  defp workspace_commands(instance, cwd) do
+    with {:ok, argv, env} <- launch(instance, ephemeral: true),
+         {:ok, conn} <-
+           Connection.start_link(cmd: argv, handler: self(), cd: cwd, env: env, dialect: :pi) do
+      try do
+        wait = Application.get_env(:hal_c2, :pi_discover_ms, 30_000)
+
+        with {:ok, data} <- Connection.call(conn, "get_commands", %{}, wait),
+             do: {:ok, parse_commands(data)}
+      after
+        Connection.stop(conn)
+      end
+    end
+  catch
+    :exit, reason -> {:error, reason}
+  end
+
   defp models(data, level, current) do
     for %{"provider" => provider, "id" => id} = model <- (data || %{})["models"] || [],
         is_binary(provider) and is_binary(id),
