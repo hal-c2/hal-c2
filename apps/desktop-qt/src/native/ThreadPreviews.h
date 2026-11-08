@@ -163,8 +163,9 @@ private:
   void openThroughTab(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc,
                       const QList<QJsonObject>& tabs);
   void onEvent(const QJsonObject& event);
-  // Files the pages the snapshots show loaded under the project.
-  void remember(const QList<QJsonObject>& snapshots);
+  // Files the pages the snapshots show under the project: as visits when the
+  // tabs `loaded` them just now, else as PreviewHistory::seen.
+  void remember(const QList<QJsonObject>& snapshots, bool loaded);
   void keep(const std::function<bool(PreviewHistory&)>& change);
   void setStatus(const QString& status, const QString& message = {});
   int rowOf(const QString& tabId) const;
@@ -199,6 +200,8 @@ private:
   History m_readHistory;
   Keep m_writeHistory;
   QString m_project;
+  // The newest `updatedAt` the MC sent, ms: when a page taken off was taken off.
+  qint64 m_newestStamp = 0;
   QString m_status = QStringLiteral("idle");
   QString m_message;
 };

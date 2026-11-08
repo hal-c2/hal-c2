@@ -20,6 +20,7 @@
 #include "LayoutController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
+#include "PreviewHistory.h"
 #include "McClient.h"
 #include "SettingsController.h"
 #include "SpaceController.h"
@@ -468,7 +469,18 @@ void RightPanelController::retarget() {
     }
     m_files.setTimeline(timeline);
     m_pullRequests.setThread(threadKey);
-    m_previews.setProject(m_projectId.isEmpty() ? QString() : environmentId + QLatin1Char(':') + m_projectId);
+    const QString pagesOf = m_projectId.isEmpty() ? QString() : environmentId + QLatin1Char(':') + m_projectId;
+    // The recent pages kept before they were kept per project go, once, to the first project shown.
+    if (auto* settings = shell->controller<SettingsController>(); settings && !pagesOf.isEmpty()) {
+      const QVariant recent = settings->deviceValue(QStringLiteral("previewRecentPages"));
+      if (recent.isValid()) {
+        PreviewHistory history = PreviewHistory::fromVariant(settings->deviceValue(QStringLiteral("previewHistory")));
+        if (!history.keepUntimed(pagesOf, recent.toStringList()) || settings->writeDevice(QStringLiteral("previewHistory"), history.toVariant())) {
+          settings->writeDevice(QStringLiteral("previewRecentPages"), QVariant());
+        }
+      }
+    }
+    m_previews.setProject(pagesOf);
     m_previews.setThread(environmentId, threadId, m_store->mcServing(environmentId));
     // The project's own preview addresses (its scripts' previewUrl).
     QStringList configured;

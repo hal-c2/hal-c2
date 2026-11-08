@@ -13,7 +13,9 @@
 // A visit is timed by when the page loaded (the MC's `updatedAt`), so news no
 // newer than what is kept (a thread listing the title it last saw of a page
 // another thread has loaded since) changes nothing. A page taken off the list
-// comes back only with a later visit.
+// comes back only with a later visit. A tab only showing a page it loaded before
+// (listed again, resized, its back and forward changing) is no visit: seen()
+// leaves the page's time and place as they were.
 class PreviewHistory {
 public:
   struct Page {
@@ -23,6 +25,9 @@ public:
   };
   static constexpr int pagesPerProject = 50;
   static constexpr int projectsKept = 20;
+  // Times before this are not when a page was visited: pages kept before
+  // visits were timed (keepUntimed) are timed 1, 2, ... ms since the epoch.
+  static constexpr qint64 timedSince = 24 * 3600 * 1000;
 
   // The address a page is kept under: an http or https URL with a host, its
   // credentials dropped, this machine's loopback hosts as localhost and a bare
@@ -34,6 +39,12 @@ public:
   // Each says whether anything kept changed.
   bool visit(const QString& project, const QString& url, const QString& title, qint64 at);
   bool remove(const QString& project, const QString& url, qint64 at);
+  // A tab shows a page it loaded before: a visit only if nothing is kept for
+  // the page, else a newer title for it in its place; a page taken off stays off.
+  bool seen(const QString& project, const QString& url, const QString& title, qint64 at);
+  // The recent pages kept before they were kept per project (one list, newest
+  // first), filed under `project` older than any visit.
+  bool keepUntimed(const QString& project, const QStringList& urls);
 
   // The project's pages, newest first.
   QList<Page> pages(const QString& project) const;
@@ -48,6 +59,8 @@ private:
     QString url;
     QString title;
     qint64 at = 0;
+    // When a tab last reported the title, at or after `at`: an older report does not replace it.
+    qint64 titled = 0;
     // Taken off the list at `at`: an older visit does not bring it back.
     bool removed = false;
     bool operator==(const Entry&) const = default;

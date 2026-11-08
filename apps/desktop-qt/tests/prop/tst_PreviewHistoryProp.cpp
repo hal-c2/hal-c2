@@ -2,13 +2,16 @@
 // order of visits, removals and the device saving and reading them back: each
 // project lists every tidy address once, the newest first, a visit no newer
 // than what is kept changes nothing, a page taken off comes back only with a
-// later visit, a project keeps its fifty newest pages and the device the
-// twenty projects used last, and what is saved reads back as it was.
+// later visit, a tab only showing a page it loaded before neither moves nor
+// retimes it, the pages kept before visits were timed sit below every visit,
+// a project keeps its fifty newest pages and the device the twenty projects
+// used last, and what is saved reads back as it was.
 
 #include "Prop.h"
 
 #include <algorithm>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "PreviewHistory.h"
@@ -51,6 +54,7 @@ struct Entry {
   std::string url;
   std::string title;
   qint64 at = 0;
+  qint64 titled = 0;  // when the title was reported
   bool removed = false;
   long seq = 0;  // when it was put in place
 };
@@ -64,7 +68,7 @@ struct Project {
 
 struct Model {
   std::vector<Project> projects;  // the one used last first
-  qint64 now = 1000;
+  qint64 now = PreviewHistory::timedSince + 1000;  // pages kept untimed are older
   long seq = 0;
 
   Project* find(const std::string& key) {
@@ -106,7 +110,7 @@ struct Model {
   void visit(const std::string& key, const Address& address, const std::string& title, qint64 at) {
     if (address.tidy.empty()) return;
     Project project = find(key) ? *find(key) : Project{key, at, 0, {}};
-    Entry entry{address.tidy, title, at, false, 0};
+    Entry entry{address.tidy, title, at, at, false, 0};
     for (const Entry& known : project.entries) {
       if (known.url != address.tidy) continue;
       if (at < known.at || (known.removed && at == known.at)) return;
@@ -121,12 +125,27 @@ struct Model {
     if (projects.size() > size_t(PreviewHistory::projectsKept)) projects.resize(PreviewHistory::projectsKept);
   }
 
+  void seen(const std::string& key, const Address& address, const std::string& title, qint64 at) {
+    if (address.tidy.empty()) return;
+    if (Project* project = find(key)) {
+      for (Entry& known : project->entries) {
+        if (known.url != address.tidy) continue;
+        if (!known.removed && !title.empty() && title != known.title && at >= known.titled) {
+          known.title = title;
+          known.titled = at;
+        }
+        return;
+      }
+    }
+    visit(key, address, title, at);
+  }
+
   void remove(const std::string& key, const Address& address, qint64 at) {
     Project* project = find(key);
     if (!project || address.tidy.empty()) return;
     for (const Entry& known : project->entries) {
       if (known.url == address.tidy && !known.removed) {
-        put(*project, Entry{address.tidy, "", std::max(at, known.at), true, 0});
+        put(*project, Entry{address.tidy, "", std::max(at, known.at), std::max(at, known.at), true, 0});
         return;
       }
     }
@@ -184,6 +203,94 @@ struct Visit : Command {
   }
 
   void show(std::ostream& os) const override { os << "Visit(" << project << ", " << address.url << ", \"" << title << "\", " << delta << ")"; }
+};
+
+// A tab shows a page it loaded before: listed again, resized, or its back and forward changed.
+struct Seen : Command {
+  int project = *rc::gen::inRange(0, 23);
+  Address address = *rc::gen::elementOf(kAddresses);
+  std::string title = *rc::gen::element(std::string(), std::string("Docs"), std::string("Home"));
+  qint64 delta = *rc::gen::inRange(-3, 4);
+
+  // Mostly a page the model keeps, as a tab shows what it loaded.
+  explicit Seen(const Model& model) {
+    std::vector<std::pair<int, Address>> kept;
+    for (int n = 0; n < 24; ++n) {
+      for (const Project& known : model.projects) {
+        if (known.key != projectKey(n)) continue;
+        for (const Entry& entry : known.entries) {
+          for (const Address& candidate : kAddresses) {
+            if (candidate.tidy == entry.url) kept.emplace_back(n, candidate);
+          }
+        }
+      }
+    }
+    if (!kept.empty() && *rc::gen::inRange(0, 4) > 0) std::tie(project, address) = *rc::gen::elementOf(kept);
+  }
+
+  void apply(Model& model) const override {
+    const qint64 at = model.now + delta;
+    model.now = std::max(model.now, at);
+    model.seen(projectKey(project), address, title, at);
+  }
+
+  void run(const Model& model, Sut& sut) const override {
+    Model expected = model;
+    apply(expected);
+    const QString key = q(projectKey(project));
+    const auto places = [&] {
+      QStringList list;
+      for (const PreviewHistory::Page& page : sut.history.pages(key)) list.append(QStringLiteral("%1 %2").arg(page.url).arg(page.at));
+      return list;
+    };
+    const QStringList before = places();
+    const QStringList projects = sut.history.projects();
+    sut.history.seen(key, q(address.url), q(title), model.now + delta);
+    // A page kept, or taken off, keeps its time and its place, and so does its project.
+    const bool known = std::ranges::any_of(model.projects, [&](const Project& kept) {
+      return kept.key == projectKey(project) && std::ranges::any_of(kept.entries, [&](const Entry& entry) { return entry.url == address.tidy; });
+    });
+    if (known) {
+      RC_ASSERT(places() == before);
+      RC_ASSERT(sut.history.projects() == projects);
+    }
+    check(expected, sut);
+  }
+
+  void show(std::ostream& os) const override { os << "Seen(" << project << ", " << address.url << ", \"" << title << "\", " << delta << ")"; }
+};
+
+// The device kept recent pages before it kept them per project: the first project shown takes them.
+struct Untimed : Command {
+  int project = *rc::gen::inRange(0, 23);
+  std::vector<Address> pages = *rc::gen::container<std::vector<Address>>(*rc::gen::inRange(0, 11), rc::gen::elementOf(kAddresses));
+
+  explicit Untimed(const Model&) {}
+
+  void apply(Model& model) const override {
+    for (size_t at = pages.size(); at-- > 0;) model.visit(projectKey(project), pages[at], "", qint64(pages.size() - at));
+  }
+
+  void run(const Model& model, Sut& sut) const override {
+    Model expected = model;
+    apply(expected);
+    QStringList urls;
+    for (const Address& page : pages) urls.append(q(page.url));
+    sut.history.keepUntimed(q(projectKey(project)), urls);
+    // Below every page visited since visits were timed.
+    bool untimed = false;
+    for (const PreviewHistory::Page& page : sut.history.pages(q(projectKey(project)))) {
+      if (page.at < PreviewHistory::timedSince) untimed = true;
+      else RC_ASSERT(!untimed);
+    }
+    check(expected, sut);
+  }
+
+  void show(std::ostream& os) const override {
+    os << "Untimed(" << project;
+    for (const Address& page : pages) os << ", " << page.url;
+    os << ")";
+  }
 };
 
 // The user takes a page off a project's list.
@@ -267,7 +374,7 @@ private slots:
     QVERIFY(rc::check("the history follows its model", [] {
       Model model;
       Sut sut;
-      rc::state::check(model, sut, rc::state::gen::execOneOfWithArgs<Visit, Visit, Visit, Remove, Browse, Reload>());
+      rc::state::check(model, sut, rc::state::gen::execOneOfWithArgs<Visit, Visit, Visit, Seen, Seen, Remove, Browse, Reload, Untimed>());
     }));
   }
 };

@@ -35,6 +35,8 @@ struct Visits {
   qint64 clock = 0;
   // The pages of "the same page twice", in the order visited.
   QStringList visited;
+  // The page visited before the scenario, as visited() kept it.
+  PreviewHistory::Page before;
 };
 
 QString projectKey(World& world, const QString& project = kProject) {
@@ -58,6 +60,7 @@ qint64 tick(World& world) {
 // The device visited `url` in the project `ago` ms before the world's now, before the scenario.
 void visited(World& world, const QString& url, const QString& title, qint64 ago) {
   PreviewHistory kept = history(world);
+  world.mc.part<Visits>().before = {url, title, world.now().toMSecsSinceEpoch() - ago};
   kept.visit(projectKey(world), url, title, world.now().toMSecsSinceEpoch() - ago);
   auto* settings = world.native().controller<SettingsController>();
   expect(settings->writeDevice(QStringLiteral("previewHistory"), kept.toVariant()), settings->deviceError());
@@ -228,6 +231,43 @@ const Steps steps([] {
   step(QStringLiteral("beneath it are %1 and how long ago it was visited").arg(q), [](World& world, const Captures& c, const Table&) {
     const Row row = rows(world).value(0);
     expect(row.detail == c[0] + QStringLiteral(" · 5m ago"), describeRows(world));
+  });
+  step(QStringLiteral("another browser tab of the thread showing that page is resized"), [](World& world, const Captures&, const Table&) {
+    const PreviewHistory::Page& page = world.mc.part<Visits>().before;
+    FakePreviews& fake = world.mc.part<FakePreviews>();
+    // The tab loaded the page when it was visited...
+    QJsonObject tab = preview::tabAt(page.url, int(fake.tabs.size()) + 1);
+    tab.insert(QStringLiteral("navStatus"), QJsonObject{{QStringLiteral("_tag"), QStringLiteral("Success")}, {QStringLiteral("url"), page.url}, {QStringLiteral("title"), page.title}});
+    tab.insert(QStringLiteral("updatedAt"), iso(page.at));
+    fake.tabs.append(tab);
+    preview::emitEvent(world.mc, tab, QStringLiteral("navigated"), {{QStringLiteral("snapshot"), tab}});
+    world.sync();
+    // ...and is resized now, which the MC stamps too (preview.ex resize).
+    tab.insert(QStringLiteral("viewport"), QJsonObject{{QStringLiteral("_tag"), QStringLiteral("device")}, {QStringLiteral("width"), 390}, {QStringLiteral("height"), 844}});
+    tab.insert(QStringLiteral("updatedAt"), iso(world.now().toMSecsSinceEpoch()));
+    fake.tabs.last() = tab;
+    preview::emitEvent(world.mc, tab, QStringLiteral("resized"), {{QStringLiteral("snapshot"), tab}});
+    world.sync();
+  });
+  step(QStringLiteral("the row still says when the page was visited, not when the tab was resized"), [](World& world, const Captures&, const Table&) {
+    const PreviewHistory::Page& page = world.mc.part<Visits>().before;
+    const Row row = rows(world).value(0);
+    expect(row.detail == PreviewHistory::shown(PreviewHistory::tidy(page.url)) + QStringLiteral(" · 5m ago"), describeRows(world));
+  });
+  step(QStringLiteral("the device kept the recent pages %1 and %1 before it kept them per project").arg(q), [](World& world, const Captures& c, const Table&) {
+    auto* settings = world.native().controller<SettingsController>();
+    expect(settings->writeDevice(QStringLiteral("previewRecentPages"), QStringList{c[0], c[1]}), settings->deviceError());
+    webtab::drawEmbedded(world);
+  });
+  step(QStringLiteral("the pages are listed as %1 then %1, with no time to show").arg(q), [](World& world, const Captures& c, const Table&) {
+    startPage(world);
+    world.waitFor([&] { const QList<Row> listed = rows(world); return listed.size() == 2 && listed.at(0).detail == c[0] && listed.at(1).detail == c[1]; },
+                  [&] { return describeRows(world); });
+  });
+  step(QStringLiteral("the device keeps them under the project from now on"), [](World& world, const Captures&, const Table&) {
+    auto* settings = world.native().controller<SettingsController>();
+    expect(!settings->deviceValue(QStringLiteral("previewRecentPages")).isValid(), show(settings->deviceValue(QStringLiteral("previewRecentPages"))));
+    expect(history(world).pages(projectKey(world)).size() == 2, show(settings->deviceValue(QStringLiteral("previewHistory"))));
   });
   step(QStringLiteral("the row offers to remove it from history"), [](World& world, const Captures&, const Table&) {
     const Row row = rows(world).value(0);

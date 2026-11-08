@@ -807,7 +807,8 @@ Rectangle {
                         required property var modelData
                         required property int index
                         readonly property bool recent: modelData.kind === "recent"
-                        readonly property string when: recent ? Format.relative(modelData.visitedAt) : ""
+                        // Pages kept from before visits were timed have no time to show.
+                        readonly property string when: recent && modelData.visitedAt !== undefined ? Format.relative(modelData.visitedAt) : ""
 
                         objectName: "browserSuggestion-" + index
                         width: parent.width

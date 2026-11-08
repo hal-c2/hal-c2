@@ -66,10 +66,22 @@ std::optional<QJsonObject> after(const QJsonObject& event, const std::optional<Q
   return current;
 }
 
+// The snapshot's `updatedAt` on the MC's clock, 0 without one.
+qint64 stampOf(const QJsonObject& snapshot) {
+  const QDateTime at = QDateTime::fromString(snapshot.value(QLatin1String("updatedAt")).toString(), Qt::ISODateWithMs);
+  return at.isValid() ? at.toMSecsSinceEpoch() : 0;
+}
+
 // When the snapshot's page loaded: its `updatedAt`, else now.
 qint64 loadedAt(const QJsonObject& snapshot) {
-  const QDateTime at = QDateTime::fromString(snapshot.value(QLatin1String("updatedAt")).toString(), Qt::ISODateWithMs);
-  return at.isValid() ? at.toMSecsSinceEpoch() : QDateTime::currentMSecsSinceEpoch();
+  const qint64 at = stampOf(snapshot);
+  return at > 0 ? at : QDateTime::currentMSecsSinceEpoch();
+}
+
+// The page the snapshot shows loaded, "" while none has.
+QString loadedUrl(const QJsonObject& snapshot) {
+  const QJsonObject nav = navOf(snapshot);
+  return nav.value(QLatin1String("_tag")).toString() == QLatin1String("Success") ? nav.value(QLatin1String("url")).toString() : QString();
 }
 
 // A dev server's address on the machine it names: one only that machine reaches.
@@ -238,20 +250,25 @@ void ThreadPreviews::keep(const std::function<bool(PreviewHistory&)>& change) {
   emit suggestionsChanged();
 }
 
-void ThreadPreviews::remember(const QList<QJsonObject>& snapshots) {
+void ThreadPreviews::remember(const QList<QJsonObject>& snapshots, bool loaded) {
+  for (const QJsonObject& snapshot : snapshots) m_newestStamp = std::max(m_newestStamp, stampOf(snapshot));
   keep([&](PreviewHistory& history) {
     bool changed = false;
     for (const QJsonObject& snapshot : snapshots) {
       const QJsonObject nav = navOf(snapshot);
       if (nav.value(QLatin1String("_tag")).toString() != QLatin1String("Success")) continue;
-      changed |= history.visit(m_project, nav.value(QLatin1String("url")).toString(), nav.value(QLatin1String("title")).toString(), loadedAt(snapshot));
+      const QString url = nav.value(QLatin1String("url")).toString();
+      const QString title = nav.value(QLatin1String("title")).toString();
+      changed |= loaded ? history.visit(m_project, url, title, loadedAt(snapshot)) : history.seen(m_project, url, title, loadedAt(snapshot));
     }
     return changed;
   });
 }
 
 void ThreadPreviews::forget(const QString& url) {
-  keep([&](PreviewHistory& history) { return history.remove(m_project, url, QDateTime::currentMSecsSinceEpoch()); });
+  // Timed on the MC's clock, as visits are: a later load brings the page back
+  // whatever this device's clock says, and nothing the MC said so far does.
+  keep([&](PreviewHistory& history) { return history.remove(m_project, url, m_newestStamp); });
 }
 
 QVariantList ThreadPreviews::suggestions() const {
@@ -277,7 +294,8 @@ QVariantList ThreadPreviews::suggestions() const {
   if (m_readHistory && !m_project.isEmpty()) {
     const QList<PreviewHistory::Page> pages = PreviewHistory::fromVariant(m_readHistory()).pages(m_project);
     for (qsizetype at = 0; at < pages.size() && at < maxRecents; ++at) {
-      add(pages.at(at).url, QString(), QStringLiteral("recent"), pages.at(at).title, {{QStringLiteral("visitedAt"), pages.at(at).at}});
+      const PreviewHistory::Page& page = pages.at(at);
+      add(page.url, QString(), QStringLiteral("recent"), page.title, page.at >= PreviewHistory::timedSince ? QVariantMap{{QStringLiteral("visitedAt"), page.at}} : QVariantMap{});
     }
   }
   return list;
@@ -319,6 +337,7 @@ void ThreadPreviews::navigate(const QString& tabId, const QString& address) {
                    // Remembered as the user went there, though the page never loads here (opened in the user's browser).
                    if (environmentId == m_environment && threadId == m_thread) {
                      const QJsonObject snapshot = result.toObject();
+                     m_newestStamp = std::max(m_newestStamp, stampOf(snapshot));
                      keep([&](PreviewHistory& history) {
                        return history.visit(m_project, target, QString(), loadedAt(snapshot));
                      });
@@ -514,7 +533,7 @@ void ThreadPreviews::reload() {
                      for (const QString& tabId : std::as_const(touched)) emit tabChanged(tabId);
                    }
                    setStatus(QStringLiteral("ready"));
-                   remember(m_rows);
+                   remember(m_rows, false);
                    if (restarted) reload();
                  });
 }
@@ -535,10 +554,14 @@ void ThreadPreviews::onEvent(const QJsonObject& event) {
   const QString tabId = event.value(QLatin1String("tabId")).toString();
   if (m_closing.contains(tabId)) return;
   const int row = rowOf(tabId);
-  const auto next = after(event, row < 0 ? std::nullopt : std::optional(m_rows.at(row)));
+  const auto before = row < 0 ? std::nullopt : std::optional(m_rows.at(row));
+  const auto next = after(event, before);
   if (next) {
+    // A visit when the tab loads a page, not when the tab showing it is
+    // resized or its back and forward change (the MC restamps those too).
+    const bool loaded = !before || loadedUrl(*before) != loadedUrl(*next);
     upsert(*next);
-    remember({*next});
+    remember({*next}, loaded);
   } else {
     remove(tabId);
   }

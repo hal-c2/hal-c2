@@ -1995,6 +1995,15 @@ Feature: In-app preview browser
       Then the page is listed as "Docs"
       And beneath it are "localhost:5173/docs?page=2" and how long ago it was visited
       And the row offers to remove it from history
+      When another browser tab of the thread showing that page is resized
+      Then the row still says when the page was visited, not when the tab was resized
+
+    @desktop
+    Scenario: Recent pages kept before they were kept per project go to the first project shown
+      Given the device kept the recent pages "http://localhost:5173/a" and "http://localhost:5173/b" before it kept them per project
+      When the user opens a new browser tab
+      Then the pages are listed as "localhost:5173/a" then "localhost:5173/b", with no time to show
+      And the device keeps them under the project from now on
 
     @desktop
     Scenario: A recent page without a title is listed by its address

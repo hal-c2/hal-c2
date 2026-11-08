@@ -67,7 +67,7 @@ bool PreviewHistory::visit(const QString& project, const QString& url, const QSt
   if (project.isEmpty() || key.isEmpty()) return false;
   const QList<Project> before = m_projects;
   Project kept = find(project) ? *find(project) : Project{project, at, {}};
-  Entry entry{key, title, at, false};
+  Entry entry{key, title, at, at, false};
   for (const Entry& known : std::as_const(kept.entries)) {
     if (known.url != key) continue;
     if (at < known.at || (known.removed && at == known.at)) return false;
@@ -86,8 +86,30 @@ bool PreviewHistory::remove(const QString& project, const QString& url, qint64 a
   if (!kept || key.isEmpty()) return false;
   const auto known = std::find_if(kept->entries.cbegin(), kept->entries.cend(), [&](const Entry& entry) { return entry.url == key && !entry.removed; });
   if (known == kept->entries.cend()) return false;
-  place(*kept, Entry{key, QString(), std::max(at, known->at), true});
+  const qint64 removed = std::max(at, known->at);
+  place(*kept, Entry{key, QString(), removed, removed, true});
   return true;
+}
+
+bool PreviewHistory::seen(const QString& project, const QString& url, const QString& title, qint64 at) {
+  const QString key = tidy(url);
+  if (project.isEmpty() || key.isEmpty()) return false;
+  if (Project* kept = find(project)) {
+    for (Entry& known : kept->entries) {
+      if (known.url != key) continue;
+      if (known.removed || title.isEmpty() || title == known.title || at < known.titled) return false;
+      known.title = title;
+      known.titled = at;
+      return true;
+    }
+  }
+  return visit(project, url, title, at);
+}
+
+bool PreviewHistory::keepUntimed(const QString& project, const QStringList& urls) {
+  bool changed = false;
+  for (qsizetype at = urls.size() - 1; at >= 0; --at) changed |= visit(project, urls.at(at), QString(), urls.size() - at);
+  return changed;
 }
 
 QList<PreviewHistory::Page> PreviewHistory::pages(const QString& project) const {
@@ -114,6 +136,7 @@ QVariant PreviewHistory::toVariant() const {
     for (const Entry& entry : kept.entries) {
       QVariantMap page{{QStringLiteral("url"), entry.url}, {QStringLiteral("at"), entry.at}};
       if (!entry.title.isEmpty()) page.insert(QStringLiteral("title"), entry.title);
+      if (entry.titled != entry.at) page.insert(QStringLiteral("titledAt"), entry.titled);
       if (entry.removed) page.insert(QStringLiteral("removed"), true);
       entries.append(page);
     }
@@ -142,10 +165,16 @@ PreviewHistory PreviewHistory::fromVariant(const QVariant& value) {
       const qint64 at = entry.value(QStringLiteral("at")).toLongLong();
       if (!entry.value(QStringLiteral("removed")).toBool()) {
         history.visit(key, url, entry.value(QStringLiteral("title")).toString(), at);
+        const qint64 titled = entry.value(QStringLiteral("titledAt")).toLongLong();
+        if (Project* kept = history.find(key); kept && titled > at) {
+          for (Entry& known : kept->entries) {
+            if (known.url == tidy(url) && known.at == at && !known.removed) known.titled = titled;
+          }
+        }
       } else if (const QString tidied = tidy(url); !key.isEmpty() && !tidied.isEmpty()) {
         // Never shown on the way in, so it pushes no page out.
         Project kept = history.find(key) ? *history.find(key) : Project{key, 0, {}};
-        place(kept, Entry{tidied, QString(), at, true});
+        place(kept, Entry{tidied, QString(), at, at, true});
         history.placeProject(std::move(kept));
       }
     }
