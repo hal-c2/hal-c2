@@ -106,6 +106,80 @@ defmodule HalC2.Acp.ThreadRuntimeTest do
     end
   end
 
+  # A Grok command the agent reports completed with only a non-zero exit in
+  # its raw output failed: the plain-`exitCode`-is-not-a-failure reading is
+  # Antigravity's and Cursor's alone (their features assert it).
+  test "a Grok command with a non-zero exit code and no failed status is shown as failed",
+       %{work: work} do
+    thread_id = create_thread(work, "grok", "grok-4")
+    {:ok, _} = send_message(thread_id, "m1", "run a failing command")
+    await_statuses(thread_id, ["completed"])
+
+    items = StreamState.list(current(thread_id), "turn-item")
+
+    assert [%{"status" => "failed", "exitCode" => 1, "output" => output}] =
+             Enum.filter(
+               items,
+               &(&1["type"] == "command_execution" and &1["input"] == "make test")
+             )
+
+    assert output =~ "boom"
+  end
+
+  # Review of #1284: a subagent's tool call dropped what the parent's calls keep.
+  describe "a subagent's tool call" do
+    alias HalC2.Acp.ThreadRuntime
+
+    test "the agent closed as never finished is interrupted, not failed" do
+      call = %{
+        "kind" => "execute",
+        "status" => "failed",
+        "rawInput" => %{"command" => "sleep 9"},
+        "_meta" => %{"interrupted" => true}
+      }
+
+      assert {"command_execution", "interrupted", _} = ThreadRuntime.child_item(call, %{})
+      assert {_, "failed", _} = ThreadRuntime.child_item(Map.delete(call, "_meta"), %{})
+    end
+
+    test "an OpenCode command completed with a non-zero metadata exit failed; a plain exitCode did not" do
+      call = %{
+        "kind" => "execute",
+        "status" => "completed",
+        "rawInput" => %{"command" => "false"},
+        "rawOutput" => %{"output" => "", "metadata" => %{"exit" => 1}}
+      }
+
+      assert {"command_execution", "failed", _} = ThreadRuntime.child_item(call, %{})
+
+      plain = Map.put(call, "rawOutput", %{"output" => "", "exitCode" => 1})
+      assert {"command_execution", "completed", _} = ThreadRuntime.child_item(plain, %{})
+    end
+
+    test "a command keeps its exit code and a file change its line counts" do
+      command = %{
+        "kind" => "execute",
+        "status" => "completed",
+        "rawInput" => %{"command" => "make test"},
+        "rawOutput" => %{"output" => "boom\n", "exitCode" => 2}
+      }
+
+      assert {"command_execution", "completed", %{"exitCode" => 2}} =
+               ThreadRuntime.child_item(command, %{})
+
+      edit = %{
+        "kind" => "edit",
+        "status" => "completed",
+        "title" => "Edit a.ex",
+        "locations" => [%{"path" => "a.ex"}],
+        "rawOutput" => %{"linesAdded" => 4, "linesRemoved" => 1}
+      }
+
+      assert {"file_change", "completed", %{"additions" => 4, "deletions" => 1}} =
+               ThreadRuntime.child_item(edit, %{})
+    end
+  end
+
   test "an OpenCode config from the instance keeps its settings when its task tool is denied",
        %{work: work, dir: dir, config_log: config_log} do
     start_supervised!(HalC2.Mcp)
