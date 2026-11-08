@@ -2405,19 +2405,93 @@ defmodule HalC2.Steps.Providers.Claude do
   step "Claude's process arguments do not contain the credential for the HAL-C2 tools", context do
     %{"argv" => argv} = World.await_provider_log(context, "claude", &Map.has_key?(&1, "argv"))
 
-    # The credential lives in the private MCP config file the arguments point to.
-    %{"mcpServers" => %{"hal-c2" => %{"headers" => %{"Authorization" => credential}}}} =
-      argv
-      |> Enum.drop_while(&(&1 != "--mcp-config"))
-      |> Enum.at(1)
-      |> File.read!()
-      |> JSON.decode!()
-
-    token = credential |> String.split(" ") |> List.last()
+    # The credential goes over stdin (`mcp_set_servers`), and no config file is named.
+    token = hal_c2_token(context)
     assert byte_size(token) >= 16
     refute Enum.any?(argv, &String.contains?(&1, token))
+    refute "--mcp-config" in argv
     context
   end
+
+  # HAL-C2's tools reach the commands Claude runs only through Claude: with the
+  # environment scrubbed for them, the tools must still work.
+  step "a Claude thread has HAL-C2's tools", context do
+    context = World.fake_providers(context)
+    Mc.ensure(HalC2.Mcp)
+    World.put_env("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "1")
+    context
+  end
+
+  # The fake runs `env` as a child, as Claude runs a shell command, a hook or a local
+  # MCP server, and answers with what it printed.
+  step "Claude runs a shell command, a hook or a local MCP server", context do
+    context = World.launch_on(context, @thread, "claudeAgent", "run env")
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "none of them can read the credential Claude uses to reach HAL-C2's tools", context do
+    token = hal_c2_token(context)
+    [printed] = World.replies(context, @thread)
+    assert printed =~ "PATH="
+    refute printed =~ token
+
+    %{"argv" => argv} = World.await_provider_log(context, "claude", &Map.has_key?(&1, "argv"))
+    refute Enum.any?(argv, &String.contains?(&1, token))
+
+    # Nor any file the MC keeps, which the commands could read; the fakes' own logs
+    # are this test's record of what Claude was sent.
+    instruments = [
+      Path.join(context.mc.home, "fakes") | Path.wildcard(Path.join(context.mc.home, "claude-*"))
+    ]
+
+    leaks =
+      for path <- Path.wildcard(Path.join(context.mc.home, "**"), match_dot: true),
+          not Enum.any?(instruments, &String.starts_with?(path, &1)),
+          File.regular?(path),
+          File.read!(path) =~ token,
+          do: path
+
+    assert leaks == []
+    context
+  end
+
+  step "HAL-C2's tools still work when Claude scrubs its subprocess environment", context do
+    assert System.get_env("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB")
+    call_hal_c2_tools(context)
+  end
+
+  step "Claude rejects the MCP servers HAL-C2 hands it", context do
+    context = World.fake_providers(context)
+    Mc.ensure(HalC2.Mcp)
+    World.put_env("FAKE_CLAUDE_MCP_REFUSE", "1")
+    World.capture_log(context)
+  end
+
+  step "the turn runs without HAL-C2's tools", context do
+    assert [%{"hal-c2" => _}] = World.claude_mcp_servers(context)
+    context = World.post_message(context, @thread, "which tools")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    assert "tools: none" in World.replies(context, @thread)
+    context
+  end
+
+  step "the log names the servers but none of the error text", context do
+    log = World.logged(context)
+    assert log =~ "MCP servers it refused: hal-c2"
+    refute log =~ "Connection failed"
+    refute log =~ hal_c2_token(context)
+    context
+  end
+
+  # The credential Claude was last handed for HAL-C2's server, over stdin.
+  defp hal_c2_server(context) do
+    %{"hal-c2" => server} = List.last(World.claude_mcp_servers(context))
+    server
+  end
+
+  defp hal_c2_token(context),
+    do: hal_c2_server(context)["headers"]["Authorization"] |> String.split(" ") |> List.last()
 
   step "Claude can still call the HAL-C2 tools for this thread", context do
     call_hal_c2_tools(context)
@@ -2428,16 +2502,7 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   defp call_hal_c2_tools(context) do
-    %{"argv" => argv} = World.await_provider_log(context, "claude", &Map.has_key?(&1, "argv"))
-
-    config =
-      argv
-      |> Enum.drop_while(&(&1 != "--mcp-config"))
-      |> Enum.at(1)
-      |> File.read!()
-      |> JSON.decode!()
-
-    %{"url" => url, "headers" => %{"Authorization" => auth}} = config["mcpServers"]["hal-c2"]
+    %{"url" => url, "headers" => %{"Authorization" => auth}} = hal_c2_server(context)
     assert url =~ ~r{^http://127\.0\.0\.1:\d+/mcp$}
 
     body =
@@ -4623,6 +4688,68 @@ defmodule HalC2.Steps.Providers.Claude do
     World.post_message(context, @thread, "hello again")
     World.await_runs(context, @thread, ["completed", "completed", "completed"])
     assert length(user_messages(context)) == 2
+    context
+  end
+
+  # Claude opens a wake while the runtime is held, and the user's message is sent
+  # before it is let go: the wake's run then queues behind the user's, and the user's
+  # turn starts while the wake is open, so it takes the wake over (a steer). Claude
+  # folds the steer into the wake turn ("fold"): one result answers both.
+  step "a background command finished and Claude opened a wake turn", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "claudeAgent", "hello")
+
+    World.await_runs(context, @thread, ["completed"])
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    :ok = :sys.suspend(pid)
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "bash-1",
+      "status" => "completed",
+      "summary" => "Build finished"
+    })
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-wake",
+        "content" => [%{"type" => "text", "text" => "The build passed"}]
+      }
+    })
+
+    Map.put(context, :held_runtime, pid)
+  end
+
+  step "the user's queued message started and Claude folded it into the wake turn", context do
+    # The send starts its turn inline, on the held runtime: it goes in a task, and the
+    # runtime is let go once the user's run is on the stream, ahead of the wake's.
+    send_task = Task.async(fn -> World.post_message(context, @thread, "fold this in") end)
+    World.await_value(context, @thread, fn _ -> length(World.runs(context, @thread)) == 2 end)
+    :ok = :sys.resume(context.held_runtime)
+    Task.await(send_task)
+  end
+
+  step "the queued wake run starts after the user turn ended", context do
+    World.await_runs(context, @thread, ["completed", "completed", "completed"])
+    context
+  end
+
+  step "the wake run ends without waiting for Claude", context do
+    [_, user, wake] = World.runs(context, @thread)
+    messages = World.stream(context, @thread) |> StreamState.get("message")
+    assert messages[user["userMessageId"]]["text"] == "fold this in"
+    assert messages[wake["userMessageId"]]["creationSource"] == "provider"
+    assert "steered: fold this in" in World.replies(context, @thread)
+    assert length(user_messages(context)) == 2
+    context
+  end
+
+  step "the thread stops showing working", context do
+    refute Enum.any?(World.runs(context, @thread), &(&1["status"] in ["running", "starting"]))
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    assert %{turn: nil, wake: nil} = :sys.get_state(pid)
     context
   end
 
@@ -6889,6 +7016,156 @@ defmodule HalC2.Steps.Providers.Claude do
         ],
         into: %{},
         do: {if(item["toolName"] =~ "scrape", do: "mcp-scrape", else: "mcp-map"), item}
+  end
+
+  # --- MCP elicitation -----------------------------------------------------------------
+
+  # The fake's MCP tool elicits mid-turn ("mcp confirm" and friends); the tool
+  # is told the answer's action and says "elicitation ACTION" before the turn ends.
+  step "a Claude thread is running", context do
+    context
+    |> World.fake_providers()
+    |> World.launch_on(@thread, "claudeAgent", "hello")
+    |> Map.put(:thread, @thread)
+    |> tap(&World.await_runs(&1, @thread, ["completed"]))
+  end
+
+  step "an MCP tool asks the user to confirm what it is about to do", context do
+    context = World.post_message(context, @thread, "mcp confirm")
+    Map.put(context, :request, World.await_request(context, @thread))
+  end
+
+  step "the user is asked to approve, decline or cancel", context do
+    assert %{"kind" => "mcp-elicitation", "status" => "pending"} = context.request
+
+    item =
+      Enum.find(
+        World.entities(context, @thread, "turn-item"),
+        &(&1["requestId"] == context.request["id"])
+      )
+
+    assert %{"prompt" => "Delete the file?", "appName" => "demo", "options" => options} = item
+
+    assert options ==
+             [
+               %{"decision" => "cancel", "label" => "Cancel"},
+               %{"decision" => "decline", "label" => "Decline"},
+               %{"decision" => "accept", "label" => "Approve"}
+             ]
+
+    context
+  end
+
+  step "the tool waits for the user's answer", context do
+    assert [%{"status" => "completed"}, %{"status" => "running"}] =
+             World.runs(context, @thread)
+
+    refute Enum.any?(World.replies(context, @thread), &(&1 =~ "elicitation"))
+    context
+  end
+
+  step "an MCP tool on Claude asked the user to confirm what it is about to do", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "mcp confirm twice")
+      |> Map.put(:thread, @thread)
+
+    Map.put(context, :request, World.await_request(context, @thread))
+  end
+
+  step "the user approves", context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => context.request["id"],
+        "decision" => "accept"
+      })
+
+    context
+  end
+
+  step "the tool goes on with that request", context do
+    # The tool was told accept: it asks its second question instead of ending denied.
+    request = World.await_request(context, @thread)
+    assert %{"kind" => "mcp-elicitation", "status" => "pending"} = request
+    Map.put(context, :request2, request)
+  end
+
+  step "the next request from that tool asks the user again", context do
+    assert context.request2["createdAt"] >= context.request["createdAt"]
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => context.request2["id"],
+        "decision" => "accept"
+      })
+
+    World.await_runs(context, @thread, ["completed"])
+    assert Enum.any?(World.replies(context, @thread), &(&1 == "elicitation accept"))
+    context
+  end
+
+  step ~r/^an MCP tool on Claude asks the user for (?<request>.+)$/,
+       %{args: [request]} = context do
+    text =
+      case request do
+        "a sign-in at a web address" -> "mcp sign in"
+        "values to fill in a form" -> "mcp form"
+        "input it does not describe" -> "mcp undescribed"
+      end
+
+    context
+    |> World.fake_providers()
+    |> World.launch_on(@thread, "claudeAgent", text)
+    |> Map.put(:thread, @thread)
+  end
+
+  step "Claude declines it without asking the user", context do
+    World.await_runs(context, @thread, ["completed"])
+    assert Enum.any?(World.replies(context, @thread), &(&1 == "elicitation decline"))
+    assert World.entities(context, @thread, "runtime-request") == []
+    context
+  end
+
+  step "an MCP tool on Claude is waiting for the user to confirm", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "mcp confirm")
+      |> Map.put(:thread, @thread)
+
+    Map.put(context, :request, World.await_request(context, @thread))
+  end
+
+  step "the Claude session stops", context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, @thread)
+      })
+
+    World.await_runs(context, @thread, ["interrupted"])
+    context
+  end
+
+  step "the request is cancelled", context do
+    assert [%{"status" => "cancelled"}] = World.entities(context, @thread, "runtime-request")
+    context
+  end
+
+  step "answering it afterwards fails as no longer pending", context do
+    assert {:error, _} =
+             HalC2.Claude.ThreadRuntime.respond(
+               World.thread_id(context, @thread),
+               context.request["id"],
+               %{"decision" => "accept"}
+             )
+
+    context
   end
 
   # --- Full access and Claude's own permission settings ------------------------------

@@ -99,9 +99,13 @@ defmodule HalC2.Steps.SourceControl.StackedPullRequests do
   end
 
   step "it is refused with {string}", %{args: [message]} = context do
-    assert World.failure(context) == message
-    assert World.cli_calls(context, "merge-async") == []
-    context
+    if is_function(context[:refused_with], 2) do
+      context.refused_with.(context, message)
+    else
+      assert World.failure(context) == message
+      assert World.cli_calls(context, "merge-async") == []
+      context
+    end
   end
 
   # --- rebasing ------------------------------------------------------------------------

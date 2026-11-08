@@ -244,7 +244,10 @@ defmodule HalC2.Steps.Preview.Remote do
   # With an action in flight, so its fate can be checked.
   step "the desktop's connection to the server closes", context do
     scope = context.scope
-    task = Task.async(fn -> HalC2.PreviewAutomation.invoke(scope, "click", %{}) end)
+
+    task =
+      Task.async(fn -> HalC2.PreviewAutomation.invoke(scope, "click", %{}, tab_id: "tab-1") end)
+
     {%{"operation" => "click"}, context} = request(context)
     Mint.HTTP.close(World.client(context).conn)
 

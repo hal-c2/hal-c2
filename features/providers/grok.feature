@@ -365,13 +365,11 @@ Feature: Grok
     Then reading fails naming the step that failed and the project folder
     And the failure is not remembered as an empty skill list
 
-  @backlog
   Scenario: Choosing Grok's default model keeps the model the session already has
     Given a Grok session that started on the model Grok picked
     When a turn runs with Grok's default model chosen
     Then Grok is not asked to switch models
 
-  @backlog
   Scenario: A reasoning level Grok could not accept is not sent
     Given a Grok thread whose saved reasoning level is not a plain word
     When the user sends a message
@@ -404,13 +402,11 @@ Feature: Grok
       | because the command finished      | completed |
       | saying it failed or timed out     | failed    |
 
-  @backlog
   Scenario: A Grok tool without a title is named after what it does
     When Grok runs a tool and gives it no title
     Then the tool call is named after the command, file or search it works on
 
   # Upstream #20881: a Grok question that allows several answers keeps that.
-  @backlog
   Scenario Outline: Grok's questions keep their shape
     When Grok asks a question <shape>
     Then <outcome>
@@ -422,25 +418,27 @@ Feature: Grok
       | and the user types an answer of their own | Grok receives the typed text as its "Other" answer   |
       | and the turn is stopped before an answer  | Grok is told the question was cancelled              |
 
-  @backlog
   Scenario: Grok stops after its plan is captured
     Given a Grok thread in plan mode
     When Grok presents its plan
     Then the plan is shown for the user to review
     And Grok is told to stop and wait for feedback or a request to implement it
 
-  @backlog
   Scenario: A Grok plan with nothing in it says so
     Given a Grok thread in plan mode
     When Grok leaves plan mode without writing a plan
     Then the plan reads "No plan written yet"
 
-  @backlog
   Scenario: Grok's plan file is shown as the plan while Grok writes it
     Given a Grok thread in plan mode
     When Grok writes the plan file of its own session
     Then the thread's plan follows what Grok wrote
     And a file named "plan.md" that Grok edits in the workspace is shown as an ordinary edit
+
+  Scenario: Each plan-mode turn's plan file is its own plan
+    Given a Grok thread in plan mode
+    When Grok writes its plan file in two plan-mode turns
+    Then both plans are kept, each as its own plan
 
   @backlog
   Scenario: Checking on a Grok background task shows its latest output
@@ -544,13 +542,11 @@ Feature: Grok
     When the user stops the turn
     Then Grok's cancel request carries the cancel trigger "ctrl_c"
 
-  @backlog
   Scenario: A reasoning level chosen with Grok's default model applies to the model the session is on
     Given a Grok session that started on the model Grok picked
     When a turn runs with Grok's default model and a reasoning level chosen
     Then Grok is asked for that reasoning level on the model the session already has
 
-  @backlog
   Scenario: Choosing the same Grok model again without a reasoning level keeps Grok's own reasoning
     Given a Grok session running on a model at the reasoning level Grok chose
     When a turn runs on that model with no reasoning level chosen
@@ -610,7 +606,6 @@ Feature: Grok
       | _x.ai/exit_plan_mode          | a plan to review                |
 
   # XAiAcpExtension.ts: the corners of tool calls, monitors and subagents.
-  @backlog
   Scenario Outline: A Grok tool with a placeholder title is given a name that says what it is
     When Grok runs <tool> titled "Tool"
     Then the tool call is named <name>
@@ -625,21 +620,24 @@ Feature: Grok
       | a command of more than 80 characters     | the command's first 77 characters followed by "..." |
 
   # Upstream #32408: the 77-character cut could land inside an emoji and leave half of it.
-  @backlog
   Scenario: A Grok command name cut short does not end in a broken character
     When Grok runs a command titled "Tool" whose 77th character falls inside an emoji
     Then the tool call is named by the command up to just before that emoji, followed by "..."
     And the name holds no replacement character
 
-  @backlog
+  Scenario: A Grok command name is cut by UTF-16 units, as the old server counted them
+    When Grok runs a command titled "Tool" of 41 emoji, 41 characters but 82 UTF-16 units
+    Then the tool call is named by the first 38 emoji followed by "..."
+
   Scenario Outline: A Grok command's result decides whether it is finished
     When Grok reports a command result with <result>
-    Then the command is shown as <state>
+    Then the command result is shown as <state>
 
     Examples:
       | result                        | state       |
       | exit code 0 and no output yet | in progress |
       | exit code 0 and its output    | completed   |
+      | exit code 0, no output, and says it completed | completed |
       | a non-zero exit code          | failed      |
       | the text "Exit Code: -1"      | failed      |
 
@@ -758,18 +756,15 @@ Feature: Grok
     And the second is still listed as background work
 
   # XAiAcpExtension.ts: the corners of questions and plans.
-  @backlog
   Scenario: A Grok question that does not say whether it takes several answers takes one
     When Grok asks a question that leaves out whether several answers are allowed
     Then the user can pick one option only
 
-  @backlog
   Scenario: Answers reach Grok in the order Grok asked its questions
     Given Grok asked two questions at once
     When the user answers the second question before the first
     Then Grok receives the answers in the order it asked, each under the question's own text
 
-  @backlog
   Scenario Outline: An option's preview goes back to Grok only for a single choice
     Given Grok asked a question whose options carry previews
     When the user answers a question that allows <choices>
@@ -780,13 +775,11 @@ Feature: Grok
       | one answer      | carries the chosen option's preview |
       | several answers | carries no preview                  |
 
-  @backlog
   Scenario: Grok's plan is read from its plan file when Grok presents none
     Given a Grok thread in plan mode whose plan file has been written
     When Grok presents its plan without including the plan's text
     Then the plan shown is the plan file's content
 
-  @backlog
   Scenario Outline: Grok's plan file is recognised wherever Grok keeps its sessions
     Given a Grok thread in plan mode
     When Grok writes "plan.md" <where>

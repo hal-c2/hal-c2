@@ -176,7 +176,9 @@ void sendFirstMessage(World& world) {
 // The one thread the shell launched is `machine`'s, in its checkout of the
 // shared project, after asking the MC about the user's pick (or without
 // asking, for a draft tied to its machine); the window then shows it there.
-void startsOn(World& world, const QString& machine) {
+void startsOn(World& world, const QString& name) {
+  // The MC's own machine may be named by its label.
+  const QString machine = name == world.mc.label && !world.mc.members.contains(name) ? world.mc.environmentId : name;
   const FakeLaunches& launches = world.mc.part<FakeLaunches>();
   world.waitFor([&] { return !launches.calls.isEmpty(); }, QStringLiteral("a launch; the MC got none"));
   world.sync();

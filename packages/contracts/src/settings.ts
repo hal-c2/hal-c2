@@ -288,6 +288,10 @@ export const LoadBalancingWeights = Schema.Record(
 
 export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 
+// How the composer shows the model's reasoning effort: its name, or bars.
+export const EffortDisplay = Schema.Literals(["label", "bars"]);
+export type EffortDisplay = typeof EffortDisplay.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -296,6 +300,7 @@ export const ClientSettingsSchema = Schema.Struct({
   diffColorScheme: DiffColorScheme.pipe(
     Schema.withDecodingDefault(Effect.succeed("red-green" as const)),
   ),
+  effortDisplay: EffortDisplay.pipe(Schema.withDecodingDefault(Effect.succeed("label" as const))),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   appearanceContrast: AppearanceContrast.pipe(
@@ -1151,6 +1156,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "textGenerationModelSelection",
   "sourceControlWriterModelSelection",
   "sourceControlWritingStyle",
+  "threadTitleInstructions",
   "pullRequestMergeMethod",
   "sidebarAutoSettleOnMerge",
   "sidebarAutoSettleAfterDays",
@@ -1180,6 +1186,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   textGenerationModelSelection: Schema.optionalKey(ModelSelection),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSettings),
+  threadTitleInstructions: Schema.optionalKey(TrimmedString),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
@@ -1405,6 +1412,8 @@ export const ServerSettings = Schema.Struct({
   sourceControlWritingStyle: SourceControlWritingStyleSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /** How thread titles are written, added to the title writer's prompt; empty adds nothing. */
+  threadTitleInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1716,6 +1725,7 @@ export const ServerSettingsPatch = Schema.Struct({
       followChangeRequestTemplates: Schema.optionalKey(Schema.Boolean),
     }),
   ),
+  threadTitleInstructions: Schema.optionalKey(TrimmedString),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   observability: Schema.optionalKey(
@@ -1772,6 +1782,7 @@ export const ClientSettingsPatch = Schema.Struct({
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
+  effortDisplay: Schema.optionalKey(EffortDisplay),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
   appearanceContrast: Schema.optionalKey(AppearanceContrast),

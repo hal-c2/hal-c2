@@ -24,6 +24,8 @@ Item {
         Composer {
             width: 800
             height: 650
+            // The chips; the model control's own tests set it.
+            optionsInModelControl: false
         }
     }
 

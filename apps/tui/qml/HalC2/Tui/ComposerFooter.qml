@@ -46,10 +46,12 @@ Item {
                 text: footer.composer.footer.effort
                 onMouseDown: Shell.dispatch("composer.effortPicker.toggle")
             }
-            Text { visible: !footer.compact; flexShrink: 0; text: " │ "; color: Theme.colors.faint }
+            // The permissions are named only when they differ from the default
+            // (always on a new thread's first message).
+            Text { visible: !footer.compact && footer.composer.namesAccess; flexShrink: 0; text: " │ "; color: Theme.colors.faint }
             Text {
                 objectName: "composerAccess"
-                visible: !footer.compact
+                visible: !footer.compact && footer.composer.namesAccess
                 flexShrink: 0
                 text: footer.composer.footer.access
                 onMouseDown: Shell.dispatch("composer.runtimePicker.toggle")
