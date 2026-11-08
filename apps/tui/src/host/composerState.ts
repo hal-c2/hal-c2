@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import {
   DEFAULT_SERVER_SETTINGS,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  type EffortDisplay,
   type KnownComposerContextRecord,
   type ModelSelection,
   type OrchestrationThread,
@@ -61,17 +62,21 @@ import {
 } from "../controls.ts";
 import { placeNewThread } from "../loadBalancing.ts";
 import {
-  currentModelIndex,
   defaultModelSlug,
+  effortReadout,
   fallbackModelSlug,
   modelOptionStates,
+  modelPickerRows,
   modelSelectionForOption,
+  pickMatchesThread,
   promptEffort,
   providerReady,
   reasoningChoicesForSelection,
   resolveModelSelection,
   steppedEffort,
   withModelSelectionOption,
+  withoutUltrathinkPrefix,
+  type EffortBars,
   type ModelOption,
   type ModelOptionState,
 } from "../models.ts";
@@ -131,6 +136,8 @@ export interface ComposerOptions {
   readonly onTextCompleted?: (text: string) => void;
   /** A new-thread draft opened or closed: the sidebar row and the page follow it. */
   readonly onDraftChange?: () => void;
+  /** How the composer names the effort: its word, or rising bars (Settings' effort display). */
+  readonly effortDisplay?: () => EffortDisplay;
   /** The editor's rows or the composer's other rows changed: the layout follows. */
   readonly onRowsChange?: (rows: number) => void;
   /** The user stopped this turn from here (its work stays open in the timeline). */
@@ -244,6 +251,8 @@ export interface TuiComposerState {
   readonly selectedInstanceId: string | null;
   readonly selectedModel: string | null;
   readonly effort: string | null;
+  /** The effort as rising bars, when the effort display shows bars and the level is one. */
+  readonly effortBars: EffortBars | null;
   /** The selected model's provider options (effort, toggles) with their values. */
   readonly options: ReadonlyArray<ModelOptionState>;
   readonly interactionMode: ProviderInteractionMode;
@@ -416,6 +425,14 @@ export interface PickRequest {
 }
 
 const EMPTY_DRAFT: Draft = { text: "", images: [] };
+
+const BAR_HEIGHTS = "▁▂▃▄▅▆▇█";
+/** `count` bars rising to full height, one cell each. */
+const barGlyphs = (count: number) =>
+  Array.from(
+    { length: count },
+    (_, at) => BAR_HEIGHTS[Math.ceil(((at + 1) * BAR_HEIGHTS.length) / count) - 1]!,
+  ).join("");
 // The project-scope picker's "All projects" value.
 const ALL_PROJECTS = "__all__";
 const NEW_TARGET = "new";
@@ -818,6 +835,19 @@ export function createComposer(options: ComposerOptions): Composer {
       promptEffort(modelOptions, model, draft.text)?.value ??
       reasoningChoicesForSelection(modelOptions, model)?.selectedId ??
       null;
+    const readout = model && effort ? effortReadout(modelOptions, model, effort) : null;
+    const effortBars =
+      (options.effortDisplay?.() ?? "label") === "bars" ? (readout?.bars ?? null) : null;
+    // The bars rise left to right; the lit ones are the level.
+    const effortChip = () =>
+      effortBars
+        ? styled(
+            chunk("effort ", { fg: palette.dim }),
+            chunk(barGlyphs(effortBars.count).slice(0, effortBars.filled), { fg: palette.text }),
+            chunk(barGlyphs(effortBars.count).slice(effortBars.filled), { fg: palette.dim }),
+            chunk(" ▾", { fg: palette.text }),
+          )
+        : footerChip("effort", readout?.label ?? effort ?? "—", { muted: !effort, dropdown: true });
     const interactionMode: ProviderInteractionMode = newDraft
       ? newDraft.interactionMode
       : page
@@ -948,6 +978,7 @@ export function createComposer(options: ComposerOptions): Composer {
       selectedInstanceId: model?.instanceId ?? null,
       selectedModel: model?.model ?? null,
       effort,
+      effortBars,
       options: modelOptionStates(modelOptions, model),
       interactionMode,
       interactionModeLabel: interactionModeLabel(interactionMode),
@@ -978,7 +1009,7 @@ export function createComposer(options: ComposerOptions): Composer {
       moreAttachments: hiddenCount > 0 ? `+${hiddenCount} more` : "",
       footer: {
         model: footerChip("model", modelButtonLabel(model), { muted: !model, dropdown: true }),
-        effort: footerChip("effort", effort ?? "—", { muted: !effort, dropdown: true }),
+        effort: effortChip(),
         access: footerChip("^O", runtimeModeLabel(runtimeMode), { dropdown: true }),
         mode: footerChip("^B", interactionModeLabel(interactionMode), {
           active: interactionMode === "plan",
@@ -1324,6 +1355,35 @@ export function createComposer(options: ComposerOptions): Composer {
       }),
     );
 
+  // The providers whose older models the open model picker lists.
+  let legacyShown = new Set<string>();
+  const modelPickerOptions = (models: ReadonlyArray<ModelOption>): SelectOption[] =>
+    modelPickerRows(models, legacyShown).map((row) =>
+      row.kind === "model"
+        ? {
+            label: row.option.label,
+            description: row.option.providerLabel,
+            value: JSON.stringify({ instanceId: row.option.instanceId, model: row.option.model }),
+          }
+        : {
+            label: row.shown ? "Show less" : "Show more",
+            description: `${row.providerLabel} · ${row.count} older model${row.count === 1 ? "" : "s"}`,
+            value: JSON.stringify({ legacy: row.instanceId }),
+          },
+    );
+  /** "Show more" lists a provider's older models in place; "Show less" folds them again. */
+  const toggleLegacyModels = (instanceId: string) => {
+    if (legacyShown.has(instanceId)) legacyShown.delete(instanceId);
+    else legacyShown.add(instanceId);
+    updatePicker("model", (current) => {
+      const options = modelPickerOptions(modelOptions);
+      const row = options.findIndex(
+        (option) => option.value === JSON.stringify({ legacy: instanceId }),
+      );
+      return { ...current, options, index: Math.max(0, row) };
+    });
+  };
+
   const openModelPicker = () => {
     if (toggles("model")) return;
     if (!newDraft && !openPage() && !selectedDetail()) return;
@@ -1337,17 +1397,27 @@ export function createComposer(options: ComposerOptions): Composer {
     });
     // Reload on every open: the server's provider list may have changed.
     void loadModels().then(
-      (models) =>
+      (models) => {
+        // An older model that is the selection opens with its provider's older models shown.
+        const chosen = models.find(
+          (model) => model.instanceId === selection?.instanceId && model.model === selection.model,
+        );
+        legacyShown = new Set(chosen?.isLegacy === true ? [chosen.instanceId] : []);
+        const options = modelPickerOptions(models);
+        const at = selection
+          ? options.findIndex(
+              (option) =>
+                option.value ===
+                JSON.stringify({ instanceId: selection.instanceId, model: selection.model }),
+            )
+          : -1;
         updatePicker("model", (current) => ({
           ...current,
           status: models.length > 0 ? "ready" : "empty",
-          options: models.map((model) => ({
-            label: model.label,
-            description: model.providerLabel,
-            value: JSON.stringify({ instanceId: model.instanceId, model: model.model }),
-          })),
-          index: currentModelIndex(models, selection),
-        })),
+          options,
+          index: Math.max(0, at),
+        }));
+      },
       () => updatePicker("model", (current) => ({ ...current, status: "error" })),
     );
   };
@@ -1714,9 +1784,15 @@ export function createComposer(options: ComposerOptions): Composer {
     ) {
       return;
     }
-    if (promptEffort(modelOptions, selection, draftFor(target()).text)?.locked) return;
-    const next = steppedEffort(modelOptions, selection, direction);
-    if (next) setOption(next.descriptorId, next.value);
+    const key = target();
+    const typed = promptEffort(modelOptions, selection, draftFor(key).text);
+    if (typed?.locked) return;
+    // The "Ultrathink:" prefix sits above the top level: the step leaves it from
+    // there and takes the prefix off, not from the level saved underneath.
+    const next = steppedEffort(modelOptions, selection, direction, typed !== null);
+    if (!next) return;
+    if (typed) setDraft(key, (draft) => ({ ...draft, text: withoutUltrathinkPrefix(draft.text) }));
+    setOption(next.descriptorId, next.value);
   };
 
   /**
@@ -2677,6 +2753,14 @@ export function createComposer(options: ComposerOptions): Composer {
       selectBranch(value);
       return;
     }
+    // The model picker's "Show more" row stays open on itself.
+    if (current.kind === "model") {
+      const { legacy } = JSON.parse(value) as { legacy?: string };
+      if (legacy !== undefined) {
+        toggleLegacyModels(legacy);
+        return;
+      }
+    }
     closePicker();
     switch (current.kind) {
       case "model": {
@@ -2734,6 +2818,12 @@ export function createComposer(options: ComposerOptions): Composer {
     const detail = selectedDetail();
     if (detail && interactionOverrides.get(detail.id) === detail.interactionMode) {
       interactionOverrides.delete(detail.id);
+    }
+    // Once the thread runs the draft's pick, the pick is dropped, so a later
+    // change made on another client shows (upstream #20886).
+    const pick = detail ? modelOverrides.get(detail.id) : undefined;
+    if (detail && pick && pickMatchesThread(modelOptions, pick, detail.modelSelection)) {
+      modelOverrides.delete(detail.id);
     }
     publish();
   };

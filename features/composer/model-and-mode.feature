@@ -239,7 +239,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then it is no longer listed among the favourites
 
   # Upstream #14961: the model picker offers every saved custom model, not just the first 32
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: Every saved custom model is offered
     Given the user has saved 40 custom models for Codex
     When the user opens the model picker
@@ -253,7 +253,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the next turn moves the thread to Claude before it runs on "claude-opus"
 
   # Upstream #20886: a model picked earlier in a draft kept overriding a change made elsewhere.
-  @shared @mobile @backlog-mobile @backlog-tui
+  @shared @mobile @backlog-mobile
   Scenario: A draft follows a model change made on another client
     Given the user picked "gpt-5" in the draft of a thread on this client
     And then changed the thread to "claude-opus" on another client
@@ -643,7 +643,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
   # Upstream #25869: the composer names the effort as a word after the model, such as
   # "Opus 5.5 Extra High", and a bolt after it when Fast is on. Settings › Appearance ›
   # Effort display shows the level as rising bars instead; Max, Ultracode and Ultrathink stay words.
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario Outline: The composer names the model's effort as the user chose to see it
     Given the thread runs on "Opus 5.5" with <effort> effort
     And the effort display is set to "<display>"
@@ -722,7 +722,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #28076: "Legacy models" became a "Show more" row at the end of the list. Replaces
   # "A provider's older models are folded away until asked for".
-  @shared @backlog-mobile @backlog-tui @priority-low
+  @shared @backlog-mobile @priority-low
   Scenario: A provider's older models are shown in place from the end of the list
     Given Codex lists two current models and three it calls legacy
     When the user chooses "Show more" at the end of Codex's models
@@ -748,7 +748,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #28044: Ultrathink is a word in the prompt, not a setting, so the effort choices
   # leave it out. Replaces turning on Ultrathink above.
-  @shared @backlog-mobile @backlog-tui @priority-low
+  @shared @backlog-mobile @priority-low
   Scenario: Ultrathink is typed, not picked
     Given the thread runs on Claude
     When the user opens the effort choices or steps the effort
@@ -801,7 +801,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Ultrathink, put on the prompt, sits above the model's top level: a step
   # leaves it from there, not from the level saved underneath.
-  @desktop @tui @backlog-tui
+  @desktop @tui
   Scenario Outline: Stepping the effort leaves Ultrathink from above the top level
     Given the thread runs on Claude
     And the user has typed "Ultrathink: design the cache"
@@ -862,7 +862,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #19928: the step stands down whenever something else owns the composer.
   # The TUI stands down on every row but cannot edit a queued message, so that row cannot run there.
-  @desktop @tui @backlog-tui
+  @desktop @tui
   Scenario Outline: Stepping the effort does nothing while the composer is taken
     Given <situation>
     When the user steps the effort up
@@ -872,9 +872,13 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | situation                                            |
       | an approval is waiting for the user                  |
       | the agent's question is waiting for an answer        |
-      | the user is editing a queued message                 |
       | no provider is available                             |
       | the user is holding the step key down after one step |
+
+    @backlog-tui
+    Examples:
+      | situation                            |
+      | the user is editing a queued message |
 
   # Upstream #21406: the phone previewed different options from those it saved.
   @desktop @backlog-mobile @priority-high

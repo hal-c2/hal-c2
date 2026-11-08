@@ -30,6 +30,8 @@ export interface ModelOption {
   readonly capabilities: ModelCapabilities | null;
   /** The provider cannot change models once a conversation has started. */
   readonly requiresNewThreadForModelChange?: boolean;
+  /** An older model the picker keeps behind its provider's "Show more" row. */
+  readonly isLegacy?: boolean;
 }
 
 export function flattenModelOptions(providers: ReadonlyArray<ServerProvider>): ModelOption[] {
@@ -48,6 +50,7 @@ export function flattenModelOptions(providers: ReadonlyArray<ServerProvider>): M
         ...(provider.requiresNewThreadForModelChange === true
           ? { requiresNewThreadForModelChange: true }
           : {}),
+        ...(model.isLegacy === true ? { isLegacy: true } : {}),
       });
     }
   }
@@ -76,13 +79,17 @@ function reasoningChoicesFromDescriptors(
     selects.find((descriptor) => REASONING_DESCRIPTOR_IDS.has(descriptor.id)) ?? selects[0];
   if (!reasoning || reasoning.type !== "select") return null;
   const selected = getProviderOptionCurrentValue(reasoning);
+  // A level the prompt carries (Ultrathink) is typed, never picked.
+  const injected = reasoning.promptInjectedValues ?? [];
   return {
     descriptorId: reasoning.id,
-    choices: reasoning.options.map((option) => ({
-      id: option.id,
-      label: option.label,
-      ...(option.description ? { description: option.description } : {}),
-    })),
+    choices: reasoning.options
+      .filter((option) => !injected.includes(option.id))
+      .map((option) => ({
+        id: option.id,
+        label: option.label,
+        ...(option.description ? { description: option.description } : {}),
+      })),
     selectedId: typeof selected === "string" ? selected : null,
   };
 }
@@ -133,6 +140,31 @@ export function resolveModelSelection(
   );
 }
 
+/**
+ * A draft's pick is what the thread already runs: the same account and model
+ * with the same options once both are resolved, Fast off counting as unset
+ * (the desktop's pickMatchesThread). The pick has then been taken.
+ */
+export function pickMatchesThread(
+  options: ReadonlyArray<ModelOption>,
+  pick: ModelSelection,
+  threadSelection: ModelSelection | null | undefined,
+): boolean {
+  const picked = resolveModelSelection(options, pick);
+  const running = resolveModelSelection(options, threadSelection);
+  if (!picked || !running) return false;
+  if (picked.instanceId !== running.instanceId || picked.model !== running.model) return false;
+  const values = (selection: ModelSelection) =>
+    new Map(
+      (selection.options ?? [])
+        .filter((option) => !(option.id === "fastMode" && option.value === false))
+        .map((option) => [option.id, option.value]),
+    );
+  const left = values(picked);
+  const right = values(running);
+  return left.size === right.size && [...left].every(([id, value]) => right.get(id) === value);
+}
+
 /** Create a complete selection for a newly chosen model, using its defaults. */
 export function modelSelectionForOption(option: ModelOption): ModelSelection {
   const descriptors = option.capabilities
@@ -175,16 +207,46 @@ export function reasoningChoicesForSelection(
   return reasoningChoicesFromDescriptors(descriptors);
 }
 
-/** Index of the option matching the current selection, or 0 when none matches. */
-export function currentModelIndex(
+/** One row of the model picker: a model, or a provider's "Show more" / "Show less" row. */
+export type ModelPickerRow =
+  | { readonly kind: "model"; readonly option: ModelOption }
+  | {
+      readonly kind: "legacy";
+      readonly instanceId: string;
+      readonly providerLabel: string;
+      readonly shown: boolean;
+      readonly count: number;
+    };
+
+/**
+ * The model picker's rows (upstream #28076): each provider's current models,
+ * then a "Show more" row that lists its older ones in place, which then reads
+ * "Show less". `shown` names the providers whose older models are listed.
+ */
+export function modelPickerRows(
   options: ReadonlyArray<ModelOption>,
-  selection: { readonly instanceId: string; readonly model: string } | null | undefined,
-): number {
-  if (!selection) return 0;
-  const index = options.findIndex(
-    (option) => option.instanceId === selection.instanceId && option.model === selection.model,
-  );
-  return index >= 0 ? index : 0;
+  shown: ReadonlySet<string>,
+): ModelPickerRow[] {
+  const rows: ModelPickerRow[] = [];
+  const instances = [...new Set(options.map((option) => option.instanceId))];
+  for (const instanceId of instances) {
+    const models = options.filter((option) => option.instanceId === instanceId);
+    const legacy = models.filter((option) => option.isLegacy === true);
+    for (const option of models) {
+      if (option.isLegacy !== true) rows.push({ kind: "model", option });
+    }
+    if (legacy.length === 0) continue;
+    const open = shown.has(instanceId);
+    if (open) for (const option of legacy) rows.push({ kind: "model", option });
+    rows.push({
+      kind: "legacy",
+      instanceId,
+      providerLabel: legacy[0]!.providerLabel,
+      shown: open,
+      count: legacy.length,
+    });
+  }
+  return rows;
 }
 
 /** One provider option of the selected model with its current value (desktop `ShellComposerOption`). */
@@ -216,7 +278,9 @@ export function modelOptionStates(
     value: getProviderOptionCurrentValue(descriptor) ?? null,
     choices:
       descriptor.type === "select"
-        ? descriptor.options.map((choice) => ({ id: choice.id, label: choice.label }))
+        ? descriptor.options
+            .filter((choice) => !(descriptor.promptInjectedValues ?? []).includes(choice.id))
+            .map((choice) => ({ id: choice.id, label: choice.label }))
         : [],
   }));
 }
@@ -243,13 +307,16 @@ function effortDescriptor(
  * The effort one level up (1) or down (-1) from the selection's, wrapping, as
  * composer.increaseEffort / decreaseEffort set it (the desktop's steppedChoice).
  * A level the prompt carries (Ultrathink) is typed, never stepped to, and a
- * current level the model does not list steps from the model's default. Null
- * when there is nothing to step between.
+ * current level the model does not list steps from the model's default.
+ * `fromAbove` steps from above the top level, as a prompt that carries
+ * Ultrathink does: up to the lowest level, down to the highest. Null when
+ * there is nothing to step between.
  */
 export function steppedEffort(
   options: ReadonlyArray<ModelOption>,
   selection: ModelSelection,
   direction: 1 | -1,
+  fromAbove = false,
 ): { readonly descriptorId: string; readonly value: string } | null {
   const descriptor = effortDescriptor(options, selection);
   if (!descriptor) return null;
@@ -258,6 +325,8 @@ export function steppedEffort(
   if (choices.length < 2) return null;
   const ids = choices.map((choice) => choice.id);
   const current = getProviderOptionCurrentValue(descriptor);
+  if (fromAbove)
+    return { descriptorId: descriptor.id, value: direction > 0 ? ids[0]! : ids.at(-1)! };
   let at = typeof current === "string" ? ids.indexOf(current) : -1;
   if (at < 0) at = choices.findIndex((choice) => choice.isDefault === true);
   const value =
@@ -269,9 +338,49 @@ export function steppedEffort(
   return { descriptorId: descriptor.id, value };
 }
 
+/** How full the effort's rising bars are; `count` levels, the lowest `filled` lit. */
+export interface EffortBars {
+  readonly count: number;
+  readonly filled: number;
+}
+
+/**
+ * The effort as the composer names it (upstream #25869): the level's label,
+ * and the bars Settings' effort display can show it as instead. Max, Ultracode
+ * and a level the prompt carries keep their names, and an "off" at the bottom
+ * is no bar (the desktop's effortBars). Bars are null for a word-only level or
+ * a select that is not the model's reasoning.
+ */
+export function effortReadout(
+  options: ReadonlyArray<ModelOption>,
+  selection: ModelSelection,
+  value: string,
+): { readonly label: string; readonly bars: EffortBars | null } {
+  const descriptor = effortDescriptor(options, selection);
+  const label = descriptor?.options.find((choice) => choice.id === value)?.label || value;
+  if (!descriptor || !REASONING_DESCRIPTOR_IDS.has(descriptor.id)) return { label, bars: null };
+  const named = new Set(["ultracode", "max", ...(descriptor.promptInjectedValues ?? [])]);
+  const levels = descriptor.options.map((choice) => choice.id).filter((id) => !named.has(id));
+  const at = levels.indexOf(value);
+  if (levels.length < 2 || at < 0) return { label, bars: null };
+  const startsAtOff = levels[0] === "off" || levels[0] === "none";
+  return {
+    label,
+    bars: {
+      count: startsAtOff ? levels.length - 1 : levels.length,
+      filled: startsAtOff ? at : at + 1,
+    },
+  };
+}
+
 /** "please ultrathink about it": the prompt asks for Ultrathink in its own words, past any prefix. */
 export function ultrathinkInWords(text: string): boolean {
-  return /\bultrathink\b/i.test(text.replace(/^\s*Ultrathink:\s*/i, ""));
+  return /\bultrathink\b/i.test(withoutUltrathinkPrefix(text));
+}
+
+/** The prompt without its "Ultrathink:" prefix. */
+export function withoutUltrathinkPrefix(text: string): string {
+  return text.replace(/^\s*Ultrathink:\s*/i, "");
 }
 
 /**

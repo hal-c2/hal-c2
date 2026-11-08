@@ -1,12 +1,16 @@
 // What the composer's footer names (composer/model-and-mode.feature): the
-// permissions only when they differ from the default (upstream #25869), and
-// the model as the user would say it (upstream #24205).
+// permissions only when they differ from the default (upstream #25869), the
+// model as the user would say it (upstream #24205), and its effort as a word
+// or rising bars, as the user chose (upstream #25869).
 import { expect } from "bun:test";
 
 import { DEFAULT_SERVER_SETTINGS, type RuntimeMode, type ServerProvider } from "@hal-c2/contracts";
 
 import { step } from "../../steps.ts";
 import { RUNTIME_MODE_META } from "../../../src/controls.ts";
+import { THEME } from "../../../src/theme.ts";
+import { cellAt, expectColour, textAt } from "../design.ts";
+import { thread } from "../fakeClient.ts";
 import { shownText } from "../threadWorld.ts";
 import {
   clickObject,
@@ -18,7 +22,13 @@ import {
   type World,
 } from "../world.ts";
 import { composer, updateThread } from "./composer.steps.ts";
-import { chooseInPicker, restartClient, select, type ControlsWorld } from "./controls.steps.ts";
+import {
+  chooseInPicker,
+  restartClient,
+  runPaletteCommand,
+  select,
+  type ControlsWorld,
+} from "./controls.steps.ts";
 
 const PERMISSIONS = "Supervised|Full access";
 
@@ -171,5 +181,104 @@ step(
     throw new Error(
       "The terminal client has no tooltips; the model picker, which the model control opens, lists the full name.",
     );
+  },
+);
+
+// --- The effort as a word or bars (upstream #25869) ---------------------------
+
+/** Opus 5.5's efforts, as Claude lists them: four levels, then Max, then Ultrathink. */
+const OPUS_EFFORTS = [
+  ["low", "Low"],
+  ["medium", "Medium"],
+  ["high", "High"],
+  ["xhigh", "Extra High"],
+  ["max", "Max"],
+  ["ultrathink", "Ultrathink"],
+] as const;
+
+const opusProviders = [
+  {
+    instanceId: "claude",
+    driver: "claudeAgent",
+    displayName: "Claude",
+    enabled: true,
+    models: [
+      {
+        slug: "claude-opus-5-5",
+        name: "Claude Opus 5.5",
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "effort",
+              label: "Effort",
+              type: "select",
+              options: OPUS_EFFORTS.map(([id, label]) => ({
+                id,
+                label,
+                ...(id === "medium" ? { isDefault: true } : {}),
+              })),
+              promptInjectedValues: ["ultrathink"],
+            },
+          ],
+        },
+      },
+    ],
+  },
+] as unknown as ReadonlyArray<ServerProvider>;
+
+const BAR_COUNTS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4 };
+
+step(
+  /^the thread runs on "Opus 5\.5" with (Low|Medium|High|Extra High|Max) effort$/,
+  async (ctx: ControlsWorld, label: string) => {
+    const id = OPUS_EFFORTS.find(([, name]) => name === label)![0];
+    await restartClient(ctx, {
+      providers: opusProviders,
+      detail: {
+        ...thread(),
+        modelSelection: {
+          instanceId: "claude",
+          model: "claude-opus-5-5",
+          options: [{ id: "effort", value: id }],
+        },
+      } as never,
+    });
+    expect(composer(ctx).effort).toBe(id);
+  },
+);
+
+step("the effort display is set to {string}", async (ctx: World, display: string) => {
+  await runPaletteCommand(ctx, "Change effort display…");
+  expect(select(ctx).title).toBe("effort display");
+  await chooseInPicker(ctx, display);
+});
+
+step(
+  /^the model reads "([^"]+)" followed by (?:"([^"]+)"|(one|two|three|four) bars?)$/,
+  async (ctx: World, model: string, word: string | undefined, bars: string | undefined) => {
+    await settle(ctx);
+    await snapshot(ctx);
+    expect(shownText(findObject(ctx, "composerModel").get("text"))).toBe(`model ${model} ▾`);
+    const modelBox = geometry(findObject(ctx, "composerModel"));
+    const effortBox = geometry(findObject(ctx, "composerEffort"));
+    expect(effortBox.y).toBe(modelBox.y);
+    expect(effortBox.x).toBeGreaterThan(modelBox.x);
+    const effort = shownText(findObject(ctx, "composerEffort").get("text"));
+    if (word !== undefined) {
+      expect(composer(ctx).effortBars).toBeNull();
+      expect(effort).toBe(`effort ${word} ▾`);
+      return;
+    }
+    // Opus 5.5 has four levels below Max; the lowest `filled` are lit.
+    const filled = BAR_COUNTS[bars!]!;
+    expect(composer(ctx).effortBars).toEqual({ count: 4, filled });
+    const glyphs = "▂▄▆█";
+    expect(effort).toBe(`effort ${glyphs} ▾`);
+    const at = await textAt(ctx, glyphs);
+    for (let bar = 0; bar < glyphs.length; bar += 1) {
+      const cell = await cellAt(ctx, at.x + bar, at.y);
+      expectColour(cell.span.fg, bar < filled ? THEME.text : THEME.dim);
+    }
   },
 );

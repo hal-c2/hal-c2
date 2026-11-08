@@ -9,7 +9,7 @@ import { step } from "../../steps.ts";
 import { PROVIDERS, thread } from "../fakeClient.ts";
 import { approvalRequest, questionRequest, shownText } from "../threadWorld.ts";
 import { findObject, holdKey, pressKey, settle, type World } from "../world.ts";
-import { composer, typeIntoPrompt } from "./composer.steps.ts";
+import { callsTo, composer, typeIntoPrompt } from "./composer.steps.ts";
 import { restartClient, type ControlsWorld } from "./controls.steps.ts";
 
 // `applyKeymapOverrides` is not exported from opentui-qml's entry; reach the module directly.
@@ -29,6 +29,10 @@ interface EffortWorld extends ControlsWorld {
   holdStep?: boolean;
   /** The effort option's value, which a read-out the prompt sets can hide. */
   chosenBefore?: string | boolean | null;
+  /** Every effort the picker listed and stepping reached. */
+  effortsOffered?: string[];
+  /** The effort read-out when the prompt was sent. */
+  effortWhenSent?: string;
 }
 
 const effortSelect = (defaultId: string, ids = ["low", "medium", "high"], extra = {}) => ({
@@ -43,7 +47,7 @@ const effortSelect = (defaultId: string, ids = ["low", "medium", "high"], extra 
   ...extra,
 });
 
-/** Claude with Ultrathink, a level only the prompt's words reach. */
+/** Claude at medium or high, with Ultrathink above them, a level only the prompt reaches. */
 const CLAUDE = [
   {
     instanceId: "claude",
@@ -57,7 +61,7 @@ const CLAUDE = [
         isCustom: false,
         capabilities: {
           optionDescriptors: [
-            effortSelect("high", ["low", "medium", "high", "max", "ultrathink"], {
+            effortSelect("medium", ["medium", "high", "ultrathink"], {
               promptInjectedValues: ["ultrathink"],
             }),
           ],
@@ -124,8 +128,72 @@ step("the thread runs on Claude", async (ctx: EffortWorld) => {
     providers: CLAUDE,
     detail: { ...thread(), modelSelection: { instanceId: "claude", model: "opus" } } as never,
   });
-  expect(composer(ctx).effort).toBe("high");
+  expect(composer(ctx).effort).toBe("medium");
 });
+
+/** Bind the step commands as a user's keymap.json would. */
+function bindStepKeys(ctx: World): void {
+  applyKeymapOverrides(ctx.app!.engine, {
+    [STEP_KEYS.up]: "composer.increaseEffort",
+    [STEP_KEYS.down]: "composer.decreaseEffort",
+  });
+}
+
+step("the user opens the effort choices or steps the effort", async (ctx: EffortWorld) => {
+  await pressKey(ctx, "Ctrl+Shift+E");
+  await settle(ctx);
+  const picker = ctx.host!.state.get("select") as {
+    open: boolean;
+    options: ReadonlyArray<{ label: string }>;
+  };
+  expect(picker.open).toBe(true);
+  const offered = picker.options.map((option) => option.label);
+  await pressKey(ctx, "Esc");
+  await settle(ctx);
+  // Once round every level and one more, each way.
+  bindStepKeys(ctx);
+  const levels = offered.length;
+  for (const key of ["]", "["]) {
+    for (let i = 0; i <= levels; i += 1) {
+      await pressKey(ctx, `Alt+${key}`);
+      await settle(ctx);
+      offered.push(String(composer(ctx).effort));
+    }
+  }
+  ctx.effortsOffered = offered;
+});
+
+step("Ultrathink is not offered", (ctx: EffortWorld) => {
+  expect(ctx.effortsOffered!.length).toBeGreaterThan(0);
+  expect(ctx.effortsOffered!.some((effort) => /ultrathink/i.test(effort))).toBe(false);
+});
+
+step("the user types {string} and sends it", async (ctx: EffortWorld, text: string) => {
+  await typeIntoPrompt(ctx, text);
+  ctx.effortWhenSent = shownText(findObject(ctx, "composerEffort").get("text"));
+  await pressKey(ctx, "Enter");
+  await settle(ctx);
+});
+
+step(
+  "the effort reads {string} and the turn runs at Ultrathink",
+  (ctx: EffortWorld, label: string) => {
+    expect(ctx.effortWhenSent).toMatch(new RegExp(label, "i"));
+    // The prompt carries the level to the agent.
+    const sent = callsTo(ctx, "sendReply");
+    expect(sent.map((call) => call.args[1])).toEqual(["Ultrathink: design the cache"]);
+  },
+);
+
+step(
+  "the draft reads {string} without {string}",
+  async (ctx: EffortWorld, text: string, gone: string) => {
+    await settle(ctx);
+    expect(composer(ctx).text).toBe(text);
+    expect(prompt(ctx).text).toBe(text);
+    expect(composer(ctx).text).not.toContain(gone);
+  },
+);
 
 step("the provider reports an effort the model does not list", async (ctx: EffortWorld) => {
   // OpenCode reports "default", a level its models do not offer.
@@ -194,10 +262,7 @@ step("the user is holding the step key down after one step", async (ctx: EffortW
 step(
   /^the user steps the effort (up|down)$/,
   async (ctx: EffortWorld, direction: "up" | "down") => {
-    applyKeymapOverrides(ctx.app!.engine, {
-      [STEP_KEYS.up]: "composer.increaseEffort",
-      [STEP_KEYS.down]: "composer.decreaseEffort",
-    });
+    bindStepKeys(ctx);
     const key = STEP_KEYS[direction].split("+")[1]!;
     if (ctx.holdStep) {
       // The press steps once from medium; the repeats that follow must not.
