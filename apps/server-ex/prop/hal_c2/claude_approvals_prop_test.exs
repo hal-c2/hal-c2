@@ -4,8 +4,10 @@ defmodule HalC2.ClaudeApprovalsPropTest do
   CLI in `test/support/fake_claude.py`, covering two promises the feature scenarios
   make one case at a time:
 
-  - The pending-approval lifecycle, for a command's approval and for an MCP
-    tool's elicitation. Claude asks ("approve", "mcp confirm"), and then, in any
+  - The pending-approval lifecycle, for a command's approval, for one Claude's
+    safety check raised and forbade remembering (`suppressAlwaysAllowRule`), and
+    for an MCP tool's elicitation. Claude asks ("approve", "approve once", "mcp
+    confirm"), and then, in any
     order: the user answers (`ThreadRuntime.respond/3` with accept, decline or
     cancel), Claude withdraws the request (its `control_cancel_request`, which the
     session forwards as `{:permission_cancelled, id}`), withdrawal or an answer
@@ -13,8 +15,10 @@ defmodule HalC2.ClaudeApprovalsPropTest do
     stops the run. The promise: the first thing that closes a request wins — a
     withdrawn approval closes as cancelled, one the user already answered stays
     answered, and nothing after that changes its status or decision. An answer
-    for a request that is not pending is an error, and an elicitation answered
-    with a decision its card does not offer ("acceptForSession") is declined.
+    for a request that is not pending is an error, and an elicitation or a
+    safety check's approval answered with a decision its card does not offer
+    ("acceptForSession") is declined, so no session rule skips the next ask
+    (Upstream #22546).
   - The resume head a turn records (its provider turn's `nativeTurnRef`, where a
     rollback to that turn resumes). A `/compact` turn has no assistant message,
     so its compact boundary is its head (a thread's first `/compact` has no
@@ -36,6 +40,7 @@ defmodule HalC2.ClaudeApprovalsPropTest do
   # Each kind's request, and the control id Claude asks it under.
   @requests %{
     permission: {"runtime-request:claudeAgent:perm-1", "perm-1"},
+    once: {"runtime-request:claudeAgent:perm-once", "perm-once"},
     elicitation: {"runtime-request:claudeAgent:mcp-elicitation:elicit-1", "elicit-1"}
   }
   @fake_claude Path.expand("../../test/support/fake_claude.py", __DIR__)
@@ -120,7 +125,7 @@ defmodule HalC2.ClaudeApprovalsPropTest do
   # phase: :idle (no turn), :pending (an approval is open), :withdrawn (Claude
   #   withdrew it; the turn still runs). kind: the latest ask's kind. reqs: per
   #   kind, the status and decision of the request the fake keeps opening under
-  #   that kind's id (perm-1, elicit-1), or nil before its first ask.
+  #   that kind's id (perm-1, perm-once, elicit-1), or nil before its first ask.
   #   msgs: user messages that reached the fake, which numbers its uuid- and
   #   compact- ids by. head: the resume head the last finished turn recorded.
   #   talked: a turn has reached Claude, so the thread has a conversation.
@@ -130,7 +135,7 @@ defmodule HalC2.ClaudeApprovalsPropTest do
     %{
       phase: :idle,
       kind: :permission,
-      reqs: %{permission: unasked, elicitation: unasked},
+      reqs: %{permission: unasked, once: unasked, elicitation: unasked},
       msgs: 0,
       n: 1,
       head: nil,
@@ -138,11 +143,11 @@ defmodule HalC2.ClaudeApprovalsPropTest do
     }
   end
 
-  @control_ids ["perm-1", "elicit-1", "perm-nope"]
+  @control_ids ["perm-1", "perm-once", "elicit-1", "perm-nope"]
 
   def command(%{phase: :idle, n: n, kind: kind}) do
     frequency([
-      {3, {:call, __MODULE__, :ask, [n, oneof([:permission, :elicitation])]}},
+      {3, {:call, __MODULE__, :ask, [n, oneof([:permission, :once, :elicitation])]}},
       {2, {:call, __MODULE__, :plain, [n]}},
       {2, {:call, __MODULE__, :compact_only, [n]}},
       {2, {:call, __MODULE__, :grow, [n]}},
@@ -152,11 +157,12 @@ defmodule HalC2.ClaudeApprovalsPropTest do
   end
 
   def command(%{phase: :pending, kind: kind}) do
-    # A command's "always allow" writes session rules the next ask would skip on.
+    # A command's "always allow" writes session rules the next ask would skip on;
+    # the other kinds' cards do not offer it, so answering with it must write none.
     offered =
-      if kind == :elicitation,
-        do: ["accept", "decline", "acceptForSession"],
-        else: ["accept", "decline"]
+      if kind == :permission,
+        do: ["accept", "decline"],
+        else: ["accept", "decline", "acceptForSession"]
 
     frequency([
       {3, {:call, __MODULE__, :answer, [kind, oneof(offered)]}},
@@ -209,13 +215,15 @@ defmodule HalC2.ClaudeApprovalsPropTest do
   def next_state(%{phase: :pending} = state, _result, {:call, _, :answer, [kind, "cancel"]}),
     do: %{close(state, kind, "cancelled", "cancel") | phase: :idle}
 
-  # An elicitation's card offers no "always allow": answering with it declines.
+  # An elicitation's or a safety check's card offers no "always allow": answering
+  # with it declines.
   def next_state(
         %{phase: :pending} = state,
         _result,
-        {:call, _, :answer, [:elicitation, "acceptForSession"]}
-      ),
-      do: %{close(state, :elicitation, "resolved", "decline") | phase: :idle}
+        {:call, _, :answer, [kind, "acceptForSession"]}
+      )
+      when kind in [:elicitation, :once],
+      do: %{close(state, kind, "resolved", "decline") | phase: :idle}
 
   def next_state(%{phase: :pending} = state, _result, {:call, _, :answer, [kind, decision]}),
     do: %{close(state, kind, "resolved", decision) | phase: :idle}
@@ -225,7 +233,7 @@ defmodule HalC2.ClaudeApprovalsPropTest do
 
   # Withdrawing the open request closes it as cancelled; the turn runs on.
   def next_state(%{phase: :pending, kind: kind} = state, _result, {:call, _, :withdraw, [id]})
-      when id == "perm-1" or id == "elicit-1" do
+      when id in ["perm-1", "perm-once", "elicit-1"] do
     if id == control_id(kind),
       do: %{close(state, kind, "cancelled", "cancel") | phase: :withdrawn},
       else: state
@@ -282,7 +290,14 @@ defmodule HalC2.ClaudeApprovalsPropTest do
   # A turn that asks for a command's approval, or an MCP tool's confirmation, and
   # waits on it.
   def ask(n, kind) do
-    send_message(n, if(kind == :permission, do: "approve run: touch x", else: "mcp confirm"))
+    text =
+      case kind do
+        :permission -> "approve run: touch x"
+        :once -> "approve once"
+        :elicitation -> "mcp confirm"
+      end
+
+    send_message(n, text)
     await(fn -> match?(%{status: "pending"}, snapshot().reqs[kind]) && snapshot() end)
   end
 

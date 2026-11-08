@@ -97,7 +97,6 @@ Feature: Pi
 
   # Upstream #27513: Pi showed as ready while its launch arguments pinned a model with no
   # credentials, so every turn on "Pi default" failed without saying why.
-  @backlog
   Scenario: Pi whose default model has no credentials says so
     Given Pi's launch arguments pin "openai/gpt-5" and Pi holds only an Anthropic key
     When the user refreshes provider status
@@ -105,7 +104,6 @@ Feature: Pi
     And Pi's provider details name "openai/gpt-5" and say its provider has no credentials
 
   # Health states of PiProvider.ts checkPiProviderStatus.
-  @backlog
   Scenario Outline: Pi's health states are explained
     Given <situation>
     When the user refreshes provider status
@@ -123,13 +121,11 @@ Feature: Pi
 
   # Upstream #28400: "pi --version" had 4 seconds, so a healthy CLI that started slowly showed as
   # unavailable. The sign-in check keeps its 4 seconds.
-  @backlog
   Scenario: A Pi whose version check takes 8 seconds is not shown as unavailable
-    Given "pi --version" takes 8 seconds to answer
+    Given Pi takes 8 seconds to print its version
     When the user refreshes provider status
     Then Pi is not reported as timed out
 
-  @backlog
   Scenario: Pi stays available when its models and commands cannot be refreshed
     Given Pi discovery of its models and commands fails
     When the user refreshes provider status
@@ -137,11 +133,10 @@ Feature: Pi
     And Pi is shown with a message that the live session will retry startup
 
   # Upstream #18498: models Pi no longer lists are not restored
-  @backlog
   Scenario: A model Pi no longer offers is removed
     Given Pi listed the models "alpha" and "beta"
     When Pi's models are discovered again and only "alpha" is listed
-    Then only "alpha" is offered
+    Then Pi offers only "alpha"
     And a discovery that fails or does not finish keeps both
 
   Scenario: Pi stays usable when discovery cannot finish
@@ -151,7 +146,6 @@ Feature: Pi
     And the first thread lets Pi handle its startup prompt
 
   # Upstream #15529: Pi model discovery waits up to 30 seconds for slow extensions
-  @backlog
   Scenario: Pi's extension models are found when its extensions load slowly
     Given Pi takes 20 seconds to load its extensions
     When the user refreshes provider status
@@ -166,7 +160,6 @@ Feature: Pi
 
   # Upstream #32389: switching models between turns let Pi apply the new model's default
   # thinking level over the one the user had chosen.
-  @backlog
   Scenario: A thinking level the user chose is kept when the Pi model changes
     Given a Pi thread runs model "A" with thinking set to high by the user
     When the user switches the thread to model "B" and sends the next message
@@ -211,7 +204,6 @@ Feature: Pi
     Then the choices appear in the composer and the answer goes back to the extension
 
   # Upstream #29768: an error from a folder extension was titled "index", after its entry file.
-  @backlog
   Scenario Outline: A Pi extension's error names the extension
     Given the Pi extension at "<path>" throws during a turn
     Then the turn shows an error titled "<title>"
@@ -239,7 +231,6 @@ Feature: Pi
 
   # Upstream #20521: a turn stopped before HAL-C2 saw its place in Pi's session made reverts and
   # forks past it fail, though Pi had kept the prompt.
-  @backlog
   Scenario Outline: A Pi turn stopped before it was recorded can still be gone past
     Given a Pi thread whose second turn was stopped before Pi reported its place in the session
     And a third turn finished after it
@@ -258,11 +249,23 @@ Feature: Pi
 
   # Upstream #23052: forking a finished turn failed while the next one ran, since the running
   # turn had no session entry captured yet.
-  @backlog
   Scenario: A finished Pi turn can be forked while the next turn runs
     Given a Pi thread whose second turn is running
     When the user forks from the first turn
     Then the new thread continues Pi's conversation through the first turn only
+
+  # A steer is a user message inside the running turn in Pi's session, so cutting a fork at
+  # the first user message after the fork point's own dropped the steer and its answer.
+  Scenario Outline: A forked Pi turn keeps the steer it took
+    Given a Pi thread whose first turn took the steer "and the tests"
+    And the Pi thread's next turn <next>
+    When the user forks from the first turn
+    Then the new thread continues Pi's conversation through the steer
+
+    Examples:
+      | next            |
+      | has not started |
+      | is running      |
 
   Scenario: Pi skills appear in the skill menu
     Given Pi loads the project skill "deploy"
@@ -287,7 +290,6 @@ Feature: Pi
     Then the turn fails saying Pi exited unexpectedly
 
   # Upstream #18639: Pi turn-start prompts are queued while native extension work is running
-  @backlog
   Scenario: A message sent while Pi resumes extension work on its own is queued
     Given Pi has resumed extension work before HAL-C2 heard that it woke
     When the user sends a message in the Pi thread
@@ -311,24 +313,21 @@ Feature: Pi
 
   # PiCommands.ts: Pi's command list omits its terminal built-ins, and Pi only expands
   # skills written as leading "/skill:name" commands.
-  @backlog
   Scenario: Pi offers /compact although Pi does not list it
     When the user types a slash in a Pi thread
     Then "/compact" is offered
 
-  @backlog
   Scenario: Sending /compact compacts the Pi conversation
+    Given a Pi thread that has answered a message
     When the user sends "/compact" to a Pi thread
     Then Pi compacts its conversation
     And the work log shows the compaction
 
-  @backlog
   Scenario: Sending /compact with instructions passes them to Pi
     When the user sends "/compact keep the database notes" to a Pi thread
     Then Pi compacts its conversation following "keep the database notes"
 
   # Upstream #17194: Pi loads every selected skill without losing prompt text
-  @backlog
   Scenario: Every skill a Pi message mentions is loaded and the message keeps its words
     Given Pi has the skills "deploy" and "review"
     When the user sends "please $review this and then $deploy it" to a Pi thread
@@ -336,21 +335,18 @@ Feature: Pi
     And Pi receives the user's text as written, with any images it carries
 
   # Upstream #17194: Pi loads every selected skill without losing prompt text
-  @backlog
   Scenario: A dollar word that is not a Pi skill is left as written
     Given Pi has the skill "deploy"
     When the user sends "the price is $5 and $deploy it" to a Pi thread
     Then Pi loads "deploy" and nothing for "$5"
 
   # Upstream #17194: Pi loads every selected skill without losing prompt text
-  @backlog
   Scenario: A skill mentioned twice is expanded once
     Given Pi has the skill "deploy"
     When the user sends "$deploy and again $deploy" to a Pi thread
     Then Pi loads "deploy" once
 
   # piHalC2McpInjection.ts: the arguments HAL-C2 owns, in their "--flag" and "--flag=value" forms.
-  @backlog
   Scenario Outline: A Pi launch argument HAL-C2 cannot honour is refused with its reason
     When the user sets Pi's launch arguments to "<arguments>"
     Then the setting is refused with the message "<message>"
@@ -368,14 +364,12 @@ Feature: Pi
       | --model             | Pi launch argument '--model' requires a value.                                    |
       | -z                  | Pi launch argument '-z' is not supported by HAL-C2.                               |
 
-  @backlog
   Scenario: A launch argument meant for a Pi extension is passed on to Pi
     Given a Pi extension takes the argument "--plan-depth 3"
     When the user adds the launch argument "--plan-depth 3" to Pi
     Then the setting is accepted
     And Pi starts with "--plan-depth 3"
 
-  @backlog
   Scenario: Pi starts with the user's own extensions, skills, settings and logins
     Given the user's Pi installation has extensions, skills, project instructions and saved logins
     When a Pi thread starts
@@ -383,14 +377,12 @@ Feature: Pi
 
   # Upstream #27539: in a folder Pi has not trusted, Pi quietly skipped the project's own settings,
   # extensions and skills.
-  @backlog
   Scenario: A Pi session in a folder Pi does not trust says what Pi skipped
     Given Pi has not trusted the project's folder
     When a Pi thread runs its first turn, new or resumed
     Then the thread shows one notice naming the folder and what Pi skipped
     And the notice says how to trust the folder with "/trust" in Pi's terminal app
 
-  @backlog
   Scenario: Pi writing titles and commit messages runs without tools, extensions or a saved session
     Given Pi's launch arguments name an extension and a tool list
     When Pi writes a thread title
@@ -398,7 +390,6 @@ Feature: Pi
     And no Pi session file is left behind
 
   # Upstream #19070: Pi text generation names the model it could not load and that extensions are off for it.
-  @backlog
   Scenario: Pi failing to write a title says which model it could not load
     Given the text-generation model is one only a Pi extension provides
     When Pi is asked for a thread title
@@ -406,38 +397,33 @@ Feature: Pi
     And says extensions are not loaded when Pi writes titles and commit messages
 
   # Upstream #23741: an empty Pi reply that came with a turn error reported a generic failure; it now names the error.
-  @backlog
   Scenario: Pi failing to write a title shows the provider's error
     Given Pi ends a title request with no text and the error "model overloaded"
     When Pi is asked for a thread title
     Then the failure reads "Pi could not generate text: model overloaded"
 
-  @backlog @priority-high
+  @priority-high
   Scenario: Pi never inherits another session's HAL-C2 credential
     Given the MC itself was started by an agent that holds a HAL-C2 tools credential
     When a Pi thread starts
     Then Pi receives only the credential of its own thread
 
   # PiRpc.ts: Pi's own output shares the channel HAL-C2 talks to it on.
-  @backlog
   Scenario: Stray output from a Pi extension does not break the session
     Given a Pi extension prints text that is not part of Pi's protocol
     When the user sends a message to Pi
     Then the stray text is ignored
     And the turn finishes normally
 
-  @backlog
   Scenario: A single Pi message larger than 8 MiB is dropped
     When Pi sends one message larger than 8 MiB
     Then that message is dropped
     And the session keeps running
 
-  @backlog
   Scenario: Text containing Unicode line separators reaches the thread intact
     When Pi answers with text that contains the characters U+2028 and U+2029
     Then the reply shows the whole text
 
-  @backlog
   Scenario Outline: A Pi request that goes wrong says what failed
     Given a Pi thread is starting
     When <problem>
@@ -445,16 +431,18 @@ Feature: Pi
 
     Examples:
       | problem                                          | message                                                  |
-      | Pi does not answer a request within its deadline | Pi RPC get_state failed: timed out after 15000ms.        |
       | Pi exits with code 2 before answering            | Pi RPC get_state failed: pi process exited with code 2.  |
+
+    @backlog
+    Examples: deadlines and closed output
+      | problem                                          | message                                                  |
+      | Pi does not answer a request within its deadline | Pi RPC get_state failed: timed out after 15000ms.        |
       | Pi closes its output before answering            | Pi RPC get_state failed: pi process closed stdout.       |
 
-  @backlog
   Scenario: A long Pi failure detail is cut to 200 characters
     When Pi refuses a request with an explanation of 5,000 characters
     Then the failure the user sees carries its first 200 characters followed by an ellipsis
 
-  @backlog
   Scenario: Requests waiting on Pi fail at once when Pi dies
     Given HAL-C2 is waiting for Pi to answer several requests
     When the Pi process exits
@@ -489,27 +477,23 @@ Feature: Pi
     Then Pi is asked to stop before its input is closed
     And the extension's shutdown work finishes before Pi exits
 
-  @backlog
   Scenario: A Pi that fails while starting is not left running
     When Pi starts but the session cannot finish setting up
     Then the Pi process is stopped
 
   # piHalC2McpExtensionSource.ts: the extension HAL-C2 loads into Pi for approvals and its tools.
-  @backlog
   Scenario: A Pi tool the user declines is blocked with a reason Pi can read
     Given the thread runs Pi in approval required
     When Pi asks to run a command and the user declines
     Then the command does not run
     And Pi is told "bash was declined in HAL-C2."
 
-  @backlog
   Scenario: Pi's approval request shows what the tool was asked to do
     Given the thread runs Pi in approval required
     When Pi asks to run "npm test"
-    Then the approval is titled "Allow bash?"
+    Then Pi's approval is titled "Allow bash?"
     And it shows the command Pi wants to run
 
-  @backlog
   Scenario Outline: Pi's approval kind follows the tool
     Given the thread runs Pi in approval required
     When Pi asks to use its <tool> tool
@@ -576,7 +560,6 @@ Feature: Pi
     Then Pi's system prompt holds both that extension's additions and HAL-C2's instructions
 
   # Works around Pi asking OpenRouter for more output than the context can hold.
-  @backlog
   Scenario Outline: Pi's output budget on OpenRouter is capped at 32,768 tokens
     Given a Pi thread uses <model>
     When Pi asks the model for up to <asked> output tokens
@@ -595,26 +578,38 @@ Feature: Pi
     Then the Pi session is stopped
     And the thread says "Pi started agent work outside an active HAL-C2 turn. The session was stopped to prevent invisible tool execution."
 
-  @backlog
   Scenario: A message an extension command handles without the agent still ends its turn
     Given a Pi extension handles "/stats" without starting agent work
     When the user sends "/stats" to a Pi thread
     Then the turn finishes once Pi is idle
-    And it is not left running
+    And the Pi turn is not left running
 
-  @backlog
+  Scenario: An extension command settles quickly though Pi was slow to list its commands
+    Given a Pi extension handles "/stats" without starting agent work
+    And Pi lists its commands only after the session's first lookup gave up
+    When the user sends "/stats" to a Pi thread
+    Then the turn finishes as a command does, once Pi is briefly idle
+
+  Scenario: A message Pi's extensions take a while to start on is not ended as idle
+    Given Pi's extensions work for a few seconds before Pi's agent starts on "slow start"
+    When the user sends "slow start" to a Pi thread
+    Then that turn waits for Pi's agent and runs to its end
+
+  Scenario: A Pi prompt template its extensions take a while to start on is not ended as idle
+    Given Pi's extensions work for a few seconds before Pi's agent starts on the prompt template "/review"
+    When the user sends "/review the cart" to a Pi thread
+    Then that turn waits for Pi's agent and runs to its end
+
   Scenario: Pi going silent after a message stops the session
     Given Pi accepted a message but never reports whether it is working
     When three checks of Pi's state fail
     Then the Pi process is stopped
-    And the turn fails
+    And the silent turn fails
 
-  @backlog
   Scenario: A notice from a Pi extension shows in the work log
     When a Pi extension shows the warning "Lint found 3 problems"
     Then the work log shows "Lint found 3 problems" as a warning
 
-  @backlog
   Scenario Outline: A Pi extension's text prompt can be answered with nothing
     When a Pi extension asks the user for <kind>
     Then the user can type an answer or choose "Submit empty value"
@@ -627,7 +622,6 @@ Feature: Pi
 
   # Upstream #23235: a blank placeholder became the question, which failed the whole turn while
   # Pi kept waiting on its dialog.
-  @backlog
   Scenario: A Pi extension's text question with a blank placeholder asks its title
     When a Pi extension asks for a line of text titled "What should I do?" with a blank placeholder
     Then the user is asked "What should I do?"
@@ -635,7 +629,6 @@ Feature: Pi
 
   # Upstream #22463: a Pi select, editor or placeholder-less input dialog showed its whole title
   # twice, as the header and again as the question, and a long title ran past the card.
-  @backlog
   Scenario Outline: A Pi extension dialog with only a title shows it once
     When a Pi extension <asks> titled "Merge target" with nothing else to say
     Then the question reads "Merge target" once, under the header "Question"
@@ -647,55 +640,48 @@ Feature: Pi
       | asks for a line of text with no placeholder |
 
   # Upstream #22463: an input dialog with a placeholder keeps its title as the header.
-  @backlog
   Scenario: A Pi text question with a placeholder keeps its title as the header
     When a Pi extension asks for a line of text titled "Branch" with the placeholder "feature/…"
     Then the question's header is "Branch"
 
-  # Upstream #17206: Pi editor dialogs prefill the answer composer
-  @backlog
+  # Upstream #17206: Pi editor dialogs prefill the answer composer. The MC sends the whole text
+  # as the question's initialAnswer; the clients still have to start the composer from it.
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A Pi extension's text edit starts the answer from what is there now
     When a Pi extension asks the user to edit a text that already has content
     Then the whole text fills the answer composer, ready to edit
     And the answer goes back to the extension with its spaces and line breaks as typed
 
   # Upstream #21762: an empty Pi select value no longer fails the question
-  @backlog
   Scenario: An empty choice from a Pi extension can still be picked
     When a Pi extension offers a list whose choices include an empty one
     Then that choice is offered as "Empty value"
 
-  @backlog
   Scenario: Dismissing a Pi extension's dialog cancels it for the extension
     Given a Pi extension asked the user to pick from a list
     When the user dismisses the request
     Then the extension is told the dialog was cancelled
 
-  @backlog
   Scenario: An answer that could not reach Pi can be sent again
     Given a Pi extension asked the user a question
     When the user's answer cannot be delivered to Pi
     Then the question stays open for another answer
 
-  @backlog
   Scenario: Answering a Pi request that is no longer open is refused
     When a client answers the Pi request "r9" that is not open
     Then the answer is refused with "No pending Pi extension request r9"
 
-  @backlog
   Scenario: A failing Pi extension is named in the work log
     Given the Pi extension "auto-lint" fails while a tool runs
     When the turn continues
     Then the work log shows a failed entry titled "auto-lint"
     And it says during which step the extension failed and why
 
-  @backlog
   Scenario: A Pi extension failing between turns is shown on the next turn
     Given a Pi extension failed while no turn was running
     When the user sends the next message
     Then that turn's work log shows the extension's failure
 
-  @backlog
   Scenario Outline: A Pi compaction shows how it ended
     When Pi's compaction of the conversation <ends>
     Then the work log entry reads "<title>"
@@ -708,7 +694,6 @@ Feature: Pi
       | fails                  | Context compaction failed | it carries Pi's reason, or "Pi context compaction failed."     |
       | is stopped by the user | Context compaction stopped | it is shown as stopped, not failed                            |
 
-  @backlog
   Scenario: Stopping a Pi thread while it compacts restarts Pi
     Given Pi is compacting the conversation
     When the user stops the turn
@@ -716,19 +701,18 @@ Feature: Pi
     And the thread can take the next message
 
   # Upstream #24388: a message sent while Pi compacted its context could be rejected and lost.
-  @backlog
+  # Pi 1.4 rejects every prompt, steers included, while it compacts.
   Scenario Outline: A message sent while Pi compacts is delivered once compaction ends
-    Given Pi is compacting the conversation after a finished turn
-    When the user <sends> "now add the tests"
+    Given Pi is compacting the conversation <when>
+    When the user <sends> "now add the tests" while it does
     Then Pi receives "now add the tests" once, after the compaction ends
-    And a message whose turn the user stops before then is not sent
+    And Pi never gets a message whose turn the user stops before then
 
     Examples:
-      | sends               |
-      | sends               |
-      | steers the turn with |
+      | when                    | sends                |
+      | after a finished turn   | sends                |
+      | inside the running turn | steers the turn with |
 
-  @backlog
   Scenario Outline: A Pi retry shows its attempt and how it ended
     When Pi's request to the model fails and <outcome>
     Then the work log shows <shown>
@@ -736,10 +720,9 @@ Feature: Pi
     Examples:
       | outcome                         | shown                                                            |
       | Pi waits to try again           | the attempt number, the most attempts allowed and the wait      |
-      | Pi gives no reason for it       | "Pi provider request failed."                                    |
+      | Pi gives no reason for it       | the failure "Pi provider request failed."                        |
       | every attempt fails             | the turn failing with Pi's last error, or "Pi auto-retry failed." |
 
-  @backlog
   Scenario Outline: A Pi failure without a reason gets a plain message
     When Pi <fails> without giving a reason
     Then the user is told "<message>"
@@ -752,36 +735,31 @@ Feature: Pi
       | is stopped while a turn runs         | Pi process was stopped.         |
       | exits while a turn runs              | Pi process exited unexpectedly. |
 
-  @backlog
   Scenario: A model at capacity is reported in the thread's error banner
     When the model Pi uses answers that it is at capacity due to high demand
     Then the thread's error says "Provider overloaded: The model is currently at capacity due to high demand."
 
-  @backlog
   Scenario: Choosing "Pi default" again restores Pi's own model and thinking level
     Given a Pi thread whose model the user changed from "Pi default" to another model
     When the user chooses "Pi default" again
     Then Pi goes back to the model and thinking level it started with
 
-  @backlog
   Scenario: A Pi model named without its provider is refused
     When a turn asks Pi for the model "sonnet"
     Then the turn is refused with "Pi model 'sonnet' must use provider/model format"
 
-  @backlog
   Scenario: The thread's title becomes the Pi session's name
     Given a Pi thread titled "Fix flaky login test"
     When the thread next talks to Pi
     Then Pi's session is named "Fix flaky login test"
     And Pi's own session list shows it under that name
 
-  @backlog
   Scenario: A file Pi cannot take as an image is handed over as a saved path
     When the user attaches a PDF to a Pi message
     Then Pi receives the line "[Attachment saved at" followed by the file's path
 
   # Upstream #21356: Pi silently skipped an attachment whose saved copy could not be found.
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: Pi is told when an attachment's saved copy cannot be found
     Given the saved copy of "notes.pdf" attached to a Pi message cannot be found
     When the message reaches Pi
@@ -839,19 +817,44 @@ Feature: Pi
     And the next turn does not send that message
     And messages HAL-C2 queued for the thread stay queued
 
-  @backlog
   Scenario: Steering a Pi thread with /compact compacts instead of prompting
     Given a Pi turn is running
     When the user steers the thread with "/compact"
     Then Pi compacts its conversation
     And "/compact" is not sent to the model as a message
 
-  @backlog
+  Scenario: Stopping a turn while a steered compaction runs does not hold up the next turn
+    Given a Pi turn that is still working while Pi compacts slowly
+    When the user steers the thread with "/compact" and stops the turn before Pi finishes compacting
+    Then the steer is answered and the turn is stopped
+    And the next Pi turn finishes
+
+  Scenario: A stopped steered compaction that finishes during the next turn does not show there
+    Given a Pi turn that is still working while Pi compacts for a few seconds
+    When the user steers the thread with "/compact" and stops the turn before Pi finishes compacting
+    Then the steer is answered and the turn is stopped
+    When the next Pi turn runs while Pi finishes the stopped compaction and then compacts again
+    Then the next turn shows only its own compaction
+
+  Scenario: A turn sent while a stopped compaction finishes waits for it instead of settling as idle
+    Given a Pi turn that is still working while Pi compacts for a few seconds
+    When the user steers the thread with "/compact" and stops the turn before Pi finishes compacting
+    Then the steer is answered and the turn is stopped
+    When the user sends a message Pi starts only once the stopped compaction ends
+    Then that turn waits for the compaction and runs to its end
+
+  Scenario: A stopped steered compaction that fails without an end does not hide the next compaction
+    Given a Pi turn that is still working while Pi's compaction fails slowly without an end event
+    When the user steers the thread with "/compact" and stops the turn before Pi finishes compacting
+    Then the steer is answered and the turn is stopped
+    When Pi's failed answer has landed and the user sends "/compact"
+    Then Pi compacts its conversation
+    And the work log shows the compaction
+
   Scenario: A message that only starts with /compact is an ordinary message
     When the user sends "/compacted logs look wrong" to a Pi thread
     Then Pi receives it as an ordinary message
 
-  @backlog
   Scenario: Pi's own subagents show as entries in the thread
     Given Pi has its subagent extension
     When Pi hands three tasks to its own subagents
@@ -866,13 +869,11 @@ Feature: Pi
     Then both tools show inside the script's entry in the work log
     And a tool Pi calls on its own shows at the top of the turn
 
-  @backlog
   Scenario: A tool Pi was running when the user stopped shows as stopped
     Given Pi is running a command
     When the user stops the turn
     Then the command shows as interrupted, not failed
 
-  @backlog
   Scenario Outline: Long Pi texts are cut to a limit
     When Pi sends <text> longer than its limit
     Then the thread keeps its first <limit> characters
@@ -883,24 +884,28 @@ Feature: Pi
       | the reason a compaction failed         | 1,000  |
       | the detail of an extension's failure   | 2,000  |
       | the current value of a text edit       | 2,000  |
-      | the progress line of one of its subagents | 200 |
-      | the result of one of its subagents     | 10,000 |
 
-  @backlog
+  Scenario Outline: Long texts from Pi's own subagents are cut to a limit
+    When Pi sends <text> longer than its limit
+    Then the thread keeps its first <limit> characters
+
+    Examples:
+      | text                                      | limit  |
+      | the progress line of one of its subagents | 200    |
+      | the result of one of its subagents        | 10,000 |
+
   Scenario: Pi's skills not loading in time do not hold up the thread
     Given Pi does not list its skills within 4 seconds
     When a Pi thread starts
     Then the thread is ready without them
     And the skills are looked up again the first time the user mentions one
 
-  @backlog
   Scenario: Reopening a Pi session that does not answer within a minute stops Pi
     Given a Pi thread with history
     When Pi does not finish reopening that session within 60 seconds
     Then the Pi process is stopped
     And the user is told the session could not be opened
 
-  @backlog
   Scenario: A Pi extension can refuse reopening a session
     Given a Pi extension cancels switching sessions
     When the user opens a Pi thread with history
@@ -923,10 +928,9 @@ Feature: Pi
       | the turn to fork from was never recorded in Pi's file | forks from that turn    | Pi fork boundary has no captured session-tree entry    |
       | Pi does not write a new session file for the fork     | forks the thread        | Pi fork did not create a distinct session file         |
 
-  @backlog
   Scenario: Forking a Pi thread does not run the user's extensions or tools
     Given a Pi thread whose installation has extensions
-    When the user forks the thread
+    When the user forks the Pi thread
     Then the copy of Pi's conversation is made with extensions and tools turned off
 
   @backlog
@@ -935,7 +939,6 @@ Feature: Pi
     When the MC restarts and the thread is read back from Pi's session file
     Then only the turns on Pi's current branch are shown
 
-  @backlog
   Scenario: Pi is updated through npm
     Given the pi command on the MC was installed with npm
     When the user updates Pi from HAL-C2
@@ -943,7 +946,6 @@ Feature: Pi
     And a Pi that npm does not own can only be updated by hand
 
   # PiAdapterV2.ts: how Pi's tools, extension requests and session files read in the thread.
-  @backlog
   Scenario Outline: Pi's tool calls are shown by kind
     When Pi runs its <tool> tool
     Then the thread shows <entry>
@@ -956,10 +958,9 @@ Feature: Pi
       | edit, without naming a file  | a plain tool call named after the tool, with what it was given |
       | grep                         | a plain tool call named after the tool, with what it was given |
 
-  @backlog
   Scenario Outline: A Pi subagent entry shows how it ended
     Given Pi handed a task to one of its own subagents
-    When the subagent <ends>
+    When Pi's subagent <ends>
     Then its entry is shown as <state>
 
     Examples:
@@ -971,7 +972,6 @@ Feature: Pi
       | stops on an error                  | failed      |
 
   # Upstream #23901 moved the status line out of this list: Pi extension statuses are now shown.
-  @backlog
   Scenario: Requests that only dress Pi's own terminal are ignored
     When a Pi extension sets a widget, the window title or the editor's text
     Then nothing is shown in the thread
@@ -995,21 +995,18 @@ Feature: Pi
     Then the status is still shown, and an idle thread does not read "Working"
     But once Pi's session ends, or the MC restarts with that session dead, the status is gone
 
-  @backlog
   Scenario: Allowing a Pi request for the session does not cover a different request
     Given the user allowed a Pi extension's confirmation for the session
     When the extension asks to confirm something with a different title or message
     Then the user is asked again
     And the same confirmation asked again is allowed without asking
 
-  @backlog
   Scenario: A steer Pi refuses does not end the turn
     Given a Pi turn is running
     When Pi refuses a message the user steered the thread with
     Then the turn keeps running and its output keeps arriving
     And the turn is not reported as failed
 
-  @backlog
   Scenario: A model error Pi recovers from by compacting is not a failure
     Given the model refused a Pi request because the conversation was too long
     When Pi compacts the conversation and says it will try again
@@ -1021,15 +1018,14 @@ Feature: Pi
     When a HAL-C2 tool Pi called answers with an error
     Then Pi receives the tool's text marked as an error
 
-  @backlog
-  Scenario Outline: A Pi session that is not kept in its own file is refused
-    When <problem>
-    Then the thread fails to start with "<message>"
+  Scenario: A Pi session with no file of its own is refused
+    When Pi reports no file for the session
+    Then the thread fails to start with "get_state returned no persisted sessionFile"
 
-    Examples:
-      | problem                                               | message                                      |
-      | Pi reports no file for the session                    | get_state returned no persisted sessionFile  |
-      | Pi reuses the previous thread's file for a new thread | Pi did not create a distinct session file    |
+  @backlog
+  Scenario: A Pi session that reuses another thread's file is refused
+    When Pi reuses the previous thread's file for a new thread
+    Then the thread fails to start with "Pi did not create a distinct session file"
 
   # HalC2.Plugins.Kinds: another instance runs with its own settings, home and account,
   # so its turn needs its own process rather than the first instance's.
@@ -1042,21 +1038,21 @@ Feature: Pi
     And another message to "pi-work" stays in that process
 
   # Upstream #16210: Pi thread titles use the linked pull request's context
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: A Pi thread title takes the linked pull request into account
     Given a Pi thread is linked to a pull request
     When Pi writes the thread's title
     Then the pull request's context is part of what Pi is asked
 
   # Upstream #16661: discovered Pi models keep their provider identity
-  @backlog @mc @shared @plugin-pi
+  @mc @shared @plugin-pi @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: Pi's discovered models show and search by their underlying provider
     Given Pi discovered models from the providers "openai" and "anthropic"
     When the user opens the model picker and searches for "anthropic"
     Then the models from that provider are listed with its name
 
   # Upstream #17214: Pi extension wakes get an owned continuation turn
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: Work a Pi extension starts after a turn settled runs as its own turn
     Given a Pi thread whose last turn has finished
     When a Pi extension wakes Pi to continue on its own
@@ -1064,14 +1060,14 @@ Feature: Pi
     And Pi is not prompted a second time for it
 
   # Upstream #17214: a joining prompt claims the outstanding extension wake
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: A message sent while an extension's wake is pending joins that work
     Given a Pi extension has woken Pi after the last turn
     When the user sends a message to the Pi thread before the wake's turn starts
     Then the message's turn shows the extension's work and the reply to the message
 
   # Upstream #17214: rollback does not replay output from a discarded session
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: Reverting a Pi thread does not replay work from the discarded conversation
     Given a Pi extension has woken Pi after the last turn
     When the user reverts the Pi thread to an earlier turn
@@ -1092,7 +1088,7 @@ Feature: Pi
       | older than 0.99 | every HAL-C2 tool is offered directly                                                          |
 
   # Upstream #17190: Pi discovers workspace skills and commands
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: Pi offers the skills and commands of the thread's own workspace
     Given the project "web" has its own Pi skill "release" and prompt template "triage"
     When the user opens the skill menu in a Pi thread of "web"
@@ -1100,36 +1096,38 @@ Feature: Pi
     And a Pi thread of another project does not offer them
 
   # Upstream #17190: Pi discovers workspace skills and commands
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: A workspace whose Pi commands cannot be found keeps the ones it had
     Given a Pi thread of "web" offered the skill "release"
     When finding the workspace's Pi commands fails
     Then "release" is still offered
 
   # Upstream #13839: Pi native session rewinds are reconciled
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: A rewind made inside Pi drops the abandoned turns from the thread
     Given a Pi thread with three turns
     When a Pi extension rewinds Pi's session to the end of the first turn
     Then the thread no longer counts the second and third turns as Pi's history
     And reverting the thread afterwards only offers turns Pi still has
 
-  # Upstream #17851: Pi tool images and structured results are preserved
-  @backlog @mc @plugin-pi
+  # Upstream #17851: Pi tool images and structured results are preserved. The MC stores the
+  # image with the thread and lists it in the tool item's attachments; the clients still have
+  # to draw a tool item's attachments.
+  @mc @shared @plugin-pi @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: An image a Pi tool returns is shown as an image
     When a Pi tool returns a screenshot alongside structured results
     Then the tool call shows the screenshot as an image, not as text
     And its structured results are kept in the tool's details
 
   # Upstream #17853: Pi native abort outcomes are preserved
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: A turn Pi aborts on its own reads as interrupted
     When Pi aborts a turn itself, for an extension, a compaction or a session replacement
     Then the turn reads as interrupted, not completed
     And the next turn Pi starts reads as its own outcome
 
   # Upstream #17835: thinking defaults are specific to each model
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: Only the model Pi is set to marks Pi's thinking level as its default
     Given Pi is set to model "a" at thinking level high
     When the user opens the thinking options for Pi model "b"
@@ -1137,7 +1135,7 @@ Feature: Pi
     And for "a" high is marked as the default
 
   # Upstream #17834: Pi shell command exit codes are preserved
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario Outline: A Pi shell command keeps its exit code
     When Pi runs <shell> on a Pi version that reports the exit code <where>
     Then the step shows as a command with exit code 2
@@ -1170,14 +1168,13 @@ Feature: Pi
       | a read-only tool from another MCP server         | asked for approval     |
 
   # Upstream #15368: extension notifications were a "notify" tool call folded into the work log.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A Pi extension notification shows as a notice in the thread
     When a Pi extension sends the notification "Lint finished\n3 warnings"
     Then the thread shows a notice with both lines
     And it is not folded into the tool calls
 
   # Upstream #15791: ids built from the per-turn ordinal let one thread's notice replace another's.
-  @backlog
   Scenario: Pi notices in two threads stay apart
     Given Pi threads "t1" and "t2" each send a notification as the first item of a turn
     When the user opens each thread
@@ -1186,7 +1183,6 @@ Feature: Pi
 
   # Upstream #30187: Pi renews expired logins in the background as it starts, and the MC stopped
   # its short-lived Pi processes mid-renewal, leaving a spent token so the next sign-in failed.
-  @backlog
   Scenario: A short-lived Pi process does not spend the user's login renewal
     Given the user's Pi login has expired and is renewed with a single-use token
     When the MC starts Pi only to check its status, write a title or fork a session

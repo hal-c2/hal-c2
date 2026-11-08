@@ -1102,7 +1102,8 @@ defmodule HalC2.Claude.Provider do
   effort the CLI has no level for, which goes in the prompt instead (`prompt/2`). A
   model the CLI listed runs under the name it was picked by, with the options its
   entry offers; another the manifest knows runs under its manifest id. A model
-  neither knows runs as named, without options.
+  neither knows runs as named, with only an effort the CLI has a level for
+  (Upstream #20849).
   """
   @spec launch(String.t() | nil, map, String.t()) :: %{
           model: String.t() | nil,
@@ -1116,7 +1117,7 @@ defmodule HalC2.Claude.Provider do
       nil ->
         %{
           model: model,
-          effort: nil,
+          effort: if(Map.has_key?(@effort_labels, options["effort"]), do: options["effort"]),
           settings: %{},
           prompt_effort: nil,
           context_window: 200_000
@@ -1254,6 +1255,13 @@ defmodule HalC2.Claude.Provider do
     RuntimeError ->
       {:error, "the launch arguments in settings have a quote that is never closed"}
   end
+
+  @doc """
+  Whether Claude Code listed `model` on `instance` or the manifest knows it, so
+  `launch/3` has its context window; another model's is the one Claude reports.
+  """
+  @spec known?(String.t() | nil, String.t()) :: boolean
+  def known?(model, instance \\ "claudeAgent"), do: spec(model, instance) != nil
 
   # The slug, capabilities and adapter settings `model` runs with on `instance`: the
   # row Claude Code listed for it, else the manifest's model.

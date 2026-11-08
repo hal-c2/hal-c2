@@ -24,7 +24,7 @@
 # answers with what it printed.
 # Each turn's message text is appended to
 # $FAKE_CLAUDE_LOG when it is set.
-import json, os, re, sys, threading, time, uuid
+import json, os, re, subprocess, sys, threading, time, uuid
 
 # With FAKE_CLAUDE_TRACE set, the argv and every message read are appended to it as JSON lines.
 TRACE = os.environ.get("FAKE_CLAUDE_TRACE")
@@ -46,7 +46,7 @@ session = "fake-session-1"
 # id>.jsonl, one entry per message recording its cwd, sessionId and the version that
 # wrote it. --resume takes a session id (looked up for the working directory) or a
 # transcript's path, and --fork-session continues it as a new session; a missing
-# transcript, or one written by a newer version than FAKE_CLAUDE_VERSION, ends the
+# transcript, one with no message, or one written by a newer version than FAKE_CLAUDE_VERSION, ends the
 # process as Claude Code does.
 SESSIONS = (os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")) if os.environ.get("FAKE_SESSIONS") else None
 VERSION = os.environ.get("FAKE_CLAUDE_VERSION", "2.1.0")
@@ -75,6 +75,11 @@ if SESSIONS:
             sys.exit(1)
         with open(source) as f:
             entries = [json.loads(line) for line in f if line.strip()]
+        # A transcript with only metadata (the prompt Claude had not saved yet) holds no
+        # conversation to resume.
+        if not any(e.get("type") in ("user", "assistant") for e in entries):
+            sys.stderr.write(f"No conversation found with session ID: {resume}\n")
+            sys.exit(1)
         newest = max((e.get("version", "0") for e in entries), key=version, default="0")
         if version(newest) > version(VERSION):
             sys.stderr.write(f"This session was written by Claude Code {newest}; update to open it.\n")
@@ -97,9 +102,24 @@ turn = 0
 session_rules = []  # Bash commands the session allows without asking
 asked_before_plan = False  # a "question first" turn waiting on its answer
 asking_subagent = None  # (Agent tool id, command) of a subagent waiting on its permission answer
+pending_tool = None  # the Bash call a "leave a tool pending" turn has not answered yet
+goal = None  # the objective "/goal OBJECTIVE" set, until "/goal clear"
 pending_elicit = None  # (request id, asks again after an accept) of an MCP elicitation waiting on its answer
 dialogs = []  # the dialog kinds the host said it can show (initialize)
 mcp_servers = {}  # the MCP servers the host handed over stdin (mcp_set_servers)
+
+def prompt_blocked(text):
+    try:
+        with open(os.path.join(os.getcwd(), ".claude", "settings.json")) as f:
+            groups = json.load(f).get("hooks", {}).get("UserPromptSubmit", [])
+    except (OSError, ValueError):
+        return None
+    for hook in (h for group in groups for h in group.get("hooks", [])):
+        run = subprocess.run(hook["command"], shell=True, input=json.dumps({"hook_event_name": "UserPromptSubmit", "prompt": text}),
+                             capture_output=True, text=True)
+        if run.returncode == 2:
+            return f"Prompt dropped by a hook: {run.stderr.strip()}"
+    return None
 
 def answer_mcp_servers(msg):
     global mcp_servers
@@ -161,7 +181,15 @@ if sys.argv[1:] == ["auth", "status"]:
                       "email": ACCOUNT_EMAIL}))
     sys.exit(0)
 # The start also traces where it was pointed: its config directory, its account and any router.
-trace({"argv": sys.argv[1:], "account": ACCOUNT_EMAIL, "env": {k: v for k, v in os.environ.items() if k.startswith("ANTHROPIC_") or k in ("CLAUDE_CONFIG_DIR", "HOME", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_TOOL_USE_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SHELL")}})
+trace({"argv": sys.argv[1:], "pid": os.getpid(), "account": ACCOUNT_EMAIL, "env": {k: v for k, v in os.environ.items() if k.startswith("ANTHROPIC_") or k in ("CLAUDE_CONFIG_DIR", "HOME", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_TOOL_USE_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SHELL", "CLAUDE_CODE_ENABLE_TODO_TOOLS")}})
+# Claude's safety check asks to run a command and forbids an always-allow rule
+# (`suppressAlwaysAllowRule`), though its suggestions would allow every Bash command.
+def ask_once():
+    send({"type": "control_request", "request_id": "perm-once", "request": {"subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": "rm -rf build"},
+          "decision_reason": "rm -rf on a path Claude could not verify always asks", "decision_reason_type": "safetyCheck", "suppressAlwaysAllowRule": True,
+          "permission_suggestions": [{"type": "addRules", "rules": [{"toolName": "Bash"}], "behavior": "allow", "destination": "session"}]}})
+
+
 for line in sys.stdin:
     msg = json.loads(line)
     trace({"in": msg})
@@ -211,6 +239,10 @@ for line in sys.stdin:
         sub = msg["request"]["subtype"]
         # Plan usage; FAKE_CLAUDE_USAGE=unsupported is an account without plan limits.
         if sub == "get_usage":
+            # FAKE_CLAUDE_USAGE=error: the read fails, as it does for a Claude signed out.
+            if os.environ.get("FAKE_CLAUDE_USAGE") == "error":
+                send({"type": "control_response", "response": {"subtype": "error", "request_id": msg["request_id"], "error": "Not logged in · Please run /login"}})
+                continue
             # FAKE_CLAUDE_USAGE=empty has limits but returns none, until the file it names is gone.
             empty = os.environ.get("FAKE_CLAUDE_USAGE_EMPTY")
             usage = {"rate_limits_available": False, "rate_limits": None} if os.environ.get("FAKE_CLAUDE_USAGE") == "unsupported" else {"rate_limits_available": True, "rate_limits": {}} if empty and os.path.exists(empty) else {
@@ -279,9 +311,10 @@ for line in sys.stdin:
             send(stopped)
         elif sub == "interrupt" and not os.environ.get("FAKE_CLAUDE_HOLD_INTERRUPT"):
             send({"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": session})
-        # A stopped turn's elicitation is no longer waiting on its answer.
+        # A stopped turn's elicitation is no longer waiting on its answer, nor its tool.
         if sub == "interrupt":
             pending_elicit = None
+            pending_tool = None
         continue
     if msg.get("type") != "user":
         continue
@@ -299,8 +332,20 @@ for line in sys.stdin:
         else:
             images = sum(1 for b in content if b.get("type") == "image")
             steer_text = "".join(b.get("text", "") for b in content) + f" (+{images} image)"
+        # A steer "ask once": the running turn's next tool call trips Claude's safety
+        # check, which asks and forbids remembering the answer (Upstream #22546).
+        if steer_text.startswith("ask once"):
+            ask_once()
+            continue
         # A steer saying "fold" is folded into the running turn instead: no result
         # cuts that turn short, and the one result answers both.
+        # Claude does not run the tool call a steer cuts off, and marks it so.
+        if pending_tool:
+            send({"type": "user", "session_id": session, "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": pending_tool, "is_error": True,
+                 "content": "The user doesn't want to proceed with this tool use."}]},
+                  "tool_result_meta": [{"id": pending_tool, "non_execution_kind": "cancelled"}]})
+            pending_tool = None
         if "fold" not in steer_text:
             send({"type": "result", "subtype": "error_during_execution", "is_error": True, "terminal_reason": "aborted_streaming", "session_id": session})
         send({"type": "assistant", "session_id": session, "message": {"id": "m-steer", "role": "assistant", "content": [{"type": "text", "text": "steered: " + steer_text}]}})
@@ -332,6 +377,18 @@ for line in sys.stdin:
             lifecycle("started")
         orphaned = None
     send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku", "permissionMode": mode})
+    # The project's UserPromptSubmit hooks (.claude/settings.json) run on the prompt; one
+    # that exits 2 drops it, and Claude reports the hook's reason as a warning, then
+    # again as the result of a turn that ran nothing (Claude Code 2.1.302).
+    blocked = prompt_blocked(text)
+    if blocked:
+        send({"type": "system", "subtype": "informational", "level": "info", "content": "Running UserPromptSubmit hooks",
+              "session_id": session, "uuid": str(uuid.uuid4())})
+        send({"type": "system", "subtype": "informational", "level": "warning", "prevent_continuation": True,
+              "content": blocked, "session_id": session, "uuid": str(uuid.uuid4())})
+        send({"type": "result", "subtype": "success", "is_error": False, "num_turns": 0, "result": blocked, "session_id": session,
+              **({"user_message_uuids": [msg["uuid"]]} if msg.get("uuid") else {})})
+        continue
     record("user", text)
     # FAKE_CLAUDE_REJECT_RESUME_FILE: once that file exists the provider refuses the server's
     # automatic resume with a 429 naming no reset.
@@ -348,6 +405,42 @@ for line in sys.stdin:
         send({"type": "result", "subtype": "success", "is_error": False, "num_turns": 0, "result": "", "session_id": session,
               **({"user_message_uuids": [msg["uuid"]]} if msg.get("uuid") else {})})
         lifecycle("completed")
+        continue
+    # "/goal OBJECTIVE": Claude Code's own goal command. It says "Goal set" in a synthetic
+    # message, works on it, and its Stop hook finds it unmet once ("Stop hook feedback")
+    # before the turn goes on; the turn stays open for the test to end. With "in the
+    # background" in the objective Claude starts a background subagent (agent-N, task
+    # task-agent-N) and ends the turn while it runs, deferring the check. "/goal" alone
+    # says the goal's state, "/goal clear" clears it. Like Claude Code, it reads "/goal
+    # pause" as a goal named "pause".
+    if text == "/goal" or text.startswith("/goal "):
+        synthetic = lambda said: send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "uuid": f"goal-uuid-{turn}",
+                                       "message": {"id": f"m{turn}goal", "model": "<synthetic>", "role": "assistant", "content": [{"type": "text", "text": said}]}})
+        objective = text[len("/goal"):].strip()
+        if objective in ("", "clear"):
+            said = ("No goal set" if goal is None else (f"Goal cleared: {goal}" if objective else f"Goal active: {goal} (not yet evaluated)"))
+            if objective:
+                goal = None
+            synthetic(said)
+            send({"type": "result", "subtype": "success", "is_error": False, "num_turns": 0, "result": said, "session_id": session})
+            continue
+        goal = objective
+        synthetic(f"Goal set: {goal}")
+        if "in the background" in goal:
+            agent = f"agent-{turn}"
+            send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "message": {"id": f"m{turn}g", "role": "assistant", "content": [{"type": "tool_use", "id": agent, "name": "Agent", "input": {
+                "description": "Survey the repo", "prompt": "List what is in the repo", "subagent_type": "general-purpose", "run_in_background": True}}]}})
+            send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{agent}", "tool_use_id": agent,
+                  "description": "Survey the repo", "task_type": "local_agent", "prompt": "List what is in the repo", "is_backgrounded": True})
+            send({"type": "user", "session_id": session, "parent_tool_use_id": None, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": agent,
+                  "content": [{"type": "text", "text": f"Async agent launched successfully.\nagentId: task-{agent}"}]}]}})
+            send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}i", "role": "assistant", "content": [{"type": "text", "text": "A helper is surveying the repo"}]}})
+            send({"type": "result", "subtype": "success", "is_error": False, "result": "A helper is surveying the repo", "session_id": session})
+            continue
+        send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "uuid": f"uuid-{turn}a", "message": {"id": f"m{turn}a", "role": "assistant", "content": [{"type": "text", "text": "Working on it"}]}})
+        send({"type": "user", "session_id": session, "parent_tool_use_id": None, "isSynthetic": True, "message": {"role": "user", "content": [
+            {"type": "text", "text": f"Stop hook feedback:\n[{goal}]: the tests still fail"}]}})
+        send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}b", "role": "assistant", "content": [{"type": "text", "text": "Fixing the last test"}]}})
         continue
     # "usage limit until EPOCH": the plan's five-hour window rejects the turn until then.
     if text.startswith("usage limit until "):
@@ -382,6 +475,13 @@ for line in sys.stdin:
     # as a turn the user stops mid-answer.
     if "answer halfway" in text.split("</conversation_history>")[-1]:
         send({"type": "assistant", "session_id": session, "uuid": f"half-uuid-{turn}", "message": {"id": f"m{turn}h", "role": "assistant", "content": [{"type": "text", "text": "Half an answer"}]}})
+        continue
+    # "leave a tool pending": Claude calls Bash (tool-pending-N) and the call runs on, so
+    # the turn stays open with a tool call pending.
+    if "leave a tool pending" in text:
+        pending_tool = f"tool-pending-{turn}"
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}p", "role": "assistant", "content": [
+            {"type": "tool_use", "id": pending_tool, "name": "Bash", "input": {"command": "npm test"}}]}})
         continue
     # A handoff's earlier conversation is history, not a directive, and so is a
     # delegated task's worker preamble (it asks the worker to finish its own waiting).
@@ -585,6 +685,10 @@ for line in sys.stdin:
         send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"tool-{turn}", "content": "", "is_error": False}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
+    # "approve once": the safety check's ask, which a session rule does not skip.
+    if text.startswith("approve once"):
+        ask_once()
+        continue
     if "approve" in text:
         cmd = text.split("run: ", 1)[1] if "run: " in text else "touch x"
         if cmd in session_rules or None in session_rules:
@@ -648,6 +752,19 @@ for line in sys.stdin:
             {"question": "How big?", "multiSelect": False,
              "options": [{"label": "Small", "description": ""}, {"label": "Large", "description": ""}]}]}}})
         continue
+    # "ask skip": a choice whose description is blank (Upstream #21762).
+    if text.startswith("ask skip"):
+        send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "AskUserQuestion", "input": {"questions": [
+            {"question": "What should we add?", "header": "Scope", "multiSelect": False,
+             "options": [{"label": "Docs", "description": "Write the docs"}, {"label": "Skip", "description": "   "}]}]}}})
+        continue
+    # "ask preview": an option with a preview (Upstream #21932).
+    if text.startswith("ask preview"):
+        send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "AskUserQuestion", "input": {"questions": [
+            {"question": "Which database?", "header": "Store", "multiSelect": False,
+             "options": [{"label": "Postgres", "description": "Relational", "preview": "```sql\nCREATE TABLE orders (id serial);\n```"},
+                         {"label": "SQLite", "description": "Embedded"}]}]}}})
+        continue
     # "ask multi": one question that takes several answers.
     if text.startswith("ask multi"):
         send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "AskUserQuestion", "input": {"questions": [
@@ -667,6 +784,21 @@ for line in sys.stdin:
         send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"tool-{turn}", "content": "done", "is_error": False}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
+    # FAKE_CLAUDE_GATEWAY_USAGE: a gateway reports zero tokens as a message starts and its
+    # counts only as it ends (message_delta). "compact" compacts between the two, so the
+    # ending counts are from before the compaction.
+    if os.environ.get("FAKE_CLAUDE_GATEWAY_USAGE"):
+        zero = {"input_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 0}
+        send({"type": "stream_event", "session_id": session, "event": {"type": "message_start", "message": {"id": f"m{turn}g", "usage": zero}}})
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}g", "role": "assistant", "usage": zero, "content": [{"type": "text", "text": "Hello from claude"}]}})
+        if "compact" in text:
+            send({"type": "system", "subtype": "compact_boundary", "session_id": session, "uuid": f"compact-{turn}",
+                  "compact_metadata": {"trigger": "auto", "pre_tokens": 150000, "post_tokens": 5000}})
+        send({"type": "stream_event", "session_id": session, "event": {"type": "message_delta", "delta": {"stop_reason": "end_turn"},
+              "usage": {"input_tokens": 1200, "cache_creation_input_tokens": 300, "cache_read_input_tokens": 40000, "output_tokens": 80}}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "Hello from claude", "session_id": session,
+              "usage": {"input_tokens": 9999, "output_tokens": 999}})
+        continue
     if "rate limit" in text:
         send({"type": "rate_limit_event", "session_id": session, "rate_limit_info": {"status": "allowed_warning", "rateLimitType": "five_hour", "utilization": 0.91, "resetsAt": 1790000000}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
@@ -684,5 +816,13 @@ for line in sys.stdin:
     send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}c", "role": "assistant", "content": [{"type": "text", "text": "Hello from claude"}]}})
     # "report your usage": the result carries the turn's token usage.
     usage = {"usage": {"input_tokens": 1000, "output_tokens": 50}} if "report your usage" in text else {}
+    # FAKE_CLAUDE_CONTEXT_WINDOW: the result's modelUsage reports that window for the model.
+    if os.environ.get("FAKE_CLAUDE_CONTEXT_WINDOW") and "--model" in sys.argv:
+        usage["modelUsage"] = {sys.argv[sys.argv.index("--model") + 1]: {"inputTokens": 1000, "outputTokens": 50, "contextWindow": int(os.environ["FAKE_CLAUDE_CONTEXT_WINDOW"])}}
     send({"type": "result", "subtype": "success", "is_error": False, "result": "Hello from claude", "session_id": session, **usage})
     lifecycle("completed")
+# Its stdin closed, the process says so in its trace and, with FAKE_CLAUDE_EXIT_DELAY
+# (seconds), lingers that long before it exits, as one finishing its work does.
+trace({"eof": os.getpid()})
+if os.environ.get("FAKE_CLAUDE_EXIT_DELAY"):
+    time.sleep(float(os.environ["FAKE_CLAUDE_EXIT_DELAY"]))

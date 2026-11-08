@@ -239,20 +239,32 @@ defmodule HalC2.Steps.Threads.SidebarListWaitMarks do
     context
   end
 
-  # Claude reports the work ended, as its CLI does after the turn.
+  # Claude reports the work ended, as its CLI does after the turn, and answers it in a
+  # turn of its own: the thread waits for that answer.
   defp finish(context, title, name) do
     [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, title))
+    session = :sys.get_state(pid).session
 
-    message = %{
-      "type" => "system",
-      "subtype" => "task_notification",
-      "task_id" => claude_task(context, name),
-      "tool_use_id" => context.tasks[name],
-      "status" => "completed",
-      "summary" => "#{name} ended"
-    }
+    for message <- [
+          %{
+            "type" => "system",
+            "subtype" => "task_notification",
+            "task_id" => claude_task(context, name),
+            "tool_use_id" => context.tasks[name],
+            "status" => "completed",
+            "summary" => "#{name} ended"
+          },
+          %{
+            "type" => "assistant",
+            "message" => %{
+              "id" => "m-#{name}-ended",
+              "content" => [%{"type" => "text", "text" => "#{name} ended"}]
+            }
+          },
+          %{"type" => "result", "subtype" => "success", "is_error" => false}
+        ],
+        do: send(pid, {:claude, session, {:message, message}})
 
-    send(pid, {:claude, :sys.get_state(pid).session, {:message, message}})
     Map.put(context, :ended, name)
   end
 

@@ -98,6 +98,39 @@ defmodule HalC2.SubprocessDurableTest do
     Subprocess.stop(sub)
   end
 
+  test "an oversized line is dropped whole, and its tail is not a line after a resume" do
+    script = ~S"""
+    import sys
+    print("one", flush=True)
+    sys.stdin.readline()
+    print("x" * 9_000_000, flush=True)
+    print("two", flush=True)
+    sys.stdin.readline()
+    print("three", flush=True)
+    sys.stdin.readline()
+    """
+
+    {:ok, sub} = Subprocess.start(["python3", "-c", script], durable: "t1")
+    assert {["one"], _} = lines(sub, 1)
+
+    Subprocess.write_line(sub, "go")
+    # The 9 MB line is dropped; "two" is the next line handed up, and the
+    # offset is every byte so far ("one\n", the dropped line, "two\n").
+    assert {["two"], offset} = lines(sub, 1)
+    offset = offset(offset)
+    assert offset == 4 + 9_000_001 + 4
+
+    dir = sub.durable.dir
+    HalC2.Orchestration.Recovery.leaving(true)
+    assert Subprocess.stop(sub) == :detached
+    HalC2.Orchestration.Recovery.leaving(false)
+
+    {:ok, sub} = Subprocess.adopt(dir, offset)
+    Subprocess.write_line(sub, "go")
+    assert {["three"], _} = lines(sub, 1)
+    Subprocess.stop(sub)
+  end
+
   test "the end of a program ends its output, with its status" do
     {:ok, sub} = Subprocess.start(["sh", "-c", "echo bye; exit 3"], durable: "t1")
     assert {["bye"], _} = lines(sub, 1)

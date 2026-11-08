@@ -452,17 +452,19 @@ Feature: Recovering from restarts and releasing idle sessions
     And the subagent of "t1" is completed with "3 files"
     And "t1" lists no background work
 
+  # Claude reports a subagent a stop ended as cancelled (Upstream #19464); a rewind cuts
+  # its work off.
   @mc
   Scenario Outline: Stopping or rewinding a Claude thread ends its background work
     Given thread "t1" left a Claude subagent and a command running in the background
     When the user <action>
-    Then the subagent and the command of "t1" are interrupted
+    Then the subagent of "t1" is <subagent> and its command interrupted
     And "t1" lists no background work
 
     Examples:
-      | action                        |
-      | stops "t1"                    |
-      | rewinds "t1" to its first run |
+      | action                        | subagent    |
+      | stops "t1"                    | cancelled   |
+      | rewinds "t1" to its first run | interrupted |
 
   @mc
   Scenario Outline: A Claude subagent the MC first hears of between turns keeps its session
@@ -565,7 +567,7 @@ Feature: Recovering from restarts and releasing idle sessions
     Then the stop is refused
     And "t1" lists the subagent and the command as background work
     When a client stops run 2 of "t1"
-    Then the subagent and the command of "t1" are interrupted
+    Then the subagent of "t1" is cancelled and its command interrupted
 
   @mc @plugin-codex
   Scenario: A stop naming an earlier run leaves the Codex command a later run left

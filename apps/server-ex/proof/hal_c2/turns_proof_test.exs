@@ -72,6 +72,9 @@ defmodule HalC2.TurnsProofTest do
       # The deadline after an interrupt Codex never answered: the interrupted end
       # of that same run, arriving without Codex acknowledging it.
       "HalC2.Codex.ThreadRuntime handle_info {:interrupt_deadline, _}" => "interrupted",
+      # Codex not going on with a goal within the grace its run waits between the
+      # goal's turns: the run ends as a completed turn ends it.
+      "HalC2.Codex.ThreadRuntime handle_info {:goal_grace, _}" => "finish",
       "HalC2.Codex.ThreadRuntime handle_call :interrupt" => ~w(interrupted no-turn stop-work),
       "HalC2.Codex.ThreadRuntime handle_call :release" => ~w(release-idle keep-turn),
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:notification, _, _}}" =>
