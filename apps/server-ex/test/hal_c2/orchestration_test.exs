@@ -2196,7 +2196,7 @@ defmodule HalC2.OrchestrationTest do
       %{"text" => text, "attachments" => [file]} =
         StreamState.get(current(thread_id), "message")["m2"]
 
-      sent_back = HalC2.Attachments.unmarked(file)
+      sent_back = put_in(file, ["source"], %{"_tag" => "pasted-text"})
 
       {:ok, _} =
         queue_command("queued-run.edit", thread_id, second["id"], %{

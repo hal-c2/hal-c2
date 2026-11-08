@@ -124,7 +124,7 @@ defmodule HalC2.Attachments do
   Moves a message's pending uploads into its thread: each is copied under a
   thread-scoped id of its own, which the message then names, so two messages naming
   one upload hold two copies. Attachments the thread already has pass through, without
-  the mark only the MC's own folds carry (`unmarked/1`).
+  the mark only the MC's own folds carry.
   """
   def claim(thread_id, attachments) when is_list(attachments) do
     Enum.reduce_while(attachments, {:ok, []}, fn attachment, {:ok, acc} ->
@@ -318,7 +318,7 @@ defmodule HalC2.Attachments do
   @doc """
   The files `fold_long_text/3` folded a message's `text` into, among its
   `attachments`: those the MC marked as its folds whose name a cut mark in `text`
-  names. Only the MC marks a file (`unmarked/1`), so text quoting a cut mark, or a
+  names. Only the MC marks a file (`claim/2` drops a client's mark), so text quoting a cut mark, or a
   pasted text of the same name, never makes another file a fold.
   """
   def folded_into(text, attachments) when is_binary(text) and is_list(attachments) do
@@ -332,14 +332,12 @@ defmodule HalC2.Attachments do
 
   def folded_into(_text, _attachments), do: []
 
-  @doc """
-  An attachment a client names, without the mark only the MC gives the files it folds
-  long messages into (`folded_into/2`).
-  """
-  def unmarked(%{"source" => %{"_tag" => "pasted-text"} = source} = attachment),
+  # An attachment a client names, without the mark only the MC gives the files it folds
+  # long messages into (`folded_into/2`).
+  defp unmarked(%{"source" => %{"_tag" => "pasted-text"} = source} = attachment),
     do: Map.put(attachment, "source", Map.delete(source, "folded"))
 
-  def unmarked(attachment), do: attachment
+  defp unmarked(attachment), do: attachment
 
   @doc """
   What an edit of a message's text from `old` to `new` leaves behind among its

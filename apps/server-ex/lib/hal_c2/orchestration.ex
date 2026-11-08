@@ -3462,7 +3462,7 @@ defmodule HalC2.Orchestration do
         command = Map.put(command, "attachments", uploads)
 
         # The message's own attachments stay as it has them, marks and all
-        # (`HalC2.Attachments.unmarked/1`), whatever a client sends back.
+        # (`HalC2.Attachments.claim/2` drops a fold's mark), whatever a client sends back.
         with {:ok, claimed} <- HalC2.Attachments.claim(thread_id, uploads),
              claimed =
                Enum.map(claimed, &(Enum.find(kept, fn a -> a["id"] == &1["id"] end) || &1)),
