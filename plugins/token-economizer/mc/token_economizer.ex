@@ -906,16 +906,25 @@ defmodule HalC2Plugins.TokenEconomizer do
     end
   end
 
+  # A write that fails (a full disk, a data directory gone read-only) costs one turn's
+  # lesson, which the tracker in memory still holds: never the plugin and every turn
+  # it is guarding.
   defp save_tracker({project_id, provider} = project, tracker) do
     path = envelope_path(project)
-    File.mkdir_p!(Path.dirname(path))
+    tmp = path <> ".tmp"
 
     saved =
       Map.merge(Envelope.dump(tracker), %{"projectId" => project_id, "provider" => provider})
 
-    tmp = path <> ".tmp"
-    File.write!(tmp, JSON.encode!(saved))
-    File.rename!(tmp, path)
+    with :ok <- File.mkdir_p(Path.dirname(path)),
+         :ok <- File.write(tmp, JSON.encode!(saved)),
+         :ok <- File.rename(tmp, path) do
+      :ok
+    else
+      {:error, reason} ->
+        Logger.warning("token-economizer: envelope not saved to #{path}: #{inspect(reason)}")
+        :error
+    end
   end
 
   # --- what a call was ------------------------------------------------------------------
