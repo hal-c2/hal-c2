@@ -82,6 +82,11 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
     run(context, provider, ["hello"])
   end
 
+  step "a Codex thread works toward the goal {string}, then runs a turn",
+       %{args: [objective]} = context do
+    run(context, "Codex", ["/goal #{objective}", "next"])
+  end
+
   step "a Codex thread that ran a turn", context do
     run(context, "Codex", ["hello"])
   end
@@ -252,6 +257,22 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
     {at, _} = :binary.match(first, hd(context.texts))
     assert ahead < at
     for later <- rest, do: refute(later =~ text)
+    context
+  end
+
+  step "Codex is asked to work toward {string} after {string}",
+       %{args: [objective, text]} = context do
+    [first | _] = prompts(context, "Codex")
+    {ahead, _} = :binary.match(first, text)
+    {at, _} = :binary.match(first, HalC2.Codex.Goals.first_prompt(objective))
+    assert ahead < at
+    context
+  end
+
+  step "the turn after the goal comes without {string}", %{args: [text]} = context do
+    assert [_goal, next] = prompts(context, "Codex")
+    assert next =~ "next"
+    refute next =~ text
     context
   end
 

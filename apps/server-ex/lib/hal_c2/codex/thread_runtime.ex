@@ -2619,7 +2619,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   # under way, so the turn is the one asked to work toward it. The thread shows only
   # the goal that results, never the cleared or paused ones on the way.
   defp run_goal(state, turn, {:set, objective}, goal) do
-    turn = %{turn | text: Goals.first_prompt(objective)}
+    turn = %{turn | text: goal_prompt(turn, objective)}
     paused = %{"objective" => objective, "status" => "paused"}
 
     with {:ok, _} <- if(goal, do: goal_call(state, "thread/goal/clear", %{}), else: {:ok, %{}}),
@@ -2637,6 +2637,21 @@ defmodule HalC2.Codex.ThreadRuntime do
           {:ok, state}
       end
     end
+  end
+
+  # The goal's first prompt in place of the user's `/goal` message, after what the turn
+  # put ahead of it: a new conversation's context from the plugins
+  # (`HalC2.Orchestration.RunShape`) and a handed-off history. A resumed conversation
+  # has nothing ahead, so nothing is put there again.
+  defp goal_prompt(%{text: text} = turn, objective) do
+    message = Map.get(turn, :message)
+
+    ahead =
+      if is_binary(text) and is_binary(message) and String.ends_with?(text, message),
+        do: binary_part(text, 0, byte_size(text) - byte_size(message)),
+        else: ""
+
+    ahead <> Goals.first_prompt(objective)
   end
 
   defp goal_call(state, method, params) do

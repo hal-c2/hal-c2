@@ -89,6 +89,13 @@ Feature: Plugins that watch and shape turns
       | OpenCode | anything      | nothing      | every tool it had       |
 
   @mc
+  Scenario: A plugin's context comes ahead of the goal a new Codex conversation starts with
+    Given a plugin that shapes runs with the context "Keep answers short." and "collaboration" off
+    When a Codex thread works toward the goal "ship the fix", then runs a turn
+    Then Codex is asked to work toward "ship the fix" after "Keep answers short."
+    And the turn after the goal comes without "Keep answers short."
+
+  @mc
   Scenario Outline: A plugin that fails while shaping a conversation leaves it as it was
     Given a plugin that <fails> when asked to shape a run
     When a Claude thread runs a turn
