@@ -1410,7 +1410,8 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
           "run" =>
             "git fetch -q origin +refs/pull/42/head:refs/remotes/origin/pr/42 && " <>
               "{ git checkout -q #{branch} 2>/dev/null || " <>
-              "git checkout -q -b #{branch} refs/remotes/origin/pr/42; }"
+              "git checkout -q -b #{branch} refs/remotes/origin/pr/42; } && " <>
+              "git merge -q --ff-only refs/remotes/origin/pr/42"
         }
       ])
       |> Map.put(:pr_view, pr)

@@ -70,7 +70,7 @@ defmodule HalC2.PullRequests.Checkout do
            URI.parse(String.trim(reference)),
          true <- is_binary(name) and checkout != nil,
          name = String.downcase(name),
-         true <- name != checkout.host,
+         true <- name != ssh_hostname(checkout.host, host.url),
          [_, repository, segment] <-
            Regex.run(~r{^/(.+?)/(?:-/)?(pull|pulls|merge_requests|pull-requests)/\d+}, path || "") do
       kind =
@@ -91,6 +91,19 @@ defmodule HalC2.PullRequests.Checkout do
       }
     else
       _ -> host
+    end
+  end
+
+  # The host an SSH remote really reaches: `github-work` of `git@github-work:acme/web.git`
+  # is a `Host` alias in ssh_config, and `ssh -G` prints the `hostname` git and gh end up
+  # using. The name as written when ssh does not answer in time.
+  defp ssh_hostname(name, url) do
+    with true <- ssh?(url) and not String.starts_with?(name, "-"),
+         {:ok, out, _} <- SourceControl.Cli.run("ssh", ["-G", name], timeout: 3_000),
+         [_, resolved] <- Regex.run(~r/^hostname (\S+)$/m, out) do
+      String.downcase(resolved)
+    else
+      _ -> name
     end
   end
 
@@ -391,6 +404,55 @@ defmodule HalC2.PullRequests.Checkout do
     end
   end
 
+  # `gh pr checkout` without `--force` switches to an existing local branch and then
+  # fast-forwards it, failing after the switch when the branch has commits of its own
+  # and the pull request has moved on. That is refused here, before anything moves.
+  defp not_diverged(cwd, host, pr) do
+    branch = pr["headRefName"]
+    mine = rev(cwd, "refs/heads/#{branch}")
+    sha = pr["headSha"]
+
+    head =
+      if is_binary(sha) and Regex.match?(~r/\A[0-9a-fA-F]{7,64}\z/, sha) do
+        rev(cwd, sha) || fetched_head(cwd, host, pr)
+      end
+
+    if mine && head && mine != head &&
+         not ancestor?(cwd, mine, head) && not ancestor?(cwd, head, mine) do
+      {:error,
+       {:failed,
+        "The local branch #{branch} has commits that are not on pull request ##{pr["number"]}, " <>
+          "and the pull request has commits the branch lacks. Nothing was changed. " <>
+          "Merge or rebase the branch onto the pull request, or check it out in its own folder."}}
+    else
+      :ok
+    end
+  end
+
+  defp ancestor?(cwd, older, newer),
+    do: match?({:ok, _}, Git.ok(cwd, ["merge-base", "--is-ancestor", older, newer]))
+
+  # The pull request's ref from the checkout's remote when its head is not here yet
+  # (best effort: `gh` fetches it again).
+  defp fetched_head(cwd, %{remote: remote}, pr) when is_binary(remote) do
+    with {:ok, _} <-
+           Git.ok(cwd, [
+             "fetch",
+             "--quiet",
+             "--no-tags",
+             "--",
+             remote,
+             "refs/pull/#{pr["number"]}/head"
+           ]),
+         {:ok, sha} <- Git.ok(cwd, ["rev-parse", "--verify", "FETCH_HEAD^{commit}"]) do
+      String.trim(sha)
+    else
+      _ -> nil
+    end
+  end
+
+  defp fetched_head(_cwd, _host, _pr), do: nil
+
   # Another GitHub server's pull request ref, onto the head branch when the checkout
   # has none, else onto the branch it has (`onto_head/2` then moves it forward).
   defp checkout(cwd, %{kind: "github", hostname: _} = host, pr) do
@@ -406,8 +468,9 @@ defmodule HalC2.PullRequests.Checkout do
          do: {:ok, branch}
   end
 
-  defp checkout(cwd, %{kind: "github"}, pr) do
-    with {:ok, _} <-
+  defp checkout(cwd, %{kind: "github"} = host, pr) do
+    with :ok <- not_diverged(cwd, host, pr),
+         {:ok, _} <-
            GitHub.gh(cwd, ["pr", "checkout", "#{pr["number"]}"], timeout: 120_000),
          do: {:ok, nil}
   end

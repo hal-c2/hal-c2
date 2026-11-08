@@ -535,6 +535,41 @@ defmodule HalC2.Steps.SourceControl.PullRequestActions do
     Map.merge(context, %{pr_head: head, pr_host: host})
   end
 
+  # `ssh -G <alias>` answers from `aliases/<alias>` of the fake remotes (test/support/mc.ex).
+  step "the checkout's {string} is reached as the ssh alias {string} for github.com",
+       %{args: [repository, alias_name]} = context do
+    context = World.github_project(context, repository)
+    root = World.project(context, repository).root
+    aliases = Path.join(System.get_env("HAL_C2_FAKE_REMOTES"), "aliases")
+    File.mkdir_p!(aliases)
+    File.write!(Path.join(aliases, alias_name), "github.com\n")
+    World.git!(root, ["remote", "set-url", "origin", "git@#{alias_name}:#{repository}.git"])
+
+    context
+    |> Map.merge(%{cwd: root, checkout: repository})
+    |> HalC2.Steps.SourceControl.PullRequestThreads.answer_view()
+  end
+
+  step "the user checks out pull request 42 by its github.com URL in this repository", context do
+    {reply, context} =
+      World.call(context, "git.preparePullRequestThread", %{
+        "cwd" => context.cwd,
+        "reference" => "https://github.com/acme/shop/pull/42",
+        "mode" => "local"
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "it is checked out through the checkout's own remote", context do
+    assert {:ok, %{"branch" => "feature/tax", "isOnPullRequestHead" => true}} = context.reply
+    assert World.git!(context.cwd, ~w(remote)) == "origin"
+    assert World.git!(context.cwd, ~w(config branch.feature/tax.remote)) == "origin"
+    assert World.git!(context.cwd, ~w(rev-parse HEAD)) == context.pr_head
+    assert [_] = World.cli_calls(context, "pr checkout 42")
+    context
+  end
+
   step ~r/^the user checks out pull request 42 (?<where>in this repository|in a separate worktree)(?: from its review)?$/,
        %{args: [where]} = context do
     context = if context[:reference], do: context, else: context |> Map.put(:reference, "42")
@@ -570,7 +605,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestActions do
     context
   end
 
-  step ~r/^the repository has (?<state>uncommitted changes to tracked files|the pull request's branch (?:with commits not yet pushed|behind the pull request))$/,
+  step ~r/^the repository has (?<state>uncommitted changes to tracked files|the pull request's branch (?:with commits not yet pushed|behind the pull request|with commits of its own and the pull request has moved on))$/,
        %{args: [state]} = context do
     context = HalC2.Steps.SourceControl.PullRequestThreads.answer_view(context)
     root = context.cwd
@@ -592,6 +627,12 @@ defmodule HalC2.Steps.SourceControl.PullRequestActions do
       "the pull request's branch behind the pull request" ->
         World.git!(root, ~w(branch feature/tax main))
         context
+
+      "the pull request's branch with commits of its own and the pull request has moved on" ->
+        World.git!(root, ~w(checkout -q -b feature/tax main))
+        mine = World.commit!(root, %{"mine.txt" => "mine\n"}, "Not pushed yet")
+        World.git!(root, ~w(checkout -q main))
+        Map.put(context, :mine, mine)
     end
   end
 
@@ -608,6 +649,14 @@ defmodule HalC2.Steps.SourceControl.PullRequestActions do
     assert {:ok, %{"branch" => "feature/tax", "isOnPullRequestHead" => false}} = context.reply
     assert World.git!(context.cwd, ~w(branch --show-current)) == "feature/tax"
     assert World.git!(context.cwd, ~w(rev-parse HEAD)) == context.mine
+    context
+  end
+
+  step "the checkout is refused and the branch is left as it was", context do
+    assert World.failure(context) =~ "Nothing was changed."
+    assert World.git!(context.cwd, ~w(branch --show-current)) == "main"
+    assert World.git!(context.cwd, ~w(rev-parse feature/tax)) == context.mine
+    assert World.cli_calls(context, "pr checkout") == []
     context
   end
 
