@@ -2202,6 +2202,33 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
+  step "the user sends {string} another message and Codex keeps the left-over turn running",
+       %{args: [thread]} = context do
+    context = World.dispatch_message(context, thread, "Next")
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    World.await_runs(context, thread, ["failed", "failed"])
+
+    Map.put(
+      context,
+      :methods_since,
+      Enum.drop(World.codex_methods(context), context.methods_before)
+    )
+  end
+
+  step "the new run fails because the previous turn is still running", context do
+    assert ["turn/interrupt"] = context.methods_since
+
+    assert [_, %{"failure" => "The previous turn is still running." <> _}] =
+             World.runs(context, context.thread)
+
+    context
+  end
+
+  step "the left-over provider turn still reads as running", context do
+    assert %{"status" => "running"} = provider_turn(context, context.leftover)
+    context
+  end
+
   step "the new turn runs in the same provider conversation", context do
     same_conversation(context)
   end

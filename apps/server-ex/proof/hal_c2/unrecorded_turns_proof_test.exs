@@ -47,20 +47,23 @@ defmodule HalC2.UnrecordedTurnsProofTest do
       "HalC2.Orchestration.TurnWatch handle_info {:DOWN, _, :process, _, _}" => "gone",
       "HalC2.Orchestration.TurnWatch handle_info {:retry, _}" => "record",
       "HalC2.Orchestration.TurnWatch handle_info {:attempted, _, _}" => ~w(record attempt-failed),
-      "HalC2.Codex.ThreadRuntime handle_call {:start_turn, _}" => ~w(take refuse-start),
+      # A turn left over is stopped first, and the new one waits for its end.
+      "HalC2.Codex.ThreadRuntime handle_call {:start_turn, _}" => ~w(take hold refuse-start),
       "HalC2.Codex.ThreadRuntime handle_call :interrupt" => ~w(interrupt-driven unrecorded),
       "HalC2.Codex.ThreadRuntime handle_call {:interrupt, _}" => "interrupt-driven",
       "HalC2.Codex.ThreadRuntime handle_call {:interrupt, _, _}" => "interrupt-driven",
       "HalC2.Codex.ThreadRuntime handle_info {:interrupt_deadline, _}" => "deadline",
+      "HalC2.Codex.ThreadRuntime handle_info {:leftover_deadline, _}" => "held-deadline",
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:notification, _, _}}" =>
-        ~w(finish hand-over leftover-end ignored-end unrecorded),
+        ~w(finish hand-over leftover-end held-start ignored-end unrecorded),
       # A Codex goal's grace ends its run as Codex's turn end does; a stale one changes
       # nothing.
       "HalC2.Codex.ThreadRuntime handle_info {:goal_grace, _}" =>
         ~w(finish hand-over unrecorded ignored-end),
       # Every message, the wrapper's clause included: one it does not know is ignored.
-      "HalC2.Codex.ThreadRuntime handle_info _" => ~w(unrecorded hand-over ignored-end),
-      "HalC2.Codex.ThreadRuntime handle_call _" => ~w(take refuse-start interrupt-driven)
+      "HalC2.Codex.ThreadRuntime handle_info _" =>
+        ~w(unrecorded hand-over ignored-end held-start held-deadline),
+      "HalC2.Codex.ThreadRuntime handle_call _" => ~w(take hold refuse-start interrupt-driven)
     },
     abstracts: %{
       "HalC2.Orchestration.TurnWatch.attempted/2" =>
@@ -70,7 +73,7 @@ defmodule HalC2.UnrecordedTurnsProofTest do
       "HalC2.Orchestration.TurnWatch.start_link/1" =>
         "starts the process TurnWatch's rules run in",
       "HalC2.Codex.ThreadRuntime handle_info {:EXIT, _, _}" =>
-        "the app-server exiting under a turn is turns.maude's; one left over goes with it, its provider turn recorded as interrupted, as [crash] kills it",
+        "the app-server exiting under a turn is turns.maude's; one left over goes with it, its provider turn recorded as interrupted, and a turn held for it fails, as [crash] kills it",
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:invalid, _}}" =>
         "closes the app-server, as it exiting does (turns.maude)",
       "HalC2.Codex.ThreadRuntime handle_call {:steer, _, _}" => @steer,
@@ -183,6 +186,7 @@ defmodule HalC2.UnrecordedTurnsProofTest do
         {"nowTime", "late", "the end keeping the time the run failed"},
         {"overwrite", "overwritten", "the end keeping how its provider turn ended"},
         {"noLeftoverStop", "twoTurns", "the next message stopping a left-over provider turn"},
+        {"noLeftoverWait", "twoTurns", "the next message waiting for the left-over turn's end"},
         {"noInterrupt", "twoTurns", "the failed turn's provider turn being stopped"},
         {"notDriven", "lost", "a held end counting as driven, so a stop leaves it"},
         {"noActiveCheck", "twice", "abandon/5 leaving a run that already ended"},

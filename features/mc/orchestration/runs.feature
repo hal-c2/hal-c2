@@ -279,6 +279,15 @@ Feature: Runs and turns
     Then the left-over provider turn is interrupted first
     And the new turn runs in the same provider conversation
 
+  # hal-c2#1398: Codex answering the stop was taken for the left-over turn's end, so the
+  # follow-up started while Codex kept the old turn running.
+  @mc
+  Scenario: A follow-up whose stop of a left-over provider turn Codex ignores fails
+    Given an earlier run of "t1" failed while its provider turn kept running
+    When the user sends "t1" another message and Codex keeps the left-over turn running
+    Then the new run fails because the previous turn is still running
+    And the left-over provider turn still reads as running
+
   # Upstream #22846: the failure path wrote a turn that had already completed or failed as
   # interrupted, and wrote it even when the interrupt itself failed.
   @mc @priority-high

@@ -46,18 +46,20 @@ mod UNRECORDED-TURNS is
   ops unstarted active : -> Rs [ctor] .
   op over : St Nat -> Rs [ctor] .
 
-  --- The provider runtime: no process, idle, driving a run's turn, or driving it
-  --- without writing (`state.unrecorded`) since the store failed it at a time.
+  --- The provider runtime: no process, idle, holding a run's turn until the left-over
+  --- one ends (`leftover.hold`), driving a run's turn, or driving it without
+  --- writing (`state.unrecorded`) since the store failed it at a time.
   ops down idle : -> Slot [ctor] .
-  op drive : Rid -> Slot [ctor] .
+  ops hold drive : Rid -> Slot [ctor] .
   op dry : Rid Nat -> Slot [ctor] .
 
   --- Parts of the fix switched off, one at a time, so a proof shows each is needed:
   --- TurnWatch's retry, the original time, the provider's own ending, the follow-up's
-  --- stop of a left-over turn, the stop of a turn the store failed, the run TurnWatch
-  --- holds counting as driven, abandon/5's check that the run is still active, and
-  --- the failure going with its turn however the turn ended.
-  ops noRetry nowTime overwrite noLeftoverStop noInterrupt notDriven noActiveCheck keepMark : -> Sw [ctor] .
+  --- stop of a left-over turn and its wait for that turn's end, the stop of a turn the
+  --- store failed, the run TurnWatch holds counting as driven, abandon/5's check that
+  --- the run is still active, and the failure going with its turn however it ended.
+  ops noRetry nowTime overwrite noLeftoverStop noLeftoverWait noInterrupt notDriven noActiveCheck
+    keepMark : -> Sw [ctor] .
   op off : Sw -> Item [ctor] .
 
   op store : Bool -> Item [ctor] .
@@ -112,7 +114,6 @@ mod UNRECORDED-TURNS is
   vars S S' : St .
   var X : Rpt .
   var P : Pv .
-  var Q : Pt .
   var Z : Rs .
   vars N T M K F : Nat .
   vars B B' : Bool .
@@ -157,12 +158,12 @@ mod UNRECORDED-TURNS is
     forgot(R) settled(C, N) .
   eq settled(C, N) = C [owise] .
 
-  --- start_turn/1's stop_leftover/1: the turn an earlier stop left running is stopped,
-  --- as Codex acknowledges, and its provider turn reads as interrupted.
-  op stopped : Conf -> Conf .
-  eq stopped(lo(R) pt(R, Q) rpt(R, X) C) =
-    pt(R, gone) rpt(R, (if X == running then interrupted else X fi)) C .
-  eq stopped(C) = C [owise] .
+  --- Whether a turn is left over, and whether the runtime holds the next for it.
+  ops lefts holding : Conf -> Bool .
+  eq lefts(lo(R) C) = true .
+  eq lefts(C) = false [owise] .
+  eq holding(rt(hold(R)) C) = true .
+  eq holding(C) = false [owise] .
 
   --- How TurnWatch records the provider turn (TurnWriter.ended/7).
   op written : Bool Pv Rpt -> Rpt .
@@ -174,6 +175,7 @@ mod UNRECORDED-TURNS is
   --- What drives a run, for TurnWatch.driven?/1 (`pending`: whether a held end counts).
   op driven : Conf Rid Bool -> Bool .
   eq driven(rt(drive(R)) C, R, B) = true .
+  eq driven(rt(hold(R)) C, R, B) = true .
   eq driven(rt(dry(R, T)) C, R, B) = true .
   eq driven(pend(R, T, P, B') C, R, true) = true .
   eq driven(C, R, B) = false [owise] .
@@ -213,6 +215,7 @@ mod UNRECORDED-TURNS is
   rl [ignore] : { asked(R) pt(R, live) C } => { pt(R, live) late(R) C } .
   rl [crash] : { faults(s F) rt(drive(R)) C } => { faults(F) rt(down) downed(R) killed(C) } .
   rl [crash] : { faults(s F) rt(dry(R, T)) C } => { faults(F) rt(down) downed(R) killed(C) } .
+  rl [crash] : { faults(s F) rt(hold(R)) C } => { faults(F) rt(down) downed(R) killed(C) } .
   rl [restart] : { faults(s F) clock(N) C } => { faults(F) clock(s N) settling wiped(C) } .
 
   --- Unrecorded.handle_info/4: what the runtime writes for its turn the store refuses.
@@ -254,12 +257,33 @@ mod UNRECORDED-TURNS is
          rpt(R, interrupted) C } .
   rl [deadline] : { late(R) rt(dry(R, T)) pend(R, M, pending, B) C }
     => { rt(idle) lo(R) pend(R, M, running, B) C } .
-  crl [deadline] : { late(R) C } => { C } if not drives(C, R) .
+  crl [deadline] : { late(R) C } => { C } if not drives(C, R) and not holding(C) .
 
   --- A left-over turn ending on its own reads as it ended; one the store refuses
   --- reads as running still (leftover_ended/2 rescues the write).
-  rl [leftover-end] : { lo(R) endmsg(R, S) store(B) rpt(R, X) C }
-    => { store(B) rpt(R, (if B and X == running then S else X fi)) C } .
+  crl [leftover-end] : { lo(R) endmsg(R, S) store(B) rpt(R, X) C }
+    => { store(B) rpt(R, (if B and X == running then S else X fi)) C }
+    if not holding(C) .
+
+  --- The left-over turn's end starts the run held for it. A start the store refuses
+  --- stops the runtime (begin_held/1), Codex's turns with it, and TurnWatch, which holds
+  --- the run's claim, fails it.
+  rl [held-start] : { lo(R) endmsg(R, S) rt(hold(R')) store(true) rpt(R, X) pt(R', nopt)
+      rpt(R', absent) C }
+    => { store(true) rt(drive(R')) rpt(R, (if X == running then S else X fi)) pt(R', live)
+         rpt(R', running) C } .
+  rl [held-start] : { lo(R) endmsg(R, S) rt(hold(R')) store(false) C }
+    => { store(false) rt(down) downed(R') killed(C) } .
+
+  --- {:leftover_deadline, _}: Codex has not ended the left-over turn; the run held for
+  --- it fails and the turn stays left over for the next. A failure the store refuses
+  --- goes to TurnWatch, as a dry turn's end does.
+  rl [held-deadline] : { late(R) lo(R) rt(hold(R')) store(true) clock(N) run(R', active)
+      ends(R', K) C }
+    => { lo(R) rt(idle) store(true) clock(N) run(R', over(failed, N)) ends(R', s K) C } .
+  rl [held-deadline] : { late(R) lo(R) rt(hold(R')) store(false) clock(N) C }
+    => { lo(R) rt(idle) store(false) clock(N) pend(R', N, failed, false) unrec(R')
+         stamp(C, R', N) } .
 
   --- An end no turn of the runtime's takes is dropped (`notification/3`, no turn).
   crl [ignored-end] : { endmsg(R, S) C } => { C } if not hears(C, R) .
@@ -298,12 +322,25 @@ mod UNRECORDED-TURNS is
     => { start(r2) store(true) run(r1, over(S, M)) C }
     if not booting(C) .
 
-  --- start_turn: a left-over turn is stopped first; the new one runs. A message on its
-  --- way when the MC stopped starts after boot recovery (Recovery requeues it).
+  --- start_turn: the new turn runs. A message on its way when the MC stopped starts
+  --- after boot recovery (Recovery requeues it).
   crl [take] : { start(r2) store(true) rt(Y) run(r2, unstarted) pt(r2, nopt) rpt(r2, absent) C }
-    => { store(true) rt(drive(r2)) run(r2, active) pt(r2, live) rpt(r2, running)
-         (if has(C, noLeftoverStop) then C else stopped(C) fi) }
-    if (Y == idle or Y == down) and not booting(C) .
+    => { store(true) rt(drive(r2)) run(r2, active) pt(r2, live) rpt(r2, running) C }
+    if (Y == idle or Y == down) and not booting(C) and (not lefts(C) or has(C, noLeftoverStop)) .
+
+  --- With noLeftoverWait, Codex answering the stop of a left-over turn counts as its
+  --- end, and the new turn runs at once.
+  crl [take] : { start(r2) store(true) rt(idle) lo(r1) rpt(r1, X) run(r2, unstarted) pt(r2, nopt)
+      rpt(r2, absent) C }
+    => { store(true) rt(drive(r2)) asked(r1) rpt(r1, (if X == running then interrupted else X fi))
+         run(r2, active) pt(r2, live) rpt(r2, running) C }
+    if has(C, noLeftoverWait) and not booting(C) .
+
+  --- start_turn with a turn left over: Codex is asked to stop it, and the new run waits
+  --- for its end (stop_leftover/1), writing nothing.
+  crl [hold] : { start(r2) rt(idle) lo(r1) run(r2, unstarted) C }
+    => { rt(hold(r2)) lo(r1) asked(r1) run(r2, active) C }
+    if not has(C, noLeftoverStop) and not has(C, noLeftoverWait) and not booting(C) .
 
   --- start_turn when Codex does not answer the left-over turn's stop: the new run fails.
   crl [refuse-start] : { start(r2) store(true) clock(N) rt(idle) lo(r1) run(r2, unstarted) ends(r2, K) C }
@@ -365,6 +402,7 @@ mod UNRECORDED-TURNS is
   op keeps : Conf Rid -> Bool .
   eq keeps(rt(drive(R)) C, R) = true .
   eq keeps(rt(dry(R, T)) C, R) = true .
+  eq keeps(rt(hold(R)) C, R) = true .
   eq keeps(pend(R, T, P, B) C, R) = true .
   eq keeps(downed(R) C, R) = true .
   eq keeps(settling C, R) = true .
