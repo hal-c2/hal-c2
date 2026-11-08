@@ -457,7 +457,7 @@ Feature: Claude
 
   # Upstream #27577: Claude's fork renumbered the copied messages but left each compaction pointing
   # at the old ones, so the fork resent its whole history or dropped what compaction kept.
-  @backlog @priority-high
+  @priority-high
   Scenario: Forking a compacted Claude thread gives the fork the same context
     Given a Claude thread that was compacted three times
     When the user forks from its latest turn and sends a message in the fork

@@ -2485,6 +2485,82 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- forking a compacted thread -----------------------------------------------------------
+
+  step "a Claude thread that was compacted three times", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.run_turns(@thread, "claudeAgent", [
+        "first",
+        "/compact",
+        "second",
+        "/compact",
+        "third",
+        "/compact"
+      ])
+
+    assert length(compactions(context)) == 3
+    Map.put(context, :thread, @thread)
+  end
+
+  step "the user forks from its latest turn and sends a message in the fork", context do
+    context = World.fork(context, @thread, 6, "fork")
+    assert {:ok, _} = context.reply
+    context = World.post_message(context, "fork", "where are we")
+    World.await_latest_run(context, "fork", "completed")
+    context
+  end
+
+  step "the fork sends Claude the same compacted context as its source", context do
+    replies = World.replies(context, "fork")
+
+    assert Enum.any?(replies, &String.starts_with?(&1, "resumed at compact-")),
+           inspect(replies)
+
+    assert Enum.any?(replies, &(&1 =~ "fork True")), inspect(replies)
+    context
+  end
+
+  step "every compaction in the fork points at messages the fork has", context do
+    fork_items = World.entities(context, "fork", "turn-item")
+    fork_runs = World.runs(context, "fork") |> Enum.map(& &1["id"]) |> MapSet.new()
+
+    fork_native =
+      for item <- fork_items,
+          id = get_in(item, ["nativeItemRef", "nativeId"]),
+          id,
+          into: MapSet.new(),
+          do: id
+
+    source_native =
+      for item <- World.entities(context, @thread, "turn-item"),
+          id = get_in(item, ["nativeItemRef", "nativeId"]),
+          id,
+          into: MapSet.new(),
+          do: id
+
+    fork_compactions = Enum.filter(fork_items, &(&1["type"] == "compaction"))
+    assert length(fork_compactions) == 3
+
+    # Each compaction belongs to a run the fork has, carries the same native
+    # boundary as in the source, and every native item the source had at the
+    # fork point is among the fork's own items.
+    assert Enum.all?(fork_compactions, &MapSet.member?(fork_runs, &1["runId"]))
+
+    boundaries = fn items ->
+      for item <- items,
+          item["type"] == "compaction",
+          do: get_in(item, ["nativeItemRef", "nativeId"])
+    end
+
+    assert MapSet.new(boundaries.(fork_items)) ==
+             MapSet.new(boundaries.(World.entities(context, @thread, "turn-item")))
+
+    assert MapSet.subset?(source_native, fork_native)
+    context
+  end
+
   step "Claude is picked for text generation", context do
     context = World.text_writers(context, [:claude])
 
