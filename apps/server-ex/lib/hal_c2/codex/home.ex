@@ -68,10 +68,10 @@ defmodule HalC2.Codex.Home do
     if managed?(instance), do: Enum.reject(env, &match?({"CODEX_HOME", _}, &1)), else: env
   end
 
-  defp managed?(instance),
-    do:
-      HalC2.Settings.instance_setting(instance, "shadowHomePath") == nil and
-        HalC2.Codex.ChatGpt.managed?(instance)
+  # A connected account's login lives in the MC-owned home (`ChatGpt.home/1`), which
+  # `ChatGpt.adopt/3` and `move/1` read and write: a `shadowHomePath` set before the
+  # account was connected does not take its place.
+  defp managed?(instance), do: HalC2.Codex.ChatGpt.managed?(instance)
 
   @doc """
   The home shared by every account of `instance`'s Codex home, or nil for the

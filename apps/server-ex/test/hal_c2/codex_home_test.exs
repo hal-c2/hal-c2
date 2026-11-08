@@ -48,6 +48,22 @@ defmodule HalC2.Codex.HomeTest do
     refute List.keymember?(Home.instance_env("codex-work"), "CODEX_HOME", 0)
   end
 
+  test "a managed instance signs in in the MC's home even with a shadowHomePath set",
+       %{tmp_dir: dir} do
+    cli_home = Path.join(dir, "cli-codex")
+
+    put_instance(
+      %{"setupMode" => "managed", "shadowHomePath" => Path.join(dir, "old-shadow")},
+      cli_home
+    )
+
+    # The home `ChatGpt.adopt/3` and `move/1` read and write.
+    managed = ChatGpt.home("codex-work")
+    assert {:ok, [{"CODEX_HOME", ^managed}]} = Home.env("codex-work")
+    refute File.exists?(Path.join(dir, "old-shadow"))
+    refute List.keymember?(Home.instance_env("codex-work"), "CODEX_HOME", 0)
+  end
+
   test "an instance on the CLI's login keeps its CODEX_HOME", %{tmp_dir: dir} do
     cli_home = Path.join(dir, "cli-codex")
     put_instance(%{}, cli_home)

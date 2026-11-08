@@ -10,11 +10,24 @@ defmodule HalC2.Codex.ToolImages do
 
   @data_url ~r/\Adata:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+\/=]+)\z/i
 
-  @doc "Tool `fields` (`toolName`, `input`, `output`) with the output's images saved."
-  def store(%{"output" => output} = fields, thread_id) when is_list(output),
+  @doc """
+  Tool `fields` (`toolName`, `input`, `output`) with the output's images saved. An
+  MCP tool that returns `structuredContent` shows that as its output, so the image
+  blocks of its `content` (`item`'s result) are saved apart, as the item's `"images"`.
+  """
+  def store(fields, thread_id, item \\ %{})
+
+  def store(%{"output" => output} = fields, thread_id, _item) when is_list(output),
     do: %{fields | "output" => Enum.map(output, &image(&1, thread_id))}
 
-  def store(fields, _thread_id), do: fields
+  def store(fields, thread_id, %{"result" => %{"content" => content}}) when is_list(content) do
+    case for(%{"type" => "image"} = block <- content, do: image(block, thread_id)) do
+      [] -> fields
+      images -> Map.put(fields, "images", images)
+    end
+  end
+
+  def store(fields, _thread_id, _item), do: fields
 
   defp image(%{"type" => "inputImage", "imageUrl" => url} = block, thread_id)
        when is_binary(url) do

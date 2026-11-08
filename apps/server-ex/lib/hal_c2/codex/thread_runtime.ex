@@ -192,8 +192,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   @doc """
-  The thread's live connection and native thread for `HalC2.Codex.McpApps`, or nil
-  when no session runs. Never starts one.
+  The thread's live connection, native thread and the instance the connection was
+  opened for, for `HalC2.Codex.McpApps`, or nil when no session runs. Never starts one.
   """
   def mcp_session(thread_id) do
     case Registry.lookup(HalC2.Codex.Registry, thread_id) do
@@ -546,7 +546,7 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   # The live connection and native thread an MCP app's requests go through.
   def handle_call(:mcp_session, _from, state),
-    do: {:reply, {state.conn, state.native_thread_id}, state}
+    do: {:reply, {state.conn, state.native_thread_id, state.conn_instance}, state}
 
   def handle_call({:upload_feedback, reason}, _from, state) do
     params =
@@ -3423,7 +3423,7 @@ defmodule HalC2.Codex.ThreadRuntime do
     fields =
       item
       |> tool_fields()
-      |> HalC2.Codex.ToolImages.store(state.thread_id)
+      |> HalC2.Codex.ToolImages.store(state.thread_id, item)
 
     status = if item["status"] == "failed", do: "failed", else: "completed"
 

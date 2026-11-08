@@ -154,6 +154,22 @@ defmodule HalC2.ProviderInstall do
 
   # --- subscribers ------------------------------------------------------------------
 
+  @doc """
+  Watches `instance`'s install state under `ref`: the installer of the driver that
+  instance has on the MC this runs on. A socket calls it on the MC the instance is
+  on (`HalC2.Watchers`), whose settings alone know whether it is a Codex instance.
+  """
+  def watch(instance, pid, ref), do: installer(instance).subscribe(instance, pid, ref)
+
+  @doc "Lets go of `watch/3`'s subscription `ref`."
+  def unwatch(instance, pid, ref), do: installer(instance).unsubscribe(instance, pid, ref)
+
+  defp installer(instance) do
+    if HalC2.Codex.Installation.instance?(instance),
+      do: HalC2.Codex.Installation,
+      else: HalC2.Acp.Antigravity.Installation
+  end
+
   @doc "Adds `pid` under `ref` as a watcher of `instance`'s install state."
   def subscribe(state, instance, pid, ref) do
     key = {pid, instance}

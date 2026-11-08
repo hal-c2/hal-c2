@@ -52,8 +52,7 @@ defmodule HalC2.Codex.Provider do
         "availability" => "available",
         "auth" => %{"status" => "authenticated"},
         "checkedAt" => HalC2.Orchestration.Entities.now(),
-        "models" =>
-          for(model <- :persistent_term.get(@key, @default_models), do: model_entry(model)),
+        "models" => for(model <- entry_models(id), do: model_entry(model)),
         "slashCommands" => slash_commands(),
         "skills" => [],
         "workspaceSnapshots" =>
@@ -729,6 +728,11 @@ defmodule HalC2.Codex.Provider do
     :persistent_term.put(models_key(id), models)
     :ok
   end
+
+  # The instance's own list (its account's models and configured tier); an instance
+  # not checked yet shows the built-in instance's, else the defaults.
+  defp entry_models(id),
+    do: listed_models(id) || :persistent_term.get(@key, @default_models)
 
   defp models_key("codex"), do: @key
   defp models_key(id), do: {@key, id}

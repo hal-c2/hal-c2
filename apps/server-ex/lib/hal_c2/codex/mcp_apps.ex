@@ -8,6 +8,7 @@ defmodule HalC2.Codex.McpApps do
   alias HalC2.JsonRpc.Connection
   alias HalC2.Orchestration
   alias HalC2.Orchestration.Entities
+  alias HalC2.StreamState
 
   # Reading an app's resource is one MCP round trip; a server that hangs gives up
   # its app after this long and leaves a plain tool row.
@@ -54,25 +55,48 @@ defmodule HalC2.Codex.McpApps do
   Puts the app `capture/4` reads for a completed tool item onto that item,
   `item_id` in `thread_id`'s stream, once the read returns: `:ok` either way.
   ThreadRuntime runs it in a process of its own, as the read may take its server's time.
+  The stored document stays only when it is published on a live thread's item: one
+  deleted (or whose item went) while the server answered would otherwise keep a file
+  nothing owns or cleans up.
   """
   def attach(conn, native_thread_id, thread_id, item_id, item) do
     with %{"mcpApp" => _} = fields <- capture(conn, native_thread_id, thread_id, item) do
-      HalC2.Streams.transact(thread_id, :thread, fn stream ->
-        update = fn
-          nil -> nil
-          current -> current |> Map.merge(fields) |> Map.put("updatedAt", Entities.now())
-        end
-
-        {Enum.reject([Orchestration.upsert(stream, "turn-item", item_id, update)], &is_nil/1),
-         :ok}
-      end)
+      publish(thread_id, item_id, fields)
     end
 
     :ok
+  end
+
+  @doc """
+  Puts `capture/4`'s `fields` (a stored document) on `item_id` of a live `thread_id`.
+  The document is removed when it cannot be, so none outlives what owns it. Decided
+  inside the stream's transaction, so it is ordered against the thread's deletion.
+  """
+  def publish(thread_id, item_id, %{"mcpApp" => %{"attachmentId" => id}} = fields) do
+    published? = put_on_item(thread_id, item_id, fields)
+    if not published?, do: remove_document(id)
+    published?
+  end
+
+  defp put_on_item(thread_id, item_id, fields) do
+    HalC2.Streams.transact(thread_id, :thread, fn stream ->
+      live? = get_in(StreamState.get(stream, "thread"), [thread_id, "deletedAt"]) == nil
+
+      update = fn
+        nil -> nil
+        current -> current |> Map.merge(fields) |> Map.put("updatedAt", Entities.now())
+      end
+
+      change = live? && Orchestration.upsert(stream, "turn-item", item_id, update)
+      {Enum.reject([change], &(&1 in [nil, false])), change != nil and change != false}
+    end)
   catch
     # The thread went away while its server answered: there is no item to put it on.
-    :exit, _ -> :ok
+    :exit, _ -> false
   end
+
+  # sobelow_skip ["Traversal.FileModule"]
+  defp remove_document(id), do: File.rm(HalC2.Attachments.path(%{"id" => id}))
 
   # --- `HalC2.McpApps` adapter ---------------------------------------------------
 
@@ -99,11 +123,21 @@ defmodule HalC2.Codex.McpApps do
     [part | parts(binary_part(text, byte_size(part), byte_size(text) - byte_size(part)), bytes)]
   end
 
-  @doc "The thread's live Codex connection and native thread, or `:stopped`; never starts one."
-  def session(thread_id) do
+  @doc """
+  The thread's live Codex connection and native thread, or `:stopped`; never starts one.
+  `instance` is the provider instance the app was made on (nil: the default one): a
+  connection open for another instance of Codex is not that app's session.
+  """
+  def session(thread_id, instance \\ nil) do
+    made_on = instance || "codex"
+
     case HalC2.Codex.ThreadRuntime.mcp_session(thread_id) do
-      {conn, native} when conn != nil and is_binary(native) -> {:ok, {conn, native}}
-      _ -> :stopped
+      {conn, native, open_for}
+      when conn != nil and is_binary(native) and open_for in [made_on, :unknown] ->
+        {:ok, {conn, native}}
+
+      _ ->
+        :stopped
     end
   end
 

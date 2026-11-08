@@ -387,7 +387,11 @@ defmodule HalC2.McpApps do
          %{"mcpApp" => %{"server" => _} = app} = item <-
            StreamState.get(state, "turn-item")[item_id] || error(input, "not-an-app"),
          {:ok, adapter} <- adapter(driver(state, item), input) do
-      case adapter.session(thread_id) do
+      # An app made on another instance of the driver than the one now running the
+      # thread is bound to that instance's session, which has stopped.
+      instance = get_in(StreamState.get(state, "run"), [item["runId"], "providerInstanceId"])
+
+      case adapter.session(thread_id, instance) do
         {:ok, session} -> {:ok, app, adapter, session}
         :stopped -> error(input, "session-stopped")
       end

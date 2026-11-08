@@ -603,9 +603,17 @@ defmodule HalC2.TextGeneration do
           ["--output-schema", schema_path, "--output-last-message", output_path] ++
           Enum.flat_map(images, &["--image", &1]) ++ ["-"]
 
-      cli = [label: "Codex", unexpected: unexpected(opts)]
+      # The instance's home and variables reach the Codex that writes text as they
+      # reach its sessions: a connected ChatGPT account writes with its own login.
+      instance = selection["instanceId"] || "codex"
 
-      with {:ok, _} <- run_cli([codex_command(selection["instanceId"]) | args], cwd, prompt, cli),
+      with {:ok, home} <- HalC2.Codex.Home.env(instance),
+           cli = [
+             label: "Codex",
+             unexpected: unexpected(opts),
+             env: home ++ HalC2.Codex.Home.instance_env(instance)
+           ],
+           {:ok, _} <- run_cli([codex_command(selection["instanceId"]) | args], cwd, prompt, cli),
            {:ok, text} <- File.read(output_path),
            {:ok, %{} = result} <- JSON.decode(text) do
         {:ok, result}

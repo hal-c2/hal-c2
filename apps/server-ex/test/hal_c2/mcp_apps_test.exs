@@ -8,7 +8,15 @@ defmodule HalC2.McpAppsTest do
   @uri "ui://weather/forecast.html"
 
   setup %{tmp_dir: dir} do
+    previous = Application.get_env(:hal_c2, :home)
     Application.put_env(:hal_c2, :home, dir)
+
+    on_exit(fn ->
+      if previous == nil,
+        do: Application.delete_env(:hal_c2, :home),
+        else: Application.put_env(:hal_c2, :home, previous)
+    end)
+
     :ok
   end
 
