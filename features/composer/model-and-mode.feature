@@ -496,10 +496,11 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then "gpt-6" is marked as new
 
   # Upstream #25609: the new mark comes from the model's release date and lasts seven days.
-  @backlog @mc @desktop
+  # The MC derives the mark for the providers whose models come from the model manifest.
+  @mc @desktop @backlog-desktop
   Scenario Outline: A model is marked new for seven days after its release
-    Given "gpt-6" was released <age>
-    When the user looks through Codex's models
+    Given "gpt-6" was released <age> in the model manifest
+    When the user looks through the manifest's models
     Then "gpt-6" <mark>
 
     Examples:
