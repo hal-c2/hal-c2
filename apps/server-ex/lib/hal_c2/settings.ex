@@ -56,7 +56,7 @@ defmodule HalC2.Settings do
                      newWorktreesStartFromOrigin worktreeSubmodules defaultAutoPull
                      defaultProjectScripts enableAgentBrowserAccess enableAgentDeviceAccess
                      textGenerationModelSelection sourceControlWriterModelSelection
-                     sourceControlWritingStyle pullRequestMergeMethod sidebarAutoSettleOnMerge
+                     sourceControlWritingStyle threadTitleInstructions pullRequestMergeMethod sidebarAutoSettleOnMerge
                      sidebarAutoSettleAfterDays continueThreadsAfterServerUpdate
                      responseStreamingMode projectEnvironment projectEnvironmentFile)
 
