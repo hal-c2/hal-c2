@@ -66,8 +66,9 @@ mod THREAD-MOVE is
   op hurt : Mc -> Item [ctor] .
   op moves : Nat -> Item [ctor] .
   --- The thread's plugin keeps it on this machine (ThreadArchive.stays/1), by the thread's
-  --- own mark or by the plugin's installed manifest, running or not: move/3 and
-  --- destinations/1 refuse it before anything begins, and an export does too.
+  --- own mark or by the plugin's manifest (the version loaded, or the one on disk, set
+  --- aside while an install replaces it), running or not: move/3 and destinations/1
+  --- refuse it before anything begins, and an export does too.
   op kept : -> Item [ctor] .
   op faults : Nat -> Item [ctor] .
   op next : Nat -> Item [ctor] .

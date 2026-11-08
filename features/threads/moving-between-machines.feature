@@ -513,6 +513,20 @@ Feature: Moving a thread and its agent to another machine
       Then the user is told "Alpha was started by code-review, which keeps it on this machine."
       And no file is written
 
+    # Installing a new version moves the old one aside before putting the new one in its place
+    # (`mix hal_c2.plugins.install`). The manifest set aside still speaks for the plugin in
+    # between, to the MC and to an export run on its own.
+    @mc
+    Scenario: A thread its plugin keeps is kept while a new version of the plugin is put in place
+      Given "Alpha" was started by the plugin "code-review" before it kept its threads on the machine
+      And the plugin "code-review" is installed on "laptop" and keeps its threads there, but is turned off
+      And a new version of "code-review" is being installed on "laptop", the old one moved aside and the new one not yet in place
+      When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+      And no file is written
+      When the user moves "Alpha" to "desktop"
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+
     @mc
     Scenario Outline: A move the destination cannot take is refused before anything is copied
       Given <situation>

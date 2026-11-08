@@ -1157,6 +1157,21 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     context
   end
 
+  # Where `mix hal_c2.plugins.install` stands between its two renames: the installed
+  # package moved aside, its replacement staged beside the plugins directory.
+  step "a new version of {string} is being installed on {string}, the old one moved aside and the new one not yet in place",
+       %{args: [plugin, machine]} = context do
+    assert Machines.machine(context, machine) == :local
+    plugins = Path.join(HalC2.Paths.data_dir(), "plugins")
+    installed = Path.join(plugins, plugin)
+    staged = HalC2.Plugins.Package.staged_dir(plugins, plugin)
+    File.mkdir_p!(staged)
+    File.cp!(Path.join(installed, "plugin.json"), Path.join(staged, "plugin.json"))
+    File.rename!(installed, HalC2.Plugins.Package.aside_dir(plugins, plugin))
+    refute File.exists?(installed)
+    context
+  end
+
   step "the user asks which machines {string} could move to", %{args: [title]} = context do
     result = HalC2.ThreadMove.destinations(World.thread_id(context, title))
     assert {:error, %{"code" => "thread_not_movable", "message" => message}} = result

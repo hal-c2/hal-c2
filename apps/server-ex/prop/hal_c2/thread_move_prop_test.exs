@@ -17,7 +17,11 @@ defmodule HalC2.ThreadMovePropTest do
   each machine has installed and a case turns on and off (or whose manager restarts).
   Some of those are kept on the machine: by the mark the plugin put on them (`"stays"`, of
   a plugin that may since have been removed), or by the manifest of an installed plugin
-  that was never run, on a thread from before the mark (`HalC2.Plugins.Package.threads_stay?/1`).
+  that was never run, on a thread from before the mark (`HalC2.Plugins.threads_stay?/1`).
+  That plugin also starts threads, which take the mark from its manifest, and a case
+  breaks its manifest (a reload that fails, leaving the version before it loaded) or
+  moves it aside as an install does between its two renames: neither lets a thread it
+  keeps go, nor one it starts then leave without the mark.
 
   The promises checked after every step: once a move settles, a thread lives on exactly
   one machine (the model's) with all its history and its attachment intact, the machines
@@ -51,6 +55,8 @@ defmodule HalC2.ThreadMovePropTest do
   @mark %{"id" => "prop-mover", "kind" => "review", "listed" => false}
   @stays_mark Map.put(@mark, "stays", true)
   @legacy_mark %{"id" => "prop-keeper", "kind" => "review", "listed" => false}
+  # How `HalC2.Plugins.Host` marks the threads that plugin starts.
+  @kept_mark Map.put(@legacy_mark, "stays", true)
   # Stages at which the destination has the thread: the move completes from there.
   @taken [:accepted, :letting_go]
 
@@ -86,13 +92,15 @@ defmodule HalC2.ThreadMovePropTest do
 
   # threads: name => %{at: mc, title: title, made: title it was created with,
   #   plugin: whether it still has the mark of the plugin that started it (false, true,
-  #   :stays for a thread marked as kept on the machine, or :legacy for one kept by its
-  #   plugin's manifest alone)}
+  #   :stays for a thread marked as kept on the machine, :legacy for one kept by its
+  #   plugin's manifest alone, or :kept for one the keeper started)}
   # held: nil or %{t, from, to, stage, ids, killed, source_restarted, at, let_go}, where
   #   at is where the thread lives once the destination has it (it may move on from
   #   there), and let_go whether the source has let go of it already
   # running: the machines the plugin runs on
-  def initial_state, do: %{threads: %{}, held: nil, running: []}
+  # keeper: the machines whose keeper package `Cluster.keeper/1` left :broken or
+  #   :replacing; the others have it installed
+  def initial_state, do: %{threads: %{}, held: nil, running: [], keeper: %{}}
 
   def command(state) do
     made = Map.keys(state.threads)
@@ -105,8 +113,13 @@ defmodule HalC2.ThreadMovePropTest do
       [
         {1,
          {:call, __MODULE__, :restart, [oneof(@mcs), oneof([:thread_move, :store, :plugins])]}},
-        {2, {:call, __MODULE__, :plugin, [oneof(@mcs), boolean()]}}
+        {2, {:call, __MODULE__, :plugin, [oneof(@mcs), boolean()]}},
+        {2, {:call, __MODULE__, :keeper, [oneof(@mcs), oneof([:installed, :broken, :replacing])]}}
       ] ++
+        if(fresh != [],
+          do: [{2, {:call, __MODULE__, :create_kept, [oneof(fresh), oneof(@mcs)]}}],
+          else: []
+        ) ++
         if(fresh != [] and state.running != [],
           do: [{2, {:call, __MODULE__, :create_staying, [oneof(fresh), oneof(state.running)]}}],
           else: []
@@ -226,6 +239,19 @@ defmodule HalC2.ThreadMovePropTest do
   def precondition(state, {:call, _, :create_legacy, [t, _]}),
     do: not is_map_key(state.threads, t)
 
+  def precondition(state, {:call, _, :create_kept, [t, _]}),
+    do: not is_map_key(state.threads, t)
+
+  # A manifest breaks or goes aside from an installed package: a manifest broken while
+  # aside has no version loaded to speak for it.
+  def precondition(state, {:call, _, :keeper, [mc, how]}),
+    do: how == :installed or not is_map_key(state.keeper, mc)
+
+  # A plugin host that starts again with the manifest broken loads no version of it,
+  # and nothing on disk says it keeps its threads (#1432).
+  def precondition(state, {:call, _, :restart, [mc, :plugins]}),
+    do: state.keeper[mc] != :broken
+
   def precondition(state, {:call, _, :destinations, [t, at]}),
     do: t in staying(state) and state.threads[t].at == at
 
@@ -264,6 +290,15 @@ defmodule HalC2.ThreadMovePropTest do
 
   def next_state(state, _result, {:call, _, :create_legacy, [t, mc]}),
     do: put_in(state.threads[t], %{at: mc, title: t, made: t, plugin: :legacy})
+
+  def next_state(state, _result, {:call, _, :create_kept, [t, mc]}),
+    do: put_in(state.threads[t], %{at: mc, title: t, made: t, plugin: :kept})
+
+  def next_state(state, _result, {:call, _, :keeper, [mc, :installed]}),
+    do: %{state | keeper: Map.delete(state.keeper, mc)}
+
+  def next_state(state, _result, {:call, _, :keeper, [mc, how]}),
+    do: put_in(state.keeper[mc], how)
 
   def next_state(state, _result, {:call, _, :destinations, _}), do: state
 
@@ -344,7 +379,7 @@ defmodule HalC2.ThreadMovePropTest do
   defp pinned?(state, t, mc),
     do: kept?(state.threads[t]) or (state.threads[t].plugin and mc in state.running)
 
-  defp kept?(thread), do: thread.plugin in [:stays, :legacy]
+  defp kept?(thread), do: thread.plugin in [:stays, :legacy, :kept]
 
   # The threads its plugin keeps on the machine.
   defp staying(state), do: for({t, thread} <- state.threads, kept?(thread), do: t)
@@ -369,8 +404,11 @@ defmodule HalC2.ThreadMovePropTest do
     do: not released?(held) and (held.stage in @taken or how == :go)
 
   def postcondition(state, {:call, _, fun, _} = call, {result, world})
-      when fun in [:create, :create_plugin, :create_staying, :create_legacy],
+      when fun in [:create, :create_plugin, :create_staying, :create_legacy, :create_kept],
       do: result == :ok and settled?(next_state(state, nil, call), world, held(state))
+
+  def postcondition(state, {:call, _, :keeper, _} = call, {result, world}),
+    do: result == :ok and settled?(next_state(state, nil, call), world, held(state))
 
   def postcondition(state, {:call, _, :plugin, [_, running]} = call, {result, world}),
     do: result == running and settled?(next_state(state, nil, call), world, held(state))
@@ -499,6 +537,7 @@ defmodule HalC2.ThreadMovePropTest do
       case thread.plugin do
         :stays -> @stays_mark
         :legacy -> @legacy_mark
+        :kept -> @kept_mark
         true -> @mark
         false -> nil
       end
@@ -533,6 +572,18 @@ defmodule HalC2.ThreadMovePropTest do
     result =
       Cluster.on(mcs()[mc], :create_marked_thread, [id(t), "proj-#{mc}", t, @legacy_mark])
 
+    {result, world()}
+  end
+
+  # The keeper on `mc` starts `t` there, whatever state its package is in.
+  def create_kept(t, mc) do
+    result = Cluster.on(mcs()[mc], :create_kept_thread, [id(t), "proj-#{mc}", t])
+    {result, world()}
+  end
+
+  # Puts the keeper package on `mc` in the state `how` (`Cluster.keeper/1`).
+  def keeper(mc, how) do
+    result = Cluster.on(mcs()[mc], :keeper, [how])
     {result, world()}
   end
 
@@ -718,6 +769,7 @@ defmodule HalC2.ThreadMovePropTest do
     end
 
     for mc <- @mcs, do: false = Cluster.on(mcs()[mc], :plugin, [false])
+    for {mc, _} <- state.keeper, do: :ok = Cluster.on(mcs()[mc], :keeper, [:installed])
     :ok
   end
 

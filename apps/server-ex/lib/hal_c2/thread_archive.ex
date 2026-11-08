@@ -126,12 +126,13 @@ defmodule HalC2.ThreadArchive do
   (a sandbox, a credential, a checkout) does not travel, so the thread would arrive
   unprotected. A thread is kept when its mark says so (`"stays"`, set by
   `HalC2.Plugins.Host.launch_thread/4` for a plugin whose manifest has `threadsStay`;
-  a fork copies it), or when its plugin's installed manifest has `threadsStay`
-  (`HalC2.Plugins.Package.threads_stay?/1`), which covers a thread started before the manifest
-  said so, and its forks, whether or not the plugin runs.
+  a fork copies it), or when its plugin's manifest has `threadsStay`
+  (`HalC2.Plugins.threads_stay?/1`: the version loaded, or the package on disk, so with
+  no MC running too), which covers a thread started before the manifest said so, and
+  its forks, whether or not the plugin runs.
   """
   def stays(%{"plugin" => %{"id" => owner} = mark} = thread) do
-    if mark["stays"] == true or HalC2.Plugins.Package.threads_stay?(owner),
+    if mark["stays"] == true or HalC2.Plugins.threads_stay?(owner),
       do: {:error, "#{thread["title"]} was started by #{owner}, which keeps it on this machine."},
       else: :ok
   end

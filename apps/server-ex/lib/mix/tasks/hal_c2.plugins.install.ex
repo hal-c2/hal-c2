@@ -64,9 +64,11 @@ defmodule Mix.Tasks.HalC2.Plugins.Install do
   end
 
   # Staged beside the plugins directory, where a rescan does not see it, then swapped in.
+  # Between the two renames the old version is aside, where
+  # `HalC2.Plugins.Package.threads_stay?/1` still reads its manifest.
   defp install(id, plugins, checkout) do
-    staged = Path.join(Path.dirname(plugins), ".plugin-#{id}.partial")
-    old = Path.join(Path.dirname(plugins), ".plugin-#{id}.old")
+    staged = HalC2.Plugins.Package.staged_dir(plugins, id)
+    old = HalC2.Plugins.Package.aside_dir(plugins, id)
     target = Path.join(plugins, id)
     Enum.each([staged, old], &File.rm_rf!/1)
 

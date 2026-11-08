@@ -1099,6 +1099,33 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     context |> Packages.ensure(id) |> enable(id) |> start_thread(id, kind, true)
   end
 
+  step "{string} runs on after a new version whose manifest is not valid JSON fails to load",
+       %{args: [id]} = context do
+    context = context |> enable(id) |> Map.put(:plugin, id)
+    File.write!(Path.join(Packages.dir(context, id), "plugin.json"), "{ \"id\": ")
+    context = Fixtures.rescan(context)
+    assert %{"status" => "running", "reloadError" => error} = Fixtures.entry(id)
+    assert error =~ "plugin.json"
+    refute HalC2.Plugins.Package.threads_stay?(id)
+    context
+  end
+
+  step "{string} is disabled", %{args: [id]} = context do
+    {_, context} = World.call!(context, "plugins.disable", %{"id" => id})
+    refute HalC2.Plugins.running?(id)
+    context
+  end
+
+  step "the thread can be neither moved nor exported", context do
+    {reply, context} = move(context)
+    kept = "Review #12 was started by code-review, which keeps it on this machine."
+    assert {:error, ^kept, _} = reply
+    file = Path.join(Mc.tmp_dir(context.mc, "export"), "review.hal-c2-thread")
+    assert HalC2.ThreadArchive.export_file(context.plugin_thread, file) == {:error, kept}
+    refute File.exists?(file)
+    context
+  end
+
   step "the thread is marked as staying on its machine", context do
     assert %{"plugin" => %{"stays" => true}} = thread(context.plugin_thread)
     context

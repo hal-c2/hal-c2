@@ -101,20 +101,53 @@ defmodule HalC2.Plugins.Package do
   Whether the package `id` installed here declares that its threads never leave the
   machine (`"threadsStay"` in its `plugin.json`). It is read from the package on disk,
   so it holds with the plugin off and with no plugin host running (an export from the
-  command line); a plugin that is not installed declares nothing.
+  command line); a plugin that is not installed declares nothing. `HalC2.Plugins.threads_stay?/1`
+  also asks the version loaded.
+
+  While `mix hal_c2.plugins.install` replaces the package, which takes two renames
+  (`aside_dir/2`), the manifest moved aside speaks for it. The installed manifest is
+  read, then the one aside, then the installed one again: missing at the first read,
+  the package was aside then, and missing aside too, the replacement is in place by
+  the next read. A few rounds cover installs one after another.
   """
   def threads_stay?(id) when is_binary(id) do
-    with true <- Regex.match?(~r/\A[\w.-]+\z/, id) and id not in [".", ".."],
-         {:ok, text} <-
-           File.read(Path.join([HalC2.Paths.data_dir(), "plugins", id, "plugin.json"])),
-         {:ok, %{"threadsStay" => stay}} <- JSON.decode(text) do
-      stay == true
+    if Regex.match?(~r/\A[\w.-]+\z/, id) and id not in [".", ".."] do
+      plugins = Path.join(HalC2.Paths.data_dir(), "plugins")
+      declared(Path.join(plugins, id), aside_dir(plugins, id), 3)
     else
-      _ -> false
+      false
     end
   end
 
   def threads_stay?(_id), do: false
+
+  defp declared(installed, aside, rounds) do
+    case manifest_at(installed) || manifest_at(aside) do
+      nil when rounds > 1 -> declared(installed, aside, rounds - 1)
+      nil -> false
+      json -> json["threadsStay"] == true
+    end
+  end
+
+  defp manifest_at(dir) do
+    with {:ok, text} <- File.read(Path.join(dir, "plugin.json")),
+         {:ok, %{} = json} <- JSON.decode(text),
+         do: json,
+         else: (_ -> nil)
+  end
+
+  @doc """
+  Where `mix hal_c2.plugins.install` copies a new version of package `id` before it
+  goes into `plugins`, beside that directory, where a scan does not see it.
+  """
+  def staged_dir(plugins, id), do: Path.join(Path.dirname(plugins), ".plugin-#{id}.partial")
+
+  @doc """
+  Where `mix hal_c2.plugins.install` moves the installed package `id` aside, between
+  renaming it away and renaming its replacement (`staged_dir/2`) into its place, and
+  then removes it. `threads_stay?/1` reads it.
+  """
+  def aside_dir(plugins, id), do: Path.join(Path.dirname(plugins), ".plugin-#{id}.old")
 
   @doc """
   A file of the package at `dir` as `PluginFileResult` fields, or an error when the

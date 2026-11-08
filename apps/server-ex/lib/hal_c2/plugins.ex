@@ -283,6 +283,24 @@ defmodule HalC2.Plugins do
     :exit, _ -> false
   end
 
+  @doc """
+  Whether plugin `id` declares that its threads never leave the machine
+  (`"threadsStay"`): the version loaded here says so, running or not, or the package
+  on disk does (`Package.threads_stay?/1`). The version loaded answers while a reload
+  that failed leaves it running and the manifest on disk cannot be read; the disk
+  answers with no host here, or one too busy to answer in `timeout`.
+  """
+  def threads_stay?(id, timeout \\ 5_000) do
+    loaded =
+      try do
+        GenServer.call(__MODULE__, {:threads_stay?, id}, timeout)
+      catch
+        :exit, _ -> false
+      end
+
+    loaded or Package.threads_stay?(id)
+  end
+
   @doc "Whether `id` is a running text-generation backend."
   def text_backend?(id), do: Enum.any?(running("textGeneration"), &(elem(&1, 0) == id))
 
@@ -696,6 +714,11 @@ defmodule HalC2.Plugins do
 
   def handle_call({:running?, id}, _from, state),
     do: {:reply, match?(%{sup: sup} when sup != nil, state.plugins[id]), state}
+
+  def handle_call({:threads_stay?, id}, _from, state),
+    do:
+      {:reply, match?(%{manifest: %{package: %{"threadsStay" => true}}}, state.plugins[id]),
+       state}
 
   def handle_call({:set_enabled, id, enabled, accepted}, _from, state) do
     case state.plugins[id] do

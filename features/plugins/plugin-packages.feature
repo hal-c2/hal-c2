@@ -347,6 +347,17 @@ Feature: Plugin packages
       Then the user is told the thread stays on this machine
       And once "code-review" is removed, the move is still refused
 
+    # A reload that fails keeps the version before it running, and the threads it starts take
+    # their mark from the version that runs: a manifest on disk that cannot be read says nothing.
+    @mc
+    Scenario: A plugin whose new version failed to load still keeps the threads it starts
+      Given "code-review" declares that its threads stay on their machine
+      And "code-review" runs on after a new version whose manifest is not valid JSON fails to load
+      When "code-review" starts a "review" thread
+      Then the thread is marked as staying on its machine
+      When "code-review" is disabled
+      Then the thread can be neither moved nor exported
+
     @mc
     Scenario: A plugin can keep its threads out of the thread list
       When "code-review" starts a "review" thread that is not listed
