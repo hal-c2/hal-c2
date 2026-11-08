@@ -46,6 +46,12 @@ defmodule HalC2.Acp.ThreadRuntime do
   @xai_backgrounded ["x.ai/task_backgrounded", "_x.ai/task_backgrounded"]
   @xai_completed ["x.ai/task_completed", "_x.ai/task_completed"]
 
+  # The conversation a `session/load` replays (Grok's turn ends, as `turn_completed`,
+  # with it), history rather than the turn's; the commands, options and mode the agent
+  # sends meanwhile are the session's state now.
+  @replayed ~w(user_message_chunk agent_message_chunk agent_thought_chunk tool_call tool_call_update
+                plan turn_completed)
+
   # OpenCode 2's report of a child session (`opencode_child/2`).
   @opencode_child ["opencode/session/child_update", "_opencode/session/child_update"]
 
@@ -580,7 +586,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         else: update
 
     cond do
-      state.replaying ->
+      state.replaying and update["sessionUpdate"] in @replayed ->
         {:noreply, state}
 
       child_session?(params["sessionId"], state) ->
@@ -700,11 +706,19 @@ defmodule HalC2.Acp.ThreadRuntime do
   def handle_info({:json_rpc, conn, {:request, id, method, params}}, %{turn: turn} = state)
       when method in @xai_plan and turn != nil do
     params = xai_params(params)
-    native = "plan:#{params["toolCallId"] || id}"
+    # The plan Grok wrote to its plan file is the one it presents, unless it sends text.
+    file = plan_file_native(state)
+
+    native =
+      if Map.has_key?(state.items, file),
+        do: file,
+        else: "plan:#{params["toolCallId"] || id}"
+
+    written = get_in(state.items, [file, :markdown])
 
     markdown =
       case String.trim(params["planContent"] || "") do
-        "" -> @empty_plan
+        "" -> written || @empty_plan
         text -> text
       end
 
@@ -1369,7 +1383,8 @@ defmodule HalC2.Acp.ThreadRuntime do
                do: HalC2.Acp.Antigravity.runtime_tmp(env)
              ),
            capabilities: init["agentCapabilities"] || %{}
-       }}
+       }
+       |> Map.put(:plan_prefixes, HalC2.Acp.GrokPlan.prefixes(env))}
     else
       {:error, reason} -> {:error, reason, state}
     end
@@ -1489,12 +1504,12 @@ defmodule HalC2.Acp.ThreadRuntime do
         end
 
       caps["loadSession"] == true ->
-        state = %{state | replaying: true}
-        result = Connection.call(state.conn, "session/load", params, 120_000)
-        state = %{state | replaying: false}
+        {result, state} = load_session(state, params)
 
         case result do
           {:ok, result} -> {:ok, native, opened(state, result || %{}, turn)}
+          # A fresh session needs a live connection; this one is gone.
+          {:error, :closed} -> {:error, :closed, state}
           {:error, _} -> fresh_session(state, turn)
         end
 
@@ -1504,6 +1519,36 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp open_session(state, turn), do: new_session(state, turn)
+
+  # What the agent replays of the session while it loads is history, not this turn. It
+  # all comes ahead of the load's reply, so the agent's messages are handled as they come
+  # until then, as replayed (`replaying`); the runtime's other messages wait their turn.
+  defp load_session(state, params) do
+    tag = make_ref()
+    Connection.ask(state.conn, "session/load", params, tag)
+    deadline = System.monotonic_time(:millisecond) + 120_000
+    await_load(%{state | replaying: true}, tag, deadline)
+  end
+
+  defp await_load(%{conn: conn} = state, tag, deadline) do
+    receive do
+      {:json_rpc, ^conn, {:reply, ^tag, reply}} ->
+        {reply, %{state | replaying: false}}
+
+      {:json_rpc, ^conn, _} = message ->
+        {:noreply, state} = handle_info(message, state)
+        await_load(state, tag, deadline)
+
+      # A connection killed without a goodbye ends the wait at once; the exit goes back
+      # to the mailbox so `handle_info({:EXIT, ...})` still ends the turn and the work.
+      {:EXIT, ^conn, _} = exit ->
+        send(self(), exit)
+        {{:error, :closed}, %{state | replaying: false}}
+    after
+      max(deadline - System.monotonic_time(:millisecond), 0) ->
+        {{:error, :timeout}, %{state | replaying: false}}
+    end
+  end
 
   # A new session in place of the recorded one the agent could not open.
   defp fresh_session(state, turn) do
@@ -1630,6 +1675,9 @@ defmodule HalC2.Acp.ThreadRuntime do
       end
 
     state = remember_config(state, result)
+
+    state =
+      if grok?(state), do: Map.put(state, :reasoning, session_reasoning(result)), else: state
 
     case Enum.find(result["configOptions"] || [], &(&1["id"] == "model")) do
       %{"currentValue" => model} ->
@@ -1843,6 +1891,14 @@ defmodule HalC2.Acp.ThreadRuntime do
   # already has. A picked model is set again, so a restarted session resumes
   # on the thread's model.
   defp select_model(state, model) do
+    if grok?(state) do
+      {:ok, grok_model(state, model, Map.get(state.turn, :options) || %{})}
+    else
+      select_model_of(state, model)
+    end
+  end
+
+  defp select_model_of(state, model) do
     if Antigravity.antigravity?(state.agent) and Antigravity.default_alias?(model) do
       case Antigravity.default_model(state.options, state.model) do
         resolved when is_binary(resolved) and resolved != state.model ->
@@ -1855,6 +1911,64 @@ defmodule HalC2.Acp.ThreadRuntime do
       {:ok, set_model(state, model)}
     end
   end
+
+  # Grok's `grok-build` is the CLI's product name, not a model it accepts: choosing it
+  # keeps the model the session has. A reasoning level goes with the model, as
+  # `session/set_model`'s `_meta.reasoningEffort`, and only when it is a plain word and
+  # differs from the level the session is on. Omitting a level on the same model leaves
+  # Grok's own default alone, so only a changed model or a changed level is sent.
+  @grok_default_model "grok-build"
+  @grok_effort ~r/^[a-z0-9][a-z0-9._-]{0,31}$/i
+
+  defp grok_model(state, model, options) do
+    requested = if model in [nil, "", @grok_default_model], do: nil, else: model
+    provided = options["reasoningEffort"]
+    effort = if is_binary(provided) and provided =~ @grok_effort, do: provided
+    model_changed = requested != nil and requested != state.model
+    effort_changed = effort != nil and effort != Map.get(state, :reasoning)
+    target = requested || state.model
+
+    cond do
+      (not model_changed and not effort_changed) or target == nil ->
+        state
+
+      # Agents that switch models through a config option keep that way when no level
+      # needs to travel with the model.
+      effort == nil and state.model_method == "session/set_config_option" ->
+        set_model(state, target)
+
+      true ->
+        params = %{"sessionId" => state.session_id, "modelId" => target}
+
+        params =
+          if effort, do: Map.put(params, "_meta", %{"reasoningEffort" => effort}), else: params
+
+        case Connection.call(state.conn, "session/set_model", params) do
+          {:ok, _} ->
+            state
+            |> Map.merge(%{model: target, model_method: "session/set_model"})
+            |> Map.put(:reasoning, effort)
+
+          {:error, reason} ->
+            Logger.warning("could not select #{target}: #{inspect(reason)}")
+            state
+        end
+    end
+  end
+
+  # The level of reasoning the model a Grok session starts on is at.
+  defp session_reasoning(%{"models" => %{"currentModelId" => current} = models}) do
+    with model when is_map(model) <-
+           Enum.find(models["availableModels"] || [], &(&1["modelId"] == current)),
+         effort when is_binary(effort) <- get_in(model, ["_meta", "reasoningEffort"]),
+         true <- effort =~ @grok_effort do
+      effort
+    else
+      _ -> nil
+    end
+  end
+
+  defp session_reasoning(_result), do: nil
 
   # "Pi default" leaves the model to the user's own Pi settings.
   defp set_model(%{agent: agent} = state, "default") when agent != nil do
@@ -2000,6 +2114,9 @@ defmodule HalC2.Acp.ThreadRuntime do
        do: subagent_call(state, id, call)
 
   defp update(%{"sessionUpdate" => "tool_call", "toolCallId" => id} = call, state) do
+    state = plan_file(state, call)
+    call = grok_call(call, state)
+
     cond do
       plan_call?(call, state) -> plan_call(state, id, call)
       subagent_call?(call, state) -> subagent_call(state, id, call)
@@ -2008,6 +2125,9 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp update(%{"sessionUpdate" => "tool_call_update", "toolCallId" => id} = call, state) do
+    state = plan_file(state, call)
+    call = grok_call(call, state)
+
     cond do
       plan_call?(call, state) -> plan_call(state, id, call)
       Map.has_key?(state.items, id) -> tool_update(state, id, call)
@@ -2390,6 +2510,141 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp plan_call(state, _id, _call), do: state
 
+  # Grok names a tool "Tool" and reports a command's end in its own result; the call
+  # is read as the other agents' are, with a name and a status.
+  defp grok_call(call, %{turn: %{ids: %{driver: driver}}}) do
+    if HalC2.Acp.driver(driver) == "grok",
+      do: call |> grok_title() |> grok_status(),
+      else: call
+  end
+
+  defp grok_call(call, _state), do: call
+
+  # What the call is about names it, in this order: its description (a monitor's
+  # reads "Monitor: ..."), what kind of call it is, and its command cut to 80
+  # characters.
+  defp grok_title(%{"title" => title} = call) when title in [nil, ""] or is_binary(title) do
+    if String.downcase(String.trim(title || "")) in ["", "tool", "tool call", "terminal"] do
+      input = if is_map(call["rawInput"]), do: call["rawInput"], else: %{}
+      description = non_empty(input["description"], nil)
+      variant = input["variant"] |> to_string() |> String.downcase()
+
+      command =
+        non_empty(input["command"], nil) || non_empty(get_in(call, ["rawOutput", "command"]), nil)
+
+      name =
+        cond do
+          description && variant == "monitor" &&
+              not String.starts_with?(String.downcase(description), "monitor") ->
+            "Monitor: " <> description
+
+          description ->
+            description
+
+          variant == "monitor" ->
+            "Monitor"
+
+          variant in ["task", "cursortask", "spawn_subagent"] ->
+            "Task"
+
+          variant in ["taskoutput", "task_output"] ->
+            "Task output"
+
+          variant != "" ->
+            variant
+
+          is_binary(command) ->
+            if utf16_length(command) > 80, do: cut_utf16(command, 77) <> "...", else: command
+
+          true ->
+            nil
+        end
+
+      if name, do: Map.put(call, "title", name), else: call
+    else
+      call
+    end
+  end
+
+  defp grok_title(call), do: call
+
+  defp utf16_length(text),
+    do: text |> String.to_charlist() |> Enum.reduce(0, &(&2 + if(&1 > 0xFFFF, do: 2, else: 1)))
+
+  # The first `units` UTF-16 code units of `text`, never half a character or half an
+  # emoji sequence.
+  defp cut_utf16(text, units) do
+    {kept, _} =
+      text
+      |> String.graphemes()
+      |> Enum.reduce_while({[], 0}, fn grapheme, {kept, used} ->
+        width = utf16_length(grapheme)
+
+        if used + width > units,
+          do: {:halt, {kept, used}},
+          else: {:cont, {[grapheme | kept], used + width}}
+      end)
+
+    kept |> Enum.reverse() |> Enum.join()
+  end
+
+  # A command's exit code decides how it ended; one that exited cleanly and has said
+  # nothing yet is still going.
+  defp grok_status(%{"rawOutput" => %{"type" => "Bash"} = output} = call) do
+    code =
+      Enum.find_value(["exit_code", "exitCode", "code"], fn key ->
+        if is_integer(output[key]), do: output[key]
+      end)
+
+    text = String.trim(content_text(call["content"]) || raw_output(output) || "")
+
+    cond do
+      code == nil ->
+        call
+
+      code != 0 ->
+        Map.put(call, "status", "failed")
+
+      text == "" and call["status"] not in ["completed", "failed"] ->
+        Map.put(call, "status", "in_progress")
+
+      true ->
+        Map.put(call, "status", "completed")
+    end
+  end
+
+  defp grok_status(%{"status" => "completed", "kind" => "execute"} = call) do
+    text = content_text(call["content"]) || ""
+
+    if text =~ ~r/Exit Code:\s*-?(?!0\b)\d+/i,
+      do: Map.put(call, "status", "failed"),
+      else: call
+  end
+
+  defp grok_status(call), do: call
+
+  # A write to the plan file of a Grok session shows as the thread's plan while Grok is
+  # still in plan mode (`HalC2.Acp.GrokPlan`).
+  defp plan_file(%{turn: %{ids: %{driver: driver}}} = state, call) do
+    markdown =
+      if HalC2.Acp.driver(driver) == "grok",
+        do: HalC2.Acp.GrokPlan.markdown(call, Map.get(state, :plan_prefixes, []))
+
+    if markdown in [nil, ""] do
+      state
+    else
+      file = plan_file_native(state)
+      state = state |> flush() |> ensure_item(file, :plan) |> finish_plan(file, markdown)
+
+      %{state | items: Map.update!(state.items, file, &Map.put(&1, :markdown, markdown))}
+    end
+  end
+
+  defp plan_file(state, _call), do: state
+
+  # One plan item per run: a later plan-mode turn must not rewrite the earlier plan.
+  defp plan_file_native(state), do: "plan:grok-file:#{state.turn.ids.run}"
+
   # The subagent's own session streams under another session id: its answer goes to
   # its child thread. Updates for a session no subagent has named yet wait for it.
   defp child_session?(session, state),
@@ -2402,7 +2657,8 @@ defmodule HalC2.Acp.ThreadRuntime do
   # ended. That end is the only word of a background child that fails: it never
   # reports back to its parent (upstream pingdotgg/t3code#21979), so every call
   # attached to the child ends with it, a steer that joined its run included. A
-  # grandchild's updates are its parent subagent's work, not a call the MC names.
+  # grandchild's updates and end are its parent subagent's work, not a call the MC
+  # names, and a report replayed while a session loads was settled when it first came.
   defp opencode_child(%{"type" => "update", "update" => %{} = update} = params, state) do
     session = params["childSessionId"]
 
@@ -2413,10 +2669,16 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp opencode_child(
-         %{"type" => "status", "childSessionId" => session, "status" => status},
-         state
+         %{
+           "type" => "status",
+           "childSessionId" => session,
+           "parentSessionId" => parent,
+           "status" => status
+         },
+         %{replaying: false, session_id: parent} = state
        )
-       when is_binary(session) and status in ["completed", "failed", "interrupted"],
+       when is_binary(session) and is_binary(parent) and
+              status in ["completed", "failed", "interrupted"],
        do: end_task(state, session, status)
 
   defp opencode_child(_params, state), do: state
@@ -2444,6 +2706,13 @@ defmodule HalC2.Acp.ThreadRuntime do
   # Kimi Code creates its Agent call before its input has streamed in, so its subagent
   # starts unnamed and is named once the input is whole. The subagent's work and its
   # end are in the session's records (`HalC2.Acp.Kimi`), read while it runs.
+  # A Grok subagent task with no description is named after the tool ("Task").
+  defp grok_task_title(%{turn: %{ids: %{driver: driver}}}, call) do
+    if HalC2.Acp.driver(driver) == "grok", do: non_empty(call["title"], nil)
+  end
+
+  defp grok_task_title(_state, _call), do: nil
+
   defp subagent_call(%{kimi: true} = state, id, call) do
     state = flush(state)
     input = call["rawInput"] || %{}
@@ -2510,7 +2779,7 @@ defmodule HalC2.Acp.ThreadRuntime do
             sub:
               NativeSubagent.start(state.turn.ids, id, %{
                 "prompt" => prompt,
-                "title" => input["description"],
+                "title" => input["description"] || grok_task_title(state, call),
                 # A subagent the call names no model for ran on the session's own.
                 "model" => input["model"] || state.model
               }),
@@ -3448,9 +3717,12 @@ defmodule HalC2.Acp.ThreadRuntime do
     # A subagent's session keeps its own limit of not delegating further:
     # its ask to start a subagent is refused where it stands, never raised
     # to the user (its other asks follow the thread's access mode as usual).
-    if HalC2.Acp.driver(state.agent) == "opencode" and is_binary(params["sessionId"]) and
-         params["sessionId"] != state.session_id and
-         String.downcase(call["name"] || call["title"] || "") == "task" do
+    # OpenCode 2 asks for a child on the thread's own session and names the
+    # child in `_meta` (only past its default depth limit, which fails the
+    # call without asking).
+    if HalC2.Acp.driver(state.agent) == "opencode" and
+         is_map(get_in(call, ["_meta", "opencode/child-session"])) and
+         String.downcase(call["name"] || "") == "subagent" do
       Connection.respond(conn, id, {:ok, %{"outcome" => outcome(options, "decline")}})
       state
     else
@@ -3953,8 +4225,9 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
-  # The labels chosen for each question, by question text; free text is "Other"
-  # with the text as a note.
+  # The labels chosen for each question, by question text, in the order Grok asked;
+  # free text is "Other" with the text as a note. The chosen option's preview goes
+  # back too, for a question that takes a single answer.
   defp xai_answers(params, answers) do
     answered =
       for question <- params["questions"] || [],
@@ -3963,21 +4236,40 @@ defmodule HalC2.Acp.ThreadRuntime do
               answers[question["id"] || question["question"]] || answers[question["question"]]
             ),
           values != [] do
-        labels = for option <- question["options"] || [], do: option["label"]
-        {chosen, notes} = Enum.split_with(values, &(&1 in labels))
-        {question["question"], if(chosen == [], do: ["Other"], else: chosen), notes}
+        options = Map.new(question["options"] || [], &{&1["label"], &1})
+        {chosen, notes} = Enum.split_with(values, &Map.has_key?(options, &1))
+
+        preview =
+          if question["multiSelect"] != true,
+            do:
+              Enum.find_value(chosen, fn label ->
+                case String.trim(options[label]["preview"] || "") do
+                  "" -> nil
+                  text -> text
+                end
+              end)
+
+        annotation =
+          %{}
+          |> then(&if(preview, do: Map.put(&1, "preview", preview), else: &1))
+          |> then(&if(notes != [], do: Map.put(&1, "notes", Enum.join(notes, "\n")), else: &1))
+
+        {question["question"], if(chosen == [], do: ["Other"], else: chosen), annotation}
       end
 
     annotations =
-      for {text, _chosen, [_ | _] = notes} <- answered,
-          into: %{},
-          do: {text, %{"notes" => Enum.join(notes, "\n")}}
+      for {text, _chosen, annotation} <- answered, annotation != %{}, do: {text, annotation}
 
     %{
       "outcome" => "accepted",
-      "answers" => Map.new(answered, fn {text, chosen, _} -> {text, chosen} end)
+      "answers" => HalC2.Acp.Ordered.new(for {text, chosen, _} <- answered, do: {text, chosen})
     }
-    |> then(&if(annotations == %{}, do: &1, else: Map.put(&1, "annotations", annotations)))
+    |> then(
+      &if(annotations == [],
+        do: &1,
+        else: Map.put(&1, "annotations", HalC2.Acp.Ordered.new(annotations))
+      )
+    )
   end
 
   defp answer_values(values) when is_list(values),

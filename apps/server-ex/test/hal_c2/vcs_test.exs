@@ -268,6 +268,20 @@ defmodule HalC2.VcsTest do
     assert git!(repo, ~w(branch --list kept)) =~ "kept"
   end
 
+  test "refs answer for a primary remote that is not called origin", %{repo: repo} do
+    git!(repo, ~w(remote rename origin github))
+
+    assert {:ok, %{"hasPrimaryRemote" => true, "refs" => refs}} =
+             Vcs.list_refs(%{
+               "cwd" => repo,
+               "refKind" => "remote",
+               "includeMatchingRemoteRefs" => true
+             })
+
+    assert %{"remoteName" => "github", "isDefault" => true} =
+             Enum.find(refs, &(&1["name"] == "github/main"))
+  end
+
   defp commit!(repo, message),
     do: git!(repo, ~w(-c user.name=t -c user.email=t@t commit -q -m) ++ [message])
 

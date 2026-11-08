@@ -2,7 +2,7 @@ defmodule HalC2.TextGeneration.Style do
   @moduledoc """
   How generated commits and pull requests are written, from the project's
   `sourceControlWritingStyle` setting. `HalC2.GitActions` passes `policy/1` and
-  `pr_template/2` to `HalC2.TextGeneration`.
+  `pr_template/3` to `HalC2.TextGeneration`.
 
   A policy is `%{kind:, commit:, change_request:}`, the instructions added to the
   commit and change request prompts: Conventional Commits, the user's own
@@ -100,56 +100,118 @@ defmodule HalC2.TextGeneration.Style do
     end
   end
 
-  @template_paths ~w(.github/pull_request_template.md .github/PULL_REQUEST_TEMPLATE.md
-                     pull_request_template.md PULL_REQUEST_TEMPLATE.md
-                     docs/pull_request_template.md docs/PULL_REQUEST_TEMPLATE.md)
-  @template_dirs ~w(.github/PULL_REQUEST_TEMPLATE PULL_REQUEST_TEMPLATE docs/PULL_REQUEST_TEMPLATE)
+  # GitHub looks in these folders, in this order, for a template of this name in any
+  # capitalisation, as `.md` or `.txt`; the folder form holds one such template.
+  @template_places [".github", "", "docs"]
+  @template_name "pull_request_template"
+  @template_exts [".md", ".txt"]
+  @gitlab_template ".gitlab/merge_request_templates/default.md"
 
   @doc """
-  The repository's pull request template in the base tree `ref` when the project
-  follows templates: the first of GitHub's template paths, or the only template
-  in a template folder. `nil` when there is none, or several to choose from.
+  The repository's change request template in the base tree `ref` when the project
+  follows templates. On GitHub (`kind`): the first of its template files, or the only
+  template in a template folder; exact spellings come before other capitalisations.
+  On GitLab: the default merge request template. Other hosts have none. `nil` when
+  there is none, or several to choose from.
   """
-  def pr_template(cwd, ref) do
-    if settings(cwd)["followChangeRequestTemplates"] != false, do: detect_template(cwd, ref)
+  def pr_template(cwd, ref, kind \\ "github") do
+    if settings(cwd)["followChangeRequestTemplates"] != false, do: detect_template(cwd, ref, kind)
   end
 
   # Read from the committed tree, so links and files changed in the checkout never count.
-  defp detect_template(cwd, ref) do
-    args = ["ls-tree", "-r", "-z", "--full-tree", ref, "--"] ++ @template_paths ++ @template_dirs
-
-    with {:ok, %{status: 0, out: out, truncated: false}} <- Git.run(cwd, args, max_bytes: 100_000) do
-      entries = tree_entries(out)
-      by_path = Map.new(entries, &{&1.path, &1})
-
-      Enum.find_value(@template_paths, &(by_path[&1] && blob(cwd, by_path[&1]))) ||
-        Enum.reduce_while(@template_dirs, nil, fn dir, nil ->
-          case dir_templates(cwd, entries, dir) do
-            [] -> {:cont, nil}
-            [template] -> {:halt, template}
-            _ambiguous -> {:halt, nil}
-          end
-        end)
+  defp detect_template(cwd, ref, "gitlab") do
+    with %{} = entry <-
+           Enum.find(tree(cwd, ref, [@gitlab_template]), &(&1.path == @gitlab_template)),
+         true <- entry.type == "blob" and entry.mode in ["100644", "100755"] do
+      blob(cwd, entry)
     else
       _ -> nil
+    end
+  end
+
+  defp detect_template(cwd, ref, "github") do
+    entries =
+      Enum.flat_map(@template_places, fn place ->
+        tree(cwd, ref, if(place == "", do: [], else: [place <> "/"]))
+      end)
+
+    in_place = fn place -> Enum.filter(entries, &(Path.dirname(&1.path) == dir_of(place))) end
+    named = fn entry -> entry.path |> Path.basename() |> String.downcase() end
+
+    files =
+      Enum.flat_map(@template_places, fn place ->
+        in_place.(place)
+        |> Enum.filter(&(&1.type == "blob" and plain?(&1) and named.(&1) in template_files()))
+        |> Enum.sort_by(&{spelling_rank(&1.path), &1.path})
+      end)
+
+    Enum.find_value(files, &blob(cwd, &1)) ||
+      folders(in_place, named, cwd, ref)
+  end
+
+  defp detect_template(_cwd, _ref, _kind), do: nil
+
+  # The first folder with a template; a folder of several ends the search.
+  defp folders(in_place, named, cwd, ref) do
+    @template_places
+    |> Enum.flat_map(fn place ->
+      in_place.(place)
+      |> Enum.filter(&(&1.type == "tree" and named.(&1) == @template_name))
+      |> Enum.sort_by(&{Path.basename(&1.path) != String.upcase(@template_name), &1.path})
+    end)
+    |> Enum.reduce_while(nil, fn dir, nil ->
+      case dir_templates(cwd, ref, dir.path) do
+        [] -> {:cont, nil}
+        [template] -> {:halt, template}
+        _ambiguous -> {:halt, nil}
+      end
+    end)
+  end
+
+  defp dir_of(""), do: "."
+  defp dir_of(place), do: place
+
+  defp template_files, do: Enum.map(@template_exts, &(@template_name <> &1))
+
+  defp plain?(%{mode: mode}), do: mode in ["100644", "100755"]
+
+  # `pull_request_template.md` and `PULL_REQUEST_TEMPLATE.md` are the names GitHub
+  # documents; they come before any other spelling.
+  defp spelling_rank(path) do
+    case Path.basename(path) do
+      "pull_request_template.md" -> 0
+      "PULL_REQUEST_TEMPLATE.md" -> 1
+      "pull_request_template.txt" -> 2
+      "PULL_REQUEST_TEMPLATE.txt" -> 3
+      _ -> 4
+    end
+  end
+
+  # The entries directly under `paths` (a folder gives its children), or the root's.
+  defp tree(cwd, ref, paths) do
+    args = ["ls-tree", "-z", "--full-tree", ref] ++ if(paths == [], do: [], else: ["--" | paths])
+
+    case Git.run(cwd, args, max_bytes: 100_000) do
+      {:ok, %{status: 0, out: out, truncated: false}} -> tree_entries(out)
+      _ -> []
     end
   end
 
   defp tree_entries(out) do
     for record <- String.split(out, "\0", trim: true),
         [meta, path] <- [String.split(record, "\t", parts: 2)],
-        [mode, "blob", oid] <- [String.split(meta, " ")],
-        mode in ["100644", "100755"] and Regex.match?(~r/^[0-9a-f]{40,64}$/, oid),
-        do: %{oid: oid, path: path}
+        [mode, type, oid] <- [String.split(meta, " ")],
+        type in ["blob", "tree"] and Regex.match?(~r/^[0-9a-f]{40,64}$/, oid),
+        do: %{mode: mode, type: type, oid: oid, path: path}
   end
 
-  # Stops at the second template: a folder of several leaves the choice to the user.
-  defp dir_templates(cwd, entries, dir) do
-    entries
-    |> Enum.filter(fn %{path: path} ->
-      String.starts_with?(path, dir <> "/") and
-        not String.contains?(String.replace_prefix(path, dir <> "/", ""), "/") and
-        String.ends_with?(String.downcase(path), ".md")
+  # The one text or markdown template in a folder; a folder of several leaves the
+  # choice to the user. Stops at the second template.
+  defp dir_templates(cwd, ref, dir) do
+    tree(cwd, ref, [dir <> "/"])
+    |> Enum.filter(fn entry ->
+      entry.type == "blob" and plain?(entry) and
+        String.downcase(Path.extname(entry.path)) in @template_exts
     end)
     |> Enum.reduce_while([], fn entry, found ->
       case blob(cwd, entry) do

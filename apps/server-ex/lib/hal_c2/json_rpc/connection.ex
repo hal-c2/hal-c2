@@ -70,6 +70,15 @@ defmodule HalC2.JsonRpc.Connection do
   def request(conn, method, params, label, reqids),
     do: :gen_server.send_request(conn, {:call, method, params}, label, reqids)
 
+  @doc """
+  Sends a call whose reply reaches the `:handler` as `{:json_rpc, conn, {:reply, tag, reply}}`,
+  in the one stream of messages its notifications come in: after every notification the
+  subprocess sent before the reply, and before any it sent after. A connection that
+  closes first replies as `call/4` would.
+  """
+  @spec ask(GenServer.server(), String.t(), term, term) :: :ok
+  def ask(conn, method, params, tag), do: GenServer.cast(conn, {:ask, method, params, tag})
+
   @spec notify(GenServer.server(), String.t(), term) :: :ok
   def notify(conn, method, params), do: GenServer.cast(conn, {:notify, method, params})
 
@@ -168,6 +177,19 @@ defmodule HalC2.JsonRpc.Connection do
   def handle_call(:os_pid, _from, state), do: {:reply, Subprocess.os_pid(state.sub), state}
 
   @impl true
+  # A call whose reply goes to the handler as a message. Ahead of the broken guard: on
+  # a broken connection it is answered with the write error, as a call is.
+  def handle_cast({:ask, method, params, tag}, state) do
+    case handle_call({:call, method, params}, {:handler, tag}, state) do
+      {:noreply, state} ->
+        {:noreply, state}
+
+      {:reply, reply, state} ->
+        send(state.handler, {:json_rpc, self(), {:reply, tag, reply}})
+        {:noreply, state}
+    end
+  end
+
   def handle_cast(_message, %{broken: error} = state) when error != nil, do: {:noreply, state}
 
   def handle_cast({:notify, method, params}, state),
@@ -288,7 +310,7 @@ defmodule HalC2.JsonRpc.Connection do
           :closed
       end
 
-    for {_id, from} <- state.pending, do: GenServer.reply(from, {:error, error})
+    for {_id, from} <- state.pending, do: reply(state, from, {:error, error})
     # The subprocess may already be gone (its exit is why this connection stops).
     try do
       Subprocess.stop(state.sub)
@@ -338,7 +360,7 @@ defmodule HalC2.JsonRpc.Connection do
     case JsonRpc.decode(line, state.dialect) do
       {:response, id, reply} ->
         {from, pending} = Map.pop(state.pending, id)
-        if from, do: GenServer.reply(from, reply)
+        if from, do: reply(state, from, reply)
         {method, earlier} = Map.pop(state.earlier, id)
 
         if method,
@@ -351,4 +373,9 @@ defmodule HalC2.JsonRpc.Connection do
         state
     end
   end
+
+  defp reply(state, {:handler, tag}, reply),
+    do: send(state.handler, {:json_rpc, self(), {:reply, tag, reply}})
+
+  defp reply(_state, from, reply), do: GenServer.reply(from, reply)
 end

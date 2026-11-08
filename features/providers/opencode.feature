@@ -1315,6 +1315,19 @@ Feature: OpenCode
     When the agent steers "A" and the steer fails
     Then the steer ends as failed while "A" keeps running
 
+  # hal-c2#1316: a child's end counts only when it is live and the child is the thread's own:
+  # a load replays what the thread already saw, and a grandchild is its parent subagent's work.
+  @mc @plugin-opencode @priority-low
+  Scenario Outline: A child status <how> does not end an OpenCode 2 subagent
+    Given the OpenCode 2 subagent "A" runs in the background
+    When OpenCode reports a finished child status <how>
+    Then "A" still runs in the background
+
+    Examples:
+      | how                              |
+      | replayed while the session loads |
+      | from a subagent that "A" started |
+
   # Upstream #21460: background work an OpenCode 2 subagent queued while the root turn ended was
   # lost behind the session's newer idle state.
   @priority-high

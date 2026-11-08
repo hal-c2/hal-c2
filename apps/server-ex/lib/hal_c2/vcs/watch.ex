@@ -7,7 +7,9 @@ defmodule HalC2.Vcs.Watch do
   something changed. Local status is read again when told (`refresh/1`: a turn
   ended, a git action ran); remote status is fetched on the background activity
   settings' `automaticGitFetchInterval` (never at 0) while a client in front shows
-  this checkout (`HalC2.BackgroundPolicy`). An MC without automatic actions
+  this checkout (`HalC2.BackgroundPolicy`), and a clean checkout of its default branch
+  that fell behind is fast-forwarded when the project says `defaultAutoPull`. An MC
+  without automatic actions
   (`HAL_C2_MC_NO_AUTO_ACTIONS`) only fetches when asked (`vcs.refreshStatus`).
   """
 
@@ -152,11 +154,10 @@ defmodule HalC2.Vcs.Watch do
     state =
       if Application.get_env(:hal_c2, :auto_actions, true) and
            HalC2.BackgroundPolicy.run_scope_work?(scope) do
-        update(
-          %{state | pr_branch: Git.current_branch(state.cwd)},
-          state.local,
-          Vcs.remote_status(state.cwd, fetch: true, pr: true)
-        )
+        remote = Vcs.remote_status(state.cwd, fetch: true, pr: true)
+        remote = maybe_auto_pull(state, remote)
+
+        update(%{state | pr_branch: Git.current_branch(state.cwd)}, state.local, remote)
       else
         state
       end
@@ -179,6 +180,32 @@ defmodule HalC2.Vcs.Watch do
   end
 
   def handle_info(_other, state), do: {:noreply, state}
+
+  # A watched checkout that fell behind is fast-forwarded when its project says
+  # `defaultAutoPull` and it is safe: on its default branch, clean, with nothing of its
+  # own to push (the same rule as `HalC2.Projects.auto_pull/0` at boot).
+  defp maybe_auto_pull(state, remote) do
+    with %{"isRepo" => true, "isDefaultRef" => true, "hasWorkingTreeChanges" => false} <-
+           Vcs.local_status(state.cwd),
+         %{"hasUpstream" => true, "aheadCount" => 0, "behindCount" => behind} when behind > 0 <-
+           remote,
+         id when is_binary(id) <- HalC2.Projects.at(state.cwd),
+         true <- HalC2.Settings.for_project(id)["defaultAutoPull"] == true,
+         pulled <- Vcs.pull(%{"cwd" => state.cwd}) do
+      case pulled do
+        {:error, error} ->
+          require Logger
+          Logger.warning("automatic pull of #{state.cwd} failed: #{inspect(error)}")
+          remote
+
+        # The pre-pull status is stale (still behind): read the repository again.
+        _ ->
+          Vcs.remote_status(state.cwd, pr: true) || remote
+      end
+    else
+      _ -> remote
+    end
+  end
 
   defp start_lookup(state) do
     watcher = self()

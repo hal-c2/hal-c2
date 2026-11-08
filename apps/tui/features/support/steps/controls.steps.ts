@@ -143,8 +143,8 @@ step(
     });
     expect([...xs].sort((a, b) => a - b)).toEqual(xs);
     expect(new Set(xs).size).toBe(4);
-    expect(footerText(ctx, "composerModel")).toContain("gpt-5");
-    expect(footerText(ctx, "composerEffort")).toContain("medium");
+    expect(footerText(ctx, "composerModel")).toContain("GPT-5");
+    expect(footerText(ctx, "composerEffort")).toContain("Medium");
     expect(footerText(ctx, "composerMode")).toContain("Build");
     expect(footerText(ctx, "composerAccess")).toContain("Full access");
   },
@@ -173,6 +173,8 @@ step("the rest are reachable from the command palette", async (ctx: World) => {
   expect(titles).toEqual(
     expect.arrayContaining([
       "Change reasoning effort",
+      "Increase reasoning effort",
+      "Decrease reasoning effort",
       "Switch to plan mode",
       "Change runtime access",
     ]),
@@ -308,7 +310,7 @@ step("the model's default effort is selected", async (ctx: World) => {
   await snapshot(ctx);
   expect(composer(ctx).selectedModel).toBe("gpt-5-codex");
   expect(composer(ctx).effort).toBe("high");
-  expect(footerText(ctx, "composerEffort")).toContain("high");
+  expect(footerText(ctx, "composerEffort")).toContain("High");
 });
 
 step("a model with effort and other options set", async (ctx: World) => {
