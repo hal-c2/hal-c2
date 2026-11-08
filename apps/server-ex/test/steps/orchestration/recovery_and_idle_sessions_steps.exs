@@ -12,6 +12,8 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
   @continuation "Continue where you left off."
   @started ~w(starting running waiting completed)
+  # A message the step waits on, as the MC answers it under a loaded test run.
+  @receive_ms 5_000
 
   # --- turns cut off by a restart ------------------------------------------------------
 
@@ -817,7 +819,8 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
       World.dispatch(context, %{
         "type" => "run.interrupt",
         "commandId" => "command:stop-#{thread}",
-        "threadId" => World.thread_id(context, thread)
+        "threadId" => World.thread_id(context, thread),
+        "stopDelegated" => true
       })
 
     assert {:ok, _} = reply
@@ -915,7 +918,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     |> backdate(thread, 60)
     |> tap(
       &World.await_row(World.thread_id(&1, thread), fn row ->
-        row["pendingBackgroundTasks"] != []
+        row["runningBackgroundTasks"] != []
       end)
     )
   end
@@ -934,7 +937,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     # Killed outright, as the MC's stop leaves no time to end the work.
     Process.exit(context.runtime, :kill)
     assert_receive {:DOWN, _, :process, _, :killed}
-    assert length(World.row(context, thread)["pendingBackgroundTasks"]) == 2
+    assert length(World.row(context, thread)["runningBackgroundTasks"]) == 2
     context
   end
 
@@ -998,7 +1001,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   step "{string} lists the subagent {string} as background work",
        %{args: [thread, title]} = context do
     assert [%{"taskType" => "subagent", "description" => ^title}] =
-             World.row(context, thread)["pendingBackgroundTasks"]
+             World.row(context, thread)["runningBackgroundTasks"]
 
     context
   end
@@ -1030,13 +1033,13 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
                "taskType" => "command_execution",
                "description" => "npm run build"
              }
-           ] = Enum.sort_by(World.row(context, thread)["pendingBackgroundTasks"], & &1["taskId"])
+           ] = Enum.sort_by(World.row(context, thread)["runningBackgroundTasks"], & &1["taskId"])
 
     context
   end
 
   step "{string} lists no background work", %{args: [thread]} = context do
-    World.await_row(World.thread_id(context, thread), &(&1["pendingBackgroundTasks"] == []))
+    World.await_row(World.thread_id(context, thread), &(&1["runningBackgroundTasks"] == []))
     context
   end
 
@@ -1056,7 +1059,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
     World.await_row(
       World.thread_id(context, context.thread),
-      &(&1["pendingBackgroundTasks"] == [])
+      &(&1["runningBackgroundTasks"] == [])
     )
 
     context
@@ -1139,8 +1142,14 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
   step "{string} lists the command {string} as background work",
        %{args: [thread, command]} = context do
-    assert [%{"taskType" => "command_execution", "description" => ^command}] =
-             World.row(context, thread)["pendingBackgroundTasks"]
+    # The row follows the stream a moment after the run's end.
+    World.await_row(
+      World.thread_id(context, thread),
+      &match?(
+        [%{"taskType" => "command_execution", "description" => ^command}],
+        &1["runningBackgroundTasks"]
+      )
+    )
 
     context
   end
@@ -1161,7 +1170,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
     World.await_row(
       World.thread_id(context, context.thread),
-      &(&1["pendingBackgroundTasks"] == [])
+      &(&1["runningBackgroundTasks"] == [])
     )
 
     # The exit wakes the thread with a turn of its own; steps go on once it has run.
@@ -1212,7 +1221,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     World.await_run(context, thread, &(&1["ordinal"] == 2 and &1["status"] == "completed"))
     context = await_background(context)
 
-    assert [%{"description" => ^command}] = World.row(context, thread)["pendingBackgroundTasks"]
+    assert [%{"description" => ^command}] = World.row(context, thread)["runningBackgroundTasks"]
     context
   end
 
@@ -1319,8 +1328,9 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
     {context, ending} =
       case situation do
+        # Its turn stays open, so its run stays the thread's active one.
         "still running inside its own turn" ->
-          {context, ending}
+          {Map.put(context, :open_run, run["id"]), ending}
 
         "left running by a turn the user stopped" ->
           {reply, context} =
@@ -1488,7 +1498,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
     # The command goes on, listed as it was.
     assert [%{"description" => "npm run dev"}] =
-             World.row(context, context.thread)["pendingBackgroundTasks"]
+             World.row(context, context.thread)["runningBackgroundTasks"]
 
     assert %{"status" => "running"} =
              World.state(context, context.thread).entities["turn-item"]["turn-item:codex:cmd-bg"]
@@ -1618,7 +1628,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context = await_background(context)
     Process.exit(context.runtime, :kill)
     assert_receive {:DOWN, _, :process, _, :killed}
-    assert length(World.row(context, thread)["pendingBackgroundTasks"]) == 1
+    assert length(World.row(context, thread)["runningBackgroundTasks"]) == 1
     Map.put(context, :settled_run, run)
   end
 
@@ -1750,8 +1760,12 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   # A Claude child of "parent"'s task, whose only turn ends that way.
   step ~r/^a task delegated to "(?<thread>[^"]+)" ended its turn to wait on (?<work>a monitor|a subagent|a background task)$/,
        %{args: [thread, work]} = context do
+    # The child marks its monitor (`hal_c2_background_wait`) before its turn ends: an
+    # unmarked one does not hold the task (upstream #27468).
+    task = waiting_on(if work == "a monitor", do: :marked_monitor, else: work)
+
     input = %{
-      "task" => waiting_on(work),
+      "task" => task,
       "mode" => "async",
       "target" => %{"providerInstanceId" => "claudeAgent"}
     }
@@ -1762,6 +1776,19 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     state = World.await_state(context, "parent", &HalC2.StreamState.get(&1, "subagent")[task_id])
     child = HalC2.StreamState.get(state, "subagent")[task_id]["childThreadId"]
     context = put_in(context, [:threads, thread], child)
+
+    if work == "a monitor" do
+      # The mark lands while the child's turn is held, so it is ordered before the
+      # turn's result; the gate file lets the turn end.
+      # The turn is held, so the monitor's `task_started` is the only thing to wait
+      # for: the runtime answers with the task ids it matched once it has seen it.
+      mark_monitor(context, thread, child, "task-mon-1")
+
+      gate = Path.join(context.mc.home, "gate")
+      File.mkdir_p!(gate)
+      File.write!(Path.join(gate, "monitor-awaited"), "")
+    end
+
     World.await_run(context, thread, &(&1["status"] == "completed"))
 
     context
@@ -2060,7 +2087,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
     # Neither the child thread nor its parent shows work in progress to a client.
     for id <- [child, World.thread_id(context, context.thread)] do
-      row = World.await_row(id, &(&1["pendingBackgroundTasks"] == []))
+      row = World.await_row(id, &(&1["runningBackgroundTasks"] == []))
       assert row["activeRunId"] == nil
       refute row["status"] in active
       refute row["activityRunStatus"] in active
@@ -2208,16 +2235,16 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     :ok = :sys.suspend(pid)
     :erlang.trace(pid, true, [:receive])
     spawn(fn -> send(test, {:released, IdleSessions.check()}) end)
-    assert_receive {:trace, ^pid, :receive, {:"$gen_call", _, :release}}
+    assert_receive {:trace, ^pid, :receive, {:"$gen_call", _, :release}}, @receive_ms
     message = World.message_command(context, thread, text)
     spawn(fn -> send(test, {:sent, World.command(%{}, message).reply}) end)
-    assert_receive {:trace, ^pid, :receive, {:"$gen_call", _, {:start_turn, _}}}
+    assert_receive {:trace, ^pid, :receive, {:"$gen_call", _, {:start_turn, _}}}, @receive_ms
     :erlang.trace(pid, false, [:receive])
     :ok = :sys.resume(pid)
-    assert_receive {:released, released}
+    assert_receive {:released, released}, @receive_ms
     assert World.thread_id(context, thread) in released
-    assert_receive {:DOWN, _, :process, ^pid, {:shutdown, :released}}
-    assert_receive {:sent, reply}
+    assert_receive {:DOWN, _, :process, ^pid, {:shutdown, :released}}, @receive_ms
+    assert_receive {:sent, reply}, @receive_ms
     Map.merge(context, %{released: released, reply: reply})
   end
 
@@ -2410,7 +2437,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
     World.await_row(
       World.thread_id(context, context.thread),
-      &(&1["pendingBackgroundTasks"] == [])
+      &(&1["runningBackgroundTasks"] == [])
     )
 
     World.await_run(
@@ -2424,11 +2451,18 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   end
 
   # Once the runtime has handled what it was sent, every wake it started is sent or
-  # dropped, and a run one started has ended.
+  # dropped, and a run one started has ended. A run the scenario left open
+  # (`:open_run`) may stay active: waiting for it to end failed whenever the row had
+  # already caught up with it (#1192).
   defp wakes_sent(context) do
     :sys.get_state(runtime(context, context.thread))
     :ok = HalC2.Orchestration.Wake.drain()
-    World.await_row(World.thread_id(context, context.thread), &(&1["activeRunId"] == nil))
+
+    World.await_row(
+      World.thread_id(context, context.thread),
+      &(&1["activeRunId"] in [nil, context[:open_run]])
+    )
+
     context
   end
 
@@ -2514,7 +2548,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
     World.await_row(
       World.thread_id(context, thread),
-      &(length(&1["pendingBackgroundTasks"] || []) == 2)
+      &(length(&1["runningBackgroundTasks"] || []) == 2)
     )
 
     pid = runtime(context, thread)
@@ -2523,6 +2557,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   end
 
   defp waiting_on("a monitor"), do: "start a monitor"
+  defp waiting_on(:marked_monitor), do: "start a monitor and hold the turn"
   defp waiting_on("a subagent"), do: "only the subagent in the background"
   defp waiting_on("a background task"), do: "only the command in the background"
 
@@ -2549,6 +2584,20 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     |> Map.merge(%{settled_run: run, work: work})
   end
 
+  # The monitor's launch acknowledgement ("Monitor started (task ...)") is the first
+  # thing recorded after its `task_started`, in order: once the monitor's turn item
+  # carries it, the runtime knows the task and is asked once.
+  defp mark_monitor(context, thread, child, task_id) do
+    World.await_state(context, thread, fn state ->
+      Enum.any?(
+        HalC2.StreamState.list(state, "turn-item"),
+        &String.contains?(to_string(&1["output"]), task_id)
+      )
+    end)
+
+    assert {:ok, [^task_id]} = HalC2.Claude.ThreadRuntime.await_background(child, [task_id], true)
+  end
+
   # Kills the provider process of `context.thread` once its one background task shows.
   defp leave_waiting(context) do
     context = await_background(context)
@@ -2562,7 +2611,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   defp await_background(context) do
     World.await_row(
       World.thread_id(context, context.thread),
-      &(length(&1["pendingBackgroundTasks"] || []) == 1)
+      &(length(&1["runningBackgroundTasks"] || []) == 1)
     )
 
     context

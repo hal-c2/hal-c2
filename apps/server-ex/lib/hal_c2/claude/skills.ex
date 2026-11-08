@@ -20,9 +20,27 @@ defmodule HalC2.Claude.Skills do
     config_dir = config_dir || Provider.config_dir(instance, cwd)
     overrides = skill_overrides(config_dir, cwd)
 
+    # Folders the instance's launch arguments add (`--add-dir`) are in Claude's
+    # reach, and their `.claude/skills` are offered with the project's. A
+    # relative folder is the session folder's, so without one it names nothing
+    # here (never the MC process's own folder).
+    added =
+      case Provider.launch_args(instance) do
+        {:ok, args} ->
+          for dir <- Provider.add_dirs(args),
+              root = if(cwd, do: Path.absname(dir, cwd), else: Path.type(dir) == :absolute && dir),
+              root do
+            {Path.join([root, ".claude", "skills"]), "project"}
+          end
+
+        _ ->
+          []
+      end
+
     roots =
       [{Path.join(config_dir, "skills"), "user"}] ++
-        if(cwd, do: [{Path.join([cwd, ".claude", "skills"]), "project"}], else: [])
+        if(cwd, do: [{Path.join([cwd, ".claude", "skills"]), "project"}], else: []) ++
+        added
 
     roots
     |> Enum.flat_map(fn {root, scope} -> read_root(root, scope, overrides) end)
@@ -294,6 +312,47 @@ defmodule HalC2.Claude.Skills do
     user ++ project ++ root_local ++ managed
   end
 
+  @doc """
+  Whether Claude lets a session at `cwd` bypass its permission prompts: `:disabled`
+  when a layer of its settings (`skill_overrides/2`'s, with the remote policy Claude
+  caches in its home) sets `permissions.disableBypassPermissionsMode` to `"disable"`,
+  `:unreadable` when a file that is there cannot be read or parsed, else `:allowed`.
+  A missing file is no layer, nor is a blank one, which Claude reads as `{}`.
+  """
+  @spec bypass_permissions(String.t(), String.t() | nil) :: :allowed | :disabled | :unreadable
+  def bypass_permissions(config_dir, cwd) do
+    paths = settings_paths(config_dir, cwd) ++ [Path.join(config_dir, "remote-settings.json")]
+
+    Enum.reduce_while(paths, :allowed, fn path, verdict ->
+      case read_bypass(path) do
+        :disabled -> {:halt, :disabled}
+        :unreadable -> {:cont, :unreadable}
+        :allowed -> {:cont, verdict}
+      end
+    end)
+  end
+
+  @doc "Whether a decoded Claude settings map turns bypassing permissions off."
+  @spec bypass_disabled_in?(term) :: boolean
+  def bypass_disabled_in?(settings),
+    do: match?(%{"permissions" => %{"disableBypassPermissionsMode" => "disable"}}, settings)
+
+  # Reads only Claude's own settings files: fixed names under its config dir and
+  # the project's root, never a path a client sent.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp read_bypass(path) do
+    with {:ok, text} <- File.read(path),
+         false <- String.trim(text) == "",
+         {:ok, settings} when is_map(settings) <- decode_lenient(text) do
+      if bypass_disabled_in?(settings), do: :disabled, else: :allowed
+    else
+      {:error, :enoent} -> :allowed
+      {:error, :enotdir} -> :allowed
+      true -> :allowed
+      _ -> :unreadable
+    end
+  end
+
   defp repository_root(cwd) do
     cwd = Path.expand(cwd)
 
@@ -387,10 +446,12 @@ defmodule HalC2.Claude.Skills do
 
   defp finish(acc), do: acc |> Enum.reverse() |> IO.iodata_to_binary()
 
+  # A line comment ends at a newline or a lone carriage return, whichever comes
+  # first; the break itself stays as whitespace.
   defp drop_line(text) do
-    case :binary.split(text, "\n") do
-      [_line, rest] -> "\n" <> rest
-      [_line] -> ""
+    case :binary.matches(text, ["\n", "\r"]) do
+      [{at, _} | _] -> binary_part(text, at, byte_size(text) - at)
+      [] -> ""
     end
   end
 

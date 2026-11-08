@@ -438,6 +438,7 @@ Feature: Tool calls and file changes
     Then the details show its input
     And no exit code is shown
 
+  # Upstream #15094: an opened command streams its output while it runs.
   @mc @shared @backlog-desktop @backlog-mobile
   Scenario: An opened command shows its output while it runs
     Given the agent's command is still running and printing
@@ -454,6 +455,7 @@ Feature: Tool calls and file changes
     Then the whole command is shown
     And no details are offered when the command fits
 
+  # Upstream #15094: a finished command's final output is fetched when its row is opened.
   @mc @shared @backlog-desktop @backlog-mobile
   Scenario: A finished command's output is fetched when it is opened
     Given the agent ran a command that finished
@@ -1222,6 +1224,7 @@ Feature: Tool calls and file changes
     And a call with nothing more to show does not expand
 
   # TUI: commands only; other tool calls carry no output the MC can supply.
+  # Upstream #15506: an expanded tool call shows the call above a muted result, without cards.
   @shared @backlog-desktop @backlog-mobile @priority-high
   Scenario: An expanded call shows the call above a muted result
     When the user expands a tool call

@@ -149,6 +149,18 @@ def prompt(pid, sid, text):
               "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
                           {"optionId": "deny", "name": "Deny", "kind": "reject_once"}]}})
         return
+    if "open bad url" in text:
+        send({"id": "url-bad", "method": "elicitation/create", "params": {"mode": "url",
+              "url": "file:///etc/passwd", "elicitationId": "bad", "message": "Sign in to Acme"}})
+        return finish(pid, sid, "asked for bad")
+    if "open anonymous url" in text:
+        send({"id": "url-anon", "method": "elicitation/create", "params": {"mode": "url",
+              "url": "https://acme.test/anon", "elicitationId": "", "message": "Sign in to Acme"}})
+        return finish(pid, sid, "asked for anon")
+    if "open long url" in text:
+        send({"id": "url-long", "method": "elicitation/create", "params": {"mode": "url",
+              "url": "https://acme.test/long", "elicitationId": "x" * 300, "message": "m" * 2000}})
+        return finish(pid, sid, "asked for long")
     m = re.search(r"open url (\S+)", text)
     if m:
         send({"id": "url-" + m.group(1), "method": "elicitation/create", "params": {"mode": "url",
@@ -253,7 +265,10 @@ for line in sys.stdin:
         continue
 
     if method == "initialize":
-        send({"id": mid, "result": initialize_result()})
+        if CONTROL.get("initializeError"):
+            send({"id": mid, "error": {"code": -32000, "message": CONTROL["initializeError"]}})
+        else:
+            send({"id": mid, "result": initialize_result()})
     elif method == "authenticate":
         failure = CONTROL.get("authenticateError")
         if failure:
@@ -316,6 +331,12 @@ for line in sys.stdin:
                         for p in providers()])
         send({"id": mid, "result": {}})
     elif method == "logout":
+        # `logoutHold` names a pipe the sign-out waits on until a line is written to it.
+        if CONTROL.get("logoutHold"):
+            open(CONTROL["logoutHold"]).readline()
+        if CONTROL.get("logoutError"):
+            send({"id": mid, "error": {"code": -32000, "message": CONTROL["logoutError"]}})
+            continue
         if os.path.exists(AUTH_FILE):
             os.remove(AUTH_FILE)
         send({"id": mid, "result": {}})

@@ -188,7 +188,7 @@ Feature: Unread and status in the thread list
     When the user looks at the thread list
     Then the row for "Build search" reads "Waiting" and shows 3 minutes
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario Outline: An idle thread shows its age
     Given the last activity in "Build search" was <ago>
     When the user looks at the thread list
@@ -220,26 +220,26 @@ Feature: Unread and status in the thread list
     When the environment records that "Build search" was pinned just now
     Then the row for "Build search" counts its age from that message
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: The age keeps up while nothing changes
     Given the last activity in "Build search" was 5 minutes ago
     When a minute passes without any update
     Then the row for "Build search" shows "6m"
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Threads that need nothing step back
     Given "Build search" is idle and read
     And "Fix cart" finished work the user has not seen
     When the user looks at the thread list
     Then "Fix cart" stands out more than "Build search"
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Pointing at a row does not flash it
     Given the user uses a light theme
     When the user moves the pointer onto "Build search"
     Then the row highlights without flashing gray
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Moving across a row's actions keeps the row highlighted
     When the user moves the pointer across the actions of "Build search"
     Then the row stays highlighted the whole time
@@ -384,10 +384,18 @@ Feature: Unread and status in the thread list
     And the preview says "2 terminal processes running"
 
   # Upstream #13673: zsh prompt helpers made idle shells look busy.
-  @mc @desktop @tui @backlog @priority-high
+  @mc @desktop @tui @backlog-desktop @backlog-tui @priority-high
   Scenario: An idle shell does not make its thread look busy
     Given "Build search" has one terminal waiting at an idle prompt
     Then "Build search" is not shown as busy
+
+  # Review of #1206: telling prompt helpers apart by the shell's name hid real work, such as
+  # `bash ./deploy.sh` run in bash; a helper stays in the shell's process group, a command
+  # runs in a group of its own.
+  @mc @priority-high
+  Scenario: A script the shell runs through itself makes its thread look busy
+    Given "Build search" has one terminal running a script through its own shell
+    Then "Build search" is shown as busy
 
   @backlog @desktop @priority-low
   Scenario: The preview lists the thread's pull requests

@@ -39,12 +39,25 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Acp.Kimi
   alias HalC2.Acp.OpenCode
 
-  @state_version 16
+  @state_version 18
   @registry HalC2.Acp.Registry
 
   # Grok's background task notifications.
   @xai_backgrounded ["x.ai/task_backgrounded", "_x.ai/task_backgrounded"]
   @xai_completed ["x.ai/task_completed", "_x.ai/task_completed"]
+
+  # OpenCode 2's report of a child session (`opencode_child/2`).
+  @opencode_child ["opencode/session/child_update", "_opencode/session/child_update"]
+
+  # Grok's notices that a prompt finished, in either spelling: the direct
+  # prompt-complete notice, and a session notice carrying a `turn_completed`
+  # update. A prompt Grok never answers still ends by these.
+  @xai_prompt_complete ["x.ai/session/prompt_complete", "_x.ai/session/prompt_complete"]
+  @xai_session_notice [
+    "x.ai/session_notification",
+    "_x.ai/session_notification",
+    "_x.ai/session/update"
+  ]
 
   # Grok's own requests (`x.ai/...`), bare or wrapped in `{method, params}`.
   @xai_questions ["x.ai/ask_user_question", "_x.ai/ask_user_question"]
@@ -204,6 +217,12 @@ defmodule HalC2.Acp.ThreadRuntime do
        # Grok's background tasks: task id -> the tool call's id while its turn runs,
        # then its turn item (`%{id, node}`).
        tasks: %{},
+       # Grok's prompt completion: the id this turn's prompt carries, the next
+       # one's number, and the ids of prompts already completed (newest last),
+       # so a repeated notice cannot end a later turn.
+       grok_prompt: nil,
+       grok_seq: 0,
+       grok_done: [],
        # Child-session updates that arrived before their subagent named its session.
        orphans: %{},
        # The session's config options (`configId` -> current value).
@@ -216,6 +235,8 @@ defmodule HalC2.Acp.ThreadRuntime do
        # message when the turn began: `{:ok, id | nil}`, or `:unknown`.
        server: nil,
        leaf: :unknown,
+       # The OpenCode session and the thread title it was last given: `{session, title}`.
+       titled: nil,
        # An Antigravity process's runtime temp directory, removed with it.
        temp_dir: nil
      }}
@@ -353,7 +374,17 @@ defmodule HalC2.Acp.ThreadRuntime do
   def handle_call({:interrupt, _run_id}, from, state), do: handle_call(:interrupt, from, state)
 
   def handle_call(:interrupt, _from, %{prompt: prompt} = state) when prompt != nil do
-    Connection.notify(state.conn, "session/cancel", %{"sessionId" => state.session_id})
+    # Grok treats a Ctrl+C cancel as a barrier against stale background-task
+    # wake prompts until the next genuine user turn.
+    params =
+      if grok?(state),
+        do: %{
+          "sessionId" => state.session_id,
+          "_meta" => %{"cancelTrigger" => "ctrl_c"}
+        },
+        else: %{"sessionId" => state.session_id}
+
+    Connection.notify(state.conn, "session/cancel", params)
     state = %{cancel_requests(state) | interrupted: true}
 
     # Antigravity gets fifteen seconds to confirm the stop; after that its
@@ -549,13 +580,40 @@ defmodule HalC2.Acp.ThreadRuntime do
         else: update
 
     cond do
-      state.replaying -> {:noreply, state}
-      child_session?(params["sessionId"], state) -> {:noreply, child_update(params, state)}
-      subagent_ended?(update) -> {:noreply, subagent_ended(state, update)}
-      commands = available_commands(update) -> {:noreply, offer(state, commands)}
-      state.turn == nil -> {:noreply, state}
-      state.kimi -> {:noreply, update(Kimi.update(update), state)}
-      true -> {:noreply, update(update, state)}
+      state.replaying ->
+        {:noreply, state}
+
+      child_session?(params["sessionId"], state) ->
+        {:noreply, child_update(params, state)}
+
+      # Grok also persists a root turn's end as a `turn_completed` update.
+      grok?(state) && update["sessionUpdate"] == "turn_completed" ->
+        prompt = update["prompt_id"] || update["promptId"]
+
+        if is_binary(prompt) && String.starts_with?(prompt, "task-completed-") do
+          {:noreply, state}
+        else
+          grok_prompt_completed(state, %{
+            session: params["sessionId"],
+            prompt: prompt,
+            stop: update["stop_reason"] || update["stopReason"]
+          })
+        end
+
+      subagent_ended?(update) ->
+        {:noreply, subagent_ended(state, update)}
+
+      commands = available_commands(update) ->
+        {:noreply, offer(state, commands)}
+
+      state.turn == nil ->
+        {:noreply, state}
+
+      state.kimi ->
+        {:noreply, update(Kimi.update(update), state)}
+
+      true ->
+        {:noreply, update(update, state)}
     end
   end
 
@@ -573,8 +631,41 @@ defmodule HalC2.Acp.ThreadRuntime do
   def handle_info({:json_rpc, _conn, {:notification, method, params}}, state)
       when method in @xai_completed do
     update = xai_params(params)["update"] || %{}
-    task = get_in(update, ["task_snapshot", "task_id"]) || update["task_id"]
-    {:noreply, if(is_binary(task), do: end_task(state, task, "completed"), else: state)}
+    snapshot = update["task_snapshot"] || %{}
+    task = snapshot["task_id"] || update["task_id"]
+    status = task_end_status(snapshot["status"] || update["status"], task_exit(snapshot, update))
+    {:noreply, if(is_binary(task), do: end_task(state, task, status), else: state)}
+  end
+
+  # Grok says the turn is complete although its prompt request may never be
+  # answered: the notice ends the turn the prompt's answer would have.
+  def handle_info({:json_rpc, _conn, {:notification, method, params}}, state)
+      when method in @xai_prompt_complete do
+    params = xai_params(params)
+
+    grok_prompt_completed(state, %{
+      session: params["sessionId"],
+      prompt: params["promptId"] || params["prompt_id"],
+      stop: params["stopReason"] || params["stop_reason"]
+    })
+  end
+
+  def handle_info({:json_rpc, _conn, {:notification, method, params}}, state)
+      when method in @xai_session_notice do
+    params = xai_params(params)
+    update = params["update"] || %{}
+    prompt = update["prompt_id"] || update["promptId"]
+
+    if update["sessionUpdate"] == "turn_completed" && is_binary(prompt) &&
+         not String.starts_with?(prompt, "task-completed-") do
+      grok_prompt_completed(state, %{
+        session: params["sessionId"],
+        prompt: prompt,
+        stop: update["stop_reason"] || update["stopReason"]
+      })
+    else
+      {:noreply, state}
+    end
   end
 
   def handle_info({:json_rpc, conn, {:request, id, "session/request_permission", params}}, state) do
@@ -609,11 +700,19 @@ defmodule HalC2.Acp.ThreadRuntime do
   def handle_info({:json_rpc, conn, {:request, id, method, params}}, %{turn: turn} = state)
       when method in @xai_plan and turn != nil do
     params = xai_params(params)
-    native = "plan:#{params["toolCallId"] || id}"
+    # The plan Grok wrote to its plan file is the one it presents, unless it sends text.
+    file = plan_file_native(state)
+
+    native =
+      if Map.has_key?(state.items, file),
+        do: file,
+        else: "plan:#{params["toolCallId"] || id}"
+
+    written = get_in(state.items, [file, :markdown])
 
     markdown =
       case String.trim(params["planContent"] || "") do
-        "" -> @empty_plan
+        "" -> written || @empty_plan
         text -> text
       end
 
@@ -701,6 +800,10 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     {:noreply, state}
   end
+
+  def handle_info({:json_rpc, _conn, {:notification, method, params}}, state)
+      when method in @opencode_child,
+      do: {:noreply, opencode_child(params || %{}, state)}
 
   def handle_info({:json_rpc, _conn, {:notification, method, params}}, state)
       when method in ["mcp/message", "_mcp/message"] do
@@ -852,18 +955,75 @@ defmodule HalC2.Acp.ThreadRuntime do
       else: {:noreply, %{state | answer: answer}}
   end
 
+  # A Grok completion notice settles the turn's prompt when it names that
+  # prompt (or names none while exactly one prompt waits) on this session,
+  # and the prompt did not already complete. A subagent session's notice, a
+  # background task's, and a repeated one settle nothing. The prompt request
+  # is abandoned like a steer's: its late answer matches no request here.
+  defp grok_prompt_completed(state, notice) do
+    waiting = state.turn != nil and state.prompt not in [nil, false]
+    named = notice.prompt
+
+    if waiting && grok?(state) && notice.session == state.session_id &&
+         named not in state.grok_done &&
+         (named == state.grok_prompt ||
+            (named in [nil, ""] && :gen_server.reqids_size(state.prompts) == 1)) do
+      result =
+        if notice.stop == "rate_limit" do
+          {:error, %{"code" => -32003, "message" => "Grok usage limit reached. Try again later."}}
+        else
+          {:ok, %{"stopReason" => grok_stop_reason(notice.stop)}}
+        end
+
+      answer(%{state | prompts: :gen_server.reqids_new()}, :prompt, result)
+    else
+      {:noreply, state}
+    end
+  end
+
+  defp grok_stop_reason(reason)
+       when reason in ["cancelled", "end_turn", "max_tokens", "max_turn_requests", "refusal"],
+       do: reason
+
+  defp grok_stop_reason(_reason), do: "end_turn"
+
+  # A Grok failure that is not its usage limit keeps Grok's own message and
+  # code; only xAI's rate-limit code (-32003, above) reads as a usage limit,
+  # never a message that merely mentions one.
+  defp grok_failure(state, error, message) do
+    if grok?(state) and is_integer(error["code"]),
+      do: "#{message} (#{error["code"]})",
+      else: message
+  end
+
   defp answered(state, result) do
     {status, failure} =
       case result do
-        _ when state.interrupted -> {"interrupted", nil}
-        {:ok, %{"stopReason" => "cancelled"}} -> {"interrupted", nil}
-        {:ok, %{"stopReason" => _}} -> {"completed", nil}
+        _ when state.interrupted ->
+          {"interrupted", nil}
+
+        {:ok, %{"stopReason" => "cancelled"}} ->
+          {"interrupted", nil}
+
+        {:ok, %{"stopReason" => _}} ->
+          {"completed", nil}
+
         # xAI's rate limit.
-        {:error, %{"code" => -32003}} -> {"failed", "Grok usage limit reached. Try again later."}
-        {:error, %{"message" => message}} -> {"failed", message}
+        {:error, %{"code" => -32003}} ->
+          {"failed", "Grok usage limit reached. Try again later."}
+
+        {:error, %{"message" => message} = error} when is_binary(message) ->
+          {"failed", usage_limit(state, error) || prompt_failure(state, error)}
+
+        {:error, %{} = error} ->
+          {"failed", usage_limit(state, error) || prompt_failure(state, error)}
+
         # The agent's process went away before it answered.
-        {:error, :closed} -> {"failed", "#{HalC2.Acp.label(state.agent)} exited unexpectedly"}
-        {:error, reason} -> {"failed", format(reason)}
+        {:error, :closed} ->
+          {"failed", "#{HalC2.Acp.label(state.agent)} exited unexpectedly"}
+
+        {:error, reason} ->
+          {"failed", format(reason)}
       end
 
     {status, failure} =
@@ -877,6 +1037,105 @@ defmodule HalC2.Acp.ThreadRuntime do
     state = end_turn(state, status, failure)
     # A turn that did not complete takes its background work, and earlier turns', down.
     {:noreply, if(status == "completed", do: state, else: stop_work(state, status))}
+  end
+
+  # OpenCode 2 names why a prompt failed (`data.errorName`): its quota, rate-limit and
+  # plan-limit stops are usage limits, with no reset time it does not give. A Claude plan
+  # spent through OpenCode says so only in its message, with the reset time it names.
+  @opencode_limits ~w(provider.quota provider.rate-limit provider.free-limit provider.go-limit
+                      provider.budget-limit provider.model-budget-limit provider.chatgpt-limit)
+
+  defp usage_limit(state, %{"message" => message} = error) when is_binary(message) do
+    # Only OpenCode's errors are read this way, and a JSON-RPC `data` need not be a
+    # map: check the driver first, then match its shape instead of walking into it.
+    if HalC2.Acp.driver(state.agent) == "opencode" do
+      name =
+        case error do
+          %{"data" => %{"errorName" => name}} -> name
+          _ -> nil
+        end
+
+      # A quota stop the provider answered 402 is a payment problem, not a limit
+      # that resets: it stays a provider error in its own words.
+      status =
+        case error do
+          %{"data" => %{} = data} -> data["statusCode"] || data["status"]
+          _ -> nil
+        end
+
+      if (name in @opencode_limits and status != 402) or
+           message =~ ~r/\bYou've hit your \w+ limit\b/ do
+        %{
+          "class" => "usage_limit",
+          "message" => message,
+          "code" => name || "usage_limit",
+          "retryable" => nil,
+          "resetAt" => reset_at(message)
+        }
+      end
+    end
+  end
+
+  defp usage_limit(_state, _error), do: nil
+
+  # How a failed prompt reads in the thread. OpenCode's own words are kept, except
+  # an exit the connection reports (named with its code) and an error with no
+  # message of its own (a model provider's error page names itself in its title
+  # and status, and "<none>" is no message): those get a plain sentence instead
+  # of the raw payload, or of nothing at all.
+  defp prompt_failure(state, %{"message" => message} = error) when is_binary(message) do
+    label = HalC2.Acp.label(state.agent)
+
+    case Regex.run(~r/process exited with code (\d+)/, message) do
+      [_, code] ->
+        if HalC2.Acp.driver(state.agent) == "opencode",
+          do: "OpenCode server exited unexpectedly (#{code}).",
+          else: "#{label} exited unexpectedly (#{code})."
+
+      _ ->
+        if blank_message?(message),
+          do: detail_failure(state, error),
+          else: grok_failure(state, error, message)
+    end
+  end
+
+  defp prompt_failure(state, error), do: detail_failure(state, error)
+
+  defp blank_message?(message),
+    do: String.trim(message) in ["", "<none>", "none"]
+
+  defp detail_failure(state, error) do
+    data = if is_map(error["data"]), do: error["data"], else: %{}
+    status = data["statusCode"] || data["status"]
+
+    title =
+      with body when is_binary(body) <-
+             data["responseBody"] || data["body"] || data["response"] || data["html"],
+           [_, title] <- Regex.run(~r/<title[^>]*>\s*(.+?)\s*<\/title>/is, body) do
+        String.trim(title)
+      else
+        _ -> nil
+      end
+
+    cond do
+      title && is_integer(status) ->
+        "#{title} (HTTP #{status})"
+
+      is_integer(status) ->
+        "#{HalC2.Acp.label(state.agent)}'s model provider failed the request (HTTP #{status})."
+
+      true ->
+        "#{HalC2.Acp.label(state.agent)} session failed without an error payload."
+    end
+  end
+
+  defp reset_at(message) do
+    with [_, at] <- Regex.run(~r/Resets at (\d{4}-\d\d-\d\dT\S+Z)/, message),
+         {:ok, reset, _} <- DateTime.from_iso8601(at) do
+      HalC2.Projection.JS.iso(DateTime.to_unix(reset, :millisecond))
+    else
+      _ -> nil
+    end
   end
 
   # The runtime or its provider plugin's supervisor crashed (not a stop): the turn
@@ -974,6 +1233,15 @@ defmodule HalC2.Acp.ThreadRuntime do
       |> Map.put_new(:mcp_bridge, nil)
       |> Map.put_new(:announced, nil)
       |> Map.put_new(:temp_dir, nil)
+      |> migrate()
+
+  defp migrate(%{v: 16} = state), do: state |> Map.merge(%{v: 17, titled: nil}) |> migrate()
+
+  defp migrate(%{v: 17} = state),
+    do:
+      state
+      |> Map.merge(%{v: 18, grok_prompt: nil, grok_seq: 0, grok_done: []})
+      |> migrate()
 
   # --- session -------------------------------------------------------------------
 
@@ -1057,14 +1325,11 @@ defmodule HalC2.Acp.ThreadRuntime do
          # The way back to HAL-C2's tools from the agent's terminal
          # (`HalC2.Mcp.AcpServers`): the MCP address, its credential and the
          # command to run one call with.
-         env =
-           env ++
-             HalC2.Mcp.AcpServers.build(
-               %{},
-               HalC2.Mcp.for_agent(state.thread_id, instance)
-             ).env,
+         mcp = HalC2.Mcp.for_agent(state.thread_id, instance),
+         env = env ++ HalC2.Mcp.AcpServers.build(%{}, mcp).env,
          {command, env, server} = serve_opencode(instance, command, env),
          env = HalC2.ProjectEnvironment.for_turn(context, env, command),
+         env = subagents_off(instance, mcp, env),
          {:ok, conn} <-
            Connection.start_link(
              cmd: command,
@@ -1074,22 +1339,25 @@ defmodule HalC2.Acp.ThreadRuntime do
              dialect: :v2,
              log: state.thread_id,
              durable: state.thread_id,
+             program: HalC2.Acp.label(instance),
              stderr_prefix: Antigravity.stderr_prefix(instance)
            ),
          {:ok, init} <-
            Connection.call(conn, "initialize", %{
              "protocolVersion" => 1,
-             "clientCapabilities" => %{
-               # Antigravity edits workspace files through HAL-C2 in chat
-               # sessions; no agent gets a terminal.
-               "fs" => %{
-                 "readTextFile" => true,
-                 "writeTextFile" => Antigravity.antigravity?(instance)
-               },
-               "terminal" => false,
-               # A sign-in page the agent asks for shows on the provider (`HalC2.Acp.UrlAuth`).
-               "elicitation" => %{"url" => %{}}
-             },
+             "clientCapabilities" =>
+               %{
+                 # Antigravity edits workspace files through HAL-C2 in chat
+                 # sessions; no agent gets a terminal.
+                 "fs" => %{
+                   "readTextFile" => true,
+                   "writeTextFile" => Antigravity.antigravity?(instance)
+                 },
+                 "terminal" => false,
+                 # A sign-in page the agent asks for shows on the provider (`HalC2.Acp.UrlAuth`).
+                 "elicitation" => %{"url" => %{}}
+               }
+               |> Map.merge(opencode_capabilities(instance)),
              "clientInfo" => %{"name" => "hal-c2", "version" => "0.1.0"}
            }) do
       # The thread now runs on the instance's sign-in, which a sign-out closes
@@ -1109,9 +1377,55 @@ defmodule HalC2.Acp.ThreadRuntime do
                do: HalC2.Acp.Antigravity.runtime_tmp(env)
              ),
            capabilities: init["agentCapabilities"] || %{}
-       }}
+       }
+       |> Map.put(:plan_prefixes, HalC2.Acp.GrokPlan.prefixes(env))}
     else
       {:error, reason} -> {:error, reason, state}
+    end
+  end
+
+  # OpenCode's own subagents (its task tool) are denied while agents use HAL-C2's
+  # workers (`HalC2.Mcp.workers_only?/1`), in the config OpenCode starts with, so the
+  # choice holds for the session. The user's own `OPENCODE_CONFIG_CONTENT` is kept:
+  # the denial is merged into the value the finished launch environment carries,
+  # which may come from the instance's variables or the project's environment, and
+  # only then from the MC's own, the order they apply in (`HalC2.ProjectEnvironment`).
+  defp subagents_off(instance, mcp, env) do
+    if HalC2.Acp.driver(instance) == "opencode" and HalC2.Mcp.workers_only?(mcp) do
+      config =
+        case JSON.decode(opencode_config(env) || "") do
+          {:ok, %{} = config} -> config
+          _ -> %{}
+        end
+
+      permission =
+        case config["permission"] do
+          %{} = permission -> Map.put(permission, "task", "deny")
+          _ -> %{"task" => "deny"}
+        end
+
+      merged =
+        {"OPENCODE_CONFIG_CONTENT", JSON.encode!(Map.put(config, "permission", permission))}
+
+      Enum.reject(env, &(elem(&1, 0) == "OPENCODE_CONFIG_CONTENT")) ++ [merged]
+    else
+      env
+    end
+  end
+
+  # The launch's `OPENCODE_CONFIG_CONTENT`: in the final environment the launch
+  # variables follow the project's, so the last entry is the one that applies;
+  # with none, the MC's own variable is the one the agent would inherit.
+  defp opencode_config(env) do
+    env
+    |> Enum.reverse()
+    |> Enum.find_value(fn
+      {"OPENCODE_CONFIG_CONTENT", value} -> value
+      _ -> nil
+    end)
+    |> case do
+      nil -> System.get_env("OPENCODE_CONFIG_CONTENT")
+      value -> value
     end
   end
 
@@ -1289,6 +1603,15 @@ defmodule HalC2.Acp.ThreadRuntime do
   # (`canSwitchModel`), which outlives the process and its session record: a new
   # session's answer says so, a continued one only when it names its model.
   defp opened(state, result, turn, new? \\ false) do
+    # What a local OpenCode session as it opened offers is its settled list:
+    # an instance first read while its server was still starting is completed
+    # by it, without a provider refresh. An external server's own read names
+    # its providers (the billing names), and other drivers' catalogs are
+    # their reads' business; neither is rewritten from a session open.
+    if is_list(result["configOptions"]) and HalC2.Acp.driver(state.agent) == "opencode" and
+         HalC2.Acp.setting(state.agent, "serverUrl") == nil,
+       do: HalC2.Acp.put_models(state.agent, result["configOptions"])
+
     named? =
       Enum.any?(result["configOptions"] || [], &(&1["id"] == "model")) or is_map(result["models"])
 
@@ -1315,6 +1638,9 @@ defmodule HalC2.Acp.ThreadRuntime do
       end
 
     state = remember_config(state, result)
+
+    state =
+      if grok?(state), do: Map.put(state, :reasoning, session_reasoning(result)), else: state
 
     case Enum.find(result["configOptions"] || [], &(&1["id"] == "model")) do
       %{"currentValue" => model} ->
@@ -1528,6 +1854,14 @@ defmodule HalC2.Acp.ThreadRuntime do
   # already has. A picked model is set again, so a restarted session resumes
   # on the thread's model.
   defp select_model(state, model) do
+    if grok?(state) do
+      {:ok, grok_model(state, model, Map.get(state.turn, :options) || %{})}
+    else
+      select_model_of(state, model)
+    end
+  end
+
+  defp select_model_of(state, model) do
     if Antigravity.antigravity?(state.agent) and Antigravity.default_alias?(model) do
       case Antigravity.default_model(state.options, state.model) do
         resolved when is_binary(resolved) and resolved != state.model ->
@@ -1540,6 +1874,64 @@ defmodule HalC2.Acp.ThreadRuntime do
       {:ok, set_model(state, model)}
     end
   end
+
+  # Grok's `grok-build` is the CLI's product name, not a model it accepts: choosing it
+  # keeps the model the session has. A reasoning level goes with the model, as
+  # `session/set_model`'s `_meta.reasoningEffort`, and only when it is a plain word and
+  # differs from the level the session is on. Omitting a level on the same model leaves
+  # Grok's own default alone, so only a changed model or a changed level is sent.
+  @grok_default_model "grok-build"
+  @grok_effort ~r/^[a-z0-9][a-z0-9._-]{0,31}$/i
+
+  defp grok_model(state, model, options) do
+    requested = if model in [nil, "", @grok_default_model], do: nil, else: model
+    provided = options["reasoningEffort"]
+    effort = if is_binary(provided) and provided =~ @grok_effort, do: provided
+    model_changed = requested != nil and requested != state.model
+    effort_changed = effort != nil and effort != Map.get(state, :reasoning)
+    target = requested || state.model
+
+    cond do
+      (not model_changed and not effort_changed) or target == nil ->
+        state
+
+      # Agents that switch models through a config option keep that way when no level
+      # needs to travel with the model.
+      effort == nil and state.model_method == "session/set_config_option" ->
+        set_model(state, target)
+
+      true ->
+        params = %{"sessionId" => state.session_id, "modelId" => target}
+
+        params =
+          if effort, do: Map.put(params, "_meta", %{"reasoningEffort" => effort}), else: params
+
+        case Connection.call(state.conn, "session/set_model", params) do
+          {:ok, _} ->
+            state
+            |> Map.merge(%{model: target, model_method: "session/set_model"})
+            |> Map.put(:reasoning, effort)
+
+          {:error, reason} ->
+            Logger.warning("could not select #{target}: #{inspect(reason)}")
+            state
+        end
+    end
+  end
+
+  # The level of reasoning the model a Grok session starts on is at.
+  defp session_reasoning(%{"models" => %{"currentModelId" => current} = models}) do
+    with model when is_map(model) <-
+           Enum.find(models["availableModels"] || [], &(&1["modelId"] == current)),
+         effort when is_binary(effort) <- get_in(model, ["_meta", "reasoningEffort"]),
+         true <- effort =~ @grok_effort do
+      effort
+    else
+      _ -> nil
+    end
+  end
+
+  defp session_reasoning(_result), do: nil
 
   # "Pi default" leaves the model to the user's own Pi settings.
   defp set_model(%{agent: agent} = state, "default") when agent != nil do
@@ -1600,6 +1992,33 @@ defmodule HalC2.Acp.ThreadRuntime do
     end)
   end
 
+  # OpenCode names a session still untitled at its first prompt with a title model of
+  # its own; the session takes the thread's name before any prompt it has changed for.
+  defp titled(%{server: nil} = state), do: state
+
+  defp titled(%{thread_id: thread_id, session_id: session} = state) do
+    title =
+      HalC2.Streams.read(
+        thread_id,
+        &get_in(HalC2.StreamState.get(&1, "thread"), [thread_id, "title"])
+      )
+
+    cond do
+      not is_binary(title) or String.trim(title) == "" or state.titled == {session, title} ->
+        state
+
+      true ->
+        case OpenCode.retitle(state.server, session, title) do
+          :ok ->
+            %{state | titled: {session, title}}
+
+          {:error, reason} ->
+            Logger.warning("could not name the OpenCode session: #{reason}")
+            state
+        end
+    end
+  end
+
   # Where an OpenCode session stood when the turn began.
   defp leaf(%{server: nil}), do: :unknown
 
@@ -1658,6 +2077,9 @@ defmodule HalC2.Acp.ThreadRuntime do
        do: subagent_call(state, id, call)
 
   defp update(%{"sessionUpdate" => "tool_call", "toolCallId" => id} = call, state) do
+    state = plan_file(state, call)
+    call = grok_call(call, state)
+
     cond do
       plan_call?(call, state) -> plan_call(state, id, call)
       subagent_call?(call, state) -> subagent_call(state, id, call)
@@ -1666,6 +2088,9 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp update(%{"sessionUpdate" => "tool_call_update", "toolCallId" => id} = call, state) do
+    state = plan_file(state, call)
+    call = grok_call(call, state)
+
     cond do
       plan_call?(call, state) -> plan_call(state, id, call)
       Map.has_key?(state.items, id) -> tool_update(state, id, call)
@@ -1675,13 +2100,23 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   # The agent's task list for the turn (ACP `plan`), replaced whole on each update.
+  # A cancelled item is left out rather than left pending, so the list can finish;
+  # an item with no text is numbered, as OpenCode numbers its to-dos.
   defp update(%{"sessionUpdate" => "plan", "entries" => entries}, state)
        when is_list(entries) and entries != [] do
+    fallback =
+      if HalC2.Acp.driver(state.agent) == "opencode",
+        do: fn index -> "Todo #{index}" end,
+        else: fn index -> "Step #{index}" end
+
     steps =
-      for {entry, index} <- Enum.with_index(entries, 1) do
+      entries
+      |> Enum.reject(&(&1["status"] in ["cancelled", "canceled"]))
+      |> Enum.with_index(1)
+      |> Enum.map(fn {entry, index} ->
         %{
           "id" => "step-#{index}",
-          "text" => non_empty(entry["content"], "Step #{index}"),
+          "text" => non_empty(entry["content"], fallback.(index)),
           "status" =>
             case entry["status"] do
               "completed" -> "completed"
@@ -1689,7 +2124,7 @@ defmodule HalC2.Acp.ThreadRuntime do
               _ -> "pending"
             end
         }
-      end
+      end)
 
     state |> flush() |> write_todo("acp-plan:#{state.turn.ids.run}", steps)
   end
@@ -1721,6 +2156,17 @@ defmodule HalC2.Acp.ThreadRuntime do
     HalC2.Acp.put_models(state.agent, options)
     remember_model(state, %{"configOptions" => options})
   end
+
+  # OpenCode 2 reports a compaction, asked for (`/compact`) or its own, in the
+  # session's info.
+  defp update(
+         %{
+           "sessionUpdate" => "session_info_update",
+           "_meta" => %{"opencode/compaction" => %{"status" => "completed"}}
+         },
+         state
+       ),
+       do: compaction(state)
 
   # How full the session's context is, for the context meter.
   defp update(%{"sessionUpdate" => "usage_update", "used" => used} = u, state)
@@ -1874,6 +2320,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         |> running_search(id, call)
         |> running_file(id, call)
         |> running_tool(id, call)
+        |> running_web(id, call)
     end
   end
 
@@ -1952,10 +2399,29 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp running_tool(state, _id, _call), do: state
 
+  # A web call announced before its input (OpenCode's) says what it looked for once
+  # it runs.
+  defp running_web(state, id, call) do
+    with %{kind: :web, id: item_id} = item <- state.items[id],
+         true <- item["patterns"] in [nil, []],
+         %{"patterns" => [_ | _]} = fields <- web_fields(call) do
+      commit(state, fn stream ->
+        [Orchestration.upsert(stream, "turn-item", item_id, &Map.merge(&1, fields))]
+      end)
+
+      %{state | items: Map.put(state.items, id, Map.merge(item, fields))}
+    else
+      _ -> state
+    end
+  end
+
   # --- provider subagents -----------------------------------------------------------
 
   @uuid "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
   @child_session [
+    # OpenCode 2's session ids, in its subagent's answer, background start or failure.
+    ~r/<subagent sessionID="(ses_[A-Za-z0-9]+)"/,
+    ~r/\(sessionID:\s*(ses_[A-Za-z0-9]+)\)/,
     ~r/(?:^|\n)\s*Agent ID:\s*(#{@uuid})\b/i,
     ~r/(?:^|\n)\s*subagent_id:\s*(#{@uuid})\b/i,
     ~r/===\s*Task\s+(#{@uuid})\s*===/i
@@ -1975,15 +2441,22 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   # Cursor's and OpenCode's `task` tool runs a subagent to its end inside the tool
-  # call: cursor-acp names the call after the SDK's tool, and OpenCode's input names
+  # call: cursor-acp names the call after the SDK's tool, and OpenCode 1's input names
   # the subagent it picked.
   defp subagent_call?(call, %{turn: %{ids: %{driver: driver}}}) do
     input = call["rawInput"] || %{}
 
-    HalC2.Acp.driver(driver) in ["cursor", "opencode"] and
-      (String.downcase(call["title"] || "") == "task" or
-         (is_binary(input["subagent_type"]) and input["subagent_type"] != ""))
+    title = String.downcase(call["title"] || "")
+
+    case HalC2.Acp.driver(driver) do
+      # OpenCode 2's tool is `subagent`, its input naming the agent it picked.
+      "opencode" when title == "subagent" -> true
+      d when d in ["cursor", "opencode"] -> title == "task" or present?(input["subagent_type"])
+      _ -> false
+    end
   end
+
+  defp present?(value), do: is_binary(value) and value != ""
 
   # Cursor's `createPlan` tool hands the user a plan (cursor-acp names the call after
   # the SDK's tool and repeats its input when it ends). It is a proposed plan once
@@ -2008,12 +2481,171 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp plan_call(state, _id, _call), do: state
 
+  # Grok names a tool "Tool" and reports a command's end in its own result; the call
+  # is read as the other agents' are, with a name and a status.
+  defp grok_call(call, %{turn: %{ids: %{driver: driver}}}) do
+    if HalC2.Acp.driver(driver) == "grok",
+      do: call |> grok_title() |> grok_status(),
+      else: call
+  end
+
+  defp grok_call(call, _state), do: call
+
+  # What the call is about names it, in this order: its description (a monitor's
+  # reads "Monitor: ..."), what kind of call it is, and its command cut to 80
+  # characters.
+  defp grok_title(%{"title" => title} = call) when title in [nil, ""] or is_binary(title) do
+    if String.downcase(String.trim(title || "")) in ["", "tool", "tool call", "terminal"] do
+      input = if is_map(call["rawInput"]), do: call["rawInput"], else: %{}
+      description = non_empty(input["description"], nil)
+      variant = input["variant"] |> to_string() |> String.downcase()
+
+      command =
+        non_empty(input["command"], nil) || non_empty(get_in(call, ["rawOutput", "command"]), nil)
+
+      name =
+        cond do
+          description && variant == "monitor" &&
+              not String.starts_with?(String.downcase(description), "monitor") ->
+            "Monitor: " <> description
+
+          description ->
+            description
+
+          variant == "monitor" ->
+            "Monitor"
+
+          variant in ["task", "cursortask", "spawn_subagent"] ->
+            "Task"
+
+          variant in ["taskoutput", "task_output"] ->
+            "Task output"
+
+          variant != "" ->
+            variant
+
+          is_binary(command) ->
+            if utf16_length(command) > 80, do: cut_utf16(command, 77) <> "...", else: command
+
+          true ->
+            nil
+        end
+
+      if name, do: Map.put(call, "title", name), else: call
+    else
+      call
+    end
+  end
+
+  defp grok_title(call), do: call
+
+  defp utf16_length(text),
+    do: text |> String.to_charlist() |> Enum.reduce(0, &(&2 + if(&1 > 0xFFFF, do: 2, else: 1)))
+
+  # The first `units` UTF-16 code units of `text`, never half a character or half an
+  # emoji sequence.
+  defp cut_utf16(text, units) do
+    {kept, _} =
+      text
+      |> String.graphemes()
+      |> Enum.reduce_while({[], 0}, fn grapheme, {kept, used} ->
+        width = utf16_length(grapheme)
+
+        if used + width > units,
+          do: {:halt, {kept, used}},
+          else: {:cont, {[grapheme | kept], used + width}}
+      end)
+
+    kept |> Enum.reverse() |> Enum.join()
+  end
+
+  # A command's exit code decides how it ended; one that exited cleanly and has said
+  # nothing yet is still going.
+  defp grok_status(%{"rawOutput" => %{"type" => "Bash"} = output} = call) do
+    code =
+      Enum.find_value(["exit_code", "exitCode", "code"], fn key ->
+        if is_integer(output[key]), do: output[key]
+      end)
+
+    text = String.trim(content_text(call["content"]) || raw_output(output) || "")
+
+    cond do
+      code == nil ->
+        call
+
+      code != 0 ->
+        Map.put(call, "status", "failed")
+
+      text == "" and call["status"] not in ["completed", "failed"] ->
+        Map.put(call, "status", "in_progress")
+
+      true ->
+        Map.put(call, "status", "completed")
+    end
+  end
+
+  defp grok_status(%{"status" => "completed", "kind" => "execute"} = call) do
+    text = content_text(call["content"]) || ""
+
+    if text =~ ~r/Exit Code:\s*-?(?!0\b)\d+/i,
+      do: Map.put(call, "status", "failed"),
+      else: call
+  end
+
+  defp grok_status(call), do: call
+
+  # A write to the plan file of a Grok session shows as the thread's plan while Grok is
+  # still in plan mode (`HalC2.Acp.GrokPlan`).
+  defp plan_file(%{turn: %{ids: %{driver: driver}}} = state, call) do
+    markdown =
+      if HalC2.Acp.driver(driver) == "grok",
+        do: HalC2.Acp.GrokPlan.markdown(call, Map.get(state, :plan_prefixes, []))
+
+    if markdown in [nil, ""] do
+      state
+    else
+      file = plan_file_native(state)
+      state = state |> flush() |> ensure_item(file, :plan) |> finish_plan(file, markdown)
+
+      %{state | items: Map.update!(state.items, file, &Map.put(&1, :markdown, markdown))}
+    end
+  end
+
+  defp plan_file(state, _call), do: state
+
+  # One plan item per run: a later plan-mode turn must not rewrite the earlier plan.
+  defp plan_file_native(state), do: "plan:grok-file:#{state.turn.ids.run}"
+
   # The subagent's own session streams under another session id: its answer goes to
   # its child thread. Updates for a session no subagent has named yet wait for it.
   defp child_session?(session, state),
     do:
       is_binary(session) and state.subagents != %{} and state.session_id != nil and
         session != state.session_id
+
+  # OpenCode 2 reports a child session in its own notification once the client asks
+  # for them (`opencode/child-session-updates`): the child's updates, and how its run
+  # ended. That end is the only word of a background child that fails: it never
+  # reports back to its parent (upstream pingdotgg/t3code#21979), so every call
+  # attached to the child ends with it, a steer that joined its run included. A
+  # grandchild's updates are its parent subagent's work, not a call the MC names.
+  defp opencode_child(%{"type" => "update", "update" => %{} = update} = params, state) do
+    session = params["childSessionId"]
+
+    if not state.replaying and params["parentSessionId"] == state.session_id and
+         child_session?(session, state),
+       do: child_update(%{"sessionId" => session, "update" => update}, state),
+       else: state
+  end
+
+  defp opencode_child(
+         %{"type" => "status", "childSessionId" => session, "status" => status},
+         state
+       )
+       when is_binary(session) and status in ["completed", "failed", "interrupted"],
+       do: end_task(state, session, status)
+
+  defp opencode_child(_params, state), do: state
 
   defp child_update(%{"sessionId" => session, "update" => update}, state) do
     case Enum.find(state.subagents, fn {_id, entry} -> entry.session == session end) do
@@ -2038,6 +2670,13 @@ defmodule HalC2.Acp.ThreadRuntime do
   # Kimi Code creates its Agent call before its input has streamed in, so its subagent
   # starts unnamed and is named once the input is whole. The subagent's work and its
   # end are in the session's records (`HalC2.Acp.Kimi`), read while it runs.
+  # A Grok subagent task with no description is named after the tool ("Task").
+  defp grok_task_title(%{turn: %{ids: %{driver: driver}}}, call) do
+    if HalC2.Acp.driver(driver) == "grok", do: non_empty(call["title"], nil)
+  end
+
+  defp grok_task_title(_state, _call), do: nil
+
   defp subagent_call(%{kimi: true} = state, id, call) do
     state = flush(state)
     input = call["rawInput"] || %{}
@@ -2095,20 +2734,37 @@ defmodule HalC2.Acp.ThreadRuntime do
     output = content_text(call["content"]) || raw_output(call["rawOutput"])
     input = call["rawInput"] || %{}
 
-    entry =
-      state.subagents[id] ||
-        %{
-          sub:
-            NativeSubagent.start(state.turn.ids, id, %{
-              "prompt" => input["prompt"],
-              "title" => input["description"],
-              "model" => input["model"]
-            }),
-          session: nil,
-          done: false
-        }
+    prompt = if is_binary(input["prompt"]), do: input["prompt"]
 
-    fresh = entry.session == nil && child_session(output)
+    entry =
+      case state.subagents[id] do
+        nil ->
+          %{
+            sub:
+              NativeSubagent.start(state.turn.ids, id, %{
+                "prompt" => prompt,
+                "title" => input["description"] || grok_task_title(state, call),
+                # A subagent the call names no model for ran on the session's own.
+                "model" => input["model"] || state.model
+              }),
+            session: nil,
+            done: false,
+            named: prompt != nil
+          }
+
+        # OpenCode 2 opens its call before its input has streamed in.
+        %{named: false} = entry when prompt != nil ->
+          %{
+            entry
+            | sub: NativeSubagent.prompt(entry.sub, prompt, input["description"]),
+              named: true
+          }
+
+        entry ->
+          entry
+      end
+
+    fresh = entry.session == nil && (reported_session(call["rawOutput"]) || child_session(output))
     entry = if fresh, do: %{entry | session: fresh}, else: entry
 
     {waiting, orphans} =
@@ -2123,10 +2779,25 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     entry = state.subagents[id]
 
-    # A background spawn's acknowledgement ends the tool call, not the subagent.
+    # A background spawn's acknowledgement ends the tool call, not the subagent. So
+    # does a completed call that joins the run of a subagent still working, a steer:
+    # OpenCode sends one report for both. A failed or stopped steer ends with its own
+    # error or interruption.
+    joined =
+      Enum.any?(state.subagents, fn {other, e} ->
+        other != id and not e.done and entry.session != nil and e.session == entry.session
+      end)
+
     cond do
-      call["status"] in ["completed", "failed"] and spawn_ack?(output) ->
+      call["status"] in ["completed", "failed"] and
+          ((call["status"] == "completed" and joined) or spawn_ack?(output)) ->
         %{state | subagents: Map.put(state.subagents, id, Map.put(entry, :background, true))}
+
+      # A task the user's stop cut off was stopped, though OpenCode 1 reports it failed
+      # with the stop as its error.
+      call["status"] in ["completed", "failed"] and not entry.done and stopped?(state, call) ->
+        sub = NativeSubagent.finish(entry.sub, "interrupted", nil)
+        %{state | subagents: Map.put(state.subagents, id, %{entry | sub: sub, done: true})}
 
       call["status"] in ["completed", "failed"] and not entry.done ->
         status = if call["status"] == "failed", do: "failed", else: "completed"
@@ -2346,8 +3017,54 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp subagent_ended(state, %{"content" => %{"text" => text}}) do
     [_, session, rest] = Regex.run(~r/Background subagent\s+["']?(#{@uuid})["']?(.*)/is, text)
-    status = if rest =~ ~r/\bfail/i, do: "failed", else: "completed"
+
+    # Only the outcome sentence after the id says how it ended: the quoted
+    # name ("fix failed tests", "handle cancel errors"), the parenthesised
+    # type, and any result text after that sentence may all carry failure
+    # words of their own.
+    outcome =
+      rest
+      |> notice_sentence()
+      |> String.split(".", parts: 2)
+      |> hd()
+
+    status =
+      if outcome =~ ~r/\b(fail|crash|cancel|interrupt|error|timed?\s*out)/i,
+        do: "failed",
+        else: "completed"
+
     end_task(state, session, status)
+  end
+
+  # What follows the notice's id with its leading parenthesised and quoted
+  # parts (the subagent's name, its type) stripped off. A parenthesised part
+  # may hold quoted text and parentheses of its own: `("handle (cancel) errors")`.
+  defp notice_sentence(rest) do
+    stripped =
+      Regex.replace(
+        ~r/^\s*(?:(?<group>\((?:"[^"]*"|'[^']*'|[^()"']|(?&group))*\))|"[^"]*"|'[^']*')/s,
+        rest,
+        ""
+      )
+
+    if stripped == rest, do: rest, else: notice_sentence(stripped)
+  end
+
+  # How a background task Grok reports ended is shown: its reported status
+  # when it gives one, else its exit code.
+  defp task_end_status(status, _exit) when status in ["completed", "success"], do: "completed"
+  defp task_end_status(status, _exit) when status in ["failed", "error"], do: "failed"
+  defp task_end_status(status, _exit) when status in ["killed", "cancelled"], do: "cancelled"
+  defp task_end_status(_status, 0), do: "completed"
+  defp task_end_status(_status, exit) when is_integer(exit), do: "failed"
+  defp task_end_status(_status, _exit), do: "completed"
+
+  defp task_exit(snapshot, update) do
+    Enum.find_value([snapshot, update], fn source ->
+      Enum.find_value(["exit_code", "exitCode", "exit"], fn key ->
+        if is_integer(source[key]), do: source[key]
+      end)
+    end)
   end
 
   # Ends the background task or subagent Grok knows as `task`: a subagent by its
@@ -2356,16 +3073,25 @@ defmodule HalC2.Acp.ThreadRuntime do
   # may be the last thing a delegated task of this thread waited on: checked as a run's
   # end is, retried while a thread it reads is busy (`Delegation.report/5`).
   defp end_task(state, task, status) do
-    subagent =
-      Enum.find(state.subagents, fn {id, e} ->
-        not e.done and (id == task or e.session == task)
-      end)
+    # A steer joins the run of the subagent it names, and one report ends them all
+    # with what the subagent said.
+    running =
+      for {id, e} <- state.subagents, not e.done, id == task or e.session == task, do: {id, e}
+
+    said = Enum.find_value(running, fn {_, e} -> NativeSubagent.said(e.sub) end)
 
     ended =
       cond do
-        Map.has_key?(state.tasks, task) -> end_tool_task(state, task, status)
-        subagent -> end_subagent(state, elem(subagent, 0), status)
-        true -> state
+        Map.has_key?(state.tasks, task) ->
+          end_tool_task(state, task, status)
+
+        running != [] ->
+          Enum.reduce(running, state, fn {id, _}, state ->
+            end_subagent(state, id, status, said)
+          end)
+
+        true ->
+          state
       end
 
     if ended != state and ended.turn == nil do
@@ -2377,9 +3103,9 @@ defmodule HalC2.Acp.ThreadRuntime do
     ended
   end
 
-  defp end_subagent(state, id, status) do
+  defp end_subagent(state, id, status, result \\ nil) do
     entry = state.subagents[id]
-    sub = NativeSubagent.finish(entry.sub, status, nil)
+    sub = NativeSubagent.finish(entry.sub, status, result)
     %{state | subagents: Map.put(state.subagents, id, %{entry | sub: sub, done: true})}
   end
 
@@ -2441,6 +3167,19 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # OpenCode 2 names a subagent's session on its call's end (`metadata.sessionID`).
+  defp reported_session(%{"metadata" => %{"sessionID" => session}}) when is_binary(session),
+    do: session
+
+  defp reported_session(_raw), do: nil
+
+  # OpenCode asks for its child sessions' own reports (`opencode_child/2`).
+  defp opencode_capabilities(instance) do
+    if HalC2.Acp.driver(instance) == "opencode",
+      do: %{"_meta" => %{"opencode/child-session-updates" => true}},
+      else: %{}
+  end
+
   defp child_session(nil), do: nil
 
   defp child_session(output) do
@@ -2455,14 +3194,21 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp spawn_ack?(nil), do: false
 
   defp spawn_ack?(output) do
+    # OpenCode 2: "The subagent is working in the background (sessionID: ses_…)".
     output =~ ~r/subagent started in background/i or
+      output =~ ~r/subagent is working in the background \(sessionID:/i or
       (output =~ ~r/subagent_id:\s*#{@uuid}/i and output =~ ~r/get_command_or_subagent_output/i)
   end
 
   defp subagent_result(nil), do: nil
 
+  # OpenCode 2 wraps a subagent's answer: `<subagent sessionID="…" state="…">…</subagent>`.
   defp subagent_result(output) do
     output
+    |> String.replace(
+      ~r/\A\s*<subagent sessionID="[^"]*"[^>]*>\n?(.*?)\n?<\/subagent>\s*\z/s,
+      "\\1"
+    )
     |> String.replace(~r/(?:^|\n)\s*(?:Agent ID|subagent_id):\s*#{@uuid}[^\n]*(?:\n|$)/i, "\n")
     |> String.trim()
     |> then(&if(&1 == "", do: nil, else: &1))
@@ -2658,6 +3404,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp tool_kind(call) do
     input = call["rawInput"] || %{}
+    name = call["title"]
     path = get_in(call, ["locations", Access.at(0), "path"])
 
     case call["kind"] do
@@ -2676,11 +3423,25 @@ defmodule HalC2.Acp.ThreadRuntime do
         {:search, search_fields(call)}
 
       "fetch" ->
-        {:web, %{"patterns" => Enum.filter([input["url"], input["query"]], &is_binary/1)}}
+        {:web, web_fields(call)}
+
+      # OpenCode announces its web search and language-server tools by name, as
+      # `other`.
+      _ when name in ["websearch", "codesearch"] ->
+        {:web, web_fields(call)}
+
+      _ when name == "lsp" ->
+        {:search, file_search(input["query"] || input["operation"] || path, path)}
 
       _ ->
         {:tool, %{"toolName" => call["title"] || call["kind"] || "tool", "input" => input}}
     end
+  end
+
+  # What a web call looked for, from whatever the call says so far.
+  defp web_fields(call) do
+    input = call["rawInput"] || %{}
+    %{"patterns" => Enum.filter([input["url"], input["query"]], &is_binary/1)}
   end
 
   # What a search or read looked for, from whatever the call says so far.
@@ -2704,16 +3465,25 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp finish_tool(state, id, call) do
     %{kind: kind} = state.items[id]
 
+    # OpenCode reports a shell command's exit in its metadata, and a non-zero one as
+    # completed like any other.
+    exit_code = kind == :command && reported_exit(call["rawOutput"])
+
     status =
       cond do
+        # A tool the user's stop cut off was stopped: OpenCode 1 rewrites it as an
+        # error, and agents report a stopped command done like any other.
+        stopped?(state, call) -> "interrupted"
         call["status"] == "failed" -> "failed"
-        # A command the user's stop cut off was stopped, though its agent reports it
-        # done like any other.
         kind == :command and state.interrupted -> "interrupted"
+        is_integer(exit_code) and exit_code != 0 -> "failed"
         true -> "completed"
       end
 
-    output = content_text(call["content"]) || raw_output(call["rawOutput"])
+    # The stop's error ("Tool execution aborted") is no output: what ran so far stays.
+    output =
+      unless stopped?(state, call),
+        do: content_text(call["content"]) || raw_output(call["rawOutput"])
 
     # Antigravity's native command fields and local image previews, under
     # whichever names the call used.
@@ -2726,7 +3496,7 @@ defmodule HalC2.Acp.ThreadRuntime do
       case kind do
         :command ->
           entity
-          |> Map.put("output", native[:output] || output || "")
+          |> Map.put("output", native[:output] || output || entity["output"] || "")
           |> then(fn entity ->
             cond do
               native[:command] ->
@@ -2740,19 +3510,19 @@ defmodule HalC2.Acp.ThreadRuntime do
             end
           end)
           |> then(&if(native[:cwd], do: Map.put(&1, "cwd", native.cwd), else: &1))
-          |> then(
-            &if(is_integer(native[:exit_code]),
-              do: Map.put(&1, "exitCode", native.exit_code),
-              else: &1
-            )
-          )
+          |> then(fn entity ->
+            case native[:exit_code] || exit_code do
+              code when is_integer(code) -> Map.put(entity, "exitCode", code)
+              _ -> entity
+            end
+          end)
 
         :file ->
-          Map.put(entity, "diffStr", output || "")
+          Map.put(entity, "diffStr", output || entity["diffStr"] || "")
 
         :tool ->
           entity
-          |> Map.put("output", native[:output] || output || "")
+          |> Map.put("output", native[:output] || output || entity["output"] || "")
           |> then(&if(call["rawInput"], do: Map.put(&1, "input", call["rawInput"]), else: &1))
           |> then(
             &if(native[:image_path], do: Map.put(&1, "imagePath", native.image_path), else: &1)
@@ -2761,6 +3531,12 @@ defmodule HalC2.Acp.ThreadRuntime do
         # What the call named when it was announced stays; the end fills in the rest.
         :search ->
           Map.merge(search_fields(call), entity)
+
+        # OpenCode announces a web call before its input.
+        :web ->
+          if entity["patterns"] in [nil, []],
+            do: Map.merge(entity, web_fields(call)),
+            else: entity
 
         _ ->
           entity
@@ -2789,6 +3565,11 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp content_text(_), do: nil
+
+  defp stopped?(state, call), do: state.interrupted and call["status"] == "failed"
+
+  defp reported_exit(%{"metadata" => %{"exit" => code}}) when is_integer(code), do: code
+  defp reported_exit(_), do: nil
 
   defp raw_output(%{"output" => output}) when is_binary(output), do: output
 
@@ -2897,15 +3678,23 @@ defmodule HalC2.Acp.ThreadRuntime do
     options = params["options"] || []
     call = params["toolCall"] || %{}
 
-    kind =
-      case call["kind"] do
-        "execute" -> "command"
-        k when k in ["edit", "delete", "move"] -> "file-change"
-        k when k in ["read", "search"] -> "file-read"
-        _ -> "permission"
-      end
+    # A subagent's session keeps its own limit of not delegating further:
+    # its ask to start a subagent is refused where it stands, never raised
+    # to the user (its other asks follow the thread's access mode as usual).
+    if HalC2.Acp.driver(state.agent) == "opencode" and is_binary(params["sessionId"]) and
+         params["sessionId"] != state.session_id and
+         String.downcase(call["name"] || call["title"] || "") == "task" do
+      Connection.respond(conn, id, {:ok, %{"outcome" => outcome(options, "decline")}})
+      state
+    else
+      permission_ask(conn, id, params, state, options, call)
+    end
+  end
 
-    prompt = command_text(call["rawInput"] || %{}, call["title"])
+  defp permission_ask(conn, id, params, state, options, call) do
+    kind = request_kind(HalC2.Acp.driver(state.agent), call)
+
+    prompt = permission_prompt(call)
 
     if allowed?(state, kind, call, prompt) do
       outcome =
@@ -2927,9 +3716,55 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # The approval an ACP permission asks for. OpenCode 1 names its permission in the
+  # title, OpenCode 2 in `name`: work outside the project (`external_directory`) is a
+  # read, and the rest it files under no ACP kind (web fetches, subagents, skills) is
+  # approved as a command, as T3 Code's OpenCode adapter did.
+  defp request_kind(driver, call) do
+    case {call["kind"], driver} do
+      {"execute", _} -> "command"
+      {k, _} when k in ["edit", "delete", "move"] -> "file-change"
+      {k, _} when k in ["read", "search"] -> "file-read"
+      {_, "opencode"} -> if external?(call), do: "file-read", else: "command"
+      _ -> "permission"
+    end
+  end
+
+  defp external?(call), do: "external_directory" in [call["name"], call["title"]]
+
+  # What an approval says: the command it runs, or — an OpenCode 1 permission,
+  # which names the permission and the patterns it covers — the permission's
+  # name with each pattern on its own line.
+  defp permission_prompt(call) do
+    input = call["rawInput"] || %{}
+
+    patterns =
+      case input["patterns"] do
+        [_ | _] = patterns -> Enum.filter(patterns, &(is_binary(&1) and &1 != ""))
+        _ -> []
+      end
+
+    case patterns do
+      [] -> command_text(input, call["title"])
+      _ -> Enum.join([call["title"] || call["name"] || "permission" | patterns], "\n")
+    end
+  end
+
+  # OpenCode tools that only read, organise or ask: they never wait on an
+  # approval, in any access mode (work outside the project and `.env` reads
+  # still ask first, below).
+  @opencode_free_tools ~w(question glob grep lsp todowrite task skill)
+
+  defp free_tool?("opencode", call) do
+    name = call["name"] || call["title"]
+    is_binary(name) and String.downcase(name) in @opencode_free_tools
+  end
+
+  defp free_tool?(_driver, _call), do: false
+
   # Full access allows everything. OpenCode and Pi ask about every tool, so HAL-C2
   # applies the mode for them: reads go ahead (OpenCode keeps asking about .env
-  # files), edits go ahead in auto-accept-edits, and what the user allowed for the
+  # files and anything outside the project), edits go ahead in auto-accept-edits, and what the user allowed for the
   # session goes ahead again. Pi has no auto; its old auto threads ask as approval
   # required does. Antigravity runs full access as its own mode (`yolo`), so what it
   # still asks about there is its own question for the user.
@@ -2941,10 +3776,29 @@ defmodule HalC2.Acp.ThreadRuntime do
       mode == "full-access" and driver != "antigravity" -> true
       MapSet.member?(state.allowed, {kind, prompt}) -> true
       driver not in @gated -> false
+      driver == "opencode" and outside?(state.turn.cwd, call) -> false
+      driver == "opencode" and env_file?(call) -> false
+      free_tool?(driver, call) -> true
       kind == "file-read" -> not (driver == "opencode" and env_file?(call))
       kind == "file-change" -> mode == "auto-accept-edits"
       true -> false
     end
+  end
+
+  # OpenCode 2 asks about work outside the project as the tool doing it (a read, an
+  # edit), with the paths it reaches as locations.
+  defp outside?(cwd, call) do
+    root = Path.expand(cwd)
+
+    external?(call) or
+      Enum.any?(call["locations"] || [], fn
+        %{"path" => path} when is_binary(path) ->
+          path = Path.expand(path, root)
+          path != root and not String.starts_with?(path, root <> "/")
+
+        _ ->
+          false
+      end)
   end
 
   # `.env` and `.env.local`, not `.env.example` or `.env.sample`.
@@ -3031,29 +3885,36 @@ defmodule HalC2.Acp.ThreadRuntime do
     end)
   end
 
-  # `/compact` alone in an Antigravity thread compacts its conversation; the
-  # work log says so once, when the turn completes.
+  # `/compact` alone in an Antigravity, OpenCode 1 or Grok thread compacts its
+  # conversation, and none of them says so; the work log does, when the turn completes.
   defp compacted(state, "completed") do
     turn = state.turn
 
-    if turn && Antigravity.antigravity?(turn.ids.driver) &&
+    if turn && Entities.driver(turn.ids) in ["antigravity", "opencode", "grok"] &&
          String.trim(turn.text || "") == "/compact" &&
-         Map.get(turn, :attachments, []) == [] do
-      native = "compaction:#{turn.ids.run}"
-
-      state
-      |> flush()
-      |> ensure_item(native, :compaction, %{
-        "driver" => Entities.driver(turn.ids),
-        "title" => "Context compacted"
-      })
-      |> finish_item(native, "completed", & &1)
-    else
-      state
-    end
+         Map.get(turn, :attachments, []) == [],
+       do: compaction(state),
+       else: state
   end
 
   defp compacted(state, _status), do: state
+
+  # "Context compacted" in the work log, once a turn however often it happens.
+  defp compaction(state) do
+    native = "compaction:#{state.turn.ids.run}"
+
+    if Map.has_key?(state.items, native) do
+      state
+    else
+      state
+      |> flush()
+      |> ensure_item(native, :compaction, %{
+        "driver" => Entities.driver(state.turn.ids),
+        "title" => "Context compacted"
+      })
+      |> finish_item(native, "completed", & &1)
+    end
+  end
 
   defp end_turn(state, status, failure) do
     state = flush(state)
@@ -3083,12 +3944,27 @@ defmodule HalC2.Acp.ThreadRuntime do
       |> cancel_requests()
 
     finish(state, status, failure)
-    %{state | turn: nil, items: %{}, prompts: :gen_server.reqids_new(), answer: nil}
+
+    %{
+      state
+      | turn: nil,
+        items: %{},
+        prompts: :gen_server.reqids_new(),
+        answer: nil,
+        grok_prompt: nil,
+        grok_done:
+          if(state.grok_prompt,
+            do: Enum.take(state.grok_done ++ [state.grok_prompt], -128),
+            else: state.grok_done
+          )
+    }
   end
 
   @skill_mention ~r/(^|\s)\p{Sc}[a-zA-Z0-9]/u
 
   # The message, with where its files are; images inline when the agent takes them.
+  # Reads only this turn's own attachment files, already stored by the MC.
+  # sobelow_skip ["Traversal.FileModule"]
   defp acp_prompt(turn, capabilities, instructions) do
     attachments = Map.get(turn, :attachments, [])
     message = HalC2.Attachments.prompt_text(turn.text, attachments)
@@ -3114,16 +3990,56 @@ defmodule HalC2.Acp.ThreadRuntime do
           {:error, _} = error -> error
         end
 
-      get_in(capabilities || %{}, ["promptCapabilities", "image"]) == true ->
-        {:ok,
-         text ++
-           for(
-             {mime, data} <- HalC2.Attachments.native_images(attachments),
-             do: %{"type" => "image", "mimeType" => mime, "data" => data}
-           )}
-
       true ->
-        {:ok, text}
+        images =
+          if get_in(capabilities || %{}, ["promptCapabilities", "image"]) == true do
+            for {mime, data} <- HalC2.Attachments.native_images(attachments),
+                do: %{"type" => "image", "mimeType" => mime, "data" => data}
+          else
+            []
+          end
+
+        # Plain text rides as embedded context for OpenCode, whose model APIs
+        # refuse other text files (a page, a sheet, a stylesheet): those stay
+        # the path the prompt names. So does a plain file past the bytes a
+        # thread keeps of text (`CommandTail.kept/0`), which the agent can
+        # still read selectively by path instead of taking it all into its
+        # context at once. Other agents keep path-only text.
+        embedded =
+          if HalC2.Acp.driver(Entities.instance(turn.ids)) == "opencode" and
+               get_in(capabilities || %{}, ["promptCapabilities", "embeddedContext"]) == true do
+            for %{mime_type: "text/plain", path: path} <- attachments,
+                is_binary(path),
+                {:ok, body} <- [File.read(path)],
+                byte_size(body) <= HalC2.Orchestration.CommandTail.kept(),
+                String.valid?(body) do
+              %{
+                "type" => "resource",
+                "resource" => %{
+                  "uri" => "file://" <> path,
+                  "mimeType" => "text/plain",
+                  "text" => body
+                }
+              }
+            end
+          else
+            []
+          end
+
+        {:ok, text ++ images ++ embedded}
+    end
+  end
+
+  defp grok?(state), do: HalC2.Acp.driver(state.agent) == "grok"
+
+  # Grok reports at start-up that it takes no images, but it does.
+  defp prompt_capabilities(state) do
+    if grok?(state) do
+      capabilities = state.capabilities || %{}
+      prompt = Map.put(capabilities["promptCapabilities"] || %{}, "image", true)
+      Map.put(capabilities, "promptCapabilities", prompt)
+    else
+      state.capabilities
     end
   end
 
@@ -3131,7 +4047,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   # connection's mailbox before this returns, and a steer or a cancel this process sends
   # the same connection later lands behind it, so the agent reads the prompt first.
   defp prompt(state, turn) do
-    state = %{state | leaf: leaf(state)} |> watch_wire()
+    state = %{titled(state) | leaf: leaf(state)} |> watch_wire()
     current = instruction_state(state, turn)
     slash? = String.starts_with?(String.trim_leading(turn.text || ""), "/")
 
@@ -3146,9 +4062,25 @@ defmodule HalC2.Acp.ThreadRuntime do
         do: text <> HalC2.Mcp.workers_only_note(),
         else: text
 
-    case acp_prompt(turn, state.capabilities, text) do
+    case acp_prompt(turn, prompt_capabilities(state), text) do
       {:ok, prompt} ->
-        params = %{"sessionId" => state.session_id, "prompt" => prompt}
+        # Grok's prompt carries an id of its own, which its completion notice
+        # names when the prompt request itself is never answered. The
+        # previous turn's id is already retired: every turn ends through
+        # `end_turn/3`, which moves it to `grok_done`.
+        {params, state} =
+          if grok?(state) do
+            id = "hal-c2-xai-prompt-#{state.grok_seq + 1}"
+
+            {%{
+               "sessionId" => state.session_id,
+               "prompt" => prompt,
+               "_meta" => %{"promptId" => id, "requestId" => id}
+             }, %{state | grok_prompt: id, grok_seq: state.grok_seq + 1}}
+          else
+            {%{"sessionId" => state.session_id, "prompt" => prompt}, state}
+          end
+
         prompts = Connection.request(state.conn, "session/prompt", params, :prompt, state.prompts)
 
         %{
@@ -3254,8 +4186,9 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
-  # The labels chosen for each question, by question text; free text is "Other"
-  # with the text as a note.
+  # The labels chosen for each question, by question text, in the order Grok asked;
+  # free text is "Other" with the text as a note. The chosen option's preview goes
+  # back too, for a question that takes a single answer.
   defp xai_answers(params, answers) do
     answered =
       for question <- params["questions"] || [],
@@ -3264,21 +4197,40 @@ defmodule HalC2.Acp.ThreadRuntime do
               answers[question["id"] || question["question"]] || answers[question["question"]]
             ),
           values != [] do
-        labels = for option <- question["options"] || [], do: option["label"]
-        {chosen, notes} = Enum.split_with(values, &(&1 in labels))
-        {question["question"], if(chosen == [], do: ["Other"], else: chosen), notes}
+        options = Map.new(question["options"] || [], &{&1["label"], &1})
+        {chosen, notes} = Enum.split_with(values, &Map.has_key?(options, &1))
+
+        preview =
+          if question["multiSelect"] != true,
+            do:
+              Enum.find_value(chosen, fn label ->
+                case String.trim(options[label]["preview"] || "") do
+                  "" -> nil
+                  text -> text
+                end
+              end)
+
+        annotation =
+          %{}
+          |> then(&if(preview, do: Map.put(&1, "preview", preview), else: &1))
+          |> then(&if(notes != [], do: Map.put(&1, "notes", Enum.join(notes, "\n")), else: &1))
+
+        {question["question"], if(chosen == [], do: ["Other"], else: chosen), annotation}
       end
 
     annotations =
-      for {text, _chosen, [_ | _] = notes} <- answered,
-          into: %{},
-          do: {text, %{"notes" => Enum.join(notes, "\n")}}
+      for {text, _chosen, annotation} <- answered, annotation != %{}, do: {text, annotation}
 
     %{
       "outcome" => "accepted",
-      "answers" => Map.new(answered, fn {text, chosen, _} -> {text, chosen} end)
+      "answers" => HalC2.Acp.Ordered.new(for {text, chosen, _} <- answered, do: {text, chosen})
     }
-    |> then(&if(annotations == %{}, do: &1, else: Map.put(&1, "annotations", annotations)))
+    |> then(
+      &if(annotations == [],
+        do: &1,
+        else: Map.put(&1, "annotations", HalC2.Acp.Ordered.new(annotations))
+      )
+    )
   end
 
   defp answer_values(values) when is_list(values),

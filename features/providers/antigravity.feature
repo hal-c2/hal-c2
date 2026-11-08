@@ -273,6 +273,7 @@ Feature: Antigravity
     Then the Account row does not say Antigravity has not reached Google while it starts
     And it says so only once 30 seconds pass after the start without a Google link
 
+  # Upstream #24652: sign-in that never reached Google says so instead of reporting an expiry.
   @backlog
   Scenario: A sign-in that never reached Google says so when it gives up
     Given the user started Google sign-in
@@ -982,12 +983,14 @@ Feature: Antigravity
       | Claude Opus 5.5  | Low     |
       | Gemini 3.8 Flash | High    |
 
+  # Upstream #26876: saved Antigravity 1.3.0 IDs such as gemini-3.8-flash-low map to the model family plus its thinking level.
   @backlog @priority-high
   Scenario: A thread saved with a model and level in one id keeps working
     Given an Antigravity thread was saved with the model "gemini-3.8-flash-low"
     When the thread sends its next message
     Then the turn runs on "Gemini 3.8 Flash" with the thinking level "Low"
 
+  # Upstream #26876: the manifest marks Antigravity 1.4.1 as the recommended runtime, and the in-app install verifies it.
   # Upstream #28629: the managed runtime moved from 1.4.1 to 1.4.5; 1.4.2 to 1.4.5 wrote a stray
   # workflow skill into the project until its workflow tool was turned off.
   @backlog
@@ -996,6 +999,7 @@ Feature: Antigravity
     Then it installs version 1.4.5 and reports it as recommended
     And starting a session leaves nothing new in the project's git status
 
+  # Upstream #26876: Antigravity 1.3.0 and later call subagents with invoke_subagent, so their subagents show in the subagent bar.
   @backlog
   Scenario: Subagents from current Antigravity releases show as a subagent batch
     When Antigravity 1.4.5 starts subagents with its "invoke_subagent" tool
@@ -1091,6 +1095,7 @@ Feature: Antigravity
       | served it                            | completed from the moment it was served, without the error |
       | refused it as outside the workspace  | failed                                           |
 
+  # Upstream #26928: two Antigravity models listed under one name are labelled apart in the picker.
   @backlog @priority-low
   Scenario: Antigravity models that share a name are told apart in the picker
     Given Antigravity lists "gemini-3.8-flash" and "gemini-3.8-flash-demo" both as "Gemini 3.8 Flash"

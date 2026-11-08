@@ -67,7 +67,11 @@ defmodule HalC2.Application do
       {Registry, keys: :duplicate, name: HalC2.Traces.Registry},
       {Registry, keys: :unique, name: HalC2.Codex.Registry},
       {Registry, keys: :unique, name: HalC2.Claude.Registry},
+      # Owns the table of Claude's sign-in reads.
+      HalC2.Claude.AuthCache,
       {DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one},
+      # Terminals starting and storage cleanup removing a worktree take turns on its folder.
+      HalC2.WorkspaceLease,
       {Registry, keys: :unique, name: HalC2.Terminal.Registry},
       {DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one},
       HalC2.Terminal.Hub,

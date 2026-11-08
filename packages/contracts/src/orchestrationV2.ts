@@ -491,8 +491,13 @@ export const OrchestrationV2Run = Schema.Struct({
   activeAttemptId: Schema.NullOr(RunAttemptId),
   status: OrchestrationV2RunStatus,
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
-  /** Restart recovery holds the queue until the user explicitly resumes it. */
+  /**
+   * A held queued run waits for the user: restart recovery, a usage limit, a Stop, or a
+   * worktree that could not be set up holds it until they resume the queue or send.
+   */
   queueHeld: Schema.optional(Schema.Boolean),
+  /** A run that set up the thread's worktree as it started. */
+  workspacePreparation: Schema.optional(Schema.Struct({ type: Schema.String })),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -511,6 +516,8 @@ export const OrchestrationV2Run = Schema.Struct({
     }),
   ),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
+  /** A failed run's own failure text, as its provider gave it. */
+  failure: Schema.optional(Schema.String),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
@@ -673,6 +680,8 @@ export const OrchestrationV2PendingBackgroundTask = Schema.Struct({
   taskId: TrimmedNonEmptyString,
   description: Schema.optional(TrimmedNonEmptyString),
   taskType: Schema.optional(TrimmedNonEmptyString),
+  /** The agent marked this command or monitor as work it waits on, so it holds the thread Working. */
+  awaited: Schema.optional(Schema.Literal(true)),
 });
 export type OrchestrationV2PendingBackgroundTask = typeof OrchestrationV2PendingBackgroundTask.Type;
 
@@ -1209,6 +1218,13 @@ export const OrchestrationV2TurnItem = Schema.Union([
     appName: Schema.optional(Schema.String),
     /** Approval choices advertised by the provider (#8058). */
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    /** The provider's own reason for asking, when it says more than the prompt. */
+    reason: Schema.optional(Schema.String),
+    /**
+     * Why a Full access thread still asked: one of the provider's own safety checks
+     * no setting skips, or an ask rule in the user's provider permissions.
+     */
+    fullAccessOverride: Schema.optional(Schema.Literals(["provider_check", "ask_rule"])),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1221,6 +1237,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("run_interrupt_request"),
     message: Schema.String,
+    // Who asked for the stop, so its outcome can say so; absent on older items.
+    stoppedBy: Schema.optional(Schema.Literals(["user", "agent"])),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1560,6 +1578,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** True when the latest run was an automatic wake (the agent resuming on its own); omitted otherwise. */
+  latestRunAutomatic: Schema.optional(Schema.Boolean),
   activeRunId: Schema.NullOr(RunId),
   /** Start of the activity-owning run; request time while it is preparing. */
   activityRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -1573,10 +1593,18 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummary),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummary),
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtc),
+  // The latest message the user typed: not an agent's, a schedule's, a wake's or a
+  // delegated result, which share the user role. Absent from older MCs.
+  latestUserAuthoredMessageAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   hasActionableProposedPlan: Schema.Boolean,
-  // Normalized post-settlement background work for sidebar Waiting pills.
+  // Normalized post-settlement background work that holds the thread Working (sidebar
+  // Waiting pills): subagents, and commands or monitors the agent marked as awaited.
   // Empty when the latest root run is still active or no pending work remains.
   pendingBackgroundTasks: Schema.optional(Schema.Array(OrchestrationV2PendingBackgroundTask)).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  // All post-settlement background work still running, held or not (a dev server, say).
+  runningBackgroundTasks: Schema.optional(Schema.Array(OrchestrationV2PendingBackgroundTask)).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   // Distinct provider instances that have owned a root provider thread here,
@@ -1945,6 +1973,13 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     appName: Schema.optional(Schema.String),
     /** Approval choices advertised by the provider (#8058). */
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    /** The provider's own reason for asking, when it says more than the prompt. */
+    reason: Schema.optional(Schema.String),
+    /**
+     * Why a Full access thread still asked: one of the provider's own safety checks
+     * no setting skips, or an ask rule in the user's provider permissions.
+     */
+    fullAccessOverride: Schema.optional(Schema.Literals(["provider_check", "ask_rule"])),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -1957,6 +1992,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("run_interrupt_request"),
     message: Schema.String,
+    stoppedBy: Schema.optional(Schema.Literals(["user", "agent"])),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -2105,6 +2141,7 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummaryJson),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummaryJson),
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  latestUserAuthoredMessageAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
   archivedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -2597,6 +2634,10 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     runId: RunId,
     reason: Schema.optional(Schema.String),
+    /** A user's Stop holds the queue behind the run (the default); cleanup sends false. */
+    holdQueue: Schema.optional(Schema.Boolean),
+    // The user's Stop: also stops the subagents still working on what the thread delegated.
+    stopDelegated: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("queued-message.promote-to-steer"),
@@ -2609,6 +2650,13 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("queue.resume"),
     commandId: CommandId,
     threadId: ThreadId,
+  }),
+  /** Send a queued message now on a thread with no turn running, ahead of the rest of the queue. */
+  Schema.Struct({
+    type: Schema.Literal("queued-run.start"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
   }),
   Schema.Struct({
     type: Schema.Literal("queued-run.reorder"),
@@ -2851,6 +2899,18 @@ export const OrchestrationV2SubscribeShellInput = Schema.Struct({
   afterSequence: Schema.optionalKey(NonNegativeInt),
   /** Requests a marker between initial catch-up and live delivery. */
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Sent as `settledLimit` on the MC's shell `sub` frame: whenever an MC's rows come
+   * whole (the first subscribe, or a `reset`), they hold only the `settledLimit` newest
+   * settled threads of each of its projects (by `settledAt`) and the older ones that
+   * are pinned or snoozed. That MC's entry in the `shell` frame, or the `shell.rows`
+   * reset, then carries `settledLeftOut`: `{ [projectId]: count }` of the settled
+   * threads it did not send, as of that send. Later changes come as usual, a left-out
+   * thread's included: the count still holds such a thread, so a client subtracts one
+   * for each settled row of that project it later receives that the full send left out.
+   * Without it every row is sent.
+   */
+  settledLimit: Schema.optionalKey(PositiveInt),
 });
 export type OrchestrationV2SubscribeShellInput = typeof OrchestrationV2SubscribeShellInput.Type;
 

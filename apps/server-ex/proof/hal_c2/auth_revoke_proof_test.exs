@@ -16,14 +16,14 @@ defmodule HalC2.AuthRevokeProofTest do
       {:messages, HalC2.Web.Socket}
     ],
     covers: %{
-      "HalC2.Auth.issue_ticket/1" => ~w(issueInsert issueOk issueWithdraw issueWithdrawTaken),
-      "HalC2.Auth.take_ticket/1" => "take",
-      "HalC2.Auth.connected/1" => "connect",
+      "HalC2.Auth.issue_ticket/2" => ~w(issueInsert issueOk issueWithdraw issueWithdrawTaken),
+      "HalC2.Auth.take_ticket/2" => "take",
+      "HalC2.Auth.connected/2" => "connect",
       "HalC2.Auth.session_scopes/1" => ~w(readFull readNone),
       "HalC2.Auth.revoke_client/1" =>
         ~w(revokeStart revokeRows revokeRowsNone revokeTicket revokeTicketsDone revokeClose revokeDone),
       "HalC2.Auth.revoke_session/2" => "revokeRows",
-      "HalC2.Auth handle_cast {:connected, _, _}" => ~w(registerLive registerGone),
+      "HalC2.Auth handle_cast {:connected, _, _, _}" => ~w(registerLive registerGone),
       "HalC2.Auth handle_call {:revoke_client, _}" =>
         ~w(revokeStart revokeRows revokeRowsNone revokeTicket revokeTicketsDone revokeClose revokeDone),
       "HalC2.Web.Socket handle_info {:hal_c2_session_revoked, _}" => "socketCloses"
@@ -33,6 +33,10 @@ defmodule HalC2.AuthRevokeProofTest do
         "reads who a session was granted to; takes no part in tickets or revoking",
       "HalC2.Auth.device_name/1" =>
         "reads what a session's device is called; takes no part in tickets or revoking",
+      "HalC2.Auth.credential/1" =>
+        "splits an Authorization header into scheme and credential; reads no state",
+      "HalC2.Auth.client_report/1" =>
+        "reads the surface and version a socket's query reports; reads no state",
       "HalC2.Web.Socket handle_info _" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:hal_c2_stream, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:hal_c2_stream, {_, _}, _}" => @socket_traffic,
@@ -52,6 +56,7 @@ defmodule HalC2.AuthRevokeProofTest do
       "HalC2.Web.Socket handle_info {:hal_c2_slack, _, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:rpc_reply, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info :flush" => @socket_traffic,
+      "HalC2.Web.Socket handle_info {:release_progress, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:DOWN, _, :process, _, _}" => @socket_traffic,
       "HalC2.Auth.create_pairing_token/2" => @outside,
       "HalC2.Auth.mint_pairing_link/2" => @outside,

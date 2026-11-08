@@ -229,7 +229,7 @@ defmodule HalC2.TextGeneration.Prompts do
   from the thread's contents (`thread_context/1`). `linked` is what the links in
   the message point to, when they could be looked up.
   """
-  def thread_title(message, previous_title, linked, attachments) do
+  def thread_title(message, previous_title, linked, attachments, instructions \\ "") do
     head =
       if previous_title == nil do
         String.trim_trailing(@initial_title, "\n") <>
@@ -253,7 +253,15 @@ defmodule HalC2.TextGeneration.Prompts do
         lines -> "\n\nAttachment metadata:\n" <> limit_section(lines, 4_000)
       end
 
-    head <> linked <> attachments
+    head <> title_instructions(instructions) <> linked <> attachments
+  end
+
+  # The user's own rules for titles; with none the prompt is the one it always was.
+  defp title_instructions(text) do
+    case String.trim(text || "") do
+      "" -> ""
+      text -> "\n\nAdditional title instructions from the user (follow them):\n" <> text
+    end
   end
 
   @doc "Asks how to draw a chart, from `HalC2.Space.Visualize`'s page text and counts."
@@ -356,7 +364,11 @@ defmodule HalC2.TextGeneration.Prompts do
       for {message, index} <- Enum.with_index(messages),
           message["role"] not in ["system", "reasoning"],
           String.trim(message["text"] || "") != "" or (message["attachments"] || []) != [] do
-        text = String.trim(message["text"] || "")
+        text =
+          message["text"]
+          |> Kernel.||("")
+          |> HalC2.ComposerContext.plain_citations()
+          |> String.trim()
 
         names = Enum.map_join(message["attachments"] || [], ", ", & &1["name"])
 

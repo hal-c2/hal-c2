@@ -408,6 +408,13 @@ sidebar::Capabilities ShellStore::capabilities(const QString& environmentId) con
   return {};
 }
 
+bool ShellStore::acceptsFileAttachments(const QString& environmentId) const {
+  for (const Mc& mc : m_mcs) {
+    if (mc.environmentId == environmentId) return mc.capabilities.value(QLatin1String("fileAttachments")).isObject();
+  }
+  return true;
+}
+
 bool ShellStore::supports(const QString& environmentId, const QString& capability) const {
   for (const Mc& mc : m_mcs) {
     if (mc.environmentId == environmentId) return mc.capabilities.value(capability).toBool();

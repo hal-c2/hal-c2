@@ -46,6 +46,32 @@ Rectangle {
     // A tap on a stacked line comments on it, for a screen with no pointer
     // to show the line's own button (the phone's).
     property bool touchLines: false
+    // A line held down starts a comment range (-1: none): tapping another
+    // line of the same file and side comments on the range, tapping the
+    // marked line comments on it alone, and tapping a line of another file
+    // comments on that line alone. Every tap lets the mark go, and holding
+    // the marked line again drops it without a comment.
+    property string rangePath: ""
+    property string rangeSide: "new"
+    property int rangeLine: -1
+
+    // Drops the range mark. It names a line of the diff as shown, so it must
+    // not outlive a change of shown diff: the triggers below call this when
+    // the source, the model, the selection or the patch changes (a thread
+    // change clears the model and restores that thread's selection, so both
+    // of those fire for it too).
+    function clearRange() {
+        rangeLine = -1;
+        rangePath = "";
+    }
+    onSourceChanged: clearRange()
+    onModelChanged: clearRange()
+    // The selection shown, for dropping the mark when it changes; a source
+    // without one (a pull request's code) always reads 0.
+    readonly property int shownSelection: source?.selection ?? 0
+    onShownSelectionChanged: clearRange()
+    // Review comments waiting in the thread's draft, counted in the header.
+    readonly property int draftComments: canComment ? (Shell.state.composer?.reviewComments ?? []).length : 0
     // The branch is what is reviewed, against `source.comparedBase`.
     readonly property bool comparing: (source?.reviewing ?? false) && source.selection === -3
     // Whether the changed files are listed as a tree beside the diff.
@@ -57,6 +83,7 @@ Rectangle {
     Connections {
         target: root.model
         function onPatchChanged() {
+            root.clearRange();
             root.treeRevision++;
         }
         function onTreeChanged() {
@@ -173,6 +200,14 @@ Rectangle {
                 visible: root.status === "ready"
                 text: "−" + (root.model?.deletions ?? 0)
                 color: root.removed
+                font.pixelSize: Theme.type.meta.size
+                font.features: { "tnum": 1 }
+            }
+            Text {
+                objectName: "diffCommentCount"
+                visible: root.status === "ready" && root.draftComments > 0
+                text: root.draftComments === 1 ? qsTr("%n comment", "", root.draftComments) : qsTr("%n comments", "", root.draftComments)
+                color: root.muted
                 font.pixelSize: Theme.type.meta.size
                 font.features: { "tnum": 1 }
             }
@@ -388,6 +423,20 @@ Rectangle {
             visible: (root.source?.truncated ?? false) && root.status === "ready"
             text: qsTr("This preview exceeds the size limit. Changes shown are incomplete. Totals include all changes.")
             color: root.muted
+            font.pixelSize: Theme.type.meta.size
+            wrapMode: Text.Wrap
+        }
+
+        // Reading the diff again failed over one seen before, still shown.
+        Text {
+            objectName: "diffStale"
+            Layout.fillWidth: true
+            Layout.leftMargin: Theme.space.sm
+            Layout.rightMargin: Theme.space.sm
+            Layout.bottomMargin: Theme.space.sm
+            visible: root.canComment && root.status === "ready" && (root.source?.message ?? "").length > 0
+            text: qsTr("Review unavailable: %1 Showing the earlier diff; it may be out of date.").arg(root.source?.message ?? "")
+            color: root.removed
             font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
@@ -823,10 +872,22 @@ Rectangle {
         Rectangle {
             id: stackedRow
             readonly property var row: parent
+            readonly property string linePath: root.model !== null ? root.model.path(row.file) : ""
+            readonly property string lineSide: row.sign === "-" ? "old" : "new"
+            readonly property int lineNumber: row.sign === "-" ? row.oldLine : row.newLine
+            readonly property bool rangeMarked: root.rangeLine >= 0 && root.rangePath === linePath && root.rangeSide === lineSide && root.rangeLine === lineNumber
             objectName: "diffLine"
             implicitHeight: Math.max(Theme.icon.md + Theme.space.xxs, lineText.implicitHeight)
             height: implicitHeight
             color: root.tint(row.sign)
+
+            Rectangle {
+                objectName: "diffRangeMark"
+                visible: stackedRow.rangeMarked
+                width: Theme.space.xxs
+                height: parent.height
+                color: root.added
+            }
 
             LineText {
                 id: lineText
@@ -841,7 +902,33 @@ Rectangle {
             }
             TapHandler {
                 enabled: root.touchLines && root.canComment && stackedRow.row.sign !== "\\"
-                onTapped: commentPopup.ask(root.model.path(stackedRow.row.file), stackedRow.row.sign === "-" ? "old" : "new", stackedRow.row.sign === "-" ? stackedRow.row.oldLine : stackedRow.row.newLine)
+                longPressThreshold: 0.4
+                // No `tapped` follows a long press (TapHandler reports the
+                // hold instead), so the mark is just set or dropped here and
+                // the next tap is always a deliberate one.
+                onLongPressed: {
+                    // Holding the marked line again drops the mark.
+                    if (stackedRow.rangeMarked) {
+                        root.clearRange();
+                        return;
+                    }
+                    root.rangePath = stackedRow.linePath;
+                    root.rangeSide = stackedRow.lineSide;
+                    root.rangeLine = stackedRow.lineNumber;
+                }
+                onTapped: {
+                    if (root.rangeLine >= 0 && root.rangePath === stackedRow.linePath && root.rangeSide === stackedRow.lineSide) {
+                        const first = Math.min(root.rangeLine, stackedRow.lineNumber);
+                        const last = Math.max(root.rangeLine, stackedRow.lineNumber);
+                        root.clearRange();
+                        // A tap on the marked line itself has first === last:
+                        // a comment on that one line.
+                        commentPopup.ask(stackedRow.linePath, stackedRow.lineSide, first, last);
+                        return;
+                    }
+                    root.clearRange();
+                    commentPopup.ask(stackedRow.linePath, stackedRow.lineSide, stackedRow.lineNumber);
+                }
             }
             // The numbers and the sign stay put while the line scrolls
             // sideways under them.
@@ -1015,11 +1102,11 @@ Rectangle {
         property string side: "new"
         property int first: 0
 
-        function ask(path, side, line) {
+        function ask(path, side, line, last) {
             commentPopup.path = path;
             commentPopup.side = side;
             commentPopup.first = line;
-            commentLast.text = String(line);
+            commentLast.text = String(last === undefined ? line : last);
             commentNote.text = "";
             open();
             commentNote.forceActiveFocus();
@@ -1052,6 +1139,15 @@ Rectangle {
                 font.pixelSize: Theme.type.body.size
                 font.weight: Font.DemiBold
                 elide: Text.ElideMiddle
+            }
+            Text {
+                objectName: "diffCommentHeading"
+                Layout.fillWidth: true
+                // What the comment is about, as its range is named.
+                readonly property int last: Math.max(commentPopup.first, parseInt(commentLast.text) || commentPopup.first)
+                text: last > commentPopup.first ? qsTr("Lines %1-%2").arg(commentPopup.first).arg(last) : qsTr("Line %1").arg(commentPopup.first)
+                color: root.muted
+                font.pixelSize: Theme.type.meta.size
             }
             RowLayout {
                 Layout.fillWidth: true

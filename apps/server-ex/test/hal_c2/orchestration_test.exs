@@ -773,6 +773,73 @@ defmodule HalC2.OrchestrationTest do
              StreamState.get(state, "message")["m1"]
   end
 
+  test "a message sent again under its id keeps its first copies and leaves no others" do
+    png = <<137, 80, 78, 71, 13, 10, 26, 10>>
+
+    upload = fn ->
+      {:ok, %{"attachmentId" => id, "relativeUrl" => "/api/attachments/upload/" <> token}} =
+        HalC2.Attachments.create_upload_url(%{
+          "name" => "a.png",
+          "mimeType" => "image/png",
+          "sizeBytes" => byte_size(png)
+        })
+
+      :ok = HalC2.Attachments.store(token, png)
+
+      %{
+        "type" => "image",
+        "id" => id,
+        "name" => "a.png",
+        "mimeType" => "image/png",
+        "sizeBytes" => byte_size(png)
+      }
+    end
+
+    thread_id = "thread-#{System.unique_integer([:positive])}"
+    :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
+
+    {:ok, _} =
+      Orchestration.launch_thread(%{
+        "commandId" => "c",
+        "threadId" => thread_id,
+        "projectId" => "project-1",
+        "title" => "Twice",
+        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+        "runtimeMode" => "full-access",
+        "interactionMode" => "default",
+        "workspaceStrategy" => %{"type" => "root"},
+        "initialMessage" => %{
+          "messageId" => "m1",
+          "text" => "first",
+          "attachments" => [upload.()]
+        }
+      })
+
+    state = await_run(thread_id, "completed")
+    %{"attachments" => [%{"id" => first}]} = StreamState.get(state, "message")["m1"]
+    again = upload.()
+    on_disk = fn -> HalC2.Attachments.dir() |> Path.join("*") |> Path.wildcard() end
+    before = length(on_disk.())
+
+    assert {:ok, %{"sequence" => _}} =
+             Orchestration.dispatch(%{
+               "type" => "message.dispatch",
+               "threadId" => thread_id,
+               "messageId" => "m1",
+               "text" => "first",
+               "attachments" => [again]
+             })
+
+    # The resend's copy is gone; the pending upload it came from stays, as does the
+    # message's own copy.
+    assert length(on_disk.()) == before
+    assert HalC2.Attachments.path(%{"id" => first})
+    assert HalC2.Attachments.path(again)
+
+    assert %{"attachments" => [%{"id" => ^first}]} =
+             StreamState.get(current(thread_id), "message")["m1"]
+  end
+
   test "inline context reaches the agent as markers and an envelope, and stays on the message" do
     thread_id = "thread-#{System.unique_integer([:positive])}"
     :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
@@ -1460,7 +1527,11 @@ defmodule HalC2.OrchestrationTest do
     # The active turn ends while the cleanup is held, promoting the
     # timed-out run's prompt into a running turn of its own.
     assert {:ok, _} =
-             Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+             Orchestration.dispatch(%{
+               "type" => "run.interrupt",
+               "threadId" => thread_id,
+               "holdQueue" => false
+             })
 
     await_statuses(thread_id, ["completed", "interrupted", "running"])
     send(cleanup, :cleanup_go)
@@ -1813,6 +1884,26 @@ defmodule HalC2.OrchestrationTest do
                StreamState.get(current(thread_id), "run")[run_id]
     end
 
+    test "a message sent on its own cannot defer its start" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+
+      assert {:error, _} =
+               Orchestration.dispatch(%{
+                 "type" => "message.dispatch",
+                 "threadId" => thread_id,
+                 "messageId" => "deferred",
+                 "text" => "later",
+                 "attachments" => [],
+                 "dispatchMode" => %{"type" => "defer_start"}
+               })
+
+      refute Enum.any?(
+               StreamState.list(current(thread_id), "run"),
+               &(&1["userMessageId"] == "deferred")
+             )
+    end
+
     test "a message sent during a run waits in the queue and starts when the run ends" do
       thread_id = launch("wait for it")
       _ = await_run(thread_id, "running")
@@ -1828,7 +1919,13 @@ defmodule HalC2.OrchestrationTest do
       # Queued messages join the transcript only when their run starts.
       refute Enum.any?(StreamState.list(state, "turn-item"), &(&1["messageId"] == "m2"))
 
-      {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+      # The run ends without holding the queue, which a user's Stop holds (next test).
+      {:ok, _} =
+        Orchestration.dispatch(%{
+          "type" => "run.interrupt",
+          "threadId" => thread_id,
+          "holdQueue" => false
+        })
 
       state = await_statuses(thread_id, ["interrupted", "completed", "completed"])
 
@@ -1836,6 +1933,88 @@ defmodule HalC2.OrchestrationTest do
                Enum.find(StreamState.list(state, "turn-item"), &(&1["messageId"] == "m2"))
 
       assert Enum.all?(runs(state), &(&1["queuePosition"] == nil))
+    end
+
+    test "a user's stop holds the queue until a message the user sends resumes it" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", "then list the files")
+      _ = await_statuses(thread_id, ["running", "queued"])
+
+      {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+      state = await_statuses(thread_id, ["interrupted", "queued"])
+      assert [_, %{"queueHeld" => true}] = runs(state)
+
+      # An agent's message leaves it held; the user's starts, and the queue after it.
+      {:ok, _} =
+        send_message(thread_id, "m3", "from the agent", %{
+          "createdBy" => "agent",
+          "creationSource" => "mcp",
+          "dispatchMode" => %{"type" => "start_immediately"}
+        })
+
+      state = await_statuses(thread_id, ["interrupted", "completed", "queued"])
+      assert %{"queueHeld" => true} = Enum.find(runs(state), &(&1["userMessageId"] == "m2"))
+
+      {:ok, _} =
+        send_message(thread_id, "m4", "from the user", %{
+          "dispatchMode" => %{"type" => "start_immediately"}
+        })
+
+      state = await_statuses(thread_id, ["interrupted", "completed", "completed", "completed"])
+      assert Enum.map(runs(state), & &1["userMessageId"]) |> Enum.take(-2) == ["m4", "m2"]
+    end
+
+    # A client still showing an ended run as active stops it (found by the property).
+    test "a stop for a run that already ended holds nothing" do
+      thread_id = launch("hello")
+      [first] = runs(await_statuses(thread_id, ["completed"]))
+      {:ok, _} = send_message(thread_id, "m2", "wait for it")
+      _ = await_statuses(thread_id, ["completed", "running"])
+      {:ok, _} = send_message(thread_id, "m3", "then list the files")
+      _ = await_statuses(thread_id, ["completed", "running", "queued"])
+
+      _ =
+        Orchestration.dispatch(%{
+          "type" => "run.interrupt",
+          "threadId" => thread_id,
+          "runId" => first["id"]
+        })
+
+      assert [_, %{"status" => "running"}, queued] = runs(current(thread_id))
+      refute queued["queueHeld"]
+    end
+
+    # Found by the property: the stop left an interrupt request on the queued run, so
+    # once it started it read as being stopped and refused every steer.
+    test "a stop for a run still queued does not mark it as being stopped once it starts" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", "wait for it")
+      [_, queued] = runs(await_statuses(thread_id, ["running", "queued"]))
+
+      _ =
+        Orchestration.dispatch(%{
+          "type" => "run.interrupt",
+          "threadId" => thread_id,
+          "runId" => queued["id"]
+        })
+
+      {:ok, _} =
+        Orchestration.dispatch(%{
+          "type" => "run.interrupt",
+          "threadId" => thread_id,
+          "holdQueue" => false
+        })
+
+      _ = await_statuses(thread_id, ["interrupted", "running"])
+
+      assert {:ok, _} =
+               send_message(thread_id, "m3", "also this", %{
+                 "deliveryIntent" => "steer",
+                 "dispatchMode" => %{"type" => "steer_active", "targetRunId" => queued["id"]}
+               })
     end
 
     test "archiving a thread cancels what it had queued" do
@@ -1871,6 +2050,45 @@ defmodule HalC2.OrchestrationTest do
       assert %{"status" => "cancelled", "queuePosition" => nil} = by_id[second["id"]]
       assert %{"status" => "queued", "queuePosition" => 1} = by_id[third["id"]]
       assert %{"text" => "third, edited"} = StreamState.get(state, "message")["m3"]
+    end
+
+    test "an edit of a queued run keeps the copies it made" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", "second")
+      [_, queued] = runs(await_statuses(thread_id, ["running", "queued"]))
+      upload = pending_upload()
+      before = length(attachment_files())
+
+      {:ok, _} =
+        queue_command("queued-run.edit", thread_id, queued["id"], %{
+          "text" => "second",
+          "attachments" => [upload]
+        })
+
+      assert %{"attachments" => [%{"id" => claimed}]} =
+               StreamState.get(current(thread_id), "message")["m2"]
+
+      assert HalC2.Attachments.path(%{"id" => claimed})
+      assert length(attachment_files()) == before + 1
+    end
+
+    test "an edit of a run that is no longer queued gives its copies back" do
+      thread_id = launch("hello")
+      state = await_run(thread_id, "completed")
+      [%{"id" => run_id, "userMessageId" => message_id}] = runs(state)
+      upload = pending_upload()
+      before = length(attachment_files())
+
+      {:ok, _} =
+        queue_command("queued-run.edit", thread_id, run_id, %{
+          "text" => "too late",
+          "attachments" => [upload]
+        })
+
+      assert length(attachment_files()) == before
+      assert HalC2.Attachments.path(upload)
+      assert %{"text" => "hello"} = StreamState.get(current(thread_id), "message")[message_id]
     end
 
     test "a queued message edited past 120,000 characters is folded, its file joining the others" do
@@ -2459,7 +2677,7 @@ defmodule HalC2.OrchestrationTest do
       start_supervised!(HalC2.Orchestration.IdleSessions)
       thread_id = launch("start the dev server in the background")
       _ = await_run(thread_id, "completed")
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 1))
       assert [%{"status" => "running", "input" => "npm run dev"}] = commands(thread_id)
 
       assert HalC2.Orchestration.IdleSessions.check() == []
@@ -2478,7 +2696,7 @@ defmodule HalC2.OrchestrationTest do
         }
       })
 
-      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
       # The exit wakes the thread with a turn telling Codex; the session idles after it.
       state = await_runs(thread_id, 2)
 
@@ -2497,12 +2715,12 @@ defmodule HalC2.OrchestrationTest do
     test "stopping the thread between turns terminates the command", %{log: log} do
       thread_id = launch("start the dev server in the background")
       _ = await_run(thread_id, "completed")
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 1))
 
       assert {:ok, _} =
                Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
 
-      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
       assert [%{"status" => "interrupted"}] = commands(thread_id)
       assert [%{"processId" => "4275"}] = terminated(log)
 
@@ -2516,7 +2734,7 @@ defmodule HalC2.OrchestrationTest do
          %{log: log} do
       thread_id = launch("start the dev server in the background")
       [%{"id" => run_id}] = thread_id |> await_run("completed") |> StreamState.list("run")
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 1))
       pinned = &%{"type" => "run.interrupt", "threadId" => thread_id, "runId" => &1}
 
       assert {:error, "no running turn"} = Orchestration.dispatch(pinned.("run:earlier"))
@@ -2524,7 +2742,7 @@ defmodule HalC2.OrchestrationTest do
       assert terminated(log) == []
 
       assert {:ok, _} = Orchestration.dispatch(pinned.(run_id))
-      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
       assert [%{"status" => "interrupted"}] = commands(thread_id)
     end
 
@@ -2552,7 +2770,7 @@ defmodule HalC2.OrchestrationTest do
          %{log: log} do
       thread_id = launch("start the dev server in the background")
       _ = await_run(thread_id, "completed")
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 1))
       claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "haiku"}}
       {:ok, _} = send_message(thread_id, "msg-claude", "hello", claude)
       [_, %{"id" => latest}] = runs(await_statuses(thread_id, ["completed", "completed"]))
@@ -2564,7 +2782,7 @@ defmodule HalC2.OrchestrationTest do
                  "runId" => latest
                })
 
-      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
 
       assert [%{"status" => "interrupted"}] =
                Enum.filter(commands(thread_id), &(&1["nativeItemRef"]["nativeId"] == "cmd-bg"))
@@ -2579,7 +2797,7 @@ defmodule HalC2.OrchestrationTest do
          %{log: log} do
       thread_id = launch("start the dev server in the background")
       _ = await_run(thread_id, "completed")
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 1))
       claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "haiku"}}
       {:ok, _} = send_message(thread_id, "msg-claude", "wait for me", claude)
       [_, %{"id" => latest}] = runs(await_statuses(thread_id, ["completed", "running"]))
@@ -2595,7 +2813,7 @@ defmodule HalC2.OrchestrationTest do
       assert terminated(log) == []
 
       assert {:ok, _} = Orchestration.dispatch(stop)
-      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
       assert [%{"status" => "interrupted"}] = cmd_bg.()
       assert [%{"processId" => "4275"}] = terminated(log)
     end
@@ -2616,22 +2834,22 @@ defmodule HalC2.OrchestrationTest do
     test "the command fails when Codex exits" do
       thread_id = launch("start the dev server in the background")
       _ = await_run(thread_id, "completed")
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 1))
 
       [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
       Process.exit(:sys.get_state(pid).conn, :kill)
 
-      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
       assert [%{"status" => "failed"}] = commands(thread_id)
     end
 
     test "releasing the session ends the command" do
       thread_id = launch("start the dev server in the background")
       _ = await_run(thread_id, "completed")
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 1))
 
       assert :ok = Orchestration.release_session(thread_id)
-      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
       assert [%{"status" => "interrupted"}] = commands(thread_id)
     end
 
@@ -2674,7 +2892,7 @@ defmodule HalC2.OrchestrationTest do
       start_supervised!(HalC2.Orchestration.IdleSessions)
       thread_id = launch("work in the background", "grok")
       _ = await_run(thread_id, "completed")
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 2))
 
       assert [
                %{"type" => "command_execution", "status" => "running", "input" => "npm run dev"},
@@ -2704,7 +2922,7 @@ defmodule HalC2.OrchestrationTest do
         }
       })
 
-      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
       assert ["completed", "completed"] = Enum.map(background_items(thread_id), & &1["status"])
       assert HalC2.Orchestration.IdleSessions.check() == [thread_id]
     end
@@ -2712,7 +2930,7 @@ defmodule HalC2.OrchestrationTest do
     test "the subagent's answer after the turn still reaches its child thread" do
       thread_id = launch("work in the background", "grok")
       _ = await_run(thread_id, "completed")
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 2))
 
       grok_says(thread_id, "session/update", %{
         "sessionId" => @child,
@@ -2730,7 +2948,7 @@ defmodule HalC2.OrchestrationTest do
         }
       })
 
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"]) == 1))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"]) == 1))
 
       assert [%{"status" => "completed", "result" => "the repo has a lib"}] =
                StreamState.list(current(thread_id), "subagent")
@@ -2739,14 +2957,14 @@ defmodule HalC2.OrchestrationTest do
     test "stopping the thread between turns ends the work and the agent" do
       thread_id = launch("work in the background", "grok")
       _ = await_run(thread_id, "completed")
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 2))
       conn = :sys.get_state(runtime_pid(thread_id)).conn
       ref = Process.monitor(conn)
 
       assert {:ok, _} =
                Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
 
-      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
 
       assert ["interrupted", "interrupted"] =
                Enum.map(background_items(thread_id), & &1["status"])
@@ -2760,7 +2978,7 @@ defmodule HalC2.OrchestrationTest do
     test "an interrupt between turns pinned to an earlier run leaves the work and the agent" do
       thread_id = launch("work in the background", "grok")
       [%{"id" => run_id}] = thread_id |> await_run("completed") |> StreamState.list("run")
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 2))
       conn = :sys.get_state(runtime_pid(thread_id)).conn
       pinned = &%{"type" => "run.interrupt", "threadId" => thread_id, "runId" => &1}
 
@@ -2770,7 +2988,7 @@ defmodule HalC2.OrchestrationTest do
 
       ref = Process.monitor(conn)
       assert {:ok, _} = Orchestration.dispatch(pinned.(run_id))
-      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
       assert_receive {:DOWN, ^ref, :process, _, _}
     end
 
@@ -2796,10 +3014,10 @@ defmodule HalC2.OrchestrationTest do
     test "releasing the agent ends the work it ran" do
       thread_id = launch("work in the background", "grok")
       _ = await_run(thread_id, "completed")
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 2))
 
       assert :ok = Orchestration.release_session(thread_id)
-      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
 
       assert ["interrupted", "interrupted"] =
                Enum.map(background_items(thread_id), & &1["status"])
@@ -2886,7 +3104,7 @@ defmodule HalC2.OrchestrationTest do
       :ok = HalC2.Shell.subscribe(self())
       thread_id = launch("work in the background", "claudeAgent")
       _ = await_run(thread_id, "completed")
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 2))
 
       assert %{
                "turn-item:subagent:node:subagent:claudeAgent:agent-1" => %{
@@ -2917,7 +3135,7 @@ defmodule HalC2.OrchestrationTest do
 
       claude_says(thread_id, notification("task-agent-1", "agent-1", "completed", "3 files"))
       claude_says(thread_id, notification("task-bash-1", "bash-1", "stopped", "Stopped"))
-      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
 
       state = current(thread_id)
 
@@ -2941,12 +3159,12 @@ defmodule HalC2.OrchestrationTest do
       :ok = HalC2.Shell.subscribe(self())
       thread_id = launch("work in the background", "claudeAgent")
       _ = await_run(thread_id, "completed")
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 2))
 
       assert {:ok, _} =
                Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
 
-      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
 
       assert ["interrupted", "interrupted"] =
                current(thread_id)
@@ -2965,7 +3183,7 @@ defmodule HalC2.OrchestrationTest do
       :ok = HalC2.Shell.subscribe(self())
       thread_id = launch("work in the background", "claudeAgent")
       _ = await_run(thread_id, "completed")
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 2))
       [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, thread_id)
       session = :sys.get_state(pid).session
       codex = %{"modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"}}
@@ -2997,7 +3215,7 @@ defmodule HalC2.OrchestrationTest do
       :ok = HalC2.Shell.subscribe(self())
       thread_id = launch("work in the background", "claudeAgent")
       [%{"id" => run_id}] = thread_id |> await_run("completed") |> StreamState.list("run")
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 2))
       [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, thread_id)
       session = :sys.get_state(pid).session
       pinned = &%{"type" => "run.interrupt", "threadId" => thread_id, "runId" => &1}
@@ -3012,7 +3230,7 @@ defmodule HalC2.OrchestrationTest do
                |> Enum.map(& &1["status"])
 
       assert {:ok, _} = Orchestration.dispatch(pinned.(run_id))
-      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
       refute Process.alive?(session)
     end
 
@@ -3020,10 +3238,10 @@ defmodule HalC2.OrchestrationTest do
       :ok = HalC2.Shell.subscribe(self())
       thread_id = launch("work in the background", "claudeAgent")
       _ = await_run(thread_id, "completed")
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 2))
 
       assert :ok = Orchestration.release_session(thread_id)
-      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
 
       assert %{"status" => "interrupted"} =
                StreamState.get(current(thread_id), "subagent")[
@@ -3074,7 +3292,7 @@ defmodule HalC2.OrchestrationTest do
 
       claude_says(thread_id, %{"type" => "result", "subtype" => "success", "is_error" => false})
       [_, %{"id" => run_id}] = runs(await_statuses(thread_id, ["completed", "completed"]))
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 2))
 
       assert %{"runId" => ^run_id, "status" => "running", "title" => "Check the tests"} =
                StreamState.get(current(thread_id), "subagent")[
@@ -3088,7 +3306,7 @@ defmodule HalC2.OrchestrationTest do
 
       claude_says(thread_id, notification("task-agent-wake", "agent-wake", "completed", "Fine"))
       claude_says(thread_id, notification("task-bash-wake", "bash-wake", "completed", "ok"))
-      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
     end
 
     # #1233: a wake sends Claude nothing, so what another provider did before it is
@@ -3242,7 +3460,7 @@ defmodule HalC2.OrchestrationTest do
 
       claude_says(thread_id, %{"type" => "result", "subtype" => "success", "is_error" => false})
       _ = await_run(thread_id, "completed")
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 1))
 
       # The SendMessage call itself is done; the subagent it resumed runs on.
       assert [%{"status" => "completed"}] =
@@ -3251,7 +3469,7 @@ defmodule HalC2.OrchestrationTest do
                |> Enum.filter(&(&1["toolName"] == "SendMessage"))
 
       claude_says(thread_id, notification("task-old", "send-1", "completed", "Done"))
-      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
     end
 
     test "after an upgrade, the progress of a subagent it never recorded records it" do
@@ -3275,7 +3493,7 @@ defmodule HalC2.OrchestrationTest do
         "summary" => "Reading lib"
       })
 
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 1))
 
       assert %{"runId" => ^run_id, "status" => "running", "progress" => "Reading lib"} =
                StreamState.get(current(thread_id), "subagent")[
@@ -3283,7 +3501,7 @@ defmodule HalC2.OrchestrationTest do
                ]
 
       claude_says(thread_id, notification("task-unseen", "agent-unseen", "completed", "LGTM"))
-      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
 
       # Its progress after it ended does not bring it back.
       claude_says(thread_id, %{
@@ -3336,7 +3554,7 @@ defmodule HalC2.OrchestrationTest do
           "summary" => "Reading lib"
         })
 
-        await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+        await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 1))
 
         assert %{"runId" => ^run_id} =
                  StreamState.get(current(thread_id), "subagent")[
@@ -3440,6 +3658,53 @@ defmodule HalC2.OrchestrationTest do
       claude_says(thread_id, wake_text("m-wake", "Woke up"))
       claude_says(thread_id, %{"type" => "result", "subtype" => "success", "is_error" => false})
       _ = await_statuses(thread_id, ["completed", "completed"])
+    end
+
+    # The default instance takes over a provider thread another Claude
+    # instance left under its id, and the decide carries that instance's
+    # native thread — the instances share a home, so it is the same
+    # conversation — without storing it on the taken-over record. The turn
+    # that starts must still resume it, not open a fresh conversation.
+    test "a foreign takeover keeps the native thread the decide carried" do
+      thread_id = launch("hello", "claudeAgent")
+      _ = await_statuses(thread_id, ["completed"])
+
+      default = HalC2.Orchestration.Entities.provider_thread_id("claudeAgent", thread_id)
+      other = HalC2.Orchestration.Entities.provider_thread_id("claude-work", thread_id)
+
+      native =
+        get_in(StreamState.get(current(thread_id), "provider-thread")[default], [
+          "nativeThreadRef"
+        ])
+
+      assert %{"nativeId" => "fake-session-1"} = native
+
+      {:ok, _} =
+        HalC2.Streams.commit(thread_id, :thread, [
+          {"provider-thread", default, %{"s" => %{"providerInstanceId" => "claude-work"}}},
+          {"provider-thread", other,
+           %{
+             "s" => %{
+               "id" => other,
+               "threadId" => thread_id,
+               "providerInstanceId" => "claude-work",
+               "driver" => "claudeAgent",
+               "status" => "idle",
+               "nativeThreadRef" => native
+             }
+           }}
+        ])
+
+      {:ok, _} = send_message(thread_id, "msg-user-2", "wait for me")
+      _ = await_statuses(thread_id, ["completed", "running"])
+
+      [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, thread_id)
+      assert %{turn: %{native_thread_id: "fake-session-1"}} = :sys.get_state(pid)
+
+      assert {:ok, _} =
+               Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+      _ = await_statuses(thread_id, ["completed", "interrupted"])
     end
 
     # Another instance of Claude runs with its own variables and home, so its turn needs
@@ -3685,6 +3950,26 @@ defmodule HalC2.OrchestrationTest do
                StreamState.list(state, "turn-item"),
                &String.contains?(&1["text"] || "", ~s(Attached file \\"notes.txt\\": ))
              )
+    end
+
+    test "an answer to a request the agent no longer has gives its copies back" do
+      thread_id = launch("ask me")
+      _ = await_request(thread_id)
+      upload = pending_upload()
+      before = length(attachment_files())
+
+      assert {:error, _} =
+               Orchestration.dispatch(%{
+                 "type" => "runtime-request.respond",
+                 "threadId" => thread_id,
+                 "requestId" => "request-gone",
+                 "answers" => %{"color" => "Red"},
+                 "attachmentsByQuestionId" => %{"color" => [upload]}
+               })
+
+      # The copy the answer made is gone; the pending upload stays for a retry.
+      assert length(attachment_files()) == before
+      assert HalC2.Attachments.path(upload)
     end
 
     test "dismissing a question tells Claude no and cancels the request" do
@@ -3996,6 +4281,63 @@ defmodule HalC2.OrchestrationTest do
                StreamState.list(current(thread_id), "provider-thread")
     end
 
+    # An app-server without `thread/revert` cannot deserialize the method and
+    # answers -32600 naming it an unknown variant, not -32601: dropping by
+    # count is still the fallback.
+    test "a Codex that knows no thread/revert drops its later turns by count", %{work: work} do
+      Application.put_env(:hal_c2, :codex_command, [
+        "env",
+        "FAKE_CODEX_LEGACY=1",
+        "FAKE_CODEX_NO_REVERT=1",
+        "python3",
+        "-u",
+        @fake_codex
+      ])
+
+      thread_id = launch_in(work, "write a.txt", "codex")
+      await_statuses(thread_id, ["completed"])
+      {:ok, _} = send_message(thread_id, "msg-user-2", "write b.txt")
+      await_statuses(thread_id, ["completed", "completed"])
+
+      assert {:ok, _} = rollback(thread_id, 1)
+
+      assert [%{"nativeThreadRef" => %{"nativeId" => "native-thread-1-dropped-1"}}] =
+               StreamState.list(current(thread_id), "provider-thread")
+    end
+
+    # A run above the target that never started — still in a held queue, or
+    # cancelled out of it — is one the provider never saw: settling must not
+    # leave `lastRunOrdinal` at it.
+    for status <- ["queued", "cancelled"] do
+      test "rewinding past a #{status} run settles lastRunOrdinal at the target",
+           %{work: work} do
+        thread_id = launch_in(work, "write a.txt", "codex")
+        await_statuses(thread_id, ["completed"])
+        {:ok, _} = send_message(thread_id, "msg-user-2", "write b.txt")
+        await_statuses(thread_id, ["completed", "completed"])
+
+        {:ok, _} =
+          HalC2.Streams.commit(thread_id, :thread, [
+            {"run", "never-started",
+             %{
+               "s" => %{
+                 "id" => "never-started",
+                 "threadId" => thread_id,
+                 "ordinal" => 3,
+                 "status" => unquote(status),
+                 "queuePosition" => 1,
+                 "queueHeld" => true
+               }
+             }}
+          ])
+
+        assert {:ok, _} = rollback(thread_id, 1)
+
+        assert [%{"lastRunOrdinal" => 1}] =
+                 StreamState.list(current(thread_id), "provider-thread")
+      end
+    end
+
     # Picking another provider in the composer moves the selection, not the
     # conversation: a rewind asked for after the pick still rewinds the
     # conversation that is active, in either selection shape.
@@ -4084,7 +4426,7 @@ defmodule HalC2.OrchestrationTest do
       await_statuses(thread_id, ["completed"])
       {:ok, _} = send_message(thread_id, "msg-user-2", "work in the background")
       await_statuses(thread_id, ["completed", "completed"])
-      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+      await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 2))
 
       assert {:ok, _} = rollback(thread_id, 1, %{"restoreFiles" => false})
 
@@ -4689,6 +5031,30 @@ defmodule HalC2.OrchestrationTest do
         extra
       )
     )
+  end
+
+  defp attachment_files, do: HalC2.Attachments.dir() |> Path.join("*") |> Path.wildcard()
+
+  # An uploaded, not yet sent, file.
+  defp pending_upload do
+    png = <<137, 80, 78, 71, 13, 10, 26, 10>>
+
+    {:ok, %{"attachmentId" => id, "relativeUrl" => "/api/attachments/upload/" <> token}} =
+      HalC2.Attachments.create_upload_url(%{
+        "name" => "a.png",
+        "mimeType" => "image/png",
+        "sizeBytes" => byte_size(png)
+      })
+
+    :ok = HalC2.Attachments.store(token, png)
+
+    %{
+      "type" => "image",
+      "id" => id,
+      "name" => "a.png",
+      "mimeType" => "image/png",
+      "sizeBytes" => byte_size(png)
+    }
   end
 
   defp queue_command(type, thread_id, run_id, extra \\ %{}),

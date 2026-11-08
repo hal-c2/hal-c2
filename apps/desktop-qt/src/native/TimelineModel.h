@@ -48,6 +48,12 @@ class TimelineModel : public QAbstractListModel {
   Q_PROPERTY(bool loadingEarlier READ loadingEarlier NOTIFY earlierChanged)
   Q_PROPERTY(QString latest READ latest NOTIFY latestChanged)
   Q_PROPERTY(bool phone READ phone NOTIFY foldsChanged)
+  // How full the thread's context window is, from its provider thread's
+  // latest report: {} before one, else {usedTokens, maxTokens (0 unknown),
+  // percent (-1 unknown), percentLabel, reading ("72% · 144k/200k", or
+  // "144k used"), nearlyFull (over nine tenths), processed ("1.2m", empty
+  // when none), cost ("USD 0.42", empty when none)}.
+  Q_PROPERTY(QVariantMap contextWindow READ contextWindow NOTIFY contextWindowChanged)
 
 public:
   enum Role {
@@ -168,6 +174,7 @@ public:
   QString problem() const { return m_problem; }
   void setStatus(const QString& status, const QString& problem = {});
   bool working() const { return m_workingSince.isValid(); }
+  QVariantMap contextWindow() const;
   QDateTime workingSince() const { return m_workingSince; }
   // The newest row in one line, for a strip standing in for the timeline: the
   // agent's reply, what its calls did, or the user's message ("You: ...").
@@ -237,6 +244,10 @@ public:
   // The `kinds` a subscription to a thread's stream names: the entities the
   // model folds, so the MC sends no others.
   static QJsonObject streamKinds();
+  // Whether a scheduled task sent the user message: by its task id, or by the
+  // id and text prefix an older MC or a T3 import left. The row's attribution
+  // and the composer's prompt recall both ask this.
+  static bool sentByScheduledTask(const QJsonObject& item);
   // What a `sub` frame for the thread carries besides its shape: where the
   // copy stands (`offset`, `handle`) and the window it holds, or the window
   // to open with. Asked as each is sent, which starts the subscription over:
@@ -283,7 +294,7 @@ public:
   // workspaceChanged means the files may differ.
   QString workspaceMutation() const;
 
-  // Opens or closes a fold ("fold:<runId>"), a work group ("work:<itemId>")
+  // Opens or closes a fold ("fold:<runId>", or "fold:cut-off:<itemId>"), a work group ("work:<itemId>")
   // or a group of subagents ("subagents:<itemId>").
   Q_INVOKABLE void toggle(const QString& rowId);
   // The user stopped this run here: once it settles its work stays open, fold
@@ -339,6 +350,8 @@ signals:
   // After a snapshot, or a command or file change starting or settling: the
   // workspace's files may have changed (WorkspaceFiles lists them again).
   void workspaceChanged();
+  // After a snapshot, or events that touched a provider thread.
+  void contextWindowChanged();
   // After the time format or locale changed: stamp() reads differently.
   void timesChanged();
   // An image on screen has no address yet (loadAttachment).
@@ -442,7 +455,7 @@ private:
   // The turn items of the events being applied that changed in more than
   // streamed text.
   QSet<QString> m_reshaped;
-  QSet<QString> m_expandedFolds;   // run ids
+  QSet<QString> m_expandedFolds;   // run ids, and "cut-off:<item id>"
   // Work groups the user toggled, by row id: open ones, or closed ones of a
   // run stopped here (Row::startsOpen).
   QSet<QString> m_expandedGroups;
@@ -459,6 +472,7 @@ private:
   bool m_turnTouched = false;
   bool m_checkpointsTouched = false;
   bool m_agentsTouched = false;
+  bool m_contextTouched = false;
   // The subagents the events being applied touch, and each as it was before them.
   QHash<QString, QJsonObject> m_agentModels;
   bool m_workspaceTouched = false;

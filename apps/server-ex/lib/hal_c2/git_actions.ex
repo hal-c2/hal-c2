@@ -203,8 +203,9 @@ defmodule HalC2.GitActions do
         _ -> MapSet.new()
       end
 
+    # The writer's own `fix/…` namespace stays; `feature/` goes on a name without one.
     name =
-      unique_branch(existing, feature_branch_name(suggestion["branch"] || suggestion["subject"]))
+      unique_branch(existing, suggestion["branch"] || feature_branch_name(suggestion["subject"]))
 
     git!(cwd, ["checkout", "-b", name])
     {%{"status" => "created", "name" => name}, name, suggestion}
@@ -388,7 +389,9 @@ defmodule HalC2.GitActions do
       case custom_message(input["commitMessage"]) do
         {subject, body} ->
           %{"subject" => subject, "body" => body}
-          |> then(&if(include_branch, do: Map.put(&1, "branch", subject), else: &1))
+          |> then(
+            &if(include_branch, do: Map.put(&1, "branch", feature_branch_name(subject)), else: &1)
+          )
 
         nil ->
           {:ok, %{out: patch}} =
@@ -460,15 +463,18 @@ defmodule HalC2.GitActions do
 
     case url && PullRequests.parse_remote(url) do
       %{kind: "forgejo"} = target -> forgejo_pull_request(cwd, branch, Map.put(target, :url, url))
-      _ -> github_pull_request(cwd, branch)
+      %{kind: kind} when kind not in ["unknown"] -> github_pull_request(cwd, branch, kind)
+      _ -> github_pull_request(cwd, branch, "github")
     end
   end
 
   # The user asked for this pull request: its reads and the create go through a pause.
-  defp github_pull_request(cwd, branch),
-    do: GitHub.asked(fn -> create_github_pull_request(cwd, branch) end)
+  # `kind` is the remote's host, which decides the change request template the text follows;
+  # a host `gh` is not known to serve (self-hosted) is treated as GitHub.
+  defp github_pull_request(cwd, branch, kind),
+    do: GitHub.asked(fn -> create_github_pull_request(cwd, branch, kind) end)
 
-  defp create_github_pull_request(cwd, branch) do
+  defp create_github_pull_request(cwd, branch, kind) do
     System.find_executable(Application.get_env(:hal_c2, :gh_command, "gh")) ||
       fail!("Creating a PR needs the GitHub CLI (gh).")
 
@@ -490,7 +496,7 @@ defmodule HalC2.GitActions do
         }
 
       _ ->
-        %{"title" => title, "body" => body} = pr_content(cwd, base, branch)
+        %{"title" => title, "body" => body} = pr_content(cwd, base, branch, kind)
 
         args =
           ["pr", "create", "--base", base, "--head", branch, "--title", title] ++
@@ -544,7 +550,7 @@ defmodule HalC2.GitActions do
         }
 
       [] ->
-        %{"title" => title, "body" => body} = pr_content(cwd, base, branch)
+        %{"title" => title, "body" => body} = pr_content(cwd, base, branch, target.kind)
 
         request = %{
           "base" => base,
@@ -617,7 +623,7 @@ defmodule HalC2.GitActions do
   end
 
   # The title and body the text generator writes for the branch's commits since `base`.
-  defp pr_content(cwd, base, branch) do
+  defp pr_content(cwd, base, branch, kind) do
     base_ref = base_ref(cwd, base)
     range = "#{base_ref}...HEAD"
     {:ok, commits} = Git.ok(cwd, ["log", "--oneline", String.replace(range, "...", "..")])
@@ -628,7 +634,7 @@ defmodule HalC2.GitActions do
 
     case TextGeneration.pr_content(cwd, base, branch, commits, stat, patch,
            policy: Style.policy(cwd),
-           template: Style.pr_template(cwd, base_ref)
+           template: Style.pr_template(cwd, base_ref, kind)
          ) do
       {:ok, content} -> content
       {:error, reason} -> fail!("Could not write the PR description: #{reason}")
@@ -701,22 +707,33 @@ defmodule HalC2.GitActions do
 
   # --- helpers --------------------------------------------------------------------
 
-  @doc "A `feature/…` branch name from free text."
-  def feature_branch_name(raw) do
-    fragment = TextGeneration.branch_fragment(raw)
+  @doc "A branch name from free text, under `feature/` unless it names a namespace."
+  def feature_branch_name(raw), do: TextGeneration.namespaced_branch(raw)
 
-    if String.starts_with?(fragment, "feature/"), do: fragment, else: "feature/#{fragment}"
-  end
-
-  # A name no branch has, and no branch sits on the path of: a branch `feature` blocks
-  # every `feature/…`, so the name is flattened to `feature-…` there.
+  # A name no branch has, and no branch sits on the path of: a branch `fix` blocks every
+  # `fix/…`, so the namespace becomes `fix-2/…` (the next number that is free).
   defp unique_branch(existing, name) do
-    name =
-      if Enum.any?(existing, &String.starts_with?(name, &1 <> "/")),
-        do: String.replace(name, "/", "-"),
-        else: name
-
     taken? = &(MapSet.member?(existing, &1) or Git.branch_path_taken_by?(existing, &1))
+
+    segments = String.split(name, "/")
+
+    blocker =
+      Enum.find(
+        for(n <- 1..(length(segments) - 1)//1, do: segments |> Enum.take(n) |> Enum.join("/")),
+        &MapSet.member?(existing, &1)
+      )
+
+    name =
+      if blocker do
+        rest = String.replace_prefix(name, blocker, "")
+
+        Enum.find_value(Stream.iterate(2, &(&1 + 1)), fn n ->
+          candidate = "#{blocker}-#{n}" <> rest
+          not Git.branch_path_taken_by?(existing, candidate) && candidate
+        end)
+      else
+        name
+      end
 
     if taken?.(name),
       do:

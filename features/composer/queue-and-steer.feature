@@ -21,6 +21,7 @@
 #   apps/web/src/session-logic.ts (getUserQueuedThreadRuns: the agent's own queued runs are not the user's)
 #   apps/tui/src/components/ChatView.tsx (Esc interrupts)
 #   apps/tui/qml/HalC2/Tui/ShellKeymap.qml (a held Esc does not repeat)
+#   apps/tui/qml/HalC2/Tui/Timeline.qml (the held queue, ^X q and the palette resume it)
 #   packages/shared/src/keybindings.ts (composer.sendAlternate, thread.steerQueuedMessage, thread.editQueuedMessage)
 #   packages/contracts/src/orchestrationV2.ts (queued-run.cancel, queued-run.edit, queued-run.reorder, queued-message.promote-to-steer, queue.resume, run.interrupt)
 #   packages/contracts/src/settings.ts (followUpBehavior)
@@ -473,7 +474,7 @@ Feature: Follow-ups while the agent is working
 
   # Upstream #26355: a message sent now from the queue showed both in the turn and still in the
   # queue, and queued messages showed in the timeline before they were sent.
-  @backlog @mc @shared @priority-high
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-high
   Scenario: A queued message sent now is shown once
     Given "a", "b" and "c" are queued while a turn runs
     When the user sends "a" now and then sends "b" now
@@ -539,7 +540,7 @@ Feature: Follow-ups while the agent is working
     Then the user is offered to send "b" now instead of steering it
 
   # Upstream #22790: sending a held queued message now starts that message first.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Sending a held queued message now starts it and keeps the rest in order
     Given "a", "b" and "c" are queued and held, and the turn is no longer running
     When the user sends "b" now
@@ -547,7 +548,7 @@ Feature: Follow-ups while the agent is working
     And the queue holds "a" then "c"
 
   # Upstream #22790: a send now that races a turn that started meanwhile leaves the message queued.
-  @backlog @mc
+  @mc
   Scenario: Sending a queued message now after another turn started keeps it queued
     Given "a" and "b" are queued and held, and the turn is no longer running
     And another turn starts before the MC handles the user's request
@@ -577,13 +578,13 @@ Feature: Follow-ups while the agent is working
     When the user starts editing it in the composer
     Then the queue marks "fix typo" as being edited and offers to cancel the edit
 
-  @desktop
+  @desktop @tui
   Scenario: A held queue says its messages are safe
     Given "later" was queued when the MC restarted
     When the MC comes back
     Then the queue is headed "Queue held" and says "Messages stay saved until you resume."
 
-  @desktop
+  @desktop @tui
   Scenario: A held queue is resumed from the composer
     Given "later" was queued when the MC restarted
     And the MC comes back
@@ -631,16 +632,17 @@ Feature: Follow-ups while the agent is working
     When the user resumes the queue
     Then the MC is asked to resume the queue
 
-  @backlog @tui @priority-high
-  Scenario: A held queue is resumed from the terminal
+  # The terminal's other route: ^X q is "the user resumes the queue" above.
+  @tui
+  Scenario: A held queue is resumed from the terminal's command palette
     Given "later" was queued when the MC restarted
     When the MC comes back
     Then the queue is shown as held
-    When the user resumes the queue
+    When the user resumes the queue from the command palette
     Then the MC is asked to resume the queue
 
   # Upstream #14725: steers keep the newest next-turn selection
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Steers keep the newest next-turn selection
     Given a provider that steers live but cannot restart the turn
     When the user steers with one model or thinking level, then steers back to the running one
@@ -649,11 +651,11 @@ Feature: Follow-ups while the agent is working
 
   # Upstream #23240: steering with a queued message used the thread's old model, not the one
   # picked when the message was queued.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Steering with a queued message keeps the model picked for it
-    Given a turn is running on Codex
+    Given the thread runs on Codex
     And the user picked Claude and queued "use the new API"
-    When the user steers with "use the new API"
+    When the user steers with the queued "use the new API"
     Then Claude answers "use the new API"
     And the thread stays on Claude
 
@@ -663,6 +665,10 @@ Feature: Follow-ups while the agent is working
     When the user removes a queued message on the phone
     Then the queued message is cancelled
 
+  # Blocked on the MC driving goals at all: "/goal drives Codex's own goal"
+  # (providers/codex.feature) and "Claude's goal shows as a work state"
+  # (providers/claude.feature) have to land first.
+  @blocked
   Rule: A goal command takes over the running turn on Codex and Claude
 
     # Upstream #25426: a new goal, or /goal resume, sent into a running turn stops it and runs first.

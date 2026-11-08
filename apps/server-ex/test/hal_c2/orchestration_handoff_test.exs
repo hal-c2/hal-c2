@@ -126,6 +126,22 @@ defmodule HalC2.Orchestration.HandoffTest do
              "## Run 1 (interrupted)\n\nUser: run the tests\n\nCommand: mix test\nInterrupted before it finished\nCompiling"
   end
 
+  # Found by the Claude session property: a refused `/compact` on an empty thread
+  # handed "User: /compact" to the next model, so its `/compact` was not refused.
+  test "a bare /compact or /logout is not handed over as conversation" do
+    state =
+      state(
+        turn(1, "/compact", "") ++
+          turn(2, " /LOGOUT ", "") ++
+          [{"run", %{"id" => "run-1", "ordinal" => 1, "status" => "failed"}}]
+      )
+
+    assert Handoff.transcript(state, 3) == nil
+
+    assert Handoff.transcript(state(turn(1, "/compact", "") ++ turn(2, "hi", "hello")), 3) ==
+             "User: hi\n\nAssistant: hello"
+  end
+
   test "a failed command with no exit code is handed over as failed" do
     command = %{"input" => "mix test", "status" => "failed", "output" => "1 failure\n"}
 

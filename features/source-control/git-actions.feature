@@ -208,6 +208,7 @@ Feature: Recommended git action and the git menu
       | the result of a git action                    |
       | a merge request referenced in the composer    |
 
+  # Upstream #23999: pages about every host keep the term pull requests where the host does.
   @backlog @desktop @mobile @tui @priority-low
   Scenario: Pages about every host's pull requests keep calling them pull requests
     Given one project is on GitHub and another on GitLab

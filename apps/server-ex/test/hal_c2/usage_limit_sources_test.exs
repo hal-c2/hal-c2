@@ -153,7 +153,7 @@ defmodule HalC2.UsageLimitSourcesTest do
              "id" => "codex-a",
              "driver" => "codex",
              "email" => "a@example.com",
-             "plan" => "ChatGPT Pro 20x Subscription"
+             "plan" => "ChatGPT Pro 200 Subscription"
            } = codex
 
     assert [

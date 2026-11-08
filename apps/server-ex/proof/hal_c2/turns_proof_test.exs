@@ -107,7 +107,7 @@ defmodule HalC2.TurnsProofTest do
         "settles a plugin's thread and lists or unlists it: sidebar organization, no turn state",
       "HalC2.Orchestration.release_prepared/2" => @preparing,
       "HalC2.Orchestration.progress_prepared/3" => @preparing,
-      "HalC2.Orchestration.fail_prepared/4" => @preparing,
+      "HalC2.Orchestration.fail_prepared/5" => @preparing,
       "HalC2.Orchestration.retry_prepared/2" => @preparing,
       "HalC2.Orchestration.delegated?/1" => "reads a thread's lineage",
       "HalC2.Orchestration.cancel_queued/1" =>
@@ -117,6 +117,8 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.fail_queued/4" =>
         "the model sends no restart, and has no failure of one queued run: it only shortens the queue",
       "HalC2.Orchestration.warn_prepared/4" => @items,
+      # Cancels a thread's open message questions (a delegated task's end): request items only.
+      "HalC2.Orchestration.dismiss_questions/1" => @items,
       "HalC2.Orchestration.upsert/4" => @changes,
       "HalC2.Orchestration.create/3" => @changes,
       "HalC2.Orchestration.next_ordinal/1" => @changes,
@@ -133,7 +135,7 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.TurnWriter.finish_item/4" => @items,
       "HalC2.Orchestration.TurnWriter.finish_plan/3" => @items,
       "HalC2.Orchestration.TurnWriter.write_todo/4" => @items,
-      "HalC2.Orchestration.TurnWriter.open_request/5" => @items,
+      "HalC2.Orchestration.TurnWriter.open_request/6" => @items,
       "HalC2.Orchestration.TurnWriter.open_question/3" => @items,
       "HalC2.Orchestration.TurnWriter.open_async_question/3" => @items,
       "HalC2.Orchestration.TurnWriter.resolve_request/4" => @items,
@@ -207,7 +209,7 @@ defmodule HalC2.TurnsProofTest do
         "A turn cut off by a restart is interrupted at boot"
       ],
       "mc/orchestration/queue-and-steering.feature" => [
-        "A held queue does not start when a run ends"
+        "A held queue does not start when a run the user did not start ends"
       ]
     }
 

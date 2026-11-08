@@ -55,9 +55,13 @@ configuration. The token never reaches logs or diagnostics.
 
 - **Codex** gets `mcp_servers.hal-c2` (`url` and `http_headers`) in the config of its thread
   parameters ([`Codex.ThreadRuntime`](../../apps/server-ex/lib/hal_c2/codex/thread_runtime.ex)).
-- **Claude** gets an HTTP server in `--mcp-config`, `mcp__hal-c2` in `--allowedTools`, and the
-  shared instructions (`priv/mcp_instructions.md`) appended to its system prompt
-  ([`Claude.Protocol`](../../apps/server-ex/lib/hal_c2/claude/protocol.ex)).
+- **Claude** gets an HTTP server over stdin (the `mcp_set_servers` control request), never in a
+  file or argument: the shell commands, hooks and local MCP servers Claude runs share its
+  environment and can read what it can. `mcp__hal-c2` goes in `--allowedTools` and the shared
+  instructions (`priv/mcp_instructions.md`) are appended to its system prompt
+  ([`Claude.Protocol`](../../apps/server-ex/lib/hal_c2/claude/protocol.ex)). The first prompt
+  waits for Claude's answer; a server Claude refuses leaves the session without HAL-C2's tools
+  ([`Claude.Session`](../../apps/server-ex/lib/hal_c2/claude/session.ex)).
 - **ACP agents** (Grok, OpenCode, Antigravity, registry agents) get it in the `mcpServers` field of
   `session/new`, `session/load` and `session/fork`, and only when the agent advertises HTTP MCP
   support ([`Acp.ThreadRuntime`](../../apps/server-ex/lib/hal_c2/acp/thread_runtime.ex)).
@@ -178,15 +182,21 @@ launching again. `create_threads` remains the batch option for a shared checkout
 
 ### `hal_c2_thread_list`
 
-Lists durable thread shells in the calling thread's project, newest first.
-Callers can filter by title, run status, and whether app-owned sub-agent threads
-are included. Results are bounded and offset-paginated. Deleted threads and
-threads from other projects are never exposed.
+Lists durable thread shells newest first: the calling thread's project, or
+every project on the MC with `allProjects`, each item naming its project.
+Callers can filter by title, run status, settled and snoozed state, and whether
+app-owned sub-agent threads are included. Results are bounded and
+offset-paginated. Deleted threads are never exposed.
+
+Like upstream, the project is the list's default, not an access limit: read and
+organize reach any thread on the MC, so whatever an all-projects list returns
+can be read and woken. Sending, interrupting and the other writes stay in the
+calling project.
 
 ### `hal_c2_thread_read`
 
-Reads a project-scoped thread's durable state, recent runs, and visible
-timeline. The default `messages` view returns user messages, assistant
+Reads a thread's durable state, recent runs, and visible timeline, from any
+project on the MC. The default `messages` view returns user messages, assistant
 messages, and proposed plans. The `activity` view also returns summarized tool,
 reasoning, checkpoint, handoff, and runtime-request items. Large item text is
 bounded and reports whether it was truncated. `afterPosition` and
@@ -240,6 +250,16 @@ Interrupts a selected active run through the normal `run.interrupt` command.
 Without `runId`, it selects the newest interruptible run. A terminal run is
 returned unchanged, and a thread with no active provider turn returns
 `no_active_run`.
+
+### `hal_c2_background_wait`
+
+Marks the caller's own background commands and monitors as work it waits on
+(`waiting: false` clears the mark). Only marked ones, plus subagents and other
+background tasks, hold a finished thread Working (the row's
+`pendingBackgroundTasks`; `runningBackgroundTasks` lists all of it). Unmarked
+work still keeps the provider process and the thread's files alive. Only
+adapters that implement `await_background/3` support it (Claude); the rest
+return `invalid_request`.
 
 ## Delegated Task Lifecycle
 

@@ -147,14 +147,66 @@ defmodule HalC2.TextGenerationTest do
 
       assert {:ok, %{"title" => "claude title"}} = TextGeneration.thread_title(repo, "Fix it")
       assert [%{"argv" => argv, "cwd" => cwd}] = calls(log)
-      assert after_flag(argv, "--model") == "claude-haiku-4-5"
+      assert after_flag(argv, "--model") == "claude-haiku-5-5"
       # Titles run outside the checkout.
       assert Path.basename(cwd) =~ ~r/^hal-c2-text-/
 
       install([])
 
+      # A CLI the user chose, missing, with nothing to fall back to, is named.
+      assert {:error, "Codex CLI " <> _ = message} =
+               TextGeneration.commit_message(repo, "main", "M a.txt", "diff")
+
+      assert message =~ "is required but not available on PATH"
+
+      # With no model chosen there is only the general message.
+      settings!(%{"textGenerationModelSelection" => nil})
+
       assert {:error, "No text generation provider is available" <> _} =
                TextGeneration.commit_message(repo, "main", "M a.txt", "diff")
+    end
+
+    test "a writer whose check failed falls back, and one still being checked keeps its selection",
+         %{repo: repo, log: log} do
+      install([:claude, :codex])
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex", "model" => "gpt-text"}
+      })
+
+      on_exit(fn -> HalC2.Codex.Provider.record_check("codex", nil) end)
+
+      # Still being checked: the selection stands.
+      :ok = HalC2.Codex.Provider.record_check("codex", nil)
+      assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
+
+      # Check failed: the next usable provider writes, with its default model.
+      :ok =
+        HalC2.Codex.Provider.record_check("codex", %{
+          "installed" => true,
+          "message" => "Codex app-server provider probe failed: signed out."
+        })
+
+      assert {:ok, %{"title" => "claude title"}} = TextGeneration.thread_title(repo, "Fix it")
+      assert [_, %{"argv" => argv}] = calls(log)
+      assert after_flag(argv, "--model") == "claude-haiku-5-5"
+    end
+
+    test "a writer whose check only warned keeps generating", %{repo: repo} do
+      install([:claude, :codex])
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex", "model" => "gpt-text"}
+      })
+
+      on_exit(fn -> HalC2.Codex.Provider.record_check("codex", nil) end)
+
+      # A signed-in Codex with no model list: probe/1 records a warning, not a failure.
+      :ok =
+        HalC2.Codex.Provider.record_check("codex", %{"warning" => "Codex returned no models."})
+
+      assert HalC2.Codex.Provider.check_state("codex") == :ok
+      assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
     end
 
     test "an ACP agent writes through one prompt in an empty directory", %{repo: repo} do
@@ -171,6 +223,59 @@ defmodule HalC2.TextGenerationTest do
 
       assert {:ok, %{"branch" => branch}} = TextGeneration.branch_name(repo, "Add login")
       assert branch =~ ~r{^acp-branch-fake/two-in-hal-c2-text-\d+-\d+$}
+    end
+
+    test "an ACP agent dying mid-generation fails it, not as a cancellation", %{repo: repo} do
+      install([])
+      dying = Path.expand("../support/fake_acp_dying.py", __DIR__)
+      Application.put_env(:hal_c2, :acp_commands, %{"opencode" => ["python3", "-u", dying]})
+
+      settings!(%{
+        "providers" => %{"opencode" => %{"enabled" => true}},
+        "sourceControlWriterModelSelection" => %{
+          "instanceId" => "opencode",
+          "model" => "fake/one"
+        }
+      })
+
+      # The connection's exit and the prompt's error answer race to the
+      # collector; whichever lands first, the answer is the failure.
+      for _ <- 1..5 do
+        assert {:error, message} = TextGeneration.branch_name(repo, "Add login")
+        assert message =~ "request failed"
+      end
+    end
+  end
+
+  describe "a project's switch on an ACP agent configured only under providers" do
+    setup do
+      Application.put_env(:hal_c2, :acp_commands, %{"opencode" => ["python3", "-u", @fake_acp]})
+      :ok
+    end
+
+    test "turns it off where the environment has it on" do
+      settings!(%{
+        "providers" => %{"opencode" => %{"enabled" => true}},
+        "projectSettingsOverrides" => %{
+          "p1" => %{"providerInstances" => %{"opencode" => %{"enabled" => false}}}
+        }
+      })
+
+      selection = %{"instanceId" => "opencode", "model" => "fake/two"}
+      assert TextGeneration.usable?(Settings.settings(), selection)
+      refute TextGeneration.usable?(Settings.resolve(Settings.settings(), "p1"), selection)
+    end
+
+    test "turns it on where the environment has it off" do
+      settings!(%{
+        "projectSettingsOverrides" => %{
+          "p1" => %{"providerInstances" => %{"opencode" => %{"enabled" => true}}}
+        }
+      })
+
+      selection = %{"instanceId" => "opencode", "model" => "fake/two"}
+      refute TextGeneration.usable?(Settings.settings(), selection)
+      assert TextGeneration.usable?(Settings.resolve(Settings.settings(), "p1"), selection)
     end
   end
 
@@ -352,6 +457,31 @@ defmodule HalC2.TextGenerationTest do
     refute TextGeneration.antigravity_available?(profile)
     write.("hooks.json", ~s({"hooks": {}, "pad": "#{String.duplicate("x", 64_000)}"}))
     refute TextGeneration.antigravity_available?(profile)
+  end
+
+  test "Codex resolves a model against the list of the instance that writes", %{
+    repo: repo,
+    log: log
+  } do
+    install([:codex])
+    list = fn slugs -> for slug <- slugs, do: %{"slug" => slug, "isDefault" => false} end
+    :ok = HalC2.Codex.Provider.record_models("codex", list.(["gpt-6-luna"]))
+    :ok = HalC2.Codex.Provider.record_models("codex-work", list.(["gpt-7-work-mini"]))
+
+    on_exit(fn ->
+      HalC2.Codex.Provider.record_models("codex", nil)
+      HalC2.Codex.Provider.record_models("codex-work", nil)
+    end)
+
+    settings!(%{
+      "textGenerationModelSelection" => %{"instanceId" => "codex-work", "model" => "gpt-7"},
+      "providerInstances" => %{"codex-work" => %{"driver" => "codex"}}
+    })
+
+    assert {:ok, _} = TextGeneration.thread_title(repo, "Fix the login redirect loop")
+    # The family resolves against the work account's list, not the default account's.
+    assert [%{"argv" => argv}] = calls(log)
+    assert after_flag(argv, "--model") == "gpt-7-work-mini"
   end
 
   test "Claude writes with the config folder of the instance chosen for text generation", %{

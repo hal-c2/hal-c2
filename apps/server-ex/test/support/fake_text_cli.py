@@ -3,7 +3,9 @@
 # (argv, cwd, prompt, pid) to $FAKE_TEXT_LOG and answers every key its JSON schema asks
 # for with "<cli> <key>" (false for booleans). $FAKE_TEXT_ANSWER (a JSON object)
 # replaces answers by key, $FAKE_TEXT_FAIL makes the call fail with that message and
-# $FAKE_TEXT_HANG makes it never answer.
+# $FAKE_TEXT_HANG makes it never answer. $FAKE_TEXT_EXIT makes it exit with that code
+# (printing $FAKE_TEXT_FAIL, if any, on stderr), and $FAKE_TEXT_STDOUT replaces what
+# Claude prints on stdout (before it exits).
 #
 # With $FAKE_TEXT_ANSWERS set, a title comes from that file instead, one line per
 # call, used up in order: "fail" fails the call, and an empty or missing file titles
@@ -18,7 +20,9 @@ log = os.environ.get("FAKE_TEXT_LOG")
 if log:
     with open(log, "a") as f:
         f.write(json.dumps({"argv": args, "cwd": os.getcwd(), "prompt": prompt, "pid": os.getpid(),
-                            "claudeConfigDir": os.environ.get("CLAUDE_CONFIG_DIR")}) + "\n")
+                            "claudeConfigDir": os.environ.get("CLAUDE_CONFIG_DIR"),
+                            "entrypoint": os.environ.get("CLAUDE_CODE_ENTRYPOINT"),
+                            "claudecode": os.environ.get("CLAUDECODE")}) + "\n")
 
 if codex:
     schema = json.load(open(args[args.index("--output-schema") + 1]))
@@ -29,9 +33,16 @@ if os.environ.get("FAKE_TEXT_HANG"):
     while True:
         time.sleep(60)
 
-if os.environ.get("FAKE_TEXT_FAIL"):
-    sys.stderr.write(os.environ["FAKE_TEXT_FAIL"] + "\n")
-    sys.exit(1)
+if os.environ.get("FAKE_TEXT_STDOUT") is not None and not codex:
+    print(os.environ["FAKE_TEXT_STDOUT"])
+
+if os.environ.get("FAKE_TEXT_FAIL") or os.environ.get("FAKE_TEXT_EXIT"):
+    if os.environ.get("FAKE_TEXT_FAIL"):
+        sys.stderr.write(os.environ["FAKE_TEXT_FAIL"] + "\n")
+    sys.exit(int(os.environ.get("FAKE_TEXT_EXIT") or 1))
+
+if os.environ.get("FAKE_TEXT_STDOUT") is not None and not codex:
+    sys.exit(0)
 
 name = "codex" if codex else "claude"
 out = {key: (False if spec["type"] == "boolean" else "%s %s" % (name, key))

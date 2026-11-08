@@ -208,7 +208,7 @@ defmodule HalC2.Steps.Orchestration.Projections do
 
   step "the shell row of {string} lists that background task", %{args: [thread]} = context do
     assert [%{"taskId" => "bg-1", "taskType" => "command_execution", "description" => d}] =
-             World.row(context, thread)["pendingBackgroundTasks"]
+             World.row(context, thread)["runningBackgroundTasks"]
 
     assert d == "npm run watch"
     context
@@ -216,7 +216,7 @@ defmodule HalC2.Steps.Orchestration.Projections do
 
   step "the shell row of {string} lists no background tasks", %{args: [thread]} = context do
     assert World.entities(context, thread, "turn-item") |> Enum.any?(&(&1["id"] == "bg-1"))
-    assert World.row(context, thread)["pendingBackgroundTasks"] == []
+    assert World.row(context, thread)["runningBackgroundTasks"] == []
     context
   end
 
@@ -1356,8 +1356,10 @@ defmodule HalC2.Steps.Orchestration.Projections do
     for key <- ~w(prompt progress result) do
       text = entity[key]
       assert String.valid?(text)
+      # The limit holds the marker too, cut no earlier than a character before it.
+      assert byte_size(text) <= 32_768
       body = String.replace_suffix(text, suffix, "")
-      assert byte_size(body) <= 32_768 and byte_size(body) > 32_760
+      assert byte_size(body) > 32_768 - byte_size(suffix) - 4
     end
 
     context
@@ -1441,5 +1443,468 @@ defmodule HalC2.Steps.Orchestration.Projections do
     if Enum.any?(frame["events"], &(hd(&1) == seq)),
       do: {acc, client},
       else: events_until(client, seq, acc)
+  end
+
+  # --- a turn longer than 500 rows ------------------------------------------------------
+
+  step ~r/^the last turn of "(?<thread>[^"]+)" holds 900 rows$/, %{args: [thread]} = context do
+    # The run's message and its 899 items are the turn's 900 windowed rows.
+    commit(context, thread, user_turn(1, 899))
+    Map.put(context, :thread, thread)
+  end
+
+  step "it receives the turn's newest rows within one megabyte and a cursor for older history",
+       context do
+    items = for ["turn-item", id, entity] <- context.history["rows"], do: {id, entity}
+    ids = Enum.map(items, &elem(&1, 0))
+    assert "item-1-899" in ids
+    refute "item-1-1" in ids
+    size = items |> Enum.map(&(&1 |> elem(1) |> JSON.encode!() |> byte_size())) |> Enum.sum()
+    assert size <= 1_000_000
+    assert is_binary(context.history["cursor"])
+    Map.put(context, :snapshot_items, ids)
+  end
+
+  step "it receives at most 75 older rows of the same turn", context do
+    items = for ["turn-item", id, entity] <- context.history["rows"], do: {id, entity}
+    assert items != [] and length(items) <= 75
+    assert Enum.all?(items, &(elem(&1, 1)["runId"] == "run-1"))
+    ids = Enum.map(items, &elem(&1, 0))
+    assert MapSet.disjoint?(MapSet.new(ids), MapSet.new(context.snapshot_items))
+    n = fn "item-1-" <> n -> String.to_integer(n) end
+    assert Enum.max(Enum.map(ids, n)) == Enum.min(Enum.map(context.snapshot_items, n)) - 1
+    context
+  end
+
+  # --- history with no turn starts ------------------------------------------------------
+
+  step ~r/^"(?<thread>[^"]+)" holds imported history that records no turn starts$/,
+       %{args: [thread]} = context do
+    small =
+      for i <- 1..200 do
+        item = %{"id" => "old-#{i}", "runId" => nil, "type" => "reasoning", "text" => "row #{i}"}
+        {"turn-item", item["id"], %{"s" => Map.put(item, "ordinal", i)}}
+      end
+
+    huge = %{
+      "id" => "old-huge",
+      "runId" => nil,
+      "type" => "reasoning",
+      "text" => String.duplicate("x", 1_200_000),
+      "ordinal" => 201
+    }
+
+    commit(context, thread, small ++ [{"turn-item", "old-huge", %{"s" => huge}}])
+    Map.put(context, :thread, thread)
+  end
+
+  step "the page holds at most 75 items and about one megabyte", context do
+    items = for ["turn-item", id, entity] <- context.history["rows"], do: {id, entity}
+    assert length(items) <= 75
+
+    size = items |> Enum.map(&(&1 |> elem(1) |> JSON.encode!() |> byte_size())) |> Enum.sum()
+    assert size <= 1_000_000 or length(items) == 1
+
+    # The page before it is bounded the same way, by count and by size.
+    context = history(context, context.thread, context.history["cursor"])
+    older = for ["turn-item", id, entity] <- context.history["rows"], do: {id, entity}
+    assert length(older) == 75
+
+    older_size =
+      older |> Enum.map(&(&1 |> elem(1) |> JSON.encode!() |> byte_size())) |> Enum.sum()
+
+    assert older_size <= 1_000_000
+    context
+  end
+
+  step "it holds at least one item, however large that item is", context do
+    # The first page asked for (in context before the step above paged on) held the
+    # huge newest item whole; re-ask for it to show so here.
+    context = history(context, context.thread, nil)
+    assert history_row(context.history, "old-huge")["text"] |> byte_size() == 1_200_000
+    context
+  end
+
+  # --- open questions in a bounded snapshot ---------------------------------------------
+
+  step ~r/^the agent in "(?<thread>[^"]+)" asked a question and kept working long after$/,
+       %{args: [thread]} = context do
+    questions = [
+      %{"id" => "mode", "header" => "Mode", "question" => "Which mode?", "options" => []}
+    ]
+
+    commit(
+      context,
+      thread,
+      user_turn(1) ++ question_rows(questions) ++ Enum.flat_map(2..30, &user_turn/1)
+    )
+
+    Map.merge(context, %{thread: thread, questions: questions})
+  end
+
+  step ~r/^the agent in "(?<thread>[^"]+)" asked a question with a large card early in a very long history$/,
+       %{args: [thread]} = context do
+    card = String.duplicate("the full context of the choice ", 20_000)
+
+    questions = [
+      %{"id" => "mode", "header" => "Mode", "question" => card, "options" => []}
+    ]
+
+    commit(
+      context,
+      thread,
+      user_turn(1) ++ question_rows(questions) ++ Enum.flat_map(2..60, &user_turn/1)
+    )
+
+    Map.merge(context, %{thread: thread, questions: questions})
+  end
+
+  # Opening a thread is its bounded snapshot plus, for a client whose shell left
+  # idle subagents out, one read of its family.
+  step "the user opens {string}", %{args: [thread]} = context do
+    context = history(context, thread, nil)
+
+    {family, context} =
+      World.call!(context, "hal-c2.threadFamily", %{
+        "threadId" => World.thread_id(context, thread)
+      })
+
+    Map.put(context, :family, family["rows"])
+  end
+
+  step "the question and its answer panel are shown", context do
+    assert history_row(context.history, "q-1")["questions"] == context.questions
+    assert history_row(context.history, "req-q")["status"] == "pending"
+    assert history_row(context.history, "node-q")
+    context
+  end
+
+  step "once the question is answered the snapshot no longer carries it", context do
+    commit(context, context.thread, [
+      {"runtime-request", "req-q", %{"s" => %{"status" => "resolved"}}},
+      {"turn-item", "q-1", %{"s" => %{"status" => "completed"}}}
+    ])
+
+    context = history(context, context.thread, nil)
+    refute Enum.any?(context.history["rows"], &match?(["turn-item", "q-1", _], &1))
+    context
+  end
+
+  step "the snapshot carries the whole question", context do
+    assert history_row(context.history, "q-1")["questions"] == context.questions
+    context
+  end
+
+  step "it still holds the newest turns of {string}", %{args: [_thread]} = context do
+    assert user_messages(context.history) == for(n <- 51..60, do: "msg-#{n}")
+    context
+  end
+
+  defp question_rows(questions) do
+    request = %{
+      "id" => "req-q",
+      "nodeId" => "node-q",
+      "kind" => "user_input",
+      "status" => "pending"
+    }
+
+    node = %{"id" => "node-q", "runId" => "run-1", "runtimeRequestId" => "req-q"}
+
+    item = %{
+      "id" => "q-1",
+      "runId" => "run-1",
+      "nodeId" => "node-q",
+      "type" => "user_input_request",
+      "requestId" => "req-q",
+      "questions" => questions
+    }
+
+    [
+      {"runtime-request", "req-q", %{"s" => request}},
+      {"node", "node-q", %{"s" => node}},
+      {"turn-item", "q-1", %{"s" => Map.put(item, "ordinal", 1500)}}
+    ]
+  end
+
+  # --- a thread that was stopped once ----------------------------------------------------
+
+  step ~r/^"(?<thread>[^"]+)" was stopped once and its runs and checkpoint file lists fill most of a snapshot$/,
+       %{args: [thread]} = context do
+    stopped = %{
+      "id" => "turn-item:run:run-30:signal:interrupt-request",
+      "runId" => "run-30",
+      "type" => "run_interrupt_request",
+      "status" => "completed",
+      "title" => "Interrupt requested",
+      "message" => "Interrupt requested"
+    }
+
+    files =
+      for i <- 1..200,
+          do: %{
+            "path" => "lib/some/deeply/nested/module_#{i}.ex",
+            "kind" => "modified",
+            "additions" => 3,
+            "deletions" => 1
+          }
+
+    checkpoints =
+      for n <- 1..60 do
+        checkpoint = %{
+          "id" => "cp-#{n}",
+          "runId" => "run-#{n}",
+          "status" => "ready",
+          "files" => files
+        }
+
+        {"checkpoint", checkpoint["id"], %{"s" => checkpoint}}
+      end
+
+    commit(
+      context,
+      thread,
+      Enum.flat_map(1..60, &user_turn/1) ++
+        [{"turn-item", stopped["id"], %{"s" => Map.put(stopped, "ordinal", 30_500)}}] ++
+        checkpoints
+    )
+
+    Map.put(context, :thread, thread)
+  end
+
+  step "it receives at least half a snapshot's worth of its newest history, not a single row",
+       context do
+    turns = user_messages(context.history)
+    assert length(turns) >= 5
+    assert "msg-60" in turns
+    assert length(for(["turn-item", _, _] <- context.history["rows"], do: 1)) >= 15
+    context
+  end
+
+  # --- idle subagents in the shell snapshot ----------------------------------------------
+
+  step ~r/^"(?<thread>[^"]+)" has a subagent thread "(?<child>[^"]+)" that (?<state>.+)$/,
+       %{args: [thread, child, state]} = context do
+    context = subagent_thread(context, thread, child)
+
+    context =
+      case state do
+        "is idle" ->
+          World.numbered_run(context, child, 1, "completed")
+
+        "has a live or queued run" ->
+          World.numbered_run(context, child, 1, "running")
+
+        "waits on a request or has background work" ->
+          context
+          |> World.numbered_run(child, 1, "completed")
+          |> background_command(child, "run-1")
+          |> World.put_entity(child, "runtime-request", "req-1", %{
+            "s" => %{
+              "id" => "req-1",
+              "threadId" => World.thread_id(context, child),
+              "kind" => "approval",
+              "status" => "pending",
+              "createdAt" => World.iso_from_now(0)
+            }
+          })
+
+        "has a subagent of its own" ->
+          context
+          |> World.numbered_run(child, 1, "completed")
+          |> subagent_thread(child, "t1-grandchild")
+      end
+
+    Map.merge(context, %{thread: thread, child: child})
+  end
+
+  step "a client that asks to leave out idle subagents connects", context do
+    client =
+      context
+      |> World.client()
+      |> Mc.sub(77, %{"type" => "shell", "omitIdleSubagents" => true})
+
+    {frame, client} = Mc.await(client, &(&1["t"] == "shell" and &1["id"] == 77))
+    ids = for [_mc, id, "thread", _row] <- frame["rows"], do: id
+    context |> World.put_client(client) |> Map.put(:shell_ids, ids)
+  end
+
+  step "a client holds the shell with its version and goes away", context do
+    client = Mc.connect(context.mc) |> Mc.sub(77, %{"type" => "shell"})
+    {frame, client} = Mc.await(client, &(&1["t"] == "shell" and &1["id"] == 77))
+    ids = for [_mc, id, "thread", _row] <- frame["rows"], do: id
+    assert World.thread_id(context, context.child) in ids
+    Mint.HTTP.close(client.conn)
+
+    name = Atom.to_string(node())
+    %{"epoch" => epoch, "rev" => rev} = Enum.find(frame["mcs"], &(&1["mc"] == name))
+    Map.put(context, :shell_have, %{name => [epoch, rev]})
+  end
+
+  step "{string} finishes its run", %{args: [child]} = context do
+    context = World.numbered_run(context, child, 1, "completed")
+    id = World.thread_id(context, child)
+    World.await_row(id, &(&1["status"] not in ~w(queued preparing starting running)))
+    context
+  end
+
+  step "the client resumes the shell with its version, leaving out idle subagents", context do
+    client =
+      WsClient.send_json(Mc.connect(context.mc), %{
+        "t" => "sub",
+        "id" => 78,
+        "shape" => %{"type" => "shell", "omitIdleSubagents" => true},
+        "have" => context.shell_have
+      })
+
+    {frame, client} = Mc.await(client, &(&1["t"] == "shell" and &1["id"] == 78))
+    context |> World.put_client(client) |> Map.put(:resumed_shell, frame)
+  end
+
+  step "the resumed shell contains {string} without a reset", %{args: [child]} = context do
+    frame = context.resumed_shell
+    ids = for [_mc, id, "thread", _row] <- frame["rows"], do: id
+    assert World.thread_id(context, child) in ids
+
+    name = Atom.to_string(node())
+    assert %{"reset" => false} = Enum.find(frame["mcs"], &(&1["mc"] == name))
+    context
+  end
+
+  step ~r/^the shell snapshot (?<outcome>does not contain|contains) "(?<child>[^"]+)"$/,
+       %{args: [outcome, child]} = context do
+    assert World.thread_id(context, context.thread) in context.shell_ids
+
+    if outcome == "contains" do
+      assert World.thread_id(context, child) in context.shell_ids
+    else
+      refute World.thread_id(context, child) in context.shell_ids
+    end
+
+    context
+  end
+
+  step "the shell snapshot left out the idle subagents of {string}",
+       %{args: [thread]} = context do
+    context =
+      context
+      |> subagent_thread(thread, "t1-child")
+      |> World.numbered_run("t1-child", 1, "completed")
+      |> World.put_entity("t1-child", "checkpoint", "cp-child", %{
+        "s" => %{"id" => "cp-child", "runId" => "run-1", "status" => "ready", "files" => []}
+      })
+      |> subagent_thread("t1-child", "t1-grandchild")
+
+    client =
+      context
+      |> World.client()
+      |> Mc.sub(77, %{"type" => "shell", "omitIdleSubagents" => true})
+
+    {frame, client} = Mc.await(client, &(&1["t"] == "shell" and &1["id"] == 77))
+    ids = for [_mc, id, "thread", _row] <- frame["rows"], do: id
+    # The grandchild is the idle leaf left out; its parent stays, as a subagent
+    # with a subagent of its own is part of the tree the sidebar anchors on.
+    assert World.thread_id(context, "t1-child") in ids
+    refute World.thread_id(context, "t1-grandchild") in ids
+    context |> World.put_client(client) |> Map.merge(%{thread: thread, shell_ids: ids})
+  end
+
+  step "the client reads the subagent tree of {string} once", %{args: [thread]} = context do
+    ids = for [_mc, id, "thread", _row] <- context.family, do: id
+
+    assert MapSet.new(ids) ==
+             MapSet.new([
+               World.thread_id(context, thread),
+               World.thread_id(context, "t1-child"),
+               World.thread_id(context, "t1-grandchild")
+             ])
+
+    assert length(ids) == 3
+    context
+  end
+
+  step "its lineage, subagent rows and their diffs show as before", context do
+    rows = Map.new(context.family, fn [_mc, id, _kind, row] -> {id, row} end)
+    child = rows[World.thread_id(context, "t1-child")]
+    grandchild = rows[World.thread_id(context, "t1-grandchild")]
+    assert child["lineage"]["parentThreadId"] == World.thread_id(context, context.thread)
+    assert grandchild["lineage"]["parentThreadId"] == World.thread_id(context, "t1-child")
+    # The rows are the shell's own, exactly as a snapshot that left nothing out holds.
+    assert child == World.row(context, "t1-child")
+    # A subagent's diffs come from its checkpoints, still in its own history.
+    context = history(context, "t1-child", nil)
+    assert history_row(context.history, "cp-child")["status"] == "ready"
+    context
+  end
+
+  # --- cut subagent text, live and in a snapshot ------------------------------------------
+
+  step ~r/^a subagent in "(?<thread>[^"]+)" has a prompt in Japanese longer than 32,768 bytes$/,
+       %{args: [thread]} = context do
+    item = %{
+      "id" => "sub-jp",
+      "runId" => "run-1",
+      "type" => "subagent",
+      "prompt" => String.duplicate("あ", 20_000)
+    }
+
+    context
+    |> World.numbered_run(thread, 1, "running")
+    |> World.put_entity(thread, "turn-item", "sub-jp", %{"s" => item})
+    |> Map.put(:thread, thread)
+  end
+
+  step ~r/^a client follows "(?<thread>[^"]+)" and another client reads "(?<same>[^"]+)" afresh$/,
+       %{args: [thread, _same]} = context do
+    id = World.thread_id(context, thread)
+    {frames, client} = context |> World.client() |> Mc.sub(41, shape(id)) |> until_live([])
+
+    # The prompt grows further while the first client follows; a title change marks
+    # where its events end.
+    append = {"turn-item", "sub-jp", %{"a" => %{"prompt" => String.duplicate("い", 100)}}}
+    {:ok, _} = HalC2.Streams.commit(id, :thread, [append])
+
+    {:ok, last} =
+      HalC2.Streams.commit(id, :thread, [{"thread", id, %{"s" => %{"title" => "Grew"}}}])
+
+    {events, client} = events_until(client, last, [])
+
+    held =
+      Enum.reduce(events, row(frames, "sub-jp"), fn
+        [_seq, "turn-item", "sub-jp", patch, _at], item -> HalC2.Patch.apply(item, patch)
+        _event, item -> item
+      end)
+
+    {fresh, fresh_client} =
+      context |> World.client("fresh") |> Mc.sub(41, shape(id)) |> until_live([])
+
+    context
+    |> World.put_client(client)
+    |> World.put_client("fresh", fresh_client)
+    |> Map.merge(%{live_prompt: held["prompt"], fresh_prompt: row(fresh, "sub-jp")["prompt"]})
+  end
+
+  step "both hold the same cut prompt", context do
+    assert context.live_prompt == context.fresh_prompt
+    context
+  end
+
+  step ~r/^the cut prompt with its "(?<tail>… output truncated for transport)" is at most 32,768 bytes$/,
+       %{args: [tail]} = context do
+    assert String.valid?(context.fresh_prompt)
+    assert String.ends_with?(context.fresh_prompt, tail)
+    assert byte_size(context.fresh_prompt) <= 32_768
+    context
+  end
+
+  defp subagent_thread(context, parent, child) do
+    context = World.named_thread(context, child)
+
+    World.patch_thread(context, child, %{
+      "lineage" => %{
+        "parentThreadId" => World.thread_id(context, parent),
+        "relationshipToParent" => "subagent",
+        "rootThreadId" => World.thread_id(context, parent)
+      }
+    })
   end
 end

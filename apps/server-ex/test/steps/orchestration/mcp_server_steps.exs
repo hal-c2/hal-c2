@@ -335,6 +335,12 @@ defmodule HalC2.Steps.Orchestration.McpServer do
     Map.put(context, :mcp_result, result)
   end
 
+  step "it receives thread {string}", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    assert {:ok, %{"thread" => %{"threadId" => ^id}}} = context.mcp_result
+    context
+  end
+
   # --- access rules ----------------------------------------------------------------
 
   step("{string} has no run starting, running or waiting", %{args: [thread]} = context,
@@ -445,7 +451,7 @@ defmodule HalC2.Steps.Orchestration.McpServer do
 
   # --- a renewed credential in a running Claude thread -----------------------------
 
-  # Claude names its MCP config file on each start's command line (`World.claude_starts/1`).
+  # Each Claude start is handed its MCP servers over stdin (`World.claude_mcp_servers/1`).
   step "the agent of a running Claude thread uses the {string} server",
        %{args: [name]} = context do
     context =
@@ -477,7 +483,8 @@ defmodule HalC2.Steps.Orchestration.McpServer do
   end
 
   step "the agent keeps its tools with the new credential", context do
-    assert [new] = claude_credentials(context, "hal-c2")
+    assert [old, new] = claude_credentials(context, "hal-c2")
+    assert old == context.credential
     assert length(World.claude_starts(context)) == 2
     assert new != context.credential
 
@@ -500,9 +507,7 @@ defmodule HalC2.Steps.Orchestration.McpServer do
 
     for argv <- starts do
       refute Enum.any?(argv, &String.contains?(&1, token))
-      index = Enum.find_index(argv, &(&1 == "--mcp-config"))
-      assert index
-      assert argv |> Enum.at(index + 1) |> File.regular?()
+      refute "--mcp-config" in argv
     end
 
     refute Enum.any?(context.processes, &String.contains?(&1["command"], token))
@@ -924,12 +929,12 @@ defmodule HalC2.Steps.Orchestration.McpServer do
     context = acp_agent(context, %{"mcpCapabilities" => %{"http" => true}})
     context = World.send_turn(context, @acp_thread, text)
     World.await_runs(context, @acp_thread, ["completed"])
-    context
+    Map.put(context, :slash_text, text)
   end
 
   step "the prompt is sent without HAL-C2's instructions in front of it", context do
     [first | _] = acp_prompts(context)
-    assert String.starts_with?(first, "/compact")
+    assert String.starts_with?(first, context.slash_text)
     refute first =~ "HAL-C2 orchestration"
     context
   end
@@ -1538,18 +1543,10 @@ defmodule HalC2.Steps.Orchestration.McpServer do
   defp request(method, params \\ %{}),
     do: JSON.encode!(%{"jsonrpc" => "2.0", "id" => 1, "method" => method, "params" => params})
 
-  # The credential in each live Claude config for the server `name`, oldest first.
+  # The credential each Claude start was handed for the server `name`, oldest first.
   defp claude_credentials(context, name) do
-    for argv <- World.claude_starts(context),
-        index = Enum.find_index(argv, &(&1 == "--mcp-config")),
-        is_integer(index),
-        path = Enum.at(argv, index + 1),
-        File.exists?(path),
-        do:
-          path
-          |> File.read!()
-          |> JSON.decode!()
-          |> get_in(["mcpServers", name, "headers", "Authorization"])
+    for servers <- World.claude_mcp_servers(context),
+        do: get_in(servers, [name, "headers", "Authorization"])
   end
 
   defp tool_request(name, arguments),
@@ -1801,7 +1798,6 @@ defmodule HalC2.Steps.Orchestration.McpServer do
   # args its runtime builds (`HalC2.Claude.Protocol.cli_args/1`).
   defp claude_system_prompt(context, opts) do
     mcp = HalC2.Mcp.for_agent(World.thread_id(context, "caller"), "claudeAgent")
-    opts = Keyword.put(opts, :mcp_config_path, "private-mcp.json")
     args = HalC2.Claude.Protocol.cli_args([mcp: mcp] ++ opts)
     index = Enum.find_index(args, &(&1 == "--append-system-prompt"))
     assert index, "the Claude launch carries no system prompt"

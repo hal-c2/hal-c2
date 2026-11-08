@@ -364,6 +364,8 @@ Feature: A thread hears when a pull request it owns needs attention
     When the host answers again and the checks of "acme/app#12" have passed
     Then the agent of "t1" is woken once to say the checks passed
 
+  # Upstream #29450: repeated known permanent failures, such as access refusals, still stop
+  # the watch and notify the agent.
   @backlog @mc @priority-low
   Scenario: A watch the host keeps refusing ends and says so
     Given "t1" watches "acme/app#12"
@@ -464,6 +466,7 @@ Feature: A thread hears when a pull request it owns needs attention
     Then the thread is told no checks have reported within the next two minutes
     And its comments are not read any more often
 
+  # Upstream #23863: a watch whose checks were seen is not told that none reported.
   @backlog @mc @priority-low
   Scenario: A GitHub pull request whose checks were seen does not count as having none
     Given a thread watches a GitHub pull request whose checks were seen running on its latest commit

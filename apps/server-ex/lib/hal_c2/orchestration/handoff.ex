@@ -835,16 +835,12 @@ defmodule HalC2.Orchestration.Handoff do
     |> history(max_chars)
   end
 
-  # A row's part of the history as `{run, at, kind, value}`, if it has one. A message the
-  # MC sent for the agent (a delegated task's result, a wake) carries a `notification`:
-  # it says what happened, and is no one's request. One another thread's agent sent
-  # (`HalC2.Mcp`) is that agent's request, said as such.
+  # A row's part of the history as `{run, at, kind, value}`, if it has one. A bare
+  # `/compact` or `/logout` the user sent was an instruction to the provider of its
+  # day, not conversation: the next provider is not handed it, so a refused
+  # `/compact` leaves the thread with nothing to compact.
   defp entry({"message", _, message}) do
-    case String.trim(message["text"] || "") do
-      "" -> []
-      text -> [{message["runId"], message["createdAt"] || "", said(message, text)}]
-    end
-    |> Enum.map(fn {run, at, {kind, value}} -> {run, at, kind, value} end)
+    if maintenance?(message), do: [], else: message_entry(message)
   end
 
   defp entry({"turn-item", _, %{"type" => "command_execution", "input" => input} = item})
@@ -882,6 +878,24 @@ defmodule HalC2.Orchestration.Handoff do
     do: [{item["runId"], item["completedAt"] || item["startedAt"] || "", :files, files}]
 
   defp entry(_row), do: []
+
+  defp maintenance?(%{"role" => "user", "text" => text} = message) when is_binary(text),
+    do:
+      (message["attachments"] || []) == [] and
+        String.downcase(String.trim(text)) in ~w(/compact /logout)
+
+  defp maintenance?(_message), do: false
+
+  # A message the MC sent for the agent (a delegated task's result, a wake) carries a
+  # `notification`: it says what happened, and is no one's request. One another
+  # thread's agent sent (`HalC2.Mcp`) is that agent's request, said as such.
+  defp message_entry(message) do
+    case String.trim(message["text"] || "") do
+      "" -> []
+      text -> [{message["runId"], message["createdAt"] || "", said(message, text)}]
+    end
+    |> Enum.map(fn {run, at, {kind, value}} -> {run, at, kind, value} end)
+  end
 
   defp said(%{"role" => "user", "notification" => %{} = notification}, text) do
     summary = notification["summary"]

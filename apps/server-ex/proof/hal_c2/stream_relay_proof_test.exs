@@ -97,6 +97,8 @@ defmodule HalC2.StreamRelayProofTest do
         "untagged, for a subscription followed before an upgrade in place; the model's follows are tagged",
       "HalC2.Web.Socket handle_info :flush" =>
         "pushes frames already in order to the client; changes no subscription",
+      "HalC2.Web.Socket handle_info {:release_progress, _, _}" =>
+        "pushes a subscription's held tool progress, in order, to the client; changes no subscription",
       "HalC2.Web.Socket handle_info {:rpc_reply, _, _}" => @other,
       "HalC2.Web.Socket handle_info {:hal_c2_shell, {:rows, _, _, _}}" => @other,
       "HalC2.Web.Socket handle_info {:hal_c2_shell, _}" => @other,

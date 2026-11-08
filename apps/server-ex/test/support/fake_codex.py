@@ -276,7 +276,9 @@ for line in sys.stdin:
             continue
         send({"id": mid, "result": {"userAgent": "fake", "platformOs": "test"}})
     elif method == "model/list":
-        # FAKE_CODEX_MODELS replaces the default catalogue.
+        # FAKE_CODEX_MODELS_HANG never answers; FAKE_CODEX_MODELS replaces the catalogue.
+        if os.environ.get("FAKE_CODEX_MODELS_HANG"):
+            continue
         send({"id": mid, "result": {"data": json.loads(os.environ.get("FAKE_CODEX_MODELS") or "null") or [
             {"id": "gpt-6-luna", "model": "gpt-6-luna", "displayName": "GPT-6 Luna", "isDefault": True},
             {"id": "gpt-5.5", "model": "gpt-5.5", "displayName": "GPT-5.5", "isDefault": False}]}})
@@ -291,6 +293,15 @@ for line in sys.stdin:
         send({"id": mid, "result": {"threadId": f"feedback-for-{params['threadId']}"}})
     elif method == "thread/resume" and os.environ.get("FAKE_CODEX_RESUME_ERROR"):
         send({"id": mid, "error": {"code": -32600, "message": os.environ["FAKE_CODEX_RESUME_ERROR"]}})
+    # While the file FAKE_CODEX_ARCHIVED_FILE names exists, the native thread is
+    # archived: resuming or forking it fails until thread/unarchive removes the file.
+    elif method in ("thread/resume", "thread/fork") and os.environ.get("FAKE_CODEX_ARCHIVED_FILE") and os.path.exists(os.environ["FAKE_CODEX_ARCHIVED_FILE"]):
+        send({"id": mid, "error": {"code": -32600, "message": f"thread {params.get('threadId')} is archived"}})
+    elif method == "thread/unarchive":
+        flag = os.environ.get("FAKE_CODEX_ARCHIVED_FILE")
+        if flag and os.path.exists(flag):
+            os.remove(flag)
+        send({"id": mid, "result": {"thread": {"id": params.get("threadId") or thread_id}}})
     elif method in ("thread/start", "thread/resume"):
         # FAKE_CODEX_SESSION_LOG collects each thread/start and thread/resume's params.
         if os.environ.get("FAKE_CODEX_SESSION_LOG"):
@@ -321,7 +332,8 @@ for line in sys.stdin:
             with open(os.environ["FAKE_CODEX_INPUT_LOG"], "a") as f:
                 f.write(json.dumps(params["input"]) + "\n")
         turns += 1
-        turn_id = f"{INSTANCE or 'native'}-turn-{turns}"
+        # FAKE_CODEX_REPEAT_TURN_ID answers every turn/start with the first turn's id.
+        turn_id = f"{INSTANCE or 'native'}-turn-{1 if os.environ.get('FAKE_CODEX_REPEAT_TURN_ID') else turns}"
         prompt = params["input"][0]["text"]
         # The script plays from the user's message, not from the context the MC hands
         # off ahead of it (`<conversation_history>`, `<imported_history>`, ...).
@@ -370,7 +382,9 @@ for line in sys.stdin:
             send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-partial-{turn_id}", "text": text[len("say and wait "):]}}})
             waiting_ctx = ctx
             continue
-        if "wait" in text or "finishing" in text or "closing" in text:
+        # While the file FAKE_CODEX_HOLD_TURN_FILE names exists, every turn waits as "wait" does.
+        held_turn = os.path.exists(os.environ.get("FAKE_CODEX_HOLD_TURN_FILE", "/nonexistent"))
+        if "wait" in text or "finishing" in text or "closing" in text or held_turn:
             # FAKE_CODEX_STDERR_FLOOD writes far more than a pipe buffer holds.
             if os.environ.get("FAKE_CODEX_STDERR_FLOOD"):
                 sys.stderr.write("x" * 300_000 + "\n")
@@ -381,6 +395,14 @@ for line in sys.stdin:
             continue
         if text.startswith("say "):
             say(ctx, text)
+            continue
+        # "compact the context" has Codex compact the thread's context during the turn,
+        # as it does on its own when the context fills up.
+        if "compact the context" in text:
+            item = {"type": "contextCompaction", "id": f"compaction-{turn_id}"}
+            send({"method": "item/started", "params": {**ctx, "item": item}})
+            send({"method": "item/completed", "params": {**ctx, "item": item}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
             continue
         if "where are we" in text:
             where = f"on {thread_id} history {'<conversation_history>' in prompt} merged {'<merged_work>' in prompt}"
@@ -494,6 +516,11 @@ for line in sys.stdin:
             send({"id": "input-1", "method": "item/tool/requestUserInput", "params": {**ctx, "itemId": "ask-1", "questions": [
                 {"id": "color", "header": "Color", "question": text.split("ask: ", 1)[1] if "ask: " in text else "Which color?", "options": [{"label": "Red", "description": "Warm"}]}]}})
             continue
+        # "capped" stops the turn on a rate limit Codex names no reset for.
+        if "capped" in text:
+            send({"method": "error", "params": {**ctx, "willRetry": False, "error": {"message": "Rate limited.", "codexErrorInfo": "rateLimitExceeded"}}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "failed", "error": {"message": "Rate limited."}}}})
+            continue
         if "rate limit" in text:
             send({"method": "account/rateLimits/updated", "params": {"rateLimits": {"limitId": "codex", "primary": {"usedPercent": 77, "windowDurationMins": 300}}}})
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
@@ -591,7 +618,9 @@ for line in sys.stdin:
         item_id = steer_item_id()
         send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": item_id, "text": ""}}})
         send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": item_id, "text": text}}})
-        send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
+        # While FAKE_CODEX_KEEP_TURN's file exists, the turn keeps working after a steer.
+        if not os.path.exists(os.environ.get("FAKE_CODEX_KEEP_TURN", "/nonexistent")):
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
     elif method == "thread/fork" and SESSIONS:
         # A fork by `path` reads that rollout; the new thread works in the given cwd.
         path = params.get("path") or rollout_find(params["threadId"])
@@ -610,8 +639,16 @@ for line in sys.stdin:
         thread_id = f"forked-{params['threadId']}-at-{params.get('lastTurnId')}"
         send({"id": mid, "result": {"thread": {"id": thread_id}}})
     elif method == "thread/revert" and os.environ.get("FAKE_CODEX_NO_REVERT"):
-        # FAKE_CODEX_NO_REVERT: cutting paginated history before a turn is refused.
-        send({"id": mid, "error": {"code": -32600, "message": "thread/revert is not available"}})
+        # FAKE_CODEX_NO_REVERT: an app-server without thread/revert. It cannot
+        # deserialize the method into its request type, so it answers -32600
+        # naming it an unknown variant rather than -32601.
+        send({"id": mid, "error": {"code": -32600, "message": "Invalid request: unknown variant `thread/revert`, expected one of `thread/rollback`, `turn/start`"}})
+    elif method == "thread/revert" and not paginated and os.environ.get("FAKE_CODEX_NO_ROLLBACK"):
+        # Codex 0.156 dropped thread/rollback, and thread/revert refuses a
+        # thread whose history predates paginated history (before 0.151).
+        send({"id": mid, "error": {"code": -32600, "message": "thread/revert is not supported for threads with legacy history"}})
+    elif method == "thread/rollback" and os.environ.get("FAKE_CODEX_NO_ROLLBACK"):
+        send({"id": mid, "error": {"code": -32601, "message": method}})
     elif method == "thread/revert" and paginated and page_size and int(params["beforeTurnId"].rsplit("-", 1)[1]) <= turns - page_size:
         send({"id": mid, "error": {"code": -32600, "message": f"{params['beforeTurnId']} is not on the latest history page"}})
     elif method == "thread/revert" and paginated:
@@ -628,7 +665,8 @@ for line in sys.stdin:
     # fails once while the FAKE_CODEX_CONSUME_FAIL file exists.
     elif method == "account/read":
         kind = os.environ.get("FAKE_CODEX_ACCOUNT", "chatgpt")
-        account = None if kind == "none" else {"type": kind, "email": "me@example.com", "planType": "pro"}
+        # FAKE_CODEX_PLAN is the planType the account reports (default "pro").
+        account = None if kind == "none" else {"type": kind, "email": "me@example.com", "planType": os.environ.get("FAKE_CODEX_PLAN", "pro")}
         send({"id": mid, "result": {"account": account, "requiresOpenaiAuth": True}})
     # FAKE_CODEX_RESET_CREDITS sets how many reset credits are banked (default two);
     # FAKE_CODEX_CONSUME_OUTCOME is what a redemption answers (default "reset").
@@ -645,9 +683,13 @@ for line in sys.stdin:
         else:
             credits = {"availableCount": int(count), "credits": [
                 {"status": "available", "expiresAt": 1800000000 + i} for i in range(int(count))]}
-        main = {"limitId": "codex", "planType": "pro",
+        # FAKE_CODEX_USAGE_PLAN is the planType the usage read reports ("none" omits it).
+        usage_plan = os.environ.get("FAKE_CODEX_USAGE_PLAN", os.environ.get("FAKE_CODEX_PLAN", "pro"))
+        main = {"limitId": "codex",
                 "primary": {"usedPercent": 0 if reset else 42, "windowDurationMins": 300, "resetsAt": 1790000000},
                 "secondary": {"usedPercent": 10.5, "resetsAt": 1790500000}}
+        if usage_plan != "none":
+            main["planType"] = usage_plan
         send({"id": mid, "result": {
             "rateLimits": {"limitId": "codex_spark", "primary": {"usedPercent": 99}},
             "rateLimitsByLimitId": {"codex": main, "codex_spark": {"limitId": "codex_spark", "primary": {"usedPercent": 99}}},
@@ -671,6 +713,8 @@ for line in sys.stdin:
     elif method == "thread/backgroundTerminals/list":
         stays = [{"processId": "4275"}] if os.path.exists("terminal-stays") else []
         send({"id": mid, "result": {"data": stays, "nextCursor": None}})
+    elif method == "thread/inject_items":
+        send({"id": mid, "result": {}})
     elif method == "turn/interrupt":
         # FAKE_CODEX_IGNORE_INTERRUPT, or the file FAKE_CODEX_IGNORE_INTERRUPT_FILE names
         # existing, acknowledges the stop and never ends the turn.

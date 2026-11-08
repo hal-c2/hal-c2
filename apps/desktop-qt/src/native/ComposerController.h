@@ -192,6 +192,12 @@ public:
   // What the sidebar shows for a draft with something in it: the text's first
   // line, else how many attachments it carries; nothing for an empty draft.
   std::optional<QString> draftPreview(const QString& target) const;
+  // The threads (keys) whose composer holds something unsent, the rows the
+  // sidebar marks "Unsent draft".
+  QSet<QString> unsentThreads() const;
+  // Empties the thread's composer of its text, attachments and excerpts, in
+  // every window (the sidebar's `thread.draft.discard`); its model and modes stay.
+  void discardDraft(const QString& target);
   // An image (a snapshot) joins `target`'s draft: a thread key or a draft id.
   // `source` rides with it to the MC when set (ChatImageAttachment.source).
   void attachImage(const QString& target, const QString& name, const QString& mimeType, const QByteArray& bytes,
@@ -245,9 +251,15 @@ private:
     QString error;
     QString remoteId;
     QString environmentId;
+    // How much of an uploading file has gone, 0 to 1; negative while unknown.
+    double progress = -1;
   };
-  // The attachment `id` of any draft or answer; null when it is gone.
+  // The attachment `id` of any draft, answer, waiting send or send in flight;
+  // null when it is gone.
   Attachment* findAttachment(const QString& id);
+  // Runs `change` on every held copy of the attachment `id` (a draft's, an
+  // answer's, a waiting send's, a send in flight's); how many there were.
+  int updateAttachmentCopies(const QString& id, const std::function<void(Attachment&)>& change);
   // Sends a file's bytes to the environment `target` runs on.
   void uploadFile(const QString& id, const QString& environmentId);
   // The environment a thread's or a new thread's files go to.
@@ -280,6 +292,9 @@ private:
     // {filePath, sectionId, sectionTitle, startIndex, endIndex, rangeLabel,
     // diff}; `text` is then the note and the lines are the file's.
     QJsonObject review;
+    // Set for another thread carried as context instead (a `thread`
+    // record): {environmentId, threadId, title}; its link is in the text.
+    QJsonObject thread;
   };
   struct Draft {
     QString text;  // a new thread's is DraftController's
@@ -399,6 +414,7 @@ private:
   // A new thread started from `from` (a thread's key or a draft's id) keeps its model and mode.
   void carryInto(const QString& draftId, const QString& from);
   QString newThreadRuntimeMode(const QString& projectId) const;
+  QString defaultRuntimeModeOf(const QString& target) const;
   // The Space page on show, when no thread or draft is.
   QString openPage() const;
   bool onPage() const { return !m_pageId.isEmpty(); }
@@ -456,6 +472,8 @@ private:
   QVariantList outboxState(const QString& target) const;
   // Pulls a waiting message back into the composer.
   bool editWaiting(const QString& target, const QString& messageId);
+  // Drops a waiting send and what it had already uploaded for it.
+  bool deleteWaiting(const QString& target, const QString& messageId);
   // A refused outbox send: its prompt ahead of what was typed since, with the
   // model and modes it was written with.
   void restoreRefused(const QString& target, const QList<Send>& sends, const QString& error);
@@ -485,6 +503,9 @@ private:
   // text only: back from an empty draft,
   // forward past the newest to an empty one. An edited recall is a draft.
   void stepHistory(const QString& target, bool backward);
+  // Why a draft carrying this much cannot be sent (the contracts' attachment
+  // and context limits), or empty when it can.
+  static QString carryProblem(const QList<Attachment>& attachments, const QList<Excerpt>& contexts);
   bool stash(const QString& target);
   void restoreStash(const QString& target, const QString& id);
   void setStashOpen(bool open);
@@ -524,6 +545,8 @@ private:
   // A send used this model: new threads start from it.
   void rememberModel(const QJsonObject& selection);
   bool setOption(const QString& target, const QString& id, const QVariant& value);
+  bool stepEffort(const QString& target, int direction);
+  static bool effortLocked(const QJsonObject& descriptor, const QString& text);
   bool selectSuggestion(const QString& target, const QString& id);
   // The suggestions for the caret, with the trigger they answer.
   QList<composer::Suggestion> suggestions(const QString& target, const std::optional<composer::Trigger>& trigger) const;
@@ -547,10 +570,15 @@ private:
   QString runtimeModeOf(const QString& target) const;
   QString interactionModeOf(const QString& target) const;
   QVariant setting(const QString& key) const;
-  void save() const;
+  // False when the drafts and stash could not be written.
+  bool save() const;
   // The other windows' composers show what this one changed in the drafts.
   void spread() const;
   bool running(const QString& target) const;
+  // Whether the shown thread's provider can take a message into its running
+  // turn (its session's `turns.supportsActiveSteering`); a provider that
+  // cannot is only offered the queue. No session known reads as able.
+  bool canSteerActive() const;
   void toast(const QString& title, const QString& description);
   void follow();
   void publish();
@@ -582,6 +610,9 @@ private:
     // last sent with: a new thread starts from them.
     QHash<QString, QJsonObject> lastModels;
     QString lastInstance;
+    // The options last given to each model (instanceId + '\n' + slug):
+    // picking a model again offers them back.
+    QHash<QString, QJsonArray> modelOptions;
     // In the order they were sent.
     QList<Unsent> unsent;
     // Each target's send the MC answered last, which its stream may not have

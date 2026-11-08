@@ -43,6 +43,16 @@ defmodule HalC2.ProviderAuthTest do
     %{auth_file: auth_file}
   end
 
+  # Review of #1322: every MC's own token was the one owner "local", so the local tools
+  # of two MCs in a cluster could answer and see each other's sign-ins.
+  test "a client is a different owner on each MC of a cluster" do
+    alias HalC2.ProviderAuth
+    assert ProviderAuth.owner(nil) == ProviderAuth.owner(nil, node())
+    refute ProviderAuth.owner(nil, :a@host) == ProviderAuth.owner(nil, :b@host)
+    refute ProviderAuth.owner("s1", :a@host) == ProviderAuth.owner("s1", :b@host)
+    refute ProviderAuth.owner(nil, :a@host) == ProviderAuth.owner("own-token", :a@host)
+  end
+
   # A socket's unsubscribe can arrive after the test's registry has stopped (scenario teardown).
   test "unsubscribing once the registry has stopped is a no-op" do
     stop_supervised!(HalC2.ProviderAuth.Registry)

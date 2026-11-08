@@ -95,6 +95,20 @@ defmodule HalC2.MuseRuntimePropTest do
         %{"text" => "Ran it."}
       ]
     },
+    # Muse refuses the turn on the subscription quota (hal-c2#1287): the run fails as a
+    # usage limit and the thread reads its reset.
+    %{
+      "match" => "quota",
+      "steps" => [
+        %{
+          "fail" => %{
+            "kind" => "modelError",
+            "message" => "API error 429: quota exhausted (rate_limit_error)",
+            "quota" => %{"limitKind" => "tierLimit", "resetsAtMs" => 1_794_096_057_000}
+          }
+        }
+      ]
+    },
     %{
       "match" => "ask",
       "steps" => [%{"question" => %{"question" => "Pick", "options" => ~w(red green)}}]
@@ -168,6 +182,7 @@ defmodule HalC2.MuseRuntimePropTest do
   # workflow child's :guarded command;
   # mode: the thread's runtime mode; full access runs every command without asking, and
   # switching a running :shell turn to it answers the open prompt;
+  # quota: the last run was refused on the quota, so the thread is limited;
   # history: what Muse's session has been sent, oldest first;
   # replies: the replies naming that history, in order.
   def initial_state,
@@ -178,7 +193,8 @@ defmodule HalC2.MuseRuntimePropTest do
       history: [],
       replies: [],
       next: 1,
-      mode: "approval-required"
+      mode: "approval-required",
+      quota: false
     }
 
   def command(%{turn: turn, next: next}) do
@@ -187,7 +203,21 @@ defmodule HalC2.MuseRuntimePropTest do
     idle = [
       {6,
        {:call, __MODULE__, :send,
-        [msg, oneof([:say, :wait, :delegate, :hold, :finish, :shell, :guarded, :workflow, :ask])]}},
+        [
+          msg,
+          oneof([
+            :say,
+            :quota,
+            :wait,
+            :delegate,
+            :hold,
+            :finish,
+            :shell,
+            :guarded,
+            :workflow,
+            :ask
+          ])
+        ]}},
       {1, {:call, __MODULE__, :set_mode, [oneof(~w(approval-required full-access)), false]}},
       {1, {:call, __MODULE__, :release, []}},
       {1, {:call, __MODULE__, :host_exit, []}}
@@ -263,9 +293,13 @@ defmodule HalC2.MuseRuntimePropTest do
 
   def next_state(state, _result, {:call, _, :send, [msg, kind]}) do
     text = "#{kind} #{msg}"
-    state = %{state | next: state.next + 1, history: state.history ++ [text]}
+    state = %{state | next: state.next + 1, history: state.history ++ [text], quota: false}
 
     case kind do
+      # The quota refusal fails the run at once, and the thread is limited until the reset.
+      :quota ->
+        %{state | runs: state.runs ++ [{msg, "failed"}], quota: true}
+
       kind when kind in [:shell, :guarded, :workflow] and state.mode == "full-access" ->
         %{state | runs: state.runs ++ [{msg, "completed"}]}
 
@@ -351,7 +385,8 @@ defmodule HalC2.MuseRuntimePropTest do
           _ -> nil
         end,
       replies: model.replies,
-      subs: model.subs
+      subs: model.subs,
+      limited: model.quota
     }
 
     reply == :ok and projection == expected
@@ -378,7 +413,7 @@ defmodule HalC2.MuseRuntimePropTest do
     # A reply ends its run, as does a command in full access; the others stop where the
     # fake waits.
     ends? =
-      kind == :say or
+      kind in [:say, :quota] or
         (kind in [:shell, :guarded, :workflow] and Process.get(:mode) == "full-access")
 
     reply(result, if(ends?, do: [run_of(msg)], else: []))
@@ -640,7 +675,8 @@ defmodule HalC2.MuseRuntimePropTest do
           sub <- StreamState.list(state, "subagent"),
           sub["runId"] == run["id"],
           do: {run["userMessageId"], sub["status"]}
-        )
+        ),
+      limited: HalC2.Projection.Shell.thread_shell(state)["lastErrorClass"] == "usage_limit"
     }
   end
 end

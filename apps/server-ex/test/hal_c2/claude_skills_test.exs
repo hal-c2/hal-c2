@@ -127,4 +127,44 @@ defmodule HalC2.ClaudeSkillsTest do
       assert Skills.skill_overrides(config, nil) == %{}
     end
   end
+
+  describe "bypass_permissions/2" do
+    @describetag :tmp_dir
+
+    test "a blank settings file is no layer, a broken one is unreadable", %{tmp_dir: dir} do
+      config = Path.join(dir, "config")
+      project = Path.join(dir, "project")
+      File.mkdir_p!(config)
+      File.mkdir_p!(Path.join(project, ".claude"))
+      local = Path.join([project, ".claude", "settings.local.json"])
+
+      for blank <- ["", "  \n\t\n"] do
+        File.write!(local, blank)
+        assert Skills.bypass_permissions(config, project) == :allowed
+      end
+
+      File.write!(local, "{ \"permissions\": ")
+      assert Skills.bypass_permissions(config, project) == :unreadable
+
+      File.write!(local, ~s({"permissions": {"disableBypassPermissionsMode": "disable"}}))
+      assert Skills.bypass_permissions(config, project) == :disabled
+    end
+
+    test "a permissions value that is not a map turns nothing off" do
+      for settings <- [
+            %{"permissions" => "x"},
+            %{"permissions" => []},
+            %{"permissions" => 5},
+            %{"permissions" => %{"disableBypassPermissionsMode" => false}},
+            %{},
+            nil
+          ] do
+        refute Skills.bypass_disabled_in?(settings), inspect(settings)
+      end
+
+      assert Skills.bypass_disabled_in?(%{
+               "permissions" => %{"disableBypassPermissionsMode" => "disable"}
+             })
+    end
+  end
 end

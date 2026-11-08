@@ -331,7 +331,14 @@ defmodule HalC2.Space.PageAgent do
     for %{"id" => run_id, "status" => status} <- Enum.sort_by(runs, &(&1["status"] != "queued")),
         status == "queued" or status in @run_active do
       type = if status == "queued", do: "queued-run.cancel", else: "run.interrupt"
-      _ = Orchestration.dispatch(%{"type" => type, "threadId" => thread_id, "runId" => run_id})
+      # Every caller replays the user's Stop on the page, so the outcome names the user.
+      _ =
+        Orchestration.dispatch(%{
+          "type" => type,
+          "threadId" => thread_id,
+          "runId" => run_id,
+          "holdQueue" => false
+        })
 
       # A run still only starting with nothing driving it never reaches `begin_turn`
       # (`HalC2.ScheduledTasks` has the same case), so nothing else would end it.
@@ -607,8 +614,8 @@ defmodule HalC2.Space.PageAgent do
 
   # A model the prompt chose is the user's word: one that cannot run is refused, not
   # swapped for another behind their back.
-  defp model(%{"instanceId" => instance} = chosen, _settings, _project, _last) do
-    if runs?(chosen, HalC2.Environment.providers()),
+  defp model(%{"instanceId" => instance} = chosen, _settings, project, _last) do
+    if runs?(chosen, HalC2.Settings.providers_for(project["id"])),
       do: {:ok, chosen},
       else:
         {:error, :invalid,
@@ -618,7 +625,7 @@ defmodule HalC2.Space.PageAgent do
   # The clients' order for a new thread, then the model last used, then the first
   # provider that can run at all. A model on a provider that can't run gives way.
   defp model(_none, settings, project, last) do
-    providers = HalC2.Environment.providers()
+    providers = HalC2.Settings.providers_for(project["id"])
 
     candidates = project_models(settings, project) ++ [last && last["modelSelection"]]
 

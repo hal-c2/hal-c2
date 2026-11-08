@@ -380,7 +380,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Leave it inherited unless the user asks for a supervised subagent. A supervised subagent (approval-required, auto-accept-edits) waits for a person on each action that needs approval, and may wait with nobody watching. A narrower mode is not a read-only switch: put a limit such as not editing files in the task itself."
         },
         "interactionMode": {
           "anyOf": [
@@ -943,6 +944,79 @@
           ],
           "description": "Optional initial page URL. Absolute http(s) URL or a schemeless host such as t3.chat or localhost:5173. Schemeless public hosts use https; loopback hosts use http. Omit to open a blank tab."
         },
+        "target": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": ["url"],
+                      "description": "Selects direct URL navigation."
+                    },
+                    "url": {
+                      "type": "string",
+                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                      "minLength": 1,
+                      "maxLength": 2048,
+                      "description": "Direct website URL. Absolute http(s) URL or a schemeless host such as t3.chat or localhost:5173. Schemeless public hosts use https; loopback hosts use http."
+                    }
+                  },
+                  "required": ["kind", "url"],
+                  "additionalProperties": true
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": ["environment-port"],
+                      "description": "Selects a dev-server port relative to the current execution environment."
+                    },
+                    "port": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "exclusiveMaximum": 65536,
+                      "description": "Dev-server TCP port inside the current environment."
+                    },
+                    "protocol": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": ["http", "https"],
+                          "description": "Dev-server protocol. Defaults to http."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "path": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "Optional path, query, and fragment, for example /settings?tab=account."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": ["kind", "port"],
+                  "additionalProperties": true
+                }
+              ],
+              "description": "Environment-relative target. Prefer {kind:'environment-port',port:5173} for a dev server in the current environment. Wins over url when both are given."
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Environment-relative target. Prefer {kind:'environment-port',port:5173} for a dev server in the current environment. Wins over url when both are given."
+        },
         "open": {
           "anyOf": [
             {
@@ -970,6 +1044,18 @@
             {
               "type": "boolean",
               "description": "Reuse tabId when supplied, otherwise this agent session's current tab. Defaults to true; set false to create a new tab."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "profile": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "description": "Browser profile a new tab opens in, by name or id (any case). Omit to use the user's default profile."
             },
             {
               "type": "null"
@@ -1279,7 +1365,7 @@
   },
   {
     "name": "preview_snapshot",
-    "description": "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot. Set includeImage=false for text-only output with the same page metadata. Set save=true to also write the PNG to disk and get screenshotPath back; embed that path in your reply as ![alt](screenshotPath) so the user sees it. This is the only way to show the user a screenshot; the image in the tool result is not saved anywhere.",
+    "description": "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, and action history. Set includeImage=true to also get a PNG screenshot in the tool response. Set save=true to also write the PNG to disk and get screenshotPath back; embed that path in your reply as ![alt](screenshotPath) so the user sees it. This is the only way to show the user a screenshot; the image in the tool result is not saved anywhere.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1298,7 +1384,7 @@
           "anyOf": [
             {
               "type": "boolean",
-              "description": "Include the PNG image in the tool response. Defaults to true. Set false for text-only output."
+              "description": "Include the PNG image in the tool response. Defaults to false, because providers replay tool images on later requests; set true to see the page."
             },
             {
               "type": "null"
@@ -2777,7 +2863,7 @@
   },
   {
     "name": "hal_c2_thread_interrupt",
-    "description": "Request interruption of a running turn in a HAL-C2 thread in the calling project. Without runId, the newest interruptible run is selected. Terminal runs and threads without an active turn return without another side effect. clientRequestId makes retries idempotent.",
+    "description": "Request interruption of a running turn in a HAL-C2 thread in the calling project. Without runId, the newest interruptible run is selected. Terminal runs and threads without an active turn return without another side effect. Like the user's Stop, it holds the thread's queued messages until the user resumes the queue or sends a message; pass holdQueue: false to let the next queued message start instead. clientRequestId makes retries idempotent.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2805,6 +2891,10 @@
             }
           ]
         },
+        "holdQueue": {
+          "type": "boolean",
+          "description": "Whether the thread's queued messages wait for the user after the interrupt. Defaults to true, as a user's Stop; false lets the next one start."
+        },
         "clientRequestId": {
           "anyOf": [
             {
@@ -2821,11 +2911,32 @@
     }
   },
   {
-    "name": "hal_c2_thread_launch",
-    "description": "Start a separate TOP-LEVEL thread with an explicit workspace binding before its agent runs. Use it only when the user asks for a separate/new/top-level thread (for example a PR stack in its own worktree); for workers, including ones that need their own worktree, use delegate_task. workspaceStrategy: {type:\"worktree\",baseRef:\"parent-branch\",branch:\"new-branch\",startFromOrigin:false} for a new worktree on local commits (startFromOrigin:true for upstream commits), {type:\"existing_worktree\",worktreePath:\"/absolute/path\",branch:\"existing-branch\"} (paths from hal_c2_worktree_list), or {type:\"root\"}. Omitting it means the project root, NOT the caller's worktree. Never create worktrees with `git worktree add` or ask the agent to: that does not update the thread binding. Put the task in message. Omit projectId/modelSelection/modes to inherit them. There is no retry key and the result is not delivered back: retain threadId, follow it with hal_c2_thread_read or hal_c2_thread_wait, and after an error or lost response check hal_c2_thread_list before retrying. Attachments must be pending uploads. Requires a full-access/default caller.",
+    "name": "hal_c2_background_wait",
+    "description": "Mark background work you started (a background command or monitor) as something you wait on before you are done, so this thread stays Working until it ends. Unmarked background commands and monitors do not keep the thread Working: mark tests or builds whose result you need, not dev servers or watchers. Pass the background task ids your tools reported; waiting: false clears the mark. Returns which ids matched running background work. Only providers that track their background tasks (Claude) support it; others return invalid_request.",
     "inputSchema": {
       "type": "object",
       "properties": {
+        "taskIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "maxItems": 20
+        },
+        "waiting": { "type": "boolean" }
+      },
+      "required": ["taskIds"],
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "hal_c2_thread_launch",
+    "description": "Start a separate TOP-LEVEL thread with an explicit workspace binding before its agent runs. Use it only when the user asks for a separate/new/top-level thread (for example a PR stack in its own worktree); for workers, including ones that need their own worktree, use delegate_task. workspaceStrategy: {type:\"worktree\",baseRef:\"parent-branch\",branch:\"new-branch\",startFromOrigin:false} for a new worktree on local commits (startFromOrigin:true for upstream commits), {type:\"existing_worktree\",worktreePath:\"/absolute/path\",branch:\"existing-branch\"} (paths from hal_c2_worktree_list), or {type:\"root\"}. Omitting it means the project root, NOT the caller's worktree. Never create worktrees with `git worktree add` or ask the agent to: that does not update the thread binding. Put the task in message. Omit projectId/modelSelection/modes to inherit them. The result is not delivered back: retain threadId and follow it with hal_c2_thread_read or hal_c2_thread_wait. Pass clientRequestId so a retry after a lost response returns the same thread instead of launching a second one. Attachments must be pending uploads. Requires a full-access/default caller.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "clientRequestId": {
+          "type": "string"
+        },
         "projectId": {
           "anyOf": [
             {
@@ -3098,7 +3209,7 @@
   },
   {
     "name": "hal_c2_thread_list",
-    "description": "List HAL-C2 threads in the calling thread's project, newest first. Filter by durable run status, title, or settled state (settled=true lists threads the user or auto-settlement moved out of the active list) and paginate with the returned cursor. Threads from other projects are never exposed.",
+    "description": "List HAL-C2 threads newest first: the calling thread's project, or every project on this MC with allProjects=true (each item names its projectId; the top-level projectId is then null). Filter by durable run status, title, settled state (settled=true lists threads the user or auto-settlement moved out of the active list), or snoozed state (snoozed=true lists only snoozed threads, false only awake ones), and paginate with the returned cursor. Every listed thread can be read with hal_c2_thread_read and organized with hal_c2_thread_organize.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3140,6 +3251,26 @@
           ]
         },
         "includeSubagents": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "snoozed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allProjects": {
           "anyOf": [
             {
               "type": "boolean"
@@ -3245,7 +3376,7 @@
   },
   {
     "name": "hal_c2_thread_organize",
-    "description": "Pin, snooze, settle, archive, or mark a thread unread in the calling project. Omit threadId for this thread. snooze requires snoozedUntil. Existing thread lifecycle rules apply; this does not schedule a future action.",
+    "description": "Pin, snooze, settle, archive, or mark unread any thread on this MC, of any project. Omit threadId for this thread. snooze requires snoozedUntil. Existing thread lifecycle rules apply; this does not schedule a future action.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3290,7 +3421,7 @@
   },
   {
     "name": "hal_c2_thread_read",
-    "description": "Read durable state and a paginated timeline from a HAL-C2 thread in the calling project, or from a thread the user attached to this conversation as context. The default messages view returns user messages, assistant messages, and proposed plans; activity returns all summarized timeline items. Reading an untruncated terminal assistant result from this parent thread's direct app-owned child acknowledges that child's automatic completion delivery. Continue with afterPosition=nextPosition. Recover long item text with itemId and textOffset=nextTextOffset until nextTextOffset is null; offsets count UTF-16 code units.",
+    "description": "Read durable state and a paginated timeline from any HAL-C2 thread on this MC, of any project. The default messages view returns user messages, assistant messages, and proposed plans; activity returns all summarized timeline items. Reading an untruncated terminal assistant result from this parent thread's direct app-owned child acknowledges that child's automatic completion delivery. Continue with afterPosition=nextPosition. Recover long item text with itemId and textOffset=nextTextOffset until nextTextOffset is null; offsets count UTF-16 code units.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3344,8 +3475,7 @@
           "anyOf": [
             {
               "type": "integer",
-              "minimum": 1,
-              "maximum": 100
+              "minimum": 1
             },
             {
               "type": "null"
@@ -3356,8 +3486,7 @@
           "anyOf": [
             {
               "type": "integer",
-              "minimum": 1,
-              "maximum": 50
+              "minimum": 1
             },
             {
               "type": "null"
@@ -3368,8 +3497,7 @@
           "anyOf": [
             {
               "type": "integer",
-              "minimum": 1,
-              "maximum": 50000
+              "minimum": 1
             },
             {
               "type": "null"
@@ -3862,7 +3990,7 @@
   },
   {
     "name": "task_status",
-    "description": "Read a HAL-C2-owned delegated task created by this parent thread. childRunId identifies the original delegated run. workState is working while the child has a run active or queued, waiting_for_children while no run is active but the child still owes background work (commands, tools, or tasks of its own), and result_available once the task has ended. A task ends only when its child is quiet, never on a turn that left work running. summary is the final task result, the child's last answer, including provider errors on failure, and remains stable after publication. hasPendingChildRuns reports whether the child thread still has queued or executing runs.",
+    "description": "Read a HAL-C2-owned delegated task created by this parent thread. childRunId identifies the original delegated run. workState is working while the child has a run active or queued, waiting_for_children while no run is active but the child still owes background work (commands, tools, or tasks of its own), and result_available once the task has ended. A task ends only when its child is quiet, never on a turn that left work running. summary is the final task result, the child's last answer, including provider errors on failure, and remains stable after publication. latestAnswer is the child's last answer when it differs from summary: one said so far while the task works, or in a later turn of the child after it ended. While the task works its result wakes this thread, and next says to end your turn; pendingRequest names the approval or question the child's run is stopped on until someone answers it. hasPendingChildRuns reports whether the child thread still has queued or executing runs.",
     "inputSchema": {
       "type": "object",
       "properties": {

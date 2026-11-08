@@ -44,6 +44,8 @@ struct FakeAttachments {
   bool unreachable = false;
   int signatures = 0;
   std::shared_ptr<QTemporaryDir> saves;
+  // The time the MC signs addresses at, for an hour; the system's when unset.
+  QDateTime clock;
 };
 
 struct FakeSent {
@@ -70,7 +72,7 @@ const FakeMc::Extension extension([](FakeMc& mc) {
     if (fake.unreachable) return mc.refuse(rpc, S("not connected"));
     ++fake.signatures;
     mc.reply(rpc, QJsonObject{{S("relativeUrl"), S("/api/assets/attachment/%1/%2").arg(id).arg(fake.signatures)},
-                              {S("expiresAt"), double(QDateTime::currentDateTimeUtc().addSecs(3600).toMSecsSinceEpoch())}});
+                              {S("expiresAt"), double((fake.clock.isValid() ? fake.clock : QDateTime::currentDateTimeUtc()).addSecs(3600).toMSecsSinceEpoch())}});
   });
   mc.onRaw(S("/api/assets/attachment/"), [&mc](QTcpSocket* socket, const QByteArray& head) {
     socket->read(head.size());
@@ -497,3 +499,7 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+void signAttachmentsAt(FakeMc& mc, const QDateTime& time) {
+  mc.part<FakeAttachments>().clock = time;
+}

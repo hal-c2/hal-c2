@@ -740,12 +740,14 @@ Feature: Attaching images and files to a message
     Then the agent's text for "plan.docx" holds "Deadline moved to Friday" once
     And text a document keeps only for older readers still reaches the agent
 
+  # Upstream #21458: a document whose text could not be extracted was dropped; it is still passed on as a file.
   @backlog @mc @priority-low
   Scenario: A document whose text cannot be read is still attached as it is
     When the user sends a message with a damaged "plan.docx" attached
     Then the agent is told where "plan.docx" is
     And the agent is not given text for it
 
+  # Upstream #21458: document text is cut at a limit, with one notice that the rest was left out.
   @backlog @mc @priority-low
   Scenario: A document's text past the limits is cut with one notice
     When the user sends a message with a "budget.xlsx" whose sheets are larger than the agent is given

@@ -762,7 +762,9 @@ const Steps steps([] {
     expect(action && action->isVisible() && action->property("stopMode").toBool(), QStringLiteral("the composer offers no Stop"));
     clickPart(world, QStringLiteral("primaryAction"));
     const QJsonObject command = lastCommand(world, QStringLiteral("run.interrupt"));
-    expect(command.value(QLatin1String("runId")) == world.mc.part<FakeStreams>().run, QStringLiteral("the MC was told %1").arg(show(command.toVariantMap())));
+    // The user's Stop also stops what the thread delegated (delegation.feature).
+    expect(command.value(QLatin1String("runId")) == world.mc.part<FakeStreams>().run && command.value(QLatin1String("stopDelegated")).toBool(),
+           QStringLiteral("the MC was told %1").arg(show(command.toVariantMap())));
   });
   // Plans.
   step(QStringLiteral("the agent (?:has proposed|proposed) a plan(?: and the thread is idle)?"), [](World& world, const Captures&, const Table&) {
@@ -1070,7 +1072,9 @@ const Steps steps([] {
   });
   step(QStringLiteral("the running turn is interrupted"), [](World& world, const Captures&, const Table&) {
     const QJsonObject command = lastCommand(world, QStringLiteral("run.interrupt"));
-    expect(command.value(QLatin1String("runId")) == world.mc.part<FakeStreams>().run, QStringLiteral("the MC was told %1").arg(show(command.toVariantMap())));
+    // The user's Stop also stops what the thread delegated (delegation.feature).
+    expect(command.value(QLatin1String("runId")) == world.mc.part<FakeStreams>().run && command.value(QLatin1String("stopDelegated")).toBool(),
+           QStringLiteral("the MC was told %1").arg(show(command.toVariantMap())));
   });
   step(QStringLiteral("%1 and %1 are queued").arg(q), [](World& world, const Captures& c, const Table&) {
     queueMessage(world, c[0]);
@@ -1380,6 +1384,18 @@ void startWorkingTurn(World& world) {
 
 void queueTurnMessage(World& world, const QString& text) {
   queueMessage(world, text);
+}
+
+void awaitTurnApproval(World& world) {
+  startWorking(world);
+  approval(world, QStringLiteral("command"), QStringLiteral("Run the tests?"));
+  world.waitFor([&] { return !listed(world, QStringLiteral("approvals")).isEmpty(); }, QStringLiteral("the approval to reach the composer"));
+}
+
+void awaitTurnQuestion(World& world) {
+  startWorking(world);
+  question(world, QStringLiteral("Which database?"), {QStringLiteral("Postgres"), QStringLiteral("SQLite")});
+  world.waitFor([&] { return !listed(world, QStringLiteral("questions")).isEmpty(); }, QStringLiteral("the question to reach the composer"));
 }
 
 void proposeTurnPlan(World& world, const QString& markdown) {

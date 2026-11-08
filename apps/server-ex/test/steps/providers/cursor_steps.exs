@@ -744,9 +744,26 @@ defmodule HalC2.Steps.Providers.Cursor do
   end
 
   step "the command is shown as interrupted", context do
-    assert [%{"status" => "interrupted"}] = Acp.await_runs(context.threads["Cursor"], 1)
-    assert [%{"input" => "npm test", "status" => "interrupted"}] = commands(context)
-    context
+    if get_in(context, [Access.key(:threads), "Cursor"]) do
+      assert [%{"status" => "interrupted"}] = Acp.await_runs(context.threads["Cursor"], 1)
+      assert [%{"input" => "npm test", "status" => "interrupted"}] = commands(context)
+      context
+    else
+      # The same words on an MC thread of another provider (Codex): its command's
+      # turn item is the interrupted one.
+      title = World.current_thread(context)
+
+      item =
+        World.await_value(context, title, fn state ->
+          Enum.find(
+            HalC2.StreamState.list(state, "turn-item"),
+            &(&1["type"] == "command_execution" and &1["status"] == "interrupted")
+          )
+        end)
+
+      assert item["status"] == "interrupted"
+      Map.put(context, :interrupted_command, item)
+    end
   end
 
   # Cursor did report the stopped command as a finished tool call.
@@ -775,11 +792,28 @@ defmodule HalC2.Steps.Providers.Cursor do
   end
 
   step "the command is shown as failed", context do
-    assert [%{"input" => "nosuchtool --version", "status" => "failed", "output" => output}] =
-             commands(context)
+    if Map.has_key?(context, :fakes) do
+      # The same words on a FakeAcp thread of another provider (Grok): its
+      # background command's turn item is the failed one.
+      title = context[:current_thread] || context[:thread]
 
-    assert output =~ "ENOENT"
-    context
+      item =
+        World.await_value(context, title, fn state ->
+          Enum.find(
+            HalC2.StreamState.list(state, "turn-item"),
+            &(&1["status"] == "failed" and get_in(&1, ["nativeItemRef", "nativeId"]) == "sh-1")
+          )
+        end)
+
+      assert item["status"] == "failed"
+      context
+    else
+      assert [%{"input" => "nosuchtool --version", "status" => "failed", "output" => output}] =
+               commands(context)
+
+      assert output =~ "ENOENT"
+      context
+    end
   end
 
   step "the user sends a message to Cursor", context do

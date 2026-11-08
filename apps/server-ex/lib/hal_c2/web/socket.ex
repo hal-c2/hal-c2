@@ -6,11 +6,16 @@ defmodule HalC2.Web.Socket do
   server sends straight to this process, already trimmed to what the client holds
   (`HalC2.Streams.Server`). Incoming events are buffered and flushed
   once the mailbox is drained, merged per entity, so a burst of streaming tokens
-  becomes one frame. A subscription whose unsent buffer passes `@max_buffered` is
-  dropped with a `resync`; the client resubscribes from its offset and the stream
+  becomes one frame. A subscription whose unsent buffer passes `@max_buffered`, or
+  holds more than `@max_buffered_events` events, is dropped with a `resync`; the client resubscribes from its offset and the stream
   replays from the log instead of this process holding the backlog. That replay is
   never itself cut short by a resync, or a client behind by more than the limit would
   be told to resync forever.
+
+  Progress of a running tool call (`HalC2.Streams.View.events/4` marks it) is held
+  for 50 ms, or until `@max_held_progress` updates wait, so a tool that reports many
+  times reaches the client as its latest state. Anything else for the subscription
+  sends what is held first, at once.
 
   Sidebar rows are buffered the same way, per MC, and flushed as one `shell.rows` frame
   per MC. The other shell messages are not buffered, but the rows before them go out first.
@@ -37,6 +42,8 @@ defmodule HalC2.Web.Socket do
   require Logger
 
   @max_buffered 8 * 1024 * 1024
+  @max_buffered_events 1_000
+  @max_held_progress 512
 
   # Sockets are Bandit's processes, so a code upgrade in place (`HalC2.Upgrade`) runs no
   # `code_change/3` for them: each callback first brings an older state up to date.
@@ -76,9 +83,12 @@ defmodule HalC2.Web.Socket do
   def rpc_timeout("scheduledTasks.runNow"),
     do: max(rpc_timeout(), HalC2.ScheduledTasks.run_timeout_ms() + 10_000)
 
-  # A desktop app update has its own deadline (`HalC2.DesktopUpdate`).
+  # A desktop app update has its own deadline (`HalC2.DesktopUpdate`); the MC's own
+  # has one per stage (`HalC2.Upgrade`), so a long download that keeps going is
+  # waited for.
   def rpc_timeout("server.updateServer") do
-    case HalC2.DesktopUpdate.update_timeout() do
+    case HalC2.DesktopUpdate.available?() && HalC2.DesktopUpdate.update_timeout() do
+      false -> :infinity
       :infinity -> :infinity
       ms -> max(rpc_timeout(), ms + 10_000)
     end
@@ -90,7 +100,7 @@ defmodule HalC2.Web.Socket do
   def init(opts) do
     # A socket opened with a ticket belongs to that client's session.
     session = opts[:session]
-    if session, do: HalC2.Auth.connected(session)
+    if session, do: HalC2.Auth.connected(session, opts[:client] || %{})
     trace = opts[:trace]
     if trace, do: Logger.metadata(trace_id: trace)
 
@@ -349,9 +359,22 @@ defmodule HalC2.Web.Socket do
   def handle_info({:nodedown, mc}, state), do: {:ok, parted(state, mc)}
 
   def handle_info(:flush, state) do
-    {frames, state} = flush(state)
+    {frames, state} = flush(state, false)
     {shell_frames, state} = flush_shell(state)
     {:push, frames ++ shell_frames, %{state | flush_scheduled: false}}
+  end
+
+  # A subscription's held progress has waited long enough. A hold sent early leaves
+  # its timer stale.
+  def handle_info({:release_progress, id, hold}, state) do
+    case state.buffers do
+      %{^id => %{hold: ^hold} = buffer} ->
+        {frames, buffer} = release(id, buffer)
+        {:push, frames, %{state | buffers: Map.put(state.buffers, id, buffer)}}
+
+      _ ->
+        {:ok, state}
+    end
   end
 
   def handle_info({:hal_c2_terminal_down, mc, key, reason}, state),
@@ -483,6 +506,8 @@ defmodule HalC2.Web.Socket do
   end
 
   @session_methods HalC2.Rpc.session_methods()
+  @provider_auth_methods ~w(provider.auth.start provider.auth.respond provider.auth.cancel
+                            provider.auth.logout provider.auth.complete)
   @session_elsewhere %{
     "_tag" => "EnvironmentOperationForbiddenError",
     "code" => "operation_forbidden",
@@ -532,6 +557,10 @@ defmodule HalC2.Web.Socket do
         method in @session_methods ->
           {HalC2.Rpc, :handle, [method, payload || %{}, state.session]}
 
+        # A sign-in belongs to the client that started it (`HalC2.ProviderAuth`).
+        method in @provider_auth_methods ->
+          {HalC2.ProviderAuth, :handle, [method, payload || %{}, auth_owner(state)]}
+
         # A desktop app update this socket asks for is cancelled when it goes.
         method == "server.updateServer" and mc == node() ->
           {HalC2.Upgrade, :update, [payload || %{}, nil, socket]}
@@ -567,8 +596,13 @@ defmodule HalC2.Web.Socket do
 
   # --- subscriptions -------------------------------------------------------------
 
-  defp subscribe(state, id, :shell, %{have: have}) do
-    %{mcs: mcs, rows: rows} = HalC2.Shell.subscribe(self(), have)
+  defp subscribe(state, id, :shell, %{have: have} = resume) do
+    %{mcs: mcs, rows: rows} =
+      HalC2.Shell.subscribe(self(), have,
+        settled_limit: resume[:settled_limit],
+        omit_idle_subagents: Map.get(resume, :omit_idle_subagents, false)
+      )
+
     offline = HalC2.Cluster.Discovery.offline()
 
     frame = %{
@@ -585,6 +619,7 @@ defmodule HalC2.Web.Socket do
             "rev" => mc.rev,
             "reset" => mc.reset
           }
+          |> put_left_out(mc[:settled_left_out])
         end,
       "rows" => for({mc, stream, kind, row} <- rows, do: [Atom.to_string(mc), stream, kind, row])
     }
@@ -1958,8 +1993,13 @@ defmodule HalC2.Web.Socket do
       {{:space_presence, space, page}, "spacePresence",
        %{"viewers" => space_viewers(view, device_key(state))}}
 
-  defp watched_frame({:hal_c2_provider_auth, instance, auth}, _state),
-    do: {{:provider_auth, instance}, "providerAuth", %{"state" => auth}}
+  defp watched_frame({:hal_c2_provider_auth, instance, auth}, state),
+    do:
+      {{:provider_auth, instance}, "providerAuth",
+       %{"state" => HalC2.ProviderAuth.view(auth, auth_owner(state))}}
+
+  # Whose sign-ins a socket acts on and sees whole (`HalC2.ProviderAuth.owner/2`).
+  defp auth_owner(%{session: session}), do: HalC2.ProviderAuth.owner(session)
 
   # This socket's device on a page: its session's, or for the MC's own token, itself.
   defp device(state) do
@@ -2109,7 +2149,11 @@ defmodule HalC2.Web.Socket do
 
   defp stream_message(state, id, {:events, events, seq}) do
     buffer = Map.get(state.buffers, id, %{events: [], bytes: 0})
-    bytes = buffer.bytes + Enum.reduce(events, 0, &(:erlang.external_size(&1.patch) + &2))
+    # Sized once; `buffer_events/6` adds them to whatever the buffer still holds.
+    size = Enum.reduce(events, 0, &(:erlang.external_size(&1.patch) + &2))
+    bytes = buffer.bytes + size
+    # Buffers from before the count was kept count from what they hold.
+    count = Map.get_lazy(buffer, :count, fn -> length(buffer.events) end) + length(events)
 
     cond do
       # A part of what the client lacks goes out as it comes, as a snapshot's parts
@@ -2118,7 +2162,7 @@ defmodule HalC2.Web.Socket do
       Map.get(buffer, :replay, false) ->
         {:push, events_frame(id, events, seq), state}
 
-      bytes > @max_buffered ->
+      bytes > @max_buffered or count > @max_buffered_events ->
         # The client has everything before the oldest event it has not been sent.
         oldest = List.last(buffer.events) || hd(events)
         state = unsubscribe(state, id)
@@ -2126,13 +2170,58 @@ defmodule HalC2.Web.Socket do
         {:push, Protocol.encode(resync), state}
 
       true ->
-        buffer =
-          Map.merge(buffer, %{events: Enum.reverse(events, buffer.events), bytes: bytes, seq: seq})
-
-        state = %{state | buffers: Map.put(state.buffers, id, buffer)}
-        {:ok, schedule_flush(state)}
+        buffer_events(state, id, buffer, events, seq, size)
     end
   end
+
+  defp buffer_events(state, id, buffer, events, seq, size) do
+    progress? = Enum.all?(events, &Map.get(&1, :progress, false))
+    held? = Map.has_key?(buffer, :hold)
+
+    # What else comes for the subscription goes after the progress held before it.
+    {frames, buffer} =
+      if held? and not progress?, do: release(id, buffer), else: {[], buffer}
+
+    # With nothing else waiting, the progress waits for more of itself.
+    hold? = progress? and (held? or buffer.events == [])
+
+    buffer =
+      Map.merge(buffer, %{
+        events: Enum.reverse(events, buffer.events),
+        bytes: buffer.bytes + size,
+        count: Map.get_lazy(buffer, :count, fn -> length(buffer.events) end) + length(events),
+        seq: seq
+      })
+
+    cond do
+      hold? and buffer.count >= @max_held_progress ->
+        {frames, buffer} = release(id, buffer)
+        {:push, frames, %{state | buffers: Map.put(state.buffers, id, buffer)}}
+
+      hold? ->
+        buffer = Map.put_new_lazy(buffer, :hold, fn -> hold(id) end)
+        {:ok, %{state | buffers: Map.put(state.buffers, id, buffer)}}
+
+      true ->
+        state = schedule_flush(%{state | buffers: Map.put(state.buffers, id, buffer)})
+        if frames == [], do: {:ok, state}, else: {:push, frames, state}
+    end
+  end
+
+  defp hold(id) do
+    hold = make_ref()
+    Process.send_after(self(), {:release_progress, id, hold}, progress_hold_ms())
+    hold
+  end
+
+  # Features hold progress longer, so what they send in a row lands in one hold.
+  defp progress_hold_ms, do: Application.get_env(:hal_c2, :progress_hold_ms, 50)
+
+  defp release(id, buffer),
+    do: {[events_frame(id, Enum.reverse(buffer.events), buffer.seq)], sent(buffer)}
+
+  defp sent(buffer),
+    do: buffer |> Map.merge(%{events: [], bytes: 0, count: 0}) |> Map.delete(:hold)
 
   # The offset is the one the stream gave with the last of the events: a replay in
   # several parts only moves the client's offset with its last.
@@ -2144,15 +2233,18 @@ defmodule HalC2.Web.Socket do
   defp put_floor(frame, %{floor: floor}), do: Map.put(frame, "floor", floor)
   defp put_floor(frame, _meta), do: frame
 
-  defp flush(state) do
-    frames =
-      for {id, %{events: [_ | _] = events, seq: seq}} <- state.buffers,
-          do: events_frame(id, Enum.reverse(events), seq)
+  # Sends what the subscriptions have buffered, with their held progress unless
+  # `held?` is false.
+  defp flush(state, held? \\ true) do
+    ready =
+      for {id, %{events: [_ | _]} = buffer} <- state.buffers,
+          held? or not Map.has_key?(buffer, :hold),
+          do: id
 
-    buffers =
-      Map.new(state.buffers, fn {id, buffer} -> {id, %{buffer | events: [], bytes: 0}} end)
-
-    {frames, %{state | buffers: buffers}}
+    Enum.flat_map_reduce(ready, state, fn id, state ->
+      {frames, buffer} = release(id, state.buffers[id])
+      {frames, %{state | buffers: Map.put(state.buffers, id, buffer)}}
+    end)
   end
 
   # The flush message lands behind everything already in the mailbox, so each
@@ -2165,17 +2257,28 @@ defmodule HalC2.Web.Socket do
   end
 
   # A later row of a stream replaces an earlier one, so the frame carries the same
-  # changes as the messages did. After a `reset` the MC's earlier rows are gone,
-  # buffered or held; rows merged on top of it keep the frame a reset.
-  defp buffer_shell_rows(state, mc, rows, %{epoch: epoch, rev: rev, reset: reset?}) do
+  # changes as the messages did, in the order each row last changed (`order`). After
+  # a `reset` the MC's earlier rows are gone, buffered or held; rows merged on top of
+  # it keep the frame a reset.
+  defp buffer_shell_rows(state, mc, rows, %{epoch: epoch, rev: rev, reset: reset?} = version) do
     buffer = Map.get(state.shell, mc, %{rows: %{}, reset: false})
-    kept = if reset?, do: %{}, else: buffer.rows
+    {kept, order} = if reset?, do: {%{}, %{}}, else: {buffer.rows, Map.get(buffer, :order, %{})}
+    last = Map.get(buffer, :last, 0)
 
     buffer = %{
       rows: Map.merge(kept, Map.new(rows)),
+      order:
+        Map.merge(
+          order,
+          Map.new(Enum.with_index(rows, last + 1), fn {{sid, _}, n} -> {sid, n} end)
+        ),
+      last: last + length(rows),
       epoch: epoch,
       rev: rev,
-      reset: reset? or buffer.reset
+      reset: reset? or buffer.reset,
+      # Told with the rows sent whole, to a client that asked for a settled limit.
+      settled_left_out:
+        if(reset?, do: version[:settled_left_out], else: buffer[:settled_left_out])
     }
 
     put_in(state.shell[mc], buffer)
@@ -2188,13 +2291,19 @@ defmodule HalC2.Web.Socket do
       case shell_sub(state) do
         {id, _} ->
           for {mc, buffer} <- Enum.sort(state.shell),
-              do: Protocol.encode(shell_message(id, {:rows, mc, Enum.sort(buffer.rows), buffer}))
+              do: Protocol.encode(shell_message(id, {:rows, mc, in_order(buffer), buffer}))
 
         nil ->
           []
       end
 
     {frames, %{state | shell: %{}}}
+  end
+
+  # Rows buffered before their order was kept go first, by id.
+  defp in_order(buffer) do
+    order = Map.get(buffer, :order, %{})
+    Enum.sort_by(buffer.rows, fn {sid, _} -> {Map.get(order, sid, 0), sid} end)
   end
 
   # The socket's one shell subscription, as `{id, :shell}`.
@@ -2210,15 +2319,17 @@ defmodule HalC2.Web.Socket do
     }
 
   defp shell_message(id, {:rows, mc, rows, version}),
-    do: %{
-      "t" => "shell.rows",
-      "id" => id,
-      "mc" => to_string(mc),
-      "epoch" => version.epoch,
-      "rev" => version.rev,
-      "reset" => version.reset,
-      "rows" => for({sid, {kind, row}} <- rows, do: [sid, kind, row])
-    }
+    do:
+      %{
+        "t" => "shell.rows",
+        "id" => id,
+        "mc" => to_string(mc),
+        "epoch" => version.epoch,
+        "rev" => version.rev,
+        "reset" => version.reset,
+        "rows" => for({sid, {kind, row}} <- rows, do: [sid, kind, row])
+      }
+      |> put_left_out(version[:settled_left_out])
 
   defp shell_message(id, {:environment, mc, descriptor}),
     do: %{
@@ -2255,4 +2366,9 @@ defmodule HalC2.Web.Socket do
       "online" => status in [:up, true],
       "trying" => true
     }
+
+  # The settled threads of each project an MC's rows sent whole left out, for a client
+  # that asked for a settled limit.
+  defp put_left_out(frame, nil), do: frame
+  defp put_left_out(frame, left_out), do: Map.put(frame, "settledLeftOut", left_out)
 end

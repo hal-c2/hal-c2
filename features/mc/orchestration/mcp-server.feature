@@ -322,11 +322,13 @@ Feature: The HAL-C2 MCP server agents receive
     When the agent of "caller" asks for a device screenshot
     Then it fails saying no device is open in this thread and to open one first
 
+  # Upstream #26442: thread tools reach any thread of the MC, the caller's project being
+  # only where a listing starts (see "Thread tools take any thread in the environment").
   @mc
-  Scenario: Threads of other projects are invisible
+  Scenario: Threads of other projects can be read
     Given thread "other" belongs to project "elsewhere"
     When the agent of "caller" reads "other"
-    Then it fails with code "thread_not_found"
+    Then it receives thread "other"
 
   @mc
   Scenario Outline: Changing things needs a caller that is itself running
@@ -595,10 +597,11 @@ Feature: The HAL-C2 MCP server agents receive
     When the agent receives its first prompt, then another in the same mode, then one after the mode changed
     Then the instructions are in the first prompt and in the one after the change, but not in the second
 
-  # Upstream #19393: native slash commands keep their prompt shape
+  # Upstream #19393: native slash commands keep their prompt shape. (A bare `/compact` on a
+  # thread with no conversation yet is refused before any prompt, so another command stands in.)
   @mc
   Scenario: A slash command stays at the start of an ACP prompt
-    When the user sends "/compact" to an ACP agent of "caller"
+    When the user sends "/review the open diff" to an ACP agent of "caller"
     Then the prompt is sent without HAL-C2's instructions in front of it
 
   # Runtime and pull-request instructions of apps/server/src/provider/RuntimeInstructions.ts,
@@ -762,12 +765,14 @@ Feature: The HAL-C2 MCP server agents receive
       | is read out by screen readers as hidden, never as its value |
       | is not offered a saved login or kept by a password manager  |
 
+  # Upstream #24809: a retried request to save a secret to a file returns the same file.
   @backlog @mc
   Scenario: A retried file secret request returns the same file
     Given an agent asked for a secret delivered as a file and the user saved it
     When the agent repeats the same request
     Then it is given the same file path
 
+  # Upstream #24809: a secret saved as a one-use reference cannot be turned into a file.
   @backlog @mc
   Scenario: A secret asked for as a reference cannot be turned into a file
     Given the user saved a secret on a card that asked for a one-use reference

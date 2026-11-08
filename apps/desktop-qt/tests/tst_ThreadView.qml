@@ -517,6 +517,35 @@ Item {
             verify(Keybindings.commands.run("timeline.jumpToLatest"));
         }
 
+        function test_escapeOnABannerCollapsesExpandedNotices() {
+            Shell.state = Object.assign({}, Shell.state, {
+                threadError: { message: "Rate limited", warning: true },
+                noticeStack: { front: "error", behind: 1, expanded: true, order: ["error", "usageLimits"] }
+            });
+            const view = openThread();
+            verify(!!view, "Component exists");
+            const dismiss = findChild(view, "threadErrorDismiss");
+            verify(!!dismiss, "Object exists");
+            dismiss.forceActiveFocus();
+            keyClick(Qt.Key_Escape);
+            compare(Shell.dispatchCount, 1);
+            compare(Shell.dispatchedActions[0].action, "noticeStack.collapse");
+        }
+
+        function test_escapeOnABannerLeavesCollapsedNoticesAlone() {
+            Shell.state = Object.assign({}, Shell.state, {
+                threadError: { message: "Rate limited", warning: true },
+                noticeStack: { front: "error", behind: 1, expanded: false, order: ["error", "usageLimits"] }
+            });
+            const view = openThread();
+            verify(!!view, "Component exists");
+            const dismiss = findChild(view, "threadErrorDismiss");
+            verify(!!dismiss, "Object exists");
+            dismiss.forceActiveFocus();
+            keyClick(Qt.Key_Escape);
+            compare(Shell.dispatchCount, 0);
+        }
+
         function findText(item, text) {
             if (!item)
                 return null;

@@ -21,6 +21,12 @@ struct GroupSummary {
 // `items` are the group's turn items, oldest first.
 GroupSummary summarize(const QList<QJsonObject>& items);
 
+// The kind of approval a request asks for. A request recorded by an older
+// version names a native request type instead of a kind (the removed
+// client-runtime's requestKindFromRequestType); read as the kind it was.
+// Empty when the item names neither.
+QString approvalKind(const QJsonObject& item);
+
 // Whether a call failed: its status, a command's exit code, or an MCP result
 // that carries an error.
 bool callFailed(const QJsonObject& item);

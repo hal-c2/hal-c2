@@ -29,6 +29,8 @@ defmodule HalC2.Mcp do
   agents get (`priv/mcp_instructions.md`) are edited in place.
   """
 
+  require Logger
+
   use GenServer
 
   @workers_only "\n\nThe user keeps agents to HAL-C2's workers: do not use this provider's built-in subagents. Delegate child work with `delegate_task`, so the user can see it.\n"
@@ -275,7 +277,7 @@ defmodule HalC2.Mcp do
   forbids storing the answer.
   """
   def handle_request(authorization, headers, body) do
-    with "Bearer " <> token <- authorization || :missing,
+    with {:ok, token} <- mcp_bearer(authorization),
          [{_, caller, last_alive}] <- :ets.lookup(@table, token),
          :ok <- alive(token, caller, last_alive) do
       case JSON.decode(body) do
@@ -283,12 +285,26 @@ defmodule HalC2.Mcp do
         _ -> {400, %{}, rpc_error(nil, -32700, "Parse error")}
       end
     else
-      _ ->
+      refused ->
+        # Which part was wrong, never the credential itself (upstream #23782).
+        reason = if is_binary(refused), do: refused, else: "unknown_or_expired_token"
+        Logger.warning("rejected MCP request with an unusable credential: #{reason}")
+
         {401, %{"www-authenticate" => "Bearer", "cache-control" => "no-store"},
          %{
            "error" => "invalid_mcp_credential",
+           "reason" => reason,
            "message" => "A valid provider-scoped MCP bearer credential is required."
          }}
+    end
+  end
+
+  defp mcp_bearer(authorization) do
+    case HalC2.Auth.credential(authorization) do
+      :missing -> "missing_authorization_header"
+      {"bearer", ""} -> "missing_bearer_token"
+      {"bearer", token} -> {:ok, token}
+      _ -> "unsupported_scheme"
     end
   end
 

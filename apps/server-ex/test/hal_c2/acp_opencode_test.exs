@@ -58,6 +58,21 @@ defmodule HalC2.Acp.OpenCodeTest do
              OpenCode.fork(server, "ses_a", "msg_3")
   end
 
+  test "a session is titled over PATCH, and a refusal says why" do
+    {server, log} =
+      server(%{
+        "/session/ses_a" => {200, %{"id" => "ses_a", "title" => "Fix login"}},
+        "/session/ses_gone" => {404, %{"data" => %{"message" => "no such session"}}}
+      })
+
+    assert OpenCode.retitle(server, "ses_a", "Fix login") == :ok
+    assert [%{"method" => "PATCH", "body" => body} | _] = FakeHttp.requests(log)
+    assert JSON.decode!(body) == %{"title" => "Fix login"}
+
+    assert {:error, "OpenCode could not title the session (HTTP 404): no such session"} =
+             OpenCode.retitle(server, "ses_gone", "Fix login")
+  end
+
   test "a turn's message is the first user message after the leaf it started from" do
     {server, _} =
       server(%{

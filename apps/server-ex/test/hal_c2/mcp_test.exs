@@ -294,6 +294,52 @@ defmodule HalC2.McpTest do
     assert {:ok, %{"pullRequests" => []}} = tool.("list_thread_pull_requests", %{})
   end
 
+  # Organize reaches threads of any project, so `no_escalation` is the only
+  # guard left: a narrower caller must not archive another project's
+  # broader thread.
+  test "a plan-mode caller cannot organize a full-access thread of another project", %{
+    dir: dir
+  } do
+    other_root = Path.join(dir, "other-work")
+    File.mkdir_p!(other_root)
+
+    {:ok, _} =
+      HalC2.Projects.mutate(%{
+        "type" => "project.create",
+        "projectId" => "project-other",
+        "title" => "Other",
+        "workspaceRoot" => other_root
+      })
+
+    await_row("project-other")
+    target = launch("hello", %{"projectId" => "project-other"})
+    await_statuses(target, ["completed"])
+    await_row(target)
+
+    {_caller, tool} = caller("wait for it", %{"interactionMode" => "plan"})
+
+    assert {:error, text} =
+             tool.("hal_c2_thread_organize", %{"threadId" => target, "action" => "archive"})
+
+    assert text =~ "interaction_mode_escalation_denied"
+    refute current(target) |> StreamState.get("thread") |> get_in([target, "archivedAt"])
+  end
+
+  test "a preference update while settings.json cannot be read is refused and changes nothing" do
+    start_supervised!(HalC2.Settings)
+    {_caller, tool} = caller("wait for it")
+    path = Path.join(HalC2.Paths.config_dir(), "settings.json")
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, "{ not json")
+
+    assert {:error, text} =
+             tool.("hal_c2_environment_preferences_update", %{"defaultThreadEnvMode" => "local"})
+
+    assert text =~ "orchestration_error"
+    assert text =~ "Could not read"
+    assert File.read!(path) == "{ not json"
+  end
+
   test "the new tools are advertised, and an idle caller cannot use them to change things" do
     thread_id = launch("hello")
     await_statuses(thread_id, ["completed"])
@@ -361,9 +407,41 @@ defmodule HalC2.McpTest do
 
   # --- helpers ----------------------------------------------------------------------------
 
+  test "a launch retried after its thread was created without the first message delivers it" do
+    {caller, tool} = caller("wait for it")
+    id = "thread:mcp:#{caller}:launch:retry-1"
+
+    # The thread was committed, then the first message's dispatch never happened.
+    {:ok, _} =
+      Orchestration.launch_thread(%{
+        "commandId" => id,
+        "threadId" => id,
+        "projectId" => @project,
+        "title" => "Retry",
+        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+        "runtimeMode" => "full-access",
+        "interactionMode" => "default",
+        "workspaceStrategy" => %{"type" => "root"},
+        "createdBy" => "agent",
+        "creationSource" => "mcp"
+      })
+
+    args = %{"title" => "Retry", "message" => "hello again", "clientRequestId" => "retry-1"}
+    assert {:ok, %{"threadId" => ^id, "runId" => run_id}} = tool.("hal_c2_thread_launch", args)
+    assert is_binary(run_id)
+
+    # A second retry answers with the same thread and sends nothing more.
+    assert {:ok, %{"threadId" => ^id}} = tool.("hal_c2_thread_launch", args)
+
+    messages =
+      id |> current() |> StreamState.list("message") |> Enum.filter(&(&1["role"] == "user"))
+
+    assert [%{"text" => "hello again"}] = messages
+  end
+
   # A running thread of the project and a function calling tools as its agent.
-  defp caller(text) do
-    thread_id = launch(text)
+  defp caller(text, overrides \\ %{}) do
+    thread_id = launch(text, overrides)
     await_statuses(thread_id, ["running"])
     await_row(thread_id)
     {thread_id, tool(thread_id)}
@@ -390,26 +468,31 @@ defmodule HalC2.McpTest do
     end
   end
 
-  defp launch(text) do
+  defp launch(text, overrides \\ %{}) do
     thread_id = "thread-#{System.unique_integer([:positive])}"
     :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
 
     {:ok, _} =
-      Orchestration.launch_thread(%{
-        "commandId" => "cmd-#{thread_id}",
-        "threadId" => thread_id,
-        "projectId" => @project,
-        "title" => "Caller",
-        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
-        "runtimeMode" => "full-access",
-        "interactionMode" => "default",
-        "workspaceStrategy" => %{"type" => "root"},
-        "initialMessage" => %{
-          "messageId" => "msg-#{thread_id}",
-          "text" => text,
-          "attachments" => []
-        }
-      })
+      Orchestration.launch_thread(
+        Map.merge(
+          %{
+            "commandId" => "cmd-#{thread_id}",
+            "threadId" => thread_id,
+            "projectId" => @project,
+            "title" => "Caller",
+            "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+            "runtimeMode" => "full-access",
+            "interactionMode" => "default",
+            "workspaceStrategy" => %{"type" => "root"},
+            "initialMessage" => %{
+              "messageId" => "msg-#{thread_id}",
+              "text" => text,
+              "attachments" => []
+            }
+          },
+          overrides
+        )
+      )
 
     thread_id
   end

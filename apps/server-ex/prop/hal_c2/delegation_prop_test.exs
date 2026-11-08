@@ -19,7 +19,8 @@ defmodule HalC2.DelegationPropTest do
   - once settled the task never changes, and its result reaches the caller at most once;
   - it is never settled while its child has a run active or queued, a background
     command of a run not rolled back still running (hal-c2/hal-c2#508), or a restart's
-    continuation still to be sent (upstream #15323);
+    continuation still to be sent (upstream #15323); a monitor left running unmarked
+    never holds it (upstream #27468);
   - it ended as and when the child's last run not rolled back did, never when a report
     got through or the MC started, with the child's last answer in such a run; a run
     that ended to wait on background work a restart ended was interrupted (upstream
@@ -33,7 +34,20 @@ defmodule HalC2.DelegationPropTest do
     ever ran in it;
   - a task that ended with its delivery still pending waits on a wake already with
     the caller for its run, never stranded with none in flight, and every wake
-    names each of its tasks once, with the worst of their endings as its outcome.
+    names each of its tasks once, with the worst of their endings as its outcome;
+  - cancelling a task that has not ended cancels it, disposes of its delivery and
+    leaves the child nothing queued, whatever the child was doing (also nothing at
+    all); cancelling one that ended is refused and changes nothing;
+  - the user stopping a child that never started a run cancels its task, which wakes
+    no one;
+  - an interrupt of the caller's run that is not the user's Stop (an agent's
+    `hal_c2_thread_interrupt`, a scheduled prompt's clean-up) leaves the task and its
+    child as they were: only its result stops waking that run;
+  - the child carries a pull request from the start, and a settled task's result
+    names it for the caller to watch (upstream #19801), also when a handover
+    (`hand_over_pull_requests/1`, as `HalC2.PullRequests.Wakes` calls it on PR news
+    for a quiet child) tombstoned the child's link and gave the caller its copy
+    before the task settled.
   """
 
   use ExUnit.Case, async: false
@@ -81,9 +95,10 @@ defmodule HalC2.DelegationPropTest do
 
   # runs: the child's runs in ordinal order, %{id, status, ended_as}, `ended_as` how
   # the run ended before any rollback; held: runs whose end is yet to be reported;
-  # commands: background commands, %{id, run, open}; continuing: the run a restart
-  # interrupted and asked the child to continue, while that continuation is unsent.
-  def initial_state, do: %{runs: [], held: [], commands: [], continuing: nil}
+  # commands: background commands, %{id, run, open}; monitors: monitors left running
+  # unmarked, which never owe; continuing: the run a restart interrupted and asked
+  # the child to continue, while that continuation is unsent.
+  def initial_state, do: %{runs: [], held: [], commands: [], monitors: [], continuing: nil}
 
   def command(state) do
     running = for %{status: "running"} = run <- state.runs, do: run.id
@@ -98,8 +113,12 @@ defmodule HalC2.DelegationPropTest do
       [
         {1, {:call, __MODULE__, :restart, []}},
         {1, {:call, __MODULE__, :delegate_blank, [blank_task()]}},
-        {1, {:call, __MODULE__, :check, []}}
+        {1, {:call, __MODULE__, :check, []}},
+        {2, {:call, __MODULE__, :hand_over, []}},
+        {1, {:call, __MODULE__, :cancel, []}},
+        {1, {:call, __MODULE__, :interrupt_caller, []}}
       ] ++
+        if(state.runs == [], do: [{1, {:call, __MODULE__, :stop_child, []}}], else: []) ++
         if(running == [],
           do: [],
           else: [
@@ -151,7 +170,8 @@ defmodule HalC2.DelegationPropTest do
                 frequency([{3, true}, {1, false}])
               ]}},
             {3,
-             {:call, __MODULE__, :background, ["bg-#{length(state.commands) + 1}", hd(running)]}}
+             {:call, __MODULE__, :background, ["bg-#{length(state.commands) + 1}", hd(running)]}},
+            {2, {:call, __MODULE__, :monitor, ["mon-#{length(state.monitors) + 1}", hd(running)]}}
           ]
         ) ++
         if(open == [],
@@ -220,6 +240,11 @@ defmodule HalC2.DelegationPropTest do
       Enum.any?(state.runs, &(&1.id == run and &1.status == "running")) and
         not Enum.any?(state.commands, &(&1.id == id))
 
+  def precondition(state, {:call, _, :monitor, [id, run]}),
+    do:
+      Enum.any?(state.runs, &(&1.id == run and &1.status == "running")) and
+        id not in state.monitors
+
   def precondition(state, {:call, _, :restart_continued, [id]}),
     do:
       state.continuing == nil and Enum.any?(state.runs, &(&1.id == id and &1.status == "running"))
@@ -238,6 +263,8 @@ defmodule HalC2.DelegationPropTest do
       run -> allowed?(call, run, state)
     end
   end
+
+  def precondition(state, {:call, _, :stop_child, []}), do: state.runs == []
 
   def precondition(_state, _call), do: true
 
@@ -277,6 +304,9 @@ defmodule HalC2.DelegationPropTest do
   def next_state(state, _result, {:call, _, :background, [id, run]}),
     do: %{state | commands: state.commands ++ [%{id: id, run: run, open: true}]}
 
+  def next_state(state, _result, {:call, _, :monitor, [id, _run]}),
+    do: %{state | monitors: state.monitors ++ [id]}
+
   def next_state(state, _result, {:call, _, :end_background, [id, _]}),
     do: %{
       state
@@ -286,6 +316,24 @@ defmodule HalC2.DelegationPropTest do
   def next_state(state, _result, {:call, _, :restart, []}), do: state
 
   def next_state(state, _result, {:call, _, :check, []}), do: state
+
+  def next_state(state, _result, {:call, _, :hand_over, []}), do: state
+
+  # The cancel cancels what the child queued and asks its turn to stop, which with no
+  # provider behind these runs stays running. A cancel refused (the task had ended)
+  # cancels nothing; the model takes the queue as cancelled all the same, which no
+  # check reads once the task has settled.
+  def next_state(state, _result, {:call, _, :cancel, []}) do
+    runs =
+      for run <- state.runs,
+          do: if(run.status == "queued", do: %{run | status: "cancelled"}, else: run)
+
+    %{state | runs: runs}
+  end
+
+  def next_state(state, _result, {:call, _, :stop_child, []}), do: state
+
+  def next_state(state, _result, {:call, _, :interrupt_caller, []}), do: state
 
   def next_state(state, _result, {:call, _, :delegate_blank, _}), do: state
 
@@ -323,6 +371,32 @@ defmodule HalC2.DelegationPropTest do
 
   defp update(state, id, fun),
     do: %{state | runs: Enum.map(state.runs, &if(&1.id == id, do: fun.(&1), else: &1))}
+
+  # A cancel ends the task at once, child working or not, and no result wakes the
+  # caller; nothing the child queued is left to start. One that ended stays as it was.
+  # (Its running turn is the provider's to stop, and these runs have none behind them.)
+  def postcondition(_state, {:call, _, call, []}, {before, task, child})
+      when call in [:cancel, :stop_child] do
+    agree?(task) and delivered_once?() and pending_has_wake?() and wakes_agree?() and
+      if settled?(before),
+        do: before == task,
+        else:
+          task["subagent"]["status"] == "cancelled" and
+            task["subagent"]["completionDelivery"]["state"] == "disposed" and
+            not Enum.any?(runs(child), &(&1["status"] == "queued"))
+  end
+
+  # Nothing of the task changes but its delivery, which the interrupted run no longer
+  # waits on. A cancel cascading from it would show here, or in the checks of the
+  # commands after it (the task settled while its child works).
+  def postcondition(_state, {:call, _, :interrupt_caller, []}, {before, task, _child}) do
+    unwaited = fn task ->
+      update_in(task, ["subagent"], &Map.drop(&1, ["completionDelivery", "updatedAt"]))
+    end
+
+    agree?(task) and delivered_once?() and pending_has_wake?() and wakes_agree?() and
+      unwaited.(before) == unwaited.(task)
+  end
 
   # Every command returns the task before and after it, and the child's stream after.
   def postcondition(state, {:call, _, call, args} = command, {before, task, child}) do
@@ -398,13 +472,25 @@ defmodule HalC2.DelegationPropTest do
     do: settled?(before) or not settled?(task) or quiet
 
   # As the child's last run not rolled back ended, with its last answer in such a
-  # run, or what a run that left no answer says for itself.
+  # run, or what a run that left no answer says for itself. The result also names
+  # the pull request the child carries (setup), handed to the caller to watch,
+  # whether the child still shows it or a handover already tombstoned its link
+  # and left the caller its copy.
   defp as_ended?(before, task, child) do
     settled?(before) or not settled?(task) or
       (task["subagent"]["status"] == ended_as(child) and
          task["subagent"]["completedAt"] == ended_at(child) and
          task["subagent"]["result"] ==
-           (prepared(child) || last_answer(child) || no_answer(ended_as(child))))
+           Enum.join(
+             Enum.reject(
+               [
+                 prepared(child) || last_answer(child) || no_answer(ended_as(child)),
+                 "Pull requests handed to you to watch: acme/app#7 at abc123 (checks pending)."
+               ],
+               &is_nil/1
+             ),
+             "\n\n"
+           ))
   end
 
   defp no_answer("completed"), do: "Child task completed without an assistant result."
@@ -580,11 +666,22 @@ defmodule HalC2.DelegationPropTest do
        })}
     ])
 
+    # The child opened a pull request its caller is to watch once the task ends.
     commit(@child, [
       {"thread", @child,
        %{
          "id" => @child,
-         "lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => @parent}
+         "lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => @parent},
+         "pullRequests" => [
+           %{
+             "host" => "github.com",
+             "repository" => "acme/app",
+             "number" => 7,
+             "url" => "https://github.com/acme/app/pull/7",
+             "source" => "agent",
+             "snapshot" => %{"headSha" => "abc123", "checksState" => "pending"}
+           }
+         ]
        }}
     ])
   end
@@ -715,6 +812,26 @@ defmodule HalC2.DelegationPropTest do
     end)
   end
 
+  # A monitor left running that the child never marked as work it waits on: it
+  # runs until stopped, so it is never owed and the task still settles
+  # (upstream #27468). The model's `owing?/1` counts only commands, as here.
+  def monitor(id, run) do
+    observe(fn ->
+      commit(@child, [
+        {"turn-item", id,
+         %{
+           "id" => id,
+           "ordinal" => item_ordinal(),
+           "type" => "dynamic_tool",
+           "toolName" => "Monitor",
+           "runId" => run,
+           "input" => %{"command" => "tail -f log/dev.log"},
+           "status" => "running"
+         }}
+      ])
+    end)
+  end
+
   # The command ends. A provider that wakes itself for it (Codex, Claude) starts a run
   # about it, which this model starts as any other; one that does not (Grok) checks
   # whether the child is quiet now.
@@ -725,8 +842,42 @@ defmodule HalC2.DelegationPropTest do
     end)
   end
 
+  # `task_cancel`, refused only for a task that ended.
+  def cancel do
+    observe(fn ->
+      ended = settled?(task())
+      result = Delegation.cancel(@parent, @task)
+
+      if ended,
+        do: assert(match?({:error, "task_not_cancellable", _}, result)),
+        else: assert(match?({:ok, %{"status" => "cancelled"}}, result))
+    end)
+  end
+
+  # The user presses Stop on the child thread.
+  def stop_child do
+    observe(fn ->
+      HalC2.Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => @child})
+    end)
+  end
+
+  # An agent's `hal_c2_thread_interrupt` of the caller's turn, not the user's Stop.
+  def interrupt_caller do
+    observe(fn ->
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "threadId" => @parent,
+        "runId" => "parent-run"
+      })
+    end)
+  end
+
   # The periodic check for a child no provider process drives.
   def check, do: observe(fn -> Delegation.settle_if_quiet(@child) end)
+
+  # PR news for the child (`HalC2.PullRequests.Wakes`): a quiet child's links are
+  # handed to its caller then, settle or not, which tombstones the child's link.
+  def hand_over, do: observe(fn -> Delegation.hand_over_pull_requests(@child) end)
 
   def roll_back(id),
     do: observe(fn -> commit(@child, [{"run", id, %{"status" => "rolled_back"}}]) end)

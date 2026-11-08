@@ -104,7 +104,6 @@ Feature: ACP registry agents
     Then matching agents are listed, best match first, at most 20
     And agents without a build for this platform are left out
 
-  @backlog
   Scenario Outline: Windows on ARM runs an agent's x64 build when it has no ARM build
     Given the MC runs on Windows on ARM
     And the agent "acme" publishes <builds>
@@ -174,7 +173,6 @@ Feature: ACP registry agents
     Then adding "acme" fails saying the archive is invalid
 
   # Upstream #25545: Cortex Code's archive listed so many files that unpacking it failed for too much output.
-  @backlog
   Scenario: An agent whose archive holds a very large file tree installs
     When the archive downloaded for "cortex-code" holds a bundled tree of many thousands of files
     Then "cortex-code" is installed
@@ -191,7 +189,6 @@ Feature: ACP registry agents
     Then the cached copy is used
 
   # Upstream #26248: every search downloaded the whole index again, up to 1 MB.
-  @backlog
   Scenario Outline: A search reuses a registry fetched in the last five minutes
     Given the MC <fetched>
     When the user searches the registry
@@ -205,7 +202,6 @@ Feature: ACP registry agents
       | fetched the registry a minute ago, but its clock has since gone back | fetched again       |
 
   # Upstream #26248: an install still picks up a new version at once.
-  @backlog
   Scenario: Adding a registry agent fetches the latest registry
     Given the MC fetched the registry a minute ago
     When the user adds the registry agent "acme"
@@ -296,7 +292,6 @@ Feature: ACP registry agents
 
   # Upstream #29463: "Always allow this session" answered an agent offering only allow-once by
   # cancelling, which stopped the turn the user had just approved.
-  @backlog @priority-high
   Scenario: Always allowing a request the agent can only allow once approves it once
     Given the thread runs "acme" with approval required
     And "acme" asks permission to run a command, offering only to allow once or reject
@@ -342,7 +337,6 @@ Feature: ACP registry agents
 
   # Upstream #28987: the replacement session's events were never read after a rollback, so its
   # turns showed nothing and Stop timed out after 15 seconds.
-  @backlog @priority-high
   Scenario: An agent thread keeps showing the agent's work after a rollback
     Given an "acme" thread that was rolled back to its first turn
     When the user sends a message and then stops the turn
@@ -552,7 +546,6 @@ Feature: ACP registry agents
 
   # Upstream #30719: the tool bridge also ended a line at U+2028 and U+2029, so a tool call holding
   # text pasted from a PDF or web page was cut apart and hung until the agent timed out.
-  @backlog @priority-high
   Scenario Outline: A HAL-C2 tool call holding a <separator> reaches HAL-C2 whole
     Given "acme" reaches HAL-C2's tools through the bridge that reads its standard input
     When the agent sends a tool call whose arguments hold a <separator>
@@ -588,6 +581,7 @@ Feature: ACP registry agents
       | session not found                                                           |
       | session lock unavailable during is_session_generation_current: acquisition timed out |
 
+  # Upstream #26651: a lost or locked Copilot session restarts on the next message; other Copilot prompt errors keep their process.
   @backlog
   Scenario: Copilot's other prompt errors keep its process
     Given Copilot CLI runs over ACP in a thread
@@ -619,14 +613,12 @@ Feature: ACP registry agents
     Then the readiness of "acme" is read from the cached copy
     And with no cached copy the check fails at once instead of fetching the registry
 
-  @backlog
   Scenario: A registry that cannot be reached falls back to the cached copy
     Given the MC holds a cached copy of the registry
     And the registry cannot be reached
     When the user searches the registry
     Then agents from the cached copy are listed
 
-  @backlog
   Scenario Outline: A registry answer that cannot be used is refused
     When the registry answers with <answer>
     Then the fetch fails with "<message>"
@@ -637,16 +629,18 @@ Feature: ACP registry agents
       | text that is not JSON       | ACP Registry returned invalid JSON.       |
       | JSON that is not a registry | ACP Registry returned an invalid index.   |
       | an index larger than 1 MB   | ACP Registry index exceeds 1048576 bytes. |
-      | nothing within 30 seconds   | Timed out fetching ACP Registry index.    |
 
-  @backlog
+    @backlog
+    Examples:
+      | answer                    | message                                |
+      | nothing within 30 seconds | Timed out fetching ACP Registry index. |
+
   Scenario: One bad registry entry does not hide the others
     Given the registry lists "acme" correctly and another agent with a malformed entry
     When the user searches the registry
     Then "acme" is listed
     And the malformed entry is left out
 
-  @backlog
   Scenario Outline: A registry entry that cannot be trusted is left out
     Given the registry lists an agent whose <part>
     When the user searches the registry
@@ -658,27 +652,23 @@ Feature: ACP registry agents
       | download address carries a user name or password   |
       | npx or uvx package does not pin an exact version   |
 
-  @backlog
   Scenario: A registry listing more than 512 agents is refused
     Given the registry lists more than 512 agents
     When the MC reads the registry
     Then the index is refused as invalid
 
-  @backlog
   Scenario: An agent whose package manager is missing is not offered in search
     Given the registry agent "acme" only runs through uvx
     And uv is not installed on the MC
     When the user searches the registry for "acme"
     Then "acme" is not offered
 
-  @backlog
   Scenario: An agent that runs through uvx needs uv on the MC
     Given the instance of "acme" is set to run through uvx
     And uv is not installed on the MC
     When the MC prepares "acme"
     Then it fails with "ACP Registry agent acme requires 'uv', but it is not available on this environment's PATH."
 
-  @backlog
   Scenario Outline: The way an agent is distributed follows the instance's preference
     Given the registry publishes "acme" as <published>
     And the instance prefers <preference>
@@ -692,7 +682,6 @@ Feature: ACP registry agents
       | uvx only         | automatic  | runs through uvx                                           |
       | a binary only    | npx        | is refused for having no npx distribution for this machine |
 
-  @backlog
   Scenario: Search results are ranked by how closely they match
     Given the registry lists agents matching "gem" by id, by the start of their name, by author and by description
     When the user searches the registry for "gem"
@@ -700,13 +689,11 @@ Feature: ACP registry agents
     And matches at the start of a name come before matches inside it, then authors, then descriptions
     And equal matches are ordered by name
 
-  @backlog
   Scenario: A search result says how its download is checked
     When the user searches the registry
     Then each agent says whether its download is checked against a published SHA-256 or trusted from the registry alone
     And each agent carries its version, authors, license, website and repository
 
-  @backlog
   Scenario: An agent without a published checksum can still be installed
     Given the registry lists no checksum for "acme"
     When the user installs "acme"
@@ -724,7 +711,6 @@ Feature: ACP registry agents
       | is not answered in 20 minutes  | Timed out downloading ACP Registry agent acme 1.2.0.      |
       | stalls while being read        | Timed out reading ACP Registry agent acme download.       |
 
-  @backlog
   Scenario Outline: An archive that could write or run outside its own folder is rejected
     Given the registry entry or archive for "acme" <problem>
     When the user installs "acme"
@@ -737,7 +723,14 @@ Feature: ACP registry agents
       | holds a file path that leaves the install folder       | ACP Registry agent acme archive contains an unsafe path.                  |
       | does not hold the command the registry names           | ACP Registry archive for acme did not contain 'bin/acme'.                 |
       | links its command to a file outside the install folder | ACP Registry archive command resolves outside its installation directory. |
+      | links its command through another link to a file outside the install folder | ACP Registry archive command resolves outside its installation directory. |
+      | links a folder on its command's path to a folder outside the install folder | ACP Registry archive command resolves outside its installation directory. |
       | names a command that is not an executable file         | ACP Registry archive command is not a regular executable file.            |
+
+  Scenario: An archive whose command links to a file beside it installs
+    Given the archive for "acme" links its command to a file inside its own folder
+    When the user installs "acme"
+    Then "acme" is installed
 
   @backlog
   Scenario: An unsafe command path is refused before anything is downloaded
@@ -745,7 +738,6 @@ Feature: ACP registry agents
     When the user installs "acme"
     Then nothing is downloaded
 
-  @backlog
   Scenario: Two clients adding the same agent install it once
     Given two clients are connected to the MC
     When both add the registry agent "acme" at the same moment
@@ -759,27 +751,23 @@ Feature: ACP registry agents
     Then adding "acme" fails saying it timed out waiting for the install lock
     And a lock left behind for more than five minutes is taken over
 
-  @backlog
   Scenario: Package agents are installed under the MC's own folder
     Given the registry agent "acme" runs through npx
     When the MC prepares "acme"
     Then the package is installed at its exact version under the MC's tools folder
     And the machine's own global packages are not changed
 
-  @backlog
   Scenario: A package agent already installed at the right version is not installed again
     Given the package of "acme" is already installed at the registry's version
     When the MC prepares "acme"
     Then the existing install is used and nothing is downloaded
 
-  @backlog
   Scenario: A same-named command on the path is not used in place of the registry's binary
     Given a command named like the binary of "acme" is on the MC's path
     When the MC prepares "acme"
     Then the registry's binary is downloaded and used
     And only an executable override makes the MC run a local copy
 
-  @backlog
   Scenario: An executable override that cannot be found is explained
     Given the instance of "acme" has the executable override "my-acme"
     And "my-acme" is not on the instance's path
@@ -798,14 +786,12 @@ Feature: ACP registry agents
     When the MC checks the instance
     Then "acme" is found ready to run through npx
 
-  @backlog
   Scenario: Removing an agent's downloaded files keeps what package managers installed
     Given "acme" was installed as a binary and "beta" through npx
     When the MC uninstalls both
     Then the downloaded files of "acme" are removed
     And the package of "beta" is kept
 
-  @backlog
   Scenario: Uninstalling an agent that is not installed succeeds
     Given nothing is installed for "acme"
     When the MC is asked to uninstall "acme"
@@ -981,12 +967,10 @@ Feature: ACP registry agents
     When another client opens the sign-in
     Then it receives the last 16,384 characters and where they start in the output
 
-  @backlog @priority-high
   Scenario: A sign-in address that is not a web address is declined
     When "acme" asks the user to open a sign-in address that is not http or https
     Then the request is declined without being shown to the user
 
-  @backlog
   Scenario: A sign-in address nobody opens expires after ten minutes
     Given "acme" is waiting for the user to open a sign-in URL
     When ten minutes pass
@@ -1561,7 +1545,6 @@ Feature: ACP registry agents
     Then the turn fails with "Model quota exhausted" and the code -32000
     And nothing else of the agent's answer is shown
 
-  @backlog
   Scenario: A sign-in address request without an id is declined
     When "acme" asks the user to open a sign-in address with an empty request id
     Then the request is declined without being shown to the user
@@ -1573,7 +1556,6 @@ Feature: ACP registry agents
     When the agent has been asked more requests than a 32-bit id can count
     Then it still answers every request
 
-  @backlog
   Scenario: A long sign-in address request is cut down before it is shown
     When "acme" asks the user to open a sign-in address with a message longer than 1,024 characters
     Then the clients are offered the address with the first 1,024 characters of the message
@@ -2172,7 +2154,6 @@ Feature: ACP registry agents
 
   # AcpRegistrySupport.ts: the corners of fetching the registry and installing from it.
 
-  @backlog
   Scenario Outline: A registry that answers badly says what went wrong
     Given the MC holds no cached copy of the registry
     When the registry <problem>
@@ -2182,23 +2163,24 @@ Feature: ACP registry agents
       | problem                                   | message                                                                                                       |
       | answers with an error status              | Could not fetch ACP Registry index from https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json. |
       | breaks off while its answer is being read | Could not read ACP Registry response body.                                                                    |
-      | stalls for 30 seconds while being read    | Timed out reading ACP Registry response body.                                                                 |
       | answers with bytes that are not UTF-8     | ACP Registry index is not valid UTF-8.                                                                        |
 
-  @backlog
+    @backlog
+    Examples:
+      | problem                                | message                                       |
+      | stalls for 30 seconds while being read | Timed out reading ACP Registry response body. |
+
   Scenario: Searches made at the same moment fetch the registry once
     Given the registry can be reached
     When two clients search the registry at the same moment
     Then the registry is fetched once
     And both searches are answered from that one fetch
 
-  @backlog
   Scenario: Starting a session with no cached registry fetches it
     Given an instance of "acme" exists and the MC holds no cached copy of the registry
     When a thread starts a session with "acme"
     Then the registry is fetched before "acme" is started
 
-  @backlog
   Scenario Outline: A registry entry that could not be stored safely is left out
     Given the registry lists an agent whose <part>
     When the user searches the registry
@@ -2211,7 +2193,6 @@ Feature: ACP registry agents
       | id holds upper-case letters, spaces or a path separator    |
       | npx package is written the way a uvx package pins versions |
 
-  @backlog
   Scenario Outline: A downloaded agent is unpacked by the kind of file it is
     Given the registry publishes "acme" as a download ending in "<ending>"
     When the user installs "acme"
@@ -2239,7 +2220,6 @@ Feature: ACP registry agents
     Then adding "acme" fails with "ACP Registry install command 'tar' produced more output than expected."
     And nothing is unpacked
 
-  @backlog
   Scenario Outline: A download that cannot be fetched or kept says so
     When the download of "acme" 1.2.0 <problem>
     Then adding "acme" fails with "<message>"
@@ -2250,7 +2230,6 @@ Feature: ACP registry agents
       | is answered with an error | Could not download ACP Registry agent acme 1.2.0. |
       | cannot be written to disk | Could not save ACP Registry agent acme 1.2.0.     |
 
-  @backlog
   Scenario: An installed binary is checked again every time it is used
     Given the binary of "acme" was installed
     And its command was since replaced by a link to a file outside the install folder
@@ -2258,22 +2237,24 @@ Feature: ACP registry agents
     Then the session fails with "ACP Registry archive command resolves outside its installation directory."
     And "acme" is not started
 
-  @backlog
   Scenario Outline: A package install that fails says which command failed
     Given the registry agent "acme" runs through npx as "acme@1.2.0"
     When npm <problem> while the MC prepares "acme"
     Then preparing "acme" fails with "<message>"
 
     Examples:
-      | problem                                             | message                                                                           |
-      | exits with code 1 and prints "E404 not found"       | ACP Registry install command '/usr/bin/npm' exited with code 1: E404 not found    |
-      | cannot be started                                   | Could not run ACP Registry install command '/usr/bin/npm'.                        |
-      | has not finished installing after 20 minutes        | Timed out running ACP Registry install command '/usr/bin/npm'.                    |
-      | does not say where it installs within 30 seconds    | Timed out running ACP Registry install command '/usr/bin/npm'.                    |
-      | names an install folder that is not a single path   | ACP Registry package manager '/usr/bin/npm' returned an invalid global path.      |
-      | installs the package but exposes no usable command  | ACP Registry installed acme@1.2.0, but could not resolve its global command.      |
+      | problem                                            | message                                                                        |
+      | exits with code 1 and prints "E404 not found"      | ACP Registry install command '/usr/bin/npm' exited with code 1: E404 not found |
+      | cannot be started                                  | Could not run ACP Registry install command '/usr/bin/npm'.                     |
+      | installs the package but exposes no usable command | ACP Registry installed acme@1.2.0, but could not resolve its global command.   |
 
-  @backlog
+    @backlog
+    Examples:
+      | problem                                           | message                                                                      |
+      | has not finished installing after 20 minutes      | Timed out running ACP Registry install command '/usr/bin/npm'.               |
+      | does not say where it installs within 30 seconds  | Timed out running ACP Registry install command '/usr/bin/npm'.               |
+      | names an install folder that is not a single path | ACP Registry package manager '/usr/bin/npm' returned an invalid global path. |
+
   Scenario Outline: The command of an npm package is chosen among the ones it publishes
     Given the npm package "@acme/acme-acp" of the registry agent "acme" publishes <commands>
     When the MC prepares "acme"
@@ -2287,7 +2268,6 @@ Feature: ACP registry agents
       | two other names that both lead to the same file          | the first of them by name runs the agent             |
       | two other names that lead to different files             | preparing fails because no command can be told apart |
 
-  @backlog
   Scenario Outline: The command of a uv tool is looked for under the agent's names
     Given the uv tool "acme-acp" of the registry agent "<agent>" exposes the command "<command>"
     When the MC prepares "<agent>"
@@ -2299,47 +2279,50 @@ Feature: ACP registry agents
       | acme-cli | acme-acp |
       | other    | acme     |
 
-  @backlog
-  Scenario: A package agent whose installed files are gone or changed is installed again
+  Scenario Outline: A package agent whose installed files are gone or changed is installed again
     Given the package of "acme" was installed at the registry's version
-    And its command was since deleted or its package replaced by another version
+    And <change>
     When the MC prepares "acme"
     Then the package is installed again at the registry's exact version
 
-  @backlog
+    Examples:
+      | change                                      |
+      | its command was since deleted               |
+      | its package was replaced by another version |
+
   Scenario: A package agent is installed the same way when npm's own global folder belongs to the system
     Given npm on the MC is set to install global packages into a folder the MC may not write
     When the MC prepares the npx agent "acme"
     Then "acme" is installed under the MC's tools folder all the same
 
-  @backlog
   Scenario: A package agent's own command comes first on its path
     Given the registry agent "acme" runs through npx and another "acme" command is on the MC's path
     When a thread starts a session with "acme"
     Then the command the MC installed is the one that runs
     And the folder it was installed into comes first on the agent's path
 
-  @backlog
   Scenario: A prepared agent nobody added within 30 seconds can be uninstalled again
     Given a client prepared "acme" and no instance of "acme" was added
     When 30 seconds pass and the MC is asked to uninstall "acme"
     Then the downloaded files for "acme" are removed
 
-  @backlog
   Scenario: Uninstalling an agent still used by an instance removes nothing
     Given an instance of "acme" exists
     When the MC is asked to uninstall "acme"
     Then the uninstall reports that nothing was removed
     And the downloaded files for "acme" are kept
 
-  @backlog
   Scenario Outline: An uninstall that cannot be carried out says why
     When the MC is asked to uninstall <request>
     Then the uninstall fails with "<message>"
 
     Examples:
+      | request                                     | message                                                             |
+      | an agent id that is not a valid registry id | ACP Registry managed binary uninstall received an invalid agent ID. |
+
+    @backlog
+    Examples:
       | request                                        | message                                                                 |
-      | an agent id that is not a valid registry id    | ACP Registry managed binary uninstall received an invalid agent ID.     |
       | "acme" while its install folder cannot be read | Could not inspect the managed binary cache for ACP Registry agent acme. |
       | "acme" while its files cannot be deleted       | Could not remove managed binaries for ACP Registry agent acme.          |
 
@@ -2349,7 +2332,6 @@ Feature: ACP registry agents
     When a thread starts a session on that instance
     Then it fails with "ACP Registry provider requires a registry agent ID."
 
-  @backlog
   Scenario: Package agents still run on a machine the registry publishes no binaries for
     Given the MC runs on a machine that is neither macOS, Linux nor Windows on arm64 or x64
     When the user searches the registry

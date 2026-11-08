@@ -165,7 +165,7 @@ Feature: Runs and turns
     When a turn streams assistant text
     Then the text is written a paragraph at a time
 
-  @mc @backlog
+  @mc
   Scenario: Reasoning streams by the same mode as the reply
     Given project "demo" streams responses by "paragraph"
     And "t1" has a running turn
@@ -173,7 +173,7 @@ Feature: Runs and turns
     Then the reasoning is written a paragraph at a time, at most every 400 ms
     And by "turn" it is written only when the reasoning is finished
 
-  @mc @backlog
+  @mc
   Scenario Outline: Paragraph streaming holds back text whose shape could still change
     Given project "demo" streams responses by "paragraph"
     And "t1" has a running turn
@@ -187,7 +187,7 @@ Feature: Runs and turns
       | a code block nested in a list item, then its close      | the text up to and including the close is written |
       | a first paragraph with no blank line after it yet       | nothing is written                                |
 
-  @mc @backlog
+  @mc
   Scenario: The held-back tail is written when the reply finishes
     Given project "demo" streams responses by "paragraph"
     And the provider streamed a reply that ends without a blank line
@@ -195,7 +195,7 @@ Feature: Runs and turns
     Then the whole reply is written at once, whatever was held back
 
   # Upstream #19023: a held-back reply written at turn end stays where it was said.
-  @backlog @mc
+  @mc
   Scenario: A held-back reply cut off by a steer keeps its place
     Given the agent's reply is partly held back
     And the user steers the turn before the reply finishes
@@ -270,6 +270,7 @@ Feature: Runs and turns
     Then the run is recorded as failed at the time it failed
     And "t1" no longer shows a running turn
 
+  # Upstream #23169: a follow-up first stops the provider turn an earlier failed run left running.
   @backlog @mc
   Scenario: A follow-up first stops a provider turn an earlier failed run left running
     Given an earlier run of "t1" failed while its provider turn kept running
@@ -360,7 +361,7 @@ Feature: Runs and turns
     Then the turn's work log shows a provider retry
     And no second user turn is created
 
-  @backlog @mc
+  @mc
   Scenario Outline: A provider retry says how it ended
     Given the provider is retrying a failed request during a turn of "t1"
     When <ending>
@@ -403,7 +404,7 @@ Feature: Runs and turns
       | a prefixed key, client secret or refresh token | "[REDACTED]" in place of the value       |
       | a URL that cannot be read                      | "[REDACTED_URL]" in place of the URL     |
   # Upstream #23313: values under keys like "client_secret" or "clientSecret" survived, being no bare key word.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A failure message hides values under compound credential keys
     When the provider fails a turn of "t1" with a message holding <text>
     Then the failure the thread records shows <shown>
@@ -459,12 +460,12 @@ Feature: Runs and turns
     When the user sends the sign-out command by itself to "t1"
     Then the run fails with "Provider sign-out failed" and the provider's reason
 
-  @backlog @mc
+  @mc
   Scenario: Compacting a thread with no conversation is refused
     Given "t1" has no conversation yet
     When the user sends "/compact" to "t1"
     Then the run fails with "Cannot compact an empty thread" and "Start a conversation before compacting this thread."
-    And nothing is sent to the provider
+    And no provider process is started for it
 
   # Upstream #24172: a fork's first /compact was refused as an empty thread.
   @backlog @mc
@@ -478,6 +479,7 @@ Feature: Runs and turns
       | native   |
       | portable |
 
+  # Upstream #24172: a fork's first /compact is refused only when its handoff carries no messages.
   @backlog @mc
   Scenario: A portable fork whose handoff carries no messages cannot compact
     Given "t2" is a portable fork of "t1" whose handoff carries no messages
@@ -557,11 +559,10 @@ Feature: Runs and turns
     Given "t1" has a running turn
     When the user interrupts the run giving the reason "wrong branch"
     Then the run records an item titled "Interrupt requested" saying "wrong branch"
-    And once the provider stops, an item titled "Interrupted" saying "Run interrupted by user"
+    And once the provider stops, an item titled "Interrupted" saying "Stopped by user"
 
   # Upstream #24299: every interrupt said "Run interrupted by user", even one an agent asked for.
-  # Replaces the outcome text of the scenario above once the MC carries it.
-  @backlog @mc
+  @mc
   Scenario Outline: An interrupt's outcome says who stopped the run
     Given "t1" has a running turn
     When <who>
@@ -572,6 +573,7 @@ Feature: Runs and turns
       | the user presses Stop                                   | Stopped by user                      |
       | an agent stops it through HAL-C2's tools                | Stopped by an agent                  |
       | an agent stops it through HAL-C2's tools with "wrong branch" | Stopped by an agent: wrong branch |
+      | an agent cancels its delegated task                          | Stopped by an agent                  |
       | the provider ends the run with no stop asked for        | Stopped by the provider              |
 
   @mc @priority-low
@@ -586,18 +588,21 @@ Feature: Runs and turns
     When the user interrupts that run
     Then the command fails saying the run is not interruptible
 
-  @backlog @mc
+  # A failure the provider itself reports is not this case: there the subagents carry on in their
+  # own threads (providers/codex.feature, "A failed Codex turn does not hold the thread for its
+  # subagents"). Here the provider process is gone, so nothing can report the subagent again.
+  @mc
   Scenario Outline: A turn that does not complete ends the provider subagents it left open
     Given "t1" has a running turn with a provider subagent still at work
-    When the turn ends as <status>
+    When the turn ends because <cause>
     Then the subagent, its item on the turn and the work in its own thread end as <status>
     And nothing of the subagent is left streaming
 
     Examples:
-      | status      |
-      | interrupted |
-      | failed      |
-      | cancelled   |
+      | cause                        | status      |
+      | the user interrupts it       | interrupted |
+      | its provider process exits   | failed      |
+      | its thread is deleted        | cancelled   |
 
   @backlog @mc
   Scenario Outline: Only a bare compact command compacts the conversation
@@ -688,8 +693,10 @@ Feature: Runs and turns
       | only idle threads            | the process is released and the idle threads reopen it on their next turn        |
 
   # Upstream #27252: killing processes stays a user decision.
-  @backlog @mc
-  Scenario: Agents cannot force stop a thread
+  @mc
+  # Deleting a project with force=true also ends its threads' processes, as part of
+  # deleting them; that is the delete's own decision, not a force stop.
+  Scenario: HAL-C2's tools offer agents no force stop
     When an agent looks for a way to force stop a thread through HAL-C2's tools
     Then none is offered
 

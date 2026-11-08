@@ -166,7 +166,7 @@ Feature: MC self-update and release upgrades
       | the requested version is the running one | already runs                |
       | no target version is given               | No target version was given |
 
-  @backlog @mc
+  @mc
   Scenario Outline: A target that is not an exact version is refused
     When a client asks the MC to update to "<target>"
     Then the update fails saying it is not an exact version
@@ -178,7 +178,7 @@ Feature: MC self-update and release upgrades
       | ^1.2.0 |
       | 1.2    |
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A staged version that cannot run on this machine is refused before the MC stops
     Given the MC downloaded and staged the target version
     And the staged version's own preflight says it cannot run here
@@ -186,16 +186,17 @@ Feature: MC self-update and release upgrades
     Then the update fails with the preflight's reason
     And the running MC keeps serving without interruption
 
-  @backlog @mc
+  @mc
   Scenario: An update can ask running turns to carry on after the restart
     Given turns are running on the MC
     When a client asks the MC to update and to continue running threads
     Then those threads are marked to continue once the new version is up
     And a restart that does not happen clears those marks
 
-  @backlog @mc
+  @mc
   Scenario: An MC with no background service explains how to enable remote updates
     Given an MC that is neither the desktop app's server nor a background service
+    And a bundle that needs a restart
     When a client asks the MC to update
     Then the update fails saying remote updates need the background service
     And it says to run the service install command on the server machine
@@ -226,7 +227,7 @@ Feature: MC self-update and release upgrades
     Then the update fails saying the bundle does not match its checksum
     And the running version is unchanged
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A download cut off midway leaves no half-installed version
     Given the MC is downloading a version to install
     When the download is interrupted
@@ -234,25 +235,27 @@ Feature: MC self-update and release upgrades
     And the running version is unchanged
 
   # Upstream #19649: a slow download still receiving bytes failed at a ten-minute cap.
-  @backlog @mc
+  @mc
   Scenario: A slow download finishes while a stalled one fails
     Given the MC is downloading a version to install
     When the download is still receiving data after ten minutes
     Then it carries on until it finishes
     But a download that receives nothing for a minute fails and leaves nothing half-installed
 
-  @backlog @mc
+  @mc
   Scenario: A version that is only partly installed is installed again
     Given an earlier install of a version stopped before it finished
     When the MC updates to that version
     Then it replaces the partial install with a complete one
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A complete installed version survives a failed re-install
     Given a version that is fully installed
     When another install of the same version fails its checks
     Then the installed version is left in place
 
+  # The MC runs one update at a time and refuses a second rather than queueing it ("Only one
+  # update runs at a time"), so two installs never take turns; proposed for @dropped.
   @backlog @mc
   Scenario: Two installs of one version never run side by side
     Given two requests install the same version at once
@@ -261,26 +264,26 @@ Feature: MC self-update and release upgrades
 
   # Upstream #22253: every update left its old runtime on disk; nightly users had 8 to 22 GB
   # of dead versions and one server ran out of disk.
-  @backlog @mc
+  @mc
   Scenario: Updating removes installed versions nothing can use any more
     Given the MC has installed versions "1.1.0", "1.2.0" and "1.3.0" and runs "1.3.0"
     And "1.2.0" is the version an update would roll back to
     When the MC starts after an update
-    Then "1.1.0" is removed
+    Then the installed version "1.1.0" is removed
     And "1.2.0" and "1.3.0" are kept
 
   # Upstream #23113: a host added over SSH starts its installed version directly rather than as a
   # service, and it kept every old runtime.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: An MC started over SSH from its installed version removes old versions too
     Given an SSH host whose MC was started from its installed version "1.3.0"
     And the host still has "1.1.0" installed, which nothing uses
     When that MC starts
-    Then "1.1.0" is removed
+    Then the installed version "1.1.0" is removed
 
   # Upstream #22253: a version some process still runs, or one installed within the last hour
   # that nothing points at yet, is kept; when the MC cannot tell, nothing is removed.
-  @backlog @mc
+  @mc
   Scenario Outline: An installed version that may still be in use is kept
     Given the MC has the old installed version "1.1.0"
     And <use>
@@ -295,7 +298,7 @@ Feature: MC self-update and release upgrades
       | the MC cannot read which version it would roll back to |
 
   # Upstream #22253: a removal that is cut off never leaves a partial version that looks whole.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: A removal cut off midway leaves nothing that looks installed
     Given the MC is removing the old installed version "1.1.0"
     When the removal is interrupted
@@ -430,37 +433,58 @@ Feature: MC self-update and release upgrades
     Then it offers in-place self-update
     And an MC running from a checkout does not
 
+  # Needs a release feed per channel that an MC can poll; the MC only learns of a version a
+  # client hands it today.
   @backlog @mc
   Scenario: An MC tells clients a newer version is available on its channel
     Given a newer MC release is published on the MC's channel
     When a client follows the MC's config
     Then it learns which version is available
 
+  # Needs a `hal-c2-mc update` command that reaches the running MC and asks before
+  # interrupting its turns.
   @backlog @mc
   Scenario: An operator updates the MC from its command line
     When an operator asks the MC's command line to update to the newest release
     Then the MC updates as it would for a client
     And the command asks before interrupting running turns
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A failed restart returns to the previous version
     Given a restart into a new version fails before it is ready
     Then the service wrapper starts the previous version again
-    And the database is restored to its state before the trial
 
+  # Upstream's launcher copied the database before a trial and put the copy back on a failed
+  # one. HAL-C2 takes no copy (docs/internals/server-updates.md: a rollback restores the code,
+  # not the data), so whether the MC should gain one is a maintainer decision.
+  # Upstream #19311: its service launcher copied the database before a trial and restored
+  # the copy when the trial rolled back.
   @backlog @mc
+  Scenario: A failed restart returns the database to its state before the trial
+    Given a restart into a new version fails before it is ready
+    Then the database is restored to its state before the trial
+
+  @mc
   Scenario: A restart the service deferred is forgotten once it runs the version it names
     Given an update asked the service to restart later
     When the service starts and runs the version it was asked for
     Then the deferred restart is cleared
     And a service that is still on an older version keeps waiting for a newer one
 
+  # Upstream's launcher kept the active version in a state file it parsed. The MC's is
+  # releases/start_erl.data, written only by HalC2.Upgrade from a target it already checked
+  # is exact ("An update names one exact version"), and the start script reads it as a
+  # directory name, so there is nothing to guess; proposed for @dropped.
   @backlog @mc
   Scenario: Only exact versions are accepted as the service's active version
     Given the service's state names a version that is not an exact version
     When the service starts
     Then it refuses the state rather than guessing a version
 
+  # This scenario and the two after it test upstream's Node service launcher, which handed
+  # the server startup context and an IPC channel and answered its update requests. The MC
+  # runs under bin/hal-c2-service and the OS service manager, with no launcher IPC: it
+  # updates itself through release_handler and restarts by exiting; proposed for @dropped.
   @backlog @mc
   Scenario Outline: An MC refuses to start under a launcher it cannot trust
     Given the service launcher started the MC and <problem>

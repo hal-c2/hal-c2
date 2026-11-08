@@ -56,7 +56,7 @@ defmodule HalC2.Settings do
                      newWorktreesStartFromOrigin worktreeSubmodules defaultAutoPull
                      defaultProjectScripts enableAgentBrowserAccess enableAgentDeviceAccess
                      textGenerationModelSelection sourceControlWriterModelSelection
-                     sourceControlWritingStyle pullRequestMergeMethod sidebarAutoSettleOnMerge
+                     sourceControlWritingStyle threadTitleInstructions pullRequestMergeMethod sidebarAutoSettleOnMerge
                      sidebarAutoSettleAfterDays continueThreadsAfterServerUpdate
                      responseStreamingMode projectEnvironment projectEnvironmentFile)
 
@@ -77,19 +77,144 @@ defmodule HalC2.Settings do
           acc
 
         key in ~w(textGenerationModelSelection defaultModelSelection) and is_map(value) and
-            not provider_enabled?(settings, value["instanceId"]) ->
+            not provider_on?(settings, project_id, value["instanceId"]) ->
           acc
 
         true ->
           Map.put(acc, key, value)
       end
     end)
+    |> with_project_switches(overrides["providerInstances"])
   end
 
-  defp provider_enabled?(settings, instance) do
+  # The resolved document says which providers are on for the project where the
+  # environment's say lives (`providerInstances.<id>.enabled`, else
+  # `providers.<id>.enabled`), so what reads it (text generation) honours the switch.
+  defp with_project_switches(settings, %{} = switches) do
+    Enum.reduce(switches, settings, fn
+      {instance, %{"enabled" => on}}, acc when is_boolean(on) ->
+        if is_map(get_in(acc, ["providerInstances", instance])),
+          do: put_in(acc, ["providerInstances", instance, "enabled"], on),
+          else: deep_put(acc, ["providers", instance, "enabled"], on)
+
+      _, acc ->
+        acc
+    end)
+  end
+
+  defp with_project_switches(settings, _switches), do: settings
+
+  defp deep_put(map, [key], value), do: Map.put(map || %{}, key, value)
+
+  defp deep_put(map, [key | rest], value) do
+    map = map || %{}
+    inner = if is_map(map[key]), do: map[key], else: %{}
+    Map.put(map, key, deep_put(inner, rest, value))
+  end
+
+  @doc """
+  Whether provider instance `instance` may run turns in project `project_id`. The
+  project's own switch (`projectSettingsOverrides.<id>.providerInstances.<instance>.enabled`)
+  wins in either direction; without one the environment's applies: the instance's
+  `enabled` in `providerInstances`, else its driver's in `providers`. Only a switch set
+  to false turns a provider off here; a provider that is off until turned on (the ACP
+  agents) is its adapter's to refuse.
+  """
+  def provider_on?(settings \\ settings(), project_id, instance) do
+    case project_switch(settings, project_id, instance) do
+      on when is_boolean(on) -> on
+      nil -> environment_on?(settings, instance)
+    end
+  end
+
+  @doc """
+  Why a turn on `instance` cannot start in project `project_id`, or nil: the reason a
+  refused message or a run that did not start carries.
+  """
+  def provider_off(settings \\ settings(), project_id, instance) do
+    unless provider_on?(settings, project_id, instance) do
+      name = HalC2.ThreadMove.provider_name(instance)
+
+      if project_switch(settings, project_id, instance) == false,
+        do:
+          "#{name} is turned off for this project. Turn it on in the project's provider settings or pick another provider.",
+        else:
+          "#{name} is turned off on this MC. Turn it on in provider settings or pick another provider."
+    end
+  end
+
+  @doc """
+  Whether some project turns `instance` on: a provider off on the environment keeps
+  being checked and offered for that project's turns.
+  """
+  def provider_on_in_a_project?(settings \\ settings(), instance) do
+    Enum.any?(
+      Map.keys(settings["projectSettingsOverrides"] || %{}),
+      &(project_switch(settings, &1, instance) == true)
+    )
+  end
+
+  @doc """
+  `HalC2.Environment.providers/0` as they stand for project `project_id`: `enabled` is
+  the project's switch where it has one, and one the project turned off says so. What
+  an agent in that project may pick a provider from.
+  """
+  def providers_for(project_id) do
+    settings = settings()
+    Enum.map(HalC2.Environment.providers(), &project_provider(settings, &1, project_id))
+  end
+
+  defp project_provider(settings, %{"instanceId" => instance} = entry, project_id) do
+    case project_switch(settings, project_id, instance) do
+      true ->
+        Map.put(entry, "enabled", true)
+
+      false ->
+        Map.merge(entry, %{
+          "enabled" => false,
+          "status" => "disabled",
+          "message" => provider_off(settings, project_id, instance)
+        })
+
+      nil ->
+        entry
+    end
+  end
+
+  defp project_provider(_settings, entry, _project_id), do: entry
+
+  defp project_switch(_settings, nil, _instance), do: nil
+
+  defp project_switch(settings, project_id, instance) do
+    case get_in(settings, ["projectSettingsOverrides", project_id]) do
+      %{"providerInstances" => %{} = switches} ->
+        case switches[instance] do
+          %{"enabled" => on} when is_boolean(on) -> on
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp environment_on?(settings, instance), do: switch(settings, instance) != false
+
+  @doc """
+  The `enabled` switch settings carry for `instance`: its `providerInstances` entry's,
+  else its driver's in `providers`; nil where neither says. `resolve/2` writes a
+  project's switch to the same place.
+  """
+  def switch(settings, instance) do
     case get_in(settings, ["providerInstances", instance]) do
-      %{} = config -> config["enabled"] != false
-      nil -> get_in(settings, ["providers", instance, "enabled"]) != false
+      %{"enabled" => on} when is_boolean(on) ->
+        on
+
+      _ ->
+        case get_in(settings, ["providers", instance, "enabled"]) do
+          on when is_boolean(on) -> on
+          _ -> nil
+        end
     end
   end
 
@@ -366,7 +491,8 @@ defmodule HalC2.Settings do
     # A key written in plain text (by hand, or before keys were sealed) moves out now.
     {settings, changed} = HalC2.UsageLimitSources.seal_keys(settings, %{})
     {settings, secrets_changed} = HalC2.ProviderSecrets.seal(settings, settings)
-    if changed or secrets_changed, do: write!(path, settings)
+    {settings, password_changed} = HalC2.ProviderSecrets.seal_server_passwords(settings, settings)
+    if changed or secrets_changed or password_changed, do: write!(path, settings)
     schedule_check()
 
     :ets.new(__MODULE__, [:named_table, :protected, read_concurrency: true])
@@ -564,12 +690,28 @@ defmodule HalC2.Settings do
   end
 
   @impl true
-  def handle_call({:put, settings, version}, _from, %{version: version} = state),
-    do: save_reply(state, fn -> settings end)
+  def handle_call({:put, settings, version}, from, %{version: version} = state) do
+    {:reply, reply, state} =
+      handle_call({:update, &carry_over(settings, state.settings, &1)}, from, state)
+
+    # A client is answered with the error type it knows (`ServerSettingsError`).
+    reply =
+      with {:error, message} when is_binary(message) <- reply do
+        {:error,
+         %{
+           "_tag" => "ServerSettingsError",
+           "settingsPath" => state.path,
+           "operation" => "write",
+           "message" => message
+         }}
+      end
+
+    {:reply, reply, state}
+  end
 
   # `fun` is a caller's: a crash in it must not take the table every service reads with it.
   def handle_call({:update, fun}, _from, state),
-    do: save_reply(state, fn -> fun.(state.settings) end)
+    do: save_reply(state, fn disk -> fun.(disk) end)
 
   def handle_call({:put, _settings, _version}, _from, state),
     do: {:reply, {:error, :stale}, state}
@@ -647,15 +789,57 @@ defmodule HalC2.Settings do
     end
   end
 
-  # Saves what `settings.()` returns and replies with the new version. A document that
-  # cannot be built or written is refused with the reason and nothing changes.
+  # Saves what `settings.(disk)` returns and replies with the new version, `disk` being the
+  # document settings.json holds now, which a hand edit the check has not noticed yet can
+  # make differ from the MC's. A file that cannot be read is refused, so the user's text is
+  # left for them to repair; so is any document that cannot be built or written, and
+  # nothing changes.
   defp save_reply(state, settings) do
-    state = save(state, settings.(), true)
-    {:reply, {:ok, state.version}, state}
+    case disk(state) do
+      {:ok, disk} ->
+        state = save(state, settings.(disk), true)
+        {:reply, {:ok, state.version}, state}
+
+      {:error, reason} ->
+        {:reply,
+         {:error,
+          "Could not read #{state.path} (#{inspect(reason)}). Fix or remove it, then save again."},
+         state}
+    end
   rescue
     exception -> {:reply, {:error, Exception.message(exception)}, state}
   catch
     kind, reason -> {:reply, {:error, Exception.format_banner(kind, reason)}, state}
+  end
+
+  # The document on disk. A file that is gone, or that holds the MC's own document, is the
+  # MC's document.
+  defp disk(state) do
+    if File.exists?(state.path), do: read(state.path), else: {:ok, state.settings}
+  end
+
+  # What a client changed from the `base` it read, put on the `disk` document: a hand edit
+  # the MC has not noticed yet stays unless the client changed that very setting. Objects
+  # all three hold are merged the same way, key by key (`providers.codex` kept beside a
+  # client's change to `providers.claude`).
+  defp carry_over(client, base, disk) when disk == base, do: client
+
+  defp carry_over(client, base, disk) do
+    for key <- Enum.uniq(Map.keys(client) ++ Map.keys(base)),
+        client[key] != base[key],
+        reduce: disk do
+      acc ->
+        case {Map.fetch(client, key), base[key], acc[key]} do
+          {{:ok, %{} = value}, %{} = read, %{} = held} ->
+            Map.put(acc, key, carry_over(value, read, held))
+
+          {{:ok, value}, _, _} ->
+            Map.put(acc, key, value)
+
+          {:error, _, _} ->
+            Map.delete(acc, key)
+        end
+    end
   end
 
   # `shared` is what the records are before this document's shared keys are compared
@@ -663,7 +847,12 @@ defmodule HalC2.Settings do
   defp save(state, settings, write?, shared \\ nil) do
     {settings, keys_changed} = HalC2.UsageLimitSources.seal_keys(settings, state.settings)
     {settings, secrets_changed} = HalC2.ProviderSecrets.seal(settings, state.settings)
-    if write? or keys_changed or secrets_changed, do: write!(state.path, settings)
+
+    {settings, password_changed} =
+      HalC2.ProviderSecrets.seal_server_passwords(settings, state.settings)
+
+    if write? or keys_changed or secrets_changed or password_changed,
+      do: write!(state.path, settings)
 
     state =
       put_shared(
@@ -682,7 +871,8 @@ defmodule HalC2.Settings do
       &((get_in(&1, ["providers", "opencode"]) || %{})
         |> Map.take(["serverUrl", "serverPassword"]))
 
-    if server.(settings) != server.(state.settings), do: HalC2.Acp.forget("opencode")
+    if password_changed or server.(settings) != server.(state.settings),
+      do: HalC2.Acp.forget("opencode")
 
     # Pi run from another binary or with other launch arguments is read again.
     pi = &((get_in(&1, ["providers", "pi"]) || %{}) |> Map.take(["binaryPath", "launchArgs"]))

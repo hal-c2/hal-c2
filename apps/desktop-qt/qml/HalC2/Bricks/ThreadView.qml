@@ -43,6 +43,16 @@ Item {
     // The composer's message is on its way to the MC.
     readonly property bool sending: Shell.state.composer?.isSendBusy === true
 
+    // An Escape nothing over the conversation wanted folds the expanded
+    // notices above the composer back to the front one, wherever in the
+    // banners or timeline focus is; the composer does the same for its own.
+    Keys.onEscapePressed: event => {
+        if ((Shell.state.noticeStack ?? null)?.expanded === true)
+            Shell.dispatch("noticeStack.collapse", {});
+        else
+            event.accepted = false;
+    }
+
     readonly property color textColor: Theme.palette.color("text", "#e4e4e7")
     readonly property color mutedColor: Theme.palette.color("textMuted", "#8b8b93")
     readonly property string uiFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
@@ -372,7 +382,28 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         height: implicitHeight
-        visible: recovery !== null && !view.draft
+        visible: recovery !== null && inFront && !view.draft
+    }
+
+    // The open thread's error, over the top of its conversation, and under
+    // it what its provider says when it cannot run.
+    ThreadErrorBanner {
+        id: errorBanner
+
+        anchors.top: timeline.top
+        anchors.left: timeline.left
+        anchors.right: timeline.right
+        z: 2
+        height: implicitHeight
+        visible: current !== null && inFront && !view.draft
+    }
+    ProviderStatusBanner {
+        anchors.top: errorBanner.visible ? errorBanner.bottom : timeline.top
+        anchors.left: timeline.left
+        anchors.right: timeline.right
+        z: 2
+        height: implicitHeight
+        visible: current !== null && inFront && !view.draft
     }
 
     // The open thread is settled: it says so, and un-settles from here.
@@ -383,7 +414,7 @@ Item {
         anchors.right: parent.right
         anchors.bottom: limitBanner.visible ? limitBanner.top : parent.bottom
         height: implicitHeight
-        visible: current !== null && !view.draft
+        visible: current !== null && inFront && !view.draft
     }
 
     // How the thread's new worktree is being prepared.

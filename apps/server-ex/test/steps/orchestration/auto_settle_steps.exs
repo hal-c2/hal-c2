@@ -154,7 +154,9 @@ defmodule HalC2.Steps.Orchestration.AutoSettle do
           "runId" => run["id"],
           "type" => "command_execution",
           "status" => "running",
-          "input" => "npm run dev"
+          "input" => "mix test",
+          # Only work the agent waits on holds a thread (`HalC2.Projection.BackgroundWork`).
+          "awaited" => true
         }
       })
 

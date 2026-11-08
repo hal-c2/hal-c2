@@ -27,6 +27,10 @@ namespace {
 
 const QStringList kDefaultGlobs{
     QStringLiteral("composer/question-answers.feature"),
+    QStringLiteral("composer/model-and-mode.feature:The composer names the permissions only when they differ*"),
+    QStringLiteral("composer/model-and-mode.feature:A new thread says which permissions*"),
+    QStringLiteral("composer/model-and-mode.feature:The phone's back leaves the permissions menu*"),
+    QStringLiteral("files/adding-projects.feature"),
     QStringLiteral("files/file-viewer-and-editing.feature"),
     QStringLiteral("mobile/pairing-and-environments.feature"),
     QStringLiteral("connections/connection-health.feature:An app that starts with its environment*"),
@@ -78,6 +82,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("connections/connection-health.feature:An expiring credential does not close*"),
     QStringLiteral("connections/connection-health.feature:A failed renewal affects only its request*"),
     QStringLiteral("mobile/home-and-thread-list.feature"),
+    QStringLiteral("mobile/review-and-diffs.feature"),
     QStringLiteral("mobile/composer.feature"),
     QStringLiteral("mobile/navigation-and-deep-links.feature"),
     QStringLiteral("mobile/offline-and-lifecycle.feature"),
@@ -100,6 +105,21 @@ const QStringList kDefaultGlobs{
     QStringLiteral("space/markdown.feature"),
     QStringLiteral("space/project-files.feature"),
     QStringLiteral("timeline/streaming.feature"),
+    QStringLiteral("timeline/scrolling-and-links.feature:The view follows new output*"),
+    QStringLiteral("timeline/scrolling-and-links.feature:The end of the thread holds still*"),
+    QStringLiteral("timeline/scrolling-and-links.feature:Scrolling away stops the view from following"),
+    QStringLiteral("timeline/scrolling-and-links.feature:The user returns to the end of the thread"),
+    QStringLiteral("timeline/scrolling-and-links.feature:Another thread opens at its end*"),
+    QStringLiteral("timeline/scrolling-and-links.feature:A long thread opens as its newest turns"),
+    QStringLiteral("timeline/scrolling-and-links.feature:Earlier turns load when the user reaches the top"),
+    QStringLiteral("timeline/scrolling-and-links.feature:A thread that does not fill the view*"),
+    QStringLiteral("timeline/scrolling-and-links.feature:Nothing is offered once every turn is loaded"),
+    QStringLiteral("timeline/scrolling-and-links.feature:A running thread opens at its latest output*"),
+    QStringLiteral("timeline/scrolling-and-links.feature:Switching threads shows only*"),
+    QStringLiteral("timeline/scrolling-and-links.feature:*lands on the real end of a thread with a tall new reply*"),
+    QStringLiteral("timeline/scrolling-and-links.feature:A bare web address in a message can be opened"),
+    QStringLiteral("timeline/scrolling-and-links.feature:The user cites part of a reply*"),
+    QStringLiteral("timeline/runs-and-queue.feature"),
     QStringLiteral("threads/sidebar-list.feature:Very long settled*"),
     QStringLiteral("threads/sidebar-list.feature:*plugin*"),
     QStringLiteral("threads/settle.feature"),
@@ -118,6 +138,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("source-control/review-diffs.feature"),
     QStringLiteral("source-control/pull-request-threads.feature"),
     QStringLiteral("timeline/tool-calls.feature"),
+    QStringLiteral("timeline/approvals-and-questions.feature"),
 };
 
 const QString kFeaturesDir = QStringLiteral(HAL_C2_FEATURES_DIR);

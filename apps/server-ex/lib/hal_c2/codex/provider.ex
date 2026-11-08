@@ -31,6 +31,9 @@ defmodule HalC2.Codex.Provider do
   @spec entry(String.t()) :: map | nil
   def entry(id \\ "codex") do
     enabled = HalC2.Settings.instance_enabled?(id, "codex")
+    # Off on this MC but on for some project, it is checked as an enabled one is, so
+    # that project's turns can run on it.
+    checked? = enabled or HalC2.Settings.provider_on_in_a_project?(id)
 
     with [executable | _] <- command(id),
          path when is_binary(path) <- System.find_executable(executable) do
@@ -58,9 +61,9 @@ defmodule HalC2.Codex.Provider do
           |> :persistent_term.get(%{})
           |> Map.values()
       }
-      |> with_health(id, enabled)
+      |> with_health(id, checked?)
     else
-      _ -> not_installed_or_checked(id, enabled)
+      _ -> not_installed_or_checked(id, enabled, checked?)
     end
     |> with_continuation(id)
   end
@@ -86,10 +89,17 @@ defmodule HalC2.Codex.Provider do
       :ok ->
         entry
 
-      %{"message" => message, "installed" => installed} ->
+      # Signed in and usable, but its model list did not arrive: the entry
+      # warns and keeps offering the last list it read.
+      %{"warning" => message} ->
+        Map.merge(entry, %{"status" => "warning", "message" => message})
+
+      %{"message" => message, "installed" => _installed} ->
+        # This branch is only reached with an executable on the path, so Codex
+        # is installed here even when its check could not start it: its version
+        # (and with it any compatibility advisory and update offer) still reads.
         Map.merge(entry, %{
           "status" => "error",
-          "installed" => installed,
           "availability" => "unavailable",
           "message" => message
         })
@@ -98,8 +108,8 @@ defmodule HalC2.Codex.Provider do
 
   # No executable a path names: not installed — unless a check already ran and
   # could not start it, which is the answer that check gave.
-  defp not_installed_or_checked(id, enabled) do
-    case enabled && check(id) do
+  defp not_installed_or_checked(id, enabled, checked?) do
+    case checked? && check(id) do
       %{"message" => message, "installed" => installed} ->
         %{
           "instanceId" => id,
@@ -132,6 +142,32 @@ defmodule HalC2.Codex.Provider do
   end
 
   defp check(id), do: :persistent_term.get(@status, %{})[id]
+
+  @doc """
+  What instance `id`'s last check found, without starting a new one: `:ok`,
+  `:failed`, or `:pending` when no check has finished this session. Text
+  generation reads it so a writer that failed its check is not asked to write.
+  """
+  def check_state(id) do
+    case check(id) do
+      nil -> :pending
+      :ok -> :ok
+      # A check that only warned (a slow model list) still found a usable Codex.
+      %{"warning" => _} -> :ok
+      %{} -> :failed
+    end
+  end
+
+  @doc """
+  Records what a check of instance `id` found (`:ok`, a failure map as
+  `probe/1` writes, or `nil` for no finished check), as the probe does.
+  """
+  def record_check(id, nil) do
+    :persistent_term.put(@status, Map.delete(:persistent_term.get(@status, %{}), id))
+    :ok
+  end
+
+  def record_check(id, value), do: put_check(id, value)
 
   defp put_check(id, value) do
     :persistent_term.put(@status, Map.put(:persistent_term.get(@status, %{}), id, value))
@@ -196,26 +232,35 @@ defmodule HalC2.Codex.Provider do
                },
                timeout
              ),
-           :ok <- Connection.notify(conn, "initialized", nil),
-           {:ok, %{"data" => [_ | _] = models}} <-
-             Connection.call(conn, "model/list", %{}, timeout) do
-        if id == "codex" do
-          :persistent_term.put(
-            @key,
-            for(
-              m <- models,
-              do: %{
-                "slug" => m["model"] || m["id"],
-                "name" => m["displayName"] || m["model"] || m["id"],
-                "isDefault" => m["isDefault"] == true,
-                "capabilities" => capabilities(m)
-              }
-            )
-          )
-        end
+           :ok <- Connection.notify(conn, "initialized", nil) do
+        # The account and binary checked out; only the model list can still be
+        # slow. That must not throw the successful check away: the entry warns
+        # and keeps the last list (`with_health/3`).
+        result =
+          case model_list(conn, timeout) do
+            {:ok, %{"data" => [_ | _] = models}} ->
+              record_models(
+                id,
+                for(
+                  m <- models,
+                  do: %{
+                    "slug" => m["model"] || m["id"],
+                    "name" => m["displayName"] || m["model"] || m["id"],
+                    "isDefault" => m["isDefault"] == true,
+                    "capabilities" => capabilities(m)
+                  }
+                )
+              )
+
+              :ok
+
+            _ ->
+              {:warning,
+               "Codex did not answer its model list in time; showing the last one it gave."}
+          end
 
         Connection.stop(conn)
-        :ok
+        result
       else
         {:spawn, _reason} ->
           {:spawn, nil}
@@ -248,6 +293,9 @@ defmodule HalC2.Codex.Provider do
       :ok ->
         put_check(id, :ok)
 
+      {:warning, message} ->
+        put_check(id, %{"warning" => message})
+
       {:spawn, _} ->
         put_check(id, %{"installed" => false, "message" => cannot_start(id)})
 
@@ -276,6 +324,13 @@ defmodule HalC2.Codex.Provider do
         "installed" => true,
         "message" => "Codex app-server provider probe failed: invalid response."
       })
+  end
+
+  defp model_list(conn, timeout) do
+    Connection.call(conn, "model/list", %{}, timeout)
+  catch
+    :exit, {:timeout, _} -> {:error, :timeout}
+    :exit, _ -> {:error, :closed}
   end
 
   # Starting the app-server, told apart from it answering badly: a process that
@@ -460,6 +515,85 @@ defmodule HalC2.Codex.Provider do
     "5.3-spark" => "gpt-5.3-codex-spark",
     "gpt-5.3-spark" => "gpt-5.3-codex-spark"
   }
+
+  @doc """
+  `{version, recommended}` when the Codex installed for `instance` is one this
+  HAL-C2 release marks broken, else nil. A broken verdict re-reads the version
+  first: the user may have updated Codex since it was last read, and the next
+  turn should run on the new one.
+  """
+  @spec broken_version(String.t()) :: {String.t(), String.t() | nil} | nil
+  def broken_version(instance \\ "codex") do
+    case advisory_of(instance) do
+      %{"status" => "broken"} ->
+        forget_version(instance)
+
+        case advisory_of(instance) do
+          %{"status" => "broken"} = advisory ->
+            {entry(instance)["version"],
+             advisory["recommendedRange"] || advisory["recommendedVersion"]}
+
+          _ ->
+            nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp advisory_of(instance) do
+    case entry(instance) do
+      %{} = entry -> HalC2.ProviderCompatibility.put(entry)["compatibilityAdvisory"]
+      _ -> nil
+    end
+  end
+
+  defp forget_version(instance) do
+    with [executable | _] <- command(instance),
+         path when is_binary(path) <- System.find_executable(executable) do
+      versions = :persistent_term.get({__MODULE__, :version}, %{})
+      :persistent_term.put({__MODULE__, :version}, Map.delete(versions, path))
+    end
+
+    :ok
+  end
+
+  @doc """
+  The models the last check of Codex instance `id` read from `codex app-server`
+  (`model/list`), or nil when no check has read them this session. Each instance
+  is on its own account, so each has its own list. Text generation resolves the
+  model it asks for against the writing instance's list.
+  """
+  def listed_models(id \\ "codex"), do: :persistent_term.get(models_key(id), nil)
+
+  @doc """
+  Records the models a check of instance `id` read, as `probe/1` does; `nil`
+  forgets them. The `codex` instance's list is also the catalog clients are shown.
+  """
+  def record_models(id \\ "codex", models)
+
+  def record_models(id, nil) do
+    :persistent_term.erase(models_key(id))
+    :ok
+  end
+
+  def record_models(id, models) when is_list(models) do
+    :persistent_term.put(models_key(id), models)
+    :ok
+  end
+
+  defp models_key("codex"), do: @key
+  defp models_key(id), do: {@key, id}
+
+  @doc "The name Codex's model list gives `slug`, or nil when the list does not have it."
+  def model_name(slug) do
+    slug = current_slug(slug)
+
+    Enum.find_value(:persistent_term.get(@key, @default_models), fn model ->
+      if model["slug"] == slug, do: model["name"]
+    end)
+  end
 
   @doc "The model Codex knows `model` as today: an older alias names its current id."
   def current_slug(model), do: Map.get(@aliases, model, model)

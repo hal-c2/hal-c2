@@ -8,6 +8,7 @@ defmodule HalC2.Mcp.Instructions do
   - `runtime/1` — which harness and model the agent runs as, that it may embed
     images and videos by absolute path, and that it must link the pull
     requests it opens (`runtime` in the Node server's `RuntimeInstructions`).
+  - `codex_context/1` — all of it as Codex `additionalContext` entries.
   - `acp_prompt/3`, `first_run_prompt/3`, `system_prompt/1` — how those reach
     agents with no system prompt of their own, and agents that take one.
   """
@@ -20,7 +21,7 @@ defmodule HalC2.Mcp.Instructions do
 
   For browser work, first call `preview_status`. If no automation-capable preview is attached, call `preview_open` before concluding that the browser is unavailable. Then use `preview_navigate`, `preview_snapshot`, and the focused interaction tools. Prefer snapshot-provided locators over coordinates.
 
-  Do not switch to global browser skills, Chrome, Node REPL browser automation, standalone Playwright, or agent-browser merely because the preview is initially closed or a first call fails. Use an alternative browser system only when the HAL-C2 preview tools are absent, the user explicitly requests another browser, or `preview_open` returns an explicit unsupported/unavailable error. A failed HAL-C2 preview tool call should be inspected and retried with corrected arguments when the error is actionable.
+  Do not switch to global browser skills, Chrome, Node REPL browser automation, standalone Playwright, or agent-browser merely because the preview is initially closed or a first call fails: while the preview works it stays the default, and a failed HAL-C2 preview tool call should be inspected and retried with corrected arguments when the error is actionable. Use another browser only when the preview cannot do the job: when the user invokes a skill or written workflow that names another browser (report any missing prerequisite instead of silently falling back), when the HAL-C2 preview tools are absent or `preview_open` returns an explicit unsupported/unavailable error, or when the preview fails twice on the same step of an open tab, in which case quote the error and switch without asking.
   """
 
   @pull_request_linking """
@@ -68,7 +69,8 @@ defmodule HalC2.Mcp.Instructions do
   @doc """
   Shared runtime context: the harness the agent runs through, its model and
   reasoning effort when the provider does not pick them itself (`"auto"` and
-  `"default"` name no model), media embedding, and pull-request linking.
+  `"default"` name no model; a `model_name` other than the slug names both),
+  media embedding, and pull-request linking.
   """
   def runtime(%{} = runtime) do
     harness = single_line(runtime[:harness] || runtime["harness"] || "")
@@ -77,7 +79,15 @@ defmodule HalC2.Mcp.Instructions do
     effort =
       single_line(runtime[:effort] || runtime["effort"] || runtime[:reasoning_effort] || "")
 
-    model_info = if model not in ["", "auto", "default"], do: ", as #{model}", else: ""
+    name = single_line(runtime[:model_name] || runtime["modelName"] || "")
+
+    model_info =
+      cond do
+        model in ["", "auto", "default"] -> ""
+        name not in ["", model] -> ", as #{name} (model slug: #{model})"
+        true -> ", as #{model}"
+      end
+
     effort_info = if effort != "", do: " with #{effort} reasoning effort", else: ""
 
     "<runtime_info>In case you're asked: you are running in HAL-C2 through the #{harness} harness#{model_info}#{effort_info}. " <>
@@ -104,6 +114,53 @@ defmodule HalC2.Mcp.Instructions do
 
     Enum.join(parts)
   end
+
+  # Codex cuts the middle out of an `additionalContext` value over 1,000 tokens,
+  # which it counts as a quarter of the value's UTF-8 bytes.
+  @codex_entry_bytes 4_000
+
+  @doc """
+  HAL-C2's instructions as Codex `turn/start.additionalContext` entries, which
+  Codex sends the model as developer messages in sorted key order, and again
+  only when an entry's value changes. They stay out of the collaboration mode:
+  a model catalog with its own text for a mode drops the client's text there.
+
+  The orchestration instructions go one `### ` section per entry
+  (`hal_c2_orchestration_01`, ...), so none crosses Codex's cap on one entry
+  (`codex_entry_bytes/0`); the runtime context is `hal_c2_runtime`, and the
+  browser section and `extra` (the workers-only note) are `hal_c2_tools`.
+  Options are `for_session/1`'s, plus `:extra`.
+  """
+  def codex_context(opts \\ []) do
+    capabilities = Keyword.get(opts, :capabilities, MapSet.new(["preview"]))
+
+    orchestration =
+      orchestration()
+      |> String.split(~r/^(?=### )/m)
+      |> Enum.with_index(1)
+      |> Map.new(fn {section, n} ->
+        {"hal_c2_orchestration_" <> String.pad_leading("#{n}", 2, "0"), section}
+      end)
+
+    tools =
+      String.trim(
+        if(MapSet.member?(capabilities, "preview"), do: browser(), else: "") <>
+          Keyword.get(opts, :extra, "")
+      )
+
+    orchestration
+    |> then(&if(tools == "", do: &1, else: Map.put(&1, "hal_c2_tools", tools)))
+    |> then(fn entries ->
+      case Keyword.get(opts, :runtime) do
+        nil -> entries
+        runtime -> Map.put(entries, "hal_c2_runtime", runtime(runtime))
+      end
+    end)
+    |> Map.new(fn {key, value} -> {key, %{"kind" => "application", "value" => value}} end)
+  end
+
+  @doc "The most UTF-8 bytes one Codex `additionalContext` value holds whole."
+  def codex_entry_bytes, do: @codex_entry_bytes
 
   @doc """
   An ACP prompt with HAL-C2's instructions in front of it. ACP has no

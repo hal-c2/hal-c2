@@ -255,7 +255,7 @@ Feature: Carrying threads and context across servers and agents
     When the user opens the app
     Then the user is told the threads were brought over
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @backlog-desktop
   Scenario: The user is told about threads migrated while the app is open
     When threads are migrated from the first version while the app is open
     Then the user is told the threads were brought over

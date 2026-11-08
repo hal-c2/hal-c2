@@ -27,7 +27,10 @@ defmodule HalC2.Steps.Files.AddingProjects do
   # --- local folders ---------------------------------------------------------------
 
   step "a client creates a project at {string} without a title", %{args: [path]} = context do
-    File.mkdir_p!(Host.path(context, path))
+    if Path.type(Host.path(context, path)) == :absolute do
+      File.mkdir_p!(Path.expand(Host.path(context, path)))
+    end
+
     create(context, path, %{})
   end
 
@@ -45,6 +48,63 @@ defmodule HalC2.Steps.Files.AddingProjects do
 
   step "{string} holds the folders {string} and {string}", %{args: [dir | names]} = context do
     for name <- names, do: File.mkdir_p!(Path.join(Host.path(context, dir), name))
+    context
+  end
+
+  step "the MC's user is {string} with the home folder {string}",
+       %{args: [_user, home]} = context do
+    # `Host.home/1` makes the scenario's `/home/sam` the MC's `$HOME`.
+    assert home == "/home/sam"
+    Host.home(context)
+    context
+  end
+
+  step "the current project's folder is {string} and holds the folder {string}",
+       %{args: [dir, name]} = context do
+    real = Host.path(context, dir)
+    File.mkdir_p!(Path.join(real, name))
+    Map.put(context, :current_project_folder, real)
+  end
+
+  step "{string} holds the folders {string}, {string} and {string} and the file {string}",
+       %{args: [dir, a, b, c, file]} = context do
+    real = Host.path(context, dir)
+    for name <- [a, b, c], do: File.mkdir_p!(Path.join(real, name))
+    File.write!(Path.join(real, file), "")
+    context
+  end
+
+  step "a client browses {string} with no current project", %{args: [partial]} = context do
+    browse(context, partial, nil)
+  end
+
+  step "a client browses {string} with the current project", %{args: [partial]} = context do
+    browse(context, partial, context.current_project_folder)
+  end
+
+  step "the MC answers that the folder {string} could not be read", %{args: [dir]} = context do
+    assert {:error, error, _} = context.reply
+    assert error =~ "The folder '#{Host.path(context, dir)}' could not be read"
+    context
+  end
+
+  step "the folders {string} and {string} are offered", %{args: names} = context do
+    assert context.listing == names
+    context
+  end
+
+  step "the folders {string}, {string} and {string} are offered", %{args: names} = context do
+    assert context.listing == names
+    context
+  end
+
+  step "the folders {string} are offered", %{args: names} = context do
+    assert context.listing == names
+    context
+  end
+
+  step "{string}, {string} and {string} are offered in that order", %{args: names} = context do
+    assert context.listing == names
     context
   end
 
@@ -75,6 +135,12 @@ defmodule HalC2.Steps.Files.AddingProjects do
        %{args: [path]} = context do
     assert {:error, error, _} = context.reply
     assert error =~ "#{Host.path(context, path)} does not exist on this machine"
+    context
+  end
+
+  step "the MC answers that {string} is not an absolute path", %{args: [path]} = context do
+    assert {:error, error, _} = context.reply
+    assert error =~ "Workspace #{path} is not an absolute path"
     context
   end
 
@@ -212,7 +278,10 @@ defmodule HalC2.Steps.Files.AddingProjects do
   end
 
   step "the folder {string} still exists and is empty", %{args: [path]} = context do
-    assert File.ls!(Host.path(context, path)) == []
+    dir =
+      if base = context[:folder_base], do: Path.join(base, path), else: Host.path(context, path)
+
+    assert File.ls!(dir) == []
     context
   end
 
@@ -307,6 +376,42 @@ defmodule HalC2.Steps.Files.AddingProjects do
 
   step "the clone is reported as running", context do
     await_clone(context, &(&1["phase"] == "running"))
+  end
+
+  # The deadline stands in for two minutes at a fraction of a second; the one-shot
+  # clone's answer is the receipt that it passed.
+  step "a clone is still transferring after two minutes", context do
+    previous = Application.get_env(:hal_c2, :clone_timeout)
+    Application.put_env(:hal_c2, :clone_timeout, 500)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:hal_c2, :clone_timeout, previous),
+        else: Application.delete_env(:hal_c2, :clone_timeout)
+    end)
+
+    context = running_clone(context, "acme/shop")
+    port = git_server(context, :hang)
+
+    {reply, context} =
+      call(context, "sourceControl.cloneRepository", %{
+        "remoteUrl" => "git://127.0.0.1:#{port}/acme/slow.git",
+        "destinationPath" => Host.path(context, "/home/sam/slow")
+      })
+
+    Map.put(context, :one_shot, reply)
+  end
+
+  step "a clone started in the background keeps running", context do
+    assert [{_, "running"}] = :ets.lookup(HalC2.ProjectClones, context.clone.id)
+    context
+  end
+
+  step "a clone that waits for its answer fails as timed out", context do
+    assert {:error, message, _} = context.one_shot
+    assert message =~ "timed out"
+    refute File.exists?(Host.path(context, "/home/sam/slow"))
+    context
   end
 
   step "a clone of {string} is running", %{args: [repository]} = context do
@@ -592,6 +697,20 @@ defmodule HalC2.Steps.Files.AddingProjects do
   end
 
   # --- helpers -----------------------------------------------------------------------
+
+  defp browse(context, partial, cwd) do
+    input = %{"partialPath" => partial}
+    input = if cwd, do: Map.put(input, "cwd", cwd), else: input
+    {reply, context} = World.call(context, "filesystem.browse", input)
+
+    listing =
+      case reply do
+        {:ok, %{"entries" => entries}} -> Enum.map(entries, & &1["name"])
+        _ -> []
+      end
+
+    Map.merge(context, %{reply: reply, listing: listing})
+  end
 
   defp create(context, path, fields) do
     # `~` paths go to the MC as typed; it expands them itself.

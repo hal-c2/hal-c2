@@ -32,7 +32,7 @@ Feature: Reviewing changes on a phone
     Given the phone is paired with "My MacBook"
     And the thread "Fix checkout" has changed "src/cart.ts" and "src/price.ts"
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario Outline: The user chooses which changes to review
     When the user reviews the <source> of "Fix checkout"
     Then the diff shows the <source>
@@ -54,7 +54,7 @@ Feature: Reviewing changes on a phone
     Then the working tree changes are shown while it loads
     And the second turn's changes are shown once they load
 
-  @backlog @mobile
+  @mobile
   Scenario: The list of changed files can be hidden and shown
     Given the user is reviewing "Fix checkout"
     When the user hides the changed files list
@@ -62,7 +62,7 @@ Feature: Reviewing changes on a phone
     When the user shows the changed files list
     Then "src/cart.ts" and "src/price.ts" are listed
 
-  @backlog @mobile
+  @mobile
   Scenario: The user collapses and expands a file's diff
     Given the user is reviewing "Fix checkout"
     When the user collapses "src/cart.ts"
@@ -70,7 +70,7 @@ Feature: Reviewing changes on a phone
     When the user expands "src/cart.ts"
     Then the changes in "src/cart.ts" are shown
 
-  @backlog @mobile
+  @mobile
   Scenario: The user marks a file as viewed and unmarks it
     Given the user is reviewing "Fix checkout"
     When the user marks "src/cart.ts" as viewed
@@ -78,7 +78,7 @@ Feature: Reviewing changes on a phone
     When the user marks "src/cart.ts" as not viewed
     Then "src/cart.ts" is expanded again
 
-  @backlog @mobile
+  @mobile
   Scenario: Viewed files are remembered per diff source
     Given the user marked "src/cart.ts" as viewed in the latest turn
     When the user switches to the working tree and back
@@ -109,7 +109,7 @@ Feature: Reviewing changes on a phone
     When the user reviews that line
     Then the whole line is marked as changed without marking single words
 
-  @backlog @mobile
+  @mobile
   Scenario: A large file's diff is held back until the user asks for it
     Given "src/big.ts" has a diff of more than 400 rows
     When the user reviews the changes
@@ -117,14 +117,14 @@ Feature: Reviewing changes on a phone
     When the user asks to load the diff
     Then the rows of "src/big.ts" are shown
 
-  @backlog @mobile
+  @mobile
   Scenario: A non-text file shows no diff
     Given the thread changed the image "assets/icon.png"
     When the user reviews the changes
     Then "assets/icon.png" is listed as a non-text file
     And no diff rows are offered for it
 
-  @backlog @mobile
+  @mobile
   Scenario: A diff cut short by the server is shown as partial and keeps whole-file counts
     Given the patch of "src/cart.ts" arrived truncated
     When the user reviews the changes
@@ -141,19 +141,19 @@ Feature: Reviewing changes on a phone
     Then the file shows 400 added and 20 removed
     And the pull request's totals include them
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: The user comments on a range of lines
     Given the user is reviewing "src/cart.ts"
     When the user selects lines 10 to 14 and writes "use the helper here"
     Then the comment is attached to lines 10 to 14 in the draft for "Fix checkout"
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: Tapping a line starts a comment on that line
     Given the user is reviewing "src/cart.ts"
     When the user taps line 10
     Then a comment on line 10 is started
 
-  @backlog @mobile
+  @mobile
   Scenario: Touching and holding a line then tapping another comments on the range
     Given the user is reviewing "src/cart.ts"
     When the user touches and holds line 10
@@ -161,11 +161,29 @@ Feature: Reviewing changes on a phone
     When the user taps line 14
     Then a comment on lines 10 to 14 is started
 
-  @backlog @mobile @priority-low
+  @mobile @priority-low
   Scenario: A range cannot be carried into another file
     Given the user touched and held line 10 of "src/cart.ts"
     When the user taps line 3 of "src/price.ts"
     Then a comment on line 3 of "src/price.ts" is started
+    And line 10 of "src/cart.ts" is no longer marked
+
+  @mobile
+  Scenario: Changing the diff source drops a held range start
+    Given the user is reviewing "src/cart.ts"
+    When the user touches and holds line 10
+    Then line 10 is marked as the start of a range
+    When the user switches to the working tree
+    And the user taps line 14
+    Then a comment on line 14 is started
+    And line 10 of "src/cart.ts" is no longer marked
+
+  @mobile
+  Scenario: Tapping the held line comments on that line alone
+    Given the user is reviewing "src/cart.ts"
+    When the user touches and holds line 10
+    And the user taps line 10
+    Then a comment on line 10 is started
     And line 10 of "src/cart.ts" is no longer marked
 
   @backlog @mobile
@@ -174,7 +192,7 @@ Feature: Reviewing changes on a phone
     When the user attaches a screenshot to it
     Then the comment carries the screenshot
 
-  @backlog @mobile
+  @mobile
   Scenario: The user discards a review comment
     Given the user is writing a review comment
     When the user discards it
@@ -187,7 +205,7 @@ Feature: Reviewing changes on a phone
     Then the comment is labelled as a file comment
     And it is attached to "src/cart.ts" in the draft for "Fix checkout"
 
-  @backlog @mobile
+  @mobile
   Scenario Outline: A review comment names what it is about
     Given the user selected <selection> of "src/cart.ts"
     When the user starts a review comment
@@ -224,13 +242,13 @@ Feature: Reviewing changes on a phone
     When the user reads the message on the phone
     Then the comment is shown with its file name, its line range and the lines in the language of the file
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: An empty diff says so
     Given the latest turn changed nothing
     When the user reviews the latest turn
     Then the user is told the diff is empty
 
-  @backlog @mobile
+  @mobile
   Scenario: A thread with nothing to review says so
     Given "Fix checkout" has no ready turn diffs and its worktree has no changes
     When the user reviews the changes
@@ -250,7 +268,7 @@ Feature: Reviewing changes on a phone
       | is still being prepared | Diff pending    |
       | could not be made       | Diff error      |
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: Turns are offered newest first and the newest is the latest turn
     Given "Fix checkout" has three turns with ready diffs
     When the user opens the choice of diffs to review
@@ -269,7 +287,7 @@ Feature: Reviewing changes on a phone
     Then the working tree is offered as the dirty worktree
     And it says it covers tracked, staged and untracked changes
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A diff that could not be loaded names the file and can be retried
     Given the diff of "src/cart.ts" could not be loaded
     When the user reviews the changes
@@ -321,6 +339,7 @@ Feature: Reviewing changes on a phone
     Then pull request 42 carries the label "bug"
     And tapping "bug" again removes it
 
+  # Upstream #24602: the phone edits a pull request's title, description and labels.
   @backlog @mobile
   Scenario Outline: The user edits a pull request's <part> from the phone
     Given the user may edit the <part> of pull request 42
@@ -333,6 +352,7 @@ Feature: Reviewing changes on a phone
       | description                |
       | comment the user wrote     |
 
+  # Upstream #24602: the phone reacts to a pull request's text, shown at once and undone if refused.
   @backlog @mobile
   Scenario: A reaction from the phone shows at once and is undone if the host refuses it
     Given the user is reading pull request 42 on the phone
@@ -340,6 +360,7 @@ Feature: Reviewing changes on a phone
     Then the heart shows at once
     And it is taken back if the host refuses the reaction
 
+  # Upstream #24602: an open pull request's checks follow its CI live while on screen.
   @backlog @mobile
   Scenario: An open pull request's checks follow its CI while it is on the phone's screen
     Given pull request 42 is open on the phone and a check is running
@@ -347,14 +368,14 @@ Feature: Reviewing changes on a phone
     Then the phone shows its result without the user refreshing
     And the phone stops reading the checks once the screen is left or the environment is offline
 
-  @backlog @mobile @priority-low
+  @mobile @priority-low
   Scenario: Android offers to refresh the current diff from the menu
     Given the user is on an Android phone
     And the user is reviewing the working tree
     When the user opens the review menu
     Then the user is offered to refresh the current diff
 
-  @backlog @mobile @priority-low
+  @mobile @priority-low
   Scenario: The review header summarises the diff and the pending comments
     Given the diff adds 12 lines and removes 4
     And the draft for "Fix checkout" carries two review comments
@@ -398,7 +419,7 @@ Feature: Reviewing changes on a phone
     When the user looks at the review header
     Then the header shows "1 comment"
 
-  @backlog @mobile
+  @mobile
   Scenario: A review that cannot be loaded says why above whatever is cached
     Given the user reviewed the latest turn earlier
     And reading the diff now fails with a reason
@@ -406,7 +427,7 @@ Feature: Reviewing changes on a phone
     Then the user is told the review is unavailable and why
     And the earlier diff is still shown below
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A diff seen before is shown while offline
     Given the user reviewed the latest turn earlier
     And "My MacBook" is unreachable
@@ -441,12 +462,14 @@ Feature: Reviewing changes on a phone
     Then the first 100,000 rows of "data.json" are shown with a notice that the rest is left out
     And "data.json" still counts 150,000 added lines
 
+  # Upstream #24276: a large file's diff keeps its syntax colours to its end.
   @backlog @mobile @priority-low
   Scenario: A large file's diff keeps its syntax colours to its end
     Given "parser.c" has a diff of 90,000 changed lines
     When the user scrolls to the end of the diff of "parser.c"
     Then the last rows are coloured by their syntax like the first
 
+  # Upstream #24276: turning word wrap on keeps the row being read on screen.
   @backlog @mobile @priority-low
   Scenario: Turning word wrap on keeps the row the user was reading on screen
     Given the user is reading row 40,000 of a large diff
@@ -475,13 +498,13 @@ Feature: Reviewing changes on a phone
     Then the user is told the working tree will load when the connection returns
     And the user can still choose the latest turn
 
-  @backlog @mobile
+  @mobile
   Scenario: Switching the diff source clears the file being looked at
     Given the user selected "src/price.ts" in the changed files list of the latest turn
     When the user switches to the working tree
     Then no file is selected in the changed files list
 
-  @backlog @mobile
+  @mobile
   Scenario: A file that is no longer in the diff is no longer selected
     Given the user selected "src/price.ts" in the changed files list
     When the diff is read again and no longer contains "src/price.ts"
@@ -519,7 +542,7 @@ Feature: Reviewing changes on a phone
     Then the header of "src/cart.ts" stays at the top
     And the header of "src/price.ts" replaces it when the user reaches that file
 
-  @backlog @mobile @priority-low
+  @mobile @priority-low
   Scenario: A renamed file's header shows where it came from
     Given the agent renamed "src/cart.ts" to "src/basket.ts"
     When the user reviews the changes

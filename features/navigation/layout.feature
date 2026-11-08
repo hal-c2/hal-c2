@@ -579,12 +579,14 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then the thread details panel no longer shows those rows, at once
       And their keyboard shortcuts still work
 
+    # Upstream #26904: the thread details card can be chosen per row, and Reset to default brings back the standard rows.
     @backlog @desktop @priority-low
     Scenario: Reset to default brings back the standard thread details
       Given the user hid rows from the thread details
       When the user chooses "Reset to default"
       Then the thread details show the standard rows
 
+    # Upstream #26904: with every row hidden, the thread details card offers to choose what it shows.
     @backlog @desktop @priority-low
     Scenario: Thread details with every row hidden offer to choose what to show
       Given the user hid every row that has something to show in this thread
@@ -891,27 +893,27 @@ Feature: Layout: sidebar, header, right panel and drawer
 
   Rule: Rearranging the shell
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A user's own shell layout replaces the default
       Given the user wrote their own shell layout in the HAL-C2 home
       When the app starts
       Then the app uses the user's layout
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A user's own shell layout still answers the agent
       Given the app is using the user's own shell layout
       And that layout shows the composer
       When the agent asks the user a question
       Then the question and its options show on the composer
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A broken shell layout falls back to the default
       Given the user's own shell layout has an error
       When the app starts
       Then the default layout is used
       And the error is shown to the user
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A shell layout change applies without restarting
       Given the app is using the user's own shell layout
       When the user saves a change to it

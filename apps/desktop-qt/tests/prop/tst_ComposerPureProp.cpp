@@ -1,8 +1,9 @@
 // The composer's pure parts: what the text before the caret asks for
 // (composer::trigger), starring models (composer::toggleFavorite), what waits
 // behind the running turn (composer::queued) and the rich text drawing
-// (ComposerHighlighter), and whose limits "/usage-limits" shows
-// (composer::usageLimitsReport).
+// (ComposerHighlighter), whose limits "/usage-limits" shows
+// (composer::usageLimitsReport), and stepping the effort from the keyboard
+// (composer::steppedChoice).
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -140,8 +141,11 @@ private slots:
       RC_ASSERT(0 <= found->start);
       RC_ASSERT(found->start < found->end);
       RC_ASSERT(found->end == cursor);
-      // The marker, then the query.
-      RC_ASSERT(text.mid(found->start + 1, found->end - found->start - 1) == found->query);
+      // The marker, then the query; a line's command takes the spaces before
+      // its slash along.
+      QString span = text.mid(found->start, found->end - found->start);
+      while (!span.isEmpty() && span.front().isSpace()) span.remove(0, 1);
+      RC_ASSERT(span.mid(1) == found->query);
     }));
   }
 
@@ -160,6 +164,71 @@ private slots:
         RC_ASSERT(composer::modelPrefs(favorites, QJsonValue()).favorites == expected);
         RC_ASSERT(favorites.size() == expected.size());
       }
+    }));
+  }
+
+  void shownPermissionsStayOffered() {
+    QVERIFY(rc::check("the shown permissions are always one the provider offers", [] {
+      const std::vector<QString> modes{QStringLiteral("approval-required"), QStringLiteral("auto-accept-edits"),
+                                       QStringLiteral("auto"), QStringLiteral("full-access")};
+      const auto supported = *rc::gen::container<std::vector<QString>>(rc::gen::elementOf(modes));
+      const QString saved = *rc::gen::elementOf(modes);
+      composer::Instance instance;
+      for (const QString& mode : supported) {
+        if (!instance.runtimeModes.contains(mode)) instance.runtimeModes.append(mode);
+      }
+      const QString shown = composer::shownRuntimeMode(&instance, saved);
+      // Every mode is offered when the provider names none.
+      const bool offered = instance.runtimeModes.isEmpty() || instance.runtimeModes.contains(shown);
+      RC_ASSERT(offered);
+      if (instance.runtimeModes.isEmpty() || instance.runtimeModes.contains(saved)) {
+        RC_ASSERT(shown == saved);
+      } else if (instance.runtimeModes.contains(QStringLiteral("approval-required"))) {
+        RC_ASSERT(shown == QLatin1String("approval-required"));
+      }
+    }));
+    QVERIFY(rc::check("with no ready provider, its stand-in names setup only when one can be set up", [] {
+      const int count = *rc::gen::inRange(0, 5);
+      QList<composer::Instance> list;
+      bool ready = false;
+      bool setUp = false;
+      for (int i = 0; i < count; ++i) {
+        composer::Instance instance;
+        instance.enabled = *rc::gen::arbitrary<bool>();
+        instance.available = *rc::gen::arbitrary<bool>();
+        instance.status = *rc::gen::arbitrary<bool>() ? QStringLiteral("ready") : QStringLiteral("error");
+        instance.canSetUp = *rc::gen::arbitrary<bool>();
+        ready = ready || instance.ready();
+        setUp = setUp || instance.canSetUp;
+        list.append(instance);
+      }
+      const QString label = composer::noProviderStandIn(list);
+      if (ready || list.isEmpty()) {
+        RC_ASSERT(label.isEmpty());
+      } else {
+        RC_ASSERT(label == (setUp ? QLatin1String("open-provider-settings") : QLatin1String("no-provider-available")));
+      }
+    }));
+  }
+
+  void fallbackSlugsStayExactForCustomModels() {
+    QVERIFY(rc::check("a fallback account's slug is exact, or a built-in's alias, never a custom model's alias", [] {
+      const bool custom = *rc::gen::arbitrary<bool>();
+      const bool exact = *rc::gen::arbitrary<bool>();
+      composer::Instance instance;
+      QJsonObject candidate{{QStringLiteral("slug"), QStringLiteral("gpt-5.4")},
+                            {QStringLiteral("name"), QStringLiteral("GPT-5.4")},
+                            {QStringLiteral("isCustom"), custom},
+                            {QStringLiteral("aliases"), QJsonArray{QStringLiteral("5.4")}}};
+      instance.models = QJsonArray{candidate};
+      const QString asked = exact ? QStringLiteral("gpt-5.4") : QStringLiteral("5.4");
+      const QString slug = composer::fallbackModelSlug(instance, asked);
+      if (exact) {
+        RC_ASSERT(slug == QLatin1String("gpt-5.4"));
+      } else {
+        RC_ASSERT(slug == (custom ? QString() : QStringLiteral("gpt-5.4")));
+      }
+      RC_ASSERT(composer::fallbackModelSlug(instance, QStringLiteral("other")).isEmpty());
     }));
   }
 
@@ -182,6 +251,20 @@ private slots:
           RC_ASSERT(range.length > 0);
           RC_ASSERT(range.start + range.length <= block.length());
         }
+      }
+    }));
+  }
+  void underscoresNeverItalicise() {
+    QVERIFY(rc::check("with rich text on, no run of letters, spaces and underscores is drawn italic", [] {
+      const std::string typed = *rc::gen::container<std::string>(rc::gen::elementOf(std::vector<char>{'_', '_', 'a', 'b', ' ', '\n'}));
+      QTextDocument document;
+      document.setPlainText(QString::fromStdString(typed));
+      ComposerHighlighter highlighter;
+      highlighter.setRich(true);
+      highlighter.setDocument(&document);
+      highlighter.rehighlight();
+      for (QTextBlock block = document.begin(); block.isValid(); block = block.next()) {
+        for (const QTextLayout::FormatRange& range : block.layout()->formats()) RC_ASSERT(!range.format.fontItalic());
       }
     }));
   }
@@ -245,6 +328,48 @@ private slots:
         // Either windows or the reason there are none.
         RC_ASSERT(account.value(QStringLiteral("windows")).toList().isEmpty() != account.value(QStringLiteral("notice")).toString().isEmpty());
         RC_ASSERT(account.value(QStringLiteral("sensitive")).toBool() == account.value(QStringLiteral("label")).toString().contains(u'@'));
+      }
+    }));
+  }
+  void effortStepsAroundTheModelsLevels() {
+    QVERIFY(rc::check("stepping the effort lands on a level the model lists, one along, and back undoes it", [] {
+      const std::vector<QString> pool{QStringLiteral("low"), QStringLiteral("medium"), QStringLiteral("high"), QStringLiteral("xhigh"),
+                                      QStringLiteral("ultrathink")};
+      std::vector<QString> ids;
+      for (const QString& id : pool)
+        if (*rc::gen::arbitrary<bool>()) ids.push_back(id);
+      const bool injects = *rc::gen::arbitrary<bool>();
+      const auto isDefault = *rc::gen::container<std::vector<bool>>(ids.size(), rc::gen::arbitrary<bool>());
+      QJsonArray options;
+      QStringList levels;
+      for (size_t i = 0; i < ids.size(); ++i) {
+        options.append(QJsonObject{{QStringLiteral("id"), ids[i]}, {QStringLiteral("label"), ids[i]}, {QStringLiteral("isDefault"), isDefault[i]}});
+        if (!(injects && ids[i] == QLatin1String("ultrathink"))) levels.append(ids[i]);
+      }
+      const QString current = *rc::gen::elementOf(std::vector<QString>{QStringLiteral("low"), QStringLiteral("high"), QStringLiteral("ultrathink"),
+                                                                         QStringLiteral("default")});
+      QJsonObject descriptor{{QStringLiteral("id"), QStringLiteral("effort")}, {QStringLiteral("type"), QStringLiteral("select")},
+                             {QStringLiteral("options"), options}, {QStringLiteral("currentValue"), current}};
+      if (injects) descriptor.insert(QStringLiteral("promptInjectedValues"), QJsonArray{QStringLiteral("ultrathink")});
+      const int direction = *rc::gen::element(1, -1);
+      RC_ASSERT(!composer::steppedChoice(descriptor, 0));
+
+      const std::optional<QString> stepped = composer::steppedChoice(descriptor, direction);
+      if (levels.size() < 2) {
+        RC_ASSERT(!stepped);
+        return;
+      }
+      RC_ASSERT(stepped.has_value());
+      RC_ASSERT(levels.contains(*stepped));
+      const qsizetype n = levels.size();
+      // Ultrathink, the prompt's, sits above the top: up wraps to the
+      // lowest, down comes to the highest.
+      if (injects && current == QLatin1String("ultrathink")) RC_ASSERT(*stepped == (direction > 0 ? levels.first() : levels.last()));
+      if (const qsizetype at = levels.indexOf(current); at >= 0) {
+        RC_ASSERT(levels.indexOf(*stepped) == ((at + direction) % n + n) % n);
+        // From a listed level, the other way comes back.
+        descriptor.insert(QStringLiteral("currentValue"), *stepped);
+        RC_ASSERT(composer::steppedChoice(descriptor, -direction) == current);
       }
     }));
   }

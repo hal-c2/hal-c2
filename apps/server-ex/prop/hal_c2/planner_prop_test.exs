@@ -374,6 +374,20 @@ defmodule HalC2.PlannerPropTest do
     assert_scripted(calls)
   end
 
+  # The counterexample of PR #1237's CI: an owner change made while a look is on its
+  # way pushes to a closed issue, stamping it after that look began, so the next look
+  # has it fresh from the updated listing, reuses no copy, and counts as a full read.
+  test "an owner push during a look makes the next look a full read of its closed issue" do
+    assert_scripted([
+      {:add, ["a", nil, :task]},
+      {:link, ["a", nil]},
+      {:close, [1, :not_planned]},
+      {:own_while_looking, ["a", "alice"]},
+      {:age, []},
+      {:look, []}
+    ])
+  end
+
   test "a stored owner appearing while a push is held is no owner change for it to settle" do
     assert_scripted([
       {:add, ["a", nil, :task]},
@@ -1692,11 +1706,14 @@ defmodule HalC2.PlannerPropTest do
   end
 
   # `call`, a client's change to the task in `slot`, made once a look has read the plan and
-  # GitHub, which it keeps; what it stamps on GitHub the look did not read.
+  # GitHub, which it keeps; what it stamps on GitHub the look did not read, so the next
+  # look's listing names it. The step runs with `touched` cleared, so what it leaves
+  # there is what it stamped: an issue stamped again while the look was on its way was
+  # changed since that look began even when a change before it had stamped it too.
   defp while_looking(m, call, slot) do
-    {made, reply} = step(m, call)
+    {made, reply} = step(%{m | touched: MapSet.new()}, call)
     changed? = made.items[slot] != m.items[slot] or made.synced[slot] != m.synced[slot]
-    stamped = MapSet.difference(made.touched, m.touched)
+    stamped = made.touched
     looked = looked(%{made | touched: m.touched}, if(changed?, do: [slot], else: []))
     {touch(looked, MapSet.to_list(stamped)), reply}
   end

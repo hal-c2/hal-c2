@@ -83,6 +83,7 @@ void McClient::open(const QUrl& origin, const QString& token, const QString& env
   url.setPath(QStringLiteral("/ws"));
   QUrlQuery query;
   query.addQueryItem(QStringLiteral("token"), token);
+  query.addQueryItem(QStringLiteral("protocol"), QString::number(kProtocol));
   url.setQuery(query);
   // Another MC: what the last one said of itself is not this one's, and
   // until it answers nothing names the one it left ("Connecting to …").
@@ -340,7 +341,8 @@ void McClient::sendPost(QObject* context, const QString& path, const QJsonObject
   });
 }
 
-void McClient::upload(QObject* context, const QString& relativeUrl, const QByteArray& bytes, const QString& mimeType, Reply reply) {
+void McClient::upload(QObject* context, const QString& relativeUrl, const QByteArray& bytes, const QString& mimeType, Reply reply,
+                      std::function<void(qint64, qint64)> progress) {
   if (m_closed || !m_origin.isValid()) {
     QTimer::singleShot(0, context, [reply = std::move(reply)] { reply(QJsonValue(), QStringLiteral("not connected")); });
     return;
@@ -351,6 +353,11 @@ void McClient::upload(QObject* context, const QString& relativeUrl, const QByteA
   QNetworkRequest request(url);
   request.setHeader(QNetworkRequest::ContentTypeHeader, mimeType.isEmpty() ? QStringLiteral("application/octet-stream") : mimeType);
   QNetworkReply* answer = m_http->post(request, bytes);
+  if (progress) {
+    connect(answer, &QNetworkReply::uploadProgress, this, [context = QPointer<QObject>(context), progress](qint64 sent, qint64 total) {
+      if (context) progress(sent, total);
+    });
+  }
   connect(answer, &QNetworkReply::finished, this, [answer, context = QPointer<QObject>(context), reply = std::move(reply)] {
     answer->deleteLater();
     if (!context) return;
@@ -543,6 +550,7 @@ void McClient::openSocket(const QString& ticket) {
   if (!ticket.isEmpty()) {
     QUrlQuery query;
     query.addQueryItem(QStringLiteral("wsTicket"), ticket);
+    query.addQueryItem(QStringLiteral("protocol"), QString::number(kProtocol));
     url.setQuery(query);
   }
   QNetworkRequest handshake(url);

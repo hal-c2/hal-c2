@@ -101,6 +101,9 @@ public:
   // one). A drop within the pinned or the active rows reorders them; into
   // another section it pins (at the drop position), unpins, settles,
   // un-settles or wakes the thread, and into the snoozed shelf does nothing.
+  // While the Working section is on (sidebarWorkingShelfEnabled) the inbox
+  // keeps the order threads came back in, so a drop within it or a move does
+  // nothing, and the Working rows are neither dragged nor dropped on.
   // The order is the environment's (sidebar::planReorder), which has to
   // support it (threadPinReorder, threadActiveReorder).
   // While the thread jump modifier is held (KeybindingController), the first
@@ -123,6 +126,20 @@ public:
   static QString snoozeLabel(const sidebar::SnoozePreset& preset);
   void snooze(const QString& key, const QString& snoozedUntil);
 
+  // The legacy tree (legacySidebarEnabled, sidebar::Tree), as the removed web
+  // LegacySidebar: `sidebar.project.fold {projectKey}` folds or unfolds a
+  // project (sidebarFoldedProjects, logical keys, on this device);
+  // `sidebar.project.more` / `.less {projectKey}` lists all its threads or
+  // the first sidebarThreadPreviewCount again, until the app restarts;
+  // `sidebar.project.drop {projectKey, targetKey}` puts a dragged project
+  // where the target is when projects are sorted by hand
+  // (sidebarProjectOrder, physical keys, sidebar::reorderProjects);
+  // `sidebar.project.menu {projectKey, x, y}` is the project's menu (Rename,
+  // Group into, Copy Path, Project settings, Remove, each per folder of a
+  // grouped project); `sidebar.options {x, y}` sorts projects and threads.
+  static inline const QString kFoldedProjects = QStringLiteral("sidebarFoldedProjects");
+  static inline const QString kProjectOrder = QStringLiteral("sidebarProjectOrder");
+
 signals:
   // The logical projects were grouped differently: one came, went, or took
   // other folders (a checkout, or a change of grouping).
@@ -142,10 +159,18 @@ private:
   // `pinning`, the thread is pinned with its key instead of reordered.
   void arrange(const QString& section, const QStringList& ordered, const QString& key, bool pinning = false);
   void drop(const QString& key, const QString& section, const QString& beforeKey);
+  void dropProject(const QString& key, const QString& targetKey);
+  void openProjectMenu(const QString& key, double x, double y);
+  void openSortMenu(double x, double y);
   ToastController* toasts() const;
   // The client settings grouping, ordering and time labels read, from this
   // device's preferences (SettingsController), else their defaults.
   void readSettings();
+  // Whether every environment has said what projects it has: none is held
+  // from the cache or unreachable.
+  bool projectsReported() const;
+  // Keeps the scope in this device's preferences for the next start.
+  void rememberScope();
   // Reading a thread is a visit: while the window shows one, the MC is told
   // the thread was seen up to its newest change (`thread.visit`, visitedAt
   // its updatedAt), which clears "Done" on every device. Once per change, an unseen completion at once and other
@@ -174,8 +199,21 @@ private:
   QString m_timestampFormat = QStringLiteral("locale");
   QString m_threadSortOrder = QStringLiteral("updated_at");
   bool m_showSettledPluginThreads = false;
+  // The legacy tree, when legacySidebarEnabled; the projects listing all
+  // their threads last the session, as the web's did.
+  std::optional<sidebar::Tree> m_tree;
+  QSet<QString> m_showingAll;
+  bool m_workingShelf = true;
+  sidebar::WorkingTracker m_working;
+  // Refreshes when a thread's grace in the Working section runs out.
+  QTimer m_workingGrace;
   QList<sidebar::ProjectGroup> m_groups;
   sidebar::Nullable m_scope;
+  bool m_scopeRestored = false;
+  // Whether a synchronized MC has listed the scope's project this run (or the
+  // user picked it): only a restored one not seen yet waits for every
+  // environment. A cached listing does not count.
+  bool m_scopeSeen = false;
   sidebar::View m_view;
   qsizetype m_settledPage = sidebar::kSettledPage;
   qsizetype m_settledShown = sidebar::kSettledPage;
@@ -193,6 +231,8 @@ private:
   // The listed drafts' labels, and the open draft's row as it was when the
   // window opened it (nothing when it was empty).
   QHash<QString, QString> m_draftLabels;
+  // The threads whose rows the last refresh marked unsent (`unsentDraft`).
+  QSet<QString> m_unsentThreads;
   QString m_openDraftId;
   std::optional<QString> m_openDraftLabel;
 };

@@ -16,18 +16,43 @@ defmodule HalC2.Projects do
   alias HalC2.Orchestration.Entities
 
   @spec mutate(map) :: {:ok, map} | {:error, String.t()}
-  def mutate(%{"type" => "project.create", "projectId" => id} = m) do
-    root = expand(m["workspaceRoot"] || "")
+  def mutate(m) do
+    case apply_mutation(m) do
+      {:error, {:owned, message, _owner}} -> {:error, message}
+      reply -> reply
+    end
+  end
+
+  @doc """
+  `mutate/1` for a client: a folder another project owns is refused with that
+  project's id in `projectId`, so the client can open the project it was after.
+  """
+  @spec mutate_for_client(map) :: {:ok, map} | {:error, String.t() | map}
+  def mutate_for_client(m) do
+    case apply_mutation(m) do
+      {:error, {:owned, message, owner}} ->
+        {:error, %{"_tag" => "WorkspaceInUse", "message" => message, "projectId" => owner}}
+
+      reply ->
+        reply
+    end
+  end
+
+  defp apply_mutation(%{"type" => "project.create", "projectId" => id} = m) do
+    root = workspace_root(m["workspaceRoot"] || "")
 
     cond do
       root == "" ->
         {:error, "a workspace folder is required"}
 
+      relative?(root) ->
+        {:error, relative_error(root)}
+
       not File.dir?(root) and m["createWorkspaceRootIfMissing"] != true ->
         {:error, "#{root} does not exist on this machine"}
 
       owner = owner(root, id) ->
-        {:error, "Workspace #{root} already belongs to project #{owner}."}
+        {:error, {:owned, "Workspace #{root} already belongs to project #{owner}.", owner}}
 
       true ->
         File.mkdir_p!(root)
@@ -55,7 +80,7 @@ defmodule HalC2.Projects do
     end
   end
 
-  def mutate(%{"type" => "project.update", "projectId" => id} = m) do
+  defp apply_mutation(%{"type" => "project.update", "projectId" => id} = m) do
     fields =
       m
       |> Map.take(
@@ -63,12 +88,15 @@ defmodule HalC2.Projects do
       )
       |> then(
         &if(m["workspaceRoot"],
-          do: Map.put(&1, "workspaceRoot", expand(m["workspaceRoot"])),
+          do: Map.put(&1, "workspaceRoot", workspace_root(m["workspaceRoot"])),
           else: &1
         )
       )
 
-    case fields["workspaceRoot"] && owner(fields["workspaceRoot"], id) do
+    case relative_root(fields) || (fields["workspaceRoot"] && owner(fields["workspaceRoot"], id)) do
+      {:refused, error} ->
+        {:error, error}
+
       nil ->
         # A moved project belongs to the repository of its new folder, if any.
         identify =
@@ -84,12 +112,14 @@ defmodule HalC2.Projects do
         end)
 
       owner ->
-        {:error, "Workspace #{fields["workspaceRoot"]} already belongs to project #{owner}."}
+        {:error,
+         {:owned, "Workspace #{fields["workspaceRoot"]} already belongs to project #{owner}.",
+          owner}}
     end
   end
 
   # A project with threads is deleted only with `force`, which deletes its threads first.
-  def mutate(%{"type" => "project.delete", "projectId" => id} = m) do
+  defp apply_mutation(%{"type" => "project.delete", "projectId" => id} = m) do
     case {threads(id), m["force"] == true} do
       {[_ | _], false} ->
         {:error, "Project #{id} is not empty."}
@@ -97,15 +127,28 @@ defmodule HalC2.Projects do
       {threads, _} ->
         with :ok <- delete_threads(threads, m["commandId"] || "project.delete:#{id}"),
              :ok <- HalC2.ProjectClones.discard(id),
-             do:
+             {:ok, _} = deleted <-
                update(
                  id,
                  &Map.merge(&1, %{"deletedAt" => Entities.now(), "updatedAt" => Entities.now()})
-               )
+               ) do
+          drop_overrides(id)
+          deleted
+        end
     end
   end
 
-  def mutate(%{"type" => type}), do: {:error, "#{type} is not supported"}
+  defp apply_mutation(%{"type" => type}), do: {:error, "#{type} is not supported"}
+
+  # A deleted project's settings go with it: a provider it turned on would otherwise
+  # stay checked for a project nobody can open (upstream #17879).
+  defp drop_overrides(id) do
+    if Map.has_key?(HalC2.Settings.settings()["projectSettingsOverrides"] || %{}, id) do
+      HalC2.Settings.update(fn settings ->
+        Map.update(settings, "projectSettingsOverrides", %{}, &Map.delete(&1 || %{}, id))
+      end)
+    end
+  end
 
   defp update(id, fun) do
     HalC2.Streams.transact(id, :project, fn state ->
@@ -344,33 +387,95 @@ defmodule HalC2.Projects do
   """
   @spec browse(map) :: {:ok, map} | {:error, String.t()}
   def browse(%{"partialPath" => partial} = input) do
-    resolved = partial |> expand() |> Path.expand(input["cwd"] || home())
-    whole_dir? = String.ends_with?(partial, "/") or partial == "~"
-    parent = if whole_dir?, do: resolved, else: Path.dirname(resolved)
-    prefix = if whole_dir?, do: "", else: Path.basename(resolved)
-    show_hidden = whole_dir? or String.starts_with?(prefix, ".")
+    with {:ok, resolved} <- browse_target(partial, input["cwd"]) do
+      whole_dir? = String.ends_with?(partial, "/") or partial in ["~", "./", "../", ".", ".."]
+      parent = if whole_dir?, do: resolved, else: Path.dirname(resolved)
+      prefix = if whole_dir?, do: "", else: Path.basename(resolved)
+      show_hidden = whole_dir? or String.starts_with?(prefix, ".")
 
-    case File.ls(parent) do
-      {:ok, names} ->
-        entries =
-          for name <- Enum.sort(names),
-              String.starts_with?(String.downcase(name), String.downcase(prefix)),
-              show_hidden or not String.starts_with?(name, "."),
-              File.dir?(Path.join(parent, name)),
-              do: %{"name" => name, "fullPath" => Path.join(parent, name)}
+      case File.ls(parent) do
+        {:ok, names} ->
+          entries =
+            for name <- Enum.sort(names),
+                String.starts_with?(String.downcase(name), String.downcase(prefix)),
+                show_hidden or not String.starts_with?(name, "."),
+                File.dir?(Path.join(parent, name)),
+                do: %{"name" => name, "fullPath" => Path.join(parent, name)}
 
-        {:ok, %{"parentPath" => parent, "entries" => entries}}
+          {:ok, %{"parentPath" => parent, "entries" => entries}}
 
-      {:error, reason} when reason in [:eacces, :eperm] ->
-        {:ok, %{"parentPath" => parent, "entries" => []}}
+        {:error, reason} when reason in [:eacces, :eperm] ->
+          {:ok, %{"parentPath" => parent, "entries" => []}}
 
-      {:error, reason} ->
-        {:error, "cannot read #{parent}: #{:file.format_error(reason)}"}
+        {:error, reason} ->
+          {:error, "The folder '#{parent}' could not be read: #{:file.format_error(reason)}"}
+      end
+    end
+  end
+
+  # Where a typed path points. `~` is the home folder; `./` and `../` paths start
+  # from the current project's folder, so they need one; a Windows drive or UNC
+  # path is refused on a host that is not Windows.
+  defp browse_target(partial, cwd) do
+    os = browse_os()
+
+    cond do
+      os != :windows and Regex.match?(~r{^([a-zA-Z]:[\\/]|\\\\)}, partial) ->
+        {:error, "Windows-style workspace path '#{partial}' is not supported on '#{os_name()}'."}
+
+      dot_relative?(partial) and cwd in [nil, ""] ->
+        {:error, "A current project is required to browse relative workspace path '#{partial}'."}
+
+      dot_relative?(partial) ->
+        {:ok, Path.expand(partial, cwd)}
+
+      true ->
+        {:ok, partial |> expand() |> Path.expand(cwd || home())}
+    end
+  end
+
+  defp dot_relative?(path), do: path in [".", ".."] or String.starts_with?(path, ["./", "../"])
+
+  defp browse_os do
+    case Application.get_env(:hal_c2, :os_type, :os.type()) do
+      {:win32, _} -> :windows
+      _ -> :posix
+    end
+  end
+
+  defp os_name do
+    case Application.get_env(:hal_c2, :os_type, :os.type()) do
+      {_, name} -> to_string(name)
+      _ -> "unix"
     end
   end
 
   @doc "A folder as a user typed it, with a leading `~` as `$HOME`."
   def expand_home(path), do: expand(path)
+
+  # A project's folder as stored: `~` is this MC's home and `.`/`..` are resolved. A
+  # relative path stays as typed, for `relative?/1` to refuse: it has no meaning here.
+  defp workspace_root(""), do: ""
+
+  defp workspace_root(path) do
+    path = expand(path)
+    if relative?(path), do: path, else: Path.expand(path)
+  end
+
+  defp relative_root(%{"workspaceRoot" => root}) when is_binary(root) do
+    cond do
+      root == "" -> {:refused, "a workspace folder is required"}
+      relative?(root) -> {:refused, relative_error(root)}
+      true -> nil
+    end
+  end
+
+  defp relative_root(_), do: nil
+
+  defp relative?(path), do: path != "" and Path.type(path) != :absolute
+
+  defp relative_error(path),
+    do: "Workspace #{path} is not an absolute path. Use a full path or one starting with ~/."
 
   defp expand("~"), do: home()
   defp expand("~/" <> rest), do: Path.join(home(), rest)

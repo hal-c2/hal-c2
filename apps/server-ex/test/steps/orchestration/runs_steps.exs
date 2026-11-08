@@ -361,6 +361,170 @@ defmodule HalC2.Steps.Orchestration.Runs do
     end
   end
 
+  # --- reasoning and held-back text stream by the same rules --------------------------
+
+  step "the provider streams reasoning text", context do
+    stream_witnessed(context, "reason-t", "item/reasoning/textDelta", "One.\n\nTw")
+  end
+
+  step "the reasoning is written a paragraph at a time, at most every 400 ms", context do
+    assert text(context, "reason-t") == "One.\n\n"
+    observed = System.monotonic_time(:millisecond)
+    context = notify(context, "item/reasoning/textDelta", delta("reason-t", "o.\n\nThr"))
+    await_text(context, "reason-t", "One.\n\nTwo.\n\n")
+    assert System.monotonic_time(:millisecond) - observed >= 300
+    context
+  end
+
+  step "by {string} it is written only when the reasoning is finished",
+       %{args: [mode]} = context do
+    # A fresh turn under the other mode: the mode is the turn's, taken at its start.
+    context =
+      notify(context, "turn/completed", %{
+        "turn" => %{"id" => native_turn(context), "status" => "completed"}
+      })
+
+    await_status(context, context.running, "completed")
+    id = World.project(context, "demo").id
+
+    World.update_settings(context, %{
+      "projectSettingsOverrides" => %{id => %{"responseStreamingMode" => mode}}
+    })
+
+    context = World.running_turn(context, context.thread)
+    context = stream_witnessed(context, "reason-u", "item/reasoning/textDelta", "One.\n\nTw")
+    assert text(context, "reason-u") == ""
+
+    context = notify(context, "item/completed", item("reasoning", "reason-u"))
+    await_text(context, "reason-u", "One.\n\nTw")
+    context
+  end
+
+  # What each held-back shape streams, and what of it is written before the reply ends.
+  @held_back %{
+    "a paragraph and half of the next line" => {"One.\n\nTw", "One.\n\n"},
+    "a paragraph and an opened code block with blank lines" =>
+      {"One.\n\n```\ncode\n\nmore\n", "One.\n\n"},
+    "a code block nested in a list item, then its close" =>
+      {"- item\n\n  ```\n  code\n  ```\nAfter", "- item\n\n  ```\n  code\n  ```\n"},
+    "a first paragraph with no blank line after it yet" => {"One.", ""}
+  }
+
+  step ~r/^the provider has streamed (?<so_far>.+)$/, %{args: [so_far]} = context do
+    {streamed, _written} = Map.fetch!(@held_back, so_far)
+    context = notify(context, "item/started", item("agentMessage", "msg-t"))
+
+    context
+    |> stream_witnessed("msg-t", "item/agentMessage/delta", streamed)
+    |> Map.put(:held_back, so_far)
+  end
+
+  step ~r/^(only the paragraph is written|nothing inside the open code block is written|the text up to and including the close is written|nothing is written)$/,
+       context do
+    {_streamed, written} = Map.fetch!(@held_back, context.held_back)
+    assert text(context, "msg-t") == written
+    context
+  end
+
+  step "the provider streamed a reply that ends without a blank line", context do
+    context = World.running_turn(context, context.thread)
+    context = notify(context, "item/started", item("agentMessage", "msg-t"))
+
+    context
+    |> stream_witnessed("msg-t", "item/agentMessage/delta", "One.\n\nTwo")
+    |> tap(fn context -> assert text(context, "msg-t") == "One.\n\n" end)
+  end
+
+  step "the provider finishes the reply", context do
+    # No text of its own: what shows is what the finish flushed.
+    notify(context, "item/completed", item("agentMessage", "msg-t"))
+  end
+
+  step "the whole reply is written at once, whatever was held back", context do
+    await_text(context, "msg-t", "One.\n\nTwo")
+
+    appends =
+      for %{kind: "turn-item", entity: "turn-item:codex:msg-t", patch: %{"a" => %{"text" => t}}} <-
+            World.events(context, context.thread),
+          do: t
+
+    assert appends == ["One.\n\n", "Two"]
+    context
+  end
+
+  # --- a held-back reply cut off by a steer ------------------------------------------
+
+  step "the agent's reply is partly held back", context do
+    context = World.running_turn(context, context.thread)
+    context = notify(context, "item/started", item("agentMessage", "msg-t"))
+
+    context
+    |> stream_witnessed("msg-t", "item/agentMessage/delta", "One.\n\nTw")
+    |> tap(fn context -> assert text(context, "msg-t") == "One.\n\n" end)
+  end
+
+  step "the user steers the turn before the reply finishes", context do
+    context =
+      World.dispatch_message(context, context.thread, "Focus on the tests", %{
+        "deliveryIntent" => "steer"
+      })
+
+    assert {:ok, _} = context.reply
+
+    World.await_state(context, context.thread, fn state ->
+      Enum.any?(
+        HalC2.StreamState.list(state, "turn-item"),
+        &(&1["type"] == "user_message" and &1["text"] == "Focus on the tests")
+      )
+    end)
+
+    # What followed the steer: the provider's answer to it, under the same turn.
+    World.await_state(context, context.thread, fn state ->
+      Enum.any?(
+        HalC2.StreamState.list(state, "turn-item"),
+        &(&1["text"] == "steered: Focus on the tests")
+      )
+    end)
+
+    context
+  end
+
+  step "the turn ends and the held-back reply is written", context do
+    await_status(context, context.running, "completed")
+    context
+  end
+
+  step "the reply appears before the steer and what followed it, where the agent said it",
+       context do
+    items =
+      context
+      |> World.entities(context.thread, "turn-item")
+      |> Enum.sort_by(& &1["ordinal"])
+
+    held = Enum.find(items, &(&1["id"] == "turn-item:codex:msg-t"))
+
+    steer =
+      Enum.find(items, &(&1["type"] == "user_message" and &1["text"] == "Focus on the tests"))
+
+    after_steer = Enum.find(items, &(&1["text"] == "steered: Focus on the tests"))
+
+    assert held["text"] == "One.\n\nTw"
+    assert held["ordinal"] < steer["ordinal"]
+    assert steer["ordinal"] < after_steer["ordinal"]
+    context
+  end
+
+  # --- force stop is the user's alone -------------------------------------------------
+
+  step "an agent looks for a way to force stop a thread through HAL-C2's tools", context do
+    Map.put(context, :tool_names, Enum.map(HalC2.Mcp.Tools.list(), & &1["name"]))
+  end
+
+  step "none is offered", context do
+    refute Enum.any?(context.tool_names, &String.contains?(&1, "force"))
+    context
+  end
+
   step "a command the agent runs prints output", context do
     context
     |> notify("item/started", item("commandExecution", "cmd-o", %{"command" => "make"}))
@@ -454,6 +618,129 @@ defmodule HalC2.Steps.Orchestration.Runs do
     World.await_state(context, thread, fn state ->
       match?([%{"status" => "running"}], HalC2.StreamState.list(state, "subagent"))
     end)
+
+    context
+  end
+
+  # The same spawn, with work of its own still running in the subagent's thread.
+  step "{string} has a running turn with a provider subagent still at work",
+       %{args: [thread]} = context do
+    context = World.running_turn(context, thread)
+    {_, runtime} = World.codex_runtime(context, thread)
+
+    context =
+      notify(
+        context,
+        "item/started",
+        item("collabAgentToolCall", "collab-1", %{
+          "tool" => "spawnAgent",
+          "prompt" => "List the modules in lib",
+          "senderThreadId" => runtime.native_thread_id,
+          "receiverThreadIds" => ["native-child-1"],
+          "status" => "inProgress",
+          "agentsStates" => %{"native-child-1" => %{"status" => "running"}}
+        })
+      )
+
+    state =
+      World.await_state(context, thread, fn state ->
+        match?([%{"status" => "running"}], HalC2.StreamState.list(state, "subagent"))
+      end)
+
+    [subagent] = HalC2.StreamState.list(state, "subagent")
+
+    context =
+      World.codex_notify(context, thread, "item/started", %{
+        "threadId" => "native-child-1",
+        "turnId" => "native-child-turn-1",
+        "item" => %{
+          "type" => "commandExecution",
+          "id" => "cmd-sub",
+          "command" => "mix test --listen",
+          "status" => "inProgress"
+        }
+      })
+
+    context =
+      context
+      |> put_in([:threads, "native-child"], subagent["childThreadId"])
+      |> Map.put(:subagent_child, subagent["childThreadId"])
+
+    await_child_item(context, "running")
+    context
+  end
+
+  step ~r/^the turn ends because (?<cause>the user interrupts it|its provider process exits|its thread is deleted)$/,
+       %{args: [cause]} = context do
+    {context, status} =
+      case cause do
+        "the user interrupts it" ->
+          {World.command(context, %{
+             "type" => "run.interrupt",
+             "threadId" => World.thread_id(context, context.thread),
+             "runId" => context.running
+           }), "interrupted"}
+
+        # The app-server goes, and its event stream with it, so nothing can report the
+        # subagent again. A failure Codex itself reports leaves the subagent to carry on
+        # in its own thread (`codex_turn_end_test.exs`).
+        "its provider process exits" ->
+          {_, runtime} = World.codex_runtime(context, context.thread)
+          os_pid = HalC2.Subprocess.os_pid(:sys.get_state(runtime.conn).sub)
+          {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+          {context, "failed"}
+
+        "its thread is deleted" ->
+          {World.command(context, %{
+             "type" => "thread.delete",
+             "threadId" => World.thread_id(context, context.thread)
+           }), "cancelled"}
+      end
+
+    await_status(context, context.running, status)
+    Map.put(context, :ended_as, status)
+  end
+
+  step "the subagent, its item on the turn and the work in its own thread end as {word}",
+       %{args: [status]} = context do
+    state =
+      World.await_state(context, context.thread, fn state ->
+        match?(
+          [%{"status" => ^status}],
+          HalC2.StreamState.list(state, "subagent")
+        ) and
+          Enum.any?(
+            HalC2.StreamState.list(state, "turn-item"),
+            &(&1["type"] == "subagent" and &1["status"] == status)
+          )
+      end)
+
+    assert Enum.any?(
+             HalC2.StreamState.list(state, "turn-item"),
+             &(&1["type"] == "subagent" and &1["status"] == status)
+           )
+
+    await_child_item(context, status)
+    context
+  end
+
+  step "nothing of the subagent is left streaming", context do
+    child = HalC2.Streams.Server.state(HalC2.Streams.ensure(context.subagent_child))
+
+    items =
+      Enum.filter(
+        World.entities(context, context.thread, "turn-item"),
+        &(&1["type"] == "subagent")
+      ) ++
+        HalC2.StreamState.list(child, "turn-item")
+
+    for item <- items do
+      assert item["streaming"] != true, inspect(item["id"])
+      assert item["status"] != "running", inspect(item["id"])
+    end
+
+    for message <- HalC2.StreamState.list(child, "message"),
+        do: assert(message["streaming"] != true, inspect(message["id"]))
 
     context
   end
@@ -560,6 +847,101 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
+  step "the provider is retrying a failed request during a turn of {string}",
+       %{args: [thread]} = context do
+    context = World.running_turn(context, thread)
+
+    context =
+      notify(context, "error", %{
+        "error" => %{
+          "message" => "Reconnecting... 1/5",
+          "codexErrorInfo" => %{"responseStreamDisconnected" => %{"httpStatusCode" => nil}},
+          "additionalDetails" => "stream disconnected before completion"
+        },
+        "willRetry" => true,
+        "turnId" => native_turn(context)
+      })
+
+    World.await_state(context, thread, fn state ->
+      Enum.any?(HalC2.StreamState.list(state, "turn-item"), &(&1["retry"]["attempt"] == 1))
+    end)
+
+    context
+  end
+
+  step "the retry succeeds", context do
+    notify(context, "turn/completed", %{
+      "turn" => %{"id" => native_turn(context), "status" => "completed"}
+    })
+  end
+
+  step "the provider gives up", context do
+    context
+    |> notify("error", %{
+      "error" => %{"message" => "stream disconnected before completion"},
+      "willRetry" => false,
+      "turnId" => native_turn(context)
+    })
+    |> notify("turn/completed", %{
+      "turn" => %{
+        "id" => native_turn(context),
+        "status" => "failed",
+        "error" => %{"message" => "stream disconnected before completion"}
+      }
+    })
+  end
+
+  step "the provider gives up on its usage limit", context do
+    context
+    |> notify("error", %{
+      "error" => %{
+        "message" => "You've hit your usage limit.",
+        "codexErrorInfo" => %{"usageLimitExceeded" => nil}
+      },
+      "willRetry" => false,
+      "turnId" => native_turn(context)
+    })
+    |> notify("turn/completed", %{
+      "turn" => %{"id" => native_turn(context), "status" => "failed"}
+    })
+  end
+
+  step "the user stops the turn while it is retrying", context do
+    World.command(context, %{
+      "type" => "run.interrupt",
+      "threadId" => World.thread_id(context, context.thread),
+      "runId" => context.running
+    })
+  end
+
+  step "the retry's entry in the turn's work log reads {string}",
+       %{args: [title]} = context do
+    state =
+      World.await_state(context, context.thread, fn state ->
+        state.entities["run"][context.running]["status"] not in ~w(starting running)
+      end)
+
+    entries =
+      for item <- HalC2.StreamState.list(state, "turn-item"),
+          String.contains?(item["id"], "terminal-failure:"),
+          do: item
+
+    assert [%{"title" => ^title}] = entries
+    Map.put(context, :retry_entries, entries)
+  end
+
+  step "the turn has only that one entry for the failure", context do
+    assert length(context.retry_entries) == 1
+
+    errors =
+      for item <- World.entities(context, context.thread, "turn-item"),
+          item["type"] == "error",
+          do: item
+
+    assert errors == context.retry_entries
+    context
+  end
+
   step "the provider session's last error is {string}", %{args: [message]} = context do
     assert session(context, context.thread, "codex")["lastError"] == message
     context
@@ -599,6 +981,27 @@ defmodule HalC2.Steps.Orchestration.Runs do
   step "the run is failed with {string}", %{args: [message]} = context do
     run = World.await_latest_run(context, context.thread, "failed")
     assert session(context, context.thread, "codex")["lastError"] == message
+    Map.put(context, :failed_run, run["id"])
+  end
+
+  # --- compacting an empty thread ----------------------------------------------------
+
+  step "{string} has no conversation yet", %{args: [thread]} = context do
+    assert World.entities(context, thread, "run") == []
+    Map.put(context, :thread, thread)
+  end
+
+  step "the run fails with {string} and {string}", %{args: [title, message]} = context do
+    run = World.await_latest_run(context, context.thread, "failed")
+
+    error =
+      Enum.find(
+        World.entities(context, context.thread, "turn-item"),
+        &(&1["type"] == "error" and &1["title"] == title)
+      )
+
+    assert error != nil, "no error item titled #{inspect(title)}"
+    assert error["failure"]["message"] == message
     Map.put(context, :failed_run, run["id"])
   end
 
@@ -1107,6 +1510,61 @@ defmodule HalC2.Steps.Orchestration.Runs do
     })
   end
 
+  step "the user presses Stop", context do
+    World.command(context, %{
+      "type" => "run.interrupt",
+      "threadId" => World.thread_id(context, context.thread),
+      "runId" => context.running,
+      "stopDelegated" => true
+    })
+  end
+
+  step "an agent stops it through HAL-C2's tools", context do
+    agent_interrupt(context, %{})
+  end
+
+  step "an agent stops it through HAL-C2's tools with {string}",
+       %{args: [reason]} = context do
+    agent_interrupt(context, %{"reason" => reason})
+  end
+
+  # The run whose outcome is read is the delegated child's, cancelled by the
+  # agent of "t1" (whose own turn is the scenario's running turn).
+  step "an agent cancels its delegated task", context do
+    assert {:ok, %{"taskId" => task_id}} =
+             World.mcp_tool(context, context.thread, "delegate_task", %{
+               "task" => "wait for it",
+               "mode" => "async"
+             })
+
+    state =
+      World.await_state(context, context.thread, fn state ->
+        Enum.any?(HalC2.StreamState.list(state, "subagent"), &(&1["id"] == task_id))
+      end)
+
+    task = Enum.find(HalC2.StreamState.list(state, "subagent"), &(&1["id"] == task_id))
+
+    context = put_in(context, [:threads, "delegated-child"], task["childThreadId"])
+
+    child =
+      World.await_state(context, "delegated-child", fn state ->
+        Enum.any?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "running"))
+      end)
+
+    run = Enum.find(HalC2.StreamState.list(child, "run"), &(&1["status"] == "running"))
+
+    assert {:ok, %{"status" => "cancelled"}} =
+             World.mcp_tool(context, context.thread, "task_cancel", %{"taskId" => task_id})
+
+    context |> Map.put(:thread, "delegated-child") |> Map.put(:running, run["id"])
+  end
+
+  step "the provider ends the run with no stop asked for", context do
+    notify(context, "turn/completed", %{
+      "turn" => %{"id" => native_turn(context), "status" => "interrupted"}
+    })
+  end
+
   step "the run records an item titled {string} saying {string}",
        %{args: [title, message]} = context do
     assert {:ok, _} = context.reply
@@ -1116,14 +1574,12 @@ defmodule HalC2.Steps.Orchestration.Runs do
 
   step "once the provider stops, an item titled {string} saying {string}",
        %{args: [title, message]} = context do
-    World.await_state(context, context.thread, fn state ->
-      Enum.any?(
-        HalC2.StreamState.list(state, "turn-item"),
-        &(&1["runId"] == context.running and &1["title"] == title and &1["message"] == message)
-      )
-    end)
+    await_interrupt_item(context, title, message)
+  end
 
-    context
+  step "once the provider stops, an item titled {string} says {string}",
+       %{args: [title, message]} = context do
+    await_interrupt_item(context, title, message)
   end
 
   # --- stopping a run nothing drives ------------------------------------------------------
@@ -1247,7 +1703,15 @@ defmodule HalC2.Steps.Orchestration.Runs do
       {~s(bad OPENAI_API_KEY=sk-abc client_secret=c5 body {"refresh_token":"r7"}),
        ~s(bad OPENAI_API_KEY=[REDACTED] client_secret=[REDACTED] body {"refresh_token":"[REDACTED]"})},
     "a URL that cannot be read" =>
-      {"could not reach http://[::1 broken", "could not reach [REDACTED_URL] broken"}
+      {"could not reach http://[::1 broken", "could not reach [REDACTED_URL] broken"},
+    # The compound-key outline names its provider text and what is shown outright.
+    "client_secret=abc refresh_token=def" =>
+      {"client_secret=abc refresh_token=def", "client_secret=[REDACTED] refresh_token=[REDACTED]"},
+    ~s({"client_secret":"abc"}) =>
+      {~s({"client_secret":"abc"}), ~s({"client_secret":"[REDACTED]"})},
+    "clientSecret: abc" => {"clientSecret: abc", "clientSecret: [REDACTED]"},
+    "max_tokens=4096 input_tokens: 12" =>
+      {"max_tokens=4096 input_tokens: 12", "max_tokens=4096 input_tokens: 12"}
   }
 
   step ~r/^the provider fails a turn of "(?<thread>[^"]+)" with a message holding (?<secret>.+)$/,
@@ -1272,7 +1736,8 @@ defmodule HalC2.Steps.Orchestration.Runs do
     {message, expected} = Map.fetch!(@secrets, context.secret)
     recorded = session(context, context.thread, "codex")["lastError"]
     assert recorded == expected
-    refute recorded == message
+    # A message with nothing to hide (token counts) is recorded as it came.
+    if expected != message, do: refute(recorded == message)
 
     for %{"failure" => %{"message" => text}} <-
           World.entities(context, context.thread, "turn-item"),
@@ -1420,6 +1885,17 @@ defmodule HalC2.Steps.Orchestration.Runs do
     Map.put(context, :reply, reply)
   end
 
+  defp await_interrupt_item(context, title, message) do
+    World.await_state(context, context.thread, fn state ->
+      Enum.any?(
+        HalC2.StreamState.list(state, "turn-item"),
+        &(&1["runId"] == context.running and &1["title"] == title and &1["message"] == message)
+      )
+    end)
+
+    context
+  end
+
   defp interrupt_item(context, title, message) do
     Enum.find(
       World.entities(context, context.thread, "turn-item"),
@@ -1445,6 +1921,31 @@ defmodule HalC2.Steps.Orchestration.Runs do
 
   defp native_turn(context),
     do: elem(World.codex_runtime(context, context.thread), 1).turn.native_turn_id
+
+  # `hal_c2_thread_interrupt` from another thread of the project, as an agent's
+  # own stop arrives. The caller needs a run of its own, as a calling agent has.
+  defp agent_interrupt(context, extra) do
+    target = context.thread
+    running = context.running
+    context = World.running_turn(context, "agent-caller")
+
+    arguments = Map.merge(%{"threadId" => World.thread_id(context, target)}, extra)
+
+    assert {:ok, %{"interrupted" => true}} =
+             World.mcp_tool(context, "agent-caller", "hal_c2_thread_interrupt", arguments)
+
+    context |> Map.put(:thread, target) |> Map.put(:running, running)
+  end
+
+  # The subagent's own command item, in its child thread ("native-child").
+  defp await_child_item(context, status) do
+    World.await_state(context, "native-child", fn state ->
+      Enum.any?(
+        HalC2.StreamState.list(state, "turn-item"),
+        &(&1["status"] == status and String.ends_with?(&1["id"], "cmd-sub"))
+      )
+    end)
+  end
 
   defp notify(context, method, params),
     do: World.codex_notify(context, context.thread, method, params)
@@ -1505,6 +2006,22 @@ defmodule HalC2.Steps.Orchestration.Runs do
         "turnId" => native_turn(context),
         "plan" => [%{"step" => "Read", "status" => "inProgress"}]
       })
+
+  # Streams `text` for `native` by `method`, then a command's output: both flush
+  # together, so the output landing shows the prose write has had its chance.
+  defp stream_witnessed(context, native, method, text) do
+    cmd = "cmd-w#{System.unique_integer([:positive])}"
+
+    context
+    |> notify(method, delta(native, text))
+    |> notify("item/started", item("commandExecution", cmd, %{"command" => "ls"}))
+    |> notify("item/commandExecution/outputDelta", delta(cmd, "a.txt\n"))
+    |> tap(fn context ->
+      World.await_state(context, context.thread, fn state ->
+        state.entities["turn-item"]["turn-item:codex:#{cmd}"]["outputSize"] == 6
+      end)
+    end)
+  end
 
   # A paragraph and a half of assistant text, then a command's output: both are
   # flushed together, so the output being written shows what the text write held back.

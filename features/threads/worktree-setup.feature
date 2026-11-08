@@ -47,7 +47,7 @@ Feature: Preparing a new thread's worktree
 
   # Upstream #18443: cancelling the setup stops the background branch rename before the
   # worktree is removed, so the rename cannot land on a worktree that is gone.
-  @backlog @mc
+  @mc
   Scenario: Cancelling the setup stops the branch rename first
     Given the temporary branch is still being renamed from the first message
     When the user cancels the setup
@@ -115,16 +115,17 @@ Feature: Preparing a new thread's worktree
 
   # Upstream #24775: a shell startup prompt (an rc file asking to install a tool) read the typed
   # setup command as its answer, and setup hung on "Setup Worktree".
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: The setup script is typed only once the setup shell is ready for a command
     Given the user's shell startup asks "Do you want to install it? answer [y/N]"
     When the setup script starts
     Then the setup command is not typed while that question is open
     And the setup output shows the question, and the user can open the setup terminal to answer it
-    When the user answers it
+    When the user answers the startup question
     Then the setup script runs and its completion is reported
 
-  @backlog @mc
+  # Upstream #24775: a setup shell that exits while starting runs nothing.
+  @mc
   Scenario: A setup shell that exits while starting runs nothing
     Given the setup shell exits before it is ready for a command
     When the setup script was about to start
@@ -146,7 +147,7 @@ Feature: Preparing a new thread's worktree
   # Upstream #13673: an idle setup shell closes once its script succeeds, so a finished setup leaves no terminal behind.
   # A failed script already keeps its shell open for the error (apps/server-ex/lib/hal_c2/worktree_setup.ex await_script),
   # so that path is not ledgered as new behaviour here.
-  @mc @backlog
+  @mc
   Scenario: A setup script that succeeds closes its idle setup terminal
     Given the setup script ran in the terminal "setup" and exited with 0
     Then the "setup" terminal is closed
@@ -253,23 +254,35 @@ Feature: Preparing a new thread's worktree
     When the user opens the setup details
     Then the user sees the last few lines of the script's output
 
-  @backlog @mc @shared @mobile @priority-high
+  @mc @shared @mobile @backlog-desktop @backlog-mobile @backlog-tui @priority-high
   Scenario: A new worktree thread keeps its worktree when the agent starts
     Given a new worktree thread whose setup script runs alongside the agent
     When the agent starts its first turn
     Then the thread stays on its worktree and branch
     And the first turn completes
 
-  @backlog @mc @shared @mobile @priority-high
+  @mc @shared @mobile @backlog-desktop @backlog-mobile @backlog-tui @priority-high
   Scenario: A message sent while the worktree is being set up is queued
     Given a new worktree thread is still checking out its worktree or running a setup script it must wait for
     When the user sends a follow-up
     Then the follow-up is queued
     And it starts by itself after the first turn finishes
 
-  @backlog @mc
-  Scenario: A follow-up queued during a setup that never made the worktree is held
+  # A cancel removes the worktree it made, so either way there is none to run in.
+  @mc
+  Scenario Outline: A follow-up queued during a setup that never made the worktree is held
     Given a follow-up is queued behind a worktree thread's setup
-    When the setup is cancelled or fails before the worktree exists
+    When the setup <ends> before the worktree exists
     Then the follow-up is held instead of running in the project's own checkout
-    And retrying the setup lets it follow the first turn again
+
+    Examples:
+      | ends         |
+      | is cancelled |
+      | fails        |
+
+  @mc
+  Scenario: Retrying a setup that never made the worktree lets its follow-up go on
+    Given a follow-up is queued behind a worktree thread's setup
+    And the setup fails before the worktree exists
+    When the user retries the setup
+    Then the follow-up goes after the first turn, in the new worktree

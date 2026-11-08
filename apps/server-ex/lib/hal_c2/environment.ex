@@ -209,12 +209,17 @@ defmodule HalC2.Environment do
       do: HalC2.Codex.Provider.load()
 
     claude = Enum.filter(ids, &(&1 in HalC2.Claude.Provider.instances()))
+    if claude != [], do: HalC2.Claude.Provider.forget_auth(claude)
     if models? and claude != [], do: HalC2.Claude.Provider.load(claude)
 
-    ids
-    |> Enum.filter(&HalC2.Acp.agent?/1)
+    agents = Enum.filter(ids, &HalC2.Acp.agent?/1)
+
+    agents
     |> Task.async_stream(&HalC2.Acp.reload/1, timeout: :infinity, max_concurrency: 4)
     |> Stream.run()
+
+    # A sign-in a client has open lists the agent's methods anew.
+    Enum.each(agents, &HalC2.ProviderAuth.refresh/1)
 
     HalC2.Settings.notify_providers()
   end
@@ -290,10 +295,9 @@ defmodule HalC2.Environment do
   defp with_identity(entry), do: entry
 
   defp builtin_providers do
-    for(
-      entry <- HalC2.Codex.Provider.entries() ++ HalC2.Claude.Provider.entries(),
-      do: HalC2.ProviderUpdates.put_state(entry)
-    ) ++ HalC2.Acp.entries()
+    for entry <-
+          HalC2.Codex.Provider.entries() ++ HalC2.Claude.Provider.entries() ++ HalC2.Acp.entries(),
+        do: HalC2.ProviderUpdates.put_state(entry)
   end
 
   # The model ids the user added in settings (`customModels`: bare slugs or
