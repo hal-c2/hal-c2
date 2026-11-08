@@ -123,7 +123,7 @@ bool sameMeaning(const keybindings::WhenPtr& left, const keybindings::WhenPtr& r
 const QStringList kCommands{QStringLiteral("diff.toggle"),     QStringLiteral("chat.new"),
                             QStringLiteral("thread.pin"),      QStringLiteral("terminal.toggle"),
                             QStringLiteral("navigation.back"), QStringLiteral("script.test.run"),
-                            QStringLiteral("bogus.command")};
+                            QStringLiteral("composer.increaseEffort"), QStringLiteral("bogus.command")};
 // The same keys spelled several ways, and one that does not parse.
 const QStringList kRuleKeys{QStringLiteral("mod+k"),       QStringLiteral("Mod+K"),        QStringLiteral(" mod+k "),
                             QStringLiteral("mod+shift+y"), QStringLiteral("shift+mod+y"),  QStringLiteral("ctrl+alt+x"),
@@ -146,6 +146,7 @@ const QList<QVariantMap> kFocuses{
     {{QStringLiteral("composer"), true}, {QStringLiteral("editable"), true}},
     {{QStringLiteral("editable"), true}},
     {{QStringLiteral("terminal"), true}},
+    {{QStringLiteral("preview"), true}},
 };
 
 QJsonObject someRule() {
@@ -369,6 +370,7 @@ keybindings::Context context(const Model& model, const QVariantMap& focus) {
       {QStringLiteral("terminalFocus"), focus.value(QStringLiteral("terminal")).toBool()},
       {QStringLiteral("composerFocus"), focus.value(QStringLiteral("composer")).toBool()},
       {QStringLiteral("editableFocus"), focus.value(QStringLiteral("editable")).toBool()},
+      {QStringLiteral("previewFocus"), focus.value(QStringLiteral("preview")).toBool()},
       {QStringLiteral("isDesktop"), true},
   };
 }
@@ -447,16 +449,24 @@ void check(const Model& model, Shell& shell) {
     return shell.keys->commands()->contains(command) ||
            (command.startsWith(QLatin1String("script.")) && command.endsWith(QLatin1String(".run")));
   };
+  // Held down, a key that steps through states (the appearance, the effort)
+  // in the chrome or the composer must not spin through them.
+  const auto cycles = [&keymap](const QString& sequence) {
+    static const QStringList cycling{KeybindingController::kAppearanceCycle, QStringLiteral("composer.increaseEffort"),
+                                     QStringLiteral("composer.decreaseEffort")};
+    return cycling.contains(keymap.resolved(sequence, kFocuses.at(0))) || cycling.contains(keymap.resolved(sequence, kFocuses.at(1)));
+  };
   QVariantList shortcuts;
   const QStringList all = keymap.all();
   for (const QString& sequence : all) {
     shortcuts.append(QVariantMap{
         {QStringLiteral("sequence"), sequence},
-        {QStringLiteral("autoRepeat"), keymap.resolved(sequence, kFocuses.at(0)) != KeybindingController::kAppearanceCycle},
+        {QStringLiteral("autoRepeat"), !cycles(sequence)},
         {QStringLiteral("chrome"), native(keymap.resolved(sequence, kFocuses.at(0)))},
         {QStringLiteral("composer"), native(keymap.resolved(sequence, kFocuses.at(1)))},
         {QStringLiteral("editable"), native(keymap.resolved(sequence, kFocuses.at(2)))},
         {QStringLiteral("terminal"), native(keymap.resolved(sequence, kFocuses.at(3)))},
+        {QStringLiteral("preview"), native(keymap.resolved(sequence, kFocuses.at(4)))},
     });
   }
   RC_ASSERT(shell.keys->shortcuts() == shortcuts);

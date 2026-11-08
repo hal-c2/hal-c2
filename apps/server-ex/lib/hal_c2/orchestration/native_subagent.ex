@@ -399,6 +399,9 @@ defmodule HalC2.Orchestration.NativeSubagent do
     if message_id, do: Map.put(sub, :said, fields["text"]), else: sub
   end
 
+  @doc "What the subagent said so far, or nil."
+  def said(sub), do: nilify(Map.get(sub, :said) || sub.text)
+
   @doc """
   Settles the subagent as `status` with its `result` (the answer it streamed when the
   provider reports none). With `summary: true` the result only sums up its work (a

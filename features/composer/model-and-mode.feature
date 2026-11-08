@@ -769,7 +769,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the draft reads "design the cache" without "Ultrathink:"
     And the next turn runs with high effort
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: A prompt that says ultrathink in its own words fixes the effort
     Given the thread runs on Claude
     And the user has typed "please ultrathink about the cache"
@@ -778,7 +778,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the user is told "Your prompt contains "ultrathink" in the text. Remove it to change this option."
 
   # Upstream #19928: two commands step the composer's effort one level without opening the picker.
-  @backlog @desktop @tui
+  @desktop @tui @backlog-tui
   Scenario Outline: The user steps the effort from the keyboard without leaving the prompt
     Given the thread runs on a model whose efforts are low, medium and high
     And the effort is <from> and the user is typing a draft
@@ -793,6 +793,21 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | high   | up        | low  |
       | medium | down      | low  |
       | low    | down      | high |
+
+  # Ultrathink, put on the prompt, sits above the model's top level: a step
+  # leaves it from there, not from the level saved underneath.
+  @desktop @tui @backlog-tui
+  Scenario Outline: Stepping the effort leaves Ultrathink from above the top level
+    Given the thread runs on Claude
+    And the user turned on Ultrathink and typed "design the cache"
+    When the user steps the effort <direction>
+    Then the effort is <to>
+    And the draft reads "design the cache" without "Ultrathink:"
+
+    Examples:
+      | direction | to     |
+      | up        | medium |
+      | down      | high   |
 
   # Upstream #19928: stepping into Ultrathink follows the same rules as choosing it.
   # Upstream #28044: stepping no longer reaches Ultrathink, which is only typed.
@@ -816,7 +831,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the draft reads "/review the cache"
 
   # Upstream #19928: writing "ultrathink" in the prompt locks effort for the step as for the picker.
-  @backlog @desktop @tui @priority-low
+  @desktop @tui @backlog-tui @priority-low
   Scenario: Stepping the effort does nothing while the prompt says ultrathink in its own words
     Given the thread runs on Claude
     And the user has typed "please ultrathink about the cache"
@@ -825,7 +840,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #19928: a level the provider reports outside the model's list (OpenCode's "default")
   # steps from the model's default instead of doing nothing.
-  @backlog @desktop @tui @priority-low
+  @desktop @tui @backlog-tui @priority-low
   Scenario: An effort outside the model's levels steps from the model's default
     Given the provider reports an effort the model does not list
     And the model's default effort is medium
@@ -841,7 +856,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the next turn runs without Fast mode
 
   # Upstream #19928: the step stands down whenever something else owns the composer.
-  @backlog @desktop @tui
+  @desktop @tui @backlog-tui
   Scenario Outline: Stepping the effort does nothing while the composer is taken
     Given <situation>
     When the user steps the effort up
