@@ -51,6 +51,10 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
     run(context, "Claude", ["hello"])
   end
 
+  step "a Codex thread runs a turn that starts a subagent", context do
+    run(context, "Codex", ["spawn a subagent"])
+  end
+
   step "a Claude thread runs two turns", context do
     run(context, "Claude", ["first", "second"])
   end
@@ -100,6 +104,16 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
 
     assert finished["runId"] == context.run_id
     assert Enum.count(context.events, &(&1["type"] == "turn.finished")) == 1
+    context
+  end
+
+  step "the plugin hears the subagent start in that turn, before it ends", context do
+    assert [%{"type" => "turn.started", "provider" => "codex", "runId" => run_id} | _] =
+             events = heard([])
+
+    assert %{"itemType" => "subagent", "status" => "running", "runId" => ^run_id} =
+             Enum.find(events, &(&1["type"] == "turn.item" and &1["itemType"] == "subagent"))
+
     context
   end
 

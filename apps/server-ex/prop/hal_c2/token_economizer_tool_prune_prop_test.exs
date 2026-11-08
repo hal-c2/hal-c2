@@ -5,12 +5,15 @@ defmodule HalC2.TokenEconomizerToolPrunePropTest do
   @moduledoc """
   Tool pruning's evidence (`ToolPrune.Evidence`) as a state machine: conversations
   fold in with the tools they loaded and used, the person applies and restores by
-  name, `auto` applies what it held, and time passes, in any order. Whatever the
+  name, `auto` applies what it held, threads start new conversations, the person
+  raises or lowers the thresholds, and time passes, in any order. Whatever the
   order: a protected or ever-used tool is never off or proposed; a restored tool
   stays back until applied by name; a fold never turns anything off by itself;
   Codex demotes at most two packages per folded session, and proposes only the
-  demoted; a use resets its tool's streak; `auto` applies nothing under `propose`,
-  nor while a turn is under way before the list has waited a day.
+  demoted; a use resets its tool's streak; a thread's conversation counts as one
+  session however many segments it folds; `auto` applies only what the evidence
+  still proposes, nothing under `propose`, nor while a turn is under way before
+  the list has waited a day.
 
   The plugin's process and `shape_run/2` are covered by
   `features/plugins/token-economizer-tool-prune.feature`; upstream's cases are
@@ -80,7 +83,11 @@ defmodule HalC2.TokenEconomizerToolPrunePropTest do
 
   def command(_state) do
     frequency([
-      {6, {:call, __MODULE__, :fold, [integer(0, 4), resize(3, list(elements(@names)))]}},
+      {6,
+       {:call, __MODULE__, :fold,
+        [integer(0, 4), resize(3, list(elements(@names))), elements([nil, "t1", "t2"])]}},
+      {1, {:call, __MODULE__, :converse, [elements(["t1", "t2"])]}},
+      {1, {:call, __MODULE__, :settings, [elements([3, 30])]}},
       {2,
        {:call, __MODULE__, :apply,
         [elements([:proposal, :named]), resize(3, list(elements(@names)))]}},
@@ -95,7 +102,7 @@ defmodule HalC2.TokenEconomizerToolPrunePropTest do
 
   def precondition(_state, _call), do: true
 
-  def next_state(state, _result, {:call, _, :fold, [prompts, _used]}) do
+  def next_state(state, _result, {:call, _, :fold, [prompts, _used, _thread]}) do
     if prompts > 0, do: %{state | folds: state.folds + 1}, else: state
   end
 
@@ -106,7 +113,8 @@ defmodule HalC2.TokenEconomizerToolPrunePropTest do
   defp run, do: Process.get(:prune_run)
   defp put_run(run), do: Process.put(:prune_run, run)
 
-  def fold(prompts, used) do
+  # A segment of `thread`'s conversation (nil: one of its own) folds.
+  def fold(prompts, used, thread) do
     run = run()
     used = Enum.uniq(used)
 
@@ -118,11 +126,43 @@ defmodule HalC2.TokenEconomizerToolPrunePropTest do
         used,
         prompts,
         run.cfg,
-        run.now
+        run.now,
+        thread: thread
       )
 
     put_run(%{run | prune: prune})
-    %{before: run.prune, after: prune, prompts: prompts, used: used, cfg: run.cfg}
+
+    %{
+      before: run.prune,
+      after: prune,
+      prompts: prompts,
+      used: used,
+      thread: thread,
+      cfg: run.cfg
+    }
+  end
+
+  def converse(thread) do
+    run = run()
+    put_run(%{run | prune: Prune.new_conversation(run.prune, thread)})
+    :ok
+  end
+
+  # The person sets the prompts and sessions it takes: low, or out of reach.
+  def settings(evidence) do
+    run = run()
+
+    cfg =
+      Prune.config(%{
+        "toolPrune" => run.cfg["mode"],
+        "toolPruneEvidence" => evidence,
+        "toolPruneMinSessions" => 2,
+        "toolPruneSessions" => evidence,
+        "toolPruneQuietMinutes" => 0
+      })
+
+    put_run(%{run | cfg: cfg})
+    :ok
   end
 
   def apply(which, names) do
@@ -183,6 +223,9 @@ defmodule HalC2.TokenEconomizerToolPrunePropTest do
 
   def postcondition(_state, {:call, _, :fold, _}, r) do
     demoted_growth = length(r.after["demoted"] -- r.before["demoted"])
+    session = if r.prompts > 0 and r.thread not in r.before["countedThreads"], do: 1, else: 0
+    unused = Prune.candidate_tools(r.after["unit"]) -- r.used
+    streak = &(&1["streaks"][&2] || %{"sessions" => 0})["sessions"]
 
     # A fold turns nothing off by itself, at most heals something back.
     # Codex demotes at most two per session; other units never demote.
@@ -195,7 +238,8 @@ defmodule HalC2.TokenEconomizerToolPrunePropTest do
           (tool not in Prune.candidate_tools(r.after["unit"]) or
              (r.after["streaks"][tool] || %{"sessions" => 0})["sessions"] == 0)
       end) and
-      r.after["sessions"] - r.before["sessions"] == if(r.prompts > 0, do: 1, else: 0) and
+      r.after["sessions"] - r.before["sessions"] == session and
+      Enum.all?(unused, &(streak.(r.after, &1) - streak.(r.before, &1) == session)) and
       lawful?(r.after, r.cfg)
   end
 
@@ -221,6 +265,7 @@ defmodule HalC2.TokenEconomizerToolPrunePropTest do
 
   def postcondition(_state, {:call, _, :pending, _}, r) do
     (r.cfg["mode"] == "auto" or r.applied == []) and
+      Enum.all?(r.applied, &(&1 in Prune.proposal(r.before, r.cfg))) and
       (not r.active or r.applied == [] or
          r.now - ((r.before["pending"] || %{})["since"] || r.now) >= 86_400) and
       Enum.all?(r.applied, &(&1 in r.after["off"])) and
@@ -235,7 +280,8 @@ defmodule HalC2.TokenEconomizerToolPrunePropTest do
       lawful?(r.after, r.cfg)
   end
 
-  def postcondition(_state, {:call, _, :tick, _}, :ok), do: true
+  def postcondition(_state, {:call, _, call, _}, :ok) when call in [:tick, :converse, :settings],
+    do: true
 
   # What holds of any state the evidence reaches: nothing protected or used is off
   # or proposed, nothing kept is proposed, and Codex proposes only the demoted.

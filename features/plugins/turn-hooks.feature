@@ -3,6 +3,7 @@
 #   apps/server-ex/lib/hal_c2/plugins/feed.ex (a running extension's feed of turns, dropped events counted)
 #   apps/server-ex/lib/hal_c2/plugins.ex (observe/1, shape_run/1: asked as a new conversation starts)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (turn.started, turn.item, turn.finished)
+#   apps/server-ex/lib/hal_c2/orchestration/native_subagent.ex (a subagent the provider started, as a turn.item)
 #   apps/server-ex/lib/hal_c2/orchestration/run_shape.ex (a conversation's shape, kept on its provider thread)
 #   apps/server-ex/lib/hal_c2/plugins/host.ex (Host.steer, Host.notice, Host.generate, Host.history)
 #   apps/server-ex/lib/hal_c2/text_generation.ex (for_plugin/2: the text model, with what it used)
@@ -29,6 +30,12 @@ Feature: Plugins that watch and shape turns
     Then the plugin hears the turn start as a new conversation
     And it hears the tool call by Claude's own name for the tool, with what it returned
     And it hears the turn end last
+
+  @mc
+  Scenario: A plugin hears a subagent the agent starts, in the turn that starts it
+    Given a plugin that hears turns
+    When a Codex thread runs a turn that starts a subagent
+    Then the plugin hears the subagent start in that turn, before it ends
 
   @mc
   Scenario: A plugin without turns:observe hears nothing of a turn

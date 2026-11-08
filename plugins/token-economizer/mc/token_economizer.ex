@@ -188,7 +188,8 @@ defmodule HalC2Plugins.TokenEconomizer do
        # thread id => %{project, loaded, used, prompts, active}, the conversation
        # tool pruning is hearing (a segment folds when it ends or goes idle)
        convs: %{},
-       # thread id => the loaded set its next conversation was shaped with
+       # {thread id, project} => the loaded set the thread's conversation on the
+       # project's provider was shaped with
        shaped: %{},
        # thread ids whose earlier turns were read back this run
        seeded: MapSet.new(),
@@ -306,7 +307,7 @@ defmodule HalC2Plugins.TokenEconomizer do
       state = put_prune(state, project, prune, applied != [])
       denied = Prune.denied(prune, cfg)
       loaded = Prune.candidate_tools(unit) -- denied
-      state = put_in(state.shaped[run["threadId"]], loaded)
+      state = put_in(state.shaped[{run["threadId"], project}], loaded)
       state = if applied != [], do: publish_prune(state), else: state
       {if(denied == [], do: nil, else: %{"deniedTools" => denied}), state}
     else
@@ -318,7 +319,12 @@ defmodule HalC2Plugins.TokenEconomizer do
     cfg = prune_cfg(state)
     tools = if is_list(input["tools"]), do: Enum.filter(input["tools"], &is_binary/1)
 
+    named? = is_binary(input["projectId"])
+
     case prune_targets(state, input) do
+      _ when action != :state and not named? ->
+        {{:error, "Name the project to apply or restore tools for."}, state}
+
       {:ok, [], state} when action != :state ->
         {{:error, "TokenEconomizer has no tool evidence for that project and provider."}, state}
 
@@ -327,22 +333,23 @@ defmodule HalC2Plugins.TokenEconomizer do
           Enum.map_reduce(targets, state, fn project, acc ->
             prune = acc.prunes[project]
 
-            {prune, changed, extra} =
+            {next, extra} =
               case action do
                 :state ->
-                  {prune, [], %{}}
+                  {prune, %{}}
 
                 :apply ->
                   {next, applied, refused} = Prune.apply_named(prune, cfg, tools)
-                  {next, applied, %{"applied" => applied, "refused" => refused}}
+                  {next, %{"applied" => applied, "refused" => refused}}
 
                 :restore ->
                   {next, restored} = Prune.restore(prune, tools)
-                  {next, restored, %{"restored" => restored}}
+                  {next, %{"restored" => restored}}
               end
 
-            acc = put_prune(acc, project, prune, changed != [])
-            {project_summary(project, prune, cfg, extra), acc}
+            # Saved whenever it changed: refusing a proposed tool restores nothing.
+            acc = put_prune(acc, project, next, next != prune)
+            {project_summary(project, next, cfg, extra), acc}
           end)
 
         state = if action == :state, do: state, else: publish_prune(state)
@@ -357,7 +364,8 @@ defmodule HalC2Plugins.TokenEconomizer do
   end
 
   # The projects a `toolPrune` call names, loading a named one's file if need be.
-  # Without a project the state call lists all held; apply and restore need one.
+  # Without a project the state call lists all held; apply and restore need one
+  # (`prune_call/3`).
   defp prune_targets(state, %{"projectId" => project_id, "provider" => provider})
        when is_binary(project_id) and is_binary(provider) do
     case Prune.unit_for_provider(provider) do
@@ -378,7 +386,10 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   # The turns as tool pruning hears them, whatever the loop guard's mode: a new
   # conversation closes the thread's last one, a turn's items say what it used, and
-  # a finished turn leaves the project idle for the quiet timer to fold.
+  # a finished turn leaves the project idle for the quiet timer to fold. A thread's
+  # segment is its provider's: a turn on another provider (a handoff, or one back to a
+  # conversation it resumes) closes it and opens that provider's, with the tools its
+  # conversation was shaped with.
   defp hear_prune(
          state,
          %{"type" => "turn.started", "threadId" => thread_id} = event
@@ -392,34 +403,30 @@ defmodule HalC2Plugins.TokenEconomizer do
       state = seed_history(state, thread_id, project, unit)
       {prune, state} = prune(state, project, unit)
       state = touch(state, project, prune)
+      new? = event["newConversation"] == true
 
-      if event["newConversation"] do
-        state = close_conv(state, thread_id)
-        loaded = state.shaped[thread_id] || default_loaded(state, project, unit)
+      case state.convs[thread_id] do
+        %{project: ^project} = conv when not new? ->
+          put_in(state.convs[thread_id], %{conv | prompts: conv.prompts + 1, active: true})
 
-        put_in(state.convs[thread_id], %{
-          project: project,
-          loaded: loaded,
-          used: [],
-          prompts: 1,
-          active: true,
-          partial: false
-        })
-      else
-        case state.convs[thread_id] do
-          nil ->
-            put_in(state.convs[thread_id], %{
-              project: project,
-              loaded: default_loaded(state, project, unit),
-              used: [],
-              prompts: 1,
-              active: true,
-              partial: false
-            })
+        _ ->
+          state = close_conv(state, thread_id)
 
-          conv ->
-            put_in(state.convs[thread_id], %{conv | prompts: conv.prompts + 1, active: true})
-        end
+          state =
+            if new?,
+              do: update_in(state.prunes[project], &Prune.new_conversation(&1, thread_id)),
+              else: state
+
+          put_in(state.convs[thread_id], %{
+            thread: thread_id,
+            project: project,
+            loaded: state.shaped[{thread_id, project}] || default_loaded(state, project, unit),
+            used: [],
+            prompts: 1,
+            active: true,
+            partial: false,
+            last_run: nil
+          })
       end
     end
   end
@@ -453,15 +460,16 @@ defmodule HalC2Plugins.TokenEconomizer do
         state
 
       conv ->
-        state = put_in(state.convs[thread_id].active, false)
+        state =
+          put_in(state.convs[thread_id], %{
+            conv
+            | active: false,
+              last_run: event["runId"] || conv.last_run
+          })
+
         unit = Prune.unit_for_provider(elem(conv.project, 1))
         {prune, state} = prune(state, conv.project, unit)
-        prune = Prune.note_thread(prune, thread_id, event["runId"])
-        state = put_in(state.prunes[conv.project], prune)
-
-        state =
-          state |> touch(conv.project, state.prunes[conv.project]) |> save_prune(conv.project)
-
+        state = state |> touch(conv.project, prune) |> save_prune(conv.project)
         schedule_tick(state, conv.project)
     end
   end
@@ -488,10 +496,15 @@ defmodule HalC2Plugins.TokenEconomizer do
     # uses are still noted, its silences grow no streak.
     prompts = if Map.get(conv, :partial, false), do: 0, else: conv.prompts
 
+    # Saved with the evidence, the thread's watermark moves to the segment's last run
+    # (`seed_history/4`), so a restart before a segment folds reads its runs back.
     prune =
-      Prune.fold_segment(prune, conv.loaded, conv.used, prompts, prune_cfg(state), now_s(),
-        imported: imported
+      prune
+      |> Prune.fold_segment(conv.loaded, conv.used, prompts, prune_cfg(state), now_s(),
+        imported: imported,
+        thread: conv.thread
       )
+      |> Prune.note_thread(conv.thread, Map.get(conv, :last_run))
 
     state
     |> put_prune(conv.project, prune, true)
@@ -569,8 +582,8 @@ defmodule HalC2Plugins.TokenEconomizer do
   # the plugin and folded as one imported session: what they used for good, and
   # their prompts as evidence `auto` alone does not act on. Read once per thread and
   # provider, and only the runs after the last already folded for the thread
-  # (`Prune.note_thread/3`'s watermark, advanced by every live turn's end), so a
-  # restart never folds a turn twice. Only the provider's own runs count: a thread's
+  # (`Prune.note_thread/3`'s watermark, advanced as each live segment folds), so a
+  # restart never folds a turn twice nor loses one heard but not yet folded. Only the provider's own runs count: a thread's
   # runs on another are that provider's evidence.
   defp seed_history(state, thread_id, {_, provider} = project, unit) do
     if MapSet.member?(state.seeded, {thread_id, project}) do
@@ -599,6 +612,7 @@ defmodule HalC2Plugins.TokenEconomizer do
         fold_conv(
           state,
           %{
+            thread: thread_id,
             project: project,
             loaded: Prune.candidate_tools(unit),
             used: used,

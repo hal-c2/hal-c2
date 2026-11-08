@@ -380,6 +380,68 @@ defmodule HalC2.TokenEconomizerToolPruneTest do
     assert {"c", []} = Prune.unseen_runs(Enum.take(runs, 3), "b", claude?)
   end
 
+  test "a conversation counts as one session however many idle segments it folds" do
+    cfg =
+      Prune.config(%{
+        "toolPruneEvidence" => 1,
+        "toolPruneMinSessions" => 2,
+        "toolPruneSessions" => 2
+      })
+
+    loaded = Prune.candidate_tools("tool")
+    fold = &Prune.fold_segment(&1, loaded, [], 1, cfg, 0, thread: "a")
+
+    state = "tool" |> Prune.new() |> fold.() |> fold.() |> fold.()
+    assert %{"sessions" => 1, "prompts" => 3} = state
+    assert state["streaks"]["Workflow"] == %{"sessions" => 1, "prompts" => 3}
+    assert Prune.proposal(state, cfg) == []
+
+    # Its next conversation counts again, and the counting survives a restart.
+    state = state |> Prune.new_conversation("a") |> fold.()
+    assert state["sessions"] == 2
+    assert "Workflow" in Prune.proposal(state, cfg)
+    assert Prune.new("tool", JSON.decode!(JSON.encode!(state)))["countedThreads"] == ["a"]
+  end
+
+  test "auto drops what it held once the person raises the thresholds past it" do
+    low =
+      Prune.config(%{
+        "toolPruneEvidence" => 1,
+        "toolPruneMinSessions" => 1,
+        "toolPruneSessions" => 1,
+        "toolPruneQuietMinutes" => 0
+      })
+
+    high =
+      Prune.config(%{
+        "toolPruneEvidence" => 50,
+        "toolPruneSessions" => 50,
+        "toolPruneQuietMinutes" => 0
+      })
+
+    state =
+      Prune.fold_segment(
+        Prune.new("capability"),
+        Prune.candidate_tools("capability"),
+        [],
+        1,
+        low,
+        0
+      )
+
+    assert %{"items" => [_ | _]} = state["pending"]
+    assert "collaboration" in state["demoted"]
+
+    assert {%{"pending" => nil, "off" => []}, []} = Prune.apply_pending(state, high, 10)
+  end
+
+  test "a Codex subagent the MC recorded is a use of collaboration" do
+    assert Prune.used_in_item(%{"itemType" => "subagent", "status" => "running"}, "capability") ==
+             ["collaboration"]
+
+    assert Prune.used_in_item(%{"itemType" => "subagent"}, "tool") == []
+  end
+
   test "restore refuses a proposed tool before it ever applies" do
     auto = cfg(%{"toolPrune" => "auto", "toolPruneQuietMinutes" => 0})
     state = Prune.new("tool") |> sessions([1, 1, 1, 1, 1], [], auto)

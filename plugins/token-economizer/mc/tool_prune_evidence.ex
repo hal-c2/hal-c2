@@ -80,11 +80,13 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
   @pending_max_s 24 * 3600
 
   # The capability a Codex item exercises, by its tool name (upstream's
-  # `_ITEM_TYPES_BY_CAPABILITY`, for the live packages).
+  # `_ITEM_TYPES_BY_CAPABILITY`, for the live packages), or by its kind: the MC
+  # records a subagent Codex spawned as a `subagent` item.
   @capability_of Map.merge(
                    Map.new(
                      ~w(spawn_agent send_input send_message followup_task resume_agent
-                        wait_agent close_agent interrupt_agent list_agents collab_tool_call),
+                        wait_agent close_agent interrupt_agent list_agents collab_tool_call
+                        subagent),
                      &{&1, "collaboration"}
                    ),
                    Map.merge(
@@ -170,6 +172,7 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
       "liveStreaks" => streaks(saved["liveStreaks"]),
       "loadedSessions" => counts(saved["loadedSessions"]),
       "seededThreads" => seeded_threads(saved["seededThreads"]),
+      "countedThreads" => strings(saved["countedThreads"]),
       "sessions" => count(saved["sessions"]),
       "prompts" => count(saved["prompts"]),
       "importedSessions" => count(saved["importedSessions"]),
@@ -210,16 +213,27 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
   later resume — into the evidence: what it had `loaded`, what it `used`, and the
   `prompts` (turns) it ran. A segment that ran no prompt is no evidence, and one
   folded from a thread's earlier turns (`imported: true`) does not grow the live
-  streaks `auto` needs. `now` is unix seconds. Returns the new state.
+  streaks `auto` needs. A segment of `thread: id`'s conversation counts as a session
+  only if none of that conversation's did before (`new_conversation/2` starts the
+  next one), however many it folds in: its prompts count either way. `now` is unix
+  seconds. Returns the new state.
   """
   def fold_segment(state, loaded, used, prompts, cfg, now, opts \\ []) do
     imported = Keyword.get(opts, :imported, false)
+    thread = Keyword.get(opts, :thread)
+    session = prompts > 0 and thread not in state["countedThreads"]
     used = MapSet.new(used)
 
     state =
       state
       |> put_in(["used"], Enum.uniq(state["used"] ++ MapSet.to_list(used)))
       |> heal(cfg)
+      |> then(
+        &if(session and thread,
+          do: update_in(&1["countedThreads"], fn t -> [thread | t] end),
+          else: &1
+        )
+      )
 
     cond do
       prompts <= 0 ->
@@ -231,12 +245,15 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
         end)
 
       loaded == [] ->
-        count_session(state, prompts, imported)
+        count_session(state, prompts, imported, session)
 
       true ->
         state =
           Enum.reduce(loaded, state, fn tool, acc ->
-            acc = update_in(acc["loadedSessions"][tool], &((&1 || 0) + 1))
+            acc =
+              if session,
+                do: update_in(acc["loadedSessions"][tool], &((&1 || 0) + 1)),
+                else: acc
 
             if MapSet.member?(used, tool) do
               acc
@@ -244,33 +261,37 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
               |> reset("liveStreaks", tool)
             else
               acc
-              |> grow("streaks", tool, prompts)
-              |> then(&if(imported, do: &1, else: grow(&1, "liveStreaks", tool, prompts)))
+              |> grow("streaks", tool, prompts, session)
+              |> then(
+                &if(imported, do: &1, else: grow(&1, "liveStreaks", tool, prompts, session))
+              )
             end
           end)
 
         state
-        |> count_session(prompts, imported)
+        |> count_session(prompts, imported, session)
         |> demote(cfg)
         |> hold(cfg, now)
     end
   end
 
-  defp count_session(state, prompts, imported) do
+  defp count_session(state, prompts, imported, session) do
+    sessions = if session, do: 1, else: 0
+
     state
-    |> update_in(["sessions"], &(&1 + 1))
+    |> update_in(["sessions"], &(&1 + sessions))
     |> update_in(["prompts"], &(&1 + prompts))
-    |> then(&if(imported, do: update_in(&1["importedSessions"], fn n -> n + 1 end), else: &1))
+    |> update_in(["importedSessions"], &(&1 + if(imported, do: sessions, else: 0)))
   end
 
   defp reset(state, key, tool),
     do: put_in(state[key][tool], %{"sessions" => 0, "prompts" => 0})
 
-  defp grow(state, key, tool, prompts) do
+  defp grow(state, key, tool, prompts, session) do
     streak = state[key][tool] || %{"sessions" => 0, "prompts" => 0}
 
     put_in(state[key][tool], %{
-      "sessions" => streak["sessions"] + 1,
+      "sessions" => streak["sessions"] + if(session, do: 1, else: 0),
       "prompts" => streak["prompts"] + prompts
     })
   end
@@ -372,17 +393,14 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
   formed regardless: applying only shapes the next conversation, so a turn that
   runs on (or whose end was never heard) cannot stall it for good. `{state,
   applied}`; nothing is applied, and the wait goes on, until then. A list whose
-  tools were used, protected or given back meanwhile applies only what is left
+  tools were used, protected or given back meanwhile, or that the evidence no
+  longer proposes (the person raised the thresholds), applies only what is left
   of it, and is dropped when nothing is.
   """
   def apply_pending(state, cfg, now, active \\ false) do
     case {cfg["mode"], state["pending"]} do
       {"auto", %{"items" => items, "since" => since}} ->
-        items =
-          Enum.filter(items, fn tool ->
-            (tool in proposal(state, cfg) or tool in state["demoted"]) and
-              proposable?(state, cfg, tool)
-          end)
+        items = Enum.filter(items, &(&1 in proposal(state, cfg)))
 
         idle = now - state["lastActivity"]
         waited = now - since
@@ -482,6 +500,10 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
     |> heal(cfg)
     |> drop_pending(used)
   end
+
+  @doc "Starts `thread_id`'s next conversation, whose first segment counts as a session."
+  def new_conversation(state, thread_id),
+    do: update_in(state["countedThreads"], &List.delete(&1, thread_id))
 
   defp seeded_threads(map) when is_map(map) do
     Map.new(map, fn {thread, run} -> {thread, if(is_binary(run), do: run)} end)

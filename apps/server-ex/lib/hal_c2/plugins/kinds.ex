@@ -345,7 +345,8 @@ defmodule HalC2.Plugins.Extension do
     * `observe(event, context)`: with `turns:observe`, what agents do in every
       thread, as it happens (`HalC2.Plugins.observe/1`): `turn.started` (`"threadId",
       "runId", "projectId", "instanceId", "provider", "model", "newConversation"`),
-      `turn.item` (a tool call or message that ended: `"threadId", "runId", "itemId",
+      `turn.item` (a tool call or message that ended, or a subagent the provider
+      started, as it starts, with `"itemType"` `subagent`: `"threadId", "runId", "itemId",
       "itemType", "tool"`, the provider's own name for the tool where it has one, `"title",
       "status", "input", "output"`, cut to 4,000 characters, `"exitCode"` and, for a
       file change, the file's `"path"`) and

@@ -17,6 +17,7 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
   use ExUnit.Case, async: true
 
   alias HalC2Plugins.TokenEconomizer
+  alias HalC2Plugins.TokenEconomizer.ToolPrune.Evidence, as: Prune
   alias HalC2Plugins.TokenEconomizer.LoopGuard.{Envelope, Judge, Rules, ShellEdits, State, Turn}
 
   # Printed by Playwright on Windows as it exits, after a passing run as after a failing one.
@@ -454,6 +455,71 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       state = observe(state, started("d"))
       refute state.turns["d"].partial
       assert %{partial: false, active: true} = state.convs["d"]
+    end
+  end
+
+  describe "tool pruning's conversations" do
+    # A project of its own: what earlier runs of the test saved is never read back.
+    defp project, do: "p#{System.unique_integer([:positive])}"
+
+    defp finished(thread, run),
+      do: %{
+        "type" => "turn.finished",
+        "threadId" => thread,
+        "runId" => run,
+        "status" => "completed"
+      }
+
+    test "a handoff back to a conversation it resumes is the provider's own, with the tools it was shaped with" do
+      p = project()
+      claude = {p, "claudeAgent"}
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = put_in(state.shaped[{"a", claude}], ["Workflow"])
+      state = observe(state, started("a", %{"projectId" => p, "newConversation" => true}))
+      codex = %{"projectId" => p, "provider" => "codex", "newConversation" => true}
+      state = observe(state, started("a", codex))
+      assert %{project: {^p, "codex"}} = state.convs["a"]
+
+      # Claude resumes its conversation: its segment, not Codex's.
+      state = observe(state, started("a", %{"projectId" => p}))
+      assert %{project: ^claude, loaded: ["Workflow"], prompts: 1} = state.convs["a"]
+      assert state.prunes[claude]["sessions"] == 1
+    end
+
+    test "a thread's watermark moves when its segment folds, not when its turn ends" do
+      p = project()
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = observe(state, started("a", %{"projectId" => p, "newConversation" => true}))
+      state = observe(state, finished("a", "r1"))
+      assert Prune.seeded_run(state.prunes[{p, "claudeAgent"}], "a") == nil
+
+      state = observe(state, started("a", %{"projectId" => p, "newConversation" => true}))
+      assert Prune.seeded_run(state.prunes[{p, "claudeAgent"}], "a") == "r1"
+    end
+
+    test "apply and restore need a project, and refusing a proposed tool is saved" do
+      p = project()
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = observe(state, started("a", %{"projectId" => p}))
+
+      for action <- [:apply, :restore] do
+        assert {:reply, {:error, _}, _} =
+                 TokenEconomizer.handle_call(
+                   {:toolprune, action, %{"tools" => ["Workflow"]}},
+                   nil,
+                   state
+                 )
+      end
+
+      input = %{"projectId" => p, "provider" => "claudeAgent", "tools" => ["Workflow"]}
+
+      assert {:reply, {:ok, %{"projects" => [%{"restored" => []}]}}, _} =
+               TokenEconomizer.handle_call({:toolprune, :restore, input}, nil, state)
+
+      saved =
+        {p, "claudeAgent"} |> TokenEconomizer.toolprune_path() |> File.read!() |> JSON.decode!()
+
+      assert saved["kept"] == ["Workflow"]
     end
   end
 

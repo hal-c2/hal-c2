@@ -11,7 +11,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
   """
 
   alias HalC2.{Orchestration, StreamState}
-  alias HalC2.Orchestration.Entities
+  alias HalC2.Orchestration.{Entities, TurnWriter}
 
   @terminal ~w(completed failed interrupted cancelled)
 
@@ -88,8 +88,9 @@ defmodule HalC2.Orchestration.NativeSubagent do
            })
          ),
          Orchestration.create("turn-item", item_id, item)
-       ], :ok}
+       ], item}
     end)
+    |> observe_started(ids)
 
     child =
       Entities.thread(
@@ -150,6 +151,17 @@ defmodule HalC2.Orchestration.NativeSubagent do
     end)
 
     sub
+  end
+
+  # Plugins that hear turns hear the agent start the subagent, a call of its turn's
+  # that the turn writer never sees (`HalC2.Plugins.observe/1`).
+  defp observe_started(item, ids) do
+    if HalC2.Plugins.observing?() do
+      item
+      |> TurnWriter.observed_item()
+      |> Map.merge(%{"type" => "turn.item", "threadId" => ids.thread, "runId" => ids.run})
+      |> HalC2.Plugins.observe()
+    end
   end
 
   @doc """
