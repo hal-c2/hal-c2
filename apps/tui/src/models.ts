@@ -30,6 +30,8 @@ export interface ModelOption {
   readonly capabilities: ModelCapabilities | null;
   /** The provider cannot change models once a conversation has started. */
   readonly requiresNewThreadForModelChange?: boolean;
+  /** An older model the picker keeps behind its provider's "Show more" row. */
+  readonly isLegacy?: boolean;
 }
 
 export function flattenModelOptions(providers: ReadonlyArray<ServerProvider>): ModelOption[] {
@@ -48,6 +50,7 @@ export function flattenModelOptions(providers: ReadonlyArray<ServerProvider>): M
         ...(provider.requiresNewThreadForModelChange === true
           ? { requiresNewThreadForModelChange: true }
           : {}),
+        ...(model.isLegacy === true ? { isLegacy: true } : {}),
       });
     }
   }
@@ -137,6 +140,31 @@ export function resolveModelSelection(
   );
 }
 
+/**
+ * A draft's pick is what the thread already runs: the same account and model
+ * with the same options once both are resolved, Fast off counting as unset
+ * (the desktop's pickMatchesThread). The pick has then been taken.
+ */
+export function pickMatchesThread(
+  options: ReadonlyArray<ModelOption>,
+  pick: ModelSelection,
+  threadSelection: ModelSelection | null | undefined,
+): boolean {
+  const picked = resolveModelSelection(options, pick);
+  const running = resolveModelSelection(options, threadSelection);
+  if (!picked || !running) return false;
+  if (picked.instanceId !== running.instanceId || picked.model !== running.model) return false;
+  const values = (selection: ModelSelection) =>
+    new Map(
+      (selection.options ?? [])
+        .filter((option) => !(option.id === "fastMode" && option.value === false))
+        .map((option) => [option.id, option.value]),
+    );
+  const left = values(picked);
+  const right = values(running);
+  return left.size === right.size && [...left].every(([id, value]) => right.get(id) === value);
+}
+
 /** Create a complete selection for a newly chosen model, using its defaults. */
 export function modelSelectionForOption(option: ModelOption): ModelSelection {
   const descriptors = option.capabilities
@@ -179,16 +207,46 @@ export function reasoningChoicesForSelection(
   return reasoningChoicesFromDescriptors(descriptors);
 }
 
-/** Index of the option matching the current selection, or 0 when none matches. */
-export function currentModelIndex(
+/** One row of the model picker: a model, or a provider's "Show more" / "Show less" row. */
+export type ModelPickerRow =
+  | { readonly kind: "model"; readonly option: ModelOption }
+  | {
+      readonly kind: "legacy";
+      readonly instanceId: string;
+      readonly providerLabel: string;
+      readonly shown: boolean;
+      readonly count: number;
+    };
+
+/**
+ * The model picker's rows (upstream #28076): each provider's current models,
+ * then a "Show more" row that lists its older ones in place, which then reads
+ * "Show less". `shown` names the providers whose older models are listed.
+ */
+export function modelPickerRows(
   options: ReadonlyArray<ModelOption>,
-  selection: { readonly instanceId: string; readonly model: string } | null | undefined,
-): number {
-  if (!selection) return 0;
-  const index = options.findIndex(
-    (option) => option.instanceId === selection.instanceId && option.model === selection.model,
-  );
-  return index >= 0 ? index : 0;
+  shown: ReadonlySet<string>,
+): ModelPickerRow[] {
+  const rows: ModelPickerRow[] = [];
+  const instances = [...new Set(options.map((option) => option.instanceId))];
+  for (const instanceId of instances) {
+    const models = options.filter((option) => option.instanceId === instanceId);
+    const legacy = models.filter((option) => option.isLegacy === true);
+    for (const option of models) {
+      if (option.isLegacy !== true) rows.push({ kind: "model", option });
+    }
+    if (legacy.length === 0) continue;
+    const open = shown.has(instanceId);
+    if (open) for (const option of legacy) rows.push({ kind: "model", option });
+    rows.push({
+      kind: "legacy",
+      instanceId,
+      providerLabel: legacy[0]!.providerLabel,
+      shown: open,
+      count: legacy.length,
+    });
+  }
+  return rows;
 }
 
 /** One provider option of the selected model with its current value (desktop `ShellComposerOption`). */

@@ -239,7 +239,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then it is no longer listed among the favourites
 
   # Upstream #14961: the model picker offers every saved custom model, not just the first 32
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: Every saved custom model is offered
     Given the user has saved 40 custom models for Codex
     When the user opens the model picker
@@ -253,7 +253,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the next turn moves the thread to Claude before it runs on "claude-opus"
 
   # Upstream #20886: a model picked earlier in a draft kept overriding a change made elsewhere.
-  @shared @mobile @backlog-mobile @backlog-tui
+  @shared @mobile @backlog-mobile
   Scenario: A draft follows a model change made on another client
     Given the user picked "gpt-5" in the draft of a thread on this client
     And then changed the thread to "claude-opus" on another client
@@ -722,7 +722,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #28076: "Legacy models" became a "Show more" row at the end of the list. Replaces
   # "A provider's older models are folded away until asked for".
-  @shared @backlog-mobile @backlog-tui @priority-low
+  @shared @backlog-mobile @priority-low
   Scenario: A provider's older models are shown in place from the end of the list
     Given Codex lists two current models and three it calls legacy
     When the user chooses "Show more" at the end of Codex's models

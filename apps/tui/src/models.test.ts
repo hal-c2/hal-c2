@@ -2,11 +2,12 @@ import { describe, expect, it } from "bun:test";
 
 import { ProviderInstanceId, type ServerProvider } from "@hal-c2/contracts";
 import {
-  currentModelIndex,
   defaultModelSlug,
   fallbackModelSlug,
   flattenModelOptions,
+  modelPickerRows,
   modelSelectionForOption,
+  pickMatchesThread,
   promptEffort,
   providerReady,
   reasoningChoicesFor,
@@ -73,22 +74,6 @@ describe("flattenModelOptions", () => {
     expect(
       flattenModelOptions([enabled, disabled, unavailable] as never).map((item) => item.model),
     ).toEqual(["gpt-5"]);
-  });
-});
-
-describe("currentModelIndex", () => {
-  const options = flattenModelOptions([
-    provider("codex", "Codex", [{ slug: "gpt-5", name: "GPT-5" }]),
-    provider("claude", "Claude", [{ slug: "opus", name: "Opus" }]),
-  ]);
-
-  it("finds the index of the matching selection", () => {
-    expect(currentModelIndex(options, { instanceId: "claude", model: "opus" })).toBe(1);
-  });
-
-  it("falls back to 0 when nothing matches or no selection", () => {
-    expect(currentModelIndex(options, { instanceId: "x", model: "y" })).toBe(0);
-    expect(currentModelIndex(options, null)).toBe(0);
   });
 });
 
@@ -277,6 +262,84 @@ describe("steppedEffort", () => {
     expect(read("Ultrathink: design the cache")).toEqual({ value: "ultrathink", locked: false });
     expect(read("design the cache")).toBeNull();
     expect(ultrathinkInWords("Ultrathink: ultrathinking")).toBe(false);
+  });
+});
+
+describe("pickMatchesThread", () => {
+  const options = flattenModelOptions([
+    {
+      instanceId: "codex",
+      driver: "codex",
+      models: [
+        {
+          slug: "gpt-5",
+          name: "GPT-5",
+          isCustom: false,
+          capabilities: {
+            optionDescriptors: [
+              {
+                type: "select",
+                id: "reasoningEffort",
+                label: "Reasoning",
+                options: [
+                  { id: "low", label: "Low", isDefault: true },
+                  { id: "high", label: "High" },
+                ],
+              },
+              { type: "boolean", id: "fastMode", label: "Fast mode" },
+            ],
+          },
+        },
+        { slug: "gpt-5-codex", name: "GPT-5 Codex", isCustom: false, capabilities: null },
+      ],
+    },
+  ] as never);
+  const codex = ProviderInstanceId.make("codex");
+
+  it("counts a pick as taken once the thread runs it, defaults and Fast off included", () => {
+    const pick = { instanceId: codex, model: "gpt-5", options: [{ id: "fastMode", value: false }] };
+    expect(pickMatchesThread(options, pick, { instanceId: codex, model: "gpt-5" })).toBe(true);
+  });
+
+  it("keeps a pick the thread does not run yet", () => {
+    const pick = {
+      instanceId: codex,
+      model: "gpt-5",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    };
+    expect(pickMatchesThread(options, pick, { instanceId: codex, model: "gpt-5" })).toBe(false);
+    expect(pickMatchesThread(options, pick, { instanceId: codex, model: "gpt-5-codex" })).toBe(
+      false,
+    );
+    expect(pickMatchesThread(options, pick, null)).toBe(false);
+  });
+});
+
+describe("modelPickerRows", () => {
+  const options = flattenModelOptions([
+    {
+      instanceId: "codex",
+      driver: "codex",
+      displayName: "Codex",
+      models: [
+        { slug: "gpt-6", name: "GPT-6", isCustom: false, capabilities: null },
+        { slug: "o3", name: "o3", isCustom: false, isLegacy: true, capabilities: null },
+        { slug: "gpt-4o", name: "GPT-4o", isCustom: false, isLegacy: true, capabilities: null },
+      ],
+    },
+    provider("claude", "Claude", [{ slug: "opus", name: "Opus" }]),
+  ] as never);
+  const names = (shown: ReadonlySet<string>) =>
+    modelPickerRows(options, shown).map((row) =>
+      row.kind === "model" ? row.option.model : `${row.shown ? "less" : "more"}:${row.count}`,
+    );
+
+  it("folds a provider's older models behind a row at the end of its models", () => {
+    expect(names(new Set())).toEqual(["gpt-6", "more:2", "opus"]);
+  });
+
+  it("lists them in place once shown, and the row then shows less", () => {
+    expect(names(new Set(["codex"]))).toEqual(["gpt-6", "o3", "gpt-4o", "less:2", "opus"]);
   });
 });
 
