@@ -207,10 +207,10 @@ defmodule HalC2.Steps.Platform.OpenShell do
 
   step "the gateway sends no telemetry", context do
     unit = File.read!(Service.unit_path(:systemd))
-    assert unit =~ "OPENSHELL_TELEMETRY_ENABLED=false"
-    assert unit =~ "UnsetEnvironment=#{Enum.join(Config.unset_environment(), " ")}"
-    assert "OTEL_EXPORTER_OTLP_ENDPOINT" in Config.unset_environment()
-    assert "OPENSHELL_OTLP_OCSF_ENDPOINT" in Config.unset_environment()
+    # It starts from an empty environment, so no OTLP or OCSF endpoint reaches it.
+    [exec] = for "ExecStart=" <> argv <- String.split(unit, "\n"), do: argv
+    assert exec =~ ~r{\A/usr/bin/env -i }
+    assert exec =~ " OPENSHELL_TELEMETRY_ENABLED=false "
     context
   end
 

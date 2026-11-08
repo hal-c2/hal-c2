@@ -17,6 +17,7 @@ defmodule HalC2.OpenShell.Config do
       and no host bind mounts.
     * A sandbox PID ceiling of #{512}, below OpenShell's 2048.
     * Telemetry off, and no OTLP or OCSF export.
+    * Nothing from the environment it was started from (`command/2`).
   """
 
   alias HalC2.OpenShell
@@ -24,32 +25,12 @@ defmodule HalC2.OpenShell.Config do
 
   @pids_limit 512
 
-  # Every variable that would send the gateway's telemetry, traces or audit
-  # events somewhere, or loosen what the configuration fixes.
-  @unset ~w(
-    OPENSHELL_TELEMETRY_ENDPOINT
-    OPENSHELL_OTLP_ENDPOINT OPENSHELL_OTLP_PROTOCOL OPENSHELL_OTLP_CA_FILE
-    OPENSHELL_OTLP_CERT_FILE OPENSHELL_OTLP_KEY_FILE OPENSHELL_OTLP_AGENT_ENDPOINT
-    OPENSHELL_OTLP_AGENT_PROTOCOL OPENSHELL_OTLP_OCSF_ENDPOINT OPENSHELL_OTLP_OCSF_PROTOCOL
-    OPENSHELL_OTLP_OCSF_SCHEMA_VERSION OPENSHELL_OCSF_JSON OPENSHELL_OCSF_LOG_DIR
-    OTEL_EXPORTER_OTLP_ENDPOINT OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
-    OTEL_EXPORTER_OTLP_METRICS_ENDPOINT OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
-    OTEL_EXPORTER_OTLP_HEADERS OTEL_EXPORTER_OTLP_PROTOCOL OTEL_EXPORTER_OTLP_CERTIFICATE
-    OTEL_TRACES_EXPORTER OTEL_METRICS_EXPORTER OTEL_LOGS_EXPORTER
-    OPENSHELL_GATEWAY_CONFIG OPENSHELL_DB_URL OPENSHELL_COMPUTE_DRIVER
-    OPENSHELL_TLS_CERT OPENSHELL_TLS_KEY OPENSHELL_TLS_CLIENT_CA
-    OPENSHELL_OIDC_ISSUER OPENSHELL_OIDC_AUDIENCE OPENSHELL_LOCAL_TLS_DIR
-  )
-
   def pids_limit, do: @pids_limit
 
-  @doc "Variables the gateway must not inherit."
-  def unset_environment, do: @unset
-
   @doc """
-  The gateway's environment as `{name, value}`: telemetry and the auth escape
-  hatches pinned off, and XDG directories of its own, so it shares nothing with
-  an OpenShell the user runs themselves.
+  The gateway's whole environment as `{name, value}`: telemetry and the auth escape
+  hatches pinned off, and a home and XDG directories of its own, so it shares
+  nothing with an OpenShell the user runs themselves.
   """
   def environment do
     home = Path.join(OpenShell.root(), "home")
@@ -58,11 +39,24 @@ defmodule HalC2.OpenShell.Config do
       {"OPENSHELL_TELEMETRY_ENABLED", "false"},
       {"OPENSHELL_DISABLE_TLS", "false"},
       {"OPENSHELL_ENABLE_OPERATOR_AUTH", "false"},
+      {"HOME", home},
+      {"PATH", "/usr/bin:/bin"},
       {"XDG_CONFIG_HOME", Path.join(home, "config")},
       {"XDG_DATA_HOME", Path.join(home, "data")},
       {"XDG_STATE_HOME", Path.join(home, "state")},
       {"XDG_CACHE_HOME", Path.join(home, "cache")}
     ]
+  end
+
+  @doc """
+  The argv that runs the gateway binary `bin` with `args` in `environment/0` and
+  nothing else. OpenShell lets any `OPENSHELL_*` variable override `gateway.toml`
+  (the socket, the bind address, the images, the auth modes) and its drivers read
+  `DOCKER_HOST` and `CONTAINER_HOST`, so the gateway inherits nothing from the shell,
+  the systemd user manager or launchd.
+  """
+  def command(bin, args \\ args()) do
+    ["/usr/bin/env", "-i"] ++ for({k, v} <- environment(), do: "#{k}=#{v}") ++ [bin | args]
   end
 
   @doc "The gateway's arguments, after the binary."

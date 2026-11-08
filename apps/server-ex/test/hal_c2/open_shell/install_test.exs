@@ -316,13 +316,16 @@ defmodule HalC2.OpenShell.InstallTest do
         System.cmd("sh", ["-c", line],
           env: [
             {"OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector"},
-            {"OPENSHELL_DISABLE_TLS", "true"}
+            {"OPENSHELL_DISABLE_TLS", "true"},
+            {"OPENSHELL_PODMAN_SOCKET", "/run/elsewhere.sock"},
+            {"DOCKER_HOST", "unix:///run/elsewhere.sock"}
           ]
         )
 
       assert out =~ "OPENSHELL_TELEMETRY_ENABLED=false"
       assert out =~ "OPENSHELL_DISABLE_TLS=false"
       refute out =~ "OTEL_EXPORTER_OTLP_ENDPOINT"
+      refute out =~ "elsewhere"
       assert out =~ "args: --config #{OpenShell.config_path()} --db-url sqlite:"
     end
 

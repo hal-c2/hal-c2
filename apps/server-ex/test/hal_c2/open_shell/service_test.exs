@@ -51,14 +51,15 @@ defmodule HalC2.OpenShell.ServiceTest do
       assert "Wants=podman.socket" in lines
       assert "UMask=0077" in lines
       assert "NoNewPrivileges=yes" in lines
-      assert "Environment=OPENSHELL_TELEMETRY_ENABLED=false" in lines
-      assert "Environment=OPENSHELL_DISABLE_TLS=false" in lines
 
-      [unset] = for "UnsetEnvironment=" <> vars <- lines, do: String.split(vars, " ")
-      assert unset == Config.unset_environment()
+      # The user manager's environment is not the gateway's: it starts from an empty one.
+      [exec] = for "ExecStart=" <> argv <- lines, do: argv
+      assert exec =~ ~r{\A/usr/bin/env -i }
+      assert exec =~ " OPENSHELL_TELEMETRY_ENABLED=false "
+      assert exec =~ " OPENSHELL_DISABLE_TLS=false "
+      refute Enum.any?(lines, &String.starts_with?(&1, "Environment="))
 
       # The home has a space in it: every path is one quoted argument.
-      [exec] = for "ExecStart=" <> argv <- lines, do: argv
       assert exec =~ ~s("#{OpenShell.gateway_bin("0.1.7")}" --config "#{OpenShell.config_path()}")
 
       refute unit =~ "docker.sock"
@@ -117,8 +118,10 @@ defmodule HalC2.OpenShell.ServiceTest do
       dict = dict(xpath(doc, "/plist/dict"))
 
       assert dict["Label"] == "io.github.halc2.openshell"
-      assert dict["ProgramArguments"] == [OpenShell.gateway_bin("0.1.7") | Config.args()]
-      assert dict["EnvironmentVariables"] == Map.new(Config.environment())
+      # launchd's own environment (`launchctl setenv`) would reach the gateway otherwise.
+      assert dict["ProgramArguments"] == Config.command(OpenShell.gateway_bin("0.1.7"))
+      assert ["/usr/bin/env", "-i" | _] = dict["ProgramArguments"]
+      refute Map.has_key?(dict, "EnvironmentVariables")
       assert dict["WorkingDirectory"] == OpenShell.root()
       assert dict["Umask"] == 63
       assert dict["RunAtLoad"] == true

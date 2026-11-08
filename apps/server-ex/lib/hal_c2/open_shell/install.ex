@@ -179,9 +179,7 @@ defmodule HalC2.OpenShell.Install do
   def foreground_command do
     case OpenShell.state() do
       %{"mode" => "foreground", "version" => version} ->
-        unset = Enum.flat_map(Config.unset_environment(), &["-u", &1])
-        set = for {k, v} <- Config.environment(), do: "#{k}=#{v}"
-        argv = ["env" | unset] ++ set ++ [OpenShell.gateway_bin(version) | Config.args()]
+        argv = Config.command(OpenShell.gateway_bin(version))
 
         {:ok,
          "cd #{shell_quote(OpenShell.root())} && exec #{Enum.map_join(argv, " ", &shell_quote/1)}"}
@@ -429,11 +427,10 @@ defmodule HalC2.OpenShell.Install do
   # Runs the binary this MC verified and unpacked itself.
   # sobelow_skip ["CI.System"]
   defp gateway(version, args) do
-    env = Config.environment() ++ Enum.map(Config.unset_environment(), &{&1, nil})
+    [env | argv] = Config.command(OpenShell.gateway_bin(version), args)
     HalC2.Paths.mkdir_private!(Path.dirname(OpenShell.db_path()))
 
-    case System.cmd(OpenShell.gateway_bin(version), args,
-           env: env,
+    case System.cmd(env, argv,
            cd: OpenShell.root(),
            stderr_to_stdout: true
          ) do
