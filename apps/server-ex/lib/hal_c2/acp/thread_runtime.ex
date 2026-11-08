@@ -2522,6 +2522,13 @@ defmodule HalC2.Acp.ThreadRuntime do
   # Kimi Code creates its Agent call before its input has streamed in, so its subagent
   # starts unnamed and is named once the input is whole. The subagent's work and its
   # end are in the session's records (`HalC2.Acp.Kimi`), read while it runs.
+  # A Grok subagent task with no description is named after the tool ("Task").
+  defp grok_task_title(%{turn: %{ids: %{driver: driver}}}, call) do
+    if HalC2.Acp.driver(driver) == "grok", do: non_empty(call["title"], nil)
+  end
+
+  defp grok_task_title(_state, _call), do: nil
+
   defp subagent_call(%{kimi: true} = state, id, call) do
     state = flush(state)
     input = call["rawInput"] || %{}
@@ -2573,13 +2580,6 @@ defmodule HalC2.Acp.ThreadRuntime do
       state
     end
   end
-
-  # A Grok subagent task with no description is named after the tool ("Task").
-  defp grok_task_title(%{turn: %{ids: %{driver: driver}}}, call) do
-    if HalC2.Acp.driver(driver) == "grok", do: non_empty(call["title"], nil)
-  end
-
-  defp grok_task_title(_state, _call), do: nil
 
   defp subagent_call(state, id, call) do
     state = flush(state)
