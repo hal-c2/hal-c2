@@ -224,6 +224,9 @@ defmodule HalC2.PreviewAutomation do
           }
           |> put_present("tabId", tab_id)
 
+        # Read before the request goes, so "before" cannot include the tab it makes.
+        tabs_before = if operation == "open", do: thread_tabs(scope.thread_id)
+
         send(
           client.pid,
           {:hal_c2_preview_automation, node(), client_id,
@@ -238,7 +241,7 @@ defmodule HalC2.PreviewAutomation do
           key: key,
           seq: state.seq,
           explicit_tab: opts[:tab_id],
-          tabs_before: if(operation == "open", do: thread_tabs(scope.thread_id)),
+          tabs_before: tabs_before,
           update_tab: Keyword.get(opts, :update_current_tab, true),
           timer: Process.send_after(self(), {:timeout, request_id}, timeout)
         }
@@ -445,31 +448,44 @@ defmodule HalC2.PreviewAutomation do
 
   # An `open` claims its tab only when it created it: absent from the thread's
   # tabs before, present after. Reusing a tab someone else opened never makes
-  # it the agent's to close. The thread's owners of tabs since closed go too.
-  defp claim_tab(state, %{tabs_before: before} = pending, %{"tabId" => tab})
-       when is_struct(before, MapSet) and is_binary(tab) do
+  # it the agent's to close. Two sessions of a thread opening at once can both
+  # see the new tab that way, when the desktop serves the second on the tab the
+  # first made; the first reply, the one that made it, keeps it. The thread's
+  # owners of tabs since closed go too. Without a tab list, nothing changes.
+  defp claim_tab(state, %{tabs_before: {:ok, before}} = pending, %{"tabId" => tab})
+       when is_binary(tab) do
     {thread, _instance} = pending.key
-    now = thread_tabs(thread)
 
-    owners =
-      Map.reject(state.owners, fn {t, {th, _}} -> th == thread and not MapSet.member?(now, t) end)
+    case thread_tabs(thread) do
+      {:ok, now} ->
+        owners =
+          Map.reject(state.owners, fn {t, {th, _}} ->
+            th == thread and not MapSet.member?(now, t)
+          end)
 
-    owners =
-      if MapSet.member?(now, tab) and not MapSet.member?(before, tab),
-        do: Map.put(owners, tab, pending.key),
-        else: owners
+        owners =
+          if MapSet.member?(now, tab) and not MapSet.member?(before, tab),
+            do: Map.put_new(owners, tab, pending.key),
+            else: owners
 
-    %{state | owners: owners}
+        %{state | owners: owners}
+
+      :error ->
+        state
+    end
   end
 
   defp claim_tab(state, _pending, _result), do: state
 
-  # The thread's tab ids in `HalC2.Preview`, which never calls back here.
+  # The thread's tab ids in `HalC2.Preview`, which never calls back here, or
+  # :error when it cannot say (not running, busy, or an unexpected reply).
   defp thread_tabs(thread) do
-    {:ok, %{"sessions" => sessions}} = HalC2.Preview.list(%{"threadId" => thread})
-    MapSet.new(sessions, & &1["tabId"])
+    case HalC2.Preview.list(%{"threadId" => thread}) do
+      {:ok, %{"sessions" => sessions}} -> {:ok, MapSet.new(sessions, & &1["tabId"])}
+      _ -> :error
+    end
   catch
-    :exit, {:noproc, _} -> MapSet.new()
+    :exit, _ -> :error
   end
 
   # How well a host serves the tab a new session asks about: showing it beats

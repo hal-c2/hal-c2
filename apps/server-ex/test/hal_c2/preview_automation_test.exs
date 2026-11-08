@@ -233,6 +233,28 @@ defmodule HalC2.PreviewAutomationTest do
     assert HalC2.PreviewAutomation.tab_ownership(@caller, user_tab) == :not_agent
   end
 
+  # Regression: two sessions of a thread opening at once both saw the new tab
+  # as absent before and present after, and the later reply took it.
+  test "of two sessions opening at once on one thread, the one whose open made the tab keeps it" do
+    start_supervised!(HalC2.Preview)
+    host("desk")
+    other = %{@caller | instance: "claude"}
+
+    first = Task.async(fn -> HalC2.PreviewAutomation.invoke(@caller, "open", %{}, []) end)
+    {connection_id, request} = next_request("desk")
+    second = Task.async(fn -> HalC2.PreviewAutomation.invoke(other, "open", %{}, []) end)
+    {_, other_request} = next_request("desk")
+
+    {:ok, %{"tabId" => tab}} = HalC2.Preview.open(%{"threadId" => "th-1"})
+    answer("desk", connection_id, request, %{"tabId" => tab})
+    assert {:ok, _} = Task.await(first)
+    answer("desk", connection_id, other_request, %{"tabId" => tab})
+    assert {:ok, _} = Task.await(second)
+
+    assert HalC2.PreviewAutomation.tab_ownership(@caller, tab) == :own
+    assert HalC2.PreviewAutomation.tab_ownership(other, tab) == :other_agent
+  end
+
   test "an unanswered request fails and drops the host, whose stream ends" do
     host("desk")
 

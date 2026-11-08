@@ -15,6 +15,11 @@ defmodule HalC2.PreviewAutomationPropTest do
   host, and ask whose a tab is or forget it. The test process is both
   desktops: it answers each request, making a new `HalC2.Preview` tab for an
   open that names none, as the desktop does.
+
+  A race starts two agent sessions on one thread (two provider instances)
+  whose opens both go out before either is answered; the desktop makes a tab
+  for the first and serves the second on it, its current tab. The tab is the
+  first session's, and the second's is the other agent's.
   """
 
   use ExUnit.Case, async: false
@@ -79,6 +84,7 @@ defmodule HalC2.PreviewAutomationPropTest do
       [
         {4, {:call, __MODULE__, :report, [oneof(@hosts), bool(), tabs(), tabs(), snapshot()]}},
         {4, {:call, __MODULE__, :session, [state.next, maybe_tab(), state.made]}},
+        {1, {:call, __MODULE__, :race, [state.next, state.made]}},
         {1, {:call, __MODULE__, :reconnect, [oneof(@hosts)]}},
         {2, {:call, __MODULE__, :ownership, [session_slot(state), any_tab(state)]}}
       ] ++
@@ -108,6 +114,9 @@ defmodule HalC2.PreviewAutomationPropTest do
   def precondition(state, {:call, _, :session, [slot, _, made]}),
     do: slot == state.next and made == state.made
 
+  def precondition(state, {:call, _, :race, [slot, made]}),
+    do: slot == state.next and made == state.made
+
   def precondition(state, {:call, _, :reopen, [slot, made]}),
     do: slot < state.next and made == state.made
 
@@ -134,6 +143,11 @@ defmodule HalC2.PreviewAutomationPropTest do
 
   def next_state(state, _result, {:call, _, :session, [slot, tab, _made]}),
     do: state |> Map.put(:next, slot + 1) |> opened(slot, expected_host(state, tab), tab)
+
+  # The first session's open makes the tab; the second one's assignment is not
+  # modelled, as nothing later asks for it.
+  def next_state(state, _result, {:call, _, :race, [slot, _made]}),
+    do: state |> Map.put(:next, slot + 1) |> opened(slot, expected_host(state, nil), nil)
 
   # With a live host, its current tab is reused; without one it routes afresh.
   def next_state(state, _result, {:call, _, :reopen, [slot, _made]}) do
@@ -215,6 +229,13 @@ defmodule HalC2.PreviewAutomationPropTest do
   def postcondition(state, {:call, _, :session, [_slot, tab, _made]}, result),
     do: result == expected_host(state, tab)
 
+  def postcondition(state, {:call, _, :race, _}, result) do
+    case expected_host(state, nil) do
+      nil -> result == nil
+      id -> result == {id, :own, :other_agent}
+    end
+  end
+
   def postcondition(state, {:call, _, :reopen, [slot, _made]}, result),
     do: result == (state.sessions[slot][:host] || expected_host(state, nil))
 
@@ -290,6 +311,46 @@ defmodule HalC2.PreviewAutomationPropTest do
     end
   end
 
+  # Two fresh sessions of thread `slot`, `codex` then `claude`, open with no
+  # tab; both requests go out before either is answered. The first gets a new
+  # tab, the second the same one. The host's id and whose the tab is to each,
+  # or nil when no host would take them.
+  def race(slot, made) do
+    first = Task.async(fn -> PreviewAutomation.invoke(scope(slot), "open", %{}, []) end)
+
+    receive do
+      {:hal_c2_preview_automation, _, id,
+       %{"type" => "request", "connectionId" => connection, "request" => request}} ->
+        second = scope(slot, "claude")
+        other = Task.async(fn -> PreviewAutomation.invoke(second, "open", %{}, []) end)
+
+        assert_receive {:hal_c2_preview_automation, _, ^id,
+                        %{"type" => "request", "request" => other_request}}
+
+        {:ok, s} = HalC2.Preview.open(%{"threadId" => scope(slot).thread_id})
+        Process.put(:made, Map.put(Process.get(:made), made, s["tabId"]))
+
+        for {r, task} <- [{request, first}, {other_request, other}] do
+          PreviewAutomation.respond(%{
+            "clientId" => id,
+            "connectionId" => connection,
+            "requestId" => r["requestId"],
+            "ok" => true,
+            "result" => %{"tabId" => s["tabId"]}
+          })
+
+          {:ok, _} = Task.await(task)
+        end
+
+        {id, PreviewAutomation.tab_ownership(scope(slot), s["tabId"]),
+         PreviewAutomation.tab_ownership(second, s["tabId"])}
+
+      {ref, {:error, _}} when ref == first.ref ->
+        Process.demonitor(ref, [:flush])
+        nil
+    end
+  end
+
   # A session's action its host never answers: the broker's timer fires now,
   # the host is dropped and its stream ends, and it registers again. Its id.
   def evict(slot) do
@@ -325,7 +386,7 @@ defmodule HalC2.PreviewAutomationPropTest do
     :ok
   end
 
-  defp scope(slot), do: %{thread_id: "th-#{slot}", instance: "codex"}
+  defp scope(slot, instance \\ "codex"), do: %{thread_id: "th-#{slot}", instance: instance}
   defp real({:made, n}), do: Process.get(:made)[n]
   defp real(tab), do: tab
 
