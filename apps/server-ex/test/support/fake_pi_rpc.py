@@ -218,7 +218,13 @@ class Session:
 
 def reply_to(session, text):
     before = session.history()[:-1]
-    return "Reply to %s after [%s]" % (text, " | ".join(before))
+    return "Reply to %s after [%s]" % (own_text(text), " | ".join(before))
+
+
+def own_text(text):
+    """A message handed the thread's history is the words after it: the history may name
+    other turns, and Pi answers the message, not what it was handed."""
+    return text.rsplit("</conversation_history>\n\n", 1)[-1]
 
 
 log({"start": {"argv": sys.argv, "cwd": os.getcwd(), "pid": os.getpid(),
@@ -407,11 +413,8 @@ def assistant(text, usage=None):
 
 
 def matching_turn(cfg, text):
-    # A message handed the thread's history is matched on what follows it, as the
-    # history may name other turns.
-    text = text.rsplit("</conversation_history>\n\n", 1)[-1]
     for turn in cfg.get("turns") or []:
-        if turn.get("match", "") in text:
+        if turn.get("match", "") in own_text(text):
             return turn
     return {}
 
@@ -432,17 +435,12 @@ def run_turn(text, wake=None):
     aborted[0] = False
     running[0] = True
     cfg = config()
-    steps = None
-    for turn in cfg.get("turns") or []:
-        if turn.get("match", "") in text:
-            steps = turn.get("steps") or []
-            break
-    if wake is not None:
-        steps = wake.get("steps") or []
-    session.append("user", text)
-    if steps is None:
-        steps = [{"text": reply_to(session, text)}]
     turn = wake if wake is not None else matching_turn(cfg, text)
+    session.append("user", text)
+    if wake is not None or turn:
+        steps = turn.get("steps") or []
+    else:
+        steps = [{"text": reply_to(session, text)}]
     if turn.get("quiet"):
         # Pi is at work it started by itself, and says nothing of it until a
         # prompt reaches it.
