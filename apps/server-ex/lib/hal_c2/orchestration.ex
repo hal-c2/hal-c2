@@ -3381,12 +3381,20 @@ defmodule HalC2.Orchestration do
 
   # An edit that names no attachments keeps the message's, which a text too long to send
   # whole is folded beside. The file the message's old text was folded into holds that
-  # text, not the edit's, so it is not kept, and goes once the edit lands. With the
-  # uploads it claimed from, and the files to drop unless the message names them.
+  # text, not the edit's, so it is not kept, and goes once the edit lands, unless the
+  # edit is of the folded text and still names it (`Attachments.left_behind/3`). With
+  # the uploads it claimed from, and the files to drop unless the message names them.
   defp edit_claims(thread_id, state, run_id, command) do
     message_id = StreamState.get(state, "run")[run_id]["userMessageId"]
     message = StreamState.get(state, "message")[message_id] || %{}
-    stale = HalC2.Attachments.folded_into(message["text"], message["attachments"] || [])
+
+    stale =
+      HalC2.Attachments.left_behind(
+        message["text"],
+        command["text"],
+        message["attachments"] || []
+      )
+
     stale_ids = Enum.map(stale, & &1["id"])
     unstale = &Enum.reject(&1, fn a -> a["id"] in stale_ids end)
 

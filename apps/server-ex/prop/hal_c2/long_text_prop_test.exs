@@ -7,8 +7,10 @@ defmodule HalC2.LongTextPropTest do
   added after the message's own attachments under a name none of them has, holds the
   text byte for byte, and is a `pasted-text` file; and what is sent is itself short
   enough to pass through again untouched. `folded_into/2` finds that file from the
-  folded text, and no file in text that was not folded. Counted in characters, so the
-  text mixes in multi-byte ones.
+  folded text, and no file in text that was not folded. An edit of the folded text
+  that keeps its cut mark leaves that file with the message, and one that drops the
+  mark leaves it behind (`left_behind/3`). Counted in characters, so the text mixes in
+  multi-byte ones.
   """
 
   use ExUnit.Case, async: false
@@ -45,7 +47,8 @@ defmodule HalC2.LongTextPropTest do
         if chars <= @limit do
           [
             untouched: folded == text and attachments == kept,
-            unfound: Attachments.folded_into(folded, attachments) == []
+            unfound: Attachments.folded_into(folded, attachments) == [],
+            nothing_behind: Attachments.left_behind(folded, "edited", attachments) == []
           ]
         else
           [file] = attachments -- kept
@@ -66,6 +69,9 @@ defmodule HalC2.LongTextPropTest do
                 file["source"] == %{"_tag" => "pasted-text"} and
                 file["mimeType"] == "text/plain",
             found: Attachments.folded_into(folded, attachments) == [file],
+            edited: Attachments.left_behind(folded, "edited " <> folded, attachments) == [],
+            replaced:
+              Attachments.left_behind(folded, String.slice(text, 0, 10), attachments) == [file],
             settles:
               Attachments.fold_long_text("t-prop", folded, attachments) ==
                 {:ok, folded, attachments}

@@ -58,6 +58,7 @@ defmodule HalC2.ThreadFilesProofTest do
       "HalC2.Attachments.valid_id?/1" => @files,
       "HalC2.Attachments.read/1" => @files,
       "HalC2.Attachments.folded_into/2" => @files,
+      "HalC2.Attachments.left_behind/3" => @files,
       "HalC2.Attachments.release/2" =>
         "removes the copies a refused message made, which no message names; the model's sends are not refused",
       "HalC2.Orchestration.Fork.merge_back/1" =>

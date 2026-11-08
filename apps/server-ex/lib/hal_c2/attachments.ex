@@ -329,6 +329,14 @@ defmodule HalC2.Attachments do
 
   def folded_into(_text, _attachments), do: []
 
+  @doc """
+  What an edit of a message's text from `old` to `new` leaves behind among its
+  `attachments`: the file `old` was folded into, unless `new` still names it, as an
+  edit of the stored folded text does.
+  """
+  def left_behind(old, new, attachments),
+    do: folded_into(old, attachments) -- folded_into(new, attachments)
+
   # `message.txt`, or `message-2.txt` and on when the message already has one.
   defp free_name(attachments, base) do
     taken = MapSet.new(attachments, & &1["name"])

@@ -2138,6 +2138,28 @@ defmodule HalC2.OrchestrationTest do
       refute HalC2.Attachments.path(file)
     end
 
+    # The desktop edits a queued message from its stored text, which for a long one is
+    # the folded text with its cut mark.
+    test "an edit of a folded message's stored text keeps the file its cut mark names" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      whole = String.duplicate("y", 130_000)
+      {:ok, _} = send_message(thread_id, "m2", whole)
+      [_, second] = runs(await_statuses(thread_id, ["running", "queued"]))
+
+      %{"text" => folded, "attachments" => [file]} =
+        current(thread_id) |> StreamState.get("message") |> Map.fetch!("m2")
+
+      edited = "Typo fixed. " <> folded
+
+      {:ok, _} = queue_command("queued-run.edit", thread_id, second["id"], %{"text" => edited})
+
+      assert %{"text" => ^edited, "attachments" => [^file]} =
+               StreamState.get(current(thread_id), "message")["m2"]
+
+      assert File.read!(HalC2.Attachments.path(file)) == whole
+    end
+
     test "an edit naming a folded message's attachments leaves out the file its old text was in" do
       thread_id = launch("wait for it")
       _ = await_run(thread_id, "running")
