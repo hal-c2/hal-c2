@@ -581,6 +581,36 @@ defmodule HalC2.TurnLifecycleTest do
     assert_wakes_again(thread_id, runtime, conn, ["completed", "completed"])
   end
 
+  # A wake Pi settled before its run came, whose run then never comes: the thread takes
+  # the wake's message (the hook stands in for the engine) and the user cancels the run
+  # from the queue, which the runtime never hears of. A turn in between leaves the
+  # settled wake for its own run.
+  test "a settled Pi wake whose run never came leaves the next wake a run of its own",
+       %{work: work} do
+    thread_id = create_thread(work, "pi", "default")
+    {:ok, _} = send_message(thread_id, "m1", "hello")
+    await_statuses(thread_id, ["completed"])
+    {runtime, conn} = pi_runtime(thread_id)
+
+    Application.put_env(:hal_c2, :wake_hook, {__MODULE__, :take_wake, [self()]})
+    on_exit(fn -> Application.delete_env(:hal_c2, :wake_hook) end)
+    send(runtime, {:json_rpc, conn, {:notification, "agent_start", %{}}})
+    assert_receive {:wake_taken, task}, 5_000
+    ref = Process.monitor(task)
+    assert_receive {:DOWN, ^ref, _, _, _}, 5_000
+    send(runtime, {:json_rpc, conn, {:notification, "agent_settled", %{}}})
+    assert %{wake: %{open: false, buffer: [_, _]}} = :sys.get_state(runtime)
+
+    {:ok, _} = send_message(thread_id, "m2", "hello again")
+    await_statuses(thread_id, ["completed", "completed"])
+    assert_wakes_again(thread_id, runtime, conn, ["completed", "completed"])
+  end
+
+  def take_wake(test, _command) do
+    send(test, {:wake_taken, self()})
+    {:ok, :cancelled}
+  end
+
   # Pi wakes once more, and settles: the wake runs as a turn of its own, after which the
   # idle runtime lets Pi go.
   defp assert_wakes_again(thread_id, runtime, conn, before) do

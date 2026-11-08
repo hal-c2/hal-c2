@@ -25,7 +25,9 @@ defmodule HalC2.PiSteerPropTest do
   compaction to end and is then delivered once; steer a turn while it compacts, which
   holds the steer until the compaction ends, or stop that turn with the steer still
   held, which Pi must then never take; interrupt it. Send a message after whose turn
-  a Pi extension wakes Pi, which runs as a turn of its own; or one after which Pi
+  a Pi extension wakes Pi, which runs as a turn of its own (or which settles before
+  its run comes, and whose run is then cancelled from the queue, after which Pi's
+  next wake still gets a run); or one after which Pi
   resumes an extension's work without a word, so the next message Pi turns back as
   busy and HAL-C2 queues it behind that work, in the same turn. Send two messages,
   then an extension command that moves Pi's session back to before the second
@@ -368,6 +370,7 @@ defmodule HalC2.PiSteerPropTest do
       {1, {:call, __MODULE__, :send_into_wake, [id(next), id(next + 1)]}},
       {1, {:call, __MODULE__, :send_rewound, [id(next), id(next + 1), id(next + 2)]}},
       {1, {:call, __MODULE__, :send_wake_taken, [id(next), id(next + 1), id(next + 2)]}},
+      {1, {:call, __MODULE__, :send_wake_settled, [id(next), id(next + 1), id(next + 2)]}},
       {1, {:call, __MODULE__, :send_wake_refused, [id(next), id(next + 1)]}}
     ])
   end
@@ -446,6 +449,7 @@ defmodule HalC2.PiSteerPropTest do
              :send_into_wake,
              :send_rewound,
              :send_wake_taken,
+             :send_wake_settled,
              :send_wake_refused
            ],
       do: state.turn == nil and state.abandoned == :none
@@ -529,6 +533,15 @@ defmodule HalC2.PiSteerPropTest do
   # `b` took over the work Pi woke to after `a` and was stopped, and the wake's own run,
   # queued behind it, was cancelled: Pi's next wake, after `c`, runs as a turn of its own.
   def next_state(state, _result, {:call, _, :send_wake_taken, [a, b, c]}) do
+    woke = [{a, "completed"}, {b, "interrupted"}, {:woken, "cancelled"}]
+    runs = state.runs ++ woke ++ [{c, "completed"}, {:woken, "completed"}]
+    %{state | next: state.next + 3, runs: runs}
+  end
+
+  # The wake after `a` settled before its run came; `b` ran with the wake left for that
+  # run, which queued behind `b` and was cancelled, and `b` was stopped: Pi's next wake,
+  # after `c`, runs as a turn of its own.
+  def next_state(state, _result, {:call, _, :send_wake_settled, [a, b, c]}) do
     woke = [{a, "completed"}, {b, "interrupted"}, {:woken, "cancelled"}]
     runs = state.runs ++ woke ++ [{c, "completed"}, {:woken, "completed"}]
     %{state | next: state.next + 3, runs: runs}
@@ -929,6 +942,128 @@ defmodule HalC2.PiSteerPropTest do
       end
 
     {reply, projection}
+  end
+
+  # Sends `a`, after which Pi works on by itself and settles while the wake's message is
+  # held, then `b`, which leaves the settled wake alone. The message then queues behind
+  # `b`, where it is cancelled, and `b` is stopped. Then `c`, after which Pi wakes again:
+  # that wake must get a run, and once it ended the idle runtime must let Pi go.
+  def send_wake_settled(a, b, c) do
+    deadline = fn -> System.monotonic_time(:millisecond) + @wait_ms end
+    Application.put_env(:hal_c2, :wake_hook, {__MODULE__, :hold_wake, [self()]})
+    first = Orchestration.dispatch(message(a, "wakes #{a}", "queue_after_active", "auto"))
+
+    held =
+      receive do
+        {:wake_held, pid} -> pid
+      after
+        @wait_ms -> nil
+      end
+
+    Application.delete_env(:hal_c2, :wake_hook)
+    settled_wake = if held, do: wake_settled(deadline.()), else: :timeout
+    second = Orchestration.dispatch(message(b, "joins #{b}", "queue_after_active", "auto"))
+
+    started =
+      await(
+        fn state ->
+          run = Enum.find(runs(state), &(&1["userMessageId"] == b))
+          run["status"] == "running" and working?(state, run)
+        end,
+        deadline.()
+      )
+
+    if held, do: Kernel.send(held, :go)
+
+    queued =
+      await(
+        &Enum.find(runs(&1), fn run ->
+          woken_id(run["userMessageId"]) == :woken and run["status"] == "queued"
+        end),
+        deadline.()
+      )
+
+    cancel =
+      with {:ok, run} <- queued,
+           do:
+             Orchestration.dispatch(%{
+               "type" => "queued-run.cancel",
+               "threadId" => @tid,
+               "runId" => run["id"]
+             })
+
+    stop = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => @tid})
+    stopped = settled(unfinished_runs(), deadline.())
+    {reply, projection} = wakes_again(c, deadline)
+
+    reply =
+      cond do
+        held == nil ->
+          {:error, "#{a}'s wake never asked the thread for a run"}
+
+        settled_wake != :ok ->
+          {:error, "Pi never settled the wake after #{a}"}
+
+        started == :timeout ->
+          {:error, "#{b} never ran"}
+
+        queued == :timeout ->
+          {:error, "the wake's run never queued behind #{b}"}
+
+        match?({:timeout, _}, stopped) ->
+          {:error, "#{b} never ended"}
+
+        true ->
+          [first, second, cancel, stop]
+          |> Enum.map(&answer/1)
+          |> Enum.reduce(&both/2)
+          |> both(reply)
+      end
+
+    {reply, projection}
+  end
+
+  # Returns once the runtime has had Pi's settle of a wake whose run has not come: a
+  # debug hook on the runtime reports the settle, so nothing polls.
+  defp wake_settled(deadline) do
+    [{runtime, _}] = Registry.lookup(HalC2.Pi.Registry, @tid)
+    test = self()
+
+    report = fn
+      _, {:in, {:json_rpc, _, {:notification, "agent_settled", _}}}, _ ->
+        Kernel.send(test, :wake_settled)
+        :done
+
+      acc, _, _ ->
+        acc
+    end
+
+    :ok = :sys.install(runtime, {:wake_settled, report, nil})
+
+    result =
+      case :sys.get_state(runtime) do
+        %{wake: %{open: false}} ->
+          :ok
+
+        _ ->
+          receive do
+            :wake_settled ->
+              # The runtime has handled the settle it was just given.
+              if match?(%{wake: %{open: false}}, :sys.get_state(runtime)), do: :ok, else: :open
+          after
+            max(deadline - System.monotonic_time(:millisecond), 0) -> :timeout
+          end
+      end
+
+    :sys.remove(runtime, :wake_settled)
+
+    receive do
+      :wake_settled -> :ok
+    after
+      0 -> :ok
+    end
+
+    result
   end
 
   # Sends `a`, after which Pi works on by itself, refuses the wake's every try, and has Pi

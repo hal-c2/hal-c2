@@ -1401,6 +1401,16 @@ defmodule HalC2.Pi.ThreadRuntime do
     %{state | wake: %{open: true, buffer: [{type, event}]}}
   end
 
+  # Pi at work by itself again after a wake that ended before its run came (which may
+  # never come: the user can cancel it from the queue) is a wake of its own, with a run
+  # of its own. It keeps the earlier work, less its end, so whichever run comes first
+  # shows both up to Pi's next settle; the other shows nothing.
+  defp buffer_wake(%{wake: %{open: false} = earlier} = state, "agent_start", event) do
+    kept = Enum.reject(earlier.buffer || [], &match?({"agent_settled", _}, &1))
+    %{wake: wake} = state = wake(state, "agent_start", event)
+    %{state | wake: %{wake | buffer: wake.buffer ++ kept}}
+  end
+
   # Pi's settle ends the work; a wake the thread refused keeps nothing of it.
   defp buffer_wake(%{wake: %{buffer: nil}} = state, type, _event),
     do: if(type == "agent_settled", do: %{state | wake: nil}, else: state)
