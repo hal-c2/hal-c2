@@ -239,6 +239,22 @@ Feature: Agent code review
         | label           | someone who is not a member or collaborator adds the label "agent-review" to #12 |
 
     @mc
+    Scenario: Who added one label does not count for another
+      Given "code-review" watches "acme/api" selectively with the trigger "label"
+      And #12 has the label "ship-it" from someone who is not a member or collaborator, and once had "agent-review" from its author
+      When the user makes "ship-it" the label that starts a review
+      Then no review starts
+
+    @mc
+    Scenario: A pull request updated since it was last read is not reviewed on what was read before
+      Given "code-review" reviews new pushes
+      And #12 was reviewed at an older head commit
+      And who stands behind #12 cannot be read
+      When "code-review" looks at "acme/api" again
+      Then no new review of #12 starts
+      And the review of #12 says "has not been read yet"
+
+    @mc
     Scenario: Asking for a review of a pull request nobody trusted needs the user's approval
       Given "code-review" watches "acme/api" selectively
       And #12 by "stranger", who is not a member or collaborator, is opened on "acme/api"

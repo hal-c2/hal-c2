@@ -373,6 +373,72 @@ defmodule HalC2.CodeReviewTest do
     refute neutral.("<!-- hal-c2-code-review:acme/api#1@abc -->") =~ "hal-c2-code-review:"
   end
 
+  test "a fence the prose of a comment leaves open does not let its suggestion out of its code block",
+       _context do
+    body = &apply(@server, :comment_body, [&1, &2])
+    bait = "![x](https://example.com/p.png) @octocat"
+    open = %{"body" => "Use this:\n```", "suggestion" => bait}
+
+    assert body.(open, "old") == "Use this:\n```\n```\n\nSuggested change:\n\n```\n#{bait}\n```"
+    assert body.(open, "new") == "Use this:\n```\n```\n\n```suggestion\n#{bait}\n```"
+
+    # A lone carriage return ends a line on GitHub too.
+    assert body.(%{open | "body" => "Use this:\r```"}, "old") ==
+             "Use this:\n```\n```\n\nSuggested change:\n\n```\n#{bait}\n```"
+
+    # One the prose opens in a list or a quote, or indents, which the reader could end
+    # elsewhere, is no fence at all.
+    for nested <- ["- ```", "> ~~~", "   ```", "1. > ```"] do
+      [lead, mark] = Regex.run(~r/^(.*?)([`~])/, nested, capture: :all_but_first)
+      broken = lead <> mark <> "​" <> String.slice(nested, String.length(lead) + 1, 99)
+
+      assert body.(%{"body" => "Ok.\n#{nested}\n  x", "suggestion" => bait}, "new") ==
+               "Ok.\n#{broken}\n  x\n\n```suggestion\n#{bait}\n```"
+    end
+
+    # A closed fence, and a fence of tildes inside one of backticks, stay as written.
+    closed = "See:\n```\n~~~\n```\nDone."
+
+    assert body.(%{"body" => closed, "suggestion" => "x"}, "new") ==
+             "#{closed}\n\n```suggestion\nx\n```"
+  end
+
+  test "a review run again with the same findings is not published on what the run before showed",
+       context do
+    review = start_review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+    settle()
+    looked = seen()
+
+    {:ok, _} = call("retry", %{"key" => @key})
+    settle()
+    assert %{"status" => "running", "threadId" => again} = review()
+    assert again != review["threadId"]
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, again)
+    settle()
+
+    assert %{"status" => "waiting", "version" => version} = review()
+    assert version != looked["version"]
+    assert {:error, %{"message" => message}} = call("publish", looked)
+    assert message =~ "changed since you looked at it"
+    assert posts(context) == []
+  end
+
+  # A path the agent named, in the review of another commit, can carry any marker.
+  test "a review that names the marker of this commit inside its text does not stop the post",
+       context do
+    posted = reviewed_by("monalisa")
+    marker = posted["body"] |> String.split("\n\n") |> List.last()
+    other = "<!-- hal-c2-code-review:#{@key}@#{String.duplicate("0", 40)} -->"
+    body = "One.\n\n- `src/#{marker}.ts:1` — One.\n\n#{other}"
+    rules!(context, head: 1, reviews: [%{posted | "body" => body}])
+
+    assert {:ok, _} = call("publish", seen())
+    assert %{"status" => "published", "publishNote" => nil} = review()
+    assert [_] = posts(context)
+  end
+
   test "a thread whose review is published is told so when it reports again", _context do
     review = start_review()
     arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}

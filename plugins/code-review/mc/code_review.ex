@@ -1273,10 +1273,10 @@ defmodule HalC2Plugins.CodeReview do
   # Who stands behind each pull request updated since the last look, or never read:
   # its author, its fork, and who last added the label and asked for the review; and
   # the time of the latest comment of someone trusted starting with the review
-  # command. A pull request read is seen at this update (`seenAt`), so one left unread
-  # is read at the next look. The first read that fails ends the reading with the
-  # problem: each remaining pull request would fail the same way, and harder against
-  # a rate limit.
+  # command. A pull request read is seen at this update (`seenAt`) for the trigger label
+  # then, so one left unread, or read for another label, is read at the next look. The
+  # first read that fails ends the reading with the problem: each remaining pull request
+  # would fail the same way, and harder against a rate limit.
   defp read_trust(found, settings, known) do
     command = String.trim(settings["command"] || "")
     label = String.trim(settings["label"] || "")
@@ -1290,7 +1290,7 @@ defmodule HalC2Plugins.CodeReview do
           problem != nil ->
             {[pr | entries], asked, problem}
 
-          had && had["trust"] && had["seenAt"] == pr["updatedAt"] ->
+          read_already?(had, pr, label) ->
             {[Map.put(pr, "seenAt", pr["updatedAt"]) | entries], asked, nil}
 
           true ->
@@ -1299,7 +1299,8 @@ defmodule HalC2Plugins.CodeReview do
             case Host.pull_request_trust(@id, ref) do
               {:ok, trust} ->
                 at = if commands?, do: command_at(settings, trust, command)
-                pr = Map.merge(pr, %{"trust" => facts(trust), "seenAt" => pr["updatedAt"]})
+                trust = facts(trust, label)
+                pr = Map.merge(pr, %{"trust" => trust, "seenAt" => pr["updatedAt"]})
                 {[pr | entries], Map.put(asked, pr["key"], at), nil}
 
               {:error, error} ->
@@ -1311,9 +1312,20 @@ defmodule HalC2Plugins.CodeReview do
     %{found | entries: Enum.reverse(entries), asked: asked, problem: problem}
   end
 
-  # What a review keeps of who stands behind its pull request, without the comments.
-  defp facts(trust),
-    do: Map.take(trust, ~w(viewer author isCrossRepository headOwner labeled requested))
+  # What a review keeps of who stands behind its pull request, without the comments, and
+  # the label whose adder `labeled` names.
+  defp facts(trust, label) do
+    trust
+    |> Map.take(~w(viewer author isCrossRepository headOwner labeled requested))
+    |> Map.put("label", label)
+  end
+
+  # Whether what `known` keeps of who stands behind its pull request still holds for
+  # `pr`: read at its last update, for the trigger label `label`.
+  defp read_already?(known, pr, label) do
+    known != nil and is_map(known["trust"]) and known["seenAt"] == pr["updatedAt"] and
+      String.downcase(known["trust"]["label"] || "") == String.downcase(label)
+  end
 
   defp command_at(settings, trust, command) do
     trust["comments"]
@@ -1345,12 +1357,14 @@ defmodule HalC2Plugins.CodeReview do
          true <-
            detail["state"] == "open" ||
              {:error, "#{repository} ##{number} is #{detail["state"]}, not open."},
+         label = String.trim(settings["label"] || ""),
          {:ok, trust} <-
            Host.pull_request_trust(@id, %{
              "projectId" => project["id"],
              "host" => project["host"],
              "repository" => project["repository"],
-             "number" => number
+             "number" => number,
+             "label" => label
            }) do
       reviewers = Enum.map(detail["reviewers"] || [], & &1["login"])
 
@@ -1363,7 +1377,7 @@ defmodule HalC2Plugins.CodeReview do
           )
         )
 
-      {:ok, Map.put(pr, "trust", facts(trust))}
+      {:ok, Map.put(pr, "trust", facts(trust, label))}
     else
       {:error, error} -> {:error, message(error)}
     end
@@ -1375,6 +1389,7 @@ defmodule HalC2Plugins.CodeReview do
 
   defp apply_look(state, found) do
     settings = state.settings
+    label = String.trim(settings["label"] || "")
     open = MapSet.new(found.entries, & &1["key"])
     read = MapSet.new(found.read)
 
@@ -1423,11 +1438,14 @@ defmodule HalC2Plugins.CodeReview do
       known = state.reviews[pr["key"]]
       asked = found.asked[pr["key"]]
       asked? = asked != nil and (known == nil or later?(asked, known["startedAt"]))
-      # A pull request not read this look keeps what was read of it before.
+      # A pull request not read this look keeps what was read of it before, if nothing
+      # has changed on it since; otherwise who stands behind it is not known.
       pr =
-        pr
-        |> Map.put_new("trust", known && known["trust"])
-        |> Map.put_new("seenAt", known && known["seenAt"])
+        cond do
+          Map.has_key?(pr, "trust") -> pr
+          read_already?(known, pr, label) -> Map.merge(pr, Map.take(known, ~w(trust seenAt)))
+          true -> Map.merge(pr, %{"trust" => nil, "seenAt" => nil})
+        end
 
       trigger = trigger(settings, pr)
       skipped = skipped(settings, pr)
@@ -2185,7 +2203,7 @@ defmodule HalC2Plugins.CodeReview do
           end)
           |> Enum.split_with(& &1["position"])
 
-        summary = neutral(summary)
+        summary = summary |> neutral() |> closed()
 
         summary =
           case general do
@@ -2300,9 +2318,11 @@ defmodule HalC2Plugins.CodeReview do
   # the host only accepts for a line of the new file; on an old line it is
   # quoted as ordinary code.
   # The suggestion is fenced past any run of backticks in it, so it cannot close its
-  # block early; inside it nothing is a mention or markup, so it stays as written.
-  defp comment_body(comment, side) do
-    body = comment["body"] |> String.trim() |> neutral()
+  # block early, and after prose that leaves no block open (`closed/1`), so its block
+  # opens where it says; inside it nothing is a mention or markup, so it stays as written.
+  @doc false
+  def comment_body(comment, side) do
+    body = comment["body"] |> String.trim() |> neutral() |> closed()
 
     suggestion =
       if is_binary(comment["suggestion"]), do: String.trim(comment["suggestion"]), else: ""
@@ -2319,6 +2339,7 @@ defmodule HalC2Plugins.CodeReview do
   # The agent's words made safe to post and to show: no mention or team mention that
   # would notify anyone, no HTML (an image, a hidden comment), no image, and no
   # marker of this plugin's posts. A zero-width space breaks each, and shows nothing.
+  @nested_fence ~r/^([ \t>]*(?:(?:[-*+]|\d{1,9}[.)])[ \t>]*)*)([`~])(?=\2\2)/
   @doc false
   def neutral(text) do
     text
@@ -2326,6 +2347,57 @@ defmodule HalC2Plugins.CodeReview do
     |> String.replace(~r/<(?=[A-Za-z!\/?])/u, "<\u200B")
     |> String.replace("![", "!\u200B[")
     |> String.replace("hal-c2-code-review:", "hal-c2-code-review\u200B:")
+  end
+
+  # Prose that leaves no code block open, so what follows it reads as it says. A fence
+  # at the start of a line it leaves open is closed at its end. One in a list or a
+  # quote, or indented, which a later line may end where a reader would not, is no
+  # fence: a zero-width space after its first mark breaks it. Lines end as GitHub
+  # ends them, at a carriage return too.
+  @doc false
+  def closed(text) do
+    {lines, open} =
+      text
+      |> String.split(["\r\n", "\r", "\n"])
+      |> Enum.map_reduce(nil, &fence/2)
+
+    Enum.join(lines ++ List.wrap(open), "\n")
+  end
+
+  defp fence(line, nil) do
+    cond do
+      opens?(line) ->
+        {line, hd(Regex.run(~r/^(`{3,}|~{3,})/, line))}
+
+      Regex.match?(@nested_fence, line) ->
+        {Regex.replace(@nested_fence, line, "\\1\\2\u200B"), nil}
+
+      true ->
+        {line, nil}
+    end
+  end
+
+  defp fence(line, open) do
+    mark = String.first(open)
+    run = Regex.run(~r/^ {0,3}(`+|~+)[ \t]*$/, line, capture: :all_but_first)
+
+    case run do
+      [marks] when binary_part(marks, 0, 1) == mark and byte_size(marks) >= byte_size(open) ->
+        {line, nil}
+
+      _ ->
+        {line, open}
+    end
+  end
+
+  # A line that opens a fenced block where it starts; a run of backticks followed by
+  # another backtick on its line is code inline instead.
+  defp opens?(line) do
+    case Regex.run(~r/^(`{3,}|~{3,})(.*)$/, line, capture: :all_but_first) do
+      ["`" <> _, rest] -> not String.contains?(rest, "`")
+      [_, _] -> true
+      nil -> false
+    end
   end
 
   defp longest_backticks(text),
@@ -2469,7 +2541,7 @@ defmodule HalC2Plugins.CodeReview do
       {:ok,
        Enum.any?(activity["comments"] || [], fn c ->
          c["kind"] == "review" and get_in(c, ["author", "login"]) == viewer and
-           String.contains?(c["body"] || "", marker(review))
+           String.ends_with?(String.trim_trailing(c["body"] || ""), marker(review))
        end)}
     end
   end
@@ -2924,12 +2996,14 @@ defmodule HalC2Plugins.CodeReview do
     oldest |> DateTime.add(@day_seconds, :second) |> DateTime.to_iso8601()
   end
 
-  # Names the findings as they stand, dismissed comments included.
+  # Names the run and its findings as they stand, dismissed comments included: a
+  # digest, so a run again with the same findings, or other findings, is another one.
   defp version(review) do
-    {review["verdict"], review["summary"], review["comments"], review["general"],
-     review["validation"]}
-    |> :erlang.phash2()
-    |> Integer.to_string()
+    {review["threadId"], review["reviewedSha"], review["verdict"], review["summary"],
+     review["comments"], review["general"], review["validation"]}
+    |> :erlang.term_to_binary([:deterministic])
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
   end
 
   defp reported,

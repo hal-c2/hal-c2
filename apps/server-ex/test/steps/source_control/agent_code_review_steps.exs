@@ -217,6 +217,40 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     |> refresh()
   end
 
+  step "\#{int} has the label {string} from someone who is not a member or collaborator, and once had {string} from its author",
+       %{args: [number, label, earlier]} = context do
+    context
+    |> World.cli_rules([
+      %{
+        "args" => ["collaborators/stranger/permission"],
+        "stdout" => %{"permission" => "read", "role_name" => "read"}
+      }
+    ])
+    |> open(number, %{
+      "labels" => [%{"name" => label, "color" => "0e8a16"}],
+      "labelEvents" => [
+        %{"label" => earlier, "by" => "octocat"},
+        %{"label" => label, "by" => "stranger"}
+      ]
+    })
+    |> refresh()
+  end
+
+  step "the user makes {string} the label that starts a review", %{args: [label]} = context do
+    context |> save(%{"label" => label}) |> refresh()
+  end
+
+  step "who stands behind \#{int} cannot be read", %{args: [number]} = context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["PullRequestTrust", ~s("number":#{number},)],
+        "stderr" => "HTTP 502: Bad Gateway\n",
+        "exit" => 1
+      }
+    ])
+  end
+
   # --- who is trusted ----------------------------------------------------------------------
 
   step "{string} watches {string} automatically and trusts {string}",
@@ -2114,17 +2148,29 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   # GitHub's answer when code review reads who stands behind pull request `pr`: its
   # author, a member unless `pr` says otherwise (`authorAssociation`), added each of
-  # its labels (or `labeledBy` did) and asked for each of its reviews; its commits come
-  # from `headOwner`'s fork when it `isCrossRepository`; `comments` are its comments.
+  # its labels (or `labeledBy` did, or `labelEvents` say who added which) and asked for
+  # each of its reviews; its commits come from `headOwner`'s fork when it
+  # `isCrossRepository`; `comments` are its comments.
   defp trust_rule(pr, comments) do
     author = %{"__typename" => "User", "login" => pr["author"]["login"]}
     labeler = if by = pr["labeledBy"], do: %{"__typename" => "User", "login" => by}, else: author
     at = pr["updatedAt"]
 
+    labeled =
+      if events = pr["labelEvents"],
+        do:
+          Enum.map(
+            events,
+            &{%{"name" => &1["label"]}, %{"__typename" => "User", "login" => &1["by"]}}
+          ),
+        else: Enum.map(pr["labels"], &{&1, labeler})
+
     events =
       Enum.map(
-        pr["labels"],
-        &%{"__typename" => "LabeledEvent", "createdAt" => at, "actor" => labeler, "label" => &1}
+        labeled,
+        fn {label, actor} ->
+          %{"__typename" => "LabeledEvent", "createdAt" => at, "actor" => actor, "label" => label}
+        end
       ) ++
         Enum.map(
           pr["reviewRequests"],
