@@ -471,6 +471,24 @@ defmodule HalC2.Steps.Parity.Fixtures do
       "provider.uploadFeedback" ->
         {%{"threadId" => f.thread, "reason" => "parity"}, context}
 
+      # A tool call with no app: the contract's not-an-app error.
+      "mcpApps." <> request ->
+        target = %{"threadId" => f.thread, "itemId" => "turn-item:parity"}
+
+        {case request do
+           "callTool" ->
+             Map.merge(target, %{"name" => "get", "arguments" => %{}})
+
+           "toolInfo" ->
+             Map.put(target, "name", "get")
+
+           "readResource" ->
+             Map.put(target, "uri", "ui://parity/app.html")
+
+           "updateModelContext" ->
+             Map.put(target, "content", [%{"type" => "text", "text" => "hi"}])
+         end, context}
+
       "vcs.init" ->
         {%{"cwd" => Mc.tmp_dir(context.mc, "fresh")}, context}
 

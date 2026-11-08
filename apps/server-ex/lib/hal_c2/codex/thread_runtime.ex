@@ -191,6 +191,22 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
+  @doc """
+  The thread's live connection and native thread for `HalC2.Codex.McpApps`, or nil
+  when no session runs. Never starts one.
+  """
+  def mcp_session(thread_id) do
+    case Registry.lookup(HalC2.Codex.Registry, thread_id) do
+      [{pid, _}] ->
+        Orchestration.session_call(fn -> GenServer.call(pid, :mcp_session, 5_000) end, nil)
+
+      [] ->
+        nil
+    end
+  catch
+    :exit, _ -> nil
+  end
+
   def start_link(thread_id),
     do:
       GenServer.start_link(__MODULE__, thread_id,
@@ -527,6 +543,10 @@ defmodule HalC2.Codex.ThreadRuntime do
       {:error, reason} -> {:reply, {:error, rpc_message(reason)}, state}
     end
   end
+
+  # The live connection and native thread an MCP app's requests go through.
+  def handle_call(:mcp_session, _from, state),
+    do: {:reply, {state.conn, state.native_thread_id}, state}
 
   def handle_call({:upload_feedback, reason}, _from, state) do
     params =
@@ -1245,7 +1265,8 @@ defmodule HalC2.Codex.ThreadRuntime do
              },
              "capabilities" => %{
                "experimentalApi" => true,
-               "optOutNotificationMethods" => ["turn/diff/updated"]
+               "optOutNotificationMethods" => ["turn/diff/updated"],
+               "extensions" => HalC2.McpApps.client_extensions()
              }
            }) do
       Connection.notify(conn, "initialized", nil)
@@ -1631,7 +1652,7 @@ defmodule HalC2.Codex.ThreadRuntime do
       Map.get(@runtime_policies, turn.runtime_mode, @runtime_policies["full-access"])
 
     plan? = Map.get(turn, :interaction_mode) == "plan"
-    context = if not plan?, do: context(state, turn)
+    context = with_app_context(if(not plan?, do: context(state, turn)), state.thread_id)
 
     params = %{
       "threadId" => state.native_thread_id,
@@ -1699,7 +1720,9 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   # The context Codex's history holds, to put back after a compaction: a plan
   # turn sends none and leaves the earlier one in place.
-  defp remember_context(state, true, _context), do: state
+  defp remember_context(state, true, context),
+    do: %{state | context: plan_context(state, context)}
+
   defp remember_context(state, false, context), do: %{state | context: context}
 
   # Compaction rebuilds Codex's history from the user's messages and its own
@@ -1708,13 +1731,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   # messages. Awaited, so they are back before the turn goes on.
   defp restore_context(%{context: context} = state) when is_map(context) do
     items =
-      for {key, %{"value" => value}} <- Enum.sort(context) do
-        %{
-          "type" => "message",
-          "role" => "developer",
-          "content" => [%{"type" => "input_text", "text" => "<#{key}>#{value}</#{key}>"}]
-        }
-      end
+      for {key, entry} <- Enum.sort(context), do: context_item(key, entry)
 
     params = %{"threadId" => state.native_thread_id, "items" => items}
 
@@ -1731,6 +1748,52 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp restore_context(_state), do: :ok
+
+  # --- MCP apps (`HalC2.Codex.McpApps`) -----------------------------------------
+
+  # What the thread's MCP apps told the model goes with every turn, a plan turn's
+  # too: it informs, it does not steer the work. An MCP server wrote it, so it goes
+  # in as untrusted context, which Codex renders as quoted user-side input, never as
+  # instructions.
+  defp with_app_context(context, thread_id) do
+    case Map.merge(context || %{}, HalC2.Codex.McpApps.context_entries(thread_id)) do
+      merged when merged == %{} -> nil
+      merged -> merged
+    end
+  end
+
+  # A plan turn keeps the HAL-C2 context Codex's history holds and takes its own
+  # turn's app context.
+  defp plan_context(state, context) do
+    kept =
+      for {key, %{"kind" => kind} = entry} <- state.context || %{},
+          kind != "untrusted",
+          into: %{},
+          do: {key, entry}
+
+    apps =
+      for {key, %{"kind" => "untrusted"} = entry} <- context || %{}, into: %{}, do: {key, entry}
+
+    if kept == %{} and apps == %{}, do: nil, else: Map.merge(kept, apps)
+  end
+
+  # Restored as Codex sent them: HAL-C2's context as developer input, an app's as
+  # quoted user-side input.
+  defp context_item(key, %{"kind" => "untrusted", "value" => value}),
+    do: %{
+      "type" => "message",
+      "role" => "user",
+      "content" => [
+        %{"type" => "input_text", "text" => "<external_#{key}>#{value}</external_#{key}>"}
+      ]
+    }
+
+  defp context_item(key, %{"value" => value}),
+    do: %{
+      "type" => "message",
+      "role" => "developer",
+      "content" => [%{"type" => "input_text", "text" => "<#{key}>#{value}</#{key}>"}]
+    }
 
   # --- notifications ----------------------------------------------------------
 
@@ -3346,7 +3409,14 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp complete_item(state, %{"type" => type, "id" => native} = item)
        when type in ["mcpToolCall", "dynamicToolCall"] do
-    fields = item |> tool_fields() |> HalC2.Codex.ToolImages.store(state.thread_id)
+    fields =
+      item
+      |> tool_fields()
+      |> HalC2.Codex.ToolImages.store(state.thread_id)
+      |> Map.merge(
+        HalC2.Codex.McpApps.capture(state.conn, state.native_thread_id, state.thread_id, item)
+      )
+
     status = if item["status"] == "failed", do: "failed", else: "completed"
 
     state

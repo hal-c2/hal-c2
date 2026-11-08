@@ -16,6 +16,7 @@ sys.dont_write_bytecode = True  # its own modules leave no __pycache__ in the tr
 import fake_codex_goals as goals  # thread/goal/*: Codex's own goal
 import fake_codex_chatgpt  # the ChatGPT sign-in, while FAKE_CODEX_CHATGPT is set
 import fake_codex_images  # images and partial answers, which it describes
+import fake_codex_mcp_apps  # MCP Apps: tool calls that return a ui:// app, and the app's requests
 
 # A "will-not-exit" file in the working directory has the process ignore SIGTERM and a
 # closed stdin, as a wedged app-server does: only SIGKILL ends it.
@@ -293,7 +294,7 @@ for line in sys.stdin:
             text = "received " + json.dumps(msg.get("result"), sort_keys=True)
             send({"method": "item/completed", "params": {**ctx, "item": {**item, "text": text}}})
         continue
-    if fake_codex_chatgpt.handle(method, params, mid, send):
+    if fake_codex_chatgpt.handle(method, params, mid, send) or fake_codex_mcp_apps.answer(method, params, mid, send):
         continue
     if method == "initialize":
         # FAKE_CODEX_PROBE_ERROR is answered as the initialize call's error, and
@@ -380,7 +381,7 @@ for line in sys.stdin:
         send({"id": mid, "result": {"turn": {"id": turn_id, "status": "inProgress"}}})
         ctx = {"threadId": thread_id, "turnId": turn_id}
         send({"method": "turn/started", "params": {**ctx, "turn": {"id": turn_id, "status": "inProgress"}}})
-        if fake_codex_images.turn(ctx, text, send):
+        if fake_codex_images.turn(ctx, text, send) or fake_codex_mcp_apps.play(text, ctx, turn_id, send):
             continue
         if "stream paragraphs" in text or "stream a reply" in text:
             stream_reply(ctx, text)

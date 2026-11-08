@@ -1706,7 +1706,7 @@ Feature: Codex
   Rule: An MCP app a Codex tool returns runs inside the thread
 
     # Upstream #16236: a tool result pointing at a ui:// resource is an MCP app.
-    @backlog @shared
+    @shared @backlog-desktop @backlog-mobile @backlog-tui
     Scenario: An MCP app opens inline in the thread
       Given a Codex tool call returned an MCP app
       When the user looks at the tool call
@@ -1714,47 +1714,53 @@ Feature: Codex
       And the user can open it full screen and close it again
 
     # Upstream #25225: Codex marks a write deferred to an app's form as a failed tool result.
-    @backlog @shared
+    @shared @backlog-desktop @backlog-mobile @backlog-tui
     Scenario: An MCP app from a tool call marked failed is still shown
       Given a Codex tool call returned an MCP app with a result marked as an error
       When the user looks at the tool call
       Then the app is shown and running in the thread
       And the tool call still shows that it failed
 
-    @backlog @shared
+    @shared
     Scenario Outline: An MCP app asks before it does anything that is not reading
       Given an MCP app is open in a Codex thread
       When the app <action>
       Then the user is asked to approve it first
 
+      @backlog-desktop @backlog-mobile @backlog-tui
       Examples:
         | action                                  |
         | calls a tool that is not read only      |
+
+      # A message or a download never reaches the MC; the client asks for them.
+      @backlog
+      Examples:
+        | action                                  |
         | sends a message to the thread           |
         | downloads a file                        |
 
-    @backlog @shared @priority-low
+    @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
     Scenario: What an MCP app tells the model goes with the next message
       Given an MCP app in a Codex thread gave the model some context
       When the user sends the next message
       Then that context goes with it, cut to 16 KiB
       And a fork of the thread keeps it and a rollback past it drops it
 
-    @backlog @shared @priority-low
+    @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
     Scenario: An MCP app in a thread whose session stopped says so
       Given the Codex session of a thread with an MCP app has stopped
       When the user opens the app
       Then the app says the session has stopped
       And no session is started for it
 
-    @backlog @priority-low
+    @priority-low
     Scenario: Deleting a thread removes its MCP apps' documents
       Given a Codex thread with an MCP app
       When the user deletes the thread
       Then the app's stored documents are removed with it
 
     # Upstream #17026: a Confluence result's canvas stayed white under dark text.
-    @backlog @shared @mc @priority-low
+    @shared @mc @backlog-desktop @backlog-mobile @backlog-tui @priority-low
     Scenario: An MCP app follows the app's light or dark appearance
       Given an MCP app is open in a Codex thread
       When the user switches the app between light and dark
@@ -1762,7 +1768,7 @@ Feature: Codex
       And an MCP app stored in the thread before this works the same
 
     # Upstream #17027: Jira's app threw on reading cookies in its sandbox and vanished.
-    @backlog @shared @mc @priority-low
+    @shared @mc @backlog-desktop @backlog-mobile @backlog-tui @priority-low
     Scenario: An MCP app that reads cookies in its sandbox still shows
       Given a Codex tool call returned an MCP app that reads its cookies while it starts
       When the user looks at the tool call
