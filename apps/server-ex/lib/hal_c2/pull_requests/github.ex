@@ -81,7 +81,7 @@ defmodule HalC2.PullRequests.GitHub do
         viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch
         baseRef { compare(headRef: $headRef) { behindBy } }
         reviewRequests(first: 100) {
-          nodes { requestedReviewer { ... on User { login name } ... on Bot { login } ... on Team { slug name } } }
+          nodes { requestedReviewer { ... on User { login name avatarUrl } ... on Bot { login avatarUrl } ... on Team { slug name avatarUrl organization { login } } } }
         }
         labels(first: 100) { nodes { name color } }
         commits(last: 1) {
@@ -453,16 +453,85 @@ defmodule HalC2.PullRequests.GitHub do
   is the usual one.
   """
   def list(ctx, opts) do
-    case list_read(ctx, opts, true) do
-      {:ok, %{items: []}} = empty ->
-        if opts.cursor == nil and String.trim(opts.query || "") == "",
-          do: unindexed(ctx, opts, empty),
-          else: empty
+    read =
+      case list_read(ctx, opts, true) do
+        {:ok, %{items: []}} = empty ->
+          if opts.cursor == nil and String.trim(opts.query || "") == "",
+            do: unindexed(ctx, opts, empty),
+            else: empty
+
+        other ->
+          other
+      end
+
+    # Rows carry the stack they belong to, where GitHub can say; a stack read
+    # that fails leaves the rows as they are rather than failing the list.
+    case read do
+      {:ok, %{items: [_ | _]} = page} ->
+        memberships = stack_memberships(ctx)
+
+        items =
+          Enum.map(page.items, fn item ->
+            case memberships[item["number"]] do
+              nil -> item
+              stack -> Map.put(item, "stack", stack)
+            end
+          end)
+
+        {:ok, %{page | items: items}}
 
       other ->
         other
     end
   end
+
+  # Every stack of the repository as `{pull request number => membership}`: its
+  # stack's number, its one-based place in it, its size and its base, read a
+  # hundred stacks at a time until a short page ends them. Any failure (a
+  # host without stacks, a read refused) keeps the memberships already read;
+  # a stack that names no base is skipped, since a membership must name one.
+  defp stack_memberships(ctx), do: stack_memberships(ctx, 1, %{})
+
+  defp stack_memberships(ctx, page, acc) do
+    case rest(ctx, "stacks?per_page=100&page=#{page}") do
+      {:ok, stacks} when is_list(stacks) ->
+        acc =
+          Enum.reduce(stacks, acc, fn stack, acc ->
+            case stack_membership(stack) do
+              nil -> acc
+              entries -> Map.merge(acc, Map.new(entries))
+            end
+          end)
+
+        if length(stacks) >= 100 and page < 100,
+          do: stack_memberships(ctx, page + 1, acc),
+          else: acc
+
+      _ ->
+        acc
+    end
+  end
+
+  defp stack_membership(%{"number" => number} = stack)
+       when is_integer(number) do
+    base = trimmed(if is_map(stack["base"]), do: stack["base"]["ref"], else: stack["base"])
+    layers = stack["pull_requests"] || []
+
+    if base do
+      for {layer, index} <- Enum.with_index(layers),
+          is_integer(layer["number"]) do
+        {layer["number"],
+         %{
+           "number" => number,
+           "position" => index + 1,
+           "size" => length(layers),
+           "base" => base
+         }}
+      end
+    end
+  end
+
+  defp stack_membership(_stack), do: nil
 
   defp unindexed(ctx, opts, empty) do
     q = "repo:#{ctx.repository} is:pr"
@@ -479,10 +548,28 @@ defmodule HalC2.PullRequests.GitHub do
   defp list_read(ctx, opts, true) do
     variables = %{"q" => Enum.join(search_terms(ctx, opts), " ")}
 
-    with {:ok, raw, _more, page} <-
-           list_pages(ctx, opts, @list_search_query, variables, ["search"], opts.limit + 1) do
-      items = Enum.flat_map(raw, &list_node/1)
-      truncated = length(raw) > opts.limit
+    # A continuation asks for the boundary instant inclusively, so the rows
+    # already sent at it come back first: read past them, or a page that shares
+    # one update time would hand back only what was already listed.
+    seen = if opts.cursor, do: opts.cursor.seen || [], else: []
+
+    with {:ok, raw, more, page} <-
+           list_pages(
+             ctx,
+             opts,
+             @list_search_query,
+             variables,
+             ["search"],
+             opts.limit + 1 + length(seen)
+           ) do
+      items =
+        raw
+        |> Enum.flat_map(&list_node/1)
+        |> Enum.reject(
+          &(opts.cursor && &1["updatedAt"] == opts.cursor.boundary && &1["number"] in seen)
+        )
+
+      truncated = length(items) > opts.limit or more
 
       {:ok,
        %{items: Enum.take(items, opts.limit), truncated: truncated, sorted: true, page: page}}
@@ -1068,9 +1155,9 @@ defmodule HalC2.PullRequests.GitHub do
           "mergedAt" => trimmed(pr["mergedAt"]),
           "closedAt" => trimmed(pr["closedAt"]),
           "reviewers" =>
-            for(
-              l <- item["reviewRequestLogins"],
-              do: %{"login" => l, "name" => nil, "avatarUrl" => nil}
+            Enum.flat_map(
+              nodes(pr, ["reviewRequests", "nodes"], "requestedReviewer"),
+              &reviewer_actor/1
             ),
           "checks" => checks,
           "mergeCapabilities" => merge_capabilities(repo),
@@ -1695,10 +1782,10 @@ defmodule HalC2.PullRequests.GitHub do
 
     cond do
       commit != nil and not sha?(commit) ->
-        {:error, {:failed, "The commit is not one this change can name."}}
+        {:error, {:failed, "The named commit was not a commit sha."}}
 
       cursor != nil and not is_integer(page) ->
-        {:error, {:failed, "The diff cannot be carried on from that cursor."}}
+        {:error, {:failed, "The diff cursor was not one this pull request handed out."}}
 
       cursor != nil or commit != nil ->
         files_page(ctx, page || 1, commit)
@@ -1841,16 +1928,20 @@ defmodule HalC2.PullRequests.GitHub do
         do: {"commits/#{commit}", "[.parents[0].sha, .sha] | @tsv"},
         else: {"pulls/#{ctx.number}", "[.base.sha, .head.sha] | @tsv"}
 
+    revisions = fn ->
+      gh(ctx.cwd, ["api", "--hostname", ctx.host, "repos/#{owner}/#{name}/#{path}", "--jq", jq])
+    end
+
+    # The revisions and the changed-file guard are independent reads; neither
+    # waits on the other.
     with true <- commit == nil or sha?(commit),
-         {:ok, out} <-
-           gh(ctx.cwd, [
-             "api",
-             "--hostname",
-             ctx.host,
-             "repos/#{owner}/#{name}/#{path}",
-             "--jq",
-             jq
-           ]),
+         [revisions, changed] <-
+           Task.await_many(
+             [Task.async(revisions), Task.async(fn -> changed_file(ctx, commit, input) end)],
+             :infinity
+           ),
+         :ok <- changed,
+         {:ok, out} <- revisions,
          [base, head] <- out |> String.trim_trailing() |> String.split("\t"),
          true <-
            sha?(head) and
@@ -1876,9 +1967,61 @@ defmodule HalC2.PullRequests.GitHub do
            {:ok, new} <- new,
            do: {:ok, %{"oldContents" => old, "newContents" => new}}
     else
-      {:error, _} = error -> error
-      _ -> {:error, {:failed, "The revisions of this change could not be read."}}
+      {:error, _} = error ->
+        error
+
+      _ ->
+        {:error,
+         {:failed, "Pull request ##{ctx.number} reported no usable base and head revisions."}}
     end
+  end
+
+  # Only a file this change (or the named commit of it) actually changes may be
+  # expanded: both paths a client names must be the two sides of one entry of
+  # the host's own list of changed files, exactly as they will be read, so
+  # contents of any other file of the repository at the base or head are never
+  # handed out through a pull request.
+  defp changed_file(ctx, commit, input, page \\ 1) do
+    {owner, name} = split(ctx.repository)
+    paging = "per_page=#{@files_page}&page=#{page}"
+
+    args =
+      if commit,
+        do: ["repos/#{owner}/#{name}/commits/#{commit}?#{paging}", "--jq", ".files // []"],
+        else: ["repos/#{owner}/#{name}/pulls/#{ctx.number}/files?#{paging}"]
+
+    case gh(ctx.cwd, ["api", "--hostname", ctx.host | args],
+           timeout: @diff_timeout,
+           max_bytes: @diff_max_bytes
+         ) do
+      {:ok, out} ->
+        case JSON.decode(out) do
+          {:ok, files} when is_list(files) ->
+            found = Enum.any?(files, &sides_of?(&1, input))
+
+            cond do
+              found -> :ok
+              length(files) < @files_page -> {:error, {:not_found, "The file was not found."}}
+              true -> changed_file(ctx, commit, input, page + 1)
+            end
+
+          _ ->
+            decoded(:error)
+        end
+
+      error ->
+        error
+    end
+  end
+
+  # The side a change type leaves empty is never read, so it need not match.
+  defp sides_of?(file, input) do
+    new = file["filename"]
+    old = file["previous_filename"] || new
+
+    is_binary(new) and
+      (input["changeType"] == "deleted" or input["newPath"] == new) and
+      (input["changeType"] == "new" or input["oldPath"] == old)
   end
 
   defp raw_file(ctx, revision, path) do
@@ -1899,10 +2042,10 @@ defmodule HalC2.PullRequests.GitHub do
     with {:ok, out} <- gh(ctx.cwd, args, timeout: 60_000) do
       cond do
         byte_size(out) > 1024 * 1024 ->
-          {:error, {:failed, "#{path} is too large to show."}}
+          {:error, {:failed, "The diff file '#{path}' exceeds the 1 MB expansion limit."}}
 
         String.contains?(out, <<0>>) or not String.valid?(out) ->
-          {:error, {:failed, "#{path} is a binary file."}}
+          {:error, {:failed, "The diff file '#{path}' is binary."}}
 
         true ->
           {:ok, out}
@@ -2237,9 +2380,44 @@ defmodule HalC2.PullRequests.GitHub do
   defp done(error), do: error
 
   defp not_found(ctx), do: {:error, {:not_found, "Pull request ##{ctx.number} was not found."}}
-  defp out_of_scope, do: {:error, {:failed, "That remark does not belong to this pull request."}}
+
+  defp out_of_scope,
+    do: {:error, {:failed, "The named subject did not belong to the named pull request."}}
 
   # --- JSON ----------------------------------------------------------------------------
+
+  # A requested reviewer as an actor: a person by their login, a team by the
+  # `organisation/slug` it is asked as, each with the name and picture the host
+  # gave. A team is its own reviewer, never the member whose login is its slug.
+  defp reviewer_actor(raw) do
+    slug = raw && trimmed(raw["slug"])
+    login = raw && trimmed(raw["login"])
+
+    cond do
+      slug ->
+        org = trimmed(get_in(raw, ["organization", "login"]))
+
+        [
+          %{
+            "login" => if(org, do: "#{org}/#{slug}", else: slug),
+            "name" => trimmed(raw["name"]),
+            "avatarUrl" => trimmed(raw["avatarUrl"])
+          }
+        ]
+
+      login ->
+        [
+          %{
+            "login" => login,
+            "name" => trimmed(raw["name"]),
+            "avatarUrl" => trimmed(raw["avatarUrl"])
+          }
+        ]
+
+      true ->
+        []
+    end
+  end
 
   @doc "A `PullRequestActor`, or nil for anyone with no login."
   def actor(nil), do: nil
@@ -2297,8 +2475,10 @@ defmodule HalC2.PullRequests.GitHub do
     end
   end
 
-  # GitHub's own decision counts only reviews that satisfy branch rules; when it has
-  # none, the latest review per reviewer decides, changes requested first.
+  # GitHub's own decision counts only reviews that satisfy branch rules, so where
+  # it has one it wins: an approving review does not approve a pull request GitHub
+  # still marks review-required. When it has none, the latest review per reviewer
+  # decides, changes requested first.
   defp review_decision(value, latest) do
     summarized =
       case up(value) do
@@ -2312,10 +2492,10 @@ defmodule HalC2.PullRequests.GitHub do
     states = MapSet.new(reviews, &up(&1 && &1["state"]))
 
     cond do
-      summarized in ["approved", "changes-requested"] -> summarized
+      summarized != nil -> summarized
       "CHANGES_REQUESTED" in states -> "changes-requested"
       "APPROVED" in states -> "approved"
-      true -> summarized
+      true -> nil
     end
   end
 
@@ -2365,12 +2545,15 @@ defmodule HalC2.PullRequests.GitHub do
       end
 
     {order, newest} =
-      Enum.reduce(entries, {[], %{}}, fn {check, workflow, at} = entry, {order, newest} ->
+      Enum.reduce(entries, {[], %{}}, fn entry, {order, newest} ->
+        {check, workflow, _at} = entry
         key = {workflow, check["name"]}
 
         case newest do
-          %{^key => {_, _, kept}} ->
-            if newer?(at, kept), do: {order, Map.put(newest, key, entry)}, else: {order, newest}
+          %{^key => kept} ->
+            if better?(entry, kept),
+              do: {order, Map.put(newest, key, entry)},
+              else: {order, newest}
 
           _ ->
             {[key | order], Map.put(newest, key, entry)}
@@ -2387,13 +2570,36 @@ defmodule HalC2.PullRequests.GitHub do
     end
   end
 
+  # One run of a check still going means the check is pending, however an
+  # earlier finished run of it ended: a workflow run on both push and
+  # pull_request leaves a passing run beside the one still running, and
+  # calling that passing wakes readers with news that is not true yet.
+  defp better?({check, _workflow, at}, {kept, _kept_workflow, kept_at}) do
+    cond do
+      check["status"] == "pending" and kept["status"] != "pending" -> true
+      kept["status"] == "pending" and check["status"] != "pending" -> false
+      true -> newer?(at, kept_at)
+    end
+  end
+
   defp newer?(nil, kept), do: kept == nil
   defp newer?(at, kept), do: kept == nil or at >= kept
 
+  # An instant, however the host spelled it: "12:00:00.500Z" is after
+  # "12:00:00Z", which comparing the spellings would miss.
   defp timestamp(value) do
     case trimmed(value) do
-      "0001-01-01T00:00:00Z" -> nil
-      at -> at
+      "0001-01-01T00:00:00Z" ->
+        nil
+
+      at when is_binary(at) ->
+        case DateTime.from_iso8601(at) do
+          {:ok, instant, _offset} -> DateTime.to_unix(instant, :microsecond)
+          _ -> nil
+        end
+
+      _ ->
+        nil
     end
   end
 

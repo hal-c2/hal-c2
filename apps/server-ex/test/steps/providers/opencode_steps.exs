@@ -1268,23 +1268,35 @@ defmodule HalC2.Steps.Providers.Opencode do
     }
 
   defp compacting(context, match, steps) do
+    turns = [
+      %{"match" => "hello", "steps" => [%{"text" => "Hi."}]},
+      %{"match" => match, "steps" => steps}
+    ]
+
     context
-    |> FakeAcp.install("opencode", %{"turns" => [%{"match" => match, "steps" => steps}]},
-      enabled: true
-    )
+    |> FakeAcp.install("opencode", %{"turns" => turns}, enabled: true)
     |> FakeAcp.thread(@thread)
+  end
+
+  # A bare /compact on a thread with no conversation never reaches the provider
+  # (mc/orchestration/runs.feature), so the thread gets one turn behind it first.
+  defp with_a_turn_behind(context) do
+    context
+    |> FakeAcp.send_message("hello")
+    |> tap(&FakeAcp.await_run(&1, "completed"))
   end
 
   step ~r{^the user sends "/compact" by itself to an OpenCode thread$}, context do
     context
     |> compacting("/compact", [compaction("started"), compaction("completed")])
+    |> with_a_turn_behind()
     |> FakeAcp.send_message("/compact")
   end
 
   step "OpenCode summarizes its session", context do
     FakeAcp.await_run(context, "completed")
     # OpenCode runs a prompt of "/compact" alone as a compaction of the session.
-    assert [%{"params" => %{"prompt" => [%{"type" => "text", "text" => "/compact"}]}}] =
+    assert [_hello, %{"params" => %{"prompt" => [%{"type" => "text", "text" => "/compact"}]}}] =
              FakeAcp.received(context, "session/prompt")
 
     context
@@ -1300,6 +1312,7 @@ defmodule HalC2.Steps.Providers.Opencode do
       compaction("failed", %{"error" => @summary_failure}),
       %{"error" => %{"code" => -32603, "message" => @summary_failure}}
     ])
+    |> with_a_turn_behind()
     |> FakeAcp.send_message("/compact")
   end
 

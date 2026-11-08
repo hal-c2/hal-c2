@@ -101,6 +101,161 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- WinGet, release channels, and who really installed it --------------------------
+
+  step "Claude was installed with WinGet", context do
+    context = World.fake_providers(context)
+    home = Mc.tmp_dir(context.mc, "claude-winget-home")
+
+    context
+    |> claude_at(
+      home,
+      Path.join([
+        "AppData",
+        "Local",
+        "Microsoft",
+        "WinGet",
+        "Packages",
+        "Anthropic.ClaudeCode",
+        "claude"
+      ])
+    )
+    |> latest("claudeAgent", "9.9.9")
+  end
+
+  step "a newer Claude is released", context do
+    {providers, context} = World.provider_list(context)
+    Map.put(context, :providers, providers)
+  end
+
+  step "Claude is reported out of date with the command to update it by hand", context do
+    assert %{
+             "status" => "behind_latest",
+             "updateCommand" => "winget upgrade Anthropic.ClaudeCode"
+           } =
+             claude(context.providers)["versionAdvisory"]
+
+    context
+  end
+
+  step "no Update action is offered", context do
+    assert claude(context.providers)["versionAdvisory"]["canUpdate"] == false
+    context
+  end
+
+  # The instance's Claude settings name the channel, in a config directory of
+  # their own; the channel offers the installed 2.1.0.
+  defp native_channel(context, channel) do
+    context = World.fake_providers(context, claude_layout: :native)
+    config = Mc.tmp_dir(context.mc, "claude-channel")
+
+    File.write!(
+      Path.join(config, "settings.json"),
+      JSON.encode!(%{"autoUpdatesChannel" => channel})
+    )
+
+    World.put_os_env("CLAUDE_CONFIG_DIR", config)
+    World.reset_provider_caches()
+    channel_latest(context, channel, "2.1.0")
+  end
+
+  step "Claude was installed by its own native installer and follows the {string} channel",
+       %{args: [channel]} = context do
+    native_channel(context, channel)
+  end
+
+  step "Claude was installed by its own native installer", context do
+    context |> World.fake_providers(claude_layout: :native) |> latest("claudeAgent", "9.9.9")
+  end
+
+  step "npm has published a newer Claude than the {string} channel offers",
+       %{args: [_channel]} = context do
+    # npm's last read is far ahead; it is not the native channel's to offer.
+    :persistent_term.put(
+      {HalC2.ProviderUpdates, "claudeAgent"},
+      {"9.9.9", System.monotonic_time(:millisecond)}
+    )
+
+    context
+  end
+
+  step "the installed Claude is the newest the {string} channel offers",
+       %{args: [_channel]} = context do
+    {providers, context} = World.provider_list(context)
+    Map.put(context, :providers, providers)
+  end
+
+  step "Claude is reported up to date", context do
+    assert %{"status" => "current", "latestVersion" => "2.1.0"} =
+             claude(context.providers)["versionAdvisory"]
+
+    context
+  end
+
+  step "Claude's release channel does not answer or answers with something unreadable",
+       context do
+    # No channel read stands (the reset clears the seeded one), and test update
+    # checks are off, so none arrives. npm's last read is still ahead.
+    World.reset_provider_caches()
+
+    :persistent_term.put(
+      {HalC2.ProviderUpdates, "claudeAgent"},
+      {"9.9.9", System.monotonic_time(:millisecond)}
+    )
+
+    context
+  end
+
+  step "the MC checks Claude for updates", context do
+    {providers, context} = World.provider_list(context)
+    Map.put(context, :providers, providers)
+  end
+
+  step "Claude's latest version is unknown", context do
+    assert %{"status" => "unknown", "latestVersion" => nil} =
+             claude(context.providers)["versionAdvisory"]
+
+    context
+  end
+
+  step "Claude is not reported out of date against npm's releases", context do
+    refute claude(context.providers)["versionAdvisory"]["status"] == "behind_latest"
+    context
+  end
+
+  step "npm's global prefix is {string} of the user's home", %{args: [_prefix]} = context do
+    context = World.fake_providers(context)
+    Map.put(context, :npm_home, Mc.tmp_dir(context.mc, "claude-npm-local"))
+  end
+
+  step "the claude command in {string} links into npm's {string} package",
+       %{args: [_bin, _package]} = context do
+    home = context.npm_home
+
+    real =
+      Path.join([home, ".local", "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js"])
+
+    File.mkdir_p!(Path.dirname(real))
+
+    File.write!(real, """
+    #!/bin/sh
+    if [ "$1" = "--version" ]; then echo "2.1.0 (Claude Code)"; exit 0; fi
+    exec python3 -u #{Path.expand("../../support/fake_claude.py", __DIR__)} "$@"
+    """)
+
+    File.chmod!(real, 0o755)
+    link = Path.join([home, ".local", "bin", "claude"])
+    File.mkdir_p!(Path.dirname(link))
+    File.ln_s!(real, link)
+    npm = Path.join([home, ".local", "bin", "npm"])
+    File.write!(npm, "#!/bin/sh\nexit 0\n")
+    File.chmod!(npm, 0o755)
+    World.put_os_env("HOME", home)
+    World.put_app_env(:claude_command, [link])
+    World.reset_provider_caches()
+    context
+  end
+
   # --- too old for a model, compatibility, who updates it ----------------------------
 
   # The gated manifest model needing the lowest version above `version` (every gated
@@ -627,6 +782,256 @@ defmodule HalC2.Steps.Providers.Claude do
              claude(context.providers)["auth"]
 
     assert label =~ "Max"
+    context
+  end
+
+  # --- plan names, sign-in state, custom endpoints ------------------------------------
+
+  step "the Claude CLI is signed in with the {string} subscription",
+       %{args: [subscription]} = context do
+    World.put_os_env("FAKE_CLAUDE_SUBSCRIPTION", subscription)
+    World.fake_providers(context)
+  end
+
+  step "Claude shows the plan as {string}", %{args: [plan]} = context do
+    assert %{"label" => ^plan} = claude(context.providers)["auth"]
+    context
+  end
+
+  # No key or token anywhere Claude would read one, and `claude auth status`
+  # itself says nobody is signed in.
+  defp signed_out(context) do
+    World.put_os_env("ANTHROPIC_API_KEY", nil)
+    World.put_os_env("ANTHROPIC_AUTH_TOKEN", nil)
+    World.put_os_env("ANTHROPIC_BASE_URL", nil)
+    World.put_os_env("FAKE_CLAUDE_AUTH_STATUS", ~s({"loggedIn":false,"authMethod":"none"}))
+    World.reset_provider_caches()
+    context
+  end
+
+  step "the Claude CLI on the MC reports no account, no API key and no token", context do
+    context |> World.fake_providers() |> signed_out()
+  end
+
+  step "the Claude CLI is not signed in", context do
+    context |> World.fake_providers() |> signed_out()
+  end
+
+  step "the Claude CLI on the MC uses an API key", context do
+    World.put_os_env("ANTHROPIC_API_KEY", "sk-ant-test")
+    context |> World.fake_providers() |> Map.put(:auth_checked, true)
+  end
+
+  step "the Claude CLI on the MC runs through Bedrock or Vertex", context do
+    World.put_os_env("CLAUDE_CODE_USE_BEDROCK", "1")
+    World.fake_providers(context)
+  end
+
+  step "the Claude CLI on the MC is too old to report its account", context do
+    World.put_os_env("FAKE_CLAUDE_AUTH_STATUS", "unknown")
+    World.fake_providers(context, claude_version: "1.0.44")
+  end
+
+  step "the user looks at Claude in the provider settings", context do
+    {providers, context} = World.provider_list(context)
+    Map.put(context, :providers, providers)
+  end
+
+  # The sign-in read lands in the background and re-announces the providers;
+  # wait for the announcement that carries `status`, and keep its list.
+  defp await_claude_auth(context, status) do
+    if get_in(claude(context.providers || []), ["auth", "status"]) == status do
+      context
+    else
+      id = System.unique_integer([:positive])
+      # A connection of its own: the default one already holds a config
+      # subscription, and a second on it gets no first frame.
+      name = "claude-auth-#{id}"
+
+      client =
+        Mc.sub(World.client(context, name), id, %{
+          "type" => "config",
+          "mc" => Atom.to_string(node())
+        })
+
+      # The first frame is the whole config; re-announcements carry only the
+      # providers (`config.providers`).
+      providers_of = fn
+        %{"t" => "config", "config" => %{"providers" => providers}} -> providers
+        %{"t" => "config.providers", "providers" => providers} -> providers
+        _ -> nil
+      end
+
+      settled = fn frame ->
+        frame["id"] == id and
+          get_in(claude(providers_of.(frame) || []), ["auth", "status"]) == status
+      end
+
+      {frame, client} = Mc.await(client, settled, 10_000)
+
+      context
+      |> World.put_client(name, client)
+      |> Map.put(:providers, providers_of.(frame))
+    end
+  end
+
+  step "Claude is shown as not signed in, with {string} as the fix",
+       %{args: [fix]} = context do
+    context = await_claude_auth(context, "unauthenticated")
+    assert %{"status" => "unauthenticated"} = claude(context.providers)["auth"]
+    assert claude(context.providers)["message"] =~ fix
+    context
+  end
+
+  step "Claude is shown as signed in", context do
+    context = await_claude_auth(context, "authenticated")
+    assert %{"status" => "authenticated"} = claude(context.providers)["auth"]
+    assert claude(context.providers)["status"] == "ready"
+    context
+  end
+
+  step "the user signs in with Claude and refreshes the providers", context do
+    World.put_os_env("FAKE_CLAUDE_AUTH_STATUS", ~s({"loggedIn":true,"authMethod":"claude.ai"}))
+
+    {result, context} =
+      World.call!(context, "server.refreshProviders", %{"instanceId" => "claudeAgent"})
+
+    Map.put(context, :providers, result["providers"])
+  end
+
+  step "the user is told to update Claude Code to use that model", context do
+    {providers, context} = World.provider_list(context)
+    {min, model} = lowest_gated(claude(providers)["version"])
+    assert claude(providers)["message"] =~ "is too old for #{model["name"]}"
+    assert claude(providers)["message"] =~ "Upgrade to v#{min} or newer"
+    Map.put(context, :providers, providers)
+  end
+
+  step "the sign-in hint is still shown", context do
+    context = await_claude_auth(context, "unauthenticated")
+    assert %{"status" => "unauthenticated"} = claude(context.providers)["auth"]
+    assert claude(context.providers)["message"] =~ "claude auth login"
+    context
+  end
+
+  # The built-in instance's own variables, as Settings > Providers writes them.
+  defp instance_env(context, vars) do
+    write_settings(context, fn settings ->
+      put_in(settings, [Access.key("providerInstances", %{}), "claudeAgent"], %{
+        "driver" => "claudeAgent",
+        "enabled" => true,
+        "environment" =>
+          Enum.map(vars, fn {name, value} ->
+            %{"name" => name, "value" => value, "sensitive" => true}
+          end)
+      })
+    end)
+  end
+
+  step "a Claude instance whose environment sets a custom ANTHROPIC_BASE_URL and key",
+       context do
+    context
+    |> World.fake_providers()
+    |> instance_env(%{
+      "ANTHROPIC_BASE_URL" => "https://router.test/api",
+      "ANTHROPIC_API_KEY" => "[REDACTED]"
+    })
+  end
+
+  # The provider entries the MC serves, read in-process: a check whose version
+  # probe takes 15 seconds outlasts a socket frame's wait.
+  step "the MC checks Claude", context do
+    Map.put(context, :providers, HalC2.Environment.providers())
+  end
+
+  step "Claude is reported ready", context do
+    assert %{"status" => "ready", "auth" => %{"status" => "authenticated"}} =
+             claude(context.providers)
+
+    context
+  end
+
+  step "the user is not asked to sign in", context do
+    refute (claude(context.providers)["message"] || "") =~ "claude auth login"
+    context
+  end
+
+  step "Claude's settings file sets ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN in its env",
+       context do
+    context = World.fake_providers(context)
+    config = Mc.tmp_dir(context.mc, "claude-proxy")
+
+    File.write!(
+      Path.join(config, "settings.json"),
+      JSON.encode!(%{
+        "env" => %{
+          "ANTHROPIC_BASE_URL" => "https://proxy.test",
+          "ANTHROPIC_AUTH_TOKEN" => "[REDACTED]"
+        }
+      })
+    )
+
+    # The proxy login is what `initialize` reports: an auth token, no subscription.
+    World.put_os_env("CLAUDE_CONFIG_DIR", config)
+    World.put_os_env("FAKE_CLAUDE_TOKEN_SOURCE", "ANTHROPIC_AUTH_TOKEN")
+    World.reset_provider_caches()
+    Mc.ensure(HalC2.ProviderUsageLimits)
+    :ok = HalC2.ProviderUsageLimits.refresh(["claudeAgent"])
+    :sys.get_state(HalC2.ProviderUsageLimits)
+    context
+  end
+
+  step "the MC's own environment sets neither", context do
+    World.put_os_env("ANTHROPIC_BASE_URL", nil)
+    World.put_os_env("ANTHROPIC_AUTH_TOKEN", nil)
+    context
+  end
+
+  step "Claude is reported ready with {string}", %{args: [label]} = context do
+    assert %{"status" => "ready", "auth" => %{"status" => "authenticated", "label" => ^label}} =
+             claude(context.providers)
+
+    context
+  end
+
+  step "the Claude account has a monthly spending limit, 40 percent used", context do
+    World.put_os_env("FAKE_CLAUDE_MONTHLY", "40")
+    World.fake_providers(context)
+  end
+
+  step "Claude shows a monthly window at 40 percent with its reset date", context do
+    {providers, context} = World.provider_list(context)
+    windows = claude(providers)["usageLimits"]["windows"]
+
+    assert %{"kind" => "monthly", "usedPercent" => 40.0, "resetsAt" => resets} =
+             Enum.find(windows, &(&1["kind"] == "monthly"))
+
+    assert resets =~ "2026-10-01"
+    context
+  end
+
+  # The first `--version` takes the 15 seconds; the deadline is what is under
+  # test, so later probes of the same check answer at once.
+  step "Claude takes 15 seconds to report its version", context do
+    context = World.fake_providers(context)
+    marker = Path.join(Mc.tmp_dir(context.mc, "slow-version"), "reported")
+
+    claude_script(
+      context,
+      "claude",
+      """
+      #!/bin/sh
+      if [ "$1" = "--version" ]; then
+        if [ ! -e #{marker} ]; then touch #{marker}; sleep 15; fi
+        echo "2.1.0 (Claude Code)"; exit 0
+      fi
+      exec python3 -u #{Path.expand("../../support/fake_claude.py", __DIR__)} "$@"
+      """
+    )
+  end
+
+  step "Claude is not reported as failing to run", context do
+    assert %{"status" => "ready", "version" => "2.1.0"} = claude(context.providers)
     context
   end
 
@@ -1532,9 +1937,32 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # After a revert to the compaction's end, the next message resumes the
+  # conversation at the compaction itself.
+  defp continues_after_compact_revert(context) do
+    context = World.post_message(context, @thread, "where are we")
+    World.await_latest_run(context, @thread, "completed")
+
+    assert Enum.any?(
+             World.replies(context, @thread),
+             &String.starts_with?(&1, "resumed at compact-")
+           ),
+           inspect(World.replies(context, @thread))
+
+    context
+  end
+
   # The same Claude session takes the message: nothing is started again, or resumed
   # from before the compaction.
   step "Claude continues from the compacted conversation", context do
+    if context[:compact_reverted] do
+      continues_after_compact_revert(context)
+    else
+      continues_after_compaction(context)
+    end
+  end
+
+  defp continues_after_compaction(context) do
     log = World.provider_log(context, "claude")
     assert [%{"argv" => argv}] = Enum.filter(log, &Map.has_key?(&1, "argv"))
     refute "--resume" in argv
@@ -1679,6 +2107,7 @@ defmodule HalC2.Steps.Providers.Claude do
              "CLAUDE_CONFIG_DIR" => context.router_config,
              "HOME" => System.user_home!(),
              "ANTHROPIC_BASE_URL" => "https://openrouter.test/api",
+             "CLAUDE_CODE_ENTRYPOINT" => "hal-c2",
              "ANTHROPIC_AUTH_TOKEN" => "sk-or-secret"
            }
 
@@ -1967,7 +2396,16 @@ defmodule HalC2.Steps.Providers.Claude do
 
   step "a Claude turn starts", context do
     context = World.launch_on(context, @thread, "claudeAgent", "hello")
-    World.await_runs(context, @thread, ["completed"])
+
+    # A turn that fails to start (a launch argument that could not be read)
+    # still started, and failed.
+    World.await_value(context, @thread, fn state ->
+      match?(
+        [%{"status" => status}] when status in ["completed", "failed"],
+        StreamState.list(state, "run")
+      )
+    end)
+
     context
   end
 
@@ -2052,6 +2490,83 @@ defmodule HalC2.Steps.Providers.Claude do
     end)
 
     assert "resumed at uuid-2 fork True history False" in World.replies(context, "fork")
+    context
+  end
+
+  # --- forking a compacted thread -----------------------------------------------------------
+
+  step "a Claude thread that was compacted three times", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.run_turns(@thread, "claudeAgent", [
+        "first",
+        "/compact",
+        "second",
+        "/compact",
+        "third",
+        "/compact"
+      ])
+
+    assert length(compactions(context)) == 3
+    Map.put(context, :thread, @thread)
+  end
+
+  step "the user forks from its latest turn and sends a message in the fork", context do
+    context = World.fork(context, @thread, 6, "fork")
+    assert {:ok, _} = context.reply
+    context = World.post_message(context, "fork", "where are we")
+    World.await_latest_run(context, "fork", "completed")
+    context
+  end
+
+  step "the fork sends Claude the same compacted context as its source", context do
+    replies = World.replies(context, "fork")
+    latest = compactions(context) |> List.last() |> get_in(["nativeItemRef", "nativeId"])
+
+    assert Enum.any?(replies, &String.starts_with?(&1, "resumed at #{latest} ")),
+           inspect(replies)
+
+    assert Enum.any?(replies, &(&1 =~ "fork True")), inspect(replies)
+    context
+  end
+
+  step "every compaction in the fork points at messages the fork has", context do
+    fork_items = World.entities(context, "fork", "turn-item")
+    fork_runs = World.runs(context, "fork") |> Enum.map(& &1["id"]) |> MapSet.new()
+
+    fork_native =
+      for item <- fork_items,
+          id = get_in(item, ["nativeItemRef", "nativeId"]),
+          id,
+          into: MapSet.new(),
+          do: id
+
+    source_native =
+      for item <- World.entities(context, @thread, "turn-item"),
+          id = get_in(item, ["nativeItemRef", "nativeId"]),
+          id,
+          into: MapSet.new(),
+          do: id
+
+    fork_compactions = Enum.filter(fork_items, &(&1["type"] == "compaction"))
+    assert length(fork_compactions) == 3
+
+    # Each compaction belongs to a run the fork has, carries the same native
+    # boundary as in the source, and every native item the source had at the
+    # fork point is among the fork's own items.
+    assert Enum.all?(fork_compactions, &MapSet.member?(fork_runs, &1["runId"]))
+
+    boundaries = fn items ->
+      for item <- items,
+          item["type"] == "compaction",
+          do: get_in(item, ["nativeItemRef", "nativeId"])
+    end
+
+    assert MapSet.new(boundaries.(fork_items)) ==
+             MapSet.new(boundaries.(World.entities(context, @thread, "turn-item")))
+
+    assert MapSet.subset?(source_native, fork_native)
     context
   end
 
@@ -2166,10 +2681,25 @@ defmodule HalC2.Steps.Providers.Claude do
 
   defp choices(model, id), do: Enum.map(descriptor(model, id)["options"], & &1["id"])
 
-  # The npm registry's latest release, as the MC last read it.
+  # The npm registry's latest release, as the MC last read it. A native Claude
+  # install follows its own release channel instead, so the channel's last read
+  # is seeded with the same version.
   defp latest(context, driver, version) do
+    read = {version, System.monotonic_time(:millisecond)}
+    :persistent_term.put({HalC2.ProviderUpdates, driver}, read)
+
+    if driver == "claudeAgent" do
+      for channel <- ["latest", "stable"],
+          do: :persistent_term.put({HalC2.ProviderUpdates, :claude_channel, channel}, read)
+    end
+
+    context
+  end
+
+  # The newest version Claude's own release channel offers, as the MC last read it.
+  defp channel_latest(context, channel, version) do
     :persistent_term.put(
-      {HalC2.ProviderUpdates, driver},
+      {HalC2.ProviderUpdates, :claude_channel, channel},
       {version, System.monotonic_time(:millisecond)}
     )
 
@@ -3326,9 +3856,14 @@ defmodule HalC2.Steps.Providers.Claude do
   # --- approvals ------------------------------------------------------------------------
 
   # A permission request as the CLI sends it, straight to the runtime.
-  defp claude_asks(context, id, tool, input) do
+  defp claude_asks(context, id, tool, input, request_context \\ %{}) do
     [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
-    send(pid, {:claude, :sys.get_state(pid).session, {:permission, id, tool, input, %{}}})
+
+    send(
+      pid,
+      {:claude, :sys.get_state(pid).session, {:permission, id, tool, input, request_context}}
+    )
+
     context
   end
 
@@ -4196,6 +4731,46 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- reverting to the turn after a compaction ---------------------------------------------
+
+  step "a Claude thread with two turns, a {string} turn, and a turn that edited a file",
+       %{args: [compact]} = context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "first question")
+
+    World.await_runs(context, @thread, ["completed"])
+    context = World.post_message(context, @thread, "second question")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context = World.post_message(context, @thread, compact)
+
+    World.await_value(context, @thread, fn state ->
+      length(StreamState.list(state, "run")) == 3 and compactions(context) != []
+    end)
+
+    context = World.post_message(context, @thread, "edit a file")
+
+    World.await_value(context, @thread, fn state ->
+      Enum.map(StreamState.list(state, "run"), & &1["status"]) ==
+        ["completed", "completed", "completed", "completed"]
+    end)
+
+    context
+  end
+
+  step "the user reverts the thread to the end of the {string} turn",
+       %{args: [_compact]} = context do
+    context
+    |> World.rollback(@thread, 3, %{"restoreFiles" => false})
+    |> Map.put(:compact_reverted, true)
+  end
+
+  step "the revert succeeds", context do
+    assert {:ok, _} = context.reply
+    context
+  end
+
   # --- reverting to a turn a subagent ended ------------------------------------------------
 
   # The fake's first turn ends with a background subagent's message; it cannot resume at
@@ -4617,6 +5192,19 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   defp launch_args(context, text) do
+    # A `--settings <file>` launch argument names a file in the thread's
+    # folder; the scenario's is written there (its `includeCoAuthoredBy` is
+    # the user's, its `showThinkingSummaries` collides with HAL-C2's own).
+    case Regex.run(~r/--settings[= ]([^\s'"]+\.json)/, text) do
+      [_, file] ->
+        path = Path.join(World.project(context).root, file)
+        File.mkdir_p!(Path.dirname(path))
+        File.write!(path, ~s({"includeCoAuthoredBy": false, "showThinkingSummaries": false}))
+
+      _ ->
+        :ok
+    end
+
     World.put_settings(context, %{"providers" => %{"claudeAgent" => %{"launchArgs" => text}}})
     World.reset_provider_caches()
     context
@@ -4753,17 +5341,321 @@ defmodule HalC2.Steps.Providers.Claude do
   step "Claude is started with those arguments", context do
     argv = last_argv(context)
     assert "--verbose" in argv
-
-    assert Enum.any?(
-             Enum.chunk_every(argv, 2, 1, :discard),
-             &match?(["--append-system-prompt", "be brief"], &1)
-           )
-
+    # The user's appended instruction rides in HAL-C2's one appended prompt.
+    assert Enum.count(argv, &(&1 == "--append-system-prompt")) == 1
+    assert flag_value(argv, "--append-system-prompt") =~ "be brief"
     context
   end
 
   step "the Claude instance has the launch argument {string}", %{args: [argument]} = context do
     context |> World.fake_providers() |> launch_args(argument)
+  end
+
+  # --- launch arguments: --settings, appended instructions, --add-dir ------------------
+
+  step "Claude runs with the user's settings and HAL-C2's settings together", context do
+    merged = settings(Map.put(context, :argv, last_argv(context)))
+    assert merged["includeCoAuthoredBy"] == false
+    assert merged["showThinkingSummaries"] == true
+    assert Enum.count(last_argv(context), &(&1 == "--settings")) == 1
+    context
+  end
+
+  step "where both set the same key, HAL-C2's value is used", context do
+    merged = settings(Map.put(context, :argv, last_argv(context)))
+    assert merged["showThinkingSummaries"] == true
+    context
+  end
+
+  # The outline's inline-JSON row: its quotes sit inside the Gherkin string.
+  step ~r/^the Claude instance has the launch argument "--settings '(?<json>.+)'"$/,
+       %{args: [json]} = context do
+    context |> World.fake_providers() |> launch_args("--settings '#{json}'")
+  end
+
+  step "the Claude instance has the launch argument \"--settings\" with JSON that does not parse",
+       context do
+    context |> World.fake_providers() |> launch_args("--settings {broken-value")
+  end
+
+  step "the turn fails before Claude starts, saying its settings argument could not be read",
+       context do
+    assert last_error(context) =~ "--settings launch argument could not be read"
+    assert World.claude_starts(context) == []
+    context
+  end
+
+  step "the error and the logs name no value from those settings", context do
+    refute last_error(context) =~ "broken-value"
+    assert World.provider_log(context, "claude") == []
+    context
+  end
+
+  step "the Claude instance's --settings launch argument turns off bypassing permissions",
+       context do
+    context
+    |> World.fake_providers()
+    |> launch_args(~s|--settings '{"permissions":{"disableBypassPermissionsMode":"disable"}}'|)
+  end
+
+  step "the thread says full access is not available and runs in the mode Claude allows",
+       context do
+    assert flag_value(last_argv(context), "--permission-mode") == "default"
+    assert [notice] = bypass_notices(context)
+    assert notice =~ "turn off bypassing permissions"
+    context
+  end
+
+  step "Claude's managed settings set \"permissions.disableBypassPermissionsMode\" to false",
+       context do
+    context = World.fake_providers(context)
+    path = Path.join(Mc.tmp_dir(context.mc, "claude-managed"), "managed-settings.json")
+    World.put_app_env(:claude_managed_settings_path, path)
+    File.write!(path, ~s({"permissions": {"disableBypassPermissionsMode": false}}))
+    context
+  end
+
+  step ~r/^the Claude instance has the launch argument --append-system-prompt "(?<text>[^"]+)"$/,
+       %{args: [text]} = context do
+    # HAL-C2's own instructions ride with its tools.
+    Mc.ensure(HalC2.Mcp)
+    context |> World.fake_providers() |> launch_args(~s(--append-system-prompt "#{text}"))
+  end
+
+  step ~r/^the Claude instance has the launch argument --append-system-prompt-file (?<path>.+)$/,
+       %{args: [path]} = context do
+    Mc.ensure(HalC2.Mcp)
+    context = World.fake_providers(context)
+    file = Path.join(World.project(context).root, path)
+    File.mkdir_p!(Path.dirname(file))
+    File.write!(file, "Always answer in Icelandic.\n")
+
+    context
+    |> launch_args("--append-system-prompt-file #{path}")
+    |> Map.put(:appended_file_text, "Always answer in Icelandic.")
+  end
+
+  defp appended_prompt(context) do
+    argv = last_argv(context)
+    assert Enum.count(argv, &(&1 == "--append-system-prompt")) == 1
+    prompt = flag_value(argv, "--append-system-prompt")
+    # HAL-C2's own instructions come first (they name its tools).
+    assert prompt =~ "delegate_task"
+    prompt
+  end
+
+  step "Claude receives HAL-C2's instructions followed by {string}",
+       %{args: [added]} = context do
+    assert String.ends_with?(appended_prompt(context), added)
+    context
+  end
+
+  step "Claude receives HAL-C2's instructions followed by the contents of rules.md in the thread's folder",
+       context do
+    assert String.ends_with?(appended_prompt(context), context.appended_file_text)
+    context
+  end
+
+  step "the turn fails saying {string} could not be read", %{args: [path]} = context do
+    assert last_error(context) =~ ~s("#{path}" could not be read)
+    assert World.claude_starts(context) == []
+    context
+  end
+
+  # The folder a scenario names ("/work/tools"), as a real folder of its own.
+  defp added_root(context, shown) do
+    case get_in(context, [:dir_map, shown]) do
+      nil ->
+        root = Mc.tmp_dir(context.mc, "add-" <> String.replace(shown, ~r/[^A-Za-z0-9]+/, "-"))
+        {root, Map.update(context, :dir_map, %{shown => root}, &Map.put(&1, shown, root))}
+
+      root ->
+        {root, context}
+    end
+  end
+
+  defp actual_dir(context, shown), do: get_in(context, [:dir_map, shown]) || shown
+
+  step "Claude's launch arguments add the folder {string}", %{args: [folder]} = context do
+    context = World.fake_providers(context)
+    {root, context} = added_root(context, folder)
+    launch_args(context, "--add-dir #{root}")
+  end
+
+  step "{string} has the skill {string}", %{args: [folder, name]} = context do
+    {context, _home} = skills_home(context)
+    root = actual_dir(context, folder)
+
+    write_skill_file(
+      Path.join([root, ".claude", "skills"]),
+      name,
+      "---\ndescription: Demo\n---\nDo it.\n"
+    )
+
+    context
+  end
+
+  step "the user types \"$\" in a Claude thread's composer", context do
+    open_skill_list(context)
+  end
+
+  step "a message mentioning \"$demo\" runs it as Claude's skill", context do
+    context = World.launch_on(context, @thread, "claudeAgent", "Please $demo this")
+    World.await_runs(context, @thread, ["completed"])
+    assert List.last(last_user_texts(context)) =~ ~r{^/demo(\s|$)}
+    context
+  end
+
+  step "Claude's launch arguments are {string}", %{args: [text]} = context do
+    context = World.fake_providers(context)
+    {context, _home} = skills_home(context)
+
+    # The two folders the outline names, each with a skill of its own.
+    {text, context} =
+      Enum.reduce(["/work/apps", "/work/lib"], {text, context}, fn shown, {text, context} ->
+        if String.contains?(text, shown) do
+          {root, context} = added_root(context, shown)
+          skill = if shown =~ "apps", do: "apps-skill", else: "lib-skill"
+
+          write_skill_file(
+            Path.join([root, ".claude", "skills"]),
+            skill,
+            "---\ndescription: From #{shown}\n---\nDo it.\n"
+          )
+
+          {String.replace(text, shown, root), context}
+        else
+          {text, context}
+        end
+      end)
+
+    launch_args(context, text)
+  end
+
+  step "a Claude session starts", context do
+    context = World.launch_on(context, @thread, "claudeAgent", "hello")
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "Claude may work in {string} and {string} without asking",
+       %{args: [first, second]} = context do
+    dirs = HalC2.Claude.Provider.add_dirs(last_argv(context))
+    assert actual_dir(context, first) in dirs
+    assert actual_dir(context, second) in dirs
+    context
+  end
+
+  step "Claude may work in {string} without asking", %{args: [folder]} = context do
+    dirs = HalC2.Claude.Provider.add_dirs(last_argv(context))
+    assert actual_dir(context, folder) in dirs
+    context
+  end
+
+  step "skills under both folders are offered", context do
+    context = open_skill_list(context)
+    assert offered(context, "apps-skill")
+    assert offered(context, "lib-skill")
+    context
+  end
+
+  # --- who started Claude, and the session it must not join ----------------------------
+
+  step "the MC was started from inside a Claude Code session", context do
+    World.put_os_env("CLAUDECODE", "1")
+    World.put_os_env("CLAUDE_CODE_ENTRYPOINT", "cli")
+    World.put_os_env("CLAUDE_CODE_SESSION_ID", "the-session-that-started-the-mc")
+    World.fake_providers(context)
+  end
+
+  step "the Claude instance's environment names {string} as the entrypoint",
+       %{args: [name]} = context do
+    context
+    |> World.fake_providers()
+    |> instance_env(%{"CLAUDE_CODE_ENTRYPOINT" => name})
+  end
+
+  step "Claude's settings file and the instance's environment both name one", context do
+    context = World.fake_providers(context)
+    {context, home} = skills_home(context)
+
+    File.write!(
+      Path.join(home, "settings.json"),
+      JSON.encode!(%{"env" => %{"CLAUDE_CODE_ENTRYPOINT" => "settings-bot"}})
+    )
+
+    context
+    |> instance_env(%{"CLAUDE_CODE_ENTRYPOINT" => "instance-bot"})
+    |> Map.put(:settings_entrypoint, "settings-bot")
+  end
+
+  step "the MC starts Claude for a turn, a status check or a thread title", context do
+    context = World.text_writers(context, [:claude])
+
+    World.merge_settings(%{
+      "textGenerationModelSelection" => %{"instanceId" => "claudeAgent", "model" => "haiku"}
+    })
+
+    :ok = HalC2.Claude.Provider.load()
+    context = World.launch_on(context, @thread, "claudeAgent", "hello")
+    World.await_runs(context, @thread, ["completed"])
+
+    assert {:ok, %{"title" => _}} =
+             HalC2.TextGeneration.thread_title(World.project(context).root, "Fix the login form")
+
+    context
+  end
+
+  step "the MC starts Claude for a turn", context do
+    context = World.launch_on(context, @thread, "claudeAgent", "hello")
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  defp start_envs(context) do
+    for %{"argv" => _argv, "env" => env} <- World.provider_log(context, "claude"), do: env
+  end
+
+  step "Claude names HAL-C2 as the program that started it", context do
+    for env <- start_envs(context), do: assert(env["CLAUDE_CODE_ENTRYPOINT"] == "hal-c2")
+    for call <- World.text_calls(context), do: assert(call["entrypoint"] == "hal-c2")
+    context
+  end
+
+  step "Claude names {string} as the program that started it", %{args: [name]} = context do
+    for env <- start_envs(context), do: assert(env["CLAUDE_CODE_ENTRYPOINT"] == name)
+    for call <- World.text_calls(context), do: assert(call["entrypoint"] == name)
+    context
+  end
+
+  step "Claude names the one in Claude's settings file as the program that started it",
+       context do
+    for env <- start_envs(context),
+        do: assert(env["CLAUDE_CODE_ENTRYPOINT"] == context.settings_entrypoint)
+
+    for call <- World.text_calls(context),
+        do: assert(call["entrypoint"] == context.settings_entrypoint)
+
+    context
+  end
+
+  step "the Claude instance's environment sets \"CLAUDE_CODE_SHELL\"", context do
+    context
+    |> World.fake_providers()
+    |> instance_env(%{"CLAUDE_CODE_SHELL" => "/bin/the-instance-shell"})
+  end
+
+  step "Claude is not part of the Claude Code session that started the MC", context do
+    env = context |> start_envs() |> List.last()
+    refute Map.has_key?(env, "CLAUDECODE")
+    refute Map.has_key?(env, "CLAUDE_CODE_SESSION_ID")
+    context
+  end
+
+  step "Claude gets the instance's \"CLAUDE_CODE_SHELL\"", context do
+    env = context |> start_envs() |> List.last()
+    assert env["CLAUDE_CODE_SHELL"] == "/bin/the-instance-shell"
+    context
   end
 
   # A run confined to reading: a message dispatched with `readOnly`, the way an
@@ -5734,6 +6626,26 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  step "the project's Claude settings hold a \"//\" comment ended by a lone carriage return",
+       context do
+    context = context |> World.fake_providers() |> project_skill("review")
+    root = World.project(context).root
+    path = Path.join([root, ".claude", "settings.json"])
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, "{\n  // the team's switches" <> <<13>>)
+    Map.put(context, :settings_path, path)
+  end
+
+  step "the line after it switches the skill {string} off", %{args: [name]} = context do
+    File.write!(
+      context.settings_path,
+      "  \"skillOverrides\": {\"#{name}\": \"off\"}\n}\n",
+      [:append]
+    )
+
+    context
+  end
+
   step "the MC's environment sets the Claude config directory to {string}",
        %{args: [dir]} = context do
     World.put_os_env("CLAUDE_CONFIG_DIR", dir)
@@ -6042,7 +6954,12 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   defp bypass_notices(context) do
-    for item <- StreamState.list(World.stream(context, @thread), "turn-item"),
+    title =
+      if (context[:threads] || %{})[@thread],
+        do: @thread,
+        else: World.current_thread(context)
+
+    for item <- StreamState.list(World.stream(context, title), "turn-item"),
         item["type"] == "system_notice",
         get_in(item, ["nativeItemRef", "nativeId"])
         |> to_string()
@@ -6085,6 +7002,90 @@ defmodule HalC2.Steps.Providers.Claude do
     end)
 
     Map.put(context, :ask_reason, reason)
+  end
+
+  # --- skill calls --------------------------------------------------------------------------------
+
+  defp skill_items(context) do
+    for item <- StreamState.list(World.stream(context, @thread), "turn-item"),
+        item["toolName"] == "Skill",
+        do: item
+  end
+
+  step "Claude calls a skill", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "call a skill")
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step ~S(the row reads "Skill: <name>"), context do
+    assert [%{"title" => "Skill: demo"}, %{"title" => "Skill: demo"}] = skill_items(context)
+    context
+  end
+
+  step "expanding it shows only the arguments as plain text", context do
+    assert [%{"input" => "with care"} | _] = skill_items(context)
+    context
+  end
+
+  step "a call with no arguments does not expand", context do
+    assert [_with_args, %{"input" => input}] = skill_items(context)
+    assert input in [nil, ""]
+    context
+  end
+
+  # --- what an approval reads -------------------------------------------------------------------
+
+  step "Claude asks to run {string} and describes it as {string}",
+       %{args: [command, description]} = context do
+    %{instance: instance, fields: fields} = context.pending_launch
+
+    context =
+      context
+      |> Map.delete(:pending_launch)
+      |> World.launch_on(@thread, instance, "wait for me", fields)
+
+    World.await_running(context, @thread)
+    World.await_provider_log(context, "claude", &(get_in(&1, ["in", "type"]) == "user"))
+
+    context
+    |> claude_asks("perm-descr-1", "Bash", %{"command" => command}, %{
+      "description" => description
+    })
+    |> Map.put(:described_as, description)
+  end
+
+  step "the approval shows the command {string} in full", %{args: [command]} = context do
+    World.await_value(context, @thread, fn state ->
+      Enum.any?(StreamState.list(state, "turn-item"), &(&1["type"] == "approval_request"))
+    end)
+
+    assert approval_prompt(context, "perm-descr-1") =~ command
+    context
+  end
+
+  step "Claude's description is shown only for a request that carries no command", context do
+    refute approval_prompt(context, "perm-descr-1") =~ context.described_as
+
+    # A request with nothing to run shows the description instead.
+    context =
+      claude_asks(context, "perm-descr-2", "NotebookEdit", %{"notebook_path" => "notes.ipynb"}, %{
+        "description" => context.described_as
+      })
+
+    World.await_value(context, @thread, fn state ->
+      Enum.any?(
+        StreamState.list(state, "turn-item"),
+        &(&1["id"] == "turn-item:approval:perm-descr-2")
+      )
+    end)
+
+    assert approval_prompt(context, "perm-descr-2") == context.described_as
+    context
   end
 
   step "the approval shows Claude's reason", context do

@@ -225,6 +225,7 @@ defmodule HalC2.Environment do
       do: HalC2.Codex.Provider.load()
 
     claude = Enum.filter(ids, &(&1 in HalC2.Claude.Provider.instances()))
+    if claude != [], do: HalC2.Claude.Provider.forget_auth(claude)
     if models? and claude != [], do: HalC2.Claude.Provider.load(claude)
 
     ids

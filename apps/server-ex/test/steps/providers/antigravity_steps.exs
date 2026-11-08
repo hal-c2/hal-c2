@@ -1493,7 +1493,15 @@ defmodule HalC2.Steps.Providers.Antigravity do
   end
 
   step ~r/^"(?<name>[a-z0-9_-]+)" is not offered$/, %{args: [name]} = context do
-    refute Enum.any?(listed_skills(context), &(&1["name"] == name))
+    # A registry search leaves its agents in the reply; anything else here is
+    # about the skills an agent offered.
+    offered =
+      case context[:reply] do
+        {:ok, %{"agents" => agents}} -> Enum.map(agents, & &1["id"])
+        _ -> Enum.map(listed_skills(context), & &1["name"])
+      end
+
+    refute name in offered
     context
   end
 

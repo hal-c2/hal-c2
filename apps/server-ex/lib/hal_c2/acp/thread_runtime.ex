@@ -183,6 +183,7 @@ defmodule HalC2.Acp.ThreadRuntime do
        buffer: %{},
        flush_timer: nil,
        interrupted: false,
+       agent_cancelled: false,
        # Updates `session/load` replays are history, not this turn.
        replaying: false,
        # Open prompts: request id -> {:permission, rpc id, options, {kind, prompt}}
@@ -918,7 +919,9 @@ defmodule HalC2.Acp.ThreadRuntime do
            do: {"failed", limit},
            else: (_ -> {status, failure})
 
-    state = record_turn(%{state | prompt: nil})
+    # A run the agent itself cancelled (not the user's stop) cancels its subagents.
+    cancelled = not state.interrupted and match?({:ok, %{"stopReason" => "cancelled"}}, result)
+    state = record_turn(%{state | prompt: nil, agent_cancelled: cancelled})
     state = compacted(state, status)
     state = end_turn(state, status, failure)
     # A turn that did not complete takes its background work, and earlier turns', down.
@@ -2528,7 +2531,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   # Background subagents outlive the turn.
   defp end_turn_subagents(state, status) do
     state = if state.kimi, do: read_wire(state), else: state
-    status = if status == "interrupted" and not state.interrupted, do: "cancelled", else: status
+    status = if status == "interrupted" and state.agent_cancelled, do: "cancelled", else: status
 
     subagents =
       Map.new(state.subagents, fn
@@ -2541,7 +2544,7 @@ defmodule HalC2.Acp.ThreadRuntime do
           other
       end)
 
-    %{state | subagents: subagents}
+    %{state | subagents: subagents, agent_cancelled: false}
   end
 
   @kimi_ends %{
