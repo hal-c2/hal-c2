@@ -13,6 +13,8 @@ import {
   FileCredentialStore,
 } from "@cursor/sdk";
 
+import { HostProcessPlatform } from "@hal-c2/shared/hostProcess";
+
 import { makeCursorAcp, type RuntimeMode } from "./agent.ts";
 
 // Stdout carries protocol frames only; anything the SDK logs goes to stderr.
@@ -22,9 +24,29 @@ console.info = console.error;
 const modeIndex = process.argv.indexOf("--mode");
 const mode = (modeIndex >= 0 ? process.argv[modeIndex + 1] : "approval-required") as RuntimeMode;
 
+// A write the SDK rejects after its stream closed (a run that ended with a
+// write in flight, as when an account runs out of usage) must not take this
+// process — or, through it, anything else — down with it.
+process.on("unhandledRejection", (cause) => {
+  console.error("cursor-acp: unhandled rejection", cause);
+});
+process.stdout.on("error", (cause) => {
+  console.error("cursor-acp: stdout closed", cause);
+});
+
 const acp = makeCursorAcp({
   mode,
-  write: (message) => process.stdout.write(`${JSON.stringify(message)}\n`),
+  platform: process.env.HAL_C2_CURSOR_PLATFORM || HostProcessPlatform.defaultValue(),
+  ...(Number(process.env.HAL_C2_CURSOR_CATALOG_TIMEOUT_MS) > 0
+    ? { catalogTimeoutMs: Number(process.env.HAL_C2_CURSOR_CATALOG_TIMEOUT_MS) }
+    : {}),
+  write: (message) => {
+    try {
+      process.stdout.write(`${JSON.stringify(message)}\n`);
+    } catch (cause) {
+      console.error("cursor-acp: write failed", cause);
+    }
+  },
   sdk: {
     version: "1.0.31",
     store: new FileCredentialStore(process.env.HAL_C2_CURSOR_CREDENTIALS || undefined),
@@ -32,6 +54,7 @@ const acp = makeCursorAcp({
     createAgent: (options) => Agent.create(options),
     resumeAgent: (agentId, options) => Agent.resume(agentId, options),
     listModels: (apiKey) => Cursor.models.list({ apiKey }),
+    me: (apiKey) => Cursor.me({ apiKey }),
     login: (options) => Cursor.auth.login({ ...options, openBrowser: false, apiKeyName: "HAL-C2" }),
     isAuthError: (cause) =>
       cause instanceof AuthenticationError ||
