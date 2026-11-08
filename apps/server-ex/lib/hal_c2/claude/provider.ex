@@ -252,6 +252,13 @@ defmodule HalC2.Claude.Provider do
   end
 
   @doc """
+  Whether `launch/3` knows `model` on instance `instance` (the CLI listed it
+  or the manifest carries it), so its option limits apply. A model neither
+  knows runs as named, without options.
+  """
+  def known?(model, instance \\ "claudeAgent"), do: spec(model, instance) != nil
+
+  @doc """
   Records what a version check of instance `id` found, as `version_health/2`
   does when its probe answers.
   """

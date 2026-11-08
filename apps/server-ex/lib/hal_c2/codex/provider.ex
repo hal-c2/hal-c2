@@ -240,8 +240,7 @@ defmodule HalC2.Codex.Provider do
           case model_list(conn, timeout) do
             {:ok, %{"data" => [_ | _] = models}} ->
               if id == "codex" do
-                :persistent_term.put(
-                  @key,
+                record_models(
                   for(
                     m <- models,
                     do: %{
@@ -558,6 +557,24 @@ defmodule HalC2.Codex.Provider do
       :persistent_term.put({__MODULE__, :version}, Map.delete(versions, path))
     end
 
+    :ok
+  end
+
+  @doc """
+  The models the last check read from `codex app-server` (`model/list`), or
+  nil when no check has read them this session. Text generation resolves the
+  model it asks for against this list, as a thread's turn does.
+  """
+  def listed_models, do: :persistent_term.get(@key, nil)
+
+  @doc "Records the models a check read, as `probe/1` does; `nil` forgets them."
+  def record_models(nil) do
+    :persistent_term.erase(@key)
+    :ok
+  end
+
+  def record_models(models) when is_list(models) do
+    :persistent_term.put(@key, models)
     :ok
   end
 

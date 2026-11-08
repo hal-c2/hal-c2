@@ -422,10 +422,19 @@ defmodule HalC2.TextGeneration do
   defp structured(_), do: nil
 
   defp codex(cwd, prompt, schema, selection, images) do
-    effort = option(selection, "reasoningEffort") || "low"
+    {model, fallback?} = codex_model(selection["model"] || @default_models["codex"])
+
+    # A model swapped in because the account did not list the default runs with
+    # that model's own defaults, not options chosen for another one.
+    effort = if(fallback?, do: nil, else: option(selection, "reasoningEffort") || "low")
 
     tier =
-      option(selection, "serviceTier") || if(option(selection, "fastMode") == true, do: "fast")
+      if(fallback?,
+        do: nil,
+        else:
+          option(selection, "serviceTier") ||
+            if(option(selection, "fastMode") == true, do: "fast")
+      )
 
     in_dir(nil, fn dir ->
       schema_path = Path.join(dir, "schema.json")
@@ -443,8 +452,11 @@ defmodule HalC2.TextGeneration do
         ["exec"] ++
           launch ++
           ~w(--ephemeral --skip-git-repo-check -s read-only) ++
-          ["--model", selection["model"] || @default_models["codex"]] ++
-          ["--config", ~s(model_reasoning_effort="#{effort}")] ++
+          ["--model", model] ++
+          if(is_binary(effort),
+            do: ["--config", ~s(model_reasoning_effort="#{effort}")],
+            else: []
+          ) ++
           if(is_binary(tier), do: ["--config", ~s(service_tier="#{tier}")], else: []) ++
           ["--output-schema", schema_path, "--output-last-message", output_path] ++
           Enum.flat_map(images, &["--image", &1]) ++ ["-"]
@@ -458,6 +470,39 @@ defmodule HalC2.TextGeneration do
         _ -> {:error, "Codex returned invalid structured output."}
       end
     end)
+  end
+
+  # The model Codex is run with, resolved against the list its last check read
+  # (nil when none was read: the name stands). A listed name stands; a family
+  # name takes the family's first listed model; the built-in default an account
+  # does not list takes the account's default, or else its first model, and says
+  # so (`true`) so the caller drops options chosen for the default. Any other
+  # name is a model the user typed and goes as written.
+  defp codex_model(model) do
+    model = HalC2.Codex.Provider.current_slug(model)
+
+    case HalC2.Codex.Provider.listed_models() do
+      [_ | _] = listed ->
+        slugs = Enum.map(listed, & &1["slug"])
+
+        cond do
+          model in slugs ->
+            {model, false}
+
+          family = Enum.find(slugs, &String.starts_with?(&1, model <> "-")) ->
+            {family, false}
+
+          model == @default_models["codex"] ->
+            default = Enum.find(listed, & &1["isDefault"]) || hd(listed)
+            {default["slug"], true}
+
+          true ->
+            {model, false}
+        end
+
+      _ ->
+        {model, false}
+    end
   end
 
   # Runs `fun` in `dir`, or in a new temporary directory it removes afterwards.

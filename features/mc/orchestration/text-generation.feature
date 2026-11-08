@@ -314,7 +314,7 @@ Feature: Generated titles, branch names and source control text
       | "pi"       |
 
   # Legacy: apps/server/src/textGeneration/CodexTextGeneration.ts (model slug lookup before exec)
-  @backlog @mc
+  @mc
   Scenario: A Codex family name is written with the family's first installed model
     Given the text model names a Codex model family rather than a model Codex lists
     And Codex lists a built-in model of that family
@@ -324,7 +324,7 @@ Feature: Generated titles, branch names and source control text
 
   # Upstream #30078: ChatGPT accounts whose catalog leaves out gpt-6-luna, the default, failed
   # every title, commit message and branch name.
-  @backlog @mc @plugin-codex @priority-high
+  @mc @plugin-codex @priority-high
   Scenario: Codex writes with a model the account lists when the default is not listed
     Given the text model is the built-in "gpt-6-luna" on Codex
     And the Codex account lists neither "gpt-6-luna" nor a model of its family
@@ -333,7 +333,7 @@ Feature: Generated titles, branch names and source control text
     And it is run with the default reasoning effort and no service tier
 
   # Upstream #30078: an account that lists the requested model keeps it, and a custom model is sent as is.
-  @backlog @mc @plugin-codex @priority-low
+  @mc @plugin-codex @priority-low
   Scenario Outline: Codex keeps a text model <kind>
     Given the text model is <model> on Codex
     And <listing>

@@ -947,6 +947,71 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     context
   end
 
+  # --- Codex's model list --------------------------------------------------------------
+
+  step "the text model names a Codex model family rather than a model Codex lists", context do
+    codex_text_model(context, "gpt-7")
+  end
+
+  step "Codex lists a built-in model of that family", context do
+    codex_lists(context, ["gpt-7-mini", "gpt-7-max"])
+  end
+
+  step "a name that matches no listed model is passed to Codex as written", context do
+    context = codex_text_model(context, "unlisted-model")
+    context = title(context, "Fix the login redirect loop")
+    assert {:ok, _} = context.reply
+    assert after_flag(List.last(calls(context)), "--model") == "unlisted-model"
+    context
+  end
+
+  step "the text model is the built-in {string} on Codex", %{args: [model]} = context do
+    codex_text_model(context, model)
+  end
+
+  step "the text model is {string} on Codex", %{args: [model]} = context do
+    codex_text_model(context, model)
+  end
+
+  step "the Codex account lists neither {string} nor a model of its family",
+       %{args: [_model]} = context do
+    codex_lists(context, ["gpt-5-codex", "gpt-5-mini"], default: "gpt-5-codex")
+  end
+
+  step "the Codex account lists {string}", %{args: [model]} = context do
+    codex_lists(context, [model])
+  end
+
+  step "the Codex account does not list it", context do
+    codex_lists(context, ["gpt-5-codex"])
+  end
+
+  step "Codex is run with that listed model", context do
+    assert {:ok, _} = context.reply
+    assert after_flag(List.last(calls(context)), "--model") == "gpt-7-mini"
+    context
+  end
+
+  step "Codex is run with {string}", %{args: [model]} = context do
+    assert {:ok, _} = context.reply
+    assert after_flag(List.last(calls(context)), "--model") == model
+    context
+  end
+
+  step "Codex is run with the instance's default model, or else the first current model it lists",
+       context do
+    assert {:ok, _} = context.reply
+    assert after_flag(List.last(calls(context)), "--model") == "gpt-5-codex"
+    context
+  end
+
+  step "it is run with the default reasoning effort and no service tier", context do
+    argv = List.last(calls(context))["argv"]
+    refute Enum.any?(argv, &String.contains?(&1, "model_reasoning_effort"))
+    refute Enum.any?(argv, &String.contains?(&1, "service_tier"))
+    context
+  end
+
   step "the text model's provider cannot be used", context do
     context
     |> install(["claudeAgent", "cursor"])
@@ -1286,6 +1351,25 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
         } <-
           FakeAcp.log(context, driver),
         do: text
+  end
+
+  defp codex_text_model(context, model) do
+    context
+    |> install()
+    |> World.update_settings(%{"textGenerationModelSelection" => selection("codex", model)})
+  end
+
+  # What Codex's last check read from `model/list`, cleared with the scenario.
+  defp codex_lists(context, slugs, opts \\ []) do
+    default = opts[:default] || hd(slugs)
+
+    :ok =
+      HalC2.Codex.Provider.record_models(
+        for(slug <- slugs, do: %{"slug" => slug, "isDefault" => slug == default})
+      )
+
+    ExUnit.Callbacks.on_exit(fn -> HalC2.Codex.Provider.record_models(nil) end)
+    context
   end
 
   defp selection(provider, model \\ nil),
