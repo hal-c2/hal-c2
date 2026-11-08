@@ -13,6 +13,7 @@
 #   sessionErrorOnce   the same, for the next session/new only (then removed)
 #   configOptions      session/new's configOptions (default: one model "fake/one")
 #   modes              session/new's modes
+#   sessionModels      session/new's `models` (currentModelId, availableModels), as Grok reports them
 #   rejectUnknownModels  session/set_config_option refuses a model configOptions lacks
 #   turns              [{"match": substring, "steps": [...]}], first match wins
 #   sessionId          session/new's sessionId (default: a fake one)
@@ -40,7 +41,8 @@
 # {"error": {code, message}} (ends the prompt with it), {"stop": reason},
 # {"hang": true} (never answers the prompt, even to a cancel),
 # {"waitFile": name} (waits until that file appears in FAKE_DIR),
-# {"writeFile": name} (leaves a file in the working folder), {"writeSession": true}
+# {"writeFile": name} (leaves a file in the working folder), {"writeDir": name}
+# (leaves an empty folder there), {"writeSession": true}
 # (records a conversation for the working folder in $GEMINI_HOME, as Antigravity keeps one),
 # {"kimiWire": {"agent": "main" | subagent id, "records": [record]}} (appends to an
 # agent's record as Kimi Code keeps it:
@@ -216,8 +218,13 @@ def run_turn(mid, sid, text):
             wait_file(step["waitFile"])
         elif "writeFile" in step:
             # Leaves a file in the session's working folder.
-            with open(os.path.join(os.getcwd(), step["writeFile"]), "w") as f:
+            path = os.path.join(os.getcwd(), step["writeFile"])
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
                 f.write("left behind\n")
+        elif "writeDir" in step:
+            # Leaves an empty folder in the session's working folder.
+            os.makedirs(os.path.join(os.getcwd(), step["writeDir"]), exist_ok=True)
         elif "writeSession" in step:
             # Records a conversation in Antigravity's profile, as the CLI does for its cwd.
             conversations = os.path.join(os.environ["GEMINI_HOME"], "antigravity-acp", "conversations")
@@ -300,6 +307,8 @@ while True:
         result = {"configOptions": cfg.get("configOptions", default_options())}
         if cfg.get("modes") is not None:
             result["modes"] = cfg["modes"]
+        if cfg.get("sessionModels") is not None:
+            result["models"] = cfg["sessionModels"]
         if method == "session/new":
             result["sessionId"] = cfg.get("sessionId") or "fake-session-%d-%d" % (os.getpid(), sessions)
         sid = result.get("sessionId") or params.get("sessionId")

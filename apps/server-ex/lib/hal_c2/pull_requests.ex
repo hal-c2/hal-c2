@@ -56,6 +56,9 @@ defmodule HalC2.PullRequests do
       "You need write access on this repository to approve workflows from a fork pull request."
   }
 
+  @auto_merge_refusal "Auto-merge is not available here: this repository has it switched off, " <>
+                        "or the pull request can be merged now."
+
   @verdict_labels %{
     "approve" => "approve",
     "request-changes" => "request changes on",
@@ -1025,6 +1028,15 @@ defmodule HalC2.PullRequests do
 
   # --- changes ----------------------------------------------------------------------
 
+  # A writer is refused enabling auto-merge only where GitHub would not wait.
+  defp refusal("enable-auto-merge", viewer) do
+    if "merge" in viewer["actions"],
+      do: @auto_merge_refusal,
+      else: @action_refusals["enable-auto-merge"]
+  end
+
+  defp refusal(action, _viewer), do: @action_refusals[action]
+
   @doc """
   `pullRequests.runAction`: refused when GitHub cannot do it or this account may not,
   asked of the host fresh. Stack actions are not served.
@@ -1065,7 +1077,7 @@ defmodule HalC2.PullRequests do
                 do: viewer["stackRebase"] != true,
                 else: action not in viewer["actions"]
               ) ->
-                refuse("runAction", @action_refusals[action])
+                refuse("runAction", refusal(action, viewer))
 
               (not stack_rebase and input["updateMethod"]) &&
                   input["updateMethod"] not in (viewer["updateMethods"] || []) ->
