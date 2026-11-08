@@ -330,6 +330,21 @@ Feature: Agents drive the preview browser
         | the user opened and is using             | the tool fails saying a person is in control of the tab      |
         | another agent session opened             | the tool fails saying the tab belongs to another agent       |
 
+    # A request naming no tab is served on the desktop's current tab of the thread, which may be
+    # another session's or the person's, so a session with no tab of its own may not leave the gap.
+    @mc
+    Scenario: An agent with no tab of its own that acts without naming one changes nothing
+      Given another agent session's tab is the browser's current tab of the thread
+      When an agent with no tab of its own clicks without naming a tab
+      Then the tool fails with "No active preview tab was found for click."
+      And the other session's tab was not clicked
+
+    @mc
+    Scenario: An agent with no tab of its own opens a new tab rather than another session's
+      Given another agent session's tab is the browser's current tab of the thread
+      When an agent with no tab of its own opens a preview without naming a tab
+      Then the agent gets a new tab of its own and the other session's tab is left alone
+
     @mc
     Scenario: Only the agent session that opened a tab can close it
       Given a tab the user opened

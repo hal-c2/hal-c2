@@ -16,8 +16,11 @@ defmodule HalC2.PreviewAutomation do
 
   Hosts also report the tabs a person is using and their browser profiles. A
   session changes a tab only if it opened it, or no agent did and no person is
-  using it; reads always go ahead, and an open naming no tab whose current tab
-  it may not change opens a new one. An open names a profile by name or id,
+  using it; reads always go ahead. An open naming no tab reuses the session's
+  current tab, or opens a new one when it has none or may not change it; any
+  other change naming no tab needs a current tab, since a desktop would fill
+  the gap with its own current tab of the thread, which may be another
+  session's or the person's. An open names a profile by name or id,
   matched across every host's profiles and sent to a host that has it; without
   one the new tab opens in the host's default profile.
 
@@ -231,9 +234,10 @@ defmodule HalC2.PreviewAutomation do
         _ -> nil
       end
 
-    {current, input} = own_open(state, key, operation, opts[:tab_id], current, input)
+    input = own_open(state, key, operation, opts[:tab_id], current, input)
+    acts_on = if makes_tab?(operation, input), do: nil, else: opts[:tab_id] || current
 
-    with :ok <- may_act(state, key, operation, opts[:tab_id] || current),
+    with :ok <- may_act(state, key, operation, acts_on),
          {:ok, input, profile} <- named_profile(state, scope, operation, input) do
       dispatch(state, scope, {key, assigned, current}, operation, input, profile, opts, from)
     else
@@ -245,6 +249,7 @@ defmodule HalC2.PreviewAutomation do
     key = {scope.thread_id, scope.instance}
     clients = Map.values(state.clients)
     running = MapSet.new(Map.values(state.pending), &pending_tab(state, &1))
+    running = MapSet.delete(running, nil)
 
     states =
       Map.new(tabs, fn tab ->
@@ -283,8 +288,19 @@ defmodule HalC2.PreviewAutomation do
           route(state, operation, profile, opts)
       end
 
-    makes_tab = makes_tab?(operation, opts, input, tab)
-    room = host && tab_room(state, key, operation, makes_tab)
+    makes_tab = makes_tab?(operation, input)
+
+    room =
+      cond do
+        host == nil ->
+          nil
+
+        tabless_change?(operation, opts[:tab_id] || tab) ->
+          {:error, tab_not_found(scope, operation)}
+
+        true ->
+          tab_room(state, key, operation, makes_tab)
+      end
 
     case room do
       nil ->
@@ -302,7 +318,12 @@ defmodule HalC2.PreviewAutomation do
         {client_id, client} = host
         timeout = opts[:timeout_ms] || @default_timeout
         request_id = "preview-#{state.seq}"
-        tab_id = opts[:tab_id] || tab || shown_tab(client, scope.thread_id, operation)
+        # An open making a tab names none, so nothing reads it as on another tab.
+        tab_id =
+          if makes_tab,
+            do: nil,
+            else: opts[:tab_id] || tab || shown_tab(client, scope.thread_id, operation)
+
         input = with_default_profile(input, client, operation, profile)
 
         context =
@@ -434,7 +455,7 @@ defmodule HalC2.PreviewAutomation do
           {:noreply, state |> track_tab(pending, result) |> claim_tab(pending, result)}
         else
           # Closed before the reply, so the caller never sees the tab.
-          state = discard_failed_open(state, pending)
+          state = discard_failed_open(state, pending, response["error"])
 
           GenServer.reply(
             pending.from,
@@ -578,16 +599,30 @@ defmodule HalC2.PreviewAutomation do
     end
   end
 
-  # An open naming no tab, whose current tab this session may not change (a
-  # read made it current), opens a new tab rather than being refused.
-  defp own_open(state, key, "open", nil, current, input) when is_binary(current) do
-    case may_act(state, key, "open", current) do
-      :ok -> {current, input}
-      {:error, _} -> {nil, Map.put(input, "reuseExistingTab", false)}
-    end
+  # An open naming no tab reuses the session's current tab. With none, or one
+  # it may not change (a read made it current), it opens a new tab rather than
+  # letting the desktop reuse its own current tab or being refused.
+  defp own_open(state, key, "open", nil, current, input) do
+    if is_binary(current) and may_act(state, key, "open", current) == :ok,
+      do: input,
+      else: Map.put(input, "reuseExistingTab", false)
   end
 
-  defp own_open(_state, _key, _operation, _tab, current, input), do: {current, input}
+  defp own_open(_state, _key, _operation, _tab, _current, input), do: input
+
+  # A change other than an open, naming no tab with no current tab: a desktop
+  # would fill the gap with its own current tab of the thread, which may be
+  # another session's or the person's, so it is refused instead.
+  defp tabless_change?(operation, nil), do: operation not in ["open" | @reads]
+  defp tabless_change?(_operation, _tab), do: false
+
+  defp tab_not_found(scope, operation),
+    do:
+      tagged("PreviewAutomationTabNotFoundError", %{
+        "operation" => operation,
+        "threadId" => scope.thread_id,
+        "providerInstanceId" => scope.instance
+      })
 
   defp ownership(state, key, tab) do
     case state.owners[tab] do
@@ -652,6 +687,9 @@ defmodule HalC2.PreviewAutomation do
 
   defp shown_tab(_client, _thread, _operation), do: nil
 
+  # The tab a running request acts on; none for an open making a new tab.
+  defp pending_tab(_state, %{makes_tab: true}), do: nil
+
   defp pending_tab(state, pending),
     do: Map.get(pending, :tab) || get_in(state.assignments, [pending.key, :tab_id])
 
@@ -684,11 +722,9 @@ defmodule HalC2.PreviewAutomation do
 
   # An `open` claims its tab only when it created it: absent from the thread's
   # tabs before, present after. Reusing a tab someone else opened never makes
-  # it the agent's to close. Two sessions of a thread opening at once can both
-  # see the new tab that way, when the desktop serves the second on the tab the
-  # first made; the first reply, the one that made it, keeps it. That holds
-  # because PreviewAutomationHost queues an open that reuses a tab behind the
-  # open that made it, and answers them in that order. The thread's
+  # it the agent's to close. An open naming no tab always names the session's
+  # own current tab or asks for a new one, so no second open is served on the
+  # tab another made; should one be, the first claim keeps it. The thread's
   # owners of tabs since closed go too. Without a tab list, nothing changes.
   defp claim_tab(state, %{tabs_before: {:ok, before}} = pending, %{"tabId" => tab})
        when is_binary(tab) do
@@ -713,12 +749,11 @@ defmodule HalC2.PreviewAutomation do
 
   defp claim_tab(state, _pending, _result), do: state
 
-  # An open makes a tab when it names none and has no current tab to reuse, or
-  # asks for another.
-  defp makes_tab?("open", opts, input, tab),
-    do: opts[:tab_id] == nil and (tab == nil or input["reuseExistingTab"] == false)
-
-  defp makes_tab?(_operation, _opts, _input, _tab), do: false
+  # An open makes a tab exactly when it asks not to reuse one, as the desktop
+  # decides; one naming no tab with no current tab to reuse has asked so
+  # (`own_open/6`).
+  defp makes_tab?("open", input), do: input["reuseExistingTab"] == false
+  defp makes_tab?(_operation, _input), do: false
 
   # Whether an open that makes a tab fits the limits, counting the agent tabs
   # still open and the opens on their way: `{:ok, state}`, having closed an
@@ -740,16 +775,19 @@ defmodule HalC2.PreviewAutomation do
       map_size(state.owners) + length(making) < limits.mc ->
         {:ok, state}
 
-      idle = idle_tab(state, limits.idle_ms) ->
-        {owner_thread, _} = state.owners[idle]
-        HalC2.Preview.close(%{"threadId" => owner_thread, "tabId" => idle})
+      # A tab that would not close still counts, so the open is refused.
+      (idle = idle_tab(state, limits.idle_ms)) && closed?(state.owners[idle], idle) ->
         {:ok, drop_owned(state, [idle])}
 
       true ->
         {:error, tagged("PreviewAutomationTabLimitError", tab_limit(fields, "mc", limits))}
     end
+  end
+
+  defp closed?({thread, _instance}, tab) do
+    match?({:ok, _}, HalC2.Preview.close(%{"threadId" => thread, "tabId" => tab}))
   catch
-    :exit, _ -> {:ok, state}
+    :exit, _ -> false
   end
 
   defp tab_limit(fields, within, limits),
@@ -790,9 +828,7 @@ defmodule HalC2.PreviewAutomation do
         tab <- set,
         do: tab
       )
-      |> Enum.concat(
-        for {_, p} <- state.pending, not Map.get(p, :makes_tab, false), do: pending_tab(state, p)
-      )
+      |> Enum.concat(for {_, p} <- state.pending, do: pending_tab(state, p))
       |> MapSet.new()
 
     used = Map.get(state, :used, %{})
@@ -835,26 +871,25 @@ defmodule HalC2.PreviewAutomation do
     }
   end
 
-  # A failed open closes the tabs it made, so the agent is not left a hidden
-  # tab it never heard of: those absent before and present now that no open
-  # claimed (the host answers a thread's opens in order, so one that made a
-  # tab earlier has claimed it already).
+  # A failed open that made a tab closes it, so the agent is not left a hidden
+  # tab it never heard of: the one its error names (the desktop names the tab
+  # it opened), if it is new since the open and no agent's. Never any other
+  # tab that appeared meanwhile: a person's, or another open's on its way.
   defp discard_failed_open(
          state,
-         %{tabs_before: {:ok, before}, key: {thread, _}, context: %{"operation" => "open"}}
-       ) do
-    with {:ok, now} <- thread_tabs(thread) do
-      for tab <- MapSet.difference(now, before),
-          not Map.has_key?(state.owners, tab),
-          do: HalC2.Preview.close(%{"threadId" => thread, "tabId" => tab})
-    end
+         %{makes_tab: true, tabs_before: {:ok, before}, key: {thread, _}},
+         %{"tabId" => tab}
+       )
+       when is_binary(tab) do
+    if not MapSet.member?(before, tab) and not Map.has_key?(state.owners, tab),
+      do: HalC2.Preview.close(%{"threadId" => thread, "tabId" => tab})
 
     state
   catch
     :exit, _ -> state
   end
 
-  defp discard_failed_open(state, _pending), do: state
+  defp discard_failed_open(state, _pending, _error), do: state
 
   # The thread's tab ids in `HalC2.Preview`, which never calls back here, or
   # :error when it cannot say (not running, busy, or an unexpected reply).

@@ -71,7 +71,7 @@ defmodule HalC2.Steps.Preview.Automation do
   end
 
   step "the desktop receives the agent's browser actions from then on", context do
-    context = act(context, "click a button")
+    context = act(context, "click a button", %{"tabId" => "tab-1"})
     assert {:ok, %{"done" => "click"}} = context.result
     assert [{"desktop-1", _}] = requests(context, "click")
     context
@@ -107,7 +107,7 @@ defmodule HalC2.Steps.Preview.Automation do
   end
 
   step "an agent takes its first browser action", context do
-    act(context, "click a button")
+    act(context, "click a button", %{"tabId" => "tab-1"})
   end
 
   # Both desktops, the first focused, so only what the second reports about
@@ -268,7 +268,7 @@ defmodule HalC2.Steps.Preview.Automation do
 
   step "the agent's next action goes to the same browser", context do
     assert Map.has_key?(broker().clients, "desktop-1")
-    context = act(context, "click a button")
+    context = act(context, "click a button", %{"tabId" => "tab-1"})
     assert {:ok, _} = context.result
     assert [{"desktop-1", _}] = requests(context, "click")
     context
@@ -336,7 +336,7 @@ defmodule HalC2.Steps.Preview.Automation do
   end
 
   step "an agent is waiting on an action in a desktop browser", context do
-    context |> connect_desktop("desktop-1") |> hold("click a button")
+    context |> connect_desktop("desktop-1") |> hold("click a button", %{"tabId" => "tab-1"})
   end
 
   step "that desktop disconnects", context do
@@ -358,7 +358,7 @@ defmodule HalC2.Steps.Preview.Automation do
 
   # With an action waiting on the old connection, so its fate can be checked.
   step "the same desktop registers again", context do
-    context = hold(context, "click a button")
+    context = hold(context, "click a button", %{"tabId" => "tab-1"})
     {old, desktops} = Map.pop(context.desktops, "desktop-1")
 
     %{context | desktops: Map.put(desktops, "old desktop-1", old)}
@@ -368,7 +368,7 @@ defmodule HalC2.Steps.Preview.Automation do
   end
 
   step "only the new connection receives actions", context do
-    context = act(context, "scroll the page")
+    context = act(context, "scroll the page", %{"tabId" => "tab-1"})
     assert {:ok, _} = context.result
     assert [{"desktop-1", _}] = requests(context, "scroll")
     new = context.desktops["desktop-1"].connection_id
@@ -427,7 +427,8 @@ defmodule HalC2.Steps.Preview.Automation do
     {action, args, error} =
       case failure do
         "an unsupported action" ->
-          {"scroll the page", %{}, %{"_tag" => "PreviewAutomationUnsupportedClientError"}}
+          {"scroll the page", %{"tabId" => "tab-1"},
+           %{"_tag" => "PreviewAutomationUnsupportedClientError"}}
 
         "a missing named tab" ->
           {"click a button", %{"tabId" => "tab-9"},
@@ -437,7 +438,7 @@ defmodule HalC2.Steps.Preview.Automation do
           {"click a button", %{}, %{"_tag" => "PreviewAutomationTabNotFoundError"}}
 
         "a failure without any details" ->
-          {"click a button", %{}, nil}
+          {"click a button", %{"tabId" => "tab-1"}, nil}
       end
 
     {_tool, _args, operation} = @actions[action]
@@ -450,7 +451,7 @@ defmodule HalC2.Steps.Preview.Automation do
   # --- tools ---------------------------------------------------------------------------------
 
   step "an agent opens a preview without saying whether to show it", context do
-    tool(context, "preview_open", %{"url" => @page})
+    context |> current_tab(@page) |> tool("preview_open", %{"url" => @page})
   end
 
   step "whether the browser comes to the front follows the user's desktop preference",
@@ -462,7 +463,7 @@ defmodule HalC2.Steps.Preview.Automation do
   end
 
   step "an existing tab for the same page is reused", context do
-    assert [{_, %{"input" => %{"url" => @page, "reuseExistingTab" => true}}}] =
+    assert [{_, %{"tabId" => "tab-1", "input" => %{"url" => @page, "reuseExistingTab" => true}}}] =
              requests(context, "open")
 
     context
@@ -548,12 +549,12 @@ defmodule HalC2.Steps.Preview.Automation do
       "preview_click with a locator it cannot parse" ->
         context
         |> answer("click", fn _request, _context -> {:error, invalid} end)
-        |> tool("preview_click", %{"locator" => "role==[["})
+        |> tool("preview_click", %{"locator" => "role==[[", "tabId" => "tab-1"})
 
       "preview_click with an invalid CSS selector" ->
         context
         |> answer("click", fn _request, _context -> {:error, invalid} end)
-        |> tool("preview_click", %{"selector" => "button["})
+        |> tool("preview_click", %{"selector" => "button[", "tabId" => "tab-1"})
     end
   end
 
@@ -1435,6 +1436,43 @@ defmodule HalC2.Steps.Preview.Automation do
     context
   end
 
+  # The desktop fills a request naming no tab with its current tab of the
+  # thread: here the other session's, which its open just made.
+  step "another agent session's tab is the browser's current tab of the thread", context do
+    context = context |> connect_desktop("desktop-1") |> other_agent_tab()
+
+    context
+    |> Map.put(:other_tab, context.tab)
+    |> answer("click", fn request, context ->
+      {:ok, %{"tabId" => request["tabId"] || context.other_tab, "done" => "click"}}
+    end)
+  end
+
+  step "an agent with no tab of its own clicks without naming a tab", context do
+    act(context, "click a button")
+  end
+
+  step "the other session's tab was not clicked", context do
+    assert requests(context, "click") == []
+    context
+  end
+
+  step "an agent with no tab of its own opens a preview without naming a tab", context do
+    tool(context, "preview_open", %{"url" => @page})
+  end
+
+  step "the agent gets a new tab of its own and the other session's tab is left alone",
+       context do
+    assert {:ok, %{"tabId" => tab}} = context.result
+    assert tab != context.other_tab
+    assert HalC2.PreviewAutomation.tab_ownership(caller(context), tab) == :own
+    assert [_theirs, {_, mine}] = requests(context, "open")
+    refute Map.has_key?(mine, "tabId")
+    assert mine["input"]["reuseExistingTab"] == false
+    assert Enum.sort(all_tabs(context)) == Enum.sort([tab, context.other_tab])
+    context
+  end
+
   step "the user is typing in a tab the user opened", context do
     context = context |> connect_desktop("desktop-1") |> user_tab(@page)
     report_tabs(context, "desktop-1", %{"controlledTabIds" => [context.tab]})
@@ -1805,8 +1843,13 @@ defmodule HalC2.Steps.Preview.Automation do
     Map.put(context, :agent_thread, World.thread_id(context, "Agent"))
   end
 
+  # The agent navigates "tab-1", which becomes its current tab.
   defp current_tab(context, url) do
-    context = context |> Map.put(:page, url) |> tool("preview_navigate", %{"url" => url})
+    context =
+      context
+      |> Map.put(:page, url)
+      |> tool("preview_navigate", %{"url" => url, "tabId" => "tab-1"})
+
     assert {:ok, %{"tabId" => "tab-1"}} = context.result
     context
   end

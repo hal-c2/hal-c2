@@ -8,11 +8,16 @@ defmodule HalC2.PreviewAutomationLimitsPropTest do
 
   Commands open a new tab in one of three sessions (each its own thread), open
   one whose load fails, race two opens of one session so the second is decided
-  while the first is on its way, click a tab (an action on an agent's tab
-  resets its idle time), report which tabs the desktop shows and a person
-  uses, make an agent tab 31 minutes idle, and close one as the user does. The
-  test process is the desktop: it makes a `HalC2.Preview` tab for each open.
-  After every command the agent tabs still open are the model's.
+  while the first is on its way, race them so the second fails before the
+  first succeeds, click a tab (an action on an agent's tab resets its idle
+  time), report which tabs the desktop shows and a person uses, make an agent
+  tab 31 minutes idle, and close one as the user does. The test process is the
+  desktop: it makes a `HalC2.Preview` tab for each open. After every command
+  the agent tabs still open are the model's.
+
+  A failed open closes only the tab it made, named in its error: never the
+  tab of an open of the same session still on its way, nor one a person
+  opened in the thread meanwhile.
   """
 
   use ExUnit.Case, async: false
@@ -76,7 +81,8 @@ defmodule HalC2.PreviewAutomationLimitsPropTest do
       [
         {5, {:call, __MODULE__, :open, [oneof(@slots), state.made]}},
         {2, {:call, __MODULE__, :failed, [oneof(@slots)]}},
-        {2, {:call, __MODULE__, :race, [oneof(@slots), state.made]}}
+        {2, {:call, __MODULE__, :race, [oneof(@slots), state.made]}},
+        {2, {:call, __MODULE__, :race_fail, [oneof(@slots), state.made]}}
       ] ++
         if(state.made == 0,
           do: [],
@@ -114,6 +120,13 @@ defmodule HalC2.PreviewAutomationLimitsPropTest do
     {first, state} = opening(state, slot, 0)
     {second, state} = opening(state, slot, if(sent?(first), do: 1, else: 0))
     state |> made_if(first, slot) |> made_if(second, slot)
+  end
+
+  # The second's reclaim (if any) stands although its load fails.
+  def next_state(state, _result, {:call, _, :race_fail, [slot, _made]}) do
+    {first, state} = opening(state, slot, 0)
+    {_second, state} = opening(state, slot, if(sent?(first), do: 1, else: 0))
+    made_if(state, first, slot)
   end
 
   def next_state(state, _result, {:call, _, :act, [slot, tab]}) do
@@ -213,6 +226,14 @@ defmodule HalC2.PreviewAutomationLimitsPropTest do
       live == expected_live(state, :race, slot)
   end
 
+  def postcondition(state, {:call, _, :race_fail, [slot, _]}, {first, second, live, person}) do
+    {o1, after_first} = opening(state, slot, 0)
+    {o2, _} = opening(after_first, slot, if(sent?(o1), do: 1, else: 0))
+
+    {first, second} == {outcome(o1), outcome(o2)} and person == :kept and
+      live == expected_live(state, :race_fail, slot)
+  end
+
   def postcondition(state, {:call, _, :act, [slot, tab]}, result),
     do: result == expected_act(state, slot, tab)
 
@@ -229,6 +250,9 @@ defmodule HalC2.PreviewAutomationLimitsPropTest do
 
   defp expected_live(state, :race, slot),
     do: next_state(state, nil, {:call, __MODULE__, :race, [slot, 0]}) |> live_tabs()
+
+  defp expected_live(state, :race_fail, slot),
+    do: next_state(state, nil, {:call, __MODULE__, :race_fail, [slot, 0]}) |> live_tabs()
 
   defp expected_live(state, :close, tab), do: state |> drop(tab) |> live_tabs()
 
@@ -273,6 +297,52 @@ defmodule HalC2.PreviewAutomationLimitsPropTest do
 
     [a, b] = results
     {a, b, live()}
+  end
+
+  # Two new-tab opens of session `slot`, the second decided while the first
+  # is on its way. The desktop makes both tabs, a person opens one in the
+  # thread, and the second's load fails before the first is answered. The
+  # outcomes, the made tabs still open, and whether the person's tab is.
+  def race_fail(slot, made) do
+    first = send_open(slot)
+    second = send_open(slot)
+    thread = scope(slot).thread_id
+    mine = if match?({:sent, _, _}, first), do: new_tab(thread)
+    theirs = if match?({:sent, _, _}, second), do: new_tab(thread)
+    person = new_tab(thread)
+
+    b =
+      case second do
+        {:sent, task, request} ->
+          error = %{"_tag" => "PreviewAutomationNavigationError", "tabId" => theirs}
+          respond(request, false, error)
+          {:error, _} = Task.await(task)
+          :sent
+
+        refused ->
+          refused
+      end
+
+    a =
+      case first do
+        {:sent, task, request} ->
+          Process.put(:made, Map.put(Process.get(:made), made, {thread, mine}))
+          respond(request, true, %{"tabId" => mine})
+          {:ok, _} = Task.await(task)
+          :sent
+
+        refused ->
+          refused
+      end
+
+    kept = if(open?(thread, person), do: :kept, else: :closed)
+    {:ok, _} = HalC2.Preview.close(%{"threadId" => thread, "tabId" => person})
+    {a, b, live(), kept}
+  end
+
+  defp new_tab(thread) do
+    {:ok, %{"tabId" => tab}} = HalC2.Preview.open(%{"threadId" => thread})
+    tab
   end
 
   def act(slot, tab) do
@@ -375,12 +445,12 @@ defmodule HalC2.PreviewAutomationLimitsPropTest do
 
   # The made tabs still open, by their place in the order they were made.
   defp live do
-    Enum.sort(
-      for {n, {thread, tab}} <- Process.get(:made),
-          {:ok, %{"sessions" => sessions}} = HalC2.Preview.list(%{"threadId" => thread}),
-          Enum.any?(sessions, &(&1["tabId"] == tab)),
-          do: {:made, n}
-    )
+    Enum.sort(for {n, {thread, tab}} <- Process.get(:made), open?(thread, tab), do: {:made, n})
+  end
+
+  defp open?(thread, tab) do
+    {:ok, %{"sessions" => sessions}} = HalC2.Preview.list(%{"threadId" => thread})
+    Enum.any?(sessions, &(&1["tabId"] == tab))
   end
 
   defp scope(slot), do: %{thread_id: "th-#{slot}", instance: "codex"}
