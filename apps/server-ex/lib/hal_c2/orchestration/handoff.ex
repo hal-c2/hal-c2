@@ -14,9 +14,10 @@ defmodule HalC2.Orchestration.Handoff do
   (one cut short by an interrupt says so), which is what tells the next agent what
   has been tried and verified. Reasoning,
   other tool calls and attachments stay behind. One too long to hand over whole
-  keeps the newest request and answer, then the original request, then whatever
-  else fits from the newest back; anything left out is left out whole and stays
-  readable through `hal_c2_thread_read`.
+  keeps the original request, then the newest request and answer, sharing what is
+  left and cut to their ends if they must be, then whatever else fits from the
+  newest back; anything else left out is left out whole and stays readable through
+  `hal_c2_thread_read`.
 
   A thread migrated from the version 1 orchestrator (`HalC2.Import.V1Thread`) keeps
   its messages outside any run, so no transcript covers them. Until one of its runs
@@ -597,57 +598,53 @@ defmodule HalC2.Orchestration.Handoff do
     |> Enum.join("\n")
   end
 
-  # Every entry when they fit; otherwise the selection of the module doc, in the
-  # order the entries happened, under a note that some were left out.
+  # Every entry when they fit. Otherwise the room the note leaves (each entry
+  # costs its length and the "\n\n" before it) is spent in this order:
+  #
+  # 1. the first request, whole, when it fits that room at all;
+  # 2. the newest request and the newest answer share what it leaves: each is held
+  #    half, one needing less than its half hands the rest to the other, and one
+  #    longer than its part keeps its end; one whose part cannot hold even that
+  #    hands the part to the other;
+  # 3. older entries fill what is left, newest first, each whole or not at all.
+  #
+  # What is kept stays in the order it happened, under a note counting what was
+  # kept, cut to its end and left out.
   defp fit(entries, max_chars) do
-    texts = Enum.map(entries, &elem(&1, 1))
-    whole = Enum.join(texts, "\n\n")
+    whole = Enum.map_join(entries, "\n\n", &elem(&1, 1))
 
     if String.length(whole) <= max_chars do
       whole
     else
       indexed = Enum.with_index(entries)
+      find = fn list, role -> Enum.find(list, &match?({{^role, _}, _}, &1)) end
       newest = Enum.reverse(indexed)
-      role = fn role -> &match?({{^role, _}, _}, &1) end
+      pair = Enum.reject([find.(newest, :user), find.(newest, :assistant)], &is_nil/1)
+      first = find.(indexed, :user)
+      room = max_chars - @omitted_note
 
-      newest_pair = [Enum.find(newest, role.(:user)), Enum.find(newest, role.(:assistant))]
-      first = newest_pair ++ [Enum.find(indexed, role.(:user))]
-      latest = for {_entry, index} <- newest_pair |> Enum.reject(&is_nil/1), do: index
-
-      # The first request outranks the rest of a cut newest message, so its room
-      # is held back while the newest are cut to fit, unless it could never fit
-      # even alone, when holding room back would only cost the newest their end.
-      first_user = Enum.find(indexed, role.(:user))
-
-      reserve =
-        case first_user do
-          {{_role, text}, index} ->
-            cost = String.length(text) + 2
-            if index in latest or cost > max_chars - @omitted_note, do: 0, else: cost
+      kept =
+        case first do
+          {{_role, text}, index} = first ->
+            if first not in pair and cost(text) <= room, do: %{index => text}, else: %{}
 
           nil ->
-            0
+            %{}
         end
 
-      {kept, _left, cut} =
-        (Enum.reject(first, &is_nil/1) ++ newest)
-        |> Enum.reduce({%{}, max_chars - @omitted_note, 0}, fn {{_role, original}, index},
-                                                               {kept, left, cut} ->
-          # A newest message must also fit beside the reserve; one that cannot be
-          # cut to that comes back from `tail_to_fit` whole, over the limit, and is
-          # left out rather than using up the first request's room.
-          limit = if index in latest, do: left - reserve, else: left
-          text = if index in latest, do: tail_to_fit(original, limit), else: original
-          cost = String.length(text) + 2
+      kept = Map.merge(kept, share(pair, room - used(kept)))
 
-          if Map.has_key?(kept, index) or cost > limit,
-            do: {kept, left, cut},
-            else:
-              {Map.put(kept, index, text), left - cost,
-               cut + if(text == original, do: 0, else: 1)}
+      {kept, _left} =
+        newest
+        |> Enum.reject(&(&1 == first or &1 in pair))
+        |> Enum.reduce({kept, room - used(kept)}, fn {{_role, text}, index}, {kept, left} ->
+          if cost(text) <= left,
+            do: {Map.put(kept, index, text), left - cost(text)},
+            else: {kept, left}
         end)
 
-      selected = for {{_role, _text}, index} <- indexed, is_map_key(kept, index), do: kept[index]
+      selected = for {_entry, index} <- indexed, is_map_key(kept, index), do: kept[index]
+      cut = Enum.count(indexed, fn {{_role, text}, index} -> kept[index] not in [nil, text] end)
       left_out = length(entries) - length(selected)
 
       # A newest message cut to its end is not "whole"; the note says so, so the
@@ -663,17 +660,48 @@ defmodule HalC2.Orchestration.Handoff do
     end
   end
 
-  # The newest request and answer are what the next agent must see; one too long
-  # for what is left keeps as much of its end as the budget allows, instead of
-  # being left out whole.
-  defp tail_to_fit(text, left) do
-    if String.length(text) + 2 <= left do
+  defp cost(text), do: String.length(text) + 2
+
+  defp used(kept), do: kept |> Map.values() |> Enum.map(&cost/1) |> Enum.sum()
+
+  # The newest request and answer in `room`, as `%{index => text}` (step 2 of `fit`).
+  defp share([], _room), do: %{}
+
+  defp share([{{_role, text}, index}], room) do
+    case tail_to_fit(text, room) do
+      nil -> %{}
+      text -> %{index => text}
+    end
+  end
+
+  defp share([{{_, a}, ia} = first, {{_, b}, ib} = second], room) do
+    half = div(room, 2)
+
+    {part_a, part_b} =
+      cond do
+        cost(a) + cost(b) <= room -> {cost(a), cost(b)}
+        cost(a) <= half -> {cost(a), room - cost(a)}
+        cost(b) <= room - half -> {room - cost(b), cost(b)}
+        true -> {half, room - half}
+      end
+
+    case {tail_to_fit(a, part_a), tail_to_fit(b, part_b)} do
+      {nil, _} -> share([second], room)
+      {_, nil} -> share([first], room)
+      {a, b} -> %{ia => a, ib => b}
+    end
+  end
+
+  # A newest message as it fits `room`: whole, or as much of its end as fits
+  # (nil when not even a character of it does), instead of being left out whole.
+  defp tail_to_fit(text, room) do
+    if cost(text) <= room do
       text
     else
       [label | _] = String.split(text, ": ", parts: 2)
       body = String.slice(text, (String.length(label) + 2)..-1//1)
-      keep = left - String.length(label) - 8
-      if keep > 0, do: "#{label}: ... " <> String.slice(body, -keep, keep), else: text
+      keep = room - String.length(label) - 8
+      if keep > 0, do: "#{label}: ... " <> String.slice(body, -keep, keep)
     end
   end
 
