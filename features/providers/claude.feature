@@ -2276,14 +2276,14 @@ Feature: Claude
       | /goal pause  | pause  |
       | /goal resume | resume |
 
-  @backlog @mc @plugin-claude @priority-high
+  @mc @plugin-claude @priority-high
   Scenario: The commands Claude runs never see the MC's tool credential
     Given a Claude thread has HAL-C2's tools
     When Claude runs a shell command, a hook or a local MCP server
     Then none of them can read the credential Claude uses to reach HAL-C2's tools
     And HAL-C2's tools still work when Claude scrubs its subprocess environment
 
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: A Claude turn runs without HAL-C2's tools when Claude refuses them
     Given Claude rejects the MCP servers HAL-C2 hands it
     When a Claude turn starts

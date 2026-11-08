@@ -67,7 +67,8 @@ defmodule HalC2.Claude.Protocol do
   A background command or monitor keeps this thread Working only while you mark it with `hal_c2_background_wait`. Mark the background work whose result you need before you are done (tests, a build, a deploy you watch) with its task id; leave dev servers, watchers and other processes left running unmarked. Pass `waiting: false` when you stop waiting on it.
   """
 
-  # HAL-C2's own MCP server, its tools allowed without a prompt, and what it is for.
+  # HAL-C2's tools allowed without a prompt, and what they are for. The server
+  # itself, with its credential, goes over stdin (`mcp_servers/1`).
   # Instructions appended in the instance's launch arguments follow HAL-C2's
   # own in the one `--append-system-prompt` (a second flag would lose one of
   # them); without HAL-C2's tools they are the whole of it.
@@ -88,8 +89,6 @@ defmodule HalC2.Claude.Protocol do
       end
 
     [
-      "--mcp-config",
-      Keyword.fetch!(opts, :mcp_config_path),
       "--allowedTools",
       allowed,
       "--append-system-prompt",
@@ -118,6 +117,22 @@ defmodule HalC2.Claude.Protocol do
 
   defp flag(_name, nil), do: []
   defp flag(name, value), do: [name, to_string(value)]
+
+  @doc """
+  HAL-C2's own MCP server as `mcp_set_servers` names it. It reaches Claude on stdin,
+  so no command line, environment or file holds its credential: commands, hooks and
+  local MCP servers Claude starts cannot read it (upstream #17898), and the header
+  is no `${VAR}` that Claude's subprocess environment scrub would empty.
+  """
+  @spec mcp_servers(%{url: String.t(), authorization: String.t()}) :: map
+  def mcp_servers(%{url: url, authorization: authorization}),
+    do: %{
+      "hal-c2" => %{
+        "type" => "http",
+        "url" => url,
+        "headers" => %{"Authorization" => authorization}
+      }
+    }
 
   @spec control_request(String.t(), String.t(), map) :: iodata
   def control_request(request_id, subtype, params),

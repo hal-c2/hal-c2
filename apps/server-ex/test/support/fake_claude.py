@@ -18,7 +18,10 @@
 # and without arguments; "edit a file" writes edited.txt through a Write call. "mcp
 # confirm" is an MCP tool eliciting a yes or no (twice over when it says so), answered
 # "elicitation ACTION"; "mcp sign in", "mcp form" and "mcp undescribed" elicit a web
-# sign-in, form values, and input no schema describes.
+# sign-in, form values, and input no schema describes. "which tools" names the MCP
+# servers the host handed over (mcp_set_servers), and "run env" runs `env` as a child
+# process, the way Claude runs a shell command, a hook or a local MCP server, and
+# answers with what it printed.
 # Each turn's message text is appended to
 # $FAKE_CLAUDE_LOG when it is set.
 import json, os, re, sys, time, uuid
@@ -93,6 +96,7 @@ asked_before_plan = False  # a "question first" turn waiting on its answer
 asking_subagent = None  # (Agent tool id, command) of a subagent waiting on its permission answer
 pending_elicit = None  # (request id, asks again after an accept) of an MCP elicitation waiting on its answer
 dialogs = []  # the dialog kinds the host said it can show (initialize)
+mcp_servers = {}  # the MCP servers the host handed over stdin (mcp_set_servers)
 # FAKE_CLAUDE_ORPHANED names a background task the previous process left running. A
 # resumed process queues its first message behind a turn of its own that reports the
 # task stopped: its result has origin task-notification and echoes no message's uuid.
@@ -203,6 +207,29 @@ for line in sys.stdin:
         # The account a signed-in Claude Code reports when it starts.
         if sub == "set_permission_mode" and NO_AUTO and msg["request"]["mode"] == "auto":
             send({"type": "control_response", "response": {"subtype": "error", "request_id": msg["request_id"], "error": "Cannot set permission mode to auto: auto mode unavailable for this model"}})
+            continue
+        # The MCP servers the host hands over stdin. Claude expands ${VAR} in their
+        # headers from its environment, which CLAUDE_CODE_SUBPROCESS_ENV_SCRUB empties.
+        # FAKE_CLAUDE_MCP_LOG gets each set's servers, expanded, as one JSON line;
+        # FAKE_CLAUDE_MCP_REFUSE fails every one, as Claude reports a server it cannot add.
+        # FAKE_CLAUDE_MCP_HOLD: a set Claude never answers.
+        if sub == "mcp_set_servers" and os.environ.get("FAKE_CLAUDE_MCP_HOLD"):
+            continue
+        if sub == "mcp_set_servers":
+            scrub = os.environ.get("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB")
+            expand = lambda v: re.sub(r"\$\{(\w+)\}", lambda m: "" if scrub else os.environ.get(m.group(1), ""), v)
+            servers = {name: {**spec, "headers": {k: expand(v) for k, v in spec.get("headers", {}).items()}}
+                       for name, spec in msg["request"].get("servers", {}).items()}
+            if os.environ.get("FAKE_CLAUDE_MCP_LOG"):
+                with open(os.environ["FAKE_CLAUDE_MCP_LOG"], "a") as f:
+                    f.write(json.dumps(servers) + "\n")
+            if os.environ.get("FAKE_CLAUDE_MCP_REFUSE"):
+                # The error's text can echo what it was sent, the credential too.
+                result = {"added": [], "removed": [], "errors": {name: f"Connection failed with {json.dumps(spec)}" for name, spec in servers.items()}}
+            else:
+                mcp_servers = servers
+                result = {"added": list(servers), "removed": [], "errors": {}}
+            send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": result}})
             continue
         if sub == "set_permission_mode":
             mode = msg["request"]["mode"]
@@ -490,6 +517,15 @@ for line in sys.stdin:
         if pending_elicit:
             send(base)
             continue
+    if text in ("which tools", "run env"):
+        if text == "which tools":
+            answer = "tools: " + (", ".join(sorted(mcp_servers)) or "none")
+        else:
+            import subprocess
+            answer = subprocess.run(["env"], capture_output=True, text=True).stdout
+        send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}t", "role": "assistant", "content": [{"type": "text", "text": answer}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
     if "where are we" in text:
         send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}w", "role": "assistant", "content": [{"type": "text", "text": f"resumed at {resume_at} fork {'--fork-session' in sys.argv} history {'<conversation_history>' in text}" + (f" earlier [{' | '.join(earlier)}]" if SESSIONS else "")}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})

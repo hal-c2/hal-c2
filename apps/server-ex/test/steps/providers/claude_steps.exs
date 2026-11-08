@@ -2404,19 +2404,93 @@ defmodule HalC2.Steps.Providers.Claude do
   step "Claude's process arguments do not contain the credential for the HAL-C2 tools", context do
     %{"argv" => argv} = World.await_provider_log(context, "claude", &Map.has_key?(&1, "argv"))
 
-    # The credential lives in the private MCP config file the arguments point to.
-    %{"mcpServers" => %{"hal-c2" => %{"headers" => %{"Authorization" => credential}}}} =
-      argv
-      |> Enum.drop_while(&(&1 != "--mcp-config"))
-      |> Enum.at(1)
-      |> File.read!()
-      |> JSON.decode!()
-
-    token = credential |> String.split(" ") |> List.last()
+    # The credential goes over stdin (`mcp_set_servers`), and no config file is named.
+    token = hal_c2_token(context)
     assert byte_size(token) >= 16
     refute Enum.any?(argv, &String.contains?(&1, token))
+    refute "--mcp-config" in argv
     context
   end
+
+  # HAL-C2's tools reach the commands Claude runs only through Claude: with the
+  # environment scrubbed for them, the tools must still work.
+  step "a Claude thread has HAL-C2's tools", context do
+    context = World.fake_providers(context)
+    Mc.ensure(HalC2.Mcp)
+    World.put_env("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "1")
+    context
+  end
+
+  # The fake runs `env` as a child, as Claude runs a shell command, a hook or a local
+  # MCP server, and answers with what it printed.
+  step "Claude runs a shell command, a hook or a local MCP server", context do
+    context = World.launch_on(context, @thread, "claudeAgent", "run env")
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "none of them can read the credential Claude uses to reach HAL-C2's tools", context do
+    token = hal_c2_token(context)
+    [printed] = World.replies(context, @thread)
+    assert printed =~ "PATH="
+    refute printed =~ token
+
+    %{"argv" => argv} = World.await_provider_log(context, "claude", &Map.has_key?(&1, "argv"))
+    refute Enum.any?(argv, &String.contains?(&1, token))
+
+    # Nor any file the MC keeps, which the commands could read; the fakes' own logs
+    # are this test's record of what Claude was sent.
+    instruments = [
+      Path.join(context.mc.home, "fakes") | Path.wildcard(Path.join(context.mc.home, "claude-*"))
+    ]
+
+    leaks =
+      for path <- Path.wildcard(Path.join(context.mc.home, "**"), match_dot: true),
+          not Enum.any?(instruments, &String.starts_with?(path, &1)),
+          File.regular?(path),
+          File.read!(path) =~ token,
+          do: path
+
+    assert leaks == []
+    context
+  end
+
+  step "HAL-C2's tools still work when Claude scrubs its subprocess environment", context do
+    assert System.get_env("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB")
+    call_hal_c2_tools(context)
+  end
+
+  step "Claude rejects the MCP servers HAL-C2 hands it", context do
+    context = World.fake_providers(context)
+    Mc.ensure(HalC2.Mcp)
+    World.put_env("FAKE_CLAUDE_MCP_REFUSE", "1")
+    World.capture_log(context)
+  end
+
+  step "the turn runs without HAL-C2's tools", context do
+    assert [%{"hal-c2" => _}] = World.claude_mcp_servers(context)
+    context = World.post_message(context, @thread, "which tools")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    assert "tools: none" in World.replies(context, @thread)
+    context
+  end
+
+  step "the log names the servers but none of the error text", context do
+    log = World.logged(context)
+    assert log =~ "MCP servers it refused: hal-c2"
+    refute log =~ "Connection failed"
+    refute log =~ hal_c2_token(context)
+    context
+  end
+
+  # The credential Claude was last handed for HAL-C2's server, over stdin.
+  defp hal_c2_server(context) do
+    %{"hal-c2" => server} = List.last(World.claude_mcp_servers(context))
+    server
+  end
+
+  defp hal_c2_token(context),
+    do: hal_c2_server(context)["headers"]["Authorization"] |> String.split(" ") |> List.last()
 
   step "Claude can still call the HAL-C2 tools for this thread", context do
     call_hal_c2_tools(context)
@@ -2427,16 +2501,7 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   defp call_hal_c2_tools(context) do
-    %{"argv" => argv} = World.await_provider_log(context, "claude", &Map.has_key?(&1, "argv"))
-
-    config =
-      argv
-      |> Enum.drop_while(&(&1 != "--mcp-config"))
-      |> Enum.at(1)
-      |> File.read!()
-      |> JSON.decode!()
-
-    %{"url" => url, "headers" => %{"Authorization" => auth}} = config["mcpServers"]["hal-c2"]
+    %{"url" => url, "headers" => %{"Authorization" => auth}} = hal_c2_server(context)
     assert url =~ ~r{^http://127\.0\.0\.1:\d+/mcp$}
 
     body =
