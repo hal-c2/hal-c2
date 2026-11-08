@@ -748,7 +748,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #28044: Ultrathink is a word in the prompt, not a setting, so the effort choices
   # leave it out. Replaces turning on Ultrathink above.
-  @shared @backlog-mobile @backlog-tui @priority-low
+  @shared @backlog-mobile @priority-low
   Scenario: Ultrathink is typed, not picked
     Given the thread runs on Claude
     When the user opens the effort choices or steps the effort
@@ -801,7 +801,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Ultrathink, put on the prompt, sits above the model's top level: a step
   # leaves it from there, not from the level saved underneath.
-  @desktop @tui @backlog-tui
+  @desktop @tui
   Scenario Outline: Stepping the effort leaves Ultrathink from above the top level
     Given the thread runs on Claude
     And the user has typed "Ultrathink: design the cache"
@@ -862,7 +862,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #19928: the step stands down whenever something else owns the composer.
   # The TUI stands down on every row but cannot edit a queued message, so that row cannot run there.
-  @desktop @tui @backlog-tui
+  @desktop @tui
   Scenario Outline: Stepping the effort does nothing while the composer is taken
     Given <situation>
     When the user steps the effort up
@@ -872,9 +872,13 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | situation                                            |
       | an approval is waiting for the user                  |
       | the agent's question is waiting for an answer        |
-      | the user is editing a queued message                 |
       | no provider is available                             |
       | the user is holding the step key down after one step |
+
+    @backlog-tui
+    Examples:
+      | situation                            |
+      | the user is editing a queued message |
 
   # Upstream #21406: the phone previewed different options from those it saved.
   @desktop @backlog-mobile @priority-high

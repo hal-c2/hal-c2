@@ -15,6 +15,7 @@ import {
   steppedEffort,
   ultrathinkInWords,
   withModelSelectionOption,
+  withoutUltrathinkPrefix,
 } from "./models.ts";
 
 const provider = (
@@ -237,6 +238,31 @@ describe("steppedEffort", () => {
     expect(at("medium", 1)).toBe("high");
     expect(at("high", 1)).toBe("low");
     expect(at("low", -1)).toBe("high");
+  });
+
+  it("steps from above the top level when the prompt carries Ultrathink", () => {
+    const above = (direction: 1 | -1) =>
+      steppedEffort(
+        [effortModel()],
+        {
+          instanceId: ProviderInstanceId.make("claude"),
+          model: "opus",
+          options: [{ id: "effort", value: "low" }],
+        },
+        direction,
+        true,
+      )?.value;
+    expect(above(1)).toBe("low");
+    expect(above(-1)).toBe("high");
+  });
+
+  it("never offers a level the prompt carries among the effort choices", () => {
+    const choices = reasoningChoicesForSelection([effortModel()], {
+      instanceId: ProviderInstanceId.make("claude"),
+      model: "opus",
+    });
+    expect(choices?.choices.map((choice) => choice.id)).toEqual(["low", "medium", "high"]);
+    expect(withoutUltrathinkPrefix("Ultrathink: design the cache")).toBe("design the cache");
   });
 
   it("steps from the model's default when the current level is not one it lists", () => {

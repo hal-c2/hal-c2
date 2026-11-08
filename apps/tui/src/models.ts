@@ -76,13 +76,17 @@ function reasoningChoicesFromDescriptors(
     selects.find((descriptor) => REASONING_DESCRIPTOR_IDS.has(descriptor.id)) ?? selects[0];
   if (!reasoning || reasoning.type !== "select") return null;
   const selected = getProviderOptionCurrentValue(reasoning);
+  // A level the prompt carries (Ultrathink) is typed, never picked.
+  const injected = reasoning.promptInjectedValues ?? [];
   return {
     descriptorId: reasoning.id,
-    choices: reasoning.options.map((option) => ({
-      id: option.id,
-      label: option.label,
-      ...(option.description ? { description: option.description } : {}),
-    })),
+    choices: reasoning.options
+      .filter((option) => !injected.includes(option.id))
+      .map((option) => ({
+        id: option.id,
+        label: option.label,
+        ...(option.description ? { description: option.description } : {}),
+      })),
     selectedId: typeof selected === "string" ? selected : null,
   };
 }
@@ -216,7 +220,9 @@ export function modelOptionStates(
     value: getProviderOptionCurrentValue(descriptor) ?? null,
     choices:
       descriptor.type === "select"
-        ? descriptor.options.map((choice) => ({ id: choice.id, label: choice.label }))
+        ? descriptor.options
+            .filter((choice) => !(descriptor.promptInjectedValues ?? []).includes(choice.id))
+            .map((choice) => ({ id: choice.id, label: choice.label }))
         : [],
   }));
 }
@@ -243,13 +249,16 @@ function effortDescriptor(
  * The effort one level up (1) or down (-1) from the selection's, wrapping, as
  * composer.increaseEffort / decreaseEffort set it (the desktop's steppedChoice).
  * A level the prompt carries (Ultrathink) is typed, never stepped to, and a
- * current level the model does not list steps from the model's default. Null
- * when there is nothing to step between.
+ * current level the model does not list steps from the model's default.
+ * `fromAbove` steps from above the top level, as a prompt that carries
+ * Ultrathink does: up to the lowest level, down to the highest. Null when
+ * there is nothing to step between.
  */
 export function steppedEffort(
   options: ReadonlyArray<ModelOption>,
   selection: ModelSelection,
   direction: 1 | -1,
+  fromAbove = false,
 ): { readonly descriptorId: string; readonly value: string } | null {
   const descriptor = effortDescriptor(options, selection);
   if (!descriptor) return null;
@@ -258,6 +267,8 @@ export function steppedEffort(
   if (choices.length < 2) return null;
   const ids = choices.map((choice) => choice.id);
   const current = getProviderOptionCurrentValue(descriptor);
+  if (fromAbove)
+    return { descriptorId: descriptor.id, value: direction > 0 ? ids[0]! : ids.at(-1)! };
   let at = typeof current === "string" ? ids.indexOf(current) : -1;
   if (at < 0) at = choices.findIndex((choice) => choice.isDefault === true);
   const value =
@@ -271,7 +282,12 @@ export function steppedEffort(
 
 /** "please ultrathink about it": the prompt asks for Ultrathink in its own words, past any prefix. */
 export function ultrathinkInWords(text: string): boolean {
-  return /\bultrathink\b/i.test(text.replace(/^\s*Ultrathink:\s*/i, ""));
+  return /\bultrathink\b/i.test(withoutUltrathinkPrefix(text));
+}
+
+/** The prompt without its "Ultrathink:" prefix. */
+export function withoutUltrathinkPrefix(text: string): string {
+  return text.replace(/^\s*Ultrathink:\s*/i, "");
 }
 
 /**

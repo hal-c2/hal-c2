@@ -72,6 +72,7 @@ import {
   resolveModelSelection,
   steppedEffort,
   withModelSelectionOption,
+  withoutUltrathinkPrefix,
   type ModelOption,
   type ModelOptionState,
 } from "../models.ts";
@@ -1714,9 +1715,15 @@ export function createComposer(options: ComposerOptions): Composer {
     ) {
       return;
     }
-    if (promptEffort(modelOptions, selection, draftFor(target()).text)?.locked) return;
-    const next = steppedEffort(modelOptions, selection, direction);
-    if (next) setOption(next.descriptorId, next.value);
+    const key = target();
+    const typed = promptEffort(modelOptions, selection, draftFor(key).text);
+    if (typed?.locked) return;
+    // The "Ultrathink:" prefix sits above the top level: the step leaves it from
+    // there and takes the prefix off, not from the level saved underneath.
+    const next = steppedEffort(modelOptions, selection, direction, typed !== null);
+    if (!next) return;
+    if (typed) setDraft(key, (draft) => ({ ...draft, text: withoutUltrathinkPrefix(draft.text) }));
+    setOption(next.descriptorId, next.value);
   };
 
   /**
