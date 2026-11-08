@@ -3687,6 +3687,30 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     Map.merge(ctx, %{helper: helper, unrelated: unrelated, unrelated_log: log})
   end
 
+  # The stop asks the agent to end and kills it after a second, so it is gone some time
+  # after `release_session` returns. The kernel tells us when: a pidfd turns readable as
+  # the process ends (a zombie, not yet reaped by the MC's port, counts as ended).
+  @await_exit ~S"""
+  import os, select, sys
+  try:
+      fd = os.pidfd_open(int(sys.argv[1]))
+  except ProcessLookupError:
+      sys.exit(0)
+  sys.exit(0 if select.select([fd], [], [], 15)[0] else 1)
+  """
+
+  defp await_exit(pid) do
+    assert {_, 0} = System.cmd("python3", ["-c", @await_exit, "#{pid}"], stderr_to_stdout: true)
+
+    alive =
+      File.exists?("/proc/#{pid}") and
+        not String.contains?(File.read!("/proc/#{pid}/stat"), ") Z ")
+
+    refute alive
+  rescue
+    File.Error -> :ok
+  end
+
   defp on_exit_kill(pid) do
     ExUnit.Callbacks.on_exit(fn ->
       System.cmd("kill", ["-KILL", "#{pid}"], stderr_to_stdout: true)
@@ -3695,7 +3719,7 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
 
   step "the unrelated program is not signalled", context do
     [%{"pid" => agent}] = Acp.launches(context, "acme")
-    refute File.exists?("/proc/#{agent}")
+    await_exit(agent)
     assert File.exists?("/proc/#{context.unrelated}")
     assert File.read!(context.unrelated_log) == ""
     context
