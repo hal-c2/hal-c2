@@ -493,7 +493,7 @@ Feature: Pi
   Scenario: Pi's approval request shows what the tool was asked to do
     Given the thread runs Pi in approval required
     When Pi asks to run "npm test"
-    Then the approval is titled "Allow bash?"
+    Then Pi's approval is titled "Allow bash?"
     And it shows the command Pi wants to run
 
   Scenario Outline: Pi's approval kind follows the tool
