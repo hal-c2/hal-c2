@@ -290,3 +290,42 @@ export function promptEffort(
   const locked = ultrathinkInWords(text);
   return locked || /^\s*Ultrathink:/.test(text) ? { value: injected, locked } : null;
 }
+
+// ── Fallback accounts (upstream #23957, #27859, #29789) ─────────────────────
+
+/** The account can run a turn: enabled, installed, and its last check passed. */
+export function providerReady(provider: ServerProvider): boolean {
+  return (
+    provider.enabled !== false &&
+    isProviderAvailable(provider) &&
+    provider.status !== "error" &&
+    provider.status !== "disabled"
+  );
+}
+
+/** The model a thread starts on with this account: its default, else its first built-in. */
+export function defaultModelSlug(provider: ServerProvider): string | null {
+  const builtIn = provider.models.filter((model) => !model.isCustom);
+  return (
+    (builtIn.find((model) => model.isDefault === true) ?? builtIn[0] ?? provider.models[0])?.slug ??
+    null
+  );
+}
+
+/**
+ * The slug another account lists `model` under: the same slug, else a built-in
+ * model it names or is an alias of. Never a custom model that only shares the
+ * name, so "5.4" finds GPT-5.4 and not a custom model called "5.4". Null when
+ * the account has no such model.
+ */
+export function fallbackModelSlug(provider: ServerProvider, model: string): string | null {
+  if (provider.models.some((entry) => entry.slug === model)) return model;
+  const wanted = model.toLowerCase();
+  return (
+    provider.models.find(
+      (entry) =>
+        !entry.isCustom &&
+        (entry.name.toLowerCase() === wanted || (entry.aliases ?? []).includes(model)),
+    )?.slug ?? null
+  );
+}

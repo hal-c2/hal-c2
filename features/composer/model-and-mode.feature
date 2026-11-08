@@ -893,7 +893,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then it reads "High Fast" with the reasoning icon, and Fast off still shows the icon
 
   # Upstream #23957: a fallback to another instance of the same provider dropped the picked effort.
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: A composer that falls back to another account keeps the effort picked for the model
     Given new threads default to Claude Opus at extra high effort on the account "Claude Personal"
     And "Claude Personal" is turned off and the account "Claude Team" is ready
@@ -902,7 +902,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the first turn is sent at extra high effort
 
   # Upstream #23957: options belong to the model they were picked with.
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario Outline: A fallback account takes no options that were not picked for what it shows
     Given new threads default to Claude Opus at extra high effort on the account "Claude Personal"
     And "Claude Personal" is turned off and <fallback> is ready
@@ -916,7 +916,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #27859: a thread saved under a model alias such as "5.4" lost its effort when the
   # composer fell back to another account.
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A fallback keeps the effort of a model saved under an alias
     Given a thread saved on the account "Codex Personal" with the model "5.4" at high effort
     And "Codex Personal" is turned off and the account "Codex Work" is ready
@@ -926,7 +926,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #29789: picking a custom model whose name matched a built-in Codex alias stored the
   # built-in model, and its effort was saved under the built-in model too.
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: A custom model named like a Codex alias stays the model the user picked
     Given the Codex account "Codex Proxy" has the custom model "gpt-5-codex"
     When the user picks "gpt-5-codex" on "Codex Proxy" at high effort and sends a message

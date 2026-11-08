@@ -3,9 +3,12 @@ import { describe, expect, it } from "bun:test";
 import { ProviderInstanceId, type ServerProvider } from "@hal-c2/contracts";
 import {
   currentModelIndex,
+  defaultModelSlug,
+  fallbackModelSlug,
   flattenModelOptions,
   modelSelectionForOption,
   promptEffort,
+  providerReady,
   reasoningChoicesFor,
   reasoningChoicesForSelection,
   resolveModelSelection,
@@ -248,5 +251,48 @@ describe("steppedEffort", () => {
     expect(read("Ultrathink: design the cache")).toEqual({ value: "ultrathink", locked: false });
     expect(read("design the cache")).toBeNull();
     expect(ultrathinkInWords("Ultrathink: ultrathinking")).toBe(false);
+  });
+});
+
+describe("fallback accounts", () => {
+  const codex = (models: ReadonlyArray<Record<string, unknown>>, extra = {}) =>
+    ({
+      instanceId: "codex_work",
+      driver: "codex",
+      enabled: true,
+      status: "ready",
+      models: models.map((model) => ({ isCustom: false, capabilities: null, ...model })),
+      ...extra,
+    }) as unknown as ServerProvider;
+  const builtIn = { slug: "gpt-5.4", name: "GPT-5.4", aliases: ["5.4"] };
+  const custom = { slug: "my-5.4", name: "5.4", isCustom: true };
+
+  it("finds the model by its slug, else a built-in it names or is an alias of", () => {
+    expect(fallbackModelSlug(codex([builtIn]), "gpt-5.4")).toBe("gpt-5.4");
+    expect(fallbackModelSlug(codex([builtIn]), "5.4")).toBe("gpt-5.4");
+    expect(fallbackModelSlug(codex([builtIn]), "GPT-5.4")).toBe("gpt-5.4");
+    expect(fallbackModelSlug(codex([builtIn]), "gpt-6")).toBeNull();
+  });
+
+  it("never takes a custom model that only shares the name", () => {
+    expect(fallbackModelSlug(codex([custom, builtIn]), "5.4")).toBe("gpt-5.4");
+    expect(fallbackModelSlug(codex([custom]), "5.4")).toBeNull();
+    expect(fallbackModelSlug(codex([custom]), "my-5.4")).toBe("my-5.4");
+  });
+
+  it("starts on the account's default, else its first built-in model", () => {
+    expect(
+      defaultModelSlug(codex([custom, builtIn, { slug: "b", name: "B", isDefault: true }])),
+    ).toBe("b");
+    expect(defaultModelSlug(codex([custom, builtIn]))).toBe("gpt-5.4");
+    expect(defaultModelSlug(codex([custom]))).toBe("my-5.4");
+    expect(defaultModelSlug(codex([]))).toBeNull();
+  });
+
+  it("runs only on an account that is on and whose last check passed", () => {
+    expect(providerReady(codex([builtIn]))).toBe(true);
+    expect(providerReady(codex([builtIn], { enabled: false }))).toBe(false);
+    expect(providerReady(codex([builtIn], { status: "error" }))).toBe(false);
+    expect(providerReady(codex([builtIn], { availability: "unavailable" }))).toBe(false);
   });
 });
