@@ -763,13 +763,17 @@ defmodule HalC2.Orchestration.Handoff do
     end
   end
 
-  defp afresh(%{fresh: %{} = fresh} = turn) do
+  @doc """
+  The turn as it opens a new provider conversation: the thread's history wrapped into its
+  text. A turn with nothing to carry is unchanged.
+  """
+  def afresh(%{fresh: %{} = fresh} = turn) do
     history = HalC2.Streams.read(fresh.thread, &transcript(&1, fresh.ordinal))
     context = wrap(history, fresh.merged, fresh.moved, nil, fresh.restart, :merged_first)
     %{turn | text: prompt(context, fresh.text), fresh: nil}
   end
 
-  defp afresh(turn), do: turn
+  def afresh(turn), do: turn
 
   @doc "The message a provider receives: the handed-off context, then the user's text."
   def prompt(nil, text), do: text

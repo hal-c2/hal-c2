@@ -46,7 +46,7 @@ session = "fake-session-1"
 # id>.jsonl, one entry per message recording its cwd, sessionId and the version that
 # wrote it. --resume takes a session id (looked up for the working directory) or a
 # transcript's path, and --fork-session continues it as a new session; a missing
-# transcript, or one written by a newer version than FAKE_CLAUDE_VERSION, ends the
+# transcript, one with no message, or one written by a newer version than FAKE_CLAUDE_VERSION, ends the
 # process as Claude Code does.
 SESSIONS = (os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")) if os.environ.get("FAKE_SESSIONS") else None
 VERSION = os.environ.get("FAKE_CLAUDE_VERSION", "2.1.0")
@@ -75,6 +75,11 @@ if SESSIONS:
             sys.exit(1)
         with open(source) as f:
             entries = [json.loads(line) for line in f if line.strip()]
+        # A transcript with only metadata (the prompt Claude had not saved yet) holds no
+        # conversation to resume.
+        if not any(e.get("type") in ("user", "assistant") for e in entries):
+            sys.stderr.write(f"No conversation found with session ID: {resume}\n")
+            sys.exit(1)
         newest = max((e.get("version", "0") for e in entries), key=version, default="0")
         if version(newest) > version(VERSION):
             sys.stderr.write(f"This session was written by Claude Code {newest}; update to open it.\n")
@@ -221,6 +226,10 @@ for line in sys.stdin:
         sub = msg["request"]["subtype"]
         # Plan usage; FAKE_CLAUDE_USAGE=unsupported is an account without plan limits.
         if sub == "get_usage":
+            # FAKE_CLAUDE_USAGE=error: the read fails, as it does for a Claude signed out.
+            if os.environ.get("FAKE_CLAUDE_USAGE") == "error":
+                send({"type": "control_response", "response": {"subtype": "error", "request_id": msg["request_id"], "error": "Not logged in · Please run /login"}})
+                continue
             # FAKE_CLAUDE_USAGE=empty has limits but returns none, until the file it names is gone.
             empty = os.environ.get("FAKE_CLAUDE_USAGE_EMPTY")
             usage = {"rate_limits_available": False, "rate_limits": None} if os.environ.get("FAKE_CLAUDE_USAGE") == "unsupported" else {"rate_limits_available": True, "rate_limits": {}} if empty and os.path.exists(empty) else {

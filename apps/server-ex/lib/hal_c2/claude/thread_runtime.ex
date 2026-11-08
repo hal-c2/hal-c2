@@ -401,6 +401,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       |> Map.put(:launch, launch)
       |> Map.put(:resumed_at, Map.get(turn, :head))
       |> bypass_policy()
+      |> unsaved_session(state)
 
     last_ids = state.last_ids
 
@@ -1556,6 +1557,50 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp semver(_text), do: nil
 
   # Fast mode left off launches as it does unset.
+  # Upstream #19637: a session whose transcript saved no message (the MC stopped after
+  # sending a prompt, before Claude wrote it) cannot be resumed: Claude answers "No
+  # conversation found", and so would every later message. A new process for such a
+  # session starts a new conversation that carries the thread's history instead. A
+  # transcript that is missing, holds a message, or cannot be read resumes as before.
+  defp unsaved_session(turn, state) do
+    id = Map.get(turn, :native_thread_id)
+
+    if is_binary(id) and Map.get(turn, :fork) == nil and
+         (state.session == nil or not same_launch?(state.launch, turn.launch)) and
+         unsaved?(turn, id) do
+      turn
+      |> HalC2.Orchestration.Handoff.afresh()
+      |> Map.merge(%{native_thread_id: nil, head: nil, resumed_at: nil})
+    else
+      turn
+    end
+  end
+
+  # Every copy of the transcript, as Claude may have written one under another folder.
+  defp unsaved?(turn, id) do
+    files =
+      [
+        Provider.config_dir(Entities.instance(turn.ids), turn.cwd),
+        "projects",
+        "*",
+        id <> ".jsonl"
+      ]
+      |> Path.join()
+      |> Path.wildcard()
+
+    files != [] and not Enum.any?(files, &saved_message?/1)
+  end
+
+  defp saved_message?(file) do
+    file
+    |> File.stream!()
+    |> Enum.any?(
+      &match?({:ok, %{"type" => type}} when type in ["user", "assistant"], JSON.decode(&1))
+    )
+  rescue
+    File.Error -> true
+  end
+
   defp same_launch?(launch, other), do: plain_launch(launch) == plain_launch(other)
 
   defp plain_launch(%{settings: %{"fastMode" => false} = settings} = launch),

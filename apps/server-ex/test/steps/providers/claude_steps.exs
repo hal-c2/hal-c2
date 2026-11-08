@@ -7185,6 +7185,71 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # Upstream #19637. The first prompt's session left a transcript with only the metadata
+  # Claude writes before the message itself, as when the MC stopped in between.
+  step "the MC restarted after sending Claude a prompt and before Claude saved it", context do
+    home = Mc.tmp_dir(context.mc, "claude-unsaved")
+    World.put_os_env("CLAUDE_CONFIG_DIR", home)
+    World.put_os_env("FAKE_SESSIONS", "1")
+
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "hello")
+
+    World.await_runs(context, @thread, ["completed"])
+
+    assert [%{"nativeThreadRef" => %{"nativeId" => session}}] =
+             World.stream(context, @thread) |> StreamState.list("provider-thread")
+
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    assert [transcript] = Path.wildcard(Path.join([home, "projects", "*", session <> ".jsonl"]))
+
+    File.write!(
+      transcript,
+      Enum.map_join(
+        [
+          %{"type" => "last-prompt", "lastPrompt" => "hello", "sessionId" => session},
+          %{"type" => "atis-latch", "sessionId" => session},
+          %{"type" => "cost-state", "sessionId" => session}
+        ],
+        &(JSON.encode!(&1) <> "\n")
+      )
+    )
+
+    Map.put(context, :unsaved_session, session)
+  end
+
+  step "the user sends the next message in the thread", context do
+    context = World.send_turn(context, @thread, "and then?")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  # The new conversation carried the thread so far, and is the one a later session
+  # resumes: the MC restarts again before the next message.
+  step "later messages in the thread do not fail with {string}", %{args: [_]} = context do
+    assert Enum.any?(World.provider_log(context, "claude"), fn entry ->
+             sent = inspect(entry["in"])
+             sent =~ "and then?" and sent =~ "Hello from claude"
+           end)
+
+    assert [%{"nativeThreadRef" => %{"nativeId" => session}}] =
+             World.stream(context, @thread) |> StreamState.list("provider-thread")
+
+    assert session != context.unsaved_session
+
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    context = World.send_turn(context, @thread, "one more")
+    World.await_runs(context, @thread, ["completed", "completed", "completed"])
+    starts = for %{"argv" => argv} <- World.provider_log(context, "claude"), do: argv
+
+    assert ["--resume", ^session] =
+             starts |> List.last() |> Enum.drop_while(&(&1 != "--resume")) |> Enum.take(2)
+
+    context
+  end
+
   step "a Claude instance with its own config directory was signed in from a terminal",
        context do
     dir = Mc.tmp_dir(context.mc, "claude-mac-home")

@@ -1795,7 +1795,7 @@ Feature: Claude
 
   # Upstream #19637: before resuming a Claude session that is not live, its transcript is
   # checked for a saved message; one with none is replaced by a new conversation.
-  @backlog
+  @mc
   Scenario: A Claude session that never saved a message is replaced, not resumed
     Given the MC restarted after sending Claude a prompt and before Claude saved it
     When the user sends the next message in the thread
@@ -2683,7 +2683,7 @@ Feature: Claude
     Then the task list is no longer shown
 
   # Upstream #15836: a failed or signed-out Claude usage reading was kept as if it were current.
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: A Claude usage reading that failed is read again next time
     Given reading Claude's usage limits failed or found Claude signed out
     When the user opens the usage limits again
