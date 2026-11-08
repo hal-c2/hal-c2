@@ -149,7 +149,8 @@ defmodule HalC2.OpenShell.InstallTest do
       assert Storage.service_calls(ctx.log) == [
                "systemctl --user daemon-reload",
                "systemctl --user enable hal-c2-openshell.service",
-               "systemctl --user restart hal-c2-openshell.service"
+               "systemctl --user restart hal-c2-openshell.service",
+               "systemctl --user enable --now hal-c2-openshell-reap.timer"
              ]
 
       assert_client_authority()

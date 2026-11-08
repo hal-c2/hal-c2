@@ -174,11 +174,13 @@ defmodule HalC2.Steps.Platform.OpenShell do
     assert state["endpoint"] == "https://127.0.0.1:#{port}"
     assert File.read!(OpenShell.config_path()) =~ ~s(bind_address = "127.0.0.1:#{port}")
     assert File.read!(Service.unit_path(:systemd)) == Service.render(:systemd, state)
+    for {path, unit} <- Service.reaper(:systemd), do: assert(File.read!(path) == unit)
 
     assert Storage.service_calls(context.openshell.log) == [
              "systemctl --user daemon-reload",
              "systemctl --user enable hal-c2-openshell.service",
-             "systemctl --user restart hal-c2-openshell.service"
+             "systemctl --user restart hal-c2-openshell.service",
+             "systemctl --user enable --now hal-c2-openshell-reap.timer"
            ]
 
     context

@@ -315,6 +315,11 @@ defmodule HalC2.Test.Mc do
 
   # --- added by W4 (terminal) ---
 
+  # The test config a peer needs as this MC has it: reviews here are of trusted
+  # pull requests unless a scenario says otherwise (#1412).
+  defp peer_config,
+    do: [code_review_trust_all: Application.get_env(:hal_c2, :code_review_trust_all, false)]
+
   @doc """
   Starts a second MC joined to this one: a `:peer` VM running the whole app in
   its own home under the scenario's `mc.home`. This VM becomes distributed on
@@ -343,7 +348,8 @@ defmodule HalC2.Test.Mc do
 
     # A peer MC does not read Mix config, so it gets the MC settings directly.
     env =
-      [start_mc: true, home: Path.join(mc.home, "peer"), port: 0] ++ Keyword.get(opts, :env, [])
+      [start_mc: true, home: Path.join(mc.home, "peer"), port: 0] ++
+        peer_config() ++ Keyword.get(opts, :env, [])
 
     for {key, value} <- env,
         do: :ok = :erpc.call(name, Application, :put_env, [:hal_c2, key, value])
@@ -616,7 +622,7 @@ defmodule HalC2.Test.Mc do
     end)
 
     # A peer MC does not read Mix config, so it gets the MC settings directly.
-    for {key, value} <- [start_mc: true, home: home, port: 0],
+    for {key, value} <- [start_mc: true, home: home, port: 0] ++ peer_config(),
         do: :ok = :erpc.call(name, Application, :put_env, [:hal_c2, key, value])
 
     {:ok, _} = :erpc.call(name, Application, :ensure_all_started, [:hal_c2])

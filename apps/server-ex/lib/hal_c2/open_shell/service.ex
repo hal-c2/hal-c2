@@ -9,6 +9,11 @@ defmodule HalC2.OpenShell.Service do
   environment of its own: neither the systemd user manager's environment nor
   launchd's (`launchctl setenv`) reaches it.
 
+  Beside it, a reaper runs `hal-c2-service openshell reap` every minute
+  (`hal-c2-openshell-reap.timer`, `io.github.halc2.openshell.reap`): OpenShell 0.1.7
+  has no TTL, so a review sandbox's lease (`HalC2.OpenShell.Review`) ends on time
+  while the MC is down too.
+
   The service manager is driven through the same seams as `HalC2.Service`
   (`:systemctl_command`, `:launchctl_command`, `:service_platform`,
   `:service_user_home` in the app env).
@@ -20,6 +25,9 @@ defmodule HalC2.OpenShell.Service do
 
   @unit "hal-c2-openshell.service"
   @label "io.github.halc2.openshell"
+  @reap_unit "hal-c2-openshell-reap.service"
+  @reap_timer "hal-c2-openshell-reap.timer"
+  @reap_label "io.github.halc2.openshell.reap"
 
   def name(:systemd), do: @unit
   def name(:launchd), do: @label
@@ -31,6 +39,21 @@ defmodule HalC2.OpenShell.Service do
 
   def unit_path(:launchd),
     do: Path.join([Service.user_home(), "Library", "LaunchAgents", @label <> ".plist"])
+
+  @doc "The reaper's units, `[{path, contents}]`, that `install/1` writes beside the gateway's."
+  def reaper(:systemd) do
+    dir = Path.dirname(unit_path(:systemd))
+
+    [
+      {Path.join(dir, @reap_unit), render_reaper(:systemd)},
+      {Path.join(dir, @reap_timer), timer()}
+    ]
+  end
+
+  def reaper(:launchd) do
+    path = Path.join([Service.user_home(), "Library", "LaunchAgents", @reap_label <> ".plist"])
+    [{path, render_reaper(:launchd)}]
+  end
 
   @doc """
   `%{"installed", "running", "current", "unitPath"}` for the gateway's unit:
@@ -52,7 +75,8 @@ defmodule HalC2.OpenShell.Service do
           "installed" => installed,
           "running" => installed and running?(manager),
           "current" =>
-            installed and state != nil and File.read(path) == {:ok, render(manager, state)},
+            installed and state != nil and File.read(path) == {:ok, render(manager, state)} and
+              Enum.all?(reaper(manager), fn {path, unit} -> File.read(path) == {:ok, unit} end),
           "unitPath" => path
         }
     end
@@ -68,6 +92,7 @@ defmodule HalC2.OpenShell.Service do
       File.mkdir_p!(Path.dirname(path))
       File.mkdir_p!(Path.dirname(OpenShell.log_path()))
       File.write!(path, render(manager, state))
+      for {path, unit} <- reaper(manager), do: File.write!(path, unit)
       Service.run_all(activate(manager, path))
     end
   end
@@ -99,6 +124,7 @@ defmodule HalC2.OpenShell.Service do
       if File.exists?(path) do
         with :ok <- Service.run_all(deactivate(manager)) do
           File.rm!(path)
+          for {path, _} <- reaper(manager), do: File.rm(path)
 
           if manager == :systemd,
             do: Service.run_all([{"systemctl", ["--user", "daemon-reload"]}]),
@@ -140,19 +166,142 @@ defmodule HalC2.OpenShell.Service do
     [
       {"systemctl", ["--user", "daemon-reload"]},
       {"systemctl", ["--user", "enable", @unit]},
-      {"systemctl", ["--user", "restart", @unit]}
+      {"systemctl", ["--user", "restart", @unit]},
+      {"systemctl", ["--user", "enable", "--now", @reap_timer]}
     ]
   end
 
   defp activate(:launchd, path) do
+    [{reap_path, _}] = reaper(:launchd)
+
     [
       {"launchctl", ["bootout", target()], :ignore},
-      {"launchctl", ["bootstrap", "gui/#{Service.uid()}", path]}
+      {"launchctl", ["bootstrap", "gui/#{Service.uid()}", path]},
+      {"launchctl", ["bootout", reap_target()], :ignore},
+      {"launchctl", ["bootstrap", "gui/#{Service.uid()}", reap_path]}
     ]
   end
 
-  defp deactivate(:systemd), do: [{"systemctl", ["--user", "disable", "--now", @unit]}]
-  defp deactivate(:launchd), do: [{"launchctl", ["bootout", target()], :ignore}]
+  defp deactivate(:systemd),
+    do: [
+      {"systemctl", ["--user", "disable", "--now", @reap_timer], :ignore},
+      {"systemctl", ["--user", "disable", "--now", @unit]}
+    ]
+
+  defp deactivate(:launchd),
+    do: [
+      {"launchctl", ["bootout", reap_target()], :ignore},
+      {"launchctl", ["bootout", target()], :ignore}
+    ]
+
+  defp reap_target, do: "gui/#{Service.uid()}/#{@reap_label}"
+
+  # `hal-c2-service openshell reap` from a release, `mix hal_c2.openshell reap` in
+  # this checkout otherwise, with the MC's home: units get neither PATH nor a shell.
+  defp reap_program do
+    case System.get_env("RELEASE_ROOT") do
+      nil ->
+        {[System.find_executable("mix") || "mix", "hal_c2.openshell", "reap"], File.cwd!()}
+
+      root ->
+        {[Path.join([root, "bin", "hal-c2-service"]), "openshell", "reap"], Service.user_home()}
+    end
+  end
+
+  defp reap_env, do: [{"PATH", System.get_env("PATH", "")} | Service.chosen_home()]
+
+  defp render_reaper(:systemd) do
+    q = &Service.quote_value/1
+    {argv, cwd} = reap_program()
+    log = OpenShell.log_path()
+
+    Enum.join(
+      List.flatten([
+        "[Unit]",
+        "Description=Deletes HAL-C2 review sandboxes past their time",
+        "",
+        "[Service]",
+        "Type=oneshot",
+        "WorkingDirectory=#{q.(cwd)}",
+        for({name, value} <- reap_env(), do: "Environment=#{name}=#{q.(value)}"),
+        "ExecStart=#{Enum.map_join(argv, " ", q)}",
+        "UMask=0077",
+        "NoNewPrivileges=yes",
+        "StandardOutput=append:#{log}",
+        "StandardError=append:#{log}",
+        ""
+      ]),
+      "\n"
+    )
+  end
+
+  defp render_reaper(:launchd) do
+    {argv, cwd} = reap_program()
+    x = &escape/1
+    log = x.(OpenShell.log_path())
+
+    env =
+      Enum.map_join(reap_env(), "\n", fn {k, v} ->
+        "    <key>#{k}</key>\n    <string>#{x.(v)}</string>"
+      end)
+
+    """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+      <key>Label</key>
+      <string>#{@reap_label}</string>
+      <key>ProgramArguments</key>
+      <array>
+    #{Enum.map_join(argv, "\n", &"    <string>#{x.(&1)}</string>")}
+      </array>
+      <key>EnvironmentVariables</key>
+      <dict>
+    #{env}
+      </dict>
+      <key>WorkingDirectory</key>
+      <string>#{x.(cwd)}</string>
+      <key>Umask</key>
+      <integer>63</integer>
+      <key>RunAtLoad</key>
+      <true/>
+      <key>StartInterval</key>
+      <integer>60</integer>
+      <key>StandardOutPath</key>
+      <string>#{log}</string>
+      <key>StandardErrorPath</key>
+      <string>#{log}</string>
+    </dict>
+    </plist>
+    """
+  end
+
+  defp timer do
+    Enum.join(
+      [
+        "[Unit]",
+        "Description=Deletes HAL-C2 review sandboxes past their time, every minute",
+        "",
+        "[Timer]",
+        "OnBootSec=1min",
+        "OnUnitActiveSec=1min",
+        "AccuracySec=10s",
+        "",
+        "[Install]",
+        "WantedBy=timers.target",
+        ""
+      ],
+      "\n"
+    )
+  end
+
+  defp escape(value) do
+    value
+    |> String.replace("&", "&amp;")
+    |> String.replace("<", "&lt;")
+    |> String.replace(">", "&gt;")
+  end
 
   @doc "The unit `install/1` writes for `state`."
   def render(:systemd, state) do

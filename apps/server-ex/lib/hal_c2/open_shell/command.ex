@@ -9,6 +9,8 @@ defmodule HalC2.OpenShell.Command do
       reuse URL --ca FILE --cert FILE --key FILE
                                            use a gateway you run yourself
       uninstall [--drain]                  remove the gateway (or forget a reused one)
+      reap                                 delete review sandboxes past their time (the
+                                           reaper's timer runs it every minute)
       run --script FILE [--archive FILE]   (dev) stage it, and write the line that runs
                                            it in the foreground to FILE
 
@@ -25,7 +27,8 @@ defmodule HalC2.OpenShell.Command do
          hal-c2-service openshell status | check
          hal-c2-service openshell rotate [--drain]
          hal-c2-service openshell reuse https://HOST:PORT --ca FILE --cert FILE --key FILE
-         hal-c2-service openshell uninstall [--drain]\
+         hal-c2-service openshell uninstall [--drain]
+         hal-c2-service openshell reap\
   """
 
   @doc "Runs a subcommand and prints its outcome; exits 1 on failure."
@@ -94,12 +97,42 @@ defmodule HalC2.OpenShell.Command do
         with {:ok, _} <- Install.reuse(endpoint, Keyword.take(opts, [:ca, :cert, :key])),
              do: {:ok, "This MC now uses the OpenShell gateway at #{endpoint}."}
 
+      {_opts, ["reap"], []} ->
+        reap()
+
       {opts, ["uninstall"], []} ->
         with :ok <- Install.uninstall(Keyword.take(opts, [:drain])),
              do: {:ok, "OpenShell removed."}
 
       _ ->
         {:error, @usage}
+    end
+  end
+
+  # Only this MC's own sandboxes are listed and deleted, so a shared gateway is no
+  # reason to leave them running.
+  defp reap do
+    case OpenShell.Client.connect_unchecked() do
+      {:ok, conn} ->
+        result = HalC2.OpenShell.Review.reap(conn, System.os_time(:second))
+        OpenShell.Client.disconnect(conn)
+
+        case result do
+          {:ok, []} ->
+            {:ok, "No review sandbox is past its time."}
+
+          {:ok, names} ->
+            {:ok, "Deleted review sandboxes past their time: #{Enum.join(names, ", ")}"}
+
+          {:error, reason} ->
+            {:error, "Reaping review sandboxes failed: #{inspect(reason)}"}
+        end
+
+      {:error, :not_installed} ->
+        {:ok, "OpenShell is not installed; no review sandbox to reap."}
+
+      {:error, reason} ->
+        {:error, "Reaping review sandboxes failed: #{inspect(reason)}"}
     end
   end
 

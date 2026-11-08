@@ -171,9 +171,11 @@ defmodule HalC2.OpenShell.ReviewTest do
     FakeOpenShell.put_sandbox(g, "review-new", owned(Review.labels("new", now + 600)))
     FakeOpenShell.put_sandbox(g, "other", owned(%{"halc2.github.io/role" => "workspace"}))
 
-    {:ok, conn} = OpenShell.Client.connect()
-    assert {:ok, ["review-old"]} = Review.reap(conn, now)
-    OpenShell.Client.disconnect(conn)
+    # What the reaper's timer runs, the MC up or not.
+    assert {:ok, "Deleted review sandboxes past their time: review-old"} =
+             OpenShell.Command.command(["reap"])
+
+    assert {:ok, "No review sandbox is past its time."} = OpenShell.Command.command(["reap"])
     assert Map.keys(FakeOpenShell.sandboxes(g)) |> Enum.sort() == ["other", "review-new"]
   end
 

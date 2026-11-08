@@ -74,8 +74,12 @@ defmodule HalC2.OpenShell.ServiceTest do
       assert Storage.service_calls(log) == [
                "systemctl --user daemon-reload",
                "systemctl --user enable hal-c2-openshell.service",
-               "systemctl --user restart hal-c2-openshell.service"
+               "systemctl --user restart hal-c2-openshell.service",
+               "systemctl --user enable --now hal-c2-openshell-reap.timer"
              ]
+
+      # The reaper, beside it, so a review's lease ends while the MC is down too.
+      for {path, unit} <- Service.reaper(:systemd), do: assert(File.read!(path) == unit)
 
       assert %{"installed" => true, "running" => true, "current" => true} = Service.status(@state)
       assert %{"current" => false} = Service.status(%{@state | "version" => "0.1.8"})
@@ -88,12 +92,38 @@ defmodule HalC2.OpenShell.ServiceTest do
       refute File.exists?(path)
 
       assert Storage.service_calls(log) == [
+               "systemctl --user disable --now hal-c2-openshell-reap.timer",
                "systemctl --user disable --now hal-c2-openshell.service",
                "systemctl --user daemon-reload"
              ]
 
+      for {path, _} <- Service.reaper(:systemd), do: refute(File.exists?(path))
+
       assert %{"installed" => false, "running" => false} = Service.status(@state)
       assert :ok = Service.uninstall()
+    end
+
+    test "the reaper runs openshell reap every minute with the MC's home", %{tmp_dir: dir} do
+      System.put_env("HAL_C2_MC_HOME", Path.join(dir, "mc dir"))
+      on_exit(fn -> System.delete_env("HAL_C2_MC_HOME") end)
+
+      [{service, unit}, {timer, schedule}] = Service.reaper(:systemd)
+      assert Path.basename(service) == "hal-c2-openshell-reap.service"
+      assert Path.basename(timer) == "hal-c2-openshell-reap.timer"
+
+      lines = String.split(unit, "\n")
+      assert "Type=oneshot" in lines
+      [exec] = for "ExecStart=" <> argv <- lines, do: argv
+      assert exec =~ ~r/ hal_c2.openshell reap\z/
+      assert ~s(Environment=HAL_C2_MC_HOME="#{Path.join(dir, "mc dir")}") in lines
+
+      assert "OnUnitActiveSec=1min" in String.split(schedule, "\n")
+      assert schedule =~ "WantedBy=timers.target"
+
+      # A unit from before the reaper is not current, so install repairs it.
+      File.mkdir_p!(Path.dirname(Service.unit_path(:systemd)))
+      File.write!(Service.unit_path(:systemd), Service.render(:systemd, @state))
+      assert %{"installed" => true, "current" => false} = Service.status(@state)
     end
 
     test "a systemd without a user manager is refused before anything is written", %{log: log} do
@@ -136,16 +166,28 @@ defmodule HalC2.OpenShell.ServiceTest do
 
       uid = HalC2.Service.uid()
 
+      [{reaper, plist}] = Service.reaper(:launchd)
+
       assert Storage.service_calls(log) == [
                "launchctl bootout gui/#{uid}/io.github.halc2.openshell",
-               "launchctl bootstrap gui/#{uid} #{path}"
+               "launchctl bootstrap gui/#{uid} #{path}",
+               "launchctl bootout gui/#{uid}/io.github.halc2.openshell.reap",
+               "launchctl bootstrap gui/#{uid} #{reaper}"
              ]
+
+      {doc, _} = apply(:xmerl_scan, :string, [String.to_charlist(plist), [quiet: true]])
+      dict = dict(xpath(doc, "/plist/dict"))
+      assert dict["Label"] == "io.github.halc2.openshell.reap"
+      assert dict["StartInterval"] == 60
+      assert ["hal_c2.openshell", "reap"] = Enum.take(dict["ProgramArguments"], -2)
 
       File.rm!(log)
       assert :ok = Service.uninstall()
       refute File.exists?(path)
+      refute File.exists?(reaper)
 
       assert Storage.service_calls(log) == [
+               "launchctl bootout gui/#{uid}/io.github.halc2.openshell.reap",
                "launchctl bootout gui/#{uid}/io.github.halc2.openshell"
              ]
     end

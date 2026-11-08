@@ -10,6 +10,7 @@ defmodule Mix.Tasks.HalC2.Openshell do
       mix hal_c2.openshell rotate [--drain]
       mix hal_c2.openshell reuse https://HOST:PORT --ca FILE --cert FILE --key FILE
       mix hal_c2.openshell uninstall [--drain]
+      mix hal_c2.openshell reap
 
   An installed MC has the same commands as `hal-c2-service openshell ...`.
   """
