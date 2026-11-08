@@ -150,14 +150,14 @@ RightPanelController::RightPanelController(ShellBridge* bridge, McClient* client
           [this](const QString& url) { m_bridge->openExternal(QUrl(url)); }, [this](const QString& url) { openAddress(url); }, this) {
   m_review.setThreads(&m_reviewThreads);
   m_previews.setConnectedHere([this] { return thisMachine::hosts(*m_store, *m_client, m_client->environment()); });
-  // The pages this device opened from a browser tab, kept with its preferences.
-  m_previews.setRecents(
+  // The pages this device's browser tabs visited, per project, kept with its preferences.
+  m_previews.setHistory(
       [this] {
         const auto* settings = NativeShell::of(this)->controller<SettingsController>();
-        return settings ? settings->deviceValue(QStringLiteral("previewRecentPages")).toStringList() : QStringList();
+        return settings ? settings->deviceValue(QStringLiteral("previewHistory")) : QVariant();
       },
-      [this](const QStringList& urls) {
-        if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) settings->writeDevice(QStringLiteral("previewRecentPages"), urls);
+      [this](const QVariant& history) {
+        if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) settings->writeDevice(QStringLiteral("previewHistory"), history);
       });
   // A note on the diff's lines joins the prompt and is said to have.
   connect(&m_diff, &ThreadDiff::commentRequested, this, [this](const QVariantMap& comment) {
@@ -468,6 +468,7 @@ void RightPanelController::retarget() {
     }
     m_files.setTimeline(timeline);
     m_pullRequests.setThread(threadKey);
+    m_previews.setProject(m_projectId.isEmpty() ? QString() : environmentId + QLatin1Char(':') + m_projectId);
     m_previews.setThread(environmentId, threadId, m_store->mcServing(environmentId));
     // The project's own preview addresses (its scripts' previewUrl).
     QStringList configured;

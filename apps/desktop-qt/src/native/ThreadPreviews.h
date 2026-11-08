@@ -6,6 +6,8 @@
 #include <QString>
 #include <QUrl>
 
+#include "PreviewHistory.h"
+
 #include <functional>
 #include <utility>
 
@@ -23,7 +25,8 @@ class McClient;
 // from `suggestions`: the web servers
 // listening on the MC's machine (its `localServers` shape, followed only
 // while the list shows), the project's configured preview addresses and the
-// pages this device opened last. navigate(tabId, url) is `preview.navigate`,
+// pages this device visited last in the project's tabs (PreviewHistory: each
+// page a tab of the thread shown loads, whether or not the tab is drawn). navigate(tabId, url) is `preview.navigate`,
 // and opens the page in the browser.
 //
 // A page opens with openAddress(): a dev server's loopback address on a
@@ -46,8 +49,9 @@ class ThreadPreviews : public QAbstractListModel {
   // idle, loading, ready or failed: the list itself, not its tabs.
   Q_PROPERTY(QString status READ status NOTIFY statusChanged)
   Q_PROPERTY(QString message READ message NOTIFY statusChanged)
-  // What an empty tab offers: [{url, label, kind}], kind "server",
-  // "configured" or "recent"; each address once.
+  // What an empty tab offers: [{url, label, kind, title, detail}], kind
+  // "server", "configured" or "recent", a recent page also with `visitedAt`
+  // (ms since the epoch); each page once, whatever its anchor.
   Q_PROPERTY(QVariantList suggestions READ suggestions NOTIFY suggestionsChanged)
   // The first tab with no page yet (what `suggestions` would fill), or "".
   Q_PROPERTY(QString emptyTab READ emptyTab NOTIFY emptyTabChanged)
@@ -66,9 +70,9 @@ public:
 
   using Notify = std::function<void(const QString& type, const QString& title, const QString& description)>;
   using Open = std::function<void(const QUrl& url)>;
-  // The pages this device opened last, newest first: read, and written.
-  using Recents = std::function<QStringList()>;
-  using Remember = std::function<void(const QStringList& urls)>;
+  // The device's PreviewHistory as it keeps it (toVariant): read, and written.
+  using History = std::function<QVariant()>;
+  using Keep = std::function<void(const QVariant& history)>;
   // Whether the MC the shell is connected to runs on this machine.
   using Here = std::function<bool()>;
   static constexpr int maxRecents = 10;
@@ -91,7 +95,9 @@ public:
   void setSuggesting(bool suggesting);
   // The preview addresses the thread's project configures (its scripts' previewUrl).
   void setConfigured(const QStringList& urls);
-  void setRecents(Recents read, Remember write);
+  void setHistory(History read, Keep write);
+  // The project the thread is in, whose history the suggestions show and visits join.
+  void setProject(const QString& project);
   // Only a connected MC on this machine forwards to this machine's loopback;
   // without one every MC counts as here.
   void setConnectedHere(Here here) { m_connectedHere = std::move(here); }
@@ -104,6 +110,8 @@ public:
   Q_INVOKABLE void reload();
   // Opens the tab's page in the browser.
   Q_INVOKABLE void open(const QString& tabId);
+  // Takes the page off the project's recent pages.
+  Q_INVOKABLE void forget(const QString& url);
   Q_INVOKABLE void close(const QString& tabId);
   // An empty tab on the MC.
   Q_INVOKABLE void newTab();
@@ -155,6 +163,9 @@ private:
   void openThroughTab(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc,
                       const QList<QJsonObject>& tabs);
   void onEvent(const QJsonObject& event);
+  // Files the pages the snapshots show loaded under the project.
+  void remember(const QList<QJsonObject>& snapshots);
+  void keep(const std::function<bool(PreviewHistory&)>& change);
   void setStatus(const QString& status, const QString& message = {});
   int rowOf(const QString& tabId) const;
   void upsert(const QJsonObject& snapshot);
@@ -185,8 +196,9 @@ private:
   // The MC's machine's web servers: {url, processName}.
   QList<QJsonObject> m_serverList;
   QStringList m_configured;
-  Recents m_readRecents;
-  Remember m_writeRecents;
+  History m_readHistory;
+  Keep m_writeHistory;
+  QString m_project;
   QString m_status = QStringLiteral("idle");
   QString m_message;
 };

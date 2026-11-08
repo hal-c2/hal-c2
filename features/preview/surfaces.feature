@@ -1940,18 +1940,18 @@ Feature: In-app preview browser
       When the user closes the device toolbar
       Then the page fills the tab again
 
-    @backlog @desktop
+    @desktop
     Scenario: A new browser tab with nothing to suggest says how to start
       Given the thread's project has no running dev server and no recent pages
       When the user opens a new browser tab
-      Then the tab says "No preview yet"
+      Then the new tab says "No preview yet"
       And it says to type a URL above or run a dev script and that localhost servers will show up automatically
 
-    @backlog @desktop
+    @desktop
     Scenario: A recent page can be taken off the new tab's list
       Given a new browser tab lists the recent page "http://localhost:5173"
       When the user removes "http://localhost:5173" from the recent pages
-      Then it is no longer listed
+      Then the page is no longer listed
       And it does not come back when the user opens another new tab
 
     # Dropped: contradicts the passing "A new browser tab offers local servers and recent pages"
@@ -1975,7 +1975,7 @@ Feature: In-app preview browser
         | vite    | vite      |
         | unknown | Listening |
 
-    @backlog @desktop
+    @desktop
     Scenario: A recent page shows its title, its address and when it was visited
       Given the user visited "http://localhost:5173/docs?page=2" titled "Docs" a few minutes ago
       When the user opens a new browser tab
@@ -1983,20 +1983,20 @@ Feature: In-app preview browser
       And beneath it are "localhost:5173/docs?page=2" and how long ago it was visited
       And the row offers to remove it from history
 
-    @backlog @desktop
+    @desktop
     Scenario: A recent page without a title is listed by its address
       Given the user visited "http://localhost:5173/" which has no title
       When the user opens a new browser tab
       Then the page is listed as "localhost:5173"
 
-    @backlog @desktop
+    @desktop
     Scenario: Opening a suggested server visits it and shows it beside the thread
       Given a new browser tab suggests a dev server on port 5173
       When the user opens the suggestion
       Then the page opens in a browser tab beside the thread
       And the server is remembered among the recent pages
 
-    @backlog @desktop
+    @desktop
     Scenario: Two configured addresses that differ only by their anchor are one suggestion
       Given the project configures "http://localhost:3000/app#a" and "http://localhost:3000/app#b" as preview addresses
       When the user opens a new browser tab
@@ -2024,14 +2024,14 @@ Feature: In-app preview browser
       When 30 seconds pass and the page crashes again
       Then the tab reloads it once more
 
-    @backlog @desktop
+    @desktop
     Scenario: Pages the user visits are remembered per project for new tabs
       Given the user visits "http://localhost:5173" in a browser tab of a project
       When the user opens a new browser tab in another thread of that project
       Then "http://localhost:5173" is among the recent pages
 
     # Upstream #25491: visits were not filed under the thread's project, so Recently used stayed empty.
-    @backlog @desktop
+    @desktop
     Scenario Outline: Pages visited in a draft or a thread are remembered with their titles
       Given the user visits "http://localhost:5173/docs" titled "Docs" in a browser tab of <thread>
       When the user restarts HAL-C2 and opens a new browser tab in that project
@@ -2040,10 +2040,15 @@ Feature: In-app preview browser
       Examples:
         | thread                        |
         | a thread of the project       |
+
+      # The desktop's drafts have no browser tabs yet: the side panel's tabs belong to a thread.
+      @backlog
+      Examples:
+        | thread                        |
         | a new thread's draft          |
 
     # Upstream #25462: titles were recorded only while the panel was open.
-    @backlog @desktop
+    @desktop
     Scenario: A page's title is remembered while its browser is not shown
       Given an agent loads "http://localhost:5173/docs" titled "Docs" in a thread's browser tab
       And the browser is not shown for that thread
@@ -2051,7 +2056,7 @@ Feature: In-app preview browser
       Then "Docs" is the title of "http://localhost:5173/docs" among the recent pages
 
     # Upstream #25521: returning to a thread replayed the title it last saw for a shared page.
-    @backlog @desktop @priority-low
+    @desktop @priority-low
     Scenario: Returning to a thread keeps a page's newest title
       Given thread "A" loaded "http://localhost:5173/x" titled "Old"
       And thread "B" of the same project later loaded it titled "New"
@@ -2066,13 +2071,13 @@ Feature: In-app preview browser
       Then the page takes the new size
       And "No visible browser viewport handler" is not shown
 
-    @backlog @desktop
+    @desktop
     Scenario: The history of one project does not appear in another
       Given the user visited "http://localhost:5173" in a project's browser tab
       When the user opens a new browser tab in a different project
       Then "http://localhost:5173" is not among the recent pages
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Recent pages are kept tidy
       Given the user visits <visit>
       Then the recent pages list <listed>
@@ -2083,12 +2088,12 @@ Feature: In-app preview browser
         | "https://user:secret@example.com/docs"                         | "https://example.com/docs" without credentials   |
         | the same page twice                                            | the page once, as the most recent                |
 
-    @backlog @desktop @priority-low
+    @desktop @priority-low
     Scenario: A project remembers its last fifty pages
       Given the user has visited fifty one different pages in a project
       Then the recent pages remember the fifty most recent ones
 
-    @backlog @desktop @priority-low
+    @desktop @priority-low
     Scenario: The desktop remembers the history of the twenty most recently used projects
       Given the user has browsed in twenty one projects
       Then the history of the project used longest ago is forgotten

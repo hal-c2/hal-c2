@@ -17,6 +17,7 @@
 #include "SettingsController.h"
 #include "Stream.h"
 #include "Preview.h"
+#include "PreviewHistory.h"
 #include "ThreadPreviews.h"
 #include "World.h"
 
@@ -387,11 +388,12 @@ const Steps steps([] {
     world.connect();
     world.sync();
     lookAtThread(world, kProject);
-    // Twelve pages opened from browser tabs on this device, the newest first.
-    QStringList pages;
-    for (int n = 12; n >= 1; --n) pages.append(QStringLiteral("https://docs.example.com/page-%1").arg(n));
+    // Twelve pages opened from browser tabs of the project on this device, page-12 last, before the tab here loads (tabAt).
+    PreviewHistory pages;
+    const qint64 now = QDateTime::fromString(QStringLiteral("2026-09-23T09:00:00Z"), Qt::ISODate).toMSecsSinceEpoch();
+    for (int n = 1; n <= 12; ++n) pages.visit(world.mc.environmentId + QLatin1Char(':') + kProject, QStringLiteral("https://docs.example.com/page-%1").arg(n), QString(), now - (13 - n) * 60000);
     auto* settings = world.native().controller<SettingsController>();
-    expect(settings->writeDevice(QStringLiteral("previewRecentPages"), pages), settings->deviceError());
+    expect(settings->writeDevice(QStringLiteral("previewHistory"), pages.toVariant()), settings->deviceError());
   });
   step(QStringLiteral("the user opens a new browser tab"), [](World& world, const Captures&, const Table&) {
     showPreviews(world);
@@ -421,7 +423,8 @@ const Steps steps([] {
     waitForUrls(world, {QStringLiteral("http://localhost:5173")});
     // And it is the newest recent page from now on.
     world.waitFor([&] { return suggested(world, QStringLiteral("server")).size() == 1 &&
-                               world.native().controller<SettingsController>()->deviceValue(QStringLiteral("previewRecentPages")).toStringList().value(0) == QLatin1String("http://localhost:5173"); },
+                               PreviewHistory::fromVariant(world.native().controller<SettingsController>()->deviceValue(QStringLiteral("previewHistory")))
+                                       .pages(world.mc.environmentId + QLatin1Char(':') + kProject).value(0).url == QLatin1String("http://localhost:5173"); },
                   QStringLiteral("the page to be remembered"));
   });
   step(QStringLiteral("the desktop is connected to an MC on another machine"), [server](World& world, const Captures&, const Table&) {

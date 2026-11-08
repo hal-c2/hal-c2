@@ -447,7 +447,7 @@ const Steps steps([] {
   step(QStringLiteral("the start page offers the dev server to open"), [](World& world, const Captures&, const Table&) {
     waitForEngine(world, [&] { QQuickItem* start = find(world, QStringLiteral("browserStart"));
                         QQuickItem* first = find(world, QStringLiteral("browserSuggestion-0"));
-                        return start && start->isVisible() && first && first->isVisible() && first->property("text").toString().startsWith(devServer(world).url()); },
+                        return start && start->isVisible() && first && first->isVisible() && first->property("modelData").toMap().value(QStringLiteral("url")).toString().startsWith(devServer(world).url()); },
                   [&] { return QStringLiteral("the start page to offer %1; %2").arg(devServer(world).url(), state(world)); });
     saveGrab(world, QStringLiteral("browser-start"));
   });
@@ -1033,6 +1033,17 @@ QString serverUrl(World& world, const QString& path) {
 }
 void showTab(World& world, const QString& path) {
   ::showTab(world, path);
+}
+void embed(World& world) {
+  ::embed(world);
+}
+void drawEmbedded(World& world) {
+  preview::showPreviews(world);
+  embed(world);
+  drawPanel(world);
+}
+void waitForTab(World& world) {
+  ::waitForTab(world, QString());
 }
 BrowserPage* page(World& world) {
   return ::page(world);
