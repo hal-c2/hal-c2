@@ -3225,6 +3225,13 @@ defmodule HalC2.Claude.ThreadRuntime do
           %{"lastRunOrdinal" => ^own} = thread ->
             thread
             |> Map.put("lastRunOrdinal", turn[:seen_run_ordinal])
+            # Nor did the history the run handed over: its mark goes, so the next run
+            # resumes the conversation and hands that over again (`Handoff.plan/6`).
+            |> then(fn thread ->
+              if thread["unconfirmedRunId"] == turn.ids.run,
+                do: Map.drop(thread, ["unconfirmedRunId", "unconfirmedSince"]),
+                else: thread
+            end)
             |> then(fn thread ->
               if head = turn[:head],
                 do:

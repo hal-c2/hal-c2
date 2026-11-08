@@ -29,6 +29,10 @@ defmodule HalC2.ProviderHandoffProofTest do
   #   - Sending again only what came after the run that set the mark, not after the run
   #     through which the conversation was known to hold the thread, leaves out what
   #     that run carried.
+  #   - A run that ended before its turn began sent nothing, so its mark is taken back
+  #     with the provider's place, and what it would have sent takes no room: the next
+  #     run goes on in the same conversation. Dropping the mark without moving the place
+  #     back would lose what the run was to carry.
   @provider "the provider's side; the MC sees it only through prompts, confirmations and reports"
   @handoff "what a prompt carries; the model counts it by size, not by text"
   @history "what of the thread fits a size; pure, its laws in handoff_history.maude and prop/hal_c2/handoff_history_prop_test.exs"
@@ -45,8 +49,8 @@ defmodule HalC2.ProviderHandoffProofTest do
     ],
     covers: %{
       "HalC2.Orchestration.Handoff.plan/6" =>
-        ~w(resume restart resend busy refuse fresh? mark overfull),
-      "HalC2.Orchestration.Handoff.room/3" => ~w(occ reserve),
+        ~w(resume restart resend busy refuse fresh? mark overfull unsent),
+      "HalC2.Orchestration.Handoff.room/3" => ~w(occ reserve unsent),
       "HalC2.Orchestration.Handoff.transcript/4" => ~w(fit done),
       "HalC2.Orchestration.Handoff.fresh_start/2" => "restart",
       "HalC2.Orchestration.TurnWriter.ensure_item/4" => ~w(confirm late-ack clear background),
@@ -74,7 +78,7 @@ defmodule HalC2.ProviderHandoffProofTest do
       "HalC2.Orchestration.TurnWriter.finish_item/4" => @items,
       "HalC2.Orchestration.TurnWriter.finish_plan/3" => @items,
       "HalC2.Orchestration.TurnWriter.write_todo/4" => @items,
-      "HalC2.Orchestration.TurnWriter.open_request/5" => @items,
+      "HalC2.Orchestration.TurnWriter.open_request/6" => @items,
       "HalC2.Orchestration.TurnWriter.open_question/3" => @items,
       "HalC2.Orchestration.TurnWriter.open_async_question/3" => @items,
       "HalC2.Orchestration.TurnWriter.resolve_request/4" => @items,
@@ -110,10 +114,14 @@ defmodule HalC2.ProviderHandoffProofTest do
         "A message that cannot fit even a fresh conversation fails the run",
         "Switching back to the first provider resumes its own conversation",
         "The delta strategy hands over only what the target provider has not seen"
+      ],
+      "providers/claude.feature" => [
+        "A turn that failed before its prompt was sent keeps the Claude session",
+        "A Claude turn that ended while Claude started still owes what it did not send"
       ]
     }
 
-  @faults ~w(drop lose-ack crash)
+  @faults ~w(drop lose-ack crash unsent)
   @script "todo(1, 1) todo(2, 2) todo(3, 1) todo(4, 2)"
   # Mark, Room, Fresh, Keyed, Quiet, Busy, Since.
   @design "true, true, true, true, true, true, true"

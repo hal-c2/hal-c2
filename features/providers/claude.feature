@@ -1680,13 +1680,13 @@ Feature: Claude
     When the user sends a new message
     Then Claude continues from the turn the thread was reverted to
 
-  # A run that failed leaves the resume point cleared: Claude may have failed on it, and
-  # resuming the whole conversation is how the thread recovers.
+  # Claude cannot open the conversation at that message, so the message goes on in a new
+  # one, handed the thread up to where it was reverted (`Handoff.fresh_start/2`).
   @mc @plugin-claude
   Scenario: A revert Claude cannot resume at does not stop the thread
     Given the user reverted a Claude thread to a message Claude cannot resume at
-    When the next message fails because Claude cannot resume there
-    Then Claude answers the message after it from the whole conversation
+    When the user sends a new message
+    Then Claude answers it in a new conversation handed the thread
 
   # Upstream #25660: an MCP registration timeout before the prompt was sent dropped the native session.
   @mc @plugin-claude @priority-high

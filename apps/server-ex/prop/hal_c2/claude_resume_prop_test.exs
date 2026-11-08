@@ -11,13 +11,14 @@ defmodule HalC2.ClaudeResumePropTest do
   thread's Claude process.
 
   A rewind is played as the orchestration plays one: `ThreadRuntime.rollback/2`, and
-  its patch on the provider thread.
+  its patch on the provider thread; one to the thread's start rolls its runs back
+  (`HalC2.Orchestration.Rollback`).
 
   The promise: a new Claude process resumes at the message the last rewind went back
   to, as long as no turn since had Claude write anything; once one did, it resumes
-  the whole conversation. A live process keeps the conversation it has. A turn that
-  fails because Claude cannot resume at the message lets the next one resume the whole
-  conversation, so the thread recovers by itself. A turn whose run ended before Claude
+  the whole conversation. A live process keeps the conversation it has. A turn Claude cannot
+  resume at the message for goes on in a new conversation handed the thread
+  (`Handoff.fresh_start/2`), so the thread recovers by itself. A turn whose run ended before Claude
   got it leaves where to resume as it found it, unless a later turn started meanwhile.
   """
 
@@ -149,13 +150,8 @@ defmodule HalC2.ClaudeResumePropTest do
   def precondition(state, {:call, _, :unstarted, _}), do: not state.session
   def precondition(_state, _call), do: true
 
-  # The process exits at startup; no turn of Claude's resumed anywhere.
-  def next_state(state, _result, {:call, _, :answered, [_n]})
-      when not state.session and state.pinned == @broken,
-      do: %{state | pinned: nil, n: state.n + 1}
-
   def next_state(state, _result, {:call, _, :answered, [_n]}) do
-    state = message(state)
+    state = message(unbroken(state))
     %{state | pinned: nil, heads: Enum.uniq(["uuid-#{state.turns}" | state.heads])}
   end
 
@@ -196,11 +192,8 @@ defmodule HalC2.ClaudeResumePropTest do
   defp message(state),
     do: %{state | session: true, resumed: state.pinned, turns: 1, n: state.n + 1}
 
-  def postcondition(state, {:call, _, :answered, [_n]}, seen)
-      when not state.session and state.pinned == @broken,
-      do: seen.status == "failed"
-
-  def postcondition(state, {:call, _, :answered, [_n]}, seen), do: answered?(state, seen)
+  def postcondition(state, {:call, _, :answered, [_n]}, seen),
+    do: answered?(unbroken(state), seen)
 
   def postcondition(_state, {:call, _, :stopped, _}, seen), do: seen.status == "interrupted"
   def postcondition(_state, {:call, _, :unstarted, _}, seen), do: seen.status == "failed"
@@ -215,6 +208,9 @@ defmodule HalC2.ClaudeResumePropTest do
   def postcondition(_state, {:call, _, :release, []}, seen), do: seen == :ok
 
   defp broken?(state), do: not state.session and state.pinned == @broken
+
+  # The process exits at startup, and the turn goes on in a new conversation.
+  defp unbroken(state), do: if(broken?(state), do: %{state | pinned: nil}, else: state)
 
   defp answered?(state, seen) do
     resumed = message(state).resumed
@@ -352,7 +348,18 @@ defmodule HalC2.ClaudeResumePropTest do
         [id] = Map.keys(stream.entities["provider-thread"])
         # A patch that changes nothing is no change.
         change = Orchestration.upsert(stream, "provider-thread", id, &Map.merge(&1, patch))
-        {Enum.filter([change], &is_tuple/1), :ok}
+
+        rolled_back =
+          if head == nil,
+            do:
+              for(
+                {run, _} <- stream.entities["run"] || %{},
+                do:
+                  Orchestration.upsert(stream, "run", run, &Map.put(&1, "status", "rolled_back"))
+              ),
+            else: []
+
+        {Enum.filter([change | rolled_back], &is_tuple/1), :ok}
       end)
     end
   end

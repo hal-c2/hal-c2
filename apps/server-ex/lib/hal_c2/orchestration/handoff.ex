@@ -86,6 +86,7 @@ defmodule HalC2.Orchestration.Handoff do
   """
   def plan(state, provider_thread, ids, ordinal, at, message) do
     {driver, run_id} = {Orchestration.Entities.driver(ids), ids.run}
+    provider_thread = unsent_mark(state, provider_thread)
 
     transfers =
       state
@@ -211,11 +212,12 @@ defmodule HalC2.Orchestration.Handoff do
       context: context,
       # A provider thread that lost its conversation's id may still have a session
       # holding one (its last run opened it, then failed before saying its id): it
-      # is left, unless background work runs there. A first run on an instance has
-      # none of its own.
+      # is left, unless background work runs there. One no run began a turn in holds
+      # none, as a first run on an instance has none of its own: its session may still
+      # be starting for a run that ended, which the run waits behind instead.
       new_conversation:
         conversation == :replace or
-          (conversation == :new and provider_thread != nil and
+          (conversation == :new and began_in?(state, provider_thread, run_id) and
              not background?(state, provider_thread, run_id)),
       unconfirmed_since:
         case conversation do
@@ -265,6 +267,8 @@ defmodule HalC2.Orchestration.Handoff do
           provider_thread != nil,
           run["providerThreadId"] == provider_thread["id"],
           is_integer(run["sentTokens"]),
+          # A run that ended before its turn began sent nothing.
+          run["startedAt"] != nil or run["status"] not in @finished,
           (run["ordinal"] || 0) > from,
           reduce: 0,
           do: (sum -> sum + run["sentTokens"] + reserve)
@@ -495,6 +499,42 @@ defmodule HalC2.Orchestration.Handoff do
 
         {text, [handoff]}
     end
+  end
+
+  # A mark whose run ended before its turn began (`TurnWriter.started/1` wrote nothing)
+  # stands for history that never left: the conversation is as that run found it, so it
+  # goes on, and what it is owed reaches back to where the mark said it last held the
+  # thread. A runtime that records the start only once the provider answers (Codex) may
+  # have sent it after all; then the history goes in twice, which costs less than a new
+  # conversation.
+  defp unsent_mark(state, %{"unconfirmedRunId" => run_id} = provider_thread) do
+    case StreamState.get(state, "run")[run_id] do
+      %{"status" => status, "startedAt" => nil} when status in @finished ->
+        since = provider_thread["unconfirmedSince"] || 0
+
+        provider_thread
+        |> Map.drop(["unconfirmedRunId", "unconfirmedSince"])
+        |> Map.update("lastRunOrdinal", since, &min(&1 || since, since))
+
+      _ ->
+        provider_thread
+    end
+  end
+
+  defp unsent_mark(_state, provider_thread), do: provider_thread
+
+  # Whether a run other than `run_id` began a turn in the provider thread
+  # (`TurnWriter.started/1`), so that its session may hold a conversation. A revert
+  # took back the runs it rolled back, with their conversation (`Rollback`).
+  defp began_in?(_state, nil, _run_id), do: false
+
+  defp began_in?(state, provider_thread, run_id) do
+    state
+    |> StreamState.list("run")
+    |> Enum.any?(
+      &(&1["providerThreadId"] == provider_thread["id"] and &1["id"] != run_id and
+          &1["startedAt"] != nil and &1["status"] != "rolled_back")
+    )
   end
 
   # The ordinal of the run the provider thread last took part in: the runs after it are

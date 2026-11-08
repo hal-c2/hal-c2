@@ -272,6 +272,10 @@ mod PROVIDER-HANDOFF is
          seen(N, within(before(N, C), KN ; CV)) over(N, CV =/= noRuns and U + Z > W) win(W) C }
     if not busy(P, C) .
 
+  --- A provider no run reached holds no conversation (`live(P, 0)`), so it opens one
+  --- whether or not the MC asked it to let go; the MC asks only once a run began a turn
+  --- in the provider thread (`Handoff.plan/6`), as a session still starting for a run
+  --- that ended is too busy to let go.
   crl [open] : { prompt(N, P, 0, true, CV, Z) live(P, L) ids(I) cfg(MK, RM, FR, KY, QU, BS, SI)
                 win(W) C }
     => { conv(P, s I, CV ; N, Z) live(P, s I) ids(s I) working(N, P, s I) ack(N, P, s I)
@@ -320,6 +324,17 @@ mod PROVIDER-HANDOFF is
   rl [drop] : { prompt(N, P, K, NEW, CV, Z) faults(s F) C } => { faults(F) C } .
   rl [drop] : { nudge(N, P, K) faults(s F) C } => { faults(F) C } .
   rl [lose-ack] : { ack(N, P, I) faults(s F) C } => { faults(F) C } .
+
+  --- A run ends before its runtime began the turn (`TurnWriter.started/1` finds it
+  --- ended, or the provider could not be started), so its prompt never leaves. The MC sees
+  --- that the run never started: the conversation is as the run found it, so its mark goes,
+  --- the provider's place goes back to the run through which the mark said the
+  --- conversation held the thread, and what the run would have sent takes no room. It
+  --- happens at most as often as the faults allow, which bounds the search.
+  rl [unsent] : { next(N) active(N, P, S) prompt(N, P, K, NEW, CV, Z) pturn(N, P, Z)
+                 mc(P, I, Q, M, E, G) faults(s F) C }
+    => { next(s N) idle faults(F) C
+         mc(P, I, if M == N then G else Q fi, clear(M, N), E, G) } .
 
   --- A run fails or is stopped with its runtime alive, or its runtime crashes. A prompt
   --- is delivered or lost before either: the runtime's pipe keeps its order.

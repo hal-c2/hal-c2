@@ -5037,19 +5037,12 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
-  step "the next message fails because Claude cannot resume there", context do
-    context = World.post_message(context, @thread, "where are we")
-    World.await_latest_run(context, @thread, "failed")
-    context
-  end
-
-  step "Claude answers the message after it from the whole conversation", context do
-    context = World.post_message(context, @thread, "where are we")
-    World.await_latest_run(context, @thread, "completed")
-
-    assert "resumed at None fork False history False" in World.replies(context, @thread),
-           inspect(World.replies(context, @thread))
-
+  step "Claude answers it in a new conversation handed the thread", context do
+    argv = last_argv(context)
+    refute "--resume" in argv, inspect(argv)
+    prompt = last_prompt(context)
+    assert prompt =~ "User: first question", prompt
+    assert String.ends_with?(prompt, "where are we"), prompt
     context
   end
 

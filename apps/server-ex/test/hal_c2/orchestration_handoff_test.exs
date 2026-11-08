@@ -139,7 +139,7 @@ defmodule HalC2.Orchestration.HandoffTest do
     assert Handoff.transcript(state, 3) == nil
 
     assert Handoff.transcript(state(turn(1, "/compact", "") ++ turn(2, "hi", "hello")), 3) ==
-             "User: hi\n\nAssistant: hello"
+             "## Run 2\n\nUser: hi\n\nAssistant: hello"
   end
 
   test "a failed command with no exit code is handed over as failed" do
@@ -713,7 +713,12 @@ defmodule HalC2.Orchestration.HandoffTest do
     # Its last run opened a conversation and failed before saying its id: the session
     # still holds that conversation, which the whole thread would go into again.
     test "a provider thread that lost its conversation's id leaves the session holding one" do
-      runs = runs([{1, "pt", "completed", "one", %{}}, {2, "po", "completed", "two", %{}}])
+      runs =
+        runs([
+          {1, "pt", "completed", "one", %{"startedAt" => "2026-10-01T10:01:00Z"}},
+          {2, "po", "completed", "two", %{}}
+        ])
+
       lost = provider_thread(%{"nativeThreadRef" => nil, "lastRunOrdinal" => 1})
 
       plan = plan_run(state(runs ++ [lost]), 3)
@@ -729,6 +734,18 @@ defmodule HalC2.Orchestration.HandoffTest do
         })
 
       refute plan_run(state(runs ++ [busy]), 3).new_conversation
+    end
+
+    # Its only run ended while its session started for it: the session took no turn,
+    # and lets go of nothing; the next run waits behind that start instead of failing
+    # on a session too busy to let go.
+    test "a provider thread no run began in starts its first conversation in the session" do
+      runs = runs([{1, "pt", "interrupted", "one", %{}}])
+      unopened = provider_thread(%{"nativeThreadRef" => nil})
+
+      plan = plan_run(state(runs ++ [unopened]), 2)
+      refute plan.new_conversation
+      assert plan.refusal == nil
     end
 
     # A thread moved with the provider's session after a handoff that was never

@@ -979,8 +979,21 @@ defmodule HalC2.Codex.ThreadRuntime do
         :ok ->
           {:ok, state |> Map.put(:last_turn, native_turn) |> Map.put(:turn, turn)}
 
-        # The run ended while Codex started its turn: nothing wants the turn now.
+        # The run ended while Codex started its turn: nothing wants the turn now. Codex
+        # took the prompt all the same, which the run's start says: a run that ended
+        # unstarted sent nothing (`HalC2.Orchestration.Handoff.plan/6`).
         :ended ->
+          commit(state, fn stream ->
+            [
+              Orchestration.upsert(
+                stream,
+                "run",
+                ids.run,
+                &(&1 && Map.update(&1, "startedAt", at, fn started -> started || at end))
+              )
+            ]
+          end)
+
           Connection.call(state.conn, "turn/interrupt", %{
             "threadId" => state.native_thread_id,
             "turnId" => native_turn

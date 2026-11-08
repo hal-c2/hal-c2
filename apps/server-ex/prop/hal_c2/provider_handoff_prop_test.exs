@@ -10,7 +10,8 @@ defmodule HalC2.ProviderHandoffPropTest do
   run in the new conversation sends some tokens and gets an answer no bigger than the
   reserve, and its usage report reaches the MC or is lost; a report that arrives late
   is in the stream the same as one on time. The conversation then holds what each of
-  its runs sent and was answered, and `held` is never less than that. When the newest
+  its runs sent and was answered, and `held` is never less than that. A run that ended
+  before its turn began sent nothing, and takes nothing from the room. When the newest
   run's report is in, `held` is exactly that report, so the check refuses no handoff
   that fits; and what the message takes is its text, a fixed share per image, and for a
   file a token per 4 bytes up to a cap (the cap when its size is not known). Only the
@@ -81,11 +82,14 @@ defmodule HalC2.ProviderHandoffPropTest do
   # run after that one; it starts a new conversation unless background work runs in
   # the old one, and then with the whole thread; it keeps no later point as the one
   # the conversation holds; and a late confirmation of any other run leaves the mark.
+  # A marked run that ended before its turn began sent nothing: the conversation it
+  # would have gone into goes on, handed what other providers did since the point the
+  # mark kept (the run's own words never reached it, and are not sent again).
   property "a provider thread that may have lost its handoff is never resumed past it",
     numtests: HalC2.Prop.numtests(300) do
-    forall {before, mark_status, others, background?, native?} <-
+    forall {before, mark_status, others, background?, native?, started?} <-
              {list(marked_run()), oneof(["failed", "interrupted"]), list(other_run()), boolean(),
-              boolean()} do
+              boolean(), boolean()} do
       runs =
         Enum.map(before, fn {owner, status} -> {owner, status} end) ++
           [{"pt", mark_status}] ++ Enum.map(others, &{"po", &1})
@@ -99,7 +103,7 @@ defmodule HalC2.ProviderHandoffPropTest do
         end)
 
       next = length(runs) + 1
-      state = marked_thread(runs, marked, since, background?, native?)
+      state = marked_thread(runs, marked, since, background?, native?, started?)
       provider_thread = StreamState.get(state, "provider-thread")["pt"]
       ids = %{driver: "claudeAgent", run: "run-#{next}", thread: "t", provider_thread: "pt"}
       plan = Handoff.plan(state, provider_thread, ids, next, "2026-10-01T11:00:00Z", @next)
@@ -114,13 +118,19 @@ defmodule HalC2.ProviderHandoffPropTest do
             change = TurnWriter.confirmed(state, %{ids | run: "run-#{ordinal}"}),
             do: {ordinal, change}
 
-      (plan.refusal == nil and Enum.all?(missed, &String.contains?(context, &1)) and
-         (background? or plan.new_conversation) and
+      handed = if started?, do: missed, else: missed -- ["req-#{marked}."]
+
+      (plan.refusal == nil and Enum.all?(handed, &String.contains?(context, &1)) and
+         if(started?,
+           do: background? or plan.new_conversation,
+           else: not (native? and plan.new_conversation)
+         ) and
          (not plan.new_conversation or Enum.all?(whole, &String.contains?(context, &1))) and
          plan.unconfirmed_since <= since and late_acks == [])
       |> when_fail(
         IO.puts(
-          "runs #{inspect(runs)}, marked run-#{marked} since #{since}: missed #{inspect(missed)}, " <>
+          "runs #{inspect(runs)}, marked run-#{marked} (started #{started?}) since #{since}: " <>
+            "missed #{inspect(missed)}, " <>
             "plan #{inspect(Map.take(plan, [:new_conversation, :unconfirmed_since, :refusal]))}, " <>
             "context #{inspect(context)}, late acks #{inspect(late_acks)}"
         )
@@ -134,7 +144,7 @@ defmodule HalC2.ProviderHandoffPropTest do
   defp other_run, do: oneof(["completed", "failed", "interrupted", "rolled_back"])
 
   # Each run's request, and the answer of one that completed.
-  defp marked_thread(runs, marked, since, background?, native?) do
+  defp marked_thread(runs, marked, since, background?, native?, started?) do
     entities =
       for {{owner, status}, ordinal} <- runs,
           entity <- [
@@ -143,7 +153,8 @@ defmodule HalC2.ProviderHandoffPropTest do
                "id" => "run-#{ordinal}",
                "ordinal" => ordinal,
                "providerThreadId" => owner,
-               "status" => status
+               "status" => status,
+               "startedAt" => if(ordinal != marked or started?, do: "2026-10-01T10:00:00Z")
              }},
             message(ordinal, "user", "req-#{ordinal}.", 0),
             status == "completed" && message(ordinal, "assistant", "answer-#{ordinal}.", 1)
@@ -208,10 +219,12 @@ defmodule HalC2.ProviderHandoffPropTest do
   # and whether the report named the window.
   defp old_run, do: {integer(0, 50_000), oneof([nil, integer(0, 300_000)]), boolean()}
 
-  # A run of the new conversation's own provider thread, or of the other one.
+  # A run of the new conversation's own provider thread, one of it that ended before its
+  # turn began (it sent nothing), or one of the other provider thread.
   defp current_run do
     oneof([
       {:own, integer(0, 40_000), integer(0, 100), boolean(), boolean()},
+      {:unsent, integer(0, 40_000), oneof(["failed", "interrupted"])},
       {:other, integer(0, 40_000)}
     ])
   end
@@ -253,6 +266,10 @@ defmodule HalC2.ProviderHandoffPropTest do
 
     {current_entities, occupancy, newest, _ordinal, named?} =
       Enum.reduce(current, {[], 0, :unreported, since, old_named?}, fn
+        {:unsent, sent, status}, {entities, occupancy, newest, ordinal, named?} ->
+          {entities ++ [run(ordinal, @own, sent, status, nil)], occupancy, newest, ordinal + 1,
+           named?}
+
         {:other, sent}, {entities, occupancy, newest, ordinal, named?} ->
           # The other provider thread's report is of its own conversation and model.
           {entities ++ [run(ordinal, @other, sent), turn(ordinal, @other, 999_999, 1_000_000)],
@@ -299,14 +316,21 @@ defmodule HalC2.ProviderHandoffPropTest do
     {state, provider_thread, occupancy, newest, named?}
   end
 
-  defp run(ordinal, provider_thread, sent) do
+  defp run(
+         ordinal,
+         provider_thread,
+         sent,
+         status \\ "completed",
+         started \\ "2026-10-01T10:00:00Z"
+       ) do
     {"run",
      %{
        "id" => "run-#{ordinal}",
        "ordinal" => ordinal,
        "providerThreadId" => provider_thread,
        "sentTokens" => sent,
-       "status" => "completed"
+       "status" => status,
+       "startedAt" => started
      }}
   end
 
