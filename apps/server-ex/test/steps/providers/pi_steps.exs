@@ -685,6 +685,44 @@ defmodule HalC2.Steps.Providers.Pi do
     end)
   end
 
+  # An extension's `/rewind` moves Pi's leaf back to the end of the first turn
+  # (`navigateTree`), with no agent: the turn settles as a command does.
+  step "a Pi extension rewinds Pi's session to the end of the first turn", context do
+    context
+    |> quick_watchdog()
+    |> FakeAcp.configure(&Map.put(&1, "rewindCommands", %{"/rewind" => 1}))
+    |> turn("/rewind")
+  end
+
+  step "the thread no longer counts the second and third turns as Pi's history", context do
+    runs = context |> state() |> StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+    assert Enum.map(runs, & &1["status"]) == ~w(completed rolled_back rolled_back completed)
+    assert kept_replies(context) == ["Reply to first after []"]
+    context
+  end
+
+  # The second and third turns' checkpoints are gone from the revert choices; the
+  # first's still rewinds, with no fork, since Pi already stands there.
+  step "reverting the thread afterwards only offers turns Pi still has", context do
+    ready =
+      for checkpoint <- context |> state() |> StreamState.list("checkpoint"),
+          checkpoint["status"] == "ready",
+          do: checkpoint["appRunOrdinal"]
+
+    assert 1 in ready and 2 not in ready and 3 not in ready
+
+    assert {:error, _} =
+             World.rollback(context, context.thread, 2, %{"restoreFiles" => false}).reply
+
+    context = World.rollback(context, context.thread, 1, %{"restoreFiles" => false})
+    assert {:ok, _} = context.reply
+    assert FakeAcp.received_type(context, "fork") == []
+
+    context = turn(context, "where are we")
+    assert List.last(replies(context)) == "Reply to where are we after [first]"
+    context
+  end
+
   # --- skills ---
 
   step "Pi loads the project skill {string}", %{args: [name]} = context do

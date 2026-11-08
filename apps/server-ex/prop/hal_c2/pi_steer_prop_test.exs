@@ -27,7 +27,10 @@ defmodule HalC2.PiSteerPropTest do
   held, which Pi must then never take; interrupt it. Send a message after whose turn
   a Pi extension wakes Pi, which runs as a turn of its own; or one after which Pi
   resumes an extension's work without a word, so the next message Pi turns back as
-  busy and HAL-C2 queues it behind that work, in the same turn.
+  busy and HAL-C2 queues it behind that work, in the same turn. Send two messages,
+  then an extension command that moves Pi's session back to before the second
+  (`navigateTree`): only the second's run is rolled back, and the turns after find
+  their place in Pi's session past the branch it abandoned.
 
   Turns run on the fake `pi --mode rpc` in `test/support/fake_pi_rpc.py`. The model
   checks that each turn ends once, with the status it should, that every steer's
@@ -189,7 +192,7 @@ defmodule HalC2.PiSteerPropTest do
       ]
     }
   ]
-  @finished ~w(completed failed interrupted cancelled)
+  @finished ~w(completed failed interrupted cancelled rolled_back)
   @active ~w(preparing starting running waiting)
   @wait_ms 10_000
   @answer_ms 2_000
@@ -305,7 +308,8 @@ defmodule HalC2.PiSteerPropTest do
       {1, {:call, __MODULE__, :send_silent, [id(next)]}},
       {1, {:call, __MODULE__, :send_slow, [id(next), oneof(["", "/review "])]}},
       {1, {:call, __MODULE__, :send_woken, [id(next)]}},
-      {1, {:call, __MODULE__, :send_into_wake, [id(next), id(next + 1)]}}
+      {1, {:call, __MODULE__, :send_into_wake, [id(next), id(next + 1)]}},
+      {1, {:call, __MODULE__, :send_rewound, [id(next), id(next + 1), id(next + 2)]}}
     ])
   end
 
@@ -377,8 +381,9 @@ defmodule HalC2.PiSteerPropTest do
   def precondition(state, {:call, _, :send_silent, _}),
     do: state.turn == nil and state.abandoned == :none
 
-  def precondition(state, {:call, _, call, _}) when call in [:send_woken, :send_into_wake],
-    do: state.turn == nil and state.abandoned == :none
+  def precondition(state, {:call, _, call, _})
+      when call in [:send_woken, :send_into_wake, :send_rewound],
+      do: state.turn == nil and state.abandoned == :none
 
   def precondition(state, {:call, _, :send_late, _}),
     do: state.turn == nil and state.abandoned == :events
@@ -447,6 +452,13 @@ defmodule HalC2.PiSteerPropTest do
   # and shows it in its own turn: no turn of the wake's own.
   def next_state(state, _result, {:call, _, :send_into_wake, [a, b]}) do
     %{state | next: state.next + 2, runs: state.runs ++ [{a, "completed"}, {b, "completed"}]}
+  end
+
+  # Pi's extension moved its session back to before `b`: `b`'s run is rolled back, and
+  # every earlier one stays as it was.
+  def next_state(state, _result, {:call, _, :send_rewound, [a, b, c]}) do
+    runs = state.runs ++ [{a, "completed"}, {b, "rolled_back"}, {c, "completed"}]
+    %{state | next: state.next + 3, runs: runs}
   end
 
   # Once its tool returned the image, a "shows" turn works as a "joins" turn.
@@ -699,6 +711,41 @@ defmodule HalC2.PiSteerPropTest do
         queued != [b] -> {:error, "Pi queued #{b} #{length(queued)} times"}
         not shown -> {:error, "#{b}'s turn does not show the resumed work"}
         true -> answer(first) |> both(answer(second))
+      end
+
+    {reply, projection}
+  end
+
+  # Sends `a` and `b`, plain turns, then `c`, an extension command that moves Pi's session
+  # back to just before `b` (`navigateTree`): `b` must be rolled back and nothing before
+  # it, and `c`'s own turn left nothing on Pi's branch, so a revert needs no fork for it.
+  # The turns after it then find their place in Pi's session past the abandoned branch.
+  def send_rewound(a, b, c) do
+    deadline = fn -> System.monotonic_time(:millisecond) + @wait_ms end
+    first = Orchestration.dispatch(message(a, "plain #{a}", "queue_after_active", "auto"))
+    done_a = settled(unfinished_runs(), deadline.())
+    second = Orchestration.dispatch(message(b, "plain #{b}", "queue_after_active", "auto"))
+    done_b = settled(unfinished_runs(), deadline.())
+    fake_config(&Map.put(&1, "rewindCommands", %{"/rewind" => "plain #{b}"}))
+    third = Orchestration.dispatch(message(c, "/rewind #{c}", "queue_after_active", "auto"))
+    projection = settled(unfinished_runs(), deadline.())
+    state = current()
+    run = Enum.find(runs(state), &(&1["userMessageId"] == c)) || %{}
+
+    turn =
+      Enum.find(StreamState.list(state, "provider-turn"), &(&1["ordinal"] == run["ordinal"])) ||
+        %{}
+
+    reply =
+      cond do
+        match?({:timeout, _}, done_a) or match?({:timeout, _}, done_b) ->
+          {:error, "#{a} or #{b} never ended"}
+
+        not match?(%{"nativeTurnRef" => nil}, turn) ->
+          {:error, "#{c}'s turn has a place in Pi's session: #{inspect(turn["nativeTurnRef"])}"}
+
+        true ->
+          answer(first) |> both(answer(second)) |> both(answer(third))
       end
 
     {reply, projection}
@@ -1095,10 +1142,13 @@ defmodule HalC2.PiSteerPropTest do
         "turns" => @turns,
         "compactDelaySec" => 30,
         "handledCommands" => ["/stats"],
+        # `send_rewound/3` names where each rewind goes.
+        "rewindCommands" => %{},
         # Only an extension's command settles after two idle checks; a
         # prompt template expands into an agent prompt like any message.
         "commands" => [
           %{"name" => "stats", "source" => "extension"},
+          %{"name" => "rewind", "source" => "extension"},
           %{"name" => "review", "source" => "prompt"}
         ],
         "silentCommands" => ["silent"]

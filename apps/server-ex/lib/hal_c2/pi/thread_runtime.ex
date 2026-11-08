@@ -2087,6 +2087,143 @@ defmodule HalC2.Pi.ThreadRuntime do
        else: state
   end
 
+  # The turn's entries from Pi's listing since the turn started: `{:ok, user,
+  # retained}`. `user` is the turn's first user entry, `:none` when the turn left
+  # nothing on Pi's branch, or `:unknown`. `get_entries` lists in the order
+  # entries were written, abandoned branches included, so the turn is the walk
+  # from the new leaf up its parents to where the turn started. A walk that never
+  # gets there means the turn moved Pi's leaf back (an extension's `navigateTree`):
+  # `retained` then lists every user entry still on Pi's branch, from a walk of the
+  # whole session to its root. A session switched away has no old leaf in its
+  # tree, so is not a rewind. A Pi listing entries without parents is read in order.
+  defp turn_entries(state, entries, head) do
+    if Enum.all?(entries, &Map.has_key?(&1, "parentId")) do
+      case walk(index(entries), head, state.leaf) do
+        :loop ->
+          :error
+
+        {:reached, seen, users} ->
+          {:ok, turn_user(seen, users), nil}
+
+        {:left, seen, users} ->
+          {:ok, turn_user(seen, users), retained(state, head)}
+      end
+    else
+      user = Enum.find(entries, &(get_in(&1, ["message", "role"]) == "user"))
+      {:ok, if(user, do: user["id"], else: :unknown), nil}
+    end
+  end
+
+  defp turn_user(_seen, [user | _]), do: user
+  defp turn_user(0, []), do: :none
+  defp turn_user(_seen, []), do: :unknown
+
+  defp retained(%{leaf: nil}, _head), do: nil
+
+  defp retained(state, head) do
+    with {:ok, %{"entries" => entries}} when is_list(entries) <- call(state, "get_entries", %{}),
+         index = index(entries),
+         true <- Map.has_key?(index, state.leaf),
+         {:reached, _seen, users} <- walk(index, head, nil) do
+      MapSet.new(users)
+    else
+      _ -> nil
+    end
+  end
+
+  defp index(entries), do: Map.new(entries, &{&1["id"], &1})
+
+  # Walks Pi's tree from `id` up its parents until `stop`: `{:reached | :left,
+  # entries passed, their user entries oldest first}`, or `:loop` for a parent
+  # chain that loops (corrupted session data).
+  defp walk(index, id, stop, seen \\ MapSet.new(), users \\ [])
+
+  defp walk(_index, stop, stop, seen, users), do: {:reached, MapSet.size(seen), users}
+
+  defp walk(index, id, stop, seen, users) do
+    case index do
+      %{^id => entry} ->
+        if MapSet.member?(seen, id) do
+          :loop
+        else
+          users = if get_in(entry, ["message", "role"]) == "user", do: [id | users], else: users
+          walk(index, entry["parentId"], stop, MapSet.put(seen, id), users)
+        end
+
+      _ ->
+        {:left, MapSet.size(seen), users}
+    end
+  end
+
+  # Pi moved its conversation back by itself: the finished runs on this provider
+  # thread whose turns are no longer on Pi's branch become `rolled_back`, and their
+  # checkpoints `stale`, as a revert leaves them (`HalC2.Orchestration.Rollback`);
+  # the files stay as they are. A run whose place in Pi's session was never learned
+  # goes with everything after the last run Pi kept; one that left nothing there (a
+  # command) goes only from after the first run Pi dropped. The turn that rewound stays.
+  defp retire_rewound(stream, ids, retained) do
+    turns =
+      for turn <- HalC2.StreamState.list(stream, "provider-turn"),
+          turn["providerThreadId"] == ids.provider_thread,
+          into: %{},
+          do:
+            {turn["ordinal"],
+             case turn["nativeTurnRef"] do
+               nil -> :none
+               ref -> ref["nativeId"] || :unknown
+             end}
+
+    settled =
+      for run <- HalC2.StreamState.list(stream, "run"),
+          run["id"] != ids.run,
+          run["status"] in ~w(completed failed interrupted),
+          Map.has_key?(turns, run["ordinal"]),
+          do: {run, turns[run["ordinal"]]}
+
+    ordinals = fn keep? ->
+      for {run, native} <- settled, is_binary(native), keep?.(native), do: run["ordinal"]
+    end
+
+    kept = Enum.max(ordinals.(&(&1 in retained)), fn -> 0 end)
+    dropped = Enum.min(ordinals.(&(&1 not in retained)), fn -> :infinity end)
+
+    off =
+      for {run, native} <- settled,
+          off_branch?(native, run["ordinal"], {kept, dropped, retained}),
+          do: run
+
+    off_ids = MapSet.new(off, & &1["id"])
+    at = Entities.now()
+    rolled_back = &Map.merge(&1, %{"status" => "rolled_back", "completedAt" => at})
+
+    stale =
+      for checkpoint <- HalC2.StreamState.list(stream, "checkpoint"),
+          checkpoint["status"] == "ready",
+          checkpoint["runId"] in off_ids,
+          do:
+            Orchestration.upsert(
+              stream,
+              "checkpoint",
+              checkpoint["id"],
+              &Map.put(&1, "status", "stale")
+            )
+
+    stale ++
+      Enum.flat_map(off, fn run ->
+        [
+          Orchestration.upsert(stream, "run", run["id"], rolled_back),
+          run["rootNodeId"] &&
+            Orchestration.upsert(stream, "node", run["rootNodeId"], rolled_back)
+        ]
+      end)
+  end
+
+  # `dropped` is `:infinity` when Pi dropped no run of a known place: a number is
+  # less than any atom.
+  defp off_branch?(:none, ordinal, {_kept, dropped, _retained}), do: ordinal > dropped
+  defp off_branch?(:unknown, ordinal, {kept, _dropped, _retained}), do: ordinal > kept
+  defp off_branch?(native, _ordinal, {_kept, _dropped, retained}), do: native not in retained
+
   # The held refusals' callers hear them, once the turn ended or runs on — except
   # from a turn the user stopped, whose callers hear `:ok` so their messages stay
   # in the stopped turn instead of being sent on their own (`unanswered/2`).
@@ -2099,50 +2236,55 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   # The session's entries since the turn started name the turn (its user message)
   # and the conversation's new head; the session's stats give its context usage.
+  # A turn that moved Pi's leaf off the branch it started on (an extension's
+  # `navigateTree`) retires the runs Pi no longer has (`retire_rewound/3`).
   defp settle(state) do
     ids = state.turn.ids
     driver = ids.driver
 
     state =
-      case call(state, "get_entries", %{"since" => state.leaf}) do
-        {:ok, %{"entries" => entries} = data} ->
-          user =
-            Enum.find(entries || [], &(get_in(&1, ["message", "role"]) == "user"))
+      with {:ok, %{"entries" => entries} = data} when is_list(entries) <-
+             call(state, "get_entries", %{"since" => state.leaf}),
+           head = data["leafId"],
+           {:ok, user, retained} <- turn_entries(state, entries, head) do
+        # The head is where the next turn's messages start: a fork from this turn
+        # is cut at the first user message after it. A turn that left nothing on
+        # Pi's branch has no native turn: a rewind past it needs no fork.
+        turn_refs =
+          %{
+            "nativeTurnRef" =>
+              case user do
+                :none -> nil
+                id when is_binary(id) -> Entities.provider_ref(id, driver)
+                _ -> :keep
+              end,
+            "nativeHeadRef" => head && Entities.provider_ref(head, driver)
+          }
+          |> Map.reject(fn {key, ref} -> ref == :keep or (key == "nativeHeadRef" and !ref) end)
 
-          head = data["leafId"]
+        commit(state, fn stream ->
+          [
+            turn_refs != %{} &&
+              Orchestration.upsert(
+                stream,
+                "provider-turn",
+                ids.provider_turn,
+                &Map.merge(&1, turn_refs)
+              ),
+            head &&
+              Orchestration.upsert(
+                stream,
+                "provider-thread",
+                ids.provider_thread,
+                &Map.put(&1, "nativeConversationHeadRef", Entities.provider_ref(head, driver))
+              )
+            | if(retained, do: retire_rewound(stream, ids, retained), else: [])
+          ]
+        end)
 
-          # The head is where the next turn's messages start: a fork from this turn
-          # is cut at the first user message after it.
-          turn_refs =
-            %{
-              "nativeTurnRef" => user && Entities.provider_ref(user["id"], driver),
-              "nativeHeadRef" => head && Entities.provider_ref(head, driver)
-            }
-            |> Map.reject(fn {_key, ref} -> is_nil(ref) end)
-
-          commit(state, fn stream ->
-            [
-              turn_refs != %{} &&
-                Orchestration.upsert(
-                  stream,
-                  "provider-turn",
-                  ids.provider_turn,
-                  &Map.merge(&1, turn_refs)
-                ),
-              head &&
-                Orchestration.upsert(
-                  stream,
-                  "provider-thread",
-                  ids.provider_thread,
-                  &Map.put(&1, "nativeConversationHeadRef", Entities.provider_ref(head, driver))
-                )
-            ]
-          end)
-
-          %{state | leaf: head || state.leaf}
-
-        _ ->
-          state
+        %{state | leaf: head || state.leaf}
+      else
+        _ -> state
       end
 
     state =

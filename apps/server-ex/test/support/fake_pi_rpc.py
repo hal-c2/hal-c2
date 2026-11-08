@@ -133,6 +133,14 @@ def new_path():
     return os.path.join(SESSIONS, "%s.json" % uuid.uuid4().hex[:12])
 
 
+def load_leaf(path):
+    try:
+        with open(path) as f:
+            return json.load(f).get("leafId")
+    except (OSError, ValueError):
+        return None
+
+
 def load_name(path):
     try:
         with open(path) as f:
@@ -142,8 +150,20 @@ def load_name(path):
 
 
 class Session:
-    def __init__(self, path, entries, name=None):
-        self.path, self.entries, self.name = path, entries, name
+    # Pi's session is a tree, its entries kept in the order they were written:
+    # each names its parent, and the leaf is where the conversation stands.
+    def __init__(self, path, entries, name=None, leaf=None):
+        self.path, self.name = path, name
+        self.reset(entries, leaf)
+
+    def reset(self, entries, leaf=None):
+        # Entries recorded without a parent chain in the order they were written.
+        parent = None
+        for entry in entries:
+            entry.setdefault("parentId", parent)
+            parent = entry["id"]
+        self.entries = entries
+        self.leaf_id = leaf or (entries[-1]["id"] if entries else None)
 
     def save(self):
         if self.path and self.path.endswith(".jsonl"):
@@ -154,20 +174,44 @@ class Session:
                     f.write(json.dumps(line) + "\n")
         elif self.path:
             with open(self.path, "w") as f:
-                json.dump({"entries": self.entries, "name": self.name}, f)
+                json.dump({"entries": self.entries, "name": self.name, "leafId": self.leaf_id}, f)
 
     def append(self, role, content):
-        entry = {"id": uuid.uuid4().hex[:8], "type": "message",
+        entry = {"id": uuid.uuid4().hex[:8], "type": "message", "parentId": self.leaf_id,
                  "message": {"role": role, "content": content}}
         self.entries.append(entry)
+        self.leaf_id = entry["id"]
         self.save()
         return entry
 
     def leaf(self):
-        return self.entries[-1]["id"] if self.entries else None
+        return self.leaf_id
+
+    def branch(self):
+        """The active branch, root first: the walk from the leaf up its parents."""
+        by_id = {e["id"]: e for e in self.entries}
+        branch, at = [], self.leaf_id
+        while at in by_id:
+            branch.append(by_id[at])
+            at = by_id[at]["parentId"]
+        return branch[::-1]
+
+    def rewind(self, to):
+        """Moves the leaf back (`navigateTree`): to the end of turn `to`, or to just
+        before the user message `to`."""
+        branch = self.branch()
+        users = [i for i, e in enumerate(branch) if e["message"]["role"] == "user"]
+        if isinstance(to, str):
+            users = [i for i in users if branch[i]["message"]["content"] == to] + [None]
+            at = users[0]
+        else:
+            at = users[to] if to < len(users) else None
+        if at is not None:
+            self.leaf_id = branch[at]["parentId"]
+        self.save()
 
     def history(self):
-        return [e["message"]["content"] for e in self.entries if e["message"]["role"] == "user"]
+        return [e["message"]["content"] for e in self.branch() if e["message"]["role"] == "user"]
 
 
 def reply_to(session, text):
@@ -188,7 +232,7 @@ if "--version" in sys.argv:
 # Pi's own terminal app continuing a session file.
 if "-p" in sys.argv:
     path = arg("--session")
-    session = Session(path, load(path))
+    session = Session(path, load(path), leaf=load_leaf(path))
     text = arg("-p")
     session.append("user", text)
     answer = reply_to(session, text)
@@ -201,7 +245,7 @@ if "--no-session" in sys.argv:
         sys.exit(1)
     session = Session(None, [])
 elif arg("--fork"):
-    session = Session(new_path(), list(load(arg("--fork"))))
+    session = Session(new_path(), list(load(arg("--fork"))), leaf=load_leaf(arg("--fork")))
     session.save()
 else:
     session = Session(new_path(), [])
@@ -646,7 +690,8 @@ def command(msg):
         if cfg.get("cancelSwitch"):
             respond(msg, {"cancelled": True})
         else:
-            session.path, session.entries = msg["sessionPath"], load(msg["sessionPath"])
+            session.path = msg["sessionPath"]
+            session.reset(load(session.path), load_leaf(session.path))
             session.name = load_name(msg["sessionPath"])
             respond(msg, {"cancelled": False})
     elif kind == "set_session_name":
@@ -685,18 +730,20 @@ def command(msg):
         if cfg.get("cancelFork"):
             respond(msg, {"cancelled": True})
             return
-        ids = [e["id"] for e in session.entries]
+        branch = session.branch()
+        ids = [e["id"] for e in branch]
         entry = msg.get("entryId")
         if entry not in ids:
             respond(msg, error="Entry %s not found" % entry)
             return
         index = ids.index(entry)
-        text = session.entries[index]["message"]["content"]
-        session.path, session.entries = new_path(), session.entries[:index]
+        text = branch[index]["message"]["content"]
+        session.path = new_path()
+        session.reset(branch[:index])
         session.save()
         respond(msg, {"text": text, "cancelled": False})
     elif kind == "get_last_assistant_text":
-        said = [e["message"]["content"] for e in session.entries if e["message"]["role"] == "assistant"]
+        said = [e["message"]["content"] for e in session.branch() if e["message"]["role"] == "assistant"]
         respond(msg, {"text": said[-1] if said else None})
     elif kind == "compact":
         if cfg.get("compactDelaySec"):
@@ -742,6 +789,13 @@ def command(msg):
     elif kind == "prompt" and steer(msg) and "ignore" in msg.get("message", ""):
         # A steer saying "ignore" that reaches Pi once its run settled is never answered.
         pass
+    elif kind == "prompt" and not steer(msg) and any(
+            msg.get("message", "").startswith(c) for c in cfg.get("rewindCommands") or {}):
+        # An extension command that moves Pi's session back to the end of a turn
+        # (`navigateTree`, without a summary), without the agent.
+        command_name = next(c for c in cfg["rewindCommands"] if msg["message"].startswith(c))
+        session.rewind(cfg["rewindCommands"][command_name])
+        respond(msg)
     elif kind == "prompt" and not steer(msg) and (
             any(msg.get("message", "").startswith(c) for c in cfg.get("handledCommands") or []) or
             any(msg.get("message", "").startswith(c) for c in cfg.get("silentCommands") or [])):

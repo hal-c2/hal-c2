@@ -1106,7 +1106,7 @@ Feature: Pi
     Then "release" is still offered
 
   # Upstream #13839: Pi native session rewinds are reconciled
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: A rewind made inside Pi drops the abandoned turns from the thread
     Given a Pi thread with three turns
     When a Pi extension rewinds Pi's session to the end of the first turn
