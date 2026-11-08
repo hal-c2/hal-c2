@@ -192,6 +192,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/model-and-mode.feature:The user steps the effort from the keyboard*"),
     QStringLiteral("composer/model-and-mode.feature:Stepping the effort does nothing*"),
     QStringLiteral("composer/model-and-mode.feature:An effort outside the model's levels*"),
+    QStringLiteral("composer/model-and-mode.feature:Stepping the effort leaves Ultrathink*"),
     QStringLiteral("composer/model-and-mode.feature:A composer that falls back to another account*"),
     QStringLiteral("composer/model-and-mode.feature:A fallback account takes no options*"),
     QStringLiteral("composer/model-and-mode.feature:A fallback keeps the effort of a model saved under an alias"),
