@@ -2652,10 +2652,15 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   # What follows the notice's id with its leading parenthesised and quoted
-  # parts (the subagent's name, its type) stripped off.
+  # parts (the subagent's name, its type) stripped off. A parenthesised part
+  # may hold quoted text and parentheses of its own: `("handle (cancel) errors")`.
   defp notice_sentence(rest) do
     stripped =
-      Regex.replace(~r/^\s*(?:\([^)]*\)|"[^"]*"|'[^']*')/s, rest, "")
+      Regex.replace(
+        ~r/^\s*(?:(?<group>\((?:"[^"]*"|'[^']*'|[^()"']|(?&group))*\))|"[^"]*"|'[^']*')/s,
+        rest,
+        ""
+      )
 
     if stripped == rest, do: rest, else: notice_sentence(stripped)
   end

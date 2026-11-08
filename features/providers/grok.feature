@@ -681,10 +681,15 @@ Feature: Grok
       | was interrupted        | failed    |
       | timed out              | failed    |
 
-  Scenario: A Grok subagent whose name mentions a failure is not failed by its name
-    Given Grok left a subagent named "fix failed tests" running in the background
-    When Grok says the subagent completed successfully
+  Scenario Outline: A Grok subagent whose name mentions a failure is not failed by its name
+    Given Grok left a subagent named "<name>" running in the background
+    When Grok says the subagent <outcome>
     Then the subagent is shown as completed
+
+    Examples:
+      | name                    | outcome                |
+      | fix failed tests        | completed successfully |
+      | handle (cancel) errors  | completed              |
 
   Scenario: Text that only mentions a subagent does not end one
     Given Grok left a subagent running in the background
