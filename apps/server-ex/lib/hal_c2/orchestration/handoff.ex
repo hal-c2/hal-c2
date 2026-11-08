@@ -14,9 +14,9 @@ defmodule HalC2.Orchestration.Handoff do
   (one cut short by an interrupt says so), which is what tells the next agent what
   has been tried and verified. Reasoning,
   other tool calls and attachments stay behind. One too long to hand over whole
-  keeps the original request, then the newest request and answer, sharing what is
-  left and cut to their ends if they must be, then whatever else fits from the
-  newest back; anything else left out is left out whole and stays readable through
+  keeps the newest request and answer, and the original request unless it would
+  cut a pair that fits without it; the pair shares what is left and is cut to their ends if it
+  must be, then whatever else fits from the newest back; anything else left out is left out whole and stays readable through
   `hal_c2_thread_read`.
 
   A thread migrated from the version 1 orchestrator (`HalC2.Import.V1Thread`) keeps
@@ -606,7 +606,9 @@ defmodule HalC2.Orchestration.Handoff do
   # Every entry when they fit. Otherwise the room the note leaves (each entry
   # costs its length and the "\n\n" before it) is spent in this order:
   #
-  # 1. the first request, whole, when it fits that room at all;
+  # 1. the first request, whole, when it fits that room at all, unless the newest
+  #    request and answer would fit whole without it but not beside it (then it
+  #    is an older entry, step 3);
   # 2. the newest request and the newest answer share what it leaves: each is held
   #    half, one needing less than its half hands the rest to the other, and one
   #    longer than its part keeps its end; one whose part cannot hold even that
@@ -625,8 +627,20 @@ defmodule HalC2.Orchestration.Handoff do
       find = fn list, role -> Enum.find(list, &match?({{^role, _}, _}, &1)) end
       newest = Enum.reverse(indexed)
       pair = Enum.reject([find.(newest, :user), find.(newest, :assistant)], &is_nil/1)
-      first = find.(indexed, :user)
       room = max_chars - @omitted_note
+
+      # The first request does not push out a newest pair that would fit whole
+      # without it: then the newest history wins and it is an older entry.
+      pair_cost = Enum.sum(for {{_r, t}, _i} <- pair, do: cost(t))
+
+      first =
+        with {{_role, text}, _index} = first <- find.(indexed, :user),
+             true <- first not in pair,
+             true <- pair_cost > room or cost(text) + pair_cost <= room do
+          first
+        else
+          _ -> nil
+        end
 
       kept =
         case first do

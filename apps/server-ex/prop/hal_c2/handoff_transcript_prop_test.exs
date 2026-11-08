@@ -4,7 +4,9 @@ defmodule HalC2.HandoffTranscriptPropTest do
   conversation to a budget, for any message lengths and budget:
 
   - (a) the transcript is never longer than the budget;
-  - (b) the first request is kept whole whenever it fits beside the note;
+  - (b) the first request is kept whole whenever it fits beside the note, unless
+    the newest pair would fit whole without it but not beside it (then the newest
+    history wins and it is an older entry);
   - (c) the newest request and the newest answer share what the first request
     leaves: each keeps at least its end when there is room for one, a cut one
     leaves none of that room unused, and when both are cut each has half;
@@ -109,7 +111,12 @@ defmodule HalC2.HandoffTranscriptPropTest do
     pair = Enum.reject([newest.(:user), newest.(:assistant)], &is_nil/1)
     pair_ids = Enum.map(pair, &elem(&1, 0))
     first = Enum.find(entries, &(elem(&1, 1) == :user))
-    first = if first && elem(first, 0) not in pair_ids, do: first
+    pair_whole = pair |> Enum.map(fn {_i, _role, text} -> cost.(text) end) |> Enum.sum()
+
+    first =
+      if first && elem(first, 0) not in pair_ids &&
+           (pair_whole > room or cost.(elem(first, 2)) + pair_whole <= room),
+         do: first
 
     first_whole? = first != nil and match?({:whole, _}, kept[elem(first, 0)])
     share = room - if(first_whole?, do: cost.(elem(first, 2)), else: 0)

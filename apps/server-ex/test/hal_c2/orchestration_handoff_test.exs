@@ -197,6 +197,22 @@ defmodule HalC2.Orchestration.HandoffTest do
              )
   end
 
+  test "the newest history wins over the first request when both cannot fit" do
+    long = String.duplicate("x", 20_000)
+
+    state =
+      state(
+        turn(1, "old-marker " <> long, "old-marker " <> long) ++
+          turn(2, "new-marker " <> long, "new-marker " <> long)
+      )
+
+    text = Handoff.transcript(state, 3)
+
+    assert String.length(text) <= 60_000
+    assert text =~ "new-marker"
+    refute text =~ "old-marker"
+  end
+
   # The source of a fork at run 1, with run 2 after it on one provider thread.
   # `first` is run 1's native turn id (nil: none was recorded; :gone: its
   # provider turn is not recorded at all).
