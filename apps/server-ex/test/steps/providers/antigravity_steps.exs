@@ -2920,32 +2920,49 @@ defmodule HalC2.Steps.Providers.Antigravity do
 
   step ~r/^the turn (?<ending>is still running|is stopped by the user)$/,
        %{args: [ending]} = context do
-    case ending do
-      "is still running" ->
-        state =
-          World.await_stream(World.thread_id(context, context.thread), fn state ->
-            if Enum.any?(turn_items(state), &(&1["type"] == "subagent")), do: state
-          end)
+    # A Codex turn held by its scenario (`:codex_compaction` names its thread)
+    # stops the same way, without Antigravity's batch gate around it.
+    if ending == "is stopped by the user" and context[:codex_compaction] do
+      title = context.codex_compaction
 
-        context = Map.put(context, :run_state, state)
-        release_file(context, "release-batch")
-        context
+      {:ok, _} =
+        HalC2.Orchestration.dispatch(%{
+          "type" => "run.interrupt",
+          "commandId" => "cmd-#{System.unique_integer([:positive])}",
+          "threadId" => World.thread_id(context, title),
+          "runId" => World.latest_run(context, title)["id"]
+        })
 
-      "is stopped by the user" ->
-        run =
+      World.await_runs(context, title, ["interrupted"])
+      context
+    else
+      case ending do
+        "is still running" ->
+          state =
+            World.await_stream(World.thread_id(context, context.thread), fn state ->
+              if Enum.any?(turn_items(state), &(&1["type"] == "subagent")), do: state
+            end)
+
+          context = Map.put(context, :run_state, state)
+          release_file(context, "release-batch")
           context
-          |> World.runs(context.thread)
-          |> Enum.find(&(&1["status"] in ~w(starting running waiting)))
 
-        {:ok, _} =
-          HalC2.Orchestration.dispatch(%{
-            "type" => "run.interrupt",
-            "threadId" => World.thread_id(context, context.thread),
-            "runId" => run["id"]
-          })
+        "is stopped by the user" ->
+          run =
+            context
+            |> World.runs(context.thread)
+            |> Enum.find(&(&1["status"] in ~w(starting running waiting)))
 
-        release_file(context, "release-batch")
-        Map.put(context, :run_state, FakeAcp.await_run(context, "interrupted"))
+          {:ok, _} =
+            HalC2.Orchestration.dispatch(%{
+              "type" => "run.interrupt",
+              "threadId" => World.thread_id(context, context.thread),
+              "runId" => run["id"]
+            })
+
+          release_file(context, "release-batch")
+          Map.put(context, :run_state, FakeAcp.await_run(context, "interrupted"))
+      end
     end
   end
 

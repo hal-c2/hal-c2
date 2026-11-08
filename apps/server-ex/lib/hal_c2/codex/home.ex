@@ -10,13 +10,19 @@ defmodule HalC2.Codex.Home do
   logs, memories and scratch stay local to it.
   """
 
+  require Logger
+
   # Created in the shared home when missing, so an account that starts first links them.
+  # `thread-writer-locks` is shared on purpose: Codex keeps one writer per thread
+  # through it, which only holds when every account on the home sees the same locks.
   @shared_directories ~w(sessions archived_sessions sqlite shell_snapshots worktrees skills
-                         plugins cache logs mcp-oauth-locks)
-  @private ~w(auth.json models_cache.json)
+                         plugins cache logs mcp-oauth-locks thread-writer-locks)
+  # `auth.lock` guards the account's own login, so it is the shadow home's own too.
+  @private ~w(auth.json models_cache.json auth.lock)
   @local ~w(log memories tmp)
-  # Runtime directories Codex may have made in the shadow home before it was linked.
-  @replaceable ~w(mcp-oauth-locks)
+  # Runtime directories Codex may have made in the shadow home before it was linked,
+  # and its sqlite maintenance lock, which the shared home's replaces.
+  @replaceable ~w(mcp-oauth-locks .sqlite-maintenance.lock)
 
   @doc """
   The variables that point Codex at `instance`'s home: `{:ok, [{"CODEX_HOME", path}]}`
@@ -42,11 +48,22 @@ defmodule HalC2.Codex.Home do
     end
   end
 
-  @doc "The home shared by every account of `instance`'s Codex home, or nil for the default."
+  @doc """
+  The home shared by every account of `instance`'s Codex home, or nil for the
+  default. A `CODEX_HOME` set only in the instance's environment variables is
+  its home too: two instances pointing it at different folders are different
+  homes, however their home settings read.
+  """
   def shared(instance) do
-    case HalC2.Settings.instance_setting(instance, "homePath") do
-      nil -> nil
-      home -> expand(home)
+    case HalC2.Settings.instance_env(instance)["CODEX_HOME"] do
+      home when is_binary(home) and home != "" ->
+        expand(home)
+
+      _ ->
+        case HalC2.Settings.instance_setting(instance, "homePath") do
+          nil -> nil
+          home -> expand(home)
+        end
     end
   end
 
@@ -63,14 +80,25 @@ defmodule HalC2.Codex.Home do
       {:error,
        "Codex shadow home path '#{shared}' must be different from the shared home path '#{shared}'."}
 
+  # The homes are the instance's own `homePath`/`shadowHomePath` settings, which only the
+  # operator sets; the entry names are the shared home's own listing or fixed names here.
+  # sobelow_skip ["Traversal.FileModule"]
   defp link(shared, shadow) do
     File.mkdir_p!(shadow)
     for directory <- @shared_directories, do: File.mkdir_p!(Path.join(shared, directory))
 
-    # A model cache that is a link would be the shared home's: it goes. A login that
-    # is a link refuses the home instead: removing it could lose the account's own.
+    # Finder metadata in the shadow home is not the account's data: it goes, so a
+    # folder a user browsed to is set up as if it were empty.
+    File.rm(Path.join(shadow, ".DS_Store"))
+
+    # A model cache that is a link would be the shared home's: it goes. So does a
+    # linked `auth.lock`: the login lock is each account's own. A login that is a
+    # link refuses the home instead: removing it could lose the account's own.
     if symlink?(Path.join(shadow, "models_cache.json")),
       do: File.rm!(Path.join(shadow, "models_cache.json"))
+
+    if symlink?(Path.join(shadow, "auth.lock")),
+      do: File.rm!(Path.join(shadow, "auth.lock"))
 
     if symlink?(Path.join(shadow, "auth.json")) do
       throw(
@@ -95,6 +123,8 @@ defmodule HalC2.Codex.Home do
     {:shadow_home, message} -> {:error, message}
   end
 
+  # As `link/2`: both paths are below the operator's configured homes.
+  # sobelow_skip ["Traversal.FileModule"]
   defp link_entry(target, link, name) do
     case :file.read_link_all(link) do
       {:ok, existing} ->
@@ -108,9 +138,29 @@ defmodule HalC2.Codex.Home do
       {:error, :enoent} ->
         File.ln_s!(target, link)
 
+      # A shadow home's own writer locks are replaced only once none is held: a
+      # lock still there may belong to a live writer, so the folder stays (with
+      # a warning) until a later preparation finds it empty.
+      {:error, _not_a_link} when name == "thread-writer-locks" ->
+        case File.ls(link) do
+          {:ok, []} ->
+            File.rm_rf!(link)
+            File.ln_s!(target, link)
+            :ok
+
+          _ ->
+            Logger.warning(
+              "codex shadow home #{link} kept: it still holds thread writer locks; " <>
+                "it joins the shared home's locks once they are gone"
+            )
+
+            :ok
+        end
+
       {:error, _not_a_link} when name in @replaceable ->
         File.rm_rf!(link)
         File.ln_s!(target, link)
+        :ok
 
       {:error, _not_a_link} ->
         {:error,

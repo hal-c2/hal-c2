@@ -22,6 +22,10 @@ defmodule HalC2.ShellPropTest do
     * a client with a settled limit, whenever an MC's rows reach it whole, lacks just
       the older settled threads of each project that are neither pinned nor snoozed,
       is told how many of each, and is sent each of them once it changes;
+    * a client that omits idle subagents lacks just the idle ones (`s3`/`r3` not
+      running) of an MC it is sent whole, and is sent each of them once it
+      changes — a resume from what it holds (`have`) is never filtered, so a
+      subagent that went idle while it was away still replaces its held row;
     * a plain subscriber is sent the rows of every member the shell holds, even
       when it has none;
     * a forgotten member's rows are gone and stay gone;
@@ -142,7 +146,9 @@ defmodule HalC2.ShellPropTest do
           else: []
         ) ++
         if(off != [],
-          do: [{3, {:call, __MODULE__, :subscribe, [oneof(off), boolean(), boolean()]}}],
+          do: [
+            {3, {:call, __MODULE__, :subscribe, [oneof(off), boolean(), boolean(), boolean()]}}
+          ],
           else: []
         ) ++
         if(on != [], do: [{2, {:call, __MODULE__, :disconnect, [oneof(on)]}}], else: [])
@@ -170,7 +176,7 @@ defmodule HalC2.ShellPropTest do
   def precondition(state, {:call, _, :peer_down, [p]}), do: state.peers[p].connected
   def precondition(state, {:call, _, :peer_put_lost, [p, _, _]}), do: state.peers[p].connected
   def precondition(state, {:call, _, :forget, [p]}), do: Map.has_key?(state.held, p)
-  def precondition(state, {:call, _, :subscribe, [c, _, _]}), do: state.clients[c] != :on
+  def precondition(state, {:call, _, :subscribe, [c, _, _, _]}), do: state.clients[c] != :on
   def precondition(state, {:call, _, :disconnect, [c]}), do: state.clients[c] == :on
   # An import marks a stream before the shell is told of it, and the shell is told
   # only once the import is done (`HalC2.Import.PreviousInstall`).
@@ -246,7 +252,7 @@ defmodule HalC2.ShellPropTest do
     |> put_in([:peers, p, :connected], false)
   end
 
-  def next_state(state, _result, {:call, _, :subscribe, [c, keep?, limit?]}) do
+  def next_state(state, _result, {:call, _, :subscribe, [c, keep?, limit?, omit?]}) do
     old =
       case state.clients[c] do
         {:held, _view} when keep? -> state.trim[c]
@@ -259,6 +265,9 @@ defmodule HalC2.ShellPropTest do
       Enum.reduce(sending(state, c, keep?), %{limit: limit, left_out: %{}, told: %{}}, fn
         {mc, %{reset: true, all: all}}, t ->
           {out, told} = if limit, do: model_trim(all), else: {MapSet.new(), nil}
+          # Idle subagents join what an MC sent whole left out; a resume delta
+          # (below) is never filtered, so one that went idle is sent and leaves.
+          out = if omit?, do: MapSet.union(out, model_idle(all)), else: out
           %{t | left_out: Map.put(t.left_out, mc, out), told: Map.put(t.told, mc, told)}
 
         {mc, %{reset: false, sent: sent}}, t ->
@@ -339,12 +348,14 @@ defmodule HalC2.ShellPropTest do
 
   # The settled threads past `@limit` in each project, newest first by when they
   # settled then by id, that are neither pinned nor snoozed: their ids, and how many
-  # of each project.
+  # of each project. Subagents (`s3`/`r3`) are never on the shelf.
   defp model_trim(rows) do
     out =
       rows
       |> Enum.flat_map(fn {id, {{_kind, row}, _rev}} ->
-        if Map.has_key?(@settled, row["title"]), do: [{id, row["title"]}], else: []
+        if Map.has_key?(@settled, row["title"]) and id not in ["s3", "r3"],
+          do: [{id, row["title"]}],
+          else: []
       end)
       |> Enum.group_by(fn {id, _title} -> project(id) end)
       |> Enum.flat_map(fn {_project, shelf} ->
@@ -383,7 +394,7 @@ defmodule HalC2.ShellPropTest do
   defp shell_view(state),
     do: Map.put(state.held, :local, %{v: {{:local, state.run}, state.rev}, rows: state.rows})
 
-  def postcondition(state, {:call, _, :subscribe, [c, keep?, limit?]}, reply) do
+  def postcondition(state, {:call, _, :subscribe, [c, keep?, limit?, omit?]}, reply) do
     view = shell_view(state)
 
     expected =
@@ -392,12 +403,10 @@ defmodule HalC2.ShellPropTest do
 
         {ids, told} =
           case sending do
-            %{reset: true} when limit? ->
-              {out, told} = model_trim(rows)
-              {Map.keys(rows) -- MapSet.to_list(out), told}
-
             %{reset: true} ->
-              {Map.keys(rows), nil}
+              {out, told} = if limit?, do: model_trim(rows), else: {MapSet.new(), nil}
+              out = if omit?, do: MapSet.union(out, model_idle(rows)), else: out
+              {Map.keys(rows) -- MapSet.to_list(out), told}
 
             %{sent: sent} ->
               {sent, nil}
@@ -507,9 +516,43 @@ defmodule HalC2.ShellPropTest do
         _ -> %{}
       end
 
+    # `s3` and `r3` are subagents: running while their title is "a", idle (a leaf
+    # with nothing waiting) otherwise, so a put can take one from running to idle.
+    subagent =
+      if id in ["s3", "r3"] do
+        running = title == "a"
+
+        %{
+          "status" => if(running, do: "running", else: "completed"),
+          "activeRunId" => if(running, do: "run-#{id}"),
+          "activityRunStatus" => if(running, do: "running"),
+          "pendingRuntimeRequest" => nil,
+          "pendingBackgroundTasks" => [],
+          "lineage" => %{
+            "parentThreadId" => "parent-#{id}",
+            "relationshipToParent" => "subagent",
+            "rootThreadId" => "parent-#{id}"
+          }
+        }
+      else
+        %{}
+      end
+
     {"thread",
      Map.merge(%{"id" => id, "title" => title, "projectId" => project(id)}, settled)
-     |> Map.merge(held)}
+     |> Map.merge(held)
+     |> Map.merge(subagent)}
+  end
+
+  # The idle subagents among `rows` (`id => {kind_row, rev}`), as `Shell` leaves
+  # them out of an MC sent whole to a client that asks.
+  defp model_idle(rows) do
+    MapSet.new(
+      for {id, {{_kind, row}, _rev}} <- rows,
+          id in ["s3", "r3"],
+          row["title"] != "a",
+          do: id
+    )
   end
 
   defp project(id) when id in ["s1", "r1"], do: "p1"
@@ -727,8 +770,9 @@ defmodule HalC2.ShellPropTest do
   end
 
   # A client connects with what it kept (or nothing), and is sent what it lacks; a
-  # limited one asks for the settled limit.
-  def subscribe(c, keep?, limit?) do
+  # limited one asks for the settled limit, an omitting one to leave idle
+  # subagents out of what it is sent whole.
+  def subscribe(c, keep?, limit?, omit?) do
     view =
       case world().clients[c] do
         %{view: view} when keep? -> view
@@ -736,7 +780,7 @@ defmodule HalC2.ShellPropTest do
       end
 
     pid = spawn_collector(:client, view)
-    send(pid, {:subscribe, self(), if(limit?, do: @limit)})
+    send(pid, {:subscribe, self(), if(limit?, do: @limit), omit?})
     assert_receive {:subscribed, ^pid, sent, errors}, 5_000
     update_world(&put_in(&1.clients[c], %{pid: pid, view: nil}))
     settle()
@@ -874,9 +918,12 @@ defmodule HalC2.ShellPropTest do
 
   defp gather(:client = kind, view, errors) do
     receive do
-      {:subscribe, parent, limit} ->
+      {:subscribe, parent, limit, omit?} ->
         have = Map.new(view, fn {mc, %{epoch: e, rev: r}} -> {Atom.to_string(mc), {e, r}} end)
-        %{mcs: mcs, rows: rows} = Shell.subscribe(self(), have, settled_limit: limit)
+
+        %{mcs: mcs, rows: rows} =
+          Shell.subscribe(self(), have, settled_limit: limit, omit_idle_subagents: omit?)
+
         by_mc = Enum.group_by(rows, &elem(&1, 0), fn {_, id, kind, row} -> {id, {kind, row}} end)
 
         {view, errors} =

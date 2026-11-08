@@ -35,6 +35,7 @@
 #include "ThisMachine.h"
 #include "ThreadStore.h"
 #include "TimelineModel.h"
+#include "TimelineSummary.h"
 #include "ToastController.h"
 #include "WorkspaceController.h"
 #include "WorkspaceFiles.h"
@@ -3432,7 +3433,7 @@ QVariantMap ComposerController::turnState() const {
   for (const QJsonObject& item : itemsOf(items, QStringLiteral("approval_request"))) {
     QVariantMap approval;
     if (!pending(item, approval, true)) continue;
-    const QString title = approvalTitle(str(item, QLatin1String("requestKind")));
+    const QString title = approvalTitle(timeline::approvalKind(item));
     QVariantList options;
     for (const QJsonValue& value : item.value(QLatin1String("options")).toArray()) {
       const QJsonObject option = value.toObject();
@@ -3457,10 +3458,15 @@ QVariantMap ComposerController::turnState() const {
     const QHash<QString, QList<Attachment>> files = m_answerFiles.value(question.value(QStringLiteral("requestId")).toString());
     QVariantList asked;
     for (const QJsonValue& value : item.value(QLatin1String("questions")).toArray()) {
-      QVariantMap one = value.toObject().toVariantMap();
+      // A question with nothing the user could answer is not shown (the
+      // removed client-runtime's parseQuestions).
+      const QJsonObject raw = value.toObject();
+      if (raw.value(QLatin1String("options")).toArray().isEmpty() && raw.value(QLatin1String("allowCustomAnswer")).toBool(true) == false) continue;
+      QVariantMap one = raw.toVariantMap();
       one.insert(QStringLiteral("attachments"), shownAttachments(files.value(one.value(QStringLiteral("id")).toString())));
       asked.append(one);
     }
+    if (asked.isEmpty()) continue;
     question.insert(QStringLiteral("questions"), asked);
     questions.append(question);
   }

@@ -74,7 +74,7 @@ Feature: Checkpoints, diffs and rewinding
 
   # Upstream #28431: forge commands (Forgejo, GitLab, Azure DevOps, GitCafe) shared git's slots,
   # so a slow forge held checkpoints back, and finishing a turn waited on a pull request lookup.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A slow forge does not hold up checkpoints or the next turn
     Given the project's Forgejo answers each pull request lookup after six seconds
     And twelve pull request lookups are waiting on it
@@ -95,7 +95,7 @@ Feature: Checkpoints, diffs and rewinding
     Then the checkpoint ref is readable after the MC restarts
 
   # Upstream #14411: a checkpoint whose full flush is refused retries that git command with a plain flush.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: A checkpoint is captured on a filesystem that refuses a full flush
     Given the worktree of "t1" is on a macOS network mount that refuses Git's full flush
     When a run of "t1" completes
@@ -133,7 +133,7 @@ Feature: Checkpoints, diffs and rewinding
 
   # Upstream #23624: one tracked entry marked skip-worktree or assume-unchanged made capture rebuild
   # the index from scratch and rehash every file, so large worktrees timed out.
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario Outline: A worktree with a <flag> entry is captured without rehashing every file
     Given the worktree of "t1" has 25,000 tracked files, one of them marked <flag>
     And the user edited that file without changing its size
@@ -148,7 +148,7 @@ Feature: Checkpoints, diffs and rewinding
 
   # Upstream #13538: checkpoint capture and restore failed past Windows' 260-character path limit;
   # they now turn on git's long paths for themselves.
-  @mc @backlog @priority-low
+  @mc @priority-low
   Scenario: A Windows workspace with very long paths is checkpointed and restored
     Given the MC runs on Windows and git's long paths setting is off
     And the worktree of "t1" holds a file whose path is longer than 260 characters
@@ -215,7 +215,7 @@ Feature: Checkpoints, diffs and rewinding
       | not a valid index file |
 
   # Upstream #17074: capturing a checkpoint leaves the repository's split index alone.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A checkpoint leaves a split index the repository still uses
     Given a repository that keeps its git index split, with shared index files that expire
     When a checkpoint is captured
@@ -249,7 +249,7 @@ Feature: Checkpoints, diffs and rewinding
 
   # Upstream #14874: on Windows, cleaning an emptied subfolder removes the folder itself and
   # still succeeds, so the restore reported success with the project's folder gone.
-  @backlog @mc
+  @mc
   Scenario: Restoring an empty checkpoint keeps a project folder that sits inside a repository
     Given "demo" is rooted at the folder "packages/app" inside a git repository
     And the checkpoint of run 1 holds no files
@@ -352,14 +352,14 @@ Feature: Checkpoints, diffs and rewinding
     Then a ready checkpoint for that run exists
 
   # Upstream #14892: a project folder its repository ignores gets missing checkpoints instead of errors
-  @backlog @mc
+  @mc
   Scenario: A workspace folder its repository ignores gets missing checkpoints
     Given thread "t3" works in a subfolder that its repository ignores, with no tracked files
     When a run of "t3" completes
     Then the run's checkpoint is missing, not an error
 
   # Upstream #14892: tracked files in an ignored folder are still captured
-  @backlog @mc
+  @mc
   Scenario: Tracked files in an ignored workspace folder are still checkpointed
     Given thread "t3" works in an ignored subfolder that holds tracked files
     When a run of "t3" completes after changing a tracked file
@@ -420,7 +420,7 @@ Feature: Checkpoints, diffs and rewinding
 
   # Upstream #28647: in a repository with no commits yet, a restore left every file from the
   # checkpoint staged, so a plain commit took files the user never added.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Restoring files in a repository with no commits leaves nothing staged
     Given the worktree of "t1" is a repository with no commits yet and the untracked file "file.txt"
     And run 2 of "t1" changed "file.txt"
@@ -430,7 +430,7 @@ Feature: Checkpoints, diffs and rewinding
 
   # Upstream #29826: with core.safecrlf=true and a line-ending conversion, git refused every
   # LF-only file, so the turn got no checkpoint, no diff and no restore point.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A turn's checkpoint is taken when the user's git refuses line-ending changes
     Given the user's git has "core.safecrlf" set to true and converts line endings to CRLF
     And run 2 of "t1" wrote a file with only LF line endings
@@ -440,7 +440,7 @@ Feature: Checkpoints, diffs and rewinding
 
   # Upstream #29795: one clean pass removed the turn's new .gitignore but skipped what it had hidden,
   # which then crept into the next checkpoint.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Restoring files removes what a .gitignore from the undone runs was hiding
     Given run 2 of "t1" created "web/.gitignore" ignoring "node_modules/" and ".env"
     And run 2 then created "web/node_modules/a.js" and "web/.env"
@@ -449,7 +449,7 @@ Feature: Checkpoints, diffs and rewinding
     And the next checkpoint of "t1" holds none of them
 
   # Upstream #29795: after four passes the restore checks again and fails rather than leave files behind.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: A restore that cannot clear what nested .gitignore files hid fails
     Given run 2 of "t1" created a chain of more than four nested .gitignore files, each hiding the next
     When the user rewinds "t1" to run 1 and restores files
@@ -530,7 +530,7 @@ Feature: Checkpoints, diffs and rewinding
 
   # Upstream #17079: a message read before the rewind's result was written put the old
   # provider session back, so the next turn ran on the history the rewind removed.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A message sent while a rewind runs continues from the rewound history
     Given runs 1 and 2 of "t1" completed
     When the user rewinds "t1" to run 1
@@ -547,7 +547,7 @@ Feature: Checkpoints, diffs and rewinding
     And the checkpoint of run 1 is still the last valid checkpoint
 
   # Upstream #11340: a restore blocked by git's index lock ended with a generic error.
-  @backlog @mc @shared @priority-low
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
   Scenario: A rewind blocked by git's index lock says so
     Given runs 1 and 2 of "t1" completed with checkpoints
     And another git process holds the index lock of the workspace
@@ -580,7 +580,7 @@ Feature: Checkpoints, diffs and rewinding
 
   # Codex 0.156 has no thread/rollback. A thread with legacy history (created before Codex 0.151)
   # is refused by thread/revert, and the refusal reaches the user rather than falling back.
-  @mc @backlog @plugin-codex @priority-high
+  @mc @plugin-codex @priority-high
   Scenario: A Codex rollback that Codex refuses for legacy history is reported as a failure
     Given a Codex thread created before Codex 0.151 with a run to rewind to
     When the user rewinds it to that run

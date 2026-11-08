@@ -45,20 +45,15 @@ defmodule HalC2.Steps.Timeline.RunsAndQueue do
     context
   end
 
-  # The running turn ends when the user stops it; the queued message starts then.
+  # The running turn ends; the queued message starts then.
   step "it starts when the running turn ends", context do
     title = World.current(context)
-    [running | _] = World.runs(context, title)
     assert World.queued(context, title) != []
 
-    {:ok, _} =
-      HalC2.Orchestration.dispatch(%{
-        "type" => "run.interrupt",
-        "threadId" => World.thread_id(context, title),
-        "runId" => running["id"]
-      })
+    # The turn ends on its own: a Stop would hold the queue.
+    World.complete_codex_turn(context, title)
 
-    [_, next] = World.await_runs(context, title, ["interrupted", "completed"]) |> sorted_runs()
+    [_, next] = World.await_runs(context, title, ["completed", "completed"]) |> sorted_runs()
     assert next["userMessageId"] == context.last_message_id
     context
   end

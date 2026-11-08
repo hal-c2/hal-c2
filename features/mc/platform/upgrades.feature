@@ -457,6 +457,8 @@ Feature: MC self-update and release upgrades
   # Upstream's launcher copied the database before a trial and put the copy back on a failed
   # one. HAL-C2 takes no copy (docs/internals/server-updates.md: a rollback restores the code,
   # not the data), so whether the MC should gain one is a maintainer decision.
+  # Upstream #19311: its service launcher copied the database before a trial and restored
+  # the copy when the trial rolled back.
   @backlog @mc
   Scenario: A failed restart returns the database to its state before the trial
     Given a restart into a new version fails before it is ready

@@ -724,6 +724,88 @@ defmodule HalC2.WorktreeSetupTest do
     assert {:ok, %{"retried" => false}} = HalC2.WorktreeSetup.retry(%{"threadId" => thread_id})
   end
 
+  test "a retry goes ahead past a message held for the worktree", %{repo: repo} do
+    project(repo, [])
+    thread_id = launch("list the files", %{"baseRef" => "later"})
+    assert %{"worktreePath" => nil} = await_phase(thread_id, "failed")
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "threadId" => thread_id,
+        "messageId" => "m2",
+        "text" => "and then the tests",
+        "attachments" => [],
+        "dispatchMode" => %{"type" => "queue_after_active"}
+      })
+
+    held = fn ->
+      Enum.find(StreamState.list(current(thread_id), "run"), &(&1["userMessageId"] == "m2"))
+    end
+
+    assert %{"status" => "queued", "queueHeld" => true} = held.()
+
+    {_, 0} = System.cmd("git", ~w(branch later), cd: repo)
+    assert {:ok, %{"retried" => true}} = HalC2.WorktreeSetup.retry(%{"threadId" => thread_id})
+    # Retrying lets what was held for the worktree follow the first turn again.
+    refute held.()["queueHeld"]
+    assert %{"worktreePath" => path} = await_phase(thread_id, "done")
+    assert File.dir?(path)
+    assert %{"status" => "completed"} = await_message_run(thread_id, "m2", "completed")
+  end
+
+  # The thread went on in the project checkout after its worktree failed: from then on
+  # a Stop holds and the user's next message resumes, as on any thread.
+  test "a thread the user went on with in the checkout resumes its held queue", %{repo: repo} do
+    project(repo, [])
+    thread_id = launch("list the files", %{"baseRef" => "later"})
+    assert %{"worktreePath" => nil} = await_phase(thread_id, "failed")
+
+    send_message = fn id, text, mode ->
+      {:ok, _} =
+        Orchestration.dispatch(%{
+          "type" => "message.dispatch",
+          "threadId" => thread_id,
+          "messageId" => id,
+          "text" => text,
+          "attachments" => [],
+          "dispatchMode" => %{"type" => mode}
+        })
+    end
+
+    send_message.("m2", "list them again", "start_immediately")
+    assert %{"status" => "completed"} = await_message_run(thread_id, "m2", "completed")
+    send_message.("m3", "wait for me", "start_immediately")
+    _ = await_message_run(thread_id, "m3", "running")
+    send_message.("m4", "and then the tests", "queue_after_active")
+    refute await_message_run(thread_id, "m4", "queued")["queueHeld"]
+
+    {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+    _ = await_message_run(thread_id, "m3", "interrupted")
+    assert %{"status" => "queued", "queueHeld" => true} = message_run(thread_id, "m4")
+
+    send_message.("m5", "go on", "start_immediately")
+    refute message_run(thread_id, "m4")["queueHeld"]
+  end
+
+  defp message_run(thread_id, message_id),
+    do:
+      Enum.find(StreamState.list(current(thread_id), "run"), &(&1["userMessageId"] == message_id))
+
+  defp await_message_run(thread_id, message_id, status) do
+    case message_run(thread_id, message_id) do
+      %{"status" => ^status} = run ->
+        run
+
+      _ ->
+        receive do
+          {:hal_c2_stream, ^thread_id, _} -> await_message_run(thread_id, message_id, status)
+        after
+          15_000 -> flunk("#{message_id}'s run never became #{status}")
+        end
+    end
+  end
+
   test "a retry after a follow-up is refused and leaves the worktree alone", %{repo: repo} do
     project(repo, [
       %{

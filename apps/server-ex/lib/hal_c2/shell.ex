@@ -166,11 +166,120 @@ defmodule HalC2.Shell do
   With `settled_limit: n`, an MC sent whole leaves out all but the `n` newest settled
   threads of each project, and its entry says how many it left out of each
   (`settled_left_out`). So do the resets this client is sent later.
+
+  With `omit_idle_subagents: true` the rows returned here leave out idle subagent
+  threads (`idle_subagent?/2`) of each MC sent whole (`reset`): a cold connect pays
+  for the rows the sidebar shows, and a client reads a thread's family when it
+  opens one (`family/1`). A resume delta is not filtered — it holds only what
+  changed, so a subagent that went idle while the client was away still reaches it
+  and replaces the row it holds. Changes after the snapshot are sent as they come,
+  so a subagent that starts work appears.
   """
-  @spec subscribe(pid, %{String.t() => version}, settled_limit: pos_integer | nil) ::
-          %{mcs: [map], rows: [tuple]}
+  @spec subscribe(pid, %{String.t() => version},
+          settled_limit: pos_integer | nil,
+          omit_idle_subagents: boolean
+        ) :: %{mcs: [map], rows: [tuple]}
   def subscribe(pid, have, opts \\ []),
-    do: GenServer.call(__MODULE__, {:subscribe, pid, have, opts[:settled_limit]})
+    do:
+      GenServer.call(
+        __MODULE__,
+        {:subscribe, pid, have, opts[:settled_limit], opts[:omit_idle_subagents] == true}
+      )
+
+  @live ~w(queued preparing starting running)
+
+  @doc """
+  Whether a thread's shell row is an idle subagent a snapshot may leave out: a
+  subagent (by its lineage) with no live or queued run, nothing waiting on the
+  user, no background work, and no subagent of its own. `parents` is the set of
+  thread ids that have a subagent (`subagent_parents/1`).
+  """
+  @spec idle_subagent?(map, MapSet.t(String.t())) :: boolean
+  def idle_subagent?(row, parents) do
+    lineage = row["lineage"] || %{}
+
+    lineage["relationshipToParent"] == "subagent" and is_binary(lineage["parentThreadId"]) and
+      row["status"] not in @live and row["status"] != "waiting" and
+      row["activeRunId"] == nil and
+      row["activityRunStatus"] not in @live and row["activityRunStatus"] != "waiting" and
+      row["pendingRuntimeRequest"] == nil and (row["pendingBackgroundTasks"] || []) == [] and
+      not MapSet.member?(parents, row["id"])
+  end
+
+  @doc "The ids of threads that have a subagent among `rows` (`rows/0` tuples)."
+  @spec subagent_parents([{{node, String.t()}, {String.t(), map}}]) :: MapSet.t(String.t())
+  def subagent_parents(rows) do
+    MapSet.new(
+      for {_key, {"thread", row}} <- rows,
+          (row["lineage"] || %{})["relationshipToParent"] == "subagent",
+          is_binary((row["lineage"] || %{})["parentThreadId"]),
+          do: row["lineage"]["parentThreadId"]
+    )
+  end
+
+  @doc """
+  A thread's family as shell rows (`{mc, id, "thread", row}`): its lineage chain
+  root first, then its subagent tree breadth first — what a client that left idle
+  subagents out of its snapshot reads when the thread is opened. Empty when this
+  shell holds no row for the thread.
+  """
+  @spec family(String.t()) :: [{node, String.t(), String.t(), map}]
+  def family(thread_id) do
+    by_id =
+      Map.new(for {{mc, id}, {"thread", row}} <- rows(), do: {id, {mc, id, "thread", row}})
+
+    case by_id[thread_id] do
+      nil ->
+        []
+
+      _ ->
+        ancestors = lineage_chain(by_id, thread_id, MapSet.new([thread_id]))
+
+        children =
+          Enum.group_by(
+            Map.values(by_id),
+            fn {_, _, _, row} -> (row["lineage"] || %{})["parentThreadId"] end,
+            fn {_, id, _, row} -> {id, (row["lineage"] || %{})["relationshipToParent"]} end
+          )
+
+        descendants = tree(children, [thread_id], MapSet.new([thread_id | ancestors]))
+        for id <- ancestors ++ [thread_id] ++ descendants, do: by_id[id]
+    end
+  end
+
+  # The thread's parents up to its root, root first; a lineage loop stops the walk.
+  defp lineage_chain(by_id, id, seen) do
+    case by_id[id] do
+      {_, _, _, row} ->
+        case (row["lineage"] || %{})["parentThreadId"] do
+          parent when is_binary(parent) ->
+            if MapSet.member?(seen, parent) or not Map.has_key?(by_id, parent),
+              do: [],
+              else: lineage_chain(by_id, parent, MapSet.put(seen, parent)) ++ [parent]
+
+          _ ->
+            []
+        end
+
+      _ ->
+        []
+    end
+  end
+
+  # Subagent descendants breadth first; a lineage loop is visited once.
+  defp tree(_children, [], _seen), do: []
+
+  defp tree(children, level, seen) do
+    next =
+      for parent <- level,
+          {id, relationship} <- Map.get(children, parent, []),
+          relationship == "subagent",
+          not MapSet.member?(seen, id),
+          do: id
+
+    next = Enum.uniq(next)
+    next ++ tree(children, next, MapSet.union(seen, MapSet.new(next)))
+  end
 
   @doc "Replaces a local stream's row; called by stream servers after they recompute it."
   @spec put_row(String.t(), {String.t(), map}) :: :ok
@@ -326,10 +435,15 @@ defmodule HalC2.Shell do
 
   # From a socket of the release before the settled limit.
   def handle_call({:subscribe, pid, have}, from, state),
-    do: handle_call({:subscribe, pid, have, nil}, from, state)
+    do: handle_call({:subscribe, pid, have, nil, false}, from, state)
 
-  def handle_call({:subscribe, pid, have, limit}, _from, state) do
+  # From a socket of the release before idle subagents could be left out.
+  def handle_call({:subscribe, pid, have, limit}, from, state),
+    do: handle_call({:subscribe, pid, have, limit, false}, from, state)
+
+  def handle_call({:subscribe, pid, have, limit, omit_idle?}, _from, state) do
     kind = client_kind(limit)
+    parents = if omit_idle?, do: subagent_parents(:ets.tab2list(@table))
 
     {mcs, rows} =
       Enum.map_reduce(:ets.tab2list(@mcs), [], fn {mc, descriptor}, rows ->
@@ -340,6 +454,19 @@ defmodule HalC2.Shell do
           for_client(kind, rows_after(mc, from), %{epoch: epoch, rev: rev, reset: reset?})
 
         mc_rows = for {id, {kind, row}} <- sent, do: {mc, id, kind, row}
+
+        # Only an MC sent whole is filtered: a resume delta holds just what
+        # changed, and dropping a subagent that went idle from it would leave
+        # the client holding its old, still-running row.
+        mc_rows =
+          if omit_idle? and reset? do
+            Enum.reject(mc_rows, fn
+              {_mc, _id, "thread", row} -> idle_subagent?(row, parents)
+              _ -> false
+            end)
+          else
+            mc_rows
+          end
 
         entry =
           Map.merge(entry, %{
