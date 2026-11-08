@@ -960,8 +960,8 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     context
   end
 
-  step "an {string} thread with three turns", %{args: [_]} = context do
-    ctx = context |> acme() |> run_on_acme("write one.txt", worktree: true)
+  defp three_turns(ctx) do
+    ctx = ctx |> acme() |> run_on_acme("write one.txt", worktree: true)
     Acp.await_runs(thread(ctx), 1)
     Acp.follow_up(ctx, ctx.thread, "write two.txt")
     Acp.await_runs(thread(ctx), 2)
@@ -977,19 +977,85 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     ctx
   end
 
-  step "the user rolls back to the first turn", context do
-    scope = HalC2.Checkpoint.scope_id(thread(context))
+  defp rollback_to_first(ctx) do
+    scope = HalC2.Checkpoint.scope_id(thread(ctx))
 
     {:ok, _} =
       HalC2.Orchestration.dispatch(%{
         "type" => "checkpoint.rollback",
         "commandId" => "cmd-#{System.unique_integer([:positive])}",
-        "threadId" => thread(context),
+        "threadId" => thread(ctx),
         "scopeId" => scope,
         "checkpointId" => HalC2.Checkpoint.checkpoint_id(scope, 1)
       })
 
-    Map.put(context, :before_rollback, length(Acp.log(context, "acme")))
+    Map.put(ctx, :before_rollback, length(Acp.log(ctx, "acme")))
+  end
+
+  step "an {string} thread with three turns", %{args: [_]} = context do
+    three_turns(context)
+  end
+
+  step "the user rolls back to the first turn", context do
+    rollback_to_first(context)
+  end
+
+  step "an {string} thread that was rolled back to its first turn", %{args: [_]} = context do
+    context |> three_turns() |> rollback_to_first()
+  end
+
+  step "the user sends a message and then stops the turn", context do
+    # The first message on the replacement session carries the history the
+    # rollback kept; the second is the one whose work must show.
+    Acp.follow_up(context, context.thread, "hello again")
+
+    Acp.await_stream(thread(context), fn state ->
+      state |> HalC2.StreamState.list("run") |> Enum.count(&(&1["status"] == "completed")) == 2
+    end)
+
+    Acp.follow_up(context, context.thread, "plan the next step")
+
+    Acp.await_stream(thread(context), fn state ->
+      state |> HalC2.StreamState.list("run") |> Enum.count(&(&1["status"] == "completed")) == 3
+    end)
+
+    Acp.follow_up(context, context.thread, "wait")
+
+    Acp.await_stream(thread(context), fn state ->
+      Enum.any?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "running"))
+    end)
+
+    started = System.monotonic_time(:millisecond)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => thread(context)
+      })
+
+    Map.put(context, :stop_started, started)
+  end
+
+  step "the thread shows what {string} did for that message", %{args: [_]} = context do
+    assert Acp.assistant_text(thread(context)) =~ "planned"
+    context
+  end
+
+  step "the turn stops without waiting for a time limit", context do
+    Acp.await_stream(thread(context), fn state ->
+      last =
+        state
+        |> HalC2.StreamState.list("run")
+        |> Enum.max_by(& &1["ordinal"], fn -> %{} end)
+
+      last["status"] in ["interrupted", "cancelled"]
+    end)
+
+    # The upstream bug made Stop wait out a 15-second limit; the await above
+    # already gives up at five, and the stop lands well inside it.
+    assert System.monotonic_time(:millisecond) - context.stop_started < 5_000
+    context
   end
 
   step "the files are restored to the first turn", context do

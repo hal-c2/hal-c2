@@ -337,7 +337,6 @@ Feature: ACP registry agents
 
   # Upstream #28987: the replacement session's events were never read after a rollback, so its
   # turns showed nothing and Stop timed out after 15 seconds.
-  @backlog @priority-high
   Scenario: An agent thread keeps showing the agent's work after a rollback
     Given an "acme" thread that was rolled back to its first turn
     When the user sends a message and then stops the turn
