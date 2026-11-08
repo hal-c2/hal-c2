@@ -13,7 +13,10 @@
 // makes (here, a checkpoint's status) asks for it again without blanking it,
 // and the same answer leaves it as it was. A review the MC cut short lists
 // its files, and the user opens them (or retries one that failed) to load
-// each one's changes.
+// each one's changes. Files are marked viewed and unmarked: remembered per
+// thread and diff source, a viewed file collapsed. A reload of a diff
+// already shown that fails keeps it on screen with the reason as its
+// message; any other failure is an error with nothing shown.
 //
 // The model is what the user should see. The picker's selection is always
 // one of its choices. Each property's signal fires once when it changes and
@@ -214,6 +217,10 @@ struct Model {
 
   // What was last asked for (or found to be empty), so a repeat asks nothing.
   std::optional<QString> loaded;
+  // The key of what was last shown whole: its failed reload keeps it shown.
+  QString shownKey;
+  // Viewed files by thread and diff source, kept across selections.
+  QMap<QString, QSet<QString>> viewed;
   int request = 0;
   QList<Request> pending;
 
@@ -281,6 +288,16 @@ struct Model {
     }
     return request;
   }
+  QString viewedKey() const {
+    return QStringLiteral("%1 %2 %3").arg(thread).arg(effective()).arg(effective() == ThreadDiff::Branch ? base : QString());
+  }
+  QStringList viewedPaths() const {
+    const QSet<QString> paths = viewed.value(viewedKey());
+    QStringList out(paths.cbegin(), paths.cend());
+    out.sort();
+    return out;
+  }
+
   // The request with what it depends on: the checkpoints it is between.
   QString keyOf(const Request& request) const {
     const QMap<int, QString> ready = turns();
@@ -370,6 +387,11 @@ struct Model {
     if (request.number != this->request) return;
     if (answer.error) {
       loaded.reset();
+      // The same selection read again keeps the diff shown, with the reason.
+      if (!files.isEmpty() && keyOf(request) == shownKey) {
+        setStatus(QStringLiteral("ready"), *answer.error);
+        return;
+      }
       dropReview();
       clearDiff();
       setStatus(QStringLiteral("error"), *answer.error);
@@ -398,6 +420,7 @@ struct Model {
       present(answer.files);
     }
     if (!answer.files.isEmpty()) {
+      shownKey = keyOf(request);
       setStatus(QStringLiteral("ready"));
     } else if (request.method != QLatin1String("review.getDiffPreview")) {
       setStatus(QStringLiteral("empty"), QStringLiteral("No net changes in this selection."));
@@ -434,11 +457,12 @@ struct Facts {
   QString comparedBase;
   QString comparedHead;
   bool truncated;
+  QStringList viewed;
 };
 
 Facts factsOf(const Model& model) {
   return {model.choices(), model.latestTurn(), model.latestCheckpoint(), model.picked(), model.shownTurn(), model.reviewing(), model.status, model.message,
-          model.focus,     model.fileTotal,    model.base,      model.comparedBase, model.comparedHead, model.truncated};
+          model.focus,     model.fileTotal,    model.base,      model.comparedBase, model.comparedHead, model.truncated, model.viewedPaths()};
 }
 
 struct Sut {
@@ -457,6 +481,7 @@ struct Sut {
   std::unique_ptr<QSignalSpy> statusChanged;
   std::unique_ptr<QSignalSpy> focusChanged;
   std::unique_ptr<QSignalSpy> reviewChanged;
+  std::unique_ptr<QSignalSpy> viewedChanged;
   QObject barrier;
   QList<Held> held;
   QMap<QString, Checkpoints> checkpoints;
@@ -488,6 +513,7 @@ struct Sut {
     statusChanged = std::make_unique<QSignalSpy>(diff.get(), &ThreadDiff::statusChanged);
     focusChanged = std::make_unique<QSignalSpy>(diff.get(), &ThreadDiff::focusChanged);
     reviewChanged = std::make_unique<QSignalSpy>(diff.get(), &ThreadDiff::reviewChanged);
+    viewedChanged = std::make_unique<QSignalSpy>(diff.get(), &ThreadDiff::viewedChanged);
   }
   ~Sut() {
     turnsChanged.reset();
@@ -495,6 +521,7 @@ struct Sut {
     statusChanged.reset();
     focusChanged.reset();
     reviewChanged.reset();
+    viewedChanged.reset();
     mirror.reset();
     diff.reset();
   }
@@ -607,6 +634,14 @@ void check(const Facts& before, const Model& expected, Sut& sut) {
   RC_ASSERT(diff.comparedBase() == expected.comparedBase);
   RC_ASSERT(diff.comparedHead() == expected.comparedHead);
   RC_ASSERT(diff.truncated() == expected.truncated);
+  RC_ASSERT(diff.viewedPaths() == expected.viewedPaths());
+  // A shown viewed file is collapsed (one shown alone is shown open).
+  if (expected.status == QLatin1String("ready") && !expected.lazy && expected.focus.isEmpty()) {
+    for (const QString& path : expected.viewedPaths()) {
+      const int file = diff.model()->fileOf(path);
+      if (file >= 0) RC_ASSERT(!diff.model()->expanded(file));
+    }
+  }
   RC_ASSERT(diff.baseRef() == expected.base);
   RC_ASSERT(diff.ignoreWhitespace() == expected.whitespace);
   if (expected.status == QLatin1String("ready")) {
@@ -647,8 +682,9 @@ void check(const Facts& before, const Model& expected, Sut& sut) {
                                                    before.comparedHead != after.comparedHead || before.truncated != after.truncated
                                                ? 1
                                                : 0));
+  RC_ASSERT(sut.viewedChanged->count() == (before.viewed != after.viewed ? 1 : 0));
   for (QSignalSpy* spy : {sut.turnsChanged.get(), sut.selectionChanged.get(), sut.statusChanged.get(), sut.focusChanged.get(),
-                          sut.reviewChanged.get()}) {
+                          sut.reviewChanged.get(), sut.viewedChanged.get()}) {
     spy->clear();
   }
   const QStringList problems = sut.mirror->problems();
@@ -802,6 +838,7 @@ struct SetThread : Step<SetThread> {
       model.thread = thread;
       ++model.request;
       model.loaded.reset();
+      model.shownKey.clear();
       model.clearDiff();
       model.focus.clear();
       model.comparedBase.clear();
@@ -993,6 +1030,28 @@ struct OpenFile : Step<OpenFile> {
   void show(std::ostream& os) const override { os << "open " << path.toStdString(); }
 };
 
+// A file is marked viewed or not. Only on a diff shown whole: on one cut
+// short, expanding a file would ask the MC for it, which OpenFile covers.
+struct SetViewed : Step<SetViewed> {
+  QString path = *oneOf(kFocus.mid(1));
+  bool viewed = *rc::gen::arbitrary<bool>();
+  explicit SetViewed(const Model& model) { RC_PRE(model.status == QLatin1String("ready") && !model.lazy); }
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.status == QLatin1String("ready") && !model.lazy); }
+  void apply(Model& model) const override {
+    if (!model.shown().contains(path)) return;
+    QSet<QString>& paths = model.viewed[model.viewedKey()];
+    if (viewed == paths.contains(path)) return;
+    if (viewed) {
+      paths.insert(path);
+    } else {
+      paths.remove(path);
+    }
+    if (paths.isEmpty()) model.viewed.remove(model.viewedKey());
+  }
+  void act(const Model&, Sut& sut) const { sut.diff->setViewed(path, viewed); }
+  void show(std::ostream& os) const override { os << "mark " << path.toStdString() << (viewed ? " viewed" : " not viewed"); }
+};
+
 }  // namespace
 
 class WorkspaceThreadDiffProp : public QObject {
@@ -1005,7 +1064,7 @@ private slots:
       rc::state::check(Model(), sut,
                        rc::state::gen::execOneOfWithArgs<NewTurn, NewTurn, Ready, Summarize, Rewind, SetThread, SetActive, SetActive, SetCheckout,
                                                          Select, Select, SetBase, SetWhitespace, Focus, Reload, AnswerOne, AnswerOne,
-                                                         AnswerOne, AnswerOne, OpenFile, OpenFile>());
+                                                         AnswerOne, AnswerOne, OpenFile, OpenFile, SetViewed, SetViewed>());
     }));
   }
 };
