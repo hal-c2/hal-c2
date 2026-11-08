@@ -338,7 +338,7 @@ Feature: Follow-ups while the agent is working
 
   # Upstream #24972: leaving the thread dropped an open edit of a queued message.
   # Replaces the scenario above.
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Leaving the thread keeps the edit
     Given "fix typo" is queued
     When the user starts editing the last queued message from the start of the composer
@@ -348,7 +348,7 @@ Feature: Follow-ups while the agent is working
 
   # Upstream #25128: a slow save from before leaving the thread ended the edit begun after
   # coming back, and cleared its draft.
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A save that finishes after a newer edit began leaves the newer edit alone
     Given the user saved "fix all typos" over the queued "fix typo" and the MC has not answered yet
     And the user switched to thread B and back to thread A
@@ -358,7 +358,7 @@ Feature: Follow-ups while the agent is working
 
   # Upstream #25468: a queued edit ends when its run leaves the queue, even with its thread closed.
   # Upstream #24972: the same on the desktop, and the message names the thread.
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: An edit whose message starts while its thread is closed ends then
     Given the user is editing the queued "fix typo" with a change
     And the user has gone to another thread
@@ -368,7 +368,7 @@ Feature: Follow-ups while the agent is working
 
   # Upstream #25468: an unchanged edit whose run starts closes without a message.
   # Upstream #25232: the phone discards an untouched queued edit when its run starts.
-  @desktop @mobile @backlog-mobile @priority-low
+  @desktop @mobile @priority-low
   Scenario: An unchanged edit whose message starts running closes quietly
     Given "fix typo" is queued
     When the user starts editing the last queued message from the start of the composer
@@ -377,7 +377,7 @@ Feature: Follow-ups while the agent is working
     And no message about the edit is shown
 
   # Upstream #25468: deleting the thread ends its open queued edit.
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Deleting a thread ends its queued edit
     Given the user is editing a queued message in thread A
     When thread A is deleted
@@ -392,7 +392,7 @@ Feature: Follow-ups while the agent is working
     And the edit-latest shortcut does nothing
 
   # Upstream #25593: an edit already open when a question arrives comes back once it is answered.
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: An edit open when a question arrives comes back after the answer
     Given the user is editing the queued "fix typo"
     When the agent asks which database to use
