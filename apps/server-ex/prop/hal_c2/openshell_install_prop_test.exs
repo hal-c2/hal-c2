@@ -35,8 +35,9 @@ defmodule HalC2.OpenShellInstallPropTest do
       never touches the other environment's;
     * another HAL-C2 home on the machine installing, updating or uninstalling its
       gateway as a service changes none of this home's: it never names this home's
-      unit to the service manager, and this home's unit, certificates, database and
-      installed state are what they were. It has a service manager stand-in of its
+      units, the gateway's or its reaper's, to the service manager, and this home's
+      units, certificates, database and installed state are what they were; a home
+      with no gateway unit has no reaper either. It has a service manager stand-in of its
       own, so this home's unit keeps running whatever the other home's does.
   """
 
@@ -412,9 +413,10 @@ defmodule HalC2.OpenShellInstallPropTest do
   def other_home(op) do
     ctx = Process.get(:openshell)
     manager = Service.manager()
-    unit = Service.unit_path(manager)
-    name = Service.name(manager)
-    before = File.read(unit)
+    units = [Service.unit_path(manager) | Service.reaper_paths(manager)]
+    reaper = if manager == :systemd, do: [:systemd, :timer], else: [:launchd]
+    names = [Service.name(manager) | Enum.map(reaper, &Service.reap_name/1)]
+    before = Enum.map(units, &File.read/1)
     log = Path.join(ctx.other.bin, "calls.log")
     File.write!(log, "")
 
@@ -433,8 +435,8 @@ defmodule HalC2.OpenShellInstallPropTest do
       end)
 
     calls = Storage.service_calls(log)
-    named = Enum.filter(calls, &String.contains?(&1, name))
-    unchanged = File.read(unit) == before
+    named = Enum.filter(calls, fn call -> Enum.any?(names, &String.contains?(call, &1)) end)
+    unchanged = Enum.map(units, &File.read/1) == before
 
     observe(
       {:other, if(named == [] and unchanged, do: classify(result), else: {:touched, named})}
@@ -612,7 +614,8 @@ defmodule HalC2.OpenShellInstallPropTest do
   defp observe(result, count? \\ false) do
     state = OpenShell.state()
     ca = OpenShell.credentials(state)[:ca]
-    unit = Service.unit_path(Service.manager())
+    manager = Service.manager()
+    unit = Service.unit_path(manager)
 
     %{
       result: classify(result),
@@ -628,11 +631,16 @@ defmodule HalC2.OpenShellInstallPropTest do
           _ -> nil
         end,
       unit:
-        if File.exists?(unit) do
-          status = Service.status(state)
-          {status["current"], status["running"]}
-        else
-          :absent
+        cond do
+          File.exists?(unit) ->
+            status = Service.status(state)
+            {status["current"], status["running"]}
+
+          Enum.any?(Service.reaper_paths(manager), &File.exists?/1) ->
+            :reaper_left
+
+          true ->
+            :absent
         end,
       clean: clean?(state),
       safe: safe?(count?)

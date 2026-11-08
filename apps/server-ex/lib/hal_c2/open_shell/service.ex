@@ -15,10 +15,13 @@ defmodule HalC2.OpenShell.Service do
   environment of its own: neither the systemd user manager's environment nor
   launchd's (`launchctl setenv`) reaches it.
 
-  Beside it, a reaper runs `hal-c2-service openshell reap` every minute
-  (`hal-c2-openshell-reap.timer`, `io.github.halc2.openshell.reap`): OpenShell 0.1.7
-  has no TTL, so a review sandbox's lease (`HalC2.OpenShell.Review`) ends on time
-  while the MC is down too.
+  Beside it, a reaper runs `hal-c2-service openshell reap --root <dir>` every
+  minute (`hal-c2-openshell-<instance>-reap.timer`,
+  `io.github.halc2.openshell.<instance>.reap`): OpenShell 0.1.7 has no TTL, so a
+  review sandbox's lease (`HalC2.OpenShell.Review`) ends on time while the MC is
+  down too. Its units are this home's like the gateway's, and `owned/0` checks them
+  the same way. They carry this home's directories, and `--root` names its
+  OpenShell directory, which the reaper refuses to run without reaching.
 
   The service manager is driven through the same seams as `HalC2.Service`
   (`:systemctl_command`, `:launchctl_command`, `:service_platform`,
@@ -29,13 +32,17 @@ defmodule HalC2.OpenShell.Service do
   alias HalC2.OpenShell.Config
   alias HalC2.Service
 
-  @reap_unit "hal-c2-openshell-reap.service"
-  @reap_timer "hal-c2-openshell-reap.timer"
-  @reap_label "io.github.halc2.openshell.reap"
-
   @doc "This home's gateway service: its systemd unit or its launchd label."
   def name(:systemd), do: "hal-c2-openshell-#{OpenShell.instance()}.service"
   def name(:launchd), do: "io.github.halc2.openshell.#{OpenShell.instance()}"
+
+  @doc """
+  This home's reaper, named beside its gateway: its systemd service (`:systemd`)
+  and timer (`:timer`), or its launchd label.
+  """
+  def reap_name(:systemd), do: "hal-c2-openshell-#{OpenShell.instance()}-reap.service"
+  def reap_name(:timer), do: "hal-c2-openshell-#{OpenShell.instance()}-reap.timer"
+  def reap_name(:launchd), do: "io.github.halc2.openshell.#{OpenShell.instance()}.reap"
 
   def manager, do: Service.manager()
 
@@ -46,45 +53,61 @@ defmodule HalC2.OpenShell.Service do
     do: Path.join([Service.user_home(), "Library", "LaunchAgents", name(:launchd) <> ".plist"])
 
   @doc "The reaper's units, `[{path, contents}]`, that `install/1` writes beside the gateway's."
-  def reaper(:systemd) do
+  def reaper(manager),
+    do: Enum.zip_with(reaper_paths(manager), reaper_units(manager), fn p, u -> {p, u} end)
+
+  @doc "The paths of `reaper/1`'s units."
+  def reaper_paths(:systemd) do
     dir = Path.dirname(unit_path(:systemd))
+    [Path.join(dir, reap_name(:systemd)), Path.join(dir, reap_name(:timer))]
+  end
 
-    [
-      {Path.join(dir, @reap_unit), render_reaper(:systemd)},
-      {Path.join(dir, @reap_timer), timer()}
+  def reaper_paths(:launchd),
+    do: [
+      Path.join([Service.user_home(), "Library", "LaunchAgents", reap_name(:launchd) <> ".plist"])
     ]
-  end
 
-  def reaper(:launchd) do
-    path = Path.join([Service.user_home(), "Library", "LaunchAgents", @reap_label <> ".plist"])
-    [{path, render_reaper(:launchd)}]
-  end
+  defp reaper_units(:systemd), do: [render_reaper(:systemd), timer()]
+  defp reaper_units(:launchd), do: [render_reaper(:launchd)]
 
   @doc """
-  `:ok` unless the unit at this home's path was written by another home: it runs a
-  gateway from another directory than `HalC2.OpenShell.root/0`. No unit, or no
-  service manager, is `:ok`.
+  `:ok` unless a unit at one of this home's paths, the gateway's or the reaper's,
+  was written by another home: it does not name `HalC2.OpenShell.root/0` as this
+  home writes it. A missing unit, or no service manager, is `:ok`.
   """
-  # Only the gateway's unit in the user's own service directory.
-  # sobelow_skip ["Traversal.FileModule"]
   def owned do
-    with manager when manager != nil <- manager(),
-         path = unit_path(manager),
-         {:ok, text} <- File.read(path) do
-      if String.contains?(text, home_line(manager)),
-        do: :ok,
-        else:
-          {:error,
-           "[unit-not-ours] #{path} was not written by this HAL-C2 home (#{OpenShell.root()}): it runs another home's gateway, so it was left alone. If no HAL-C2 home uses it, remove it, then try again."}
-    else
+    case manager() do
       nil ->
         :ok
+
+      manager ->
+        ([{unit_path(manager), home_line(manager), "gateway"}] ++
+           for(path <- reaper_paths(manager), do: {path, reap_home_line(manager), "reaper"}))
+        |> Enum.reduce_while(:ok, fn {path, line, what}, :ok ->
+          case owned(path, line, what) do
+            :ok -> {:cont, :ok}
+            error -> {:halt, error}
+          end
+        end)
+    end
+  end
+
+  # Only this home's units in the user's own service directory.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp owned(path, line, what) do
+    case File.read(path) do
+      {:ok, text} ->
+        if String.contains?(text, line),
+          do: :ok,
+          else:
+            {:error,
+             "[unit-not-ours] #{path} was not written by this HAL-C2 home (#{OpenShell.root()}): it runs another home's #{what}, so it was left alone. If no HAL-C2 home uses it, remove it, then try again."}
 
       {:error, :enoent} ->
         :ok
 
       {:error, reason} ->
-        {:error, "Cannot read #{unit_path(manager())}: #{:file.format_error(reason)}"}
+        {:error, "Cannot read #{path}: #{:file.format_error(reason)}"}
     end
   end
 
@@ -93,6 +116,16 @@ defmodule HalC2.OpenShell.Service do
 
   defp home_line(:launchd),
     do: "\n  <key>WorkingDirectory</key>\n  <string>#{xml(OpenShell.root())}</string>\n"
+
+  # The line each of the reaper's units carries that names this home's directory:
+  # a comment in a systemd unit, the `--root` argument in the launchd agent.
+  defp reap_home_line(:systemd), do: reap_comment() <> "\n"
+
+  defp reap_home_line(:launchd),
+    do: "\n    <string>--root</string>\n    <string>#{xml(OpenShell.root())}</string>\n"
+
+  defp reap_comment,
+    do: "# The reaper of the HAL-C2 home at #{Service.quote_value(OpenShell.root())}"
 
   defp xml(text) do
     text
@@ -263,7 +296,7 @@ defmodule HalC2.OpenShell.Service do
       {"systemctl", ["--user", "daemon-reload"]},
       {"systemctl", ["--user", "enable", name(:systemd)]},
       {"systemctl", ["--user", "restart", name(:systemd)]},
-      {"systemctl", ["--user", "enable", "--now", @reap_timer]}
+      {"systemctl", ["--user", "enable", "--now", reap_name(:timer)]}
     ])
   end
 
@@ -280,25 +313,49 @@ defmodule HalC2.OpenShell.Service do
   end
 
   defp stop_reaper(:systemd),
-    do: [{"systemctl", ["--user", "disable", "--now", @reap_timer], :ignore}]
+    do: [{"systemctl", ["--user", "disable", "--now", reap_name(:timer)], :ignore}]
 
   defp stop_reaper(:launchd), do: [{"launchctl", ["bootout", reap_target()], :ignore}]
 
-  defp reap_target, do: "gui/#{Service.uid()}/#{@reap_label}"
+  defp reap_target, do: "gui/#{Service.uid()}/#{reap_name(:launchd)}"
 
   # `hal-c2-service openshell reap` from a release, `mix hal_c2.openshell reap` in
   # this checkout otherwise, with the MC's home: units get neither PATH nor a shell.
+  # `--root` is this home's OpenShell directory, which the reaper checks it reaches.
   defp reap_program do
+    reap = ["reap", "--root", OpenShell.root()]
+
     case System.get_env("RELEASE_ROOT") do
       nil ->
-        {[System.find_executable("mix") || "mix", "hal_c2.openshell", "reap"], File.cwd!()}
+        {[System.find_executable("mix") || "mix", "hal_c2.openshell" | reap], File.cwd!()}
 
       root ->
-        {[Path.join([root, "bin", "hal-c2-service"]), "openshell", "reap"], Service.user_home()}
+        {[Path.join([root, "bin", "hal-c2-service"]), "openshell" | reap], Service.user_home()}
     end
   end
 
-  defp reap_env, do: [{"PATH", System.get_env("PATH", "")} | Service.chosen_home()]
+  @xdg [
+    {"XDG_CONFIG_HOME", [".config"]},
+    {"XDG_DATA_HOME", [".local", "share"]},
+    {"XDG_STATE_HOME", [".local", "state"]},
+    {"XDG_CACHE_HOME", [".cache"]}
+  ]
+
+  # What decides this home's directories (`HalC2.Paths`): the home variables the
+  # user chose and each XDG base as this process resolves it, so neither the
+  # service manager's environment nor a missing override moves the reaper elsewhere.
+  @doc false
+  def reap_env do
+    home = HalC2.Paths.user_home()
+
+    xdg =
+      for {name, default} <- @xdg,
+          do:
+            {name,
+             HalC2.Paths.absolute(System.get_env(name), :unix) || Path.join([home | default])}
+
+    [{"PATH", System.get_env("PATH", "")} | Service.chosen_home()] ++ xdg
+  end
 
   defp render_reaper(:systemd) do
     q = &Service.quote_value/1
@@ -307,6 +364,7 @@ defmodule HalC2.OpenShell.Service do
 
     Enum.join(
       List.flatten([
+        reap_comment(),
         "[Unit]",
         "Description=Deletes HAL-C2 review sandboxes past their time",
         "",
@@ -341,7 +399,7 @@ defmodule HalC2.OpenShell.Service do
     <plist version="1.0">
     <dict>
       <key>Label</key>
-      <string>#{@reap_label}</string>
+      <string>#{reap_name(:launchd)}</string>
       <key>ProgramArguments</key>
       <array>
     #{Enum.map_join(argv, "\n", &"    <string>#{x.(&1)}</string>")}
@@ -370,6 +428,7 @@ defmodule HalC2.OpenShell.Service do
   defp timer do
     Enum.join(
       [
+        reap_comment(),
         "[Unit]",
         "Description=Deletes HAL-C2 review sandboxes past their time, every minute",
         "",

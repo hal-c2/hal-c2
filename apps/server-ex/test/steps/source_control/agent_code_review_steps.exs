@@ -652,7 +652,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     ExUnit.Callbacks.stop_supervised!(OpenShell.Review)
 
     assert {:ok, "Deleted review sandboxes past their time: review-old"} =
-             OpenShell.Command.command(["reap"])
+             OpenShell.Command.command(["reap", "--root", OpenShell.root()])
 
     context
   end

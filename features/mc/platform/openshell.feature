@@ -234,8 +234,14 @@ Feature: The OpenShell gateway review sandboxes run in
     Given OpenShell is installed
     And another HAL-C2 home on this machine has installed OpenShell
     When the other home updates its OpenShell and then uninstalls it
-    Then the other home never asked the service manager about this home's service
-    And this home's gateway, service and certificates are as they were
+    Then the other home never asked the service manager about this home's service or its reaper
+    And this home's gateway, service, reaper and certificates are as they were
+
+  @mc
+  Scenario: A reaper written for another home's directory reaps nothing
+    Given OpenShell is installed
+    When the reaper runs naming another home's OpenShell directory
+    Then the reap is refused because "reaper-wrong-home"
 
   @mc
   Scenario: A service under this home's name that another home wrote is left alone

@@ -163,7 +163,7 @@ defmodule HalC2.OpenShell.InstallTest do
                "systemctl --user daemon-reload",
                "systemctl --user enable #{Service.name(:systemd)}",
                "systemctl --user restart #{Service.name(:systemd)}",
-               "systemctl --user enable --now hal-c2-openshell-reap.timer"
+               "systemctl --user enable --now #{Service.reap_name(:timer)}"
              ]
 
       assert_client_authority()
