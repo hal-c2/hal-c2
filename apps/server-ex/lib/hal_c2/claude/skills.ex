@@ -44,6 +44,7 @@ defmodule HalC2.Claude.Skills do
 
     roots
     |> Enum.flat_map(fn {root, scope} -> read_root(root, scope, overrides) end)
+    |> Kernel.++(plugin_skills(config_dir, cwd, overrides))
     |> Enum.uniq_by(& &1["name"])
     |> Enum.sort_by(& &1["name"])
   end
@@ -112,36 +113,81 @@ defmodule HalC2.Claude.Skills do
     end
   end
 
-  @doc "The names a `$mention` may run: offered, on, and not kept from the user."
-  @spec user_invocable_names(String.t(), String.t() | nil) :: MapSet.t()
-  def user_invocable_names(instance \\ "claudeAgent", cwd \\ nil) do
+  @doc "The skills a `$mention` may run, by name: offered, on, and not kept from the user."
+  @spec user_invocable(String.t(), String.t() | nil) :: %{String.t() => map()}
+  def user_invocable(instance \\ "claudeAgent", cwd \\ nil) do
     if HalC2.Settings.instance_enabled?(instance, "claudeAgent") do
       instance
       |> discover(cwd)
       |> Enum.filter(&(&1["enabled"] and &1["userInvocable"] != false))
-      |> MapSet.new(& &1["name"])
+      |> Map.new(&{&1["name"], &1})
     else
-      MapSet.new()
+      %{}
     end
   end
 
-  defp read_root(root, scope, overrides) do
+  # The skills of each installed plugin that the layered settings' `enabledPlugins`
+  # turn on, from its install's `skills` folder, named `<plugin>:<skill>` as Claude
+  # offers them (Upstream #15662). An install for another project is not this one's.
+  # Reads only Claude's own plugin index under its config dir and the install folders
+  # Claude recorded there, never a path a client sent.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp plugin_skills(config_dir, cwd, overrides) do
+    enabled =
+      Enum.reduce(settings_paths(config_dir, cwd), %{}, &Map.merge(&2, read_enabled(&1)))
+
+    with {:ok, text} <- File.read(Path.join([config_dir, "plugins", "installed_plugins.json"])),
+         {:ok, %{"plugins" => plugins}} when is_map(plugins) <- JSON.decode(text) do
+      for {id, installs} <- plugins,
+          enabled[id] == true,
+          install = Enum.find(List.wrap(installs), &install_here?(&1, cwd)),
+          install != nil,
+          skill <-
+            read_root(
+              Path.join(install["installPath"], "skills"),
+              "plugin",
+              overrides,
+              hd(String.split(id, "@")) <> ":"
+            ),
+          do: skill
+    else
+      _ -> []
+    end
+  end
+
+  defp install_here?(%{"installPath" => path} = install, cwd) when is_binary(path),
+    do: install["projectPath"] in [nil, cwd]
+
+  defp install_here?(_install, _cwd), do: false
+
+  # Reads only Claude's own settings files (`settings_paths/2`), never a client's path.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp read_enabled(path) do
+    with {:ok, text} <- File.read(path),
+         {:ok, %{"enabledPlugins" => enabled}} when is_map(enabled) <- decode_lenient(text) do
+      enabled
+    else
+      _ -> %{}
+    end
+  end
+
+  defp read_root(root, scope, overrides, prefix \\ "") do
     case File.ls(root) do
       {:ok, entries} ->
         entries
         |> Enum.sort()
-        |> Enum.flat_map(&read_skill(Path.join(root, &1), &1, scope, overrides))
+        |> Enum.flat_map(&read_skill(Path.join(root, &1), &1, scope, overrides, prefix))
 
       _ ->
         []
     end
   end
 
-  defp read_skill(dir, entry, scope, overrides) do
-    name = String.trim(entry)
+  defp read_skill(dir, entry, scope, overrides, prefix) do
+    name = prefix <> String.trim(entry)
     path = Path.join(dir, "SKILL.md")
 
-    with true <- name != "",
+    with true <- String.trim(entry) != "",
          {:ok, content} <- File.read(path),
          {:ok, frontmatter} <- frontmatter(content) do
       override = overrides[name]
@@ -320,11 +366,33 @@ defmodule HalC2.Claude.Skills do
   A missing file is no layer, nor is a blank one, which Claude reads as `{}`.
   """
   @spec bypass_permissions(String.t(), String.t() | nil) :: :allowed | :disabled | :unreadable
-  def bypass_permissions(config_dir, cwd) do
+  def bypass_permissions(config_dir, cwd), do: policy(config_dir, cwd, &bypass_disabled_in?/1)
+
+  @doc """
+  Whether Claude lets a session at `cwd` run in Auto mode, read from the same layers
+  as `bypass_permissions/2`: `:disabled` when one sets `disableAutoMode` to `"disable"`,
+  at its top level or under `permissions`.
+  """
+  @spec auto_mode(String.t(), String.t() | nil) :: :allowed | :disabled | :unreadable
+  def auto_mode(config_dir, cwd), do: policy(config_dir, cwd, &auto_disabled_in?/1)
+
+  @doc "Whether a decoded Claude settings map turns bypassing permissions off."
+  @spec bypass_disabled_in?(term) :: boolean
+  def bypass_disabled_in?(settings),
+    do: match?(%{"permissions" => %{"disableBypassPermissionsMode" => "disable"}}, settings)
+
+  @doc "Whether a decoded Claude settings map turns Auto mode off."
+  @spec auto_disabled_in?(term) :: boolean
+  def auto_disabled_in?(settings),
+    do:
+      match?(%{"disableAutoMode" => "disable"}, settings) or
+        match?(%{"permissions" => %{"disableAutoMode" => "disable"}}, settings)
+
+  defp policy(config_dir, cwd, disabled?) do
     paths = settings_paths(config_dir, cwd) ++ [Path.join(config_dir, "remote-settings.json")]
 
     Enum.reduce_while(paths, :allowed, fn path, verdict ->
-      case read_bypass(path) do
+      case read_policy(path, disabled?) do
         :disabled -> {:halt, :disabled}
         :unreadable -> {:cont, :unreadable}
         :allowed -> {:cont, verdict}
@@ -332,19 +400,14 @@ defmodule HalC2.Claude.Skills do
     end)
   end
 
-  @doc "Whether a decoded Claude settings map turns bypassing permissions off."
-  @spec bypass_disabled_in?(term) :: boolean
-  def bypass_disabled_in?(settings),
-    do: match?(%{"permissions" => %{"disableBypassPermissionsMode" => "disable"}}, settings)
-
   # Reads only Claude's own settings files: fixed names under its config dir and
   # the project's root, never a path a client sent.
   # sobelow_skip ["Traversal.FileModule"]
-  defp read_bypass(path) do
+  defp read_policy(path, disabled?) do
     with {:ok, text} <- File.read(path),
          false <- String.trim(text) == "",
          {:ok, settings} when is_map(settings) <- decode_lenient(text) do
-      if bypass_disabled_in?(settings), do: :disabled, else: :allowed
+      if disabled?.(settings), do: :disabled, else: :allowed
     else
       {:error, :enoent} -> :allowed
       {:error, :enotdir} -> :allowed
@@ -494,27 +557,42 @@ defmodule HalC2.Claude.Skills do
   own `/skill` command (the last text block, where Claude expands it), earlier
   known mentions are rewritten to `/name` in the leading text, and everything
   else stays as typed. `nil` when the message runs no skill.
+
+  `skills` are `user_invocable/2`'s. Claude's Skill tool refuses an earlier skill
+  only the user may invoke, so the first mention of each such skill also names
+  its instructions (Upstream #19485).
   """
-  @spec dispatch(String.t(), MapSet.t()) :: {String.t() | nil, String.t()} | nil
-  def dispatch(text, names) do
+  @spec dispatch(String.t(), %{String.t() => map()}) :: {String.t() | nil, String.t()} | nil
+  def dispatch(text, skills) do
     known =
       text
       |> mentions()
-      |> Enum.filter(fn {_at, _length, _currency_at, name} -> MapSet.member?(names, name) end)
+      |> Enum.filter(fn {_at, _length, _currency_at, name} -> Map.has_key?(skills, name) end)
 
     case List.last(known) do
       nil ->
         nil
 
       {at, length, _currency_at, name} ->
-        leading =
+        {earlier, _} =
           known
           |> Enum.drop(-1)
+          |> Enum.map_reduce(MapSet.new([name]), fn {_, _, _, m_name} = mention, noted ->
+            skill = skills[m_name]
+
+            if skill["userInvocationOnly"] == true and not MapSet.member?(noted, m_name),
+              do: {{mention, skill["path"]}, MapSet.put(noted, m_name)},
+              else: {{mention, nil}, noted}
+          end)
+
+        leading =
+          earlier
           |> Enum.reverse()
-          |> Enum.reduce(binary_part(text, 0, at), fn {m_at, m_length, m_currency, m_name}, acc ->
+          |> Enum.reduce(binary_part(text, 0, at), fn {{m_at, m_length, m_currency, m_name}, path},
+                                                      acc ->
             # Right to left, so an earlier mention's offsets still hold after
             # a later one (whose currency sign may be wider than `/`) is rewritten.
-            replace_mention(acc, m_at, m_length, m_currency, m_name)
+            replace_mention(acc, m_at, m_length, m_currency, invoked(m_name, path))
           end)
 
         command =
@@ -525,6 +603,11 @@ defmodule HalC2.Claude.Skills do
         {if(leading == "", do: nil, else: leading), command}
     end
   end
+
+  defp invoked(name, nil), do: name
+
+  defp invoked(name, path),
+    do: "#{name} [The user invoked this skill. Follow the instructions at: #{path}]"
 
   defp replace_mention(leading, at, length, currency_at, name) do
     head = binary_part(leading, 0, currency_at)

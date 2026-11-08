@@ -15,15 +15,32 @@
 #   commands         get_commands
 #   turns            [{"match": substring, "steps": [...]}], first match wins
 #                    (a turn may also set "afterCompaction": true, to start only once a
-#                    running compaction ends, or "startDelaySec": n, to start its agent late)
+#                    running compaction ends, "startDelaySec": n, to start its agent late,
+#                    "startUntil": name, to start it once the file FAKE_DIR/<name> exists,
+#                    or "compactAfter": n, to compact for n seconds once it settled,
+#                    or "wake": {"text", "steps"[, "quiet": true]}: once it settled, Pi runs
+#                    that turn by itself, as when an extension wakes it, once per
+#                    process; a "quiet" one shows nothing until a prompt reaches Pi, and
+#                    one with a "wake" of its own is followed by that one)
+#   startupUi        fire-and-forget extension UI requests (as a turn's `uiEmit`) Pi's
+#                    extensions send as an RPC Pi starts, before any command
+#   rejectWhileCompacting  as Pi 1.4: every prompt, steers included, sent while Pi
+#                    compacts is rejected (logged as `rejected`); a prompt Pi takes up
+#                    is logged as `accepted`, and compaction events as `compaction`
 #
-# Turn steps: {"text": s[, "usage": {...}]}, {"thinking": s}, {"tool": name, "args": {},
+# Turn steps: {"compactFor": n} (a compaction of n seconds, taking aborts and rejecting
+# every prompt as Pi 1.4 does),
+# {"text": s[, "usage": {...}]}, {"thinking": s}, {"tool": name, "args": {},
 # "output": s} (HAL-C2's extension gate first: see `allowed`), {"select": {"title",
 # "options"}} (waits for the answer, then says it), {"event": {...}} (sent as is),
 # {"mcp": {"name", "arguments"}} (a HAL-C2 MCP tool call), {"waitAbort": true} (until an
 # abort, or a steer prompt, which it answers), {"settleOnSteer": true | n} (until an abort,
 # or n steer prompts, which reach Pi only once this run has settled, in the order of their
-# text, and each start a run of its own), {"exit": code}. While a turn waits, a steer saying "refuse" is rejected, and
+# text, and each start a run of its own), {"exit": code}, {"waitFollowUp": true} (until a
+# followUp prompt is queued), {"until": name} (until the file FAKE_DIR/<name> exists, or a followUp is queued).
+# While Pi runs, a prompt without a streamingBehavior is turned back as Pi does ("Agent is
+# already processing"), and a followUp one is answered after the run's own work, before
+# it settles. While a turn waits, a steer saying "refuse" is rejected, and
 # one saying "vanish" makes Pi exit before answering it; one saying "hold" is taken in
 # but not answered while the turn waits (its next model call never comes); one saying "decline" is rejected,
 # and one saying "ignore" never answered, only once it reaches Pi after the run settled.
@@ -65,11 +82,17 @@ def is_compacting():
     return compacting[0] or compacts_out[0] > 0
 
 
+COMPACTING_ERROR = ("Cannot submit a prompt while compaction is in progress. "
+                    "Wait for compaction to finish and retry.")
+
+
 def send(msg):
     if msg.get("type") == "compaction_start":
         compacting[0] = True
+        log({"compaction": "start"})
     elif msg.get("type") == "compaction_end":
         compacting[0] = False
+        log({"compaction": "end"})
     # Unescaped, as Pi writes UTF-8: a U+2028 in a text travels literally.
     with SEND_LOCK:
         sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
@@ -112,6 +135,14 @@ def new_path():
     return os.path.join(SESSIONS, "%s.json" % uuid.uuid4().hex[:12])
 
 
+def load_leaf(path):
+    try:
+        with open(path) as f:
+            return json.load(f).get("leafId")
+    except (OSError, ValueError):
+        return None
+
+
 def load_name(path):
     try:
         with open(path) as f:
@@ -121,8 +152,20 @@ def load_name(path):
 
 
 class Session:
-    def __init__(self, path, entries, name=None):
-        self.path, self.entries, self.name = path, entries, name
+    # Pi's session is a tree, its entries kept in the order they were written:
+    # each names its parent, and the leaf is where the conversation stands.
+    def __init__(self, path, entries, name=None, leaf=None):
+        self.path, self.name = path, name
+        self.reset(entries, leaf)
+
+    def reset(self, entries, leaf=None):
+        # Entries recorded without a parent chain in the order they were written.
+        parent = None
+        for entry in entries:
+            entry.setdefault("parentId", parent)
+            parent = entry["id"]
+        self.entries = entries
+        self.leaf_id = leaf or (entries[-1]["id"] if entries else None)
 
     def save(self):
         if self.path and self.path.endswith(".jsonl"):
@@ -133,20 +176,44 @@ class Session:
                     f.write(json.dumps(line) + "\n")
         elif self.path:
             with open(self.path, "w") as f:
-                json.dump({"entries": self.entries, "name": self.name}, f)
+                json.dump({"entries": self.entries, "name": self.name, "leafId": self.leaf_id}, f)
 
     def append(self, role, content):
-        entry = {"id": uuid.uuid4().hex[:8], "type": "message",
+        entry = {"id": uuid.uuid4().hex[:8], "type": "message", "parentId": self.leaf_id,
                  "message": {"role": role, "content": content}}
         self.entries.append(entry)
+        self.leaf_id = entry["id"]
         self.save()
         return entry
 
     def leaf(self):
-        return self.entries[-1]["id"] if self.entries else None
+        return self.leaf_id
+
+    def branch(self):
+        """The active branch, root first: the walk from the leaf up its parents."""
+        by_id = {e["id"]: e for e in self.entries}
+        branch, at = [], self.leaf_id
+        while at in by_id:
+            branch.append(by_id[at])
+            at = by_id[at]["parentId"]
+        return branch[::-1]
+
+    def rewind(self, to):
+        """Moves the leaf back (`navigateTree`): to the end of turn `to`, or to just
+        before the user message `to`."""
+        branch = self.branch()
+        users = [i for i, e in enumerate(branch) if e["message"]["role"] == "user"]
+        if isinstance(to, str):
+            users = [i for i in users if branch[i]["message"]["content"] == to] + [None]
+            at = users[0]
+        else:
+            at = users[to] if to < len(users) else None
+        if at is not None:
+            self.leaf_id = branch[at]["parentId"]
+        self.save()
 
     def history(self):
-        return [e["message"]["content"] for e in self.entries if e["message"]["role"] == "user"]
+        return [e["message"]["content"] for e in self.branch() if e["message"]["role"] == "user"]
 
 
 def reply_to(session, text):
@@ -167,7 +234,7 @@ if "--version" in sys.argv:
 # Pi's own terminal app continuing a session file.
 if "-p" in sys.argv:
     path = arg("--session")
-    session = Session(path, load(path))
+    session = Session(path, load(path), leaf=load_leaf(path))
     text = arg("-p")
     session.append("user", text)
     answer = reply_to(session, text)
@@ -180,7 +247,7 @@ if "--no-session" in sys.argv:
         sys.exit(1)
     session = Session(None, [])
 elif arg("--fork"):
-    session = Session(new_path(), list(load(arg("--fork"))))
+    session = Session(new_path(), list(load(arg("--fork"))), leaf=load_leaf(arg("--fork")))
     session.save()
 else:
     session = Session(new_path(), [])
@@ -191,6 +258,18 @@ delayed_once = set()
 backlog = []
 ui_answers = {}
 aborted = [False]
+# While Pi runs (from a prompt to its settle): followUp prompts wait in `follow_ups`.
+running = [False]
+follow_ups = []
+woken = set()
+BUSY_ERROR = ("Agent is already processing. Specify streamingBehavior ('steer' or "
+              "'followUp') to queue the message.")
+
+# What Pi's extensions say at `session_start` (HAL-C2's, in a folder Pi does not trust).
+for notice in [] if "--no-session" in sys.argv else cfg.get("startupUi") or []:
+    request = dict(notice, type="extension_ui_request", id="ui-%s" % uuid.uuid4().hex[:8])
+    log({"ui": request})
+    send(request)
 
 
 def models():
@@ -215,6 +294,16 @@ def read():
     return msg
 
 
+def rejected(msg, compacting=False):
+    """Pi 1.4 turns a prompt back while it compacts (`compacting`: it is, mid-turn)."""
+    if msg.get("type") == "prompt" and (compacting or (
+            config().get("rejectWhileCompacting") and is_compacting())):
+        log({"rejected": msg.get("message")})
+        respond(msg, error=COMPACTING_ERROR)
+        return True
+    return False
+
+
 def wait_for(pred):
     """Reads until `pred(msg)`: dialog answers and aborts are noted, other commands answered."""
     while True:
@@ -224,6 +313,10 @@ def wait_for(pred):
             aborted[0] = True
         elif kind == "extension_ui_response":
             ui_answers[msg.get("id")] = msg
+        elif rejected(msg):
+            continue
+        elif kind == "prompt" and running[0] and not steer(msg):
+            busy_prompt(msg)
         elif kind != "prompt":
             command(msg)
         elif steer(msg) and "refuse" in msg.get("message", ""):
@@ -242,6 +335,35 @@ def wait_for(pred):
 
 def steer(msg):
     return msg.get("type") == "prompt" and msg.get("streamingBehavior") == "steer"
+
+
+def busy_prompt(msg):
+    """A prompt while Pi runs: a followUp waits for the run's end, any other is turned back."""
+    if msg.get("streamingBehavior") == "followUp":
+        log({"accepted": msg.get("message"), "followUp": True})
+        respond(msg)
+        follow_ups.append(msg.get("message", ""))
+    else:
+        log({"busy": msg.get("message")})
+        respond(msg, error=BUSY_ERROR)
+
+
+def workspace_commands():
+    """The skills (`.pi/skills/<name>/SKILL.md`) and prompt templates (`.pi/prompts/<name>.md`)
+    of the folder Pi runs in, as Pi lists them."""
+    found = []
+    skills = os.path.join(os.getcwd(), ".pi", "skills")
+    for name in sorted(os.listdir(skills)) if os.path.isdir(skills) else []:
+        path = os.path.join(skills, name, "SKILL.md")
+        if os.path.isfile(path):
+            found.append({"name": "skill:" + name, "source": "skill",
+                          "sourceInfo": {"path": path, "scope": "project"}})
+    prompts = os.path.join(os.getcwd(), ".pi", "prompts")
+    for name in sorted(os.listdir(prompts)) if os.path.isdir(prompts) else []:
+        if name.endswith(".md"):
+            found.append({"name": name[:-3], "source": "prompt",
+                          "sourceInfo": {"path": os.path.join(prompts, name), "scope": "project"}})
+    return found
 
 
 def respond(msg, data=None, error=None):
@@ -303,22 +425,33 @@ def serve_while(busy):
                 command(msg)
 
 
-def run_turn(text):
+def run_turn(text, wake=None):
     aborted[0] = False
+    running[0] = True
     cfg = config()
     steps = None
     for turn in cfg.get("turns") or []:
         if turn.get("match", "") in text:
             steps = turn.get("steps") or []
             break
+    if wake is not None:
+        steps = wake.get("steps") or []
     session.append("user", text)
     if steps is None:
         steps = [{"text": reply_to(session, text)}]
-    turn = matching_turn(cfg, text)
+    turn = wake if wake is not None else matching_turn(cfg, text)
+    if turn.get("quiet"):
+        # Pi is at work it started by itself, and says nothing of it until a
+        # prompt reaches it.
+        serve_while(lambda: not follow_ups)
     if turn.get("afterCompaction"):
         # Pi starts a prompt sent while it compacts only once the compaction
         # is over: until then it shows nothing for it, and answers checks.
         serve_while(is_compacting)
+    if "startUntil" in turn:
+        # Pi starts its agent only once the file FAKE_DIR/<name> exists.
+        gate = os.path.join(DIR, turn["startUntil"])
+        serve_while(lambda: not os.path.exists(gate))
     if "startDelaySec" in turn:
         # Extension hooks that run before Pi's agent starts: nothing shows,
         # and Pi reads idle, for this long.
@@ -401,6 +534,17 @@ def run_turn(text):
                            id="ui-%s" % uuid.uuid4().hex[:8])
             log({"ui": request})
             send(request)
+        elif "ui" in step and step.get("deaf"):
+            # Pi stops reading before it asks: the answer cannot reach it. It stays
+            # up (its output open), so the MC keeps the session and the question.
+            os.close(0)
+            fields = {k: v for k, v in step["ui"].items() if k != "method"}
+            request = dict(fields, type="extension_ui_request",
+                           id="ui-%s" % uuid.uuid4().hex[:8], method=step["ui"]["method"])
+            log({"ui": request})
+            send(request)
+            while True:
+                time.sleep(60)
         elif "ui" in step:
             fields = {k: v for k, v in step["ui"].items() if k != "method"}
             answer = dialog(step["ui"]["method"], fields)
@@ -424,6 +568,7 @@ def run_turn(text):
                 if steer(msg):
                     # Pi hands the steer to the model's next call, which answers it. Its
                     # session keeps what was said before, then the steer as a user message.
+                    log({"accepted": msg["message"]})
                     respond(msg)
                     session.append("assistant", "".join(said))
                     session.append("user", msg["message"])
@@ -442,6 +587,27 @@ def run_turn(text):
             backlog.extend(sorted(steers, key=lambda m: m.get("message", "")))
             if steers:
                 break
+        elif "compactFor" in step:
+            # Pi compacts mid-turn: an abort is noted (it does not stop the
+            # compaction), and a prompt is answered as Pi answers one then.
+            send({"type": "compaction_start", "reason": "threshold"})
+            until = time.monotonic() + float(step["compactFor"])
+            while time.monotonic() < until:
+                if backlog or select.select([sys.stdin], [], [], 0.05)[0]:
+                    msg = read()
+                    if msg.get("type") == "abort":
+                        aborted[0] = True
+                    elif not rejected(msg, compacting=True):
+                        command(msg)
+            send({"type": "compaction_end", "aborted": False,
+                  "result": {"summary": "Compacted mid-turn.", "tokensBefore": 1000,
+                             "estimatedTokensAfter": 200}})
+        elif "waitFollowUp" in step:
+            if not follow_ups and not aborted[0]:
+                wait_for(lambda m: follow_ups or aborted[0])
+        elif "until" in step:
+            path = os.path.join(DIR, step["until"])
+            serve_while(lambda: not os.path.exists(path) and not follow_ups)
         elif "hang" in step:
             # Never answers, aborts included, until the process is stopped.
             time.sleep(3600)
@@ -453,15 +619,45 @@ def run_turn(text):
     final["stopReason"] = stop
     send({"type": "message_end", "message": final})
     session.append("assistant", "".join(said))
+    # Messages queued as followUps run before Pi settles, each answered in turn.
+    while follow_ups and not aborted[0]:
+        asked = follow_ups.pop(0)
+        session.append("user", asked)
+        texts = [s["text"] for s in matching_turn(config(), asked).get("steps") or [] if "text" in s]
+        reply = "".join(texts) if texts else reply_to(session, asked)
+        send({"type": "message_start", "message": {"role": "assistant"}})
+        send({"type": "message_update", "message": assistant(reply),
+              "assistantMessageEvent": {"type": "text_delta", "delta": reply}})
+        reply_end = assistant(reply)
+        reply_end["stopReason"] = "stop"
+        send({"type": "message_end", "message": reply_end})
+        session.append("assistant", reply)
+    del follow_ups[:]
+    running[0] = False
     send({"type": "agent_end"})
     send({"type": "agent_settled"})
     # Events Pi sends once a turn has settled (an extension waking or failing
     # between turns), once per process.
+    if "compactAfter" in turn:
+        # Pi compacts once the turn settled: its events come between turns.
+        send({"type": "compaction_start", "reason": "threshold"})
+
+        def later():
+            time.sleep(float(turn["compactAfter"]))
+            send({"type": "compaction_end", "aborted": False,
+                  "result": {"summary": "Compacted after the turn.", "tokensBefore": 1000,
+                             "estimatedTokensAfter": 200}})
+
+        threading.Thread(target=later, daemon=True).start()
     global settled_sent
     if not settled_sent:
         settled_sent = True
         for event in config().get("settledEvents") or []:
             send(event)
+    # A wake may itself be followed by one (a "wake" in the wake), each time it runs.
+    if "wake" in turn and (wake is not None or text not in woken):
+        woken.add(text)
+        run_turn(turn["wake"].get("text", "Continue."), turn["wake"])
 
 
 def command(msg):
@@ -496,12 +692,13 @@ def command(msg):
     elif kind == "get_available_models":
         respond(msg, {"models": models()})
     elif kind == "get_commands":
-        respond(msg, {"commands": cfg.get("commands", [])})
+        respond(msg, {"commands": cfg.get("commands", []) + workspace_commands()})
     elif kind == "switch_session":
         if cfg.get("cancelSwitch"):
             respond(msg, {"cancelled": True})
         else:
-            session.path, session.entries = msg["sessionPath"], load(msg["sessionPath"])
+            session.path = msg["sessionPath"]
+            session.reset(load(session.path), load_leaf(session.path))
             session.name = load_name(msg["sessionPath"])
             respond(msg, {"cancelled": False})
     elif kind == "set_session_name":
@@ -540,18 +737,20 @@ def command(msg):
         if cfg.get("cancelFork"):
             respond(msg, {"cancelled": True})
             return
-        ids = [e["id"] for e in session.entries]
+        branch = session.branch()
+        ids = [e["id"] for e in branch]
         entry = msg.get("entryId")
         if entry not in ids:
             respond(msg, error="Entry %s not found" % entry)
             return
         index = ids.index(entry)
-        text = session.entries[index]["message"]["content"]
-        session.path, session.entries = new_path(), session.entries[:index]
+        text = branch[index]["message"]["content"]
+        session.path = new_path()
+        session.reset(branch[:index])
         session.save()
         respond(msg, {"text": text, "cancelled": False})
     elif kind == "get_last_assistant_text":
-        said = [e["message"]["content"] for e in session.entries if e["message"]["role"] == "assistant"]
+        said = [e["message"]["content"] for e in session.branch() if e["message"]["role"] == "assistant"]
         respond(msg, {"text": said[-1] if said else None})
     elif kind == "compact":
         if cfg.get("compactDelaySec"):
@@ -586,6 +785,8 @@ def command(msg):
                       "result": {"summary": "Compacted.", "tokensBefore": 1000,
                                  "estimatedTokensAfter": 200}})
             respond(msg, {"summary": "Compacted.", "tokensBefore": 1000})
+    elif rejected(msg):
+        pass
     elif kind == "prompt" and steer(msg) and "decline" in msg.get("message", ""):
         # A steer saying "decline" that reaches Pi once its run settled is rejected.
         # One also saying "after stop" is rejected only once the abort reaches Pi.
@@ -595,15 +796,25 @@ def command(msg):
     elif kind == "prompt" and steer(msg) and "ignore" in msg.get("message", ""):
         # A steer saying "ignore" that reaches Pi once its run settled is never answered.
         pass
+    elif kind == "prompt" and not steer(msg) and any(
+            msg.get("message", "").startswith(c) for c in cfg.get("rewindCommands") or {}):
+        # An extension command that moves Pi's session back to the end of a turn
+        # (`navigateTree`, without a summary), without the agent.
+        command_name = next(c for c in cfg["rewindCommands"] if msg["message"].startswith(c))
+        session.rewind(cfg["rewindCommands"][command_name])
+        respond(msg)
     elif kind == "prompt" and not steer(msg) and (
             any(msg.get("message", "").startswith(c) for c in cfg.get("handledCommands") or []) or
             any(msg.get("message", "").startswith(c) for c in cfg.get("silentCommands") or [])):
         # An extension command Pi handles without the agent, or a prompt Pi
         # accepts and then never reports on: the answer, and nothing else.
         respond(msg)
+    elif kind == "prompt" and running[0] and not steer(msg):
+        busy_prompt(msg)
     elif kind == "prompt" and "promptError" in cfg:
         respond(msg, error=cfg["promptError"])
     elif kind == "prompt":
+        log({"accepted": msg.get("message")})
         respond(msg)
         run_turn(msg.get("message", ""))
     elif kind in ("abort", "extension_ui_response"):
