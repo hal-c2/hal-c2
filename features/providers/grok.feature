@@ -408,7 +408,6 @@ Feature: Grok
     Then the tool call is named after the command, file or search it works on
 
   # Upstream #20881: a Grok question that allows several answers keeps that.
-  @backlog
   Scenario Outline: Grok's questions keep their shape
     When Grok asks a question <shape>
     Then <outcome>
@@ -420,20 +419,17 @@ Feature: Grok
       | and the user types an answer of their own | Grok receives the typed text as its "Other" answer   |
       | and the turn is stopped before an answer  | Grok is told the question was cancelled              |
 
-  @backlog
   Scenario: Grok stops after its plan is captured
     Given a Grok thread in plan mode
     When Grok presents its plan
     Then the plan is shown for the user to review
     And Grok is told to stop and wait for feedback or a request to implement it
 
-  @backlog
   Scenario: A Grok plan with nothing in it says so
     Given a Grok thread in plan mode
     When Grok leaves plan mode without writing a plan
     Then the plan reads "No plan written yet"
 
-  @backlog
   Scenario: Grok's plan file is shown as the plan while Grok writes it
     Given a Grok thread in plan mode
     When Grok writes the plan file of its own session
@@ -754,18 +750,15 @@ Feature: Grok
     And the second is still listed as background work
 
   # XAiAcpExtension.ts: the corners of questions and plans.
-  @backlog
   Scenario: A Grok question that does not say whether it takes several answers takes one
     When Grok asks a question that leaves out whether several answers are allowed
     Then the user can pick one option only
 
-  @backlog
   Scenario: Answers reach Grok in the order Grok asked its questions
     Given Grok asked two questions at once
     When the user answers the second question before the first
     Then Grok receives the answers in the order it asked, each under the question's own text
 
-  @backlog
   Scenario Outline: An option's preview goes back to Grok only for a single choice
     Given Grok asked a question whose options carry previews
     When the user answers a question that allows <choices>
@@ -776,13 +769,11 @@ Feature: Grok
       | one answer      | carries the chosen option's preview |
       | several answers | carries no preview                  |
 
-  @backlog
   Scenario: Grok's plan is read from its plan file when Grok presents none
     Given a Grok thread in plan mode whose plan file has been written
     When Grok presents its plan without including the plan's text
     Then the plan shown is the plan file's content
 
-  @backlog
   Scenario Outline: Grok's plan file is recognised wherever Grok keeps its sessions
     Given a Grok thread in plan mode
     When Grok writes "plan.md" <where>

@@ -59,6 +59,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   # Grok's own requests (`x.ai/...`), bare or wrapped in `{method, params}`.
   @xai_questions ["x.ai/ask_user_question", "_x.ai/ask_user_question"]
   @xai_plan ["x.ai/exit_plan_mode", "_x.ai/exit_plan_mode"]
+  @plan_file "plan:grok-file"
   @empty_plan "# No plan written yet\n\n(The agent exited plan mode without writing a plan.)"
   @plan_captured "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn."
 
@@ -697,11 +698,17 @@ defmodule HalC2.Acp.ThreadRuntime do
   def handle_info({:json_rpc, conn, {:request, id, method, params}}, %{turn: turn} = state)
       when method in @xai_plan and turn != nil do
     params = xai_params(params)
-    native = "plan:#{params["toolCallId"] || id}"
+    # The plan Grok wrote to its plan file is the one it presents, unless it sends text.
+    native =
+      if Map.has_key?(state.items, @plan_file),
+        do: @plan_file,
+        else: "plan:#{params["toolCallId"] || id}"
+
+    written = get_in(state.items, [@plan_file, :markdown])
 
     markdown =
       case String.trim(params["planContent"] || "") do
-        "" -> @empty_plan
+        "" -> written || @empty_plan
         text -> text
       end
 
@@ -1296,7 +1303,8 @@ defmodule HalC2.Acp.ThreadRuntime do
                do: HalC2.Acp.Antigravity.runtime_tmp(env)
              ),
            capabilities: init["agentCapabilities"] || %{}
-       }}
+       }
+       |> Map.put(:plan_prefixes, HalC2.Acp.GrokPlan.prefixes(env))}
     else
       {:error, reason} -> {:error, reason, state}
     end
@@ -1987,6 +1995,8 @@ defmodule HalC2.Acp.ThreadRuntime do
        do: subagent_call(state, id, call)
 
   defp update(%{"sessionUpdate" => "tool_call", "toolCallId" => id} = call, state) do
+    state = plan_file(state, call)
+
     cond do
       plan_call?(call, state) -> plan_call(state, id, call)
       subagent_call?(call, state) -> subagent_call(state, id, call)
@@ -1995,6 +2005,8 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp update(%{"sessionUpdate" => "tool_call_update", "toolCallId" => id} = call, state) do
+    state = plan_file(state, call)
+
     cond do
       plan_call?(call, state) -> plan_call(state, id, call)
       Map.has_key?(state.items, id) -> tool_update(state, id, call)
@@ -2356,6 +2368,25 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp plan_call(state, _id, _call), do: state
+
+  # A write to the plan file of a Grok session shows as the thread's plan while Grok is
+  # still in plan mode (`HalC2.Acp.GrokPlan`).
+  defp plan_file(%{turn: %{ids: %{driver: driver}}} = state, call) do
+    markdown =
+      if HalC2.Acp.driver(driver) == "grok",
+        do: HalC2.Acp.GrokPlan.markdown(call, Map.get(state, :plan_prefixes, []))
+
+    if markdown in [nil, ""] do
+      state
+    else
+      state =
+        state |> flush() |> ensure_item(@plan_file, :plan) |> finish_plan(@plan_file, markdown)
+
+      %{state | items: Map.update!(state.items, @plan_file, &Map.put(&1, :markdown, markdown))}
+    end
+  end
+
+  defp plan_file(state, _call), do: state
 
   # The subagent's own session streams under another session id: its answer goes to
   # its child thread. Updates for a session no subagent has named yet wait for it.
@@ -3766,8 +3797,9 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
-  # The labels chosen for each question, by question text; free text is "Other"
-  # with the text as a note.
+  # The labels chosen for each question, by question text, in the order Grok asked;
+  # free text is "Other" with the text as a note. The chosen option's preview goes
+  # back too, for a question that takes a single answer.
   defp xai_answers(params, answers) do
     answered =
       for question <- params["questions"] || [],
@@ -3776,21 +3808,40 @@ defmodule HalC2.Acp.ThreadRuntime do
               answers[question["id"] || question["question"]] || answers[question["question"]]
             ),
           values != [] do
-        labels = for option <- question["options"] || [], do: option["label"]
-        {chosen, notes} = Enum.split_with(values, &(&1 in labels))
-        {question["question"], if(chosen == [], do: ["Other"], else: chosen), notes}
+        options = Map.new(question["options"] || [], &{&1["label"], &1})
+        {chosen, notes} = Enum.split_with(values, &Map.has_key?(options, &1))
+
+        preview =
+          if question["multiSelect"] != true,
+            do:
+              Enum.find_value(chosen, fn label ->
+                case String.trim(options[label]["preview"] || "") do
+                  "" -> nil
+                  text -> text
+                end
+              end)
+
+        annotation =
+          %{}
+          |> then(&if(preview, do: Map.put(&1, "preview", preview), else: &1))
+          |> then(&if(notes != [], do: Map.put(&1, "notes", Enum.join(notes, "\n")), else: &1))
+
+        {question["question"], if(chosen == [], do: ["Other"], else: chosen), annotation}
       end
 
     annotations =
-      for {text, _chosen, [_ | _] = notes} <- answered,
-          into: %{},
-          do: {text, %{"notes" => Enum.join(notes, "\n")}}
+      for {text, _chosen, annotation} <- answered, annotation != %{}, do: {text, annotation}
 
     %{
       "outcome" => "accepted",
-      "answers" => Map.new(answered, fn {text, chosen, _} -> {text, chosen} end)
+      "answers" => HalC2.Acp.Ordered.new(for {text, chosen, _} <- answered, do: {text, chosen})
     }
-    |> then(&if(annotations == %{}, do: &1, else: Map.put(&1, "annotations", annotations)))
+    |> then(
+      &if(annotations == [],
+        do: &1,
+        else: Map.put(&1, "annotations", HalC2.Acp.Ordered.new(annotations))
+      )
+    )
   end
 
   defp answer_values(values) when is_list(values),
