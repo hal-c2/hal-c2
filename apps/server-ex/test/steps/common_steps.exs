@@ -94,6 +94,10 @@ defmodule HalC2.Steps.Common do
     %{context | mc: Mc.restart(context.mc), clients: %{}}
   end
 
+  step "the MC restarted", context do
+    %{context | mc: Mc.restart(context.mc), clients: %{}}
+  end
+
   step "the MC starts again", context do
     %{context | mc: Mc.restart(context.mc), clients: %{}}
   end

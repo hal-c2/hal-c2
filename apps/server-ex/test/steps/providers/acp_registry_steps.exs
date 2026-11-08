@@ -1243,8 +1243,28 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
 
   step "{string} reports no models", %{args: [_]} = context do
     ctx = acme(context, %{"models" => []})
-    assert Acp.check("acme")["models"] == []
+    assert [%{"slug" => "default"}] = Acp.check("acme")["models"]
     ctx |> watch_providers() |> Map.put(:model_instance, "acme")
+  end
+
+  step "one model {string} is offered", %{args: [name]} = context do
+    assert [%{"slug" => "default", "name" => ^name, "isDefault" => true}] =
+             context.entry["models"]
+
+    context
+  end
+
+  step "for an agent that reports models, the one it is currently using is marked as the default",
+       context do
+    Acp.control(context, "acme", %{"models" => [["acme/fast", "Fast"], ["acme/smart", "Smart"]]})
+    models = Acp.check("acme")["models"]
+
+    assert [
+             %{"slug" => "acme/fast", "isDefault" => true},
+             %{"slug" => "acme/smart", "isDefault" => false}
+           ] = models
+
+    context
   end
 
   step "the user adds the custom model {string}", %{args: [slug]} = context do
@@ -1383,6 +1403,475 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     ctx = context |> acme() |> run_on_acme("read file")
     Acp.await_runs(thread(ctx), 1)
     ctx
+  end
+
+  step "{string} asks the client for the file {string} without a full path",
+       %{args: [_, path]} = context do
+    {error, ctx} = ask_client(context, "fs/read_text_file", %{"path" => path})
+    # Read by the shared "the request is refused with {string}".
+    Map.put(ctx, :reply, {:error, error["message"], error})
+  end
+
+  step "{string} asks for the output of the terminal {string} that was never created",
+       %{args: [_, terminal]} = context do
+    {error, ctx} = ask_client(context, "terminal/output", %{"terminalId" => terminal})
+
+    Map.put(ctx, :refused_with, fn ctx, message ->
+      assert error["message"] == message
+      ctx
+    end)
+  end
+
+  # The fake sends one client request and ends its turn; what the MC answered, from its log.
+  defp ask_client(context, method, params) do
+    ctx = context |> acme() |> run_on_acme("ask #{method} #{JSON.encode!(params)}")
+    Acp.await_runs(thread(ctx), 1)
+
+    %{"error" => error} =
+      Enum.find(Acp.log(ctx, "acme"), &(&1["event"] == "response" and &1["id"] =~ "ask-"))
+
+    {error, ctx}
+  end
+
+  # The client's answer to one request "acme" sends it, through the fake's "ask".
+  defp ask_answer(context, method, params) do
+    ctx = context |> acme() |> run_on_acme("ask #{method} #{JSON.encode!(params)}")
+    Acp.await_runs(thread(ctx), 1)
+    answer = Enum.find(Acp.log(ctx, "acme"), &(&1["event"] == "response" and &1["id"] =~ "ask-"))
+    Map.put(ctx, :answer, answer)
+  end
+
+  step "{string} asks the client for 20 lines of a workspace file starting at line 100",
+       %{args: [_]} = context do
+    ctx = acme(context)
+    path = Path.join(World.project(ctx).root, "long.txt")
+    File.write!(path, Enum.map_join(1..200, "\n", &"line #{&1}"))
+    ask_answer(ctx, "fs/read_text_file", %{"path" => path, "line" => 100, "limit" => 20})
+  end
+
+  step "it receives lines 100 to 119", context do
+    assert context.answer["result"]["content"] == Enum.map_join(100..119, "\n", &"line #{&1}")
+    context
+  end
+
+  step "{string} sends the client a request {string} that HAL-C2 does not know",
+       %{args: [_, method]} = context do
+    ask_answer(context, method, %{})
+  end
+
+  step "{string} is answered with the error {string}", %{args: [_, message]} = context do
+    assert %{"code" => -32601, "message" => ^message} = context.answer["error"]
+    context
+  end
+
+  # --- what an agent's updates become in the thread ----------------------------------
+
+  # Runs one turn in which "acme" sends `updates`, as given.
+  defp send_updates(context, updates) do
+    ctx = context |> acme() |> run_on_acme("updates " <> JSON.encode!(updates))
+    Acp.await_runs(thread(ctx), 1)
+    ctx
+  end
+
+  # The thread's items for the agent's tool call "t1".
+  defp items(context) do
+    Acp.stream(thread(context))
+    |> HalC2.StreamState.list("turn-item")
+    |> Enum.filter(&match?(%{"nativeItemRef" => %{"nativeId" => "t1"}}, &1))
+  end
+
+  defp message_chunk(content),
+    do: %{"sessionUpdate" => "agent_message_chunk", "messageId" => "m1", "content" => content}
+
+  step "a tool of {string} is running", %{args: [_]} = context do
+    running = %{
+      "sessionUpdate" => "tool_call",
+      "toolCallId" => "t1",
+      "title" => "Search the docs",
+      "kind" => "search",
+      "status" => "in_progress"
+    }
+
+    Map.put(context, :tool_updates, [running])
+  end
+
+  step "{string} reports the tool call as cancelled", %{args: [_]} = context do
+    cancelled = %{
+      "sessionUpdate" => "tool_call_update",
+      "toolCallId" => "t1",
+      "status" => "cancelled"
+    }
+
+    send_updates(context, context.tool_updates ++ [cancelled])
+  end
+
+  step "the tool stops showing as running", context do
+    assert [%{"status" => status}] = items(context)
+    refute status in ["running", "inProgress", "in_progress", "pending"]
+    context
+  end
+
+  step "it is not marked completed when the turn ends", context do
+    assert [%{"status" => "failed"}] = items(context)
+    context
+  end
+
+  step "{string} sends a single piece of text longer than 65,536 characters",
+       %{args: [_]} = context do
+    ctx = context |> acme() |> run_on_acme("say 70000 characters")
+    Acp.await_runs(thread(ctx), 1)
+    ctx
+  end
+
+  step "the thread receives it cut to 65,536 characters in that update", context do
+    assert Acp.assistant_text(thread(context)) == String.duplicate("x", 65_536)
+    context
+  end
+
+  @inline_bytes Base.encode64(String.duplicate("\xFF\x00secret-bytes", 300))
+
+  step "{string} sends an image, audio clip or binary resource inline", %{args: [_]} = context do
+    send_updates(context, [
+      message_chunk(%{"type" => "image", "mimeType" => "image/png", "data" => @inline_bytes}),
+      message_chunk(%{"type" => "audio", "mimeType" => "audio/wav", "data" => @inline_bytes}),
+      message_chunk(%{
+        "type" => "resource",
+        "resource" => %{
+          "uri" => "file:///blob.bin",
+          "mimeType" => "application/octet-stream",
+          "blob" => @inline_bytes
+        }
+      })
+    ])
+  end
+
+  step "the thread keeps a short placeholder naming its type and not the bytes", context do
+    text = Acp.assistant_text(thread(context))
+    assert text =~ "[ACP image (image/png)]"
+    assert text =~ "[ACP audio (audio/wav)]"
+    assert text =~ "[ACP binary resource (application/octet-stream)"
+    refute text =~ String.slice(@inline_bytes, 0, 16)
+    assert String.length(text) < 300
+    context
+  end
+
+  step "{string} sends content of the unknown kind {string}", %{args: [_, kind]} = context do
+    send_updates(context, [message_chunk(%{"type" => kind, "data" => "3d"})])
+  end
+
+  step "the thread shows {string}", %{args: [text]} = context do
+    assert Acp.assistant_text(thread(context)) =~ text
+    context
+  end
+
+  step "{string} sends a text part whose text is null, then the text {string}",
+       %{args: [_, text]} = context do
+    send_updates(context, [
+      message_chunk(%{"type" => "text", "text" => nil}),
+      message_chunk(%{"type" => "text", "text" => text})
+    ])
+  end
+
+  step "the thread does not show {string}", %{args: [text]} = context do
+    refute Acp.assistant_text(thread(context)) =~ text
+    context
+  end
+
+  step "{string} sends a session update of the unknown kind {string}",
+       %{args: [_, kind]} = context do
+    send_updates(context, [%{"sessionUpdate" => kind, "data" => "3d"}])
+  end
+
+  step "the work log shows {string}", %{args: [text]} = context do
+    assert Acp.stream(thread(context))
+           |> HalC2.StreamState.list("turn-item")
+           |> Enum.any?(&(&1["type"] == "system_notice" and &1["title"] == text))
+
+    context
+  end
+
+  defp turn_items(context) do
+    Acp.stream(thread(context))
+    |> HalC2.StreamState.list("turn-item")
+    |> Enum.filter(&(&1["type"] in ["assistant_message", "reasoning", "command_execution"]))
+    |> Enum.sort_by(& &1["ordinal"])
+  end
+
+  defp tool_call(id, fields),
+    do: Map.merge(%{"sessionUpdate" => "tool_call", "toolCallId" => id}, fields)
+
+  step "{string} streams its thoughts and then its answer in one turn", context do
+    send_updates(context, [
+      %{
+        "sessionUpdate" => "agent_thought_chunk",
+        "content" => %{"type" => "text", "text" => "Weighing the options."}
+      },
+      message_chunk(%{"type" => "text", "text" => "The answer is 42."})
+    ])
+  end
+
+  step "the thoughts are shown as the turn's thinking", context do
+    assert [%{"text" => "Weighing the options."}] =
+             Enum.filter(turn_items(context), &(&1["type"] == "reasoning"))
+
+    context
+  end
+
+  step "they are not part of the answer", context do
+    assert Acp.assistant_text(thread(context)) == "The answer is 42."
+    context
+  end
+
+  step "{string} wrote some text and then ran a tool", context do
+    Map.put(context, :updates, [
+      message_chunk(%{"type" => "text", "text" => "First I look."}),
+      tool_call("t1", %{
+        "title" => "ls",
+        "kind" => "execute",
+        "status" => "completed",
+        "rawInput" => %{"command" => "ls"}
+      })
+    ])
+  end
+
+  step "{string} writes more text", context do
+    send_updates(
+      context,
+      context.updates ++
+        [
+          message_chunk(%{"type" => "text", "text" => "   "}),
+          message_chunk(%{"type" => "text", "text" => "Then I answer."})
+        ]
+    )
+  end
+
+  step "the thread shows the first text, the tool and the later text as three items in that order",
+       context do
+    assert [
+             %{"type" => "assistant_message", "text" => "First I look."},
+             %{"type" => "command_execution", "input" => "ls"},
+             %{"type" => "assistant_message", "text" => later}
+           ] = turn_items(context)
+
+    Map.put(context, :later, later)
+  end
+
+  step "text that is only spaces does not start a new message", context do
+    assert String.trim_leading(context.later) == "Then I answer."
+    context
+  end
+
+  defp run_command(context, input, title \\ "Run") do
+    call = %{"title" => title, "kind" => "execute", "status" => "completed"}
+    call = if input, do: Map.put(call, "rawInput", input), else: call
+    send_updates(context, [tool_call("t1", call)])
+  end
+
+  step(
+    "{string} reports a tool that carries the command {string} as text",
+    %{args: [_, command]} = context,
+    do: run_command(context, %{"command" => command})
+  )
+
+  step(
+    "{string} reports a tool that carries the command as the list {string} and {string}",
+    %{args: [_ | argv]} = context,
+    do: run_command(context, %{"command" => argv})
+  )
+
+  step(
+    "{string} reports a tool that carries the program {string} and the arguments {string} and {string}",
+    %{args: [_, program | args]} = context,
+    do: run_command(context, %{"command" => program, "args" => args})
+  )
+
+  step(
+    "{string} reports a tool that carries only the program {string}",
+    %{args: [_, program]} = context,
+    do: run_command(context, %{"command" => program})
+  )
+
+  step(
+    "{string} reports a tool that names the command only between backticks in its title",
+    context,
+    do: run_command(context, nil, "Run `npm test`")
+  )
+
+  step "the tool is shown with the command {string}", %{args: [command]} = context do
+    assert [%{"input" => ^command}] = items(context)
+    context
+  end
+
+  step "{string} links a resource in its answer", context do
+    send_updates(context, [
+      message_chunk(%{
+        "type" => "resource_link",
+        "title" => "Spec",
+        "name" => "spec.md",
+        "description" => "the design",
+        "uri" => "https://example.com/spec.md"
+      }),
+      message_chunk(%{"type" => "text", "text" => "\n"}),
+      message_chunk(%{
+        "type" => "resource_link",
+        "name" => "notes.md",
+        "uri" => "data:text/plain;base64,aGk="
+      }),
+      message_chunk(%{"type" => "text", "text" => "\n"}),
+      message_chunk(%{"type" => "resource_link"})
+    ])
+  end
+
+  step "the answer shows the resource's title, or its name, or \"resource\" when it has neither",
+       context do
+    text = Acp.assistant_text(thread(context))
+    assert text =~ "Spec"
+    assert text =~ "notes.md"
+    assert text |> String.split("\n") |> List.last() == "resource"
+    refute text =~ "spec.md:"
+    context
+  end
+
+  step "its description follows the name when it has one", context do
+    assert Acp.assistant_text(thread(context)) =~ "Spec: the design"
+    context
+  end
+
+  step "its address is shown on the next line, unless the address carries the data itself",
+       context do
+    text = Acp.assistant_text(thread(context))
+    assert text =~ "Spec: the design\nhttps://example.com/spec.md"
+    refute text =~ "data:"
+    context
+  end
+
+  step("a thread runs on one session of {string}", %{args: [_]} = context, do: context)
+
+  step "{string} sends updates for a session it started by itself", context do
+    send_updates(context, [
+      Map.put(
+        message_chunk(%{"type" => "text", "text" => "not for this thread"}),
+        "_session",
+        "sess-other"
+      ),
+      message_chunk(%{"type" => "text", "text" => "for this thread"})
+    ])
+  end
+
+  step "the thread does not show them", context do
+    assert Acp.assistant_text(thread(context)) == "for this thread"
+    context
+  end
+
+  step "{string} reports a tool's output as a list of whole numbers instead of text", context do
+    bytes = :binary.bin_to_list("  héllo  ")
+
+    send_updates(context, [
+      tool_call("t1", %{
+        "title" => "Run",
+        "kind" => "execute",
+        "status" => "completed",
+        "rawInput" => %{"command" => "echo"},
+        "rawOutput" => %{"output" => bytes}
+      })
+    ])
+  end
+
+  step "the output is shown as the text those bytes spell", context do
+    assert [%{"output" => output}] = items(context)
+    assert String.trim(output) == "héllo"
+    Map.put(context, :output, output)
+  end
+
+  step "its leading and trailing spaces are kept", context do
+    assert context.output == "  héllo  "
+    context
+  end
+
+  defp report_usage(context, usage) do
+    send_updates(context, [
+      Map.merge(%{"sessionUpdate" => "usage_update", "used" => 1_200}, usage)
+    ])
+  end
+
+  defp context_meter(context) do
+    Acp.stream(thread(context))
+    |> HalC2.StreamState.list("provider-thread")
+    |> hd()
+    |> Map.fetch!("contextUsage")
+  end
+
+  step("{string} reports tokens used and a window size of 0", context,
+    do: report_usage(context, %{"size" => 0})
+  )
+
+  step("{string} reports tokens used, a window size and a cost in a currency", context,
+    do:
+      report_usage(context, %{
+        "size" => 200_000,
+        "cost" => %{"amount" => 0.42, "currency" => "USD"}
+      })
+  )
+
+  step("{string} reports a cost without a currency", context,
+    do: report_usage(context, %{"size" => 200_000, "cost" => %{"amount" => 0.42}})
+  )
+
+  step "the context meter shows the tokens used, with no window size", context do
+    assert context_meter(context) == %{"usedTokens" => 1_200}
+    context
+  end
+
+  step "the context meter shows the cost with its currency as well", context do
+    assert %{
+             "usedTokens" => 1_200,
+             "maxTokens" => 200_000,
+             "cost" => %{"amount" => 0.42, "currency" => "USD"}
+           } =
+             context_meter(context)
+
+    context
+  end
+
+  step "the context meter shows no cost", context do
+    usage = context_meter(context)
+    assert usage["usedTokens"] == 1_200
+    refute Map.has_key?(usage, "cost")
+    context
+  end
+
+  step "the instance's registry agent has not been chosen", context do
+    ctx = acme(context)
+    Acp.add_registry_instance("acme", nil)
+    ctx
+  end
+
+  step "the instance's registry agent is no longer in the registry", context do
+    ctx = acme(context)
+    Acp.publish(ctx, [Acp.acme_agent(ctx, id: "other")])
+  end
+
+  step "the instance's registry agent has no build for this machine", context do
+    ctx = acme(context)
+    Acp.publish(ctx, [agent(ctx, "acme", "Acme", elsewhere())])
+  end
+
+  step "the instance's registry agent runs through npx and npm is missing", context do
+    ctx = acme(context)
+    Acp.publish(ctx, [agent(ctx, "acme", "Acme", npx("@acme/agent@2.0.0"))])
+    # `AcpFixtures.ready/1` puts PATH back after the scenario.
+    empty = Path.join(ctx.mc.home, "empty-bin")
+    File.mkdir_p!(empty)
+    System.put_env("PATH", empty)
+    Map.put(ctx, :runners_removed, true)
+  end
+
+  step "the instance is shown with {string}", %{args: [message]} = context do
+    assert %{"status" => "error", "availability" => "unavailable", "message" => ^message} =
+             context.entry
+
+    refute Map.has_key?(context.entry, "unready")
+    context
   end
 
   step "the request is refused rather than left waiting", context do
@@ -1574,6 +2063,29 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
              Enum.find(context.providers, &(&1["instanceId"] == "acme"))
 
     context
+  end
+
+  step "a thread title or a commit message is asked of the registry instance {string}",
+       %{args: [id]} = context do
+    ctx = acme(context)
+
+    World.update_settings(ctx, %{
+      "textGenerationModelSelection" => %{"instanceId" => id, "model" => "default"}
+    })
+
+    cwd = ctx.mc.home
+
+    asked = [
+      HalC2.TextGeneration.thread_title(cwd, "Fix the parser"),
+      HalC2.TextGeneration.commit_message(cwd, "main", "M README.md", "diff")
+    ]
+
+    Map.put(ctx, :refused_with, fn ctx, message ->
+      assert Enum.all?(asked, &(&1 == {:error, message}))
+      # Nothing was asked of the agent, nor of another provider in its place.
+      assert Acp.requests(ctx, "acme", "session/prompt") == []
+      ctx
+    end)
   end
 
   # --- model providers -------------------------------------------------------------------
@@ -3755,8 +4267,172 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
   end
 
   step "the user lists its model providers", context do
-    {providers, ctx} = model_providers(context)
-    Map.put(ctx, :listed, providers)
+    ctx = session_settings(context, "lists its model providers")
+
+    case ctx.reply do
+      {:ok, %{"providers" => providers}} -> Map.put(ctx, :listed, providers)
+      _ -> ctx
+    end
+  end
+
+  # --- session settings ------------------------------------------------------------------
+
+  # The session settings' requests of an agent: the RPC and the method it sends.
+  @session_settings %{
+    "lists the agent's sessions" => {"server.listAcpRegistrySessions", %{}},
+    "deletes one of its sessions" => {"server.deleteAcpRegistrySession", %{"sessionId" => "s-1"}},
+    "lists its model providers" => {"server.listAcpRegistryProviders", %{}},
+    "changes a model provider" =>
+      {"server.setAcpRegistryProvider",
+       %{"providerId" => "openai", "apiType" => "openai", "baseUrl" => "https://p.acme.test/v1"}},
+    "disables a model provider" =>
+      {"server.disableAcpRegistryProvider", %{"providerId" => "openai"}},
+    "signs out from session settings" => {"server.logoutAcpRegistry", %{}}
+  }
+
+  @session_methods %{
+    "lists the agent's sessions" => "session/list",
+    "deletes one of its sessions" => "session/delete",
+    "lists its model providers" => "providers/list",
+    "changes a model provider" => "providers/set",
+    "disables a model provider" => "providers/disable",
+    "signs out from session settings" => "logout"
+  }
+
+  # Read by the shared "the user is told {string}".
+  defp session_settings(context, action) do
+    {rpc, input} = Map.fetch!(@session_settings, action)
+    ctx = if Map.has_key?(context, :auth_instance), do: context, else: acme(context)
+    input = Map.put(input, "instanceId", "acme")
+
+    input =
+      if rpc == "server.logoutAcpRegistry",
+        do: input,
+        else: Map.put(input, "projectId", World.project(ctx).id)
+
+    {reply, ctx} = World.call(ops(ctx), rpc, input, "ops")
+    Map.put(ctx, :reply, reply)
+  end
+
+  step ~r/^the user (?<action>lists the agent's sessions|deletes one of its sessions|lists its model providers|changes a model provider|disables a model provider|signs out from session settings) and "acme" (?<how>does not answer within 60 seconds|answers with an error)$/,
+       %{args: [action, how]} = context do
+    method = Map.fetch!(@session_methods, action)
+
+    control =
+      if how =~ "answers", do: %{"fail" => [method]}, else: %{"silent" => [method]}
+
+    Application.put_env(:hal_c2, :acp_session_timeout_ms, 300)
+    ctx = context |> acme(control) |> session_settings(action)
+    # The agent was asked, and gave up on.
+    assert [_] = Acp.requests(ctx, "acme", method)
+    ctx
+  end
+
+  defp session(i, fields \\ %{}),
+    do: Map.merge(%{"sessionId" => "s-#{i}", "cwd" => "/work/s-#{i}", "title" => "S#{i}"}, fields)
+
+  step "{string} has more sessions than it returns in one answer", %{args: [_]} = context do
+    acme(context, %{"sessions" => for(i <- 1..300, do: session(i)), "pageSize" => 200})
+  end
+
+  step "the user lists the agent's sessions", context do
+    session_settings(context, "lists the agent's sessions")
+  end
+
+  step "at most 256 sessions arrive with a marker for the next page", context do
+    assert {:ok, %{"sessions" => sessions, "nextCursor" => cursor}} = context.reply
+    assert length(sessions) <= 256 and is_binary(cursor)
+    Map.put(context, :first_page, sessions)
+  end
+
+  step "asking with that marker returns the sessions that follow", context do
+    {:ok, %{"nextCursor" => cursor}} = context.reply
+
+    {next, ctx} =
+      World.call!(
+        ops(context),
+        "server.listAcpRegistrySessions",
+        %{"instanceId" => "acme", "projectId" => World.project(context).id, "cursor" => cursor},
+        "ops"
+      )
+
+    assert next["nextCursor"] == nil
+    ids = Enum.map(context.first_page ++ next["sessions"], & &1["sessionId"])
+    assert ids == for(i <- 1..300, do: "s-#{i}")
+    ctx
+  end
+
+  step "{string} lists a session whose id is empty and one whose folder is padded with spaces",
+       %{args: [_]} = context do
+    acme(context, %{
+      "sessions" => [
+        session(1, %{"sessionId" => ""}),
+        session(2, %{"cwd" => " /work/s-2 "}),
+        session(3, %{"title" => String.duplicate("t", 2000)}),
+        session(4)
+      ]
+    })
+  end
+
+  step "neither of them is listed", context do
+    assert {:ok, %{"sessions" => sessions}} = context.reply
+    assert Enum.map(sessions, & &1["sessionId"]) == ["s-3", "s-4"]
+    context
+  end
+
+  step "the other sessions are listed with titles cut to 1,024 characters", context do
+    {:ok, %{"sessions" => [long, short]}} = context.reply
+    assert long["title"] == String.duplicate("t", 1024)
+    assert short["title"] == "S4"
+    context
+  end
+
+  step "{string} reports a model provider whose current base address is not http or https",
+       %{args: [_]} = context do
+    acme(context, %{
+      "providers" => [
+        %{
+          "providerId" => "local",
+          "supported" => ["openai"],
+          "current" => %{"apiType" => "openai", "baseUrl" => "file:///etc/passwd"}
+        }
+      ]
+    })
+  end
+
+  step "that model provider is listed without a current setting", context do
+    assert [%{"providerId" => "local", "current" => nil}] = context.listed
+    context
+  end
+
+  step "{string} of generation 2 advertises a sign-in method of the unknown kind {string}",
+       %{args: [_, kind]} = context do
+    holo = %{"id" => "holo", "name" => "Hologram", "type" => kind}
+    ctx = acme(context, %{"protocolVersion" => 2, "methods" => [@browser, holo]})
+    {:ok, methods} = HalC2.Acp.Auth.methods("acme")
+    Map.put(ctx, :methods, methods)
+  end
+
+  step "that method is not offered", context do
+    refute Enum.any?(context.methods, &(&1["id"] == "holo"))
+    context
+  end
+
+  step "it is not offered as the agent's own sign-in either", context do
+    assert [%{"id" => "acme-login", "type" => "agent"}] = context.methods
+    context
+  end
+
+  step "{string} does not offer model provider configuration", %{args: [_]} = context do
+    acme(context, %{"providerConfig" => false})
+  end
+
+  step "{string} does not offer signing out", %{args: [_]} = context do
+    acme(context, %{"logout" => false})
+  end
+
+  step "the user signs out from session settings", context do
+    session_settings(context, "signs out from session settings")
   end
 
   step "the first 64 are listed", context do
@@ -4291,6 +4967,173 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     assert Enum.all?(names, &(String.length(&1) <= 128))
     assert Enum.all?(descriptions, &(String.length(&1) <= 1024))
     assert Enum.any?(descriptions, &(String.length(&1) == 1024))
+    context
+  end
+
+  # --- older ACP session modes ----------------------------------------------------------
+
+  step "{string} offers the modes {string} and {string} and no session options",
+       %{args: [_, a, b]} = context do
+    ctx = acme(context, %{"legacyModes" => [a, b]})
+    assert Acp.check("acme")["status"] == "ready"
+    ctx
+  end
+
+  step "one option {string} offers {string} and {string}", %{args: [name, a, b]} = context do
+    assert [%{"id" => "mode", "type" => "select", "options" => choices}] =
+             Enum.filter(context.descriptors, &(&1["label"] == name))
+
+    assert Enum.map(choices, & &1["id"]) == [a, b]
+    context
+  end
+
+  step "{string} needs no sign-in and used to report {string} and {string}",
+       %{args: [_, a, b]} = context do
+    ctx = acme(context, %{"models" => [[a, a], [b, b]]})
+    assert %{"status" => "ready"} = Acp.check("acme")
+    assert offered_models() == [a, b]
+    ctx
+  end
+
+  step "the MC checks the instance and {string} reports only {string}",
+       %{args: [_, a]} = context do
+    Acp.control(context, "acme", %{"models" => [[a, a]]})
+    assert %{"status" => "ready"} = Acp.check("acme")
+    context
+  end
+
+  step "only {string} is offered", %{args: [a]} = context do
+    assert offered_models() == [a]
+    context
+  end
+
+  step "a check that fails leaves the offered models as they were", context do
+    before = offered_models()
+    Acp.control(context, "acme", %{"sessionError" => "acme is down"})
+    refute Acp.check("acme")["status"] == "ready"
+    assert offered_models() == before
+    context
+  end
+
+  defp offered_models, do: for(%{"slug" => slug} <- Acp.provider("acme")["models"], do: slug)
+
+  # --- the wire --------------------------------------------------------------------------
+
+  # An agent that answers the first request with its id as text, then says which id
+  # it was sent; the answer reaches the connection first.
+  @text_id_agent """
+  import json, sys
+  msg = json.loads(sys.stdin.readline())
+  print(json.dumps({"jsonrpc": "2.0", "id": str(msg["id"]), "result": {}}), flush=True)
+  print(json.dumps({"jsonrpc": "2.0", "method": "sent", "params": {"id": msg["id"]}}), flush=True)
+  sys.stdin.read()
+  """
+
+  step "the MC sent {string} a request with the id 1", %{args: [_]} = context do
+    script = Path.join(context.mc.home, "text_id_agent.py")
+    File.write!(script, @text_id_agent)
+
+    {:ok, conn} =
+      HalC2.JsonRpc.Connection.start_link(cmd: ["python3", script], handler: self(), dialect: :v2)
+
+    reqids = HalC2.JsonRpc.Connection.request(conn, "ping", %{}, :ping, :gen_server.reqids_new())
+    Map.merge(context, %{wire: conn, reqids: reqids})
+  end
+
+  step "{string} sends an answer with the id {string} as text", %{args: [_, "1"]} = context do
+    conn = context.wire
+    assert_receive {:json_rpc, ^conn, {:notification, "sent", %{"id" => 1}}}, 10_000
+    context
+  end
+
+  step "the request is still waiting", context do
+    # The text answer came before "sent", from the same process: had it settled the
+    # request, its reply would be here already.
+    assert :gen_server.receive_response(context.reqids, 0, true) == :timeout
+    HalC2.JsonRpc.Connection.stop(context.wire)
+    context
+  end
+
+  step "an ACP agent sends its modes with one description null", context do
+    acme(context, %{
+      "legacyModes" => ["ask", "code", "debug"],
+      "modeDescriptions" => %{"ask" => "Asks before it changes anything", "code" => nil}
+    })
+    |> tap(fn _ -> assert Acp.check("acme")["status"] == "ready" end)
+  end
+
+  step "the session starts", context do
+    ctx = run_on_acme(context, "hello")
+    Acp.await_runs(thread(ctx), 1)
+    ctx
+  end
+
+  step "all its modes are offered", context do
+    assert %{"options" => choices} = descriptor(model_options(), "mode")
+    assert Enum.map(choices, & &1["id"]) == ["ask", "code", "debug"]
+    assert Acp.assistant_text(thread(context)) =~ "Hello from acme"
+    context
+  end
+
+  step "an agent with a single mode gets no such option", context do
+    Acp.control(context, "acme", %{"legacyModes" => ["ask"]})
+    assert Acp.check("acme")["status"] == "ready"
+    refute descriptor(model_options(), "mode")
+    context
+  end
+
+  step "{string} offers the same choices as its modes and as a thinking-level session option",
+       %{args: [_]} = context do
+    with_session_options(
+      context,
+      [select_option("thinking", "Thinking", ["low", "high"], %{"category" => "thought_level"})],
+      %{"legacyModes" => ["low", "high"]}
+    )
+  end
+
+  step "the choices are offered once, under the session option", context do
+    assert [%{"id" => "thinking", "options" => choices}] =
+             Enum.filter(context.descriptors, fn d ->
+               Enum.any?(d["options"] || [], &(&1["id"] == "low"))
+             end)
+
+    assert Enum.map(choices, & &1["id"]) == ["low", "high"]
+    context
+  end
+
+  step "no separate {string} option is added", %{args: [name]} = context do
+    refute Enum.any?(context.descriptors, &(&1["label"] == name or &1["id"] == "mode"))
+    context
+  end
+
+  step "{string} switches its session to the mode {string} by itself",
+       %{args: [_, mode]} = context do
+    ctx = run_on_acme(context, "switch yourself to #{mode}")
+    assert %{"status" => "completed"} = List.last(Acp.await_runs(thread(ctx), 1))
+    assert Acp.assistant_text(thread(ctx)) =~ "mode: #{mode}"
+    ctx
+  end
+
+  step "the user sends {string} a message in the mode {string}", %{args: [_, mode]} = context do
+    send_with_options(context, %{"mode" => mode})
+  end
+
+  step "{string} is asked to switch its session to the mode {string}",
+       %{args: [_, mode]} = context do
+    assert %{"status" => "completed"} = context.last_run
+
+    assert [%{"modeId" => ^mode}] =
+             for(
+               %{"params" => params} <- Acp.requests(context, "acme", "session/set_mode"),
+               do: params
+             )
+
+    assert config_sets(context, "mode") == []
+    context
+  end
+
+  step "its {string} option now holds {string}", %{args: [name, value]} = context do
+    assert %{"currentValue" => ^value} = Enum.find(model_options(), &(&1["label"] == name))
     context
   end
 

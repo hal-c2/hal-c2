@@ -110,8 +110,7 @@ defmodule HalC2.Steps.Preview.Remote do
   step "the client watches the second MC's local servers", context do
     client = World.client(context) |> watch(%{"type" => "localServers"}, context.peer)
 
-    {frame, client} =
-      Mc.await(client, &(&1["t"] == "localServers" and &1["id"] == @sub), 10_000)
+    {frame, client} = Mc.await_local_servers(client, @sub, context.peer)
 
     context
     |> World.put_client("default", client)
@@ -132,7 +131,17 @@ defmodule HalC2.Steps.Preview.Remote do
     refute Enum.any?(context.servers, &(&1["port"] == context.first_port))
     # This MC's own suggestions do include it.
     Mc.ensure(HalC2.LocalServers)
-    assert {:ok, %{"servers" => servers}} = HalC2.LocalServers.subscribe(self())
+    # The reply is what the last scan found; the change a scan now brings follows it.
+    assert {:ok, %{"servers" => replied}} = HalC2.LocalServers.subscribe(self())
+
+    servers =
+      if Enum.any?(replied, &(&1["port"] == context.first_port)) do
+        replied
+      else
+        assert_receive {:hal_c2_local_servers, _, %{"servers" => found}}, 10_000
+        found
+      end
+
     assert Enum.any?(servers, &(&1["port"] == context.first_port))
     context
   end
