@@ -872,4 +872,490 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
     assert HalC2.Checkpoint.exists?(context.cwd, "refs/hal-c2/test/flaky")
     context
   end
+
+  # --- paths that start with a space -----------------------------------------------------
+
+  step "the user has added {string} to {string}", %{args: [path, title]} = context do
+    assert World.project(context, title).root == context.cwd
+    write_and_add(context, path)
+    Map.put(context, :listed, %{path: path, previous: nil})
+  end
+
+  step "it lists {string} with its leading space", %{args: [path]} = context do
+    assert path == context.listed.path
+    assert Enum.any?(status(context)["workingTree"]["files"], &(&1["path"] == path))
+    context
+  end
+
+  step "a git action given {string} acts on that file, not on {string}",
+       %{args: [path, other]} = context do
+    {events, context} =
+      World.git_action(context, context.cwd, "commit", %{
+        "commitMessage" => "Take the file",
+        "filePaths" => [path]
+      })
+
+    assert List.last(events)["kind"] == "action_finished"
+
+    committed =
+      context.cwd
+      |> World.git!(~w(show --name-only --format=%x00 -z HEAD))
+      |> String.split(<<0>>, trim: true)
+      |> Enum.map(&String.trim_leading(&1, "\n"))
+
+    assert committed == [path]
+    refute other in committed
+    context
+  end
+
+  # --- what a branch tracks ----------------------------------------------------------------
+
+  step "the repository also has a local branch named {string}", %{args: [name]} = context do
+    git(context, ["branch", name, "HEAD"])
+    record_git(context)
+  end
+
+  step "the upstream is {string} on the remote {string}",
+       %{args: [upstream, remote]} = context do
+    assert HalC2.Git.upstream(context.cwd, git(context, ~w(branch --show-current))) ==
+             %{remote: remote, ref: upstream}
+
+    # The refresh fetched the remote that was named, not "remotes".
+    calls = File.read!(context.git_log)
+    assert calls =~ "fetch --quiet --no-tags #{remote}\n"
+    context
+  end
+
+  step "it reports 1 commit ahead", context do
+    assert status(context)["aheadCount"] == 1
+    context
+  end
+
+  step "pushing {string} keeps {string} as its base", %{args: [branch, upstream]} = context do
+    {events, _context} = World.git_action(context, context.cwd, "push")
+    assert %{"push" => %{"upstreamBranch" => ^upstream}} = List.last(events)["result"] || %{}
+    assert git(context, ~w(branch --show-current)) == branch
+    :ok
+  end
+
+  step "{string} tracks the local branch {string} and is 1 commit ahead of it",
+       %{args: [branch, parent]} = context do
+    git(context, ["checkout", "-q", "-b", parent])
+    World.commit!(context.cwd, %{"part1.ts" => "1\n"}, "Part one")
+    git(context, ["checkout", "-q", "-b", branch, "--track", parent])
+    World.commit!(context.cwd, %{"part2.ts" => "1\n"}, "Part two")
+    record_git(context)
+  end
+
+  step "nothing is fetched for {string}", %{args: [_branch]} = context do
+    calls = if File.exists?(context.git_log), do: File.read!(context.git_log), else: ""
+    refute calls =~ " fetch "
+    context
+  end
+
+  # --- the base a branch is compared with ----------------------------------------------------
+
+  step "the branch {string} has no upstream and is set to merge into {string}",
+       %{args: [branch, base]} = context do
+    [remote, base_branch] = String.split(base, "/", parts: 2)
+    root = Path.dirname(context.bare)
+    other = Path.join(root, "#{remote}.git")
+    File.mkdir_p!(other)
+    World.git!(other, ["init", "-q", "--bare", "-b", "main"])
+    git(context, ["remote", "add", remote, other])
+    git(context, ["push", "-q", remote, "HEAD:refs/heads/#{base_branch}"])
+    # The other remote moves on by a commit origin's main has not seen.
+    World.commit!(context.cwd, %{"upstream-only.ts" => "1\n"}, "Only upstream has this")
+    git(context, ["push", "-q", remote, "HEAD:refs/heads/#{base_branch}"])
+    git(context, ["fetch", "-q", remote])
+    git(context, ["checkout", "-q", "--no-track", "-b", branch])
+    World.commit!(context.cwd, %{"tax.ts" => "1\n"}, "Fix tax")
+    git(context, ["config", "branch.#{branch}.gh-merge-base", base])
+    context
+  end
+
+  step "the fork's {string} is behind {string}", %{args: [fork, base]} = context do
+    assert git(context, ["rev-list", "--count", "#{fork}..#{base}"]) != "0"
+    context
+  end
+
+  step "status is read for {string} on {string}", %{args: [_title, branch]} = context do
+    assert git(context, ~w(branch --show-current)) == branch
+    {reply, context} = World.call(context, "vcs.refreshStatus", %{"cwd" => context.cwd})
+    Map.put(context, :reply, reply)
+  end
+
+  step "its changes and the commits it is ahead are counted against {string}",
+       %{args: [base]} = context do
+    branch = git(context, ~w(branch --show-current))
+    assert HalC2.Git.base_branch(context.cwd, branch) == base
+    assert status(context)["aheadCount"] == 1
+    assert status(context)["aheadOfDefaultCount"] == 1
+    context
+  end
+
+  step "commits only {string} has are not shown as the branch's changes",
+       %{args: [base]} = context do
+    branch = git(context, ~w(branch --show-current))
+    only_base = git(context, ["rev-list", "--count", "#{branch}..#{base}"])
+    assert only_base == "0"
+    assert git(context, ["rev-list", "--count", "origin/main..#{branch}"]) == "2"
+    assert status(context)["aheadOfDefaultCount"] == 1
+    context
+  end
+
+  # --- the primary remote ------------------------------------------------------------------------
+
+  step ~r/^"(?<title>[^"]+)" has (?<remotes>only the remote "[^"]+"|the remotes "[^"]+" and "[^"]+")$/,
+       %{args: [title, remotes]} = context do
+    assert World.project(context, title).root == context.cwd
+
+    for existing <- String.split(git(context, ["remote"]), "\n", trim: true),
+        do: git(context, ["remote", "remove", existing])
+
+    for [name] <- Regex.scan(~r/"([^"]+)"/, remotes, capture: :all_but_first) do
+      git(context, ["remote", "add", name, "git@github.com:acme/#{name}.git"])
+    end
+
+    context
+  end
+
+  step "the MC reads the git status of {string}", %{args: [title]} = context do
+    {reply, context} =
+      World.call(context, "vcs.refreshStatus", %{"cwd" => World.project(context, title).root})
+
+    Map.put(context, :reply, reply)
+  end
+
+  step ~r/^"(?<title>[^"]+)" (?<has>has|does not have) a primary remote$/,
+       %{args: [_title, has]} = context do
+    assert status(context)["hasPrimaryRemote"] == (has == "has")
+    context
+  end
+
+  # --- a branch named like a tag -------------------------------------------------------------------
+
+  step "the checked out branch {string} has a tag also named {string}",
+       %{args: [branch, tag]} = context do
+    git(context, ["checkout", "-q", "-b", branch])
+    World.commit!(context.cwd, %{"release.ts" => "1\n"}, "Release work")
+    git(context, ["tag", tag])
+
+    World.cli_rules(context, [
+      %{"args" => ["pr list", "--head #{branch}"], "stdout" => [pr(42, branch, "OPEN", false)]}
+    ])
+  end
+
+  step "the status names the branch {string}, not {string}", %{args: [branch, wrong]} = context do
+    assert status(context)["refName"] == branch
+    refute status(context)["refName"] == wrong
+    context
+  end
+
+  step "the review compares {string} with the default branch", %{args: [branch]} = context do
+    assert HalC2.Git.current_branch(context.cwd) == branch
+    assert HalC2.Git.base_branch(context.cwd, branch) in ["origin/main", "main"]
+    context
+  end
+
+  step "the pull request of {string} is still found", %{args: [branch]} = context do
+    assert %{"number" => 42, "headRef" => ^branch} = status(context)["pr"]
+    context
+  end
+
+  # --- thousands of changed files --------------------------------------------------------------------
+
+  step "the user has changed {int} files with long paths in {string}",
+       %{args: [count, title]} = context do
+    assert World.project(context, title).root == context.cwd
+
+    for n <- 1..count do
+      dir =
+        Path.join([
+          "packages",
+          "some-rather-long-package-name-#{rem(n, 40)}",
+          "src",
+          "components",
+          "nested"
+        ])
+
+      path = Path.join(dir, "a-component-with-a-very-long-file-name-number-#{n}.ts")
+      File.mkdir_p!(Path.join(context.cwd, dir))
+      File.write!(Path.join(context.cwd, path), "export const n = #{n}\n")
+    end
+
+    git(context, ["add", "-A"])
+    Map.put(context, :changed_count, count)
+  end
+
+  step "the status lists all {int} files with their line counts", %{args: [count]} = context do
+    files = status(context)["workingTree"]["files"]
+    assert length(files) == count
+    assert Enum.all?(files, &(&1["insertions"] == 1))
+    context
+  end
+
+  step "a commit can be prepared from them", context do
+    {events, context} =
+      World.git_action(context, context.cwd, "commit", %{"commitMessage" => "Take them all"})
+
+    assert List.last(events)["kind"] == "action_finished"
+    context
+  end
+
+  # --- a late answer for the branch that was left -----------------------------------------------------
+
+  step "a pull request lookup for {string} is still waiting", %{args: [branch]} = context do
+    git(context, ["checkout", "-q", "-b", branch])
+
+    context =
+      World.cli_rules(context, [
+        %{
+          "args" => ["pr list", "--head #{branch}"],
+          "sleep" => 1,
+          "stdout" => [pr(42, branch, "OPEN", false)]
+        }
+      ])
+
+    context = context |> shared_answers() |> show(true)
+    Application.put_env(:hal_c2, :auto_actions, false)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :auto_actions) end)
+    HalC2.Vcs.Watch.turn_ended(context.cwd)
+    %{lookup: {_ref, _again, _pid}} = :sys.get_state(watcher(context))
+    context
+  end
+
+  step "the user checks out {string} and the lookup for {string} then answers",
+       %{args: [branch, _previous]} = context do
+    git(context, ["checkout", "-q", "-b", branch])
+
+    context =
+      World.cli_rules(context, [
+        %{"args" => ["pr list", "--head #{branch}"], "stdout" => [pr(43, branch, "OPEN", false)]}
+      ])
+
+    HalC2.Vcs.Watch.refresh(context.cwd)
+    %{lookup: {_ref, _again, pid}} = :sys.get_state(watcher(context))
+    down = Process.monitor(pid)
+    assert_receive {:DOWN, ^down, :process, _, _}, 10_000
+    state = :sys.get_state(watcher(context))
+    Map.put(context, :reply, {:ok, Map.merge(state.local, state.remote)})
+  end
+
+  step "the status for {string} does not carry the pull request of {string}",
+       %{args: [_branch, _previous]} = context do
+    assert status(context)["pr"] == nil
+    context
+  end
+
+  step "a later lookup still finds the pull request of {string}", %{args: [_branch]} = context do
+    HalC2.Vcs.Watch.turn_ended(context.cwd)
+    %{lookup: {_ref, _again, pid}} = :sys.get_state(watcher(context))
+    down = Process.monitor(pid)
+    assert_receive {:DOWN, ^down, :process, _, _}, 10_000
+    assert %{"number" => 43} = :sys.get_state(watcher(context)).remote["pr"]
+    context
+  end
+
+  # --- what the user does asks the host again ---------------------------------------------------
+
+  step "status showed no pull request for {string} a moment ago", %{args: [branch]} = context do
+    git(context, ["checkout", "-q", "-b", branch])
+    World.commit!(context.cwd, %{"tax.ts" => "1\n"}, "Add tax")
+    context = context |> shared_answers() |> show(true)
+    assert context.vcs.remote["pr"] == nil
+    assert asked(context, branch) >= 1
+    context
+  end
+
+  step "the user refreshes the status", context do
+    Map.put(context, :next_status, :refresh)
+  end
+
+  step "the user pushes the branch", context do
+    {events, context} = World.git_action(context, context.cwd, "push")
+    assert List.last(events)["kind"] == "action_finished"
+    Map.put(context, :next_status, :fetch)
+  end
+
+  step "the user creates the pull request", context do
+    {events, context} = World.git_action(context, context.cwd, "create_pr")
+    assert List.last(events)["kind"] == "action_finished"
+    Map.put(context, :next_status, :fetch)
+  end
+
+  step "the next status asks the host about the branch again", context do
+    branch = git(context, ~w(branch --show-current))
+    before = asked(context, branch)
+
+    case context.next_status do
+      :refresh ->
+        {reply, _context} = World.call(context, "vcs.refreshStatus", %{"cwd" => context.cwd})
+        assert {:ok, _} = reply
+
+      :fetch ->
+        assert fetch_now(context) == nil
+    end
+
+    assert asked(context, branch) == before + 1
+    context
+  end
+
+  # --- watchers ---------------------------------------------------------------------------------------
+
+  step "a client is watching the status of {string}", %{args: [title]} = context do
+    assert World.project(context, title).root == context.cwd
+    HalC2.Vcs.Watch.subscribe(context.cwd, self())
+    context
+  end
+
+  step "the status is refreshed and nothing about the checkout changed", context do
+    HalC2.Vcs.Watch.refresh(context.cwd)
+    # The watcher has handled the refresh once it answers.
+    _ = :sys.get_state(watcher(context))
+    context
+  end
+
+  step "the client receives no update", context do
+    refute_received {:hal_c2_vcs, _, _}
+    context
+  end
+
+  step "two clients are watching the status of {string}", %{args: [title]} = context do
+    assert World.project(context, title).root == context.cwd
+    context = context |> shared_answers() |> show(true) |> upstream_moves() |> record_git()
+    parent = self()
+    cwd = context.cwd
+
+    for name <- [:one, :two] do
+      spawn_link(fn ->
+        HalC2.Vcs.Watch.subscribe(cwd, self())
+        send(parent, {:ready, name})
+
+        receive do
+          {:hal_c2_vcs, _, event} -> send(parent, {:got, name, event})
+        end
+      end)
+    end
+
+    assert_receive {:ready, :one}
+    assert_receive {:ready, :two}
+    context
+  end
+
+  step "the MC fetches {string} once", %{args: [_title]} = context do
+    fetches =
+      context.git_log
+      |> File.read!()
+      |> String.split("\n", trim: true)
+      |> Enum.filter(&(&1 =~ " fetch "))
+
+    assert length(fetches) == 1
+    context
+  end
+
+  step "both clients receive the result", context do
+    assert_receive {:got, :one, %{"_tag" => "remoteUpdated"}}
+    assert_receive {:got, :two, %{"_tag" => "remoteUpdated"}}
+    context
+  end
+
+  # --- background settings and the host ----------------------------------------------------------------
+
+  step "background work is paused for {string} by the user's background activity settings",
+       %{args: [title]} = context do
+    assert World.project(context, title).root == context.cwd
+    git(context, ["checkout", "-q", "-b", "feature/tax"])
+
+    context =
+      World.cli_rules(context, [
+        %{
+          "args" => ["pr list", "--head feature/tax"],
+          "stdout" => [pr(42, "feature/tax", "OPEN", false)]
+        }
+      ])
+
+    # No client is in front: nothing wants the checkout's status.
+    context = context |> shared_answers() |> show(false)
+    Map.put(context, :asked_before, asked(context, "feature/tax"))
+  end
+
+  step "a thread's turn ends in {string}", %{args: [title]} = context do
+    assert World.project(context, title).root == context.cwd
+    context = World.run_turn(context, context.thread_title, "write notes.md")
+    # The watcher has handled the turn's end once it answers.
+    _ = :sys.get_state(watcher(context))
+    context
+  end
+
+  step "the host is not asked about the pull request", context do
+    assert asked(context, "feature/tax") == context.asked_before
+    context
+  end
+
+  # --- a slow pull request lookup --------------------------------------------------------------------------
+
+  step "the host is slow to answer the pull request lookup for {string}",
+       %{args: [branch]} = context do
+    git(context, ["checkout", "-q", "-b", branch])
+    context = context |> shared_answers() |> show(true)
+
+    World.cli_rules(context, [
+      %{
+        "args" => ["pr list", "--head #{branch}"],
+        "sleep" => 2,
+        "stdout" => [pr(42, branch, "OPEN", false)]
+      }
+    ])
+  end
+
+  step "the user changes {string} while the lookup is still waiting", %{args: [path]} = context do
+    HalC2.Vcs.Watch.turn_ended(context.cwd)
+    %{lookup: {_ref, _again, pid}} = :sys.get_state(watcher(context))
+    File.mkdir_p!(Path.dirname(Path.join(context.cwd, path)))
+    File.write!(Path.join(context.cwd, path), "export const cart = 1\n")
+    HalC2.Vcs.Watch.refresh(context.cwd)
+    Map.put(context, :lookup_pid, pid)
+  end
+
+  step "the status shows the change to {string} before the lookup answers",
+       %{args: [path]} = context do
+    {event, context} =
+      World.await_vcs(context, fn event ->
+        event["_tag"] == "localUpdated" and
+          Enum.any?(event["local"]["workingTree"]["files"], &(&1["path"] == path))
+      end)
+
+    assert event["local"]["hasWorkingTreeChanges"]
+    # The lookup is still waiting on the host.
+    assert Process.alive?(context.lookup_pid)
+    down = Process.monitor(context.lookup_pid)
+    assert_receive {:DOWN, ^down, :process, _, _}, 10_000
+    context
+  end
+
+  # --- automatic pull of a watched checkout ----------------------------------------------------------------
+
+  # The steps for the other states are in files/removing-and-listing-projects.
+  step ~r/^"(?<title>[^"]+)" (?<state>is a clean checkout of its default branch with commits the upstream lacks|is a clean checkout of its default branch)$/,
+       %{args: [_title, state]} = context do
+    if state =~ "with commits", do: World.commit!(context.cwd, %{"mine.ts" => "1\n"}, "Only here")
+    Map.put(context, :head_before, git(context, ~w(rev-parse HEAD)))
+  end
+
+  step "the fetch finds the upstream has new commits", context do
+    context = context |> shared_answers() |> show(true) |> upstream_moves()
+    context = Map.put(context, :upstream_head, World.git!(context.bare, ~w(rev-parse main)))
+    assert {:fetch, _} = elapse(context)
+    # The watcher has handled the fetch (and any pull) once it answers.
+    _ = :sys.get_state(watcher(context))
+    context
+  end
+
+  step "{string} is fast-forwarded", %{args: [_title]} = context do
+    head = git(context, ~w(rev-parse HEAD))
+    assert head == git(context, ~w(rev-parse origin/main))
+    refute head == context.head_before
+    context
+  end
 end

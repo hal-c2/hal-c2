@@ -7,7 +7,9 @@ defmodule HalC2.VcsWatchPropTest do
   - the status it shows names the branch the checkout was on at the last read git
     could give, and a read refused for the index lock leaves the last one standing;
   - the branch its pull request was looked up for follows the checkout, so a pull
-    request found for one branch is never held for another.
+    request found for one branch is never held for another;
+  - the background fetch timer firing (with no client in front, so nothing is fetched or
+    pulled) leaves the status as it was.
   """
 
   use ExUnit.Case, async: false
@@ -56,6 +58,7 @@ defmodule HalC2.VcsWatchPropTest do
       [
         {3, {:call, __MODULE__, :refresh, []}},
         {2, {:call, __MODULE__, :turn_ended, []}},
+        {1, {:call, __MODULE__, :fetch_tick, []}},
         {1, {:call, __MODULE__, :lock, []}},
         {1, {:call, __MODULE__, :unlock, []}}
       ] ++
@@ -71,6 +74,7 @@ defmodule HalC2.VcsWatchPropTest do
   def next_state(s, _res, {:call, _, :checkout, [branch]}), do: %{s | branch: branch}
   def next_state(s, _res, {:call, _, :lock, _}), do: %{s | locked: true}
   def next_state(s, _res, {:call, _, :unlock, _}), do: %{s | locked: false}
+  def next_state(s, _res, {:call, _, :fetch_tick, _}), do: s
 
   def next_state(s, _res, {:call, _, read, _}) when read in [:refresh, :turn_ended],
     do: if(s.locked, do: s, else: %{s | shown: s.branch})
@@ -80,6 +84,9 @@ defmodule HalC2.VcsWatchPropTest do
     shown == if(s.locked, do: s.shown, else: s.branch) and pr_branch == s.branch
   end
 
+  def postcondition(s, {:call, _, :fetch_tick, _}, {shown, pr_branch}),
+    do: shown == s.shown and pr_branch == s.branch
+
   def postcondition(_s, _call, _result), do: true
 
   def checkout(branch), do: git(Process.get(:cwd), ["checkout", "-q", "-B", branch])
@@ -87,6 +94,15 @@ defmodule HalC2.VcsWatchPropTest do
   def unlock, do: File.rm!(Path.join(Process.get(:cwd), ".git/index.lock"))
   def refresh, do: read(&HalC2.Vcs.Watch.refresh/1)
   def turn_ended, do: read(&HalC2.Vcs.Watch.turn_ended/1)
+
+  # The fetch timer fires; the watcher has handled it once it answers.
+  def fetch_tick do
+    cwd = Process.get(:cwd)
+    [{pid, _}] = Registry.lookup(HalC2.Vcs.Registry, cwd)
+    send(pid, :fetch)
+    state = :sys.get_state(pid)
+    {state.local["refName"], state.pr_branch}
+  end
 
   # What the watcher shows once it has handled the news: a call behind the cast sees it.
   defp read(tell) do
