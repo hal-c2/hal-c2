@@ -3,21 +3,23 @@ defmodule HalC2.OpenShellInstallPropTest do
   `HalC2.OpenShell.Install` against a model of what an install promises, over any
   sequence of installs and updates (as a service or for the dev run, with the
   gateway's preflight or its check after start failing, or a service that will not
-  stop), certificate rotations,
-  uninstalls, the gateway writing its database, and the gateway of a user (`reuse`)
+  stop), certificate rotations, uninstalls (also of a service that will not stop),
+  the gateway writing its database, and the gateway of a user (`reuse`)
   that is clean or already holds another HAL-C2 environment's sandboxes, or comes
   to hold one later.
 
   The gateway is a shell script (its `generate-certs` copies a fresh certificate set
   the test issued for that command, two per install: one for the gateway and one
   for the CA of the MC's client certificate), the service manager is the test's
-  systemctl stand-in, and the check after start is the `:smoke` seam. A check that
+  systemctl or launchctl stand-in, one of them for each case, and the check after
+  start is the `:smoke` seam. A check that
   fails first writes over the database, as a new gateway that migrated it would.
   A user's gateway is the TLS fake. The promises checked after every step:
 
     * an install, update or rotation that fails changes nothing: the installed
       state, the certificates, the database and the unit are what they were; one
       over a service that will not stop fails;
+    * an uninstall over a service that will not stop fails and removes nothing;
     * one that succeeds installs what was asked, and only a fresh install or a
       rotation brings new certificates;
     * a gateway run as a service has its current unit, running; any other has none;
@@ -72,41 +74,47 @@ defmodule HalC2.OpenShellInstallPropTest do
     :launchctl_command
   ]
 
-  property "an install changes the gateway only once the new one passes, and never leaves keys behind",
-    numtests: HalC2.Prop.numtests(60),
-    max_size: 25 do
-    forall cmds <- commands(__MODULE__) do
-      trap_exit do
-        home = HalC2.Prop.scratch_home("openshell-install")
-        level = Logger.level()
-        # A drain's connection to a stopped gateway logs its retries.
-        Logger.configure(level: :none)
-        prepare_case(home)
+  # The same model under each service manager: systemd on Linux, launchd on macOS.
+  for platform <- [:linux, :darwin] do
+    property "an install changes the gateway only once the new one passes, and never leaves keys behind (#{platform})",
+      numtests: HalC2.Prop.numtests(40),
+      max_size: 25 do
+      platform = unquote(platform)
 
-        {history, state, result} =
-          try do
-            run_commands(__MODULE__, cmds)
-          after
-            Logger.configure(level: level)
-            drop_retained()
-            stop_gateways()
-            for key <- @env, do: Application.delete_env(:hal_c2, key)
-            File.rm_rf!(home)
-          end
+      forall cmds <- commands(__MODULE__) do
+        trap_exit do
+          home = HalC2.Prop.scratch_home("openshell-install")
+          level = Logger.level()
+          # A drain's connection to a stopped gateway logs its retries.
+          Logger.configure(level: :none)
+          prepare_case(home, platform)
 
-        (result == :ok)
-        |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
-        |> aggregate(command_names(cmds))
+          {history, state, result} =
+            try do
+              run_commands(__MODULE__, cmds)
+            after
+              Logger.configure(level: level)
+              drop_retained()
+              stop_gateways()
+              for key <- @env, do: Application.delete_env(:hal_c2, key)
+              File.rm_rf!(home)
+            end
+
+          (result == :ok)
+          |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
+          |> aggregate(command_names(cmds))
+        end
       end
     end
   end
 
-  defp prepare_case(home) do
+  # `platform` picks the service manager: systemd on Linux, launchd on macOS.
+  defp prepare_case(home, platform) do
     bin = Path.join(home, "bin")
     File.mkdir_p!(bin)
     Storage.fake_service_manager(bin)
     Application.put_env(:hal_c2, :openshell_facts, @facts)
-    Application.put_env(:hal_c2, :service_platform, {:unix, :linux})
+    Application.put_env(:hal_c2, :service_platform, {:unix, platform})
     Application.put_env(:hal_c2, :service_user_home, Path.join(home, "user"))
     Application.put_env(:hal_c2, :systemctl_command, Path.join(bin, "systemctl"))
     Application.put_env(:hal_c2, :launchctl_command, Path.join(bin, "launchctl"))
@@ -154,7 +162,7 @@ defmodule HalC2.OpenShellInstallPropTest do
           [oneof(["0.1.6", "0.1.7"]), oneof(["managed", "foreground"]), outcome()]}},
         {2, {:call, __MODULE__, :rotate, [oneof([:ok, :smoke_fails, :stop_fails])]}},
         {2, {:call, __MODULE__, :reuse, [oneof([:clean, :shared])]}},
-        {1, {:call, __MODULE__, :uninstall, []}}
+        {1, {:call, __MODULE__, :uninstall, [oneof([:ok, :stop_fails])]}}
       ] ++
         if(writable?(state),
           do: [{2, {:call, __MODULE__, :write_db, [oneof(["a", "b"])]}}],
@@ -244,10 +252,13 @@ defmodule HalC2.OpenShellInstallPropTest do
     end
   end
 
-  defp step(%{installed: nil} = state, {:call, _, :uninstall, []}),
+  defp step(%{installed: nil} = state, {:call, _, :uninstall, _}),
     do: seen(state, :not_installed)
 
-  defp step(state, {:call, _, :uninstall, []}),
+  defp step(%{installed: {"managed", _, _}} = state, {:call, _, :uninstall, [:stop_fails]}),
+    do: seen(state, :stop_failed)
+
+  defp step(state, {:call, _, :uninstall, _}),
     do: seen(%{state | installed: nil, pki: nil, db: nil, shared: false, retained: false}, :ok)
 
   defp step(state, {:call, _, :write_db, [marker]}), do: seen(%{state | db: marker}, :ok)
@@ -360,8 +371,8 @@ defmodule HalC2.OpenShellInstallPropTest do
     end
   end
 
-  def uninstall do
-    result = Install.uninstall()
+  def uninstall(outcome) do
+    result = stop_fails(outcome == :stop_fails, fn -> Install.uninstall() end)
     drop_retained()
     Process.put(:openshell, %{Process.get(:openshell) | current: nil})
     observe(result)
@@ -523,7 +534,7 @@ defmodule HalC2.OpenShellInstallPropTest do
   defp observe(result, count? \\ false) do
     state = OpenShell.state()
     ca = OpenShell.credentials(state)[:ca]
-    unit = Service.unit_path(:systemd)
+    unit = Service.unit_path(Service.manager())
 
     %{
       result: classify(result),

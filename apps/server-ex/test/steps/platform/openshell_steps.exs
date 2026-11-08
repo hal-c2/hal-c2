@@ -520,9 +520,9 @@ defmodule HalC2.Steps.Platform.OpenShell do
     assert :ok = context.result
     refute File.exists?(OpenShell.root())
 
-    assert "systemctl --user disable --now hal-c2-openshell.service" in Storage.service_calls(
-             context.openshell.log
-           )
+    calls = Storage.service_calls(context.openshell.log)
+    assert "systemctl --user stop hal-c2-openshell.service" in calls
+    assert "systemctl --user disable hal-c2-openshell.service" in calls
 
     context
   end
@@ -571,9 +571,9 @@ defmodule HalC2.Steps.Platform.OpenShell do
   step "no service of the gateway's is left", context do
     refute File.exists?(Service.unit_path(:systemd))
 
-    assert "systemctl --user disable --now hal-c2-openshell.service" in Storage.service_calls(
-             context.openshell.log
-           )
+    calls = Storage.service_calls(context.openshell.log)
+    assert "systemctl --user stop hal-c2-openshell.service" in calls
+    assert "systemctl --user disable hal-c2-openshell.service" in calls
 
     context
   end

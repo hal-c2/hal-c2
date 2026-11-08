@@ -147,14 +147,7 @@ defmodule HalC2.OpenShell.Install do
   # Stops `previous` and copies what it runs on (nil: nothing of it to keep). Its
   # database is only copied, or written over, once it has stopped.
   defp stop_and_backup(%{"mode" => "managed"} = previous) do
-    case Service.stop() do
-      :ok ->
-        {:ok, backup(previous)}
-
-      {:error, reason} ->
-        {:error,
-         "[gateway-stop-failed] The gateway did not stop, so nothing was changed: #{message(reason)}"}
-    end
+    with :ok <- service_stopped(), do: {:ok, backup(previous)}
   end
 
   defp stop_and_backup(%{"mode" => "foreground"} = previous) do
@@ -162,6 +155,18 @@ defmodule HalC2.OpenShell.Install do
   end
 
   defp stop_and_backup(_previous), do: {:ok, nil}
+
+  # The gateway's service stops before any of its files change.
+  defp service_stopped do
+    case Service.stop() do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        {:error,
+         "[gateway-stop-failed] The gateway did not stop, so nothing was changed: #{message(reason)}"}
+    end
+  end
 
   # Undoes a `switch/4` to `state` that failed, back to `previous` and its backup.
   # A new gateway that will not stop keeps its files: nothing goes back under it.
@@ -1162,6 +1167,7 @@ defmodule HalC2.OpenShell.Install do
       state ->
         with :ok <- foreground_stopped(state),
              :ok <- drained(state, opts),
+             :ok <- if(state["mode"] == "managed", do: service_stopped(), else: :ok),
              :ok <- if(state["mode"] == "managed", do: Service.uninstall(), else: :ok) do
           if state["mode"] != "external" do
             File.rm_rf!(OpenShell.root())
