@@ -421,8 +421,9 @@ void openChip(World& world, const QString& name) {
 // A choice an open picker lists, as a list row or, folded, a menu row.
 bool offers(QQuickItem* candidate, const QString& label) {
   if (candidate->inherits("QQuickMenuItem")) return candidate->isVisible() && candidate->property("text").toString().compare(label, Qt::CaseInsensitive) == 0;
-  const auto* text = candidate->inherits("QQuickItemDelegate") ? candidate->property("contentItem").value<QQuickItem*>() : nullptr;
-  return text && text->property("text").toString().compare(label, Qt::CaseInsensitive) == 0;
+  // A picker's row lays its label out beside marks: the row's own text names it.
+  return candidate->inherits("QQuickItemDelegate") && candidate->isVisible() &&
+         candidate->property("text").toString().compare(label, Qt::CaseInsensitive) == 0;
 }
 
 // Claude offers Sonnet and Opus, and the thread runs on Sonnet: the user picks
