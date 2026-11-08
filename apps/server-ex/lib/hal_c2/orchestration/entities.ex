@@ -141,7 +141,8 @@ defmodule HalC2.Orchestration.Entities do
   Codex, Claude and OpenCode fork their own threads; other agents fork through a
   transcript. An ACP agent's driver is its instance's id. A driver that cannot
   take a message into a running turn can still redirect it by interrupting and
-  restarting, and Antigravity keeps no way to rewind its conversation.
+  restarting, except Copilot, whose background agents die with its prompt: a message
+  waits for the prompt instead. Antigravity keeps no way to rewind its conversation.
   """
   def capabilities(driver) do
     native = driver in ["codex", "claudeAgent"] or HalC2.Acp.driver(driver) == "opencode"
@@ -150,7 +151,7 @@ defmodule HalC2.Orchestration.Entities do
     base =
       @codex_capabilities
       |> put_in(["turns", "supportsActiveSteering"], steers?(driver))
-      |> put_in(["turns", "supportsSteeringByInterruptRestart"], true)
+      |> put_in(["turns", "supportsSteeringByInterruptRestart"], not HalC2.Acp.copilot?(driver))
       |> put_in(["threads", "canForkThread"], native)
       |> put_in(["threads", "canForkFromTurn"], native)
       |> put_in(["threads", "canRollbackThread"], rewinds)
