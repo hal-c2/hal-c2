@@ -4615,6 +4615,136 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- a wake turn keeps the thread working (Upstream ClaudeAdapterV2 continuations) -----
+
+  # The fake's first turn leaves a background command (task task-build-1) running, and
+  # the thread waits on it as `hal_c2_background_wait` makes it.
+  step "a Claude thread waiting on a background command", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "background commands: build")
+
+    World.await_runs(context, @thread, ["completed"])
+    id = World.thread_id(context, @thread)
+
+    assert {:ok, ["task-build-1"]} =
+             HalC2.Claude.ThreadRuntime.await_background(id, ["task-build-1"], true)
+
+    World.await_row(id, &match?([_], &1["pendingBackgroundTasks"]))
+    context
+  end
+
+  # Claude says the command ended, then answers it in a turn of its own.
+  step "the command finishes and Claude begins reacting", context do
+    id = World.thread_id(context, @thread)
+    flush_rows()
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-build-1",
+      "tool_use_id" => "build-1",
+      "status" => "completed",
+      "summary" => "The build passed"
+    })
+
+    # Claude thinks before it answers: the sidebar row in the meantime.
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, id)
+    _ = :sys.get_state(pid)
+    :ok = HalC2.Streams.flush_shell(id)
+    context = Map.put(context, :meantime, World.row(context, @thread))
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-build-done",
+        "content" => [%{"type" => "text", "text" => "The build passed"}]
+      }
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    idle = first_idle_row(id)
+    World.await_runs(context, @thread, ["completed", "completed"])
+    Map.put(context, :idle, idle)
+  end
+
+  # The row while Claude thinks still holds the command; the stream may fold the rows
+  # of quick commits into one, so the rest is checked on the first row that shows the
+  # thread idle after the notice: by then the wake's run, the thread's last, has ended.
+  step "the thread never leaves working in between", context do
+    assert context.meantime["pendingBackgroundTasks"] != [], inspect(context.meantime)
+    wake = List.last(World.runs(context, @thread))
+    assert %{"latestRunId" => latest, "status" => "completed"} = context.idle
+    assert latest == wake["id"], inspect(context.idle)
+
+    assert Enum.any?(
+             StreamState.list(World.stream(context, @thread), "turn-item"),
+             &(&1["input"] == "run build" and &1["status"] == "completed")
+           )
+
+    context
+  end
+
+  # The hold on the notice runs out (`:claude_notice_hold_ms`) without Claude answering:
+  # the deadline's message is sent at once.
+  step "the command finishes and Claude does not answer it", context do
+    id = World.thread_id(context, @thread)
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-build-1",
+      "tool_use_id" => "build-1",
+      "status" => "completed",
+      "summary" => "The build passed"
+    })
+
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, id)
+    assert [_] = :sys.get_state(pid).notices
+    send(pid, {:release_notices, "task-build-1"})
+    context
+  end
+
+  step "the command ends and the thread settles", context do
+    World.await_row(
+      World.thread_id(context, @thread),
+      &(&1["activeRunId"] == nil and &1["pendingBackgroundTasks"] == [])
+    )
+
+    World.await_value(context, @thread, fn state ->
+      Enum.any?(
+        StreamState.list(state, "turn-item"),
+        &(&1["input"] == "run build" and &1["status"] == "completed" and
+            &1["output"] == "The build passed")
+      )
+    end)
+
+    assert ["completed"] = Enum.map(World.runs(context, @thread), & &1["status"])
+    context
+  end
+
+  defp flush_rows do
+    receive do
+      {:hal_c2_shell, {:rows, _, _}} -> flush_rows()
+    after
+      0 -> :ok
+    end
+  end
+
+  # The first row the shell sends this process that shows the thread idle.
+  defp first_idle_row(id) do
+    receive do
+      {:hal_c2_shell, {:rows, _, changed}} ->
+        case List.keyfind(changed, id, 0) do
+          {^id, {_kind, %{"activeRunId" => nil, "pendingBackgroundTasks" => []} = row}} -> row
+          _ -> first_idle_row(id)
+        end
+    after
+      10_000 -> flunk("the thread never settled")
+    end
+  end
+
   step "Claude launches a subagent in the background and the launch returns at once",
        context do
     context =

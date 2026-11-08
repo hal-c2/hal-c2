@@ -8,11 +8,15 @@ defmodule HalC2.ClaudeWakePropTest do
   it into the wake turn so that one result answers both ("fold", Upstream #28010),
   or had already ended the wake before the user's turn started, where a subagent the
   wake launched in the background may finish during the user's turn, before the wake's
-  run has replayed its launch (Upstream #23561).
+  run has replayed its launch (Upstream #23561). A wake also leaves a command running
+  that the thread waits on (`hal_c2_background_wait`), whose end Claude answers in a
+  wake of its own, never answers, or the user's next turn comes first; until one of
+  those, the command holds the thread working.
 
   The promise: every run ends once Claude has said all it will, with no run left
-  running or queued, no subagent left running, and the runtime holding no turn and no
-  wake; each user message reaches Claude once, and a wake's run sends Claude nothing.
+  running or queued, no subagent or command left running, and the runtime holding no
+  turn, no wake and no notice; each user message reaches Claude once, and a wake's run
+  sends Claude nothing.
   """
 
   use ExUnit.Case, async: false
@@ -110,7 +114,9 @@ defmodule HalC2.ClaudeWakePropTest do
       {2, {:call, __MODULE__, :user_turn, [n]}},
       {2, {:call, __MODULE__, :wake, [oneof([:at_once, :after_its_run_started])]}},
       {3,
-       {:call, __MODULE__, :take_over, [n, oneof([:steer, :fold, :ended, :ended_with_subagent])]}}
+       {:call, __MODULE__, :take_over, [n, oneof([:steer, :fold, :ended, :ended_with_subagent])]}},
+      {2,
+       {:call, __MODULE__, :awaited_command, [n, oneof([:answered, :unanswered, :user_first])]}}
     ])
   end
 
@@ -127,11 +133,23 @@ defmodule HalC2.ClaudeWakePropTest do
   def next_state(state, _result, {:call, _, :take_over, [_n, _how]}),
     do: %{state | runs: state.runs + 2, prompts: state.prompts + 1, n: state.n + 1}
 
+  # The wake that launched the command, then Claude's answer or the user's turn.
+  def next_state(state, _result, {:call, _, :awaited_command, [_n, :answered]}),
+    do: %{state | runs: state.runs + 2}
+
+  def next_state(state, _result, {:call, _, :awaited_command, [_n, :unanswered]}),
+    do: %{state | runs: state.runs + 1}
+
+  def next_state(state, _result, {:call, _, :awaited_command, [_n, :user_first]}),
+    do: %{state | runs: state.runs + 2, prompts: state.prompts + 1, n: state.n + 1}
+
+  def postcondition(_state, {:call, _, :awaited_command, _}, %{held: false}), do: false
+
   def postcondition(state, call, seen) do
     next = next_state(state, seen, call)
 
     seen.statuses == List.duplicate("completed", next.runs) and seen.prompts == next.prompts and
-      seen.subagents == [] and seen.runtime == {nil, nil}
+      seen.subagents == [] and seen.commands == [] and seen.runtime == {nil, nil, []}
   end
 
   # --- commands -------------------------------------------------------------------
@@ -205,6 +223,48 @@ defmodule HalC2.ClaudeWakePropTest do
     settled(runs + 2)
   end
 
+  # A wake launches a background command the thread then waits on, and Claude reports
+  # it ended: Claude answers that in a wake (`:answered`), never does and the hold runs
+  # out (its deadline's message is sent at once), or the user's turn starts first.
+  # `held` is whether the command still held the thread once the notice was in.
+  def awaited_command(n, how) do
+    runs = run_count()
+    tool = "bash-wake-#{runs}"
+    task = "task-#{tool}"
+    Enum.each(background_command(tool), &claude_says/1)
+    claude_says(%{"type" => "result", "subtype" => "success", "is_error" => false})
+    settled(runs + 1)
+    {:ok, [^task]} = HalC2.Claude.ThreadRuntime.await_background(@tid, [task], true)
+
+    claude_says(%{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => task,
+      "tool_use_id" => tool,
+      "status" => "completed",
+      "summary" => "Built"
+    })
+
+    _ = :sys.get_state(runtime_pid())
+    held = Enum.any?(running_commands(), &(&1["nativeItemRef"]["nativeId"] == tool))
+
+    case how do
+      :answered ->
+        claude_says(assistant("m-built-#{runs}", "It built"))
+        claude_says(%{"type" => "result", "subtype" => "success", "is_error" => false})
+        Map.put(settled(runs + 2), :held, held)
+
+      :unanswered ->
+        send(runtime_pid(), {:release_notices, task})
+        await(fn -> running_commands() == [] end)
+        Map.put(settled(runs + 1), :held, held)
+
+      :user_first ->
+        send_message(n, "hello")
+        Map.put(settled(runs + 2), :held, held)
+    end
+  end
+
   # --- the runtime ------------------------------------------------------------------
 
   # Once the thread has `count` runs and none is still going: their statuses, the
@@ -220,14 +280,15 @@ defmodule HalC2.ClaudeWakePropTest do
 
     runtime =
       case runtime_pid() do
-        nil -> {nil, nil}
-        pid -> pid |> :sys.get_state() |> then(&{&1.turn, &1.wake})
+        nil -> {nil, nil, []}
+        pid -> pid |> :sys.get_state() |> then(&{&1.turn, &1.wake, &1.notices})
       end
 
     %{
       statuses: current() |> StreamState.list("run") |> Enum.map(& &1["status"]),
       subagents:
         for(%{"status" => "running"} = sub <- StreamState.list(current(), "subagent"), do: sub),
+      commands: running_commands(),
       prompts: prompts(),
       runtime: runtime
     }
@@ -277,6 +338,56 @@ defmodule HalC2.ClaudeWakePropTest do
         "is_backgrounded" => true
       }
     ]
+
+  # Claude launching a command in the background, and registering its task.
+  defp background_command(tool),
+    do: [
+      %{
+        "type" => "assistant",
+        "message" => %{
+          "id" => "m-#{tool}",
+          "content" => [
+            %{
+              "type" => "tool_use",
+              "id" => tool,
+              "name" => "Bash",
+              "input" => %{"command" => "npm run build", "run_in_background" => true}
+            }
+          ]
+        }
+      },
+      %{
+        "type" => "system",
+        "subtype" => "task_started",
+        "task_id" => "task-#{tool}",
+        "tool_use_id" => tool,
+        "description" => "Build",
+        "task_type" => "local_bash",
+        "is_backgrounded" => true
+      },
+      %{
+        "type" => "user",
+        "message" => %{
+          "role" => "user",
+          "content" => [
+            %{
+              "type" => "tool_result",
+              "tool_use_id" => tool,
+              "content" => "Command running in background with ID: task-#{tool}",
+              "is_error" => false
+            }
+          ]
+        }
+      }
+    ]
+
+  defp running_commands,
+    do:
+      for(
+        %{"type" => "command_execution", "status" => "running"} = item <-
+          StreamState.list(current(), "turn-item"),
+        do: item
+      )
 
   defp flush_traces(pid) do
     receive do

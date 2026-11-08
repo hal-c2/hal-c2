@@ -280,6 +280,9 @@ defmodule HalC2.Claude.ThreadRuntime do
        tasks: %{},
        # Task ids that already ended, so late progress cannot reopen them.
        finished_tasks: MapSet.new(),
+       # The notices of awaited commands that ended between turns, newest first, held
+       # until Claude answers them (`hold_notice?/2`).
+       notices: [],
        # The latest turn's ids, which work Claude starts between turns joins.
        last_ids: nil,
        # The run the latest turn ran as, also one that failed to start: the run a
@@ -315,6 +318,10 @@ defmodule HalC2.Claude.ThreadRuntime do
         settle = Application.get_env(:hal_c2, :claude_interrupt_timeout_ms, 10_000)
         Process.send_after(self(), {:settle_interrupt, restored.turn.ids.run}, settle)
       end
+
+      # So does a hold on notices Claude has not answered yet.
+      with [%{"task_id" => task_id} | _] <- Enum.reverse(restored.notices),
+           do: hold_notices(task_id)
 
       {:reply, :ok, Durable.restored(restored, :session, session, snapshot)}
     else
@@ -358,6 +365,8 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   def handle_call({:start_turn, turn}, _from, state) do
+    # The user's run holds the thread working now.
+    state = release_notices(state)
     ids = Map.put(turn.ids, :provider_turn, "provider-turn:claudeAgent:#{turn.ids.run}")
     # The CLI also takes its MCP server at launch: a credential renewed since (the old
     # one lapsed, or the project's agent access changed) needs a new process to reach it.
@@ -560,6 +569,11 @@ defmodule HalC2.Claude.ThreadRuntime do
           uniq: true,
           do: item_id
 
+    state =
+      Enum.reduce(matched, state, fn {_id, tool}, state ->
+        put_in(state.work[tool], Map.put(state.work[tool], :awaited, awaited))
+      end)
+
     if items != [] do
       commit(state, fn stream ->
         for item_id <- items do
@@ -714,6 +728,12 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   def handle_info(:wake_refused, state), do: {:noreply, state}
+
+  def handle_info({:release_notices, task_id}, state) do
+    if Enum.any?(state.notices, &(&1["task_id"] == task_id)),
+      do: {:noreply, release_notices(state)},
+      else: {:noreply, state}
+  end
 
   def handle_info(
         {:claude, session, {:permission, id, _tool, _input, _context}},
@@ -938,6 +958,7 @@ defmodule HalC2.Claude.ThreadRuntime do
        |> Map.put_new(:work, %{})
        |> Map.put_new(:tasks, %{})
        |> Map.put_new(:finished_tasks, MapSet.new())
+       |> Map.put_new(:notices, [])
        |> Map.put_new(:last_ids, nil)
        |> Map.put_new_lazy(:last_run, fn -> state[:last_ids][:run] end)
        |> Map.put_new(:usage_instance, nil)
@@ -1631,7 +1652,18 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   defp receive_message(message, %{turn: nil, wake: nil} = state) do
-    if wake?(message), do: wake(state, message), else: message(message, state)
+    cond do
+      hold_notice?(state, message) ->
+        if state.notices == [], do: hold_notices(message["task_id"])
+        %{state | notices: [message | state.notices]}
+
+      wake?(message) or (result?(message) and state.notices != []) ->
+        state = wake(state, message)
+        %{state | wake: %{state.wake | buffer: [message | state.notices]}, notices: []}
+
+      true ->
+        message(message, state)
+    end
   end
 
   # The result of the wake a user's turn took over; the user's own follows it. An
@@ -1688,6 +1720,32 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   defp wake?(%{"type" => type}) when type in ~w(assistant user stream_event), do: true
   defp wake?(_message), do: false
+
+  # A command the thread waits on (`hal_c2_background_wait`) that ends between turns
+  # holds the thread working until Claude's turn answering it has a run: its notice
+  # waits for that turn (`wake/2`), which ends the command when it replays it. Ended at
+  # once, the command would leave the thread idle until the wake's run started.
+  defp hold_notice?(state, %{"type" => "system", "subtype" => "task_notification"} = task) do
+    tool = state.tasks[task["task_id"]] || task["tool_use_id"]
+    match?(%{awaited: true, sub: nil}, state.work[tool])
+  end
+
+  defp hold_notice?(_state, _message), do: false
+
+  # A Claude that answers a notice starts within seconds; one that never does must not
+  # hold the thread working for good, so the first notice held releases them all
+  # (`{:release_notices, task_id}`) unless they have gone first.
+  defp hold_notices(task_id) do
+    hold = Application.get_env(:hal_c2, :claude_notice_hold_ms, 30_000)
+    Process.send_after(self(), {:release_notices, task_id}, hold)
+  end
+
+  # Held notices end their commands: the run that holds the thread working now is
+  # another, or the work is ending anyway.
+  defp release_notices(%{notices: []} = state), do: state
+
+  defp release_notices(state),
+    do: state.notices |> Enum.reverse() |> Enum.reduce(%{state | notices: []}, &message/2)
 
   # Claude started a turn by itself: the thread gets a message for it, from the agent,
   # whose run (`handle_call({:start_turn, %{wake: true}})`) queues behind any other.
@@ -3327,6 +3385,8 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp end_work(state, which \\ fn _ -> true end, status)
 
   defp end_work(state, which, status) when is_function(which) do
+    state = release_notices(state)
+
     Enum.reduce(state.work, state, fn {tool, work}, state ->
       if which.(work), do: end_work(state, tool, status, nil), else: state
     end)

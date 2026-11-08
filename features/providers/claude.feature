@@ -2199,11 +2199,18 @@ Feature: Claude
     And expanding it shows only the arguments as plain text
     And a call with no arguments does not expand
 
-  @backlog @mc @priority-high
+  @priority-high
   Scenario: A thread stays working while Claude starts a wake turn
     Given a Claude thread waiting on a background command
     When the command finishes and Claude begins reacting
     Then the thread never leaves working in between
+
+  # The hold above ends: a Claude that never answers the command does not leave the
+  # thread working for good.
+  Scenario: A command Claude never answers still ends
+    Given a Claude thread waiting on a background command
+    When the command finishes and Claude does not answer it
+    Then the command ends and the thread settles
 
   @priority-high
   Scenario: A Claude command the user stops is recorded as interrupted
