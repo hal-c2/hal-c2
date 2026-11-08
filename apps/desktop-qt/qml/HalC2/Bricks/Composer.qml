@@ -1496,6 +1496,38 @@ Rectangle {
                                     currentIndex: composer.effortOption ? composer.effortOption.choices.findIndex(choice => choice.id === composer.effortOption.value) : -1
                                     displayText: composer.selectedLabel(composer.effortOption)
                                     Accessible.name: composer.effortOption ? composer.effortOption.label : ""
+                                    // Appearance's "Bars": the level drawn instead of named. Max and
+                                    // the prompt's Ultrathink keep their names; the word stays the
+                                    // overflow's and the screen reader's.
+                                    readonly property var bars: composer.model?.effortDisplay === "bars" && composer.effortOption?.bars
+                                        && !composer.effortOption.bars.special ? composer.effortOption.bars : null
+                                    contentItem: Item {
+                                        implicitWidth: effortPicker.bars ? effortBars.width : effortWord.implicitWidth
+                                        implicitHeight: effortWord.implicitHeight
+
+                                        Text {
+                                            id: effortWord
+
+                                            anchors.fill: parent
+                                            visible: effortPicker.bars === null
+                                            text: effortPicker.displayText
+                                            font: effortPicker.font
+                                            color: effortPicker.labelColor
+                                            verticalAlignment: Text.AlignVCenter
+                                            elide: Text.ElideRight
+                                        }
+
+                                        EffortBars {
+                                            id: effortBars
+
+                                            objectName: "effortBars"
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            visible: effortPicker.bars !== null
+                                            count: effortPicker.bars?.count ?? 0
+                                            filled: effortPicker.bars?.filled ?? 0
+                                            color: effortPicker.labelColor
+                                        }
+                                    }
                                     // The prompt says ultrathink in its own words: the effort is its.
                                     readonly property bool locked: (composer.effortOption?.lockedReason ?? "").length > 0
                                     note: locked ? composer.effortOption.lockedReason : ""
@@ -2279,6 +2311,37 @@ Rectangle {
         tint: checked || hovered || down ? composer.foreground : composer.chipLabel
         iconSize: Theme.icon.md
         font.weight: Theme.type.body.weight
+    }
+
+    // The effort as rising bars (upstream's EffortGlyph): one per level, 2px
+    // wide on a 4px step, from about half height up, the unfilled ones faint.
+    component EffortBars: Item {
+        id: glyph
+
+        property int count: 0
+        property int filled: 0
+        property color color
+        readonly property int maxBar: 12
+        // Rounding each bar mixes 1px and 2px steps, so the step is rounded once.
+        readonly property int rise: Math.max(1, Math.round(maxBar / 2 / Math.max(count - 1, 1)))
+
+        width: Math.max(0, 4 * count - 2)
+        height: 14
+
+        Repeater {
+            model: glyph.count
+
+            Rectangle {
+                required property int index
+
+                x: index * 4
+                y: glyph.maxBar - height
+                width: 2
+                height: glyph.maxBar - (glyph.count - 1 - index) * glyph.rise
+                color: glyph.color
+                opacity: index < glyph.filled ? 1 : 0.4
+            }
+        }
     }
 
     component ChipPicker: ShellComboBox {

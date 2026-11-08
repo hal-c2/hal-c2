@@ -4360,16 +4360,15 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
   auto* keys = NativeShell::of(this)->controller<KeybindingController>();
   const QString selectedInstance = chosen.value(QLatin1String("instanceId")).toString();
   const QString selectedModel = chosen.value(QLatin1String("model")).toString();
-  const QVariantList options =
-      instance ? composer::shellOptions(composer::descriptors(composer::findModel(*instance, selectedModel),
-                                                              chosen.value(QLatin1String("options")).toArray(), planOn))
-               : QVariantList();
+  const QJsonArray described =
+      instance ? composer::descriptors(composer::findModel(*instance, selectedModel), chosen.value(QLatin1String("options")).toArray(), planOn)
+               : QJsonArray();
+  const QVariantList options = composer::shellOptions(described);
   // An effort the prompt asks for (Ultrathink) is the one shown; asked for in
   // the prompt's own words, it cannot be changed until they go.
   QVariantList shownOptions = options;
   const bool prefixed = text.trimmed().startsWith(kUltrathinkPrefix.trimmed());
-  if (instance && (prefixed || composer::ultrathinkInWords(text))) {
-    const QJsonArray described = composer::descriptors(composer::findModel(*instance, selectedModel), chosen.value(QLatin1String("options")).toArray(), planOn);
+  if (prefixed || composer::ultrathinkInWords(text)) {
     for (qsizetype i = 0; i < described.size() && i < shownOptions.size(); ++i) {
       const QJsonArray injected = described.at(i).toObject().value(QLatin1String("promptInjectedValues")).toArray();
       if (injected.isEmpty()) continue;
@@ -4380,6 +4379,15 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       }
       shownOptions[i] = option;
     }
+  }
+  // The effort as bars, for the composer to draw when Appearance asks for them.
+  for (qsizetype i = 0; i < described.size() && i < shownOptions.size(); ++i) {
+    if (str(described.at(i).toObject(), QLatin1String("type")) != QLatin1String("select")) continue;
+    QVariantMap option = shownOptions.at(i).toMap();
+    const QVariantMap bars = composer::effortBars(described.at(i).toObject(), option.value(QStringLiteral("value")).toString());
+    if (!bars.isEmpty()) option.insert(QStringLiteral("bars"), bars);
+    shownOptions[i] = option;
+    break;
   }
   const auto orNull = [](const QString& value) { return value.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(value); };
   // A page's ask: the project it runs in and the ones it could.
@@ -4444,6 +4452,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       {QStringLiteral("selectedInstanceId"), orNull(selectedInstance)},
       {QStringLiteral("selectedModel"), orNull(selectedModel)},
       {QStringLiteral("options"), shownOptions},
+      {QStringLiteral("effortDisplay"), setting(QStringLiteral("effortDisplay")).toString()},
       {QStringLiteral("runtimeMode"), composer::shownRuntimeMode(instance, runtimeModeOf(target))},
       {QStringLiteral("defaultRuntimeMode"), composer::shownRuntimeMode(instance, defaultRuntimeModeOf(target))},
       {QStringLiteral("runtimeModes"), composer::runtimeModes(instance)},

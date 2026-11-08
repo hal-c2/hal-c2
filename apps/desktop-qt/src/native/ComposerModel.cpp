@@ -654,6 +654,34 @@ std::optional<QString> steppedChoice(const QJsonObject& descriptor, int directio
   return choices.at(((at + (direction > 0 ? 1 : -1)) % count + count) % count);
 }
 
+QVariantMap effortBars(const QJsonObject& descriptor, const QString& current) {
+  static const QStringList reasoningIds{QStringLiteral("effort"), QStringLiteral("reasoningEffort"), QStringLiteral("reasoning")};
+  // Ultracode changes the workflow and Max tops the scale: both keep their names.
+  static const QStringList named{QStringLiteral("ultracode"), QStringLiteral("max")};
+  static const QStringList off{QStringLiteral("off"), QStringLiteral("none")};
+  if (str(descriptor, QLatin1String("type")) != QLatin1String("select") || !reasoningIds.contains(str(descriptor, QLatin1String("id"))) ||
+      current.isEmpty())
+    return {};
+  QStringList special = named;
+  for (const QJsonValue& value : descriptor.value(QLatin1String("promptInjectedValues")).toArray()) special.append(value.toString());
+  QStringList levels;
+  QString label = current;
+  for (const QJsonValue& value : descriptor.value(QLatin1String("options")).toArray()) {
+    const QString id = str(value.toObject(), QLatin1String("id"));
+    if (id == current && !str(value.toObject(), QLatin1String("label")).isEmpty()) label = str(value.toObject(), QLatin1String("label"));
+    if (!special.contains(id)) levels.append(id);
+  }
+  if (levels.size() < 2) return {};
+  const bool startsAtOff = off.contains(levels.first());
+  const qsizetype count = startsAtOff ? levels.size() - 1 : levels.size();
+  if (special.contains(current)) {
+    return {{QStringLiteral("count"), count}, {QStringLiteral("filled"), count}, {QStringLiteral("special"), label}};
+  }
+  const qsizetype at = levels.indexOf(current);
+  if (at < 0) return {};
+  return {{QStringLiteral("count"), count}, {QStringLiteral("filled"), startsAtOff ? at : at + 1}, {QStringLiteral("special"), QString()}};
+}
+
 bool ultrathinkInWords(const QString& text) {
   // The picker writes the prefix with a capital; typed any other way it is
   // the user's own word.

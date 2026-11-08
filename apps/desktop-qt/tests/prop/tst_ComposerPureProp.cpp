@@ -3,7 +3,7 @@
 // behind the running turn (composer::queued) and the rich text drawing
 // (ComposerHighlighter), whose limits "/usage-limits" shows
 // (composer::usageLimitsReport), and stepping the effort from the keyboard
-// (composer::steppedChoice).
+// (composer::steppedChoice) or drawing it as bars (composer::effortBars).
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -370,6 +370,44 @@ private slots:
         // From a listed level, the other way comes back.
         descriptor.insert(QStringLiteral("currentValue"), *stepped);
         RC_ASSERT(composer::steppedChoice(descriptor, -direction) == current);
+      }
+    }));
+  }
+  void effortBarsCountTheOrdinaryLevels() {
+    QVERIFY(rc::check("bars are one per ordinary level, filled to the current one; named levels keep their names", [] {
+      const std::vector<QString> pool{QStringLiteral("off"), QStringLiteral("low"), QStringLiteral("medium"), QStringLiteral("high"),
+                                      QStringLiteral("xhigh"), QStringLiteral("max"), QStringLiteral("ultracode"), QStringLiteral("ultrathink")};
+      QJsonArray options;
+      QStringList ids;
+      for (const QString& id : pool) {
+        if (!*rc::gen::arbitrary<bool>()) continue;
+        ids.append(id);
+        options.append(QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("label"), id.toUpper()}});
+      }
+      const QString descriptorId = *rc::gen::elementOf(std::vector<QString>{QStringLiteral("effort"), QStringLiteral("reasoningEffort"), QStringLiteral("contextWindow")});
+      const QJsonObject descriptor{{QStringLiteral("id"), descriptorId}, {QStringLiteral("type"), QStringLiteral("select")}, {QStringLiteral("options"), options},
+                                   {QStringLiteral("promptInjectedValues"), QJsonArray{QStringLiteral("ultrathink")}}};
+      const QString current = *rc::gen::elementOf(pool);
+      const QVariantMap bars = composer::effortBars(descriptor, current);
+
+      const auto named = [](const QString& id) { return id == QLatin1String("max") || id == QLatin1String("ultracode") || id == QLatin1String("ultrathink"); };
+      QStringList levels = ids;
+      levels.removeIf(named);
+      if (descriptorId == QLatin1String("contextWindow") || levels.size() < 2 || (!levels.contains(current) && !named(current))) {
+        RC_ASSERT(bars.isEmpty());
+        return;
+      }
+      const bool startsAtOff = levels.first() == QLatin1String("off");
+      const int count = int(levels.size()) - (startsAtOff ? 1 : 0);
+      if (levels.contains(current)) {
+        RC_ASSERT(bars.value(QStringLiteral("count")).toInt() == count);
+        RC_ASSERT(bars.value(QStringLiteral("filled")).toInt() == int(levels.indexOf(current)) + (startsAtOff ? 0 : 1));
+        RC_ASSERT(bars.value(QStringLiteral("special")).toString().isEmpty());
+      } else {
+        // Max, Ultracode and Ultrathink: every bar, and their name.
+        RC_ASSERT(bars.value(QStringLiteral("count")).toInt() == count);
+        RC_ASSERT(bars.value(QStringLiteral("filled")).toInt() == count);
+        RC_ASSERT(bars.value(QStringLiteral("special")).toString() == (ids.contains(current) ? current.toUpper() : current));
       }
     }));
   }
