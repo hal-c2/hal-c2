@@ -195,6 +195,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/model-and-mode.feature:Stepping the effort leaves Ultrathink*"),
     QStringLiteral("composer/model-and-mode.feature:The composer names the model's effort*"),
     QStringLiteral("composer/model-and-mode.feature:A provider's older models are shown in place*"),
+    QStringLiteral("composer/model-and-mode.feature:Every saved custom model is offered"),
     QStringLiteral("composer/model-and-mode.feature:A composer that falls back to another account*"),
     QStringLiteral("composer/model-and-mode.feature:A fallback account takes no options*"),
     QStringLiteral("composer/model-and-mode.feature:A fallback keeps the effort of a model saved under an alias"),

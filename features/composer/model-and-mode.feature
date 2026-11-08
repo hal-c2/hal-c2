@@ -239,7 +239,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then it is no longer listed among the favourites
 
   # Upstream #14961: the model picker offers every saved custom model, not just the first 32
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario: Every saved custom model is offered
     Given the user has saved 40 custom models for Codex
     When the user opens the model picker
