@@ -98,7 +98,7 @@ defmodule HalC2.Vcs do
   end
 
   defp local_status(cwd, status) do
-    branch = parse_branch(status)
+    branch = parse_branch(status, cwd)
     changed = changed_paths(status)
     stats = numstat(cwd)
     default = default_branch(cwd)
@@ -120,7 +120,7 @@ defmodule HalC2.Vcs do
 
     %{
       "isRepo" => true,
-      "hasPrimaryRemote" => Git.primary_remote(cwd) == "origin",
+      "hasPrimaryRemote" => Git.primary_remote(cwd) != nil,
       "isDefaultRef" => default_ref?(branch.head, default),
       "refName" => branch.head,
       "hasWorkingTreeChanges" => changed != [],
@@ -202,14 +202,17 @@ defmodule HalC2.Vcs do
   def remote_status(cwd, opts \\ []) do
     with true <- File.dir?(cwd),
          {:ok, %{status: 0, out: status}} <- Git.run(cwd, ~w(status --porcelain=2 --branch -z)) do
-      branch = parse_branch(status)
+      branch = parse_branch(status, cwd)
 
       branch =
         if opts[:fetch] && branch.upstream do
-          [remote | _] = String.split(branch.upstream, "/", parts: 2)
-          Git.run(cwd, ["fetch", "--quiet", "--no-tags", remote], max_bytes: 64 * 1024)
+          # A branch tracking a local branch has no remote to fetch.
+          with %{remote: remote} when is_binary(remote) <- Git.upstream(cwd, branch.head) do
+            Git.run(cwd, ["fetch", "--quiet", "--no-tags", remote], max_bytes: 64 * 1024)
+          end
+
           {:ok, %{out: status}} = Git.run(cwd, ~w(status --porcelain=2 --branch -z))
-          parse_branch(status)
+          parse_branch(status, cwd)
         else
           branch
         end
@@ -299,6 +302,14 @@ defmodule HalC2.Vcs do
 
   defp empty_remote,
     do: %{"hasUpstream" => false, "aheadCount" => 0, "behindCount" => 0, "pr" => nil}
+
+  # With a tag of the same name git prints the branch as "heads/<name>" here.
+  defp parse_branch(status, cwd) do
+    case parse_branch(status) do
+      %{head: "heads/" <> _} = branch -> %{branch | head: Git.current_branch(cwd)}
+      branch -> branch
+    end
+  end
 
   defp parse_branch(status) do
     status

@@ -232,8 +232,14 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     |> Map.put(:origin_head, World.git!(other, ~w(rev-parse HEAD)))
   end
 
+  # A project from `thread_in_git_project` has an origin: this takes it away.
   step "{string} has no remote", %{args: [title]} = context do
-    assert World.git!(World.project(context, title).root, ["remote"]) == ""
+    root = World.project(context, title).root
+
+    for remote <- String.split(World.git!(root, ["remote"]), "\n", trim: true),
+        do: World.git!(root, ["remote", "remove", remote])
+
+    assert World.git!(root, ["remote"]) == ""
     context
   end
 

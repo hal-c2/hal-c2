@@ -420,15 +420,15 @@ defmodule HalC2.GitActions do
 
   defp push(cwd, branch) do
     status = Vcs.remote_status(cwd) || %{}
-    upstream = upstream(cwd)
+    upstream = Git.upstream(cwd, branch)
 
     cond do
       upstream && status["aheadCount"] == 0 && status["behindCount"] == 0 ->
-        %{"status" => "skipped_up_to_date", "branch" => branch, "upstreamBranch" => upstream}
+        %{"status" => "skipped_up_to_date", "branch" => branch, "upstreamBranch" => upstream.ref}
 
-      upstream ->
-        push!(cwd, ["push"], upstream |> String.split("/", parts: 2) |> hd())
-        %{"status" => "pushed", "branch" => branch, "upstreamBranch" => upstream}
+      upstream && upstream.remote ->
+        push!(cwd, ["push"], upstream.remote)
+        %{"status" => "pushed", "branch" => branch, "upstreamBranch" => upstream.ref}
 
       remote = Git.primary_remote(cwd) ->
         push!(cwd, ["push", "-u", remote, "HEAD:refs/heads/#{branch}"], remote)
@@ -442,13 +442,6 @@ defmodule HalC2.GitActions do
 
       true ->
         fail!("Cannot push because no git remote is configured for this repository.")
-    end
-  end
-
-  defp upstream(cwd) do
-    case Git.ok(cwd, ~w(rev-parse --abbrev-ref --symbolic-full-name @{upstream})) do
-      {:ok, ref} -> String.trim(ref)
-      _ -> nil
     end
   end
 

@@ -58,7 +58,7 @@ Feature: Repository status and working tree changes
     And it lists both files with their inserted and deleted line counts
     And it says the working tree has changes
 
-  @backlog @mc
+  @mc
   Scenario: A file whose name starts or ends with a space keeps its exact path
     Given the user has added " leading.txt" to "shop"
     When status is read for "shop"
@@ -100,7 +100,7 @@ Feature: Repository status and working tree changes
   # Upstream #29180: a local branch literally named "origin/feature/tax" made the upstream's
   # remote read as "remotes", so background fetches failed and a push saved a base that does
   # not exist.
-  @backlog @mc
+  @mc
   Scenario: A local branch named like the upstream does not hide the upstream's remote
     Given "feature/tax" tracks "origin/feature/tax" and is 1 commit ahead
     And the repository also has a local branch named "origin/feature/tax"
@@ -111,7 +111,7 @@ Feature: Repository status and working tree changes
 
   # Upstream #29670: a branch tracking the local "feature/part-1" read "feature" as its remote,
   # so every status refresh fetched a remote that does not exist and logged a failure.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: A branch that tracks a local branch fetches nothing
     Given "part-2" tracks the local branch "feature/part-1" and is 1 commit ahead of it
     When status is read for "shop"
@@ -120,7 +120,7 @@ Feature: Repository status and working tree changes
 
   # Upstream #16453: a branch without an upstream that is configured to merge into "upstream/main"
   # was still compared with the fork's "origin/main".
-  @backlog @mc
+  @mc
   Scenario: A branch's changes are compared with the base it is configured to merge into
     Given the branch "fix-tax" has no upstream and is set to merge into "upstream/main"
     And the fork's "origin/main" is behind "upstream/main"
@@ -182,7 +182,7 @@ Feature: Repository status and working tree changes
 
   # Upstream #22119: only a remote named "origin" counted, so a repository cloned with another
   # remote name had no Push or Create PR and was offered "Publish repository".
-  @backlog @mc
+  @mc
   Scenario Outline: A repository's only remote is its primary remote whatever its name
     Given "shop" has <remotes>
     When the MC reads the git status of "shop"
@@ -363,7 +363,7 @@ Feature: Repository status and working tree changes
     And the background lookups run no more than two git processes at a time
 
   # Upstream #21046: a lookup started on one branch never fills in the pull request of the branch checked out next.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A late pull request answer for the previous branch is not shown on the new one
     Given a pull request lookup for "feature/tax" is still waiting
     When the user checks out "feature/cart" and the lookup for "feature/tax" then answers
@@ -371,7 +371,7 @@ Feature: Repository status and working tree changes
     And a later lookup still finds the pull request of "feature/cart"
 
   # Upstream #24258: a branch with the same name as a tag read as "heads/<name>" in remote status and review.
-  @backlog @mc
+  @mc
   Scenario: A branch named like a tag is still reported by its name
     Given the checked out branch "release" has a tag also named "release"
     When status is read for "shop"
@@ -380,7 +380,7 @@ Feature: Repository status and working tree changes
     And the pull request of "release" is still found
 
   # Upstream #25207: status of a repository with thousands of long changed paths failed on an output cap.
-  @backlog @mc
+  @mc
   Scenario: Status of a repository with thousands of changed files is complete
     Given the user has changed 6000 files with long paths in "shop"
     When status is read for "shop"
