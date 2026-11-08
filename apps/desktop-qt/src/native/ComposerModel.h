@@ -94,6 +94,15 @@ QVariantList shellOptions(const QJsonArray& descriptors);
 // The selections to keep after the user sets option `id`; nothing when the
 // value does not fit the option.
 std::optional<QJsonArray> applyOption(const QJsonArray& descriptors, const QString& id, const QVariant& value);
+// The choice one level up (`direction` > 0) or down from select `descriptor`'s
+// current value, wrapping; the values the prompt carries (Ultrathink) are
+// never stepped to. A value outside the list steps from the default, or
+// from the ends when none is marked. Nothing with fewer than two to step through.
+std::optional<QString> steppedChoice(const QJsonObject& descriptor, int direction);
+// Whether `text` asks for ultrathink in its own words, past the prefix the
+// effort control puts there; the effort is then the prompt's (upstream's
+// isClaudeUltrathinkPrompt).
+bool ultrathinkInWords(const QString& text);
 
 // `composer.runtimeModes`: [{value, label, description}].
 QVariantList runtimeModes(const Instance* instance);

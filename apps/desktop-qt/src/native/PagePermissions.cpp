@@ -35,15 +35,22 @@ QVariantMap PagePermissions::request(const QString& tabId, const QString& origin
   if (const auto known = m_clipboard.constFind(origin); known != m_clipboard.cend())
     return answerOf(*known ? QStringLiteral("grant") : QStringLiteral("deny"));
   // One question at a time: a page asking again behind it is refused, not queued.
-  if (!m_questions.isEmpty() || origin.isEmpty()) return answerOf(QStringLiteral("deny"));
+  if (!m_questions.isEmpty() || origin.isEmpty() || !m_shown.contains(tabId)) return answerOf(QStringLiteral("deny"));
   return answerOf(QStringLiteral("ask"), ask({0, tabId, kClipboard, origin, {}}));
 }
 
 int PagePermissions::openLink(const QString& tabId, const QUrl& url) {
   if (!url.isValid() || url.scheme().isEmpty() || engineScheme(url.scheme())) return 0;
-  // The engine may ask twice for one click.
-  for (const Question& waiting : std::as_const(m_questions))
-    if (waiting.tabId == tabId && waiting.url == url) return waiting.id;
+  if (!m_shown.contains(tabId)) return -1;
+  for (qsizetype i = 0; i < m_questions.size(); ++i) {
+    const Question& waiting = m_questions.at(i);
+    if (waiting.tabId != tabId || waiting.kind != kLink) continue;
+    // The engine may ask twice for one click.
+    if (waiting.url == url) return waiting.id;
+    // One link of the tab's waits behind the question on screen; a page
+    // following links in a loop gets no more.
+    if (i > 0) return -1;
+  }
   return ask({0, tabId, kLink, url.scheme().toLower(), url});
 }
 
@@ -65,7 +72,21 @@ QVariantMap PagePermissions::answer(int id, bool allow) {
   return {};
 }
 
+void PagePermissions::setShown(const QString& tabId, bool shown) {
+  if (shown) {
+    m_shown.insert(tabId);
+  } else {
+    m_shown.remove(tabId);
+    drop(tabId);
+  }
+}
+
 void PagePermissions::forget(const QString& tabId) {
+  m_shown.remove(tabId);
+  drop(tabId);
+}
+
+void PagePermissions::drop(const QString& tabId) {
   const bool shown = !m_questions.isEmpty() && m_questions.first().tabId == tabId;
   m_questions.removeIf([&tabId](const Question& question) { return question.tabId == tabId; });
   if (shown) emit questionChanged();

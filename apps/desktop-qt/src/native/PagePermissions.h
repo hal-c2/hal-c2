@@ -15,12 +15,16 @@
 // asked once per site and remembered while the app runs; one that comes
 // while another question is on screen is refused without being remembered,
 // so a page cannot queue prompts behind the one the user is reading. A link
-// to another app (openLink()) waits its turn instead.
+// to another app (openLink()) waits its turn instead, one per tab: a tab
+// with a link waiting behind the question on screen has its next link refused.
 //
-// A tab's brick (BrowserPanel) shows `question` when it is the tab's, holds
-// the engine's request until the user answers (answer()), and drops its
-// questions when its page goes (forget()). The engine's own permission store
-// is off (main.cpp), so these are the only answers remembered.
+// Only a tab the user can see asks anything: a page keeps running while its
+// tab is not shown, and its question would sit where nobody sees it, holding
+// up every other. A tab's brick (BrowserPanel) says whether it shows
+// (setShown(); hiding a tab drops its questions), shows `question` when it is
+// the tab's, holds the engine's request until the user answers (answer()),
+// and drops its questions when its page goes (forget()). The engine's own
+// permission store is off (main.cpp), so these are the only answers remembered.
 class PagePermissions : public QObject {
   Q_OBJECT
   // The question on screen: {id, tabId, kind ("clipboard" or "link"),
@@ -37,12 +41,17 @@ public:
   // camera-and-microphone, screen, screen-and-audio, mouse-lock, fonts; anything else is refused.
   // "ask" puts question `id` to the user.
   Q_INVOKABLE QVariantMap request(const QString& tabId, const QString& origin, const QString& kind);
-  // Asks whether the link `url` to another app may open; 0 when it is never
-  // handed to the system (a local or inline address, or not a link at all).
+  // Asks whether the link `url` to another app may open, the id of its
+  // question; 0 when it is never handed to the system (a local or inline
+  // address, or not a link at all), and -1 when it is refused unasked (its tab
+  // is not shown, or already has a link waiting).
   Q_INVOKABLE int openLink(const QString& tabId, const QUrl& url);
   // The user's answer to question `id`: the question, or empty when it is no
   // longer asked. A clipboard answer is remembered for its site.
   Q_INVOKABLE QVariantMap answer(int id, bool allow);
+  // Whether tab `tabId` shows where the user can see it; a tab that stops
+  // showing has its questions dropped, as forget() does.
+  Q_INVOKABLE void setShown(const QString& tabId, bool shown);
   // Drops tab `tabId`'s questions: its page went.
   Q_INVOKABLE void forget(const QString& tabId);
   // Forgets every answer and question, as quitting the app does.
@@ -72,9 +81,11 @@ private:
     QUrl url;
   };
   int ask(Question question);
+  void drop(const QString& tabId);
   static QVariantMap mapOf(const Question& question);
 
   QList<Question> m_questions;  // the first is on screen
   QHash<QString, bool> m_clipboard;  // a site's remembered answer
+  QSet<QString> m_shown;  // the tabs the user can see
   int m_next = 0;
 };

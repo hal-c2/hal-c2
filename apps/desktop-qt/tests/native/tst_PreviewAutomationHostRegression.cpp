@@ -98,6 +98,57 @@ private slots:
     QTRY_COMPARE(answered, QStringList{QStringLiteral("current")});
     QTRY_COMPARE(page.held, 2);
   }
+
+  // A failed open named no tab, so the MC could only guess which new tab of
+  // the thread was the one it made, and closed others' with it.
+  void aFailedOpenNamesTheTabItMade() {
+    FakeMc mc;
+    QString connection;
+    mc.onShape(QStringLiteral("previewAutomation"), [&](int id, const QJsonObject&) {
+      QTimer::singleShot(0, &mc, [&, id] {
+        connection = QStringLiteral("connection-1");
+        mc.send({{QStringLiteral("t"), QStringLiteral("previewAutomation")},
+                 {QStringLiteral("id"), id},
+                 {QStringLiteral("event"), QJsonObject{{QStringLiteral("type"), QStringLiteral("connected")},
+                                                       {QStringLiteral("connectionId"), connection}}}});
+      });
+    });
+    QJsonObject response;
+    mc.onRpc(QStringLiteral("previewAutomation.respond"), [&](const FakeMc::Rpc& rpc) {
+      response = rpc.payload;
+      mc.reply(rpc, QJsonValue::Null);
+    });
+    mc.onRpc(QStringLiteral("previewAutomation.focusHost"), [&](const FakeMc::Rpc& rpc) { mc.reply(rpc, QJsonValue::Null); });
+    // The MC makes the tab; its page never registers here, so the open fails.
+    mc.onRpc(QStringLiteral("preview.open"), [&](const FakeMc::Rpc& rpc) {
+      mc.reply(rpc, QJsonObject{{QStringLiteral("tabId"), QStringLiteral("tab-new")}});
+    });
+    McClient client;
+    client.open(mc.origin(), QStringLiteral("token"));
+    QTRY_VERIFY(client.isReady());
+    PreviewAutomationHost host(&client, QStringLiteral("desktop-test"));
+    HeldPage page;
+    host.setMcs({{mc.name, mc.environmentId}});
+    host.attach(mc.environmentId, kThread, kTab, &page);
+    QTRY_VERIFY(!connection.isEmpty() && host.connectionId(mc.name) == connection);
+
+    const QJsonObject request{{QStringLiteral("requestId"), QStringLiteral("open")},
+                              {QStringLiteral("threadId"), kThread},
+                              {QStringLiteral("tabIdExplicit"), false},
+                              {QStringLiteral("operation"), QStringLiteral("open")},
+                              {QStringLiteral("input"), QJsonObject{{QStringLiteral("reuseExistingTab"), false}}},
+                              {QStringLiteral("timeoutMs"), 400}};
+    mc.send({{QStringLiteral("t"), QStringLiteral("previewAutomation")},
+             {QStringLiteral("id"), mc.subscribers(QStringLiteral("previewAutomation")).last()},
+             {QStringLiteral("event"), QJsonObject{{QStringLiteral("type"), QStringLiteral("request")},
+                                                   {QStringLiteral("connectionId"), connection},
+                                                   {QStringLiteral("request"), request}}}});
+
+    QTRY_VERIFY(response.contains(QLatin1String("ok")));
+    QCOMPARE(response.value(QLatin1String("ok")).toBool(), false);
+    QCOMPARE(response.value(QLatin1String("error")).toObject().value(QLatin1String("tabId")).toString(),
+             QStringLiteral("tab-new"));
+  }
 };
 
 QTEST_MAIN(tst_PreviewAutomationHostRegression)

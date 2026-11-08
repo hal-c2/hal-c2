@@ -73,8 +73,11 @@ Rectangle {
 
         onLoadRequested: url => root.go(url, false)
         // Given its tab after it was made (PanelBodies): the view starts where the tab is.
-        onTabIdChanged: if (url.length > 0 && webView.url.toString() !== url)
-            webView.url = url
+        onTabIdChanged: {
+            if (url.length > 0 && webView.url.toString() !== url)
+                webView.url = url;
+            root.showQuestions();
+        }
         onEvaluateRequested: (request, script, world) => webView.runJavaScript(script, world, result => page.evaluated(request, result))
         onGrabRequested: request => {
             const grabbed = webView.grabToImage(result => page.grabbed(request, result.image));
@@ -169,6 +172,31 @@ Rectangle {
         else if (permission !== undefined)
             allow ? permission.grant() : permission.deny();
         webView.forceActiveFocus();
+    }
+
+    // The tab Browser.permissions may ask the user about: this one while it
+    // shows. A tab kept while another shows (PanelBodies) asks nothing, and
+    // what it was asking is refused.
+    property string asking: ""
+    onVisibleChanged: showQuestions()
+    Component.onCompleted: showQuestions()
+
+    function showQuestions() {
+        const shown = root.visible ? page.tabId : "";
+        if (shown === root.asking)
+            return;
+        if (root.asking.length > 0) {
+            Browser.permissions.setShown(root.asking, false);
+            for (const id in root.waiting) {
+                const permission = root.waiting[id];
+                permission.deny();
+                Qt.callLater(() => permission.reset());
+            }
+            root.waiting = {};
+        }
+        root.asking = shown;
+        if (shown.length > 0)
+            Browser.permissions.setShown(shown, true);
     }
 
     Component.onDestruction: {
@@ -656,7 +684,7 @@ Rectangle {
                     onDesktopMediaRequested: request => request.cancel()
                     // A link to another app (slack:, mailto:) is the user's to open.
                     onNavigationRequested: request => {
-                        if (Browser.permissions.openLink(page.tabId, request.url) > 0)
+                        if (Browser.permissions.openLink(page.tabId, request.url) !== 0)
                             request.reject();
                     }
                     onNewWindowRequested: request => {
@@ -781,13 +809,17 @@ Rectangle {
             color: root.color
 
             Column {
+                id: startColumn
+
+                readonly property var offered: root.source !== null && root.address.length === 0 ? root.source.suggestions : []
+
                 anchors.horizontalCenter: parent.horizontalCenter
                 y: Math.min(parent.height * 0.18, 96)
                 width: Math.min(parent.width - 48, 420)
                 spacing: Theme.space.sm
 
                 Text {
-                    text: qsTr("Open a page")
+                    text: startColumn.offered.length > 0 ? qsTr("Open a page") : qsTr("No preview yet")
                     color: root.foreground
                     font.pixelSize: Theme.type.title.size
                     font.weight: Font.DemiBold
@@ -795,7 +827,7 @@ Rectangle {
 
                 Text {
                     width: parent.width
-                    text: qsTr("Type an address above, or pick a server running on this machine.")
+                    text: startColumn.offered.length > 0 ? qsTr("Type an address above, or pick a server running on this machine.") : qsTr("Type a URL above or run a dev script. Servers on localhost show up here automatically.")
                     wrapMode: Text.Wrap
                     color: root.muted
                     font.pixelSize: Theme.type.meta.size
@@ -803,22 +835,27 @@ Rectangle {
                 }
 
                 Repeater {
-                    model: root.source !== null && root.address.length === 0 ? root.source.suggestions : []
+                    model: startColumn.offered
 
+                    // A server, a configured address or a recent page: its title, and beneath it
+                    // its address (and when a recent page was visited, with a way to forget it).
                     delegate: AbstractButton {
                         id: suggestion
 
                         required property var modelData
                         required property int index
+                        readonly property bool recent: modelData.kind === "recent"
+                        // Pages kept from before visits were timed have no time to show.
+                        readonly property string when: recent && modelData.visitedAt !== undefined ? Format.relative(modelData.visitedAt) : ""
 
                         objectName: "browserSuggestion-" + index
                         width: parent.width
-                        implicitHeight: 32
+                        implicitHeight: 44
                         leftPadding: 8
-                        rightPadding: 8
+                        rightPadding: 4
                         hoverEnabled: true
-                        text: modelData.url
-                        Accessible.name: modelData.url
+                        text: modelData.title
+                        Accessible.name: modelData.title === modelData.detail ? modelData.url : qsTr("%1, %2").arg(modelData.title).arg(modelData.url)
 
                         background: Rectangle {
                             radius: Theme.radiusMd
@@ -829,36 +866,46 @@ Rectangle {
                             spacing: 8
 
                             ShellIcon {
-                                name: suggestion.modelData.kind === "server" ? "server" : suggestion.modelData.kind === "recent" ? "clock" : "globe"
+                                name: suggestion.modelData.kind === "server" ? "server" : suggestion.recent ? "clock" : "globe"
                                 size: 14
                                 color: root.muted
                             }
 
-                            Text {
+                            Column {
                                 Layout.fillWidth: true
-                                text: suggestion.modelData.url
-                                elide: Text.ElideMiddle
-                                color: root.foreground
-                                font.pixelSize: Theme.type.body.size
+                                spacing: 2
+
+                                Text {
+                                    objectName: "browserSuggestionTitle"
+                                    width: parent.width
+                                    text: suggestion.modelData.title
+                                    elide: Text.ElideRight
+                                    color: root.foreground
+                                    font.pixelSize: Theme.type.body.size
+                                }
+
+                                Text {
+                                    objectName: "browserSuggestionDetail"
+                                    width: parent.width
+                                    text: suggestion.when.length > 0 ? qsTr("%1 · %2").arg(suggestion.modelData.detail).arg(suggestion.when) : suggestion.modelData.detail
+                                    elide: Text.ElideMiddle
+                                    color: root.muted
+                                    font.pixelSize: Theme.type.meta.size
+                                }
                             }
 
-                            Text {
-                                visible: text.length > 0
-                                text: suggestion.modelData.label || ""
-                                color: root.muted
-                                font.pixelSize: Theme.type.meta.size
+                            ShellButton {
+                                objectName: "browserSuggestionForget-" + suggestion.index
+                                visible: suggestion.recent
+                                subtle: true
+                                iconName: "x"
+                                Accessible.name: qsTr("Remove %1 from history").arg(suggestion.modelData.title)
+                                onClicked: root.source.forget(suggestion.modelData.url)
                             }
                         }
 
                         onClicked: root.go(modelData.url, true)
                     }
-                }
-
-                Text {
-                    visible: root.source === null || root.source.suggestions.length === 0
-                    text: qsTr("No servers are running on this machine yet.")
-                    color: root.muted
-                    font.pixelSize: Theme.type.meta.size
                 }
             }
         }
@@ -1024,7 +1071,7 @@ Rectangle {
                 onNewWindowRequested: request => {}
                 onPermissionRequested: permission => root.permissionAsked(permission)
                 onNavigationRequested: request => {
-                    if (Browser.permissions.openLink(page.tabId, request.url) > 0)
+                    if (Browser.permissions.openLink(page.tabId, request.url) !== 0)
                         request.reject();
                 }
                 onWindowCloseRequested: popup.close()

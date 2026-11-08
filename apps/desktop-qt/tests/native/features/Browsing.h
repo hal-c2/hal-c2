@@ -19,6 +19,12 @@ void servePage(World& world, const QString& path, const QString& title, const QS
 QString serverUrl(World& world, const QString& path = QStringLiteral("/"));
 // The thread has one browser tab, drawn, showing the dev server's `path`.
 void showTab(World& world, const QString& path = QStringLiteral("/"));
+// The thread's pages show in browser tabs here, as the desktop's do.
+void embed(World& world);
+// The thread shown with its pages in browser tabs here and the side panel drawn, as the desktop does.
+void drawEmbedded(World& world);
+// Waits for a browser tab to show, the one the scenario is about from now on.
+void waitForTab(World& world);
 // The page of the tab the scenario is about.
 BrowserPage* page(World& world);
 QString tabId(World& world);
