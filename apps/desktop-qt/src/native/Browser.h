@@ -100,8 +100,9 @@ private:
 // report (an agent's `preview.navigate`, another window) asks the view to load
 // it (loadRequested). The device size is the MC's (`viewport`): setViewport
 // shows the new size at once (`resizing` until the MC answers) and sends
-// `preview.resize`; answered or timed out, the size the MC has is the size
-// unless a newer one was picked since.
+// `preview.resize`; refused or timed out, the size the MC has is the size;
+// taken, the size picked is, until the MC's tab says otherwise. A newer pick
+// outlives an older one's answer.
 // Zoom, appearance, mute and DevTools are the page's own, not the MC's.
 //
 // For drivers in C++: `view` is the WebEngineView (a QQuickItem; call its
@@ -142,7 +143,7 @@ public:
   QString status() const;
   bool exists() const { return !m_tab.isEmpty(); }
   QVariantMap viewport() const;
-  bool resizing() const { return !m_pendingViewport.isEmpty(); }
+  bool resizing() const { return m_resizing; }
   qreal zoom() const { return m_zoom; }
   void setZoom(qreal zoom);
   QString appearance() const { return m_appearance; }
@@ -204,7 +205,7 @@ private:
   void follow();
   void refresh();
   void went(const QString& url);
-  void setPending(const QJsonObject& viewport);
+  void setPending(const QJsonObject& viewport, bool waiting);
 
   QPointer<ThreadPreviews> m_previews;
   QString m_tabId;
@@ -215,8 +216,10 @@ private:
   QString m_at;
   QStringList m_echoes;
   QJsonObject m_lastReport;
-  // A size picked and not yet confirmed, and which pick it was.
+  // A size picked that the MC's tab does not show yet, whether the MC is yet
+  // to answer it, and which pick it was.
   QJsonObject m_pendingViewport;
+  bool m_resizing = false;
   int m_viewportPick = 0;
   qreal m_zoom = 1.0;
   QString m_appearance = QStringLiteral("system");

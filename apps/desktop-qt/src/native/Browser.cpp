@@ -163,7 +163,7 @@ void BrowserPage::setTabId(const QString& tabId) {
   m_lastReport = {};
   // A size picked for the old tab is not the new tab's.
   ++m_viewportPick;
-  setPending({});
+  setPending({}, false);
   follow();
   emit tabIdChanged();
 }
@@ -190,12 +190,15 @@ void BrowserPage::refresh() {
   const QJsonObject tab = m_previews ? m_previews->tab(m_tabId) : QJsonObject();
   if (tab == m_tab) return;
   const QJsonValue before = m_tab.value(QLatin1String("viewport"));
+  const QString was = url();
   m_tab = tab;
   emit tabChanged();
-  // The MC confirming the size picked ends the pick.
-  if (!m_pendingViewport.isEmpty() && m_tab.value(QLatin1String("viewport")).toObject() == m_pendingViewport) {
-    setPending({});
-  } else if (m_tab.value(QLatin1String("viewport")) != before && m_pendingViewport.isEmpty()) {
+  // The MC's tab showing the size picked, or another, ends the pick.
+  const bool resized = m_tab.value(QLatin1String("viewport")) != before;
+  if (!m_pendingViewport.isEmpty() && (resized || m_tab.value(QLatin1String("viewport")).toObject() == m_pendingViewport)) {
+    setPending({}, false);
+    emit viewportChanged();
+  } else if (resized && m_pendingViewport.isEmpty()) {
     emit viewportChanged();
   }
   const QString at = url();
@@ -205,22 +208,26 @@ void BrowserPage::refresh() {
     m_echoes.clear();
     return;
   }
-  // The MC saying back where the page went, in order.
+  // The MC saying back where the page went, in order (the page is where it
+  // went last).
   if (const qsizetype echo = m_echoes.indexOf(at); echo >= 0) {
     m_echoes.remove(0, echo + 1);
-    m_at = at;
     return;
   }
+  // The tab changed but not its address (its size, say): not where the page
+  // is, which may be somewhere the MC has not heard of yet.
+  if (at == was) return;
   if (at == m_at) return;
   // Somewhere the page did not go by itself: an agent, or another window.
   m_at = at;
   emit loadRequested(at);
 }
 
-void BrowserPage::setPending(const QJsonObject& viewport) {
-  const bool was = resizing();
+void BrowserPage::setPending(const QJsonObject& viewport, bool waiting) {
   m_pendingViewport = viewport;
-  if (resizing() != was) emit resizingChanged();
+  if (waiting == m_resizing) return;
+  m_resizing = waiting;
+  emit resizingChanged();
 }
 
 void BrowserPage::went(const QString& url) {
@@ -309,7 +316,16 @@ void BrowserPage::report(const QString& phase, const QString& url, const QString
   if (report == m_lastReport) return;
   m_lastReport = report;
   went(url);
-  m_previews->report(m_tabId, navStatus, canGoBack, canGoForward);
+  m_previews->report(m_tabId, navStatus, canGoBack, canGoForward, [this, url, tabId = m_tabId, guard = QPointer<BrowserPage>(this)] {
+    if (!guard || tabId != m_tabId) return;
+    // The MC will not say it back, and its tab is where the page is.
+    m_echoes.removeAll(url);
+    m_lastReport = {};
+    const QString at = this->url();
+    if (at.isEmpty() || at == m_at) return;
+    m_at = at;
+    emit loadRequested(at);
+  });
 }
 
 void BrowserPage::navigate(const QString& url) {
@@ -322,18 +338,23 @@ void BrowserPage::setViewport(const QVariantMap& viewport) {
   if (!m_previews || m_tabId.isEmpty()) return;
   const QJsonObject next = QJsonObject::fromVariantMap(viewport);
   const int pick = ++m_viewportPick;
-  setPending(next);
+  setPending(next, true);
   emit viewportChanged();
-  m_previews->resizeTab(m_tabId, next, [this, pick, guard = QPointer<BrowserPage>(this)](const std::optional<QString>&) {
-    // Answered: the MC's size is the size, confirmed (refresh) or not (refused,
-    // or the MC kept another), unless the user has picked another since.
-    if (!guard || pick != m_viewportPick || !resizing()) return;
-    setPending({});
+  m_previews->resizeTab(m_tabId, next, [this, pick, guard = QPointer<BrowserPage>(this)](const std::optional<QString>& error) {
+    // Answered, unless the user has picked another since: refused, the MC's
+    // size is the size; taken, the size picked stays shown until the MC's tab
+    // has it (its event may come after the answer, or not at all).
+    if (!guard || pick != m_viewportPick || !m_resizing) return;
+    if (!error) {
+      setPending(m_tab.value(QLatin1String("viewport")).toObject() == m_pendingViewport ? QJsonObject() : m_pendingViewport, false);
+      return;
+    }
+    setPending({}, false);
     emit viewportChanged();
   });
   QTimer::singleShot(kResizeTimeoutMs, this, [this, pick] {
-    if (pick != m_viewportPick || m_pendingViewport.isEmpty()) return;
-    setPending({});
+    if (pick != m_viewportPick || !m_resizing) return;
+    setPending({}, false);
     emit viewportChanged();
   });
 }

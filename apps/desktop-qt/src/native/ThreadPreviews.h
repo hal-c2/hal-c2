@@ -123,10 +123,11 @@ public:
   // The tab as the MC last said, or {} when there is none.
   QJsonObject tab(const QString& tabId) const;
   // What the page showing the tab did: `preview.reportStatus`, navStatus a
-  // PreviewNavStatus.
-  void report(const QString& tabId, const QJsonObject& navStatus, bool canGoBack, bool canGoForward);
+  // PreviewNavStatus. `unheard` runs when the MC refused it or never got it.
+  void report(const QString& tabId, const QJsonObject& navStatus, bool canGoBack, bool canGoForward, std::function<void()> unheard = {});
   // The size the tab's page is shown at: `preview.resize`, viewport a
-  // PreviewViewportSetting. `failed` runs when the MC refused it.
+  // PreviewViewportSetting. `done` runs once the MC answers, with why it
+  // refused; the tab changes with the MC's event.
   void resizeTab(const QString& tabId, const QJsonObject& viewport, std::function<void(const std::optional<QString>&)> done = {});
 
   int rowCount(const QModelIndex& parent = QModelIndex()) const override;

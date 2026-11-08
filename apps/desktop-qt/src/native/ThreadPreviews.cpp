@@ -434,7 +434,11 @@ void ThreadPreviews::reload() {
                        continue;
                      }
                      const QString tabId = event.value(QLatin1String("tabId")).toString();
-                     if (revision <= m_revision || m_closing.contains(tabId)) continue;
+                     if (revision <= m_revision) continue;
+                     if (m_closing.contains(tabId)) {
+                       if (event.value(QLatin1String("type")).toString() == QLatin1String("closed")) m_closing.remove(tabId);
+                       continue;
+                     }
                      m_revision = revision;
                      const auto at = std::find_if(rows.begin(), rows.end(), [&](const QJsonObject& row) {
                        return row.value(QLatin1String("tabId")).toString() == tabId;
@@ -486,7 +490,11 @@ void ThreadPreviews::onEvent(const QJsonObject& event) {
   if (revision <= m_revision) return;
   m_revision = revision;
   const QString tabId = event.value(QLatin1String("tabId")).toString();
-  if (m_closing.contains(tabId)) return;
+  if (m_closing.contains(tabId)) {
+    // Closed on the MC: a refusal of the user's close does not bring it back.
+    if (event.value(QLatin1String("type")).toString() == QLatin1String("closed")) m_closing.remove(tabId);
+    return;
+  }
   const int row = rowOf(tabId);
   const auto next = after(event, row < 0 ? std::nullopt : std::optional(m_rows.at(row)));
   if (next) {
@@ -518,16 +526,18 @@ QJsonObject ThreadPreviews::tab(const QString& tabId) const {
   return row < 0 ? QJsonObject() : m_rows.at(row);
 }
 
-void ThreadPreviews::report(const QString& tabId, const QJsonObject& navStatus, bool canGoBack, bool canGoForward) {
+void ThreadPreviews::report(const QString& tabId, const QJsonObject& navStatus, bool canGoBack, bool canGoForward, std::function<void()> unheard) {
   if (rowOf(tabId) < 0 || m_thread.isEmpty() || m_closing.contains(tabId)) return;
-  // The MC's event says it back; nothing to do with the answer.
+  // The MC's event says it back.
   m_client->call(this, m_environment, QStringLiteral("preview.reportStatus"),
                  QJsonObject{{QStringLiteral("threadId"), m_thread},
                              {QStringLiteral("tabId"), tabId},
                              {QStringLiteral("navStatus"), navStatus},
                              {QStringLiteral("canGoBack"), canGoBack},
                              {QStringLiteral("canGoForward"), canGoForward}},
-                 [](const QJsonValue&, const std::optional<QString>&) {});
+                 [unheard](const QJsonValue&, const std::optional<QString>& error) {
+                   if (error && unheard) unheard();
+                 });
 }
 
 void ThreadPreviews::resizeTab(const QString& tabId, const QJsonObject& viewport, std::function<void(const std::optional<QString>&)> done) {
@@ -535,12 +545,12 @@ void ThreadPreviews::resizeTab(const QString& tabId, const QJsonObject& viewport
     if (done) done(QStringLiteral("no such tab"));
     return;
   }
-  const int generation = m_generation;
+  // The tab's new size comes in the MC's `resized` event, in order with the
+  // rest; the answer's snapshot may be older than an event read before it.
   m_client->call(this, m_environment, QStringLiteral("preview.resize"),
                  QJsonObject{{QStringLiteral("threadId"), m_thread}, {QStringLiteral("tabId"), tabId}, {QStringLiteral("viewport"), viewport}},
-                 [this, generation, done](const QJsonValue& result, const std::optional<QString>& error) {
+                 [this, done](const QJsonValue&, const std::optional<QString>& error) {
                    if (error) m_notify(QStringLiteral("error"), QStringLiteral("Unable to resize browser viewport"), *error);
-                   else if (generation == m_generation && result.isObject() && m_status == QLatin1String("ready")) upsert(result.toObject());
                    if (done) done(error);
                  });
 }
