@@ -1743,7 +1743,7 @@ defmodule HalC2.Steps.Providers.Pi do
     Map.put(context, :providers, providers)
   end
 
-  step "only {string} is offered", %{args: [kept]} = context do
+  step "Pi offers only {string}", %{args: [kept]} = context do
     assert Enum.map(pi(context)["models"], & &1["slug"]) == ["default", "fake/#{kept}"]
     context
   end
