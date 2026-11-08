@@ -335,10 +335,10 @@ Feature: Cursor
     Then Cursor receives the skill reference
 
   @priority-low
-  Scenario: Credentials from an older Cursor login move to the MC's secrets once
+  Scenario: Credentials from an older Cursor login are copied to the MC's secrets once
     Given an older Cursor login file exists
     When Cursor starts for the first time on this version
-    Then the login moves into the MC's secrets and the old file is removed
+    Then the login is copied into the MC's secrets and the old file is left where it was
 
   @dropped
   Scenario: Cursor turns can be recorded and replayed against the SDK boundary

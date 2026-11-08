@@ -67,9 +67,12 @@ const settle = async () => {
 };
 
 /** Drives the sidecar like a client: requests get ids, replies are collected. */
-function client(sdk: CursorSdk) {
+function client(
+  sdk: CursorSdk,
+  mode: "full-access" | "text-generation-unsandboxed" = "full-access",
+) {
   const out: Array<Record<string, unknown>> = [];
-  const acp = makeCursorAcp({ sdk, mode: "full-access", write: (m) => out.push(m as never) });
+  const acp = makeCursorAcp({ sdk, mode, write: (m) => out.push(m as never) });
   let id = 0;
   const call = async (method: string, params: object = {}) => {
     const mine = ++id;
@@ -300,6 +303,66 @@ describe("Cursor over ACP", () => {
 
     failure = { message: "Invalid parameters for registry model: model not found" };
     expect((await prompt()).error.message).toContain("is not one this Cursor account offers");
+  });
+
+  it("reads the account only for a probe, and refuses it before any agent exists", async () => {
+    const { sdk } = fakeSdk([]);
+    await sdk.store.save(credentials);
+    let meCalls = 0;
+    let agentsCreated = 0;
+    const counting: CursorSdk = {
+      ...sdk,
+      me: async () => {
+        meCalls++;
+        throw new Error("network unreachable");
+      },
+      createAgent: async (options) => {
+        agentsCreated++;
+        return sdk.createAgent(options);
+      },
+    };
+    const { call } = client(counting);
+
+    // A real thread's session never asks the account endpoint.
+    const session = await call("session/new", { cwd: "/work" });
+    expect(session.result.sessionId).toBe("agent-1");
+    expect(meCalls).toBe(0);
+    expect(agentsCreated).toBe(1);
+
+    // The probe does, and a sign-in it cannot confirm fails the probe —
+    // before a second agent is created and orphaned.
+    const probe = await call("session/new", { cwd: "/work", _meta: { probe: true } });
+    expect(probe.error.message).toBe("Could not verify the Cursor sign-in. Try again.");
+    expect(meCalls).toBe(1);
+    expect(agentsCreated).toBe(1);
+  });
+
+  it("explains a usage limit on the unsandboxed text-generation retry too", async () => {
+    const { sdk } = fakeSdk([]);
+    await sdk.store.save(credentials);
+    const limited: CursorSdk = {
+      ...sdk,
+      createAgent: async () => ({
+        agentId: "agent-1",
+        close: () => {},
+        send: async () => ({
+          wait: async () => ({
+            status: "error",
+            error: { message: "You have reached your usage limit" },
+          }),
+          cancel: async () => {},
+        }),
+      }),
+    };
+    const { call } = client(limited, "text-generation-unsandboxed");
+    await call("session/new", { cwd: "/work" });
+    const reply = await call("session/prompt", {
+      sessionId: "agent-1",
+      prompt: [{ type: "text", text: "title please" }],
+    });
+    expect(reply.error.message).toBe(
+      "Cursor usage limit reached. Try again later or choose another text-generation provider.",
+    );
   });
 
   it("cancels a running prompt", async () => {

@@ -197,10 +197,12 @@ export function makeCursorAcp(input: {
   };
 
   /**
-   * Who the key belongs to, for the provider list. A team that blocks the
-   * account endpoint still lets Cursor run: the account then reads as a
-   * Cursor account (or API key) without an email, and only a saved sign-in
-   * Cursor cannot confirm at all is an error.
+   * Who the key belongs to, for the provider list — read only for the MC's
+   * probe session (`_meta.probe`), never for a real thread's session, whose
+   * turns must not wait on or fail with Cursor's account endpoint. A team
+   * that blocks the account endpoint still lets Cursor run: the account
+   * then reads as a Cursor account (or API key) without an email, and only
+   * a saved sign-in Cursor cannot confirm at all is an error.
    */
   const account = async (key: string, stored: boolean) => {
     const fallback = { label: stored ? "Cursor account" : "Cursor API key" };
@@ -301,13 +303,16 @@ export function makeCursorAcp(input: {
     const { key, stored } = await requireKey();
     const cwd = String(params.cwd ?? process.cwd());
     const model: ModelSelection = { id: "default" };
+    // Everything that can refuse the session runs before an agent exists, so
+    // a refused open never orphans one. The account read is the probe's alone.
+    const { options, catalogError } = await modelOption(key, model.id, stored);
+    const probe = (params._meta as { readonly probe?: unknown } | undefined)?.probe === true;
+    const who = probe ? await account(key, stored) : undefined;
     const agent = await guard(
       agentId === undefined
         ? sdk.createAgent(agentOptions(cwd, key, model))
         : sdk.resumeAgent(agentId, agentOptions(cwd, key, model)),
     );
-    const { options, catalogError } = await modelOption(key, model.id, stored);
-    const who = await account(key, stored);
     sessions.get(agent.agentId)?.agent.close();
     sessions.set(agent.agentId, {
       agent,
@@ -321,7 +326,7 @@ export function makeCursorAcp(input: {
       ...(agentId === undefined ? { sessionId: agent.agentId } : {}),
       configOptions: options,
       _meta: {
-        account: who,
+        ...(who === undefined ? {} : { account: who }),
         ...(catalogError === undefined ? {} : { catalogError }),
       },
     };
@@ -1152,7 +1157,7 @@ class TransportFailure {
  */
 function explainFailure(message: string, model: string, mode: RuntimeMode): string {
   if (
-    mode === "text-generation" &&
+    (mode === "text-generation" || mode === "text-generation-unsandboxed") &&
     /usage limit|rate limit|quota|insufficient.*credit/i.test(message)
   ) {
     return "Cursor usage limit reached. Try again later or choose another text-generation provider.";

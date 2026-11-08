@@ -349,24 +349,29 @@ defmodule HalC2.Acp do
     do: Application.get_env(:hal_c2, :cursor_cancel_timeout_ms, 10_000)
 
   # An older Cursor login lives in the SDK's own file (`~/.cursor/sdk/auth.json`):
-  # it moves into this instance's sign-in once, and the old file is removed. A
-  # sign-in already kept (and readable) wins; the old file goes either way.
-  # Both paths are the MC's own: the SDK's fixed file under the user's home and
-  # this instance's sign-in under the MC's data directory.
+  # it is copied into this instance's sign-in once, when this instance has none
+  # it can read. The SDK's file stays where it was — other SDK clients (and a
+  # T3 Code install on the default store) may still sign in from it, and a
+  # second Cursor instance copies it too. A marker beside the sign-in remembers
+  # the copy, so signing out does not bring the old login back.
+  # Both paths are fixed: the SDK's file under the user's home and this
+  # instance's sign-in under the MC's data directory.
   # sobelow_skip ["Traversal.FileModule"]
   defp migrate_cursor_credentials(instance) do
     target = cursor_credentials(instance)
+    marker = Path.join(Path.dirname(target), "legacy-migrated")
     legacy = Path.join([HalC2.Paths.user_home(), ".cursor", "sdk", "auth.json"])
 
-    if legacy != target && File.regular?(legacy) do
+    if legacy != target && !File.exists?(marker) && File.regular?(legacy) do
       try do
+        File.mkdir_p!(Path.dirname(target))
+
         if not cursor_credentials_valid?(target) && cursor_credentials_valid?(legacy) do
-          File.mkdir_p!(Path.dirname(target))
           File.cp!(legacy, target)
           File.chmod!(target, 0o600)
         end
 
-        File.rm!(legacy)
+        File.write!(marker, "")
       rescue
         error ->
           require Logger
@@ -826,9 +831,17 @@ defmodule HalC2.Acp do
 
         # Antigravity's models come from its sign-in and sessions
         # (`HalC2.Acp.Antigravity.account/1`); a probe session would need a Google login.
+        # A Cursor probe says so in `_meta`: its sidecar then also reads who
+        # the key belongs to (and may fail saying it cannot), which a real
+        # thread's session must never wait on or fail for.
+        probe_params =
+          if driver == "cursor",
+            do: %{"cwd" => dir, "mcpServers" => [], "_meta" => %{"probe" => true}},
+            else: %{"cwd" => dir, "mcpServers" => []}
+
         case if(driver == "antigravity",
                do: {:ok, %{}},
-               else: call_serving(conn, id, "session/new", %{"cwd" => dir, "mcpServers" => []})
+               else: call_serving(conn, id, "session/new", probe_params)
              ) do
           {:ok, session} ->
             stage(id, :config, session["configOptions"] || [])

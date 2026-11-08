@@ -1885,7 +1885,14 @@ defmodule HalC2.Steps.Providers.Cursor do
 
   step "an older Cursor login file exists", context do
     ctx = ops(context)
-    legacy = Path.join([HalC2.Paths.user_home(), ".cursor", "sdk", "auth.json"])
+    legacy = Path.join([HalC2.Test.Mc.Host.home(ctx), ".cursor", "sdk", "auth.json"])
+
+    # The scenario's scratch home only: this file stands in for the developer's
+    # real Cursor SDK login, which a test must never write or delete.
+    unless String.starts_with?(legacy, ctx.mc.home <> "/") do
+      raise "refusing to write a fake Cursor login outside the scenario home: #{legacy}"
+    end
+
     File.mkdir_p!(Path.dirname(legacy))
 
     File.write!(
@@ -1908,11 +1915,13 @@ defmodule HalC2.Steps.Providers.Cursor do
     ctx
   end
 
-  step "the login moves into the MC's secrets and the old file is removed", context do
+  step "the login is copied into the MC's secrets and the old file is left where it was",
+       context do
     assert File.exists?(credentials("cursor"))
     assert JSON.decode!(File.read!(credentials("cursor")))["apiKey"] == "cursor-key"
     assert Acp.check("cursor")["auth"]["status"] == "authenticated"
-    refute File.exists?(context.legacy_auth)
+    # The SDK's own file stays for the other clients that read it.
+    assert File.exists?(context.legacy_auth)
     context
   end
 
