@@ -250,7 +250,7 @@ defmodule HalC2.ProviderUsageLimits.Codex do
   # its home, as its sessions run in, and its variables); nil when it cannot start.
   defp with_app_server(instance, fun) do
     Process.flag(:trap_exit, true)
-    env = Enum.to_list(HalC2.Settings.instance_env(instance))
+    env = HalC2.Codex.Provider.app_server_env(Enum.to_list(HalC2.Settings.instance_env(instance)))
 
     with {:ok, home} <- HalC2.Codex.Home.env(instance),
          {:ok, conn} <-
