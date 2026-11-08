@@ -97,7 +97,7 @@ defmodule HalC2.ProviderLog do
   def options(thread_id, opts) do
     # The names of the MCP servers attached, when the caller named them;
     # HAL-C2's own server is the only one a Claude session attaches
-    # (`HalC2.Claude.McpConfig`).
+    # (`HalC2.Claude.Session`).
     servers =
       case opts[:mcp_servers] do
         names when is_list(names) -> names
