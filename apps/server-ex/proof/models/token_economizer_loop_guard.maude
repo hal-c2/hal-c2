@@ -5,32 +5,39 @@ sload model-checker
 --- may miss an event and say so with the next one. The plugin folds each call into the
 --- turn's guard, which may find the turn stuck by its free rules, or put a job out to
 --- the paid judge, whose verdict comes back later, or never. A stuck turn is redirected
---- up to the budget, each redirect starting a fresh segment, and is then offered a stop,
---- which only the person takes. Redirects and notices are delivered by a task of their
---- own, so they may land after the turn they are about has ended or the next has begun.
+--- up to the budget, each redirect that reaches the agent starting a fresh segment, and
+--- is then offered a stop, which only the person takes. Redirects and notices are
+--- delivered by a task of their own, so they may land after the turn they are about has
+--- ended or the next has begun, and the MC may refuse a redirect; the task tells the
+--- plugin whether it was taken.
 --- When a turn closes, one that ended green and was heard whole teaches the project's
 --- envelope. proof/hal_c2/token_economizer_loop_guard_proof_test.exs maps it to the code
 --- and checks it.
 ---
---- cfg(Keyed, Reset, Once, Stale, Aimed, First, Whole, Green, Window) switches each part of the
---- design on, so that the design without it can be shown to fail (see the test's
---- moduledoc for the counterexamples):
+--- cfg(Keyed, Reset, Once, Stale, Aimed, Told, Whole, Green, Window, Landed, Cancel) switches
+--- each part of the design on, so that the design without it can be shown to fail (see
+--- the test's comment for the counterexamples):
 ---   Keyed - a verdict is kept only for the job out now (Turn.verdict/3), and only for
 ---           the turn under way.
 ---   Reset - a redirect starts its segment without the job out or the verdict back,
----           in Turn.after_nudge/1.
+---           in Turn.redirected/2.
 ---   Once  - after the stop offer the guard decides nothing more in the turn, and the
 ---           plugin offers a turn a stop once (abort_delivered).
 ---   Stale - a job out longer than the judge's stale time stops blocking the next one.
 ---   Aimed - a redirect names its run and is refused once that run is no longer under
 ---           way (Host.steer/4's targetRunId and steerOnly).
----   First - the redirect's notice is delivered before the redirect.
+---   Told  - the redirect's notice is delivered after the redirect, and only once the MC
+---           took it.
 ---   Whole - a turn under way when the feed missed an event is partial, and teaches
 ---           nothing.
 ---   Green - only a turn that ended on its own, green and not offered a stop, teaches.
 ---   Window - the feed misses the newest event and says so with the next it delivers,
 ---           which it queued before the missed one; so the turns heard until those
 ---           queued with it have been heard are partial too (suspect/2).
+---   Landed - a redirect starts its segment once its task says the MC took it, and the
+---           guard decides nothing while it is on its way (Turn.redirect/1); one refused
+---           leaves the segment as it was.
+---   Cancel - a judge job of a segment or turn that has ended is stopped (cancel_judge/2).
 
 mod TOKEN-ECONOMIZER-LOOP-GUARD is
   protecting NAT .
@@ -51,8 +58,8 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
   op noev : -> Feed [ctor] .
   op _;_ : Feed Feed -> Feed [ctor assoc id: noev] .
 
-  --- What a delivery task does, in order: the redirect's notice, the redirect, the notice
-  --- offering a stop.
+  --- What a delivery task does, in order: the redirect, its notice, the notice offering a
+  --- stop. A redirect refused ends the task.
   ops notice steer offer : -> Act [ctor] .
   op done : -> Acts [ctor] .
   op _then_ : Acts Acts -> Acts [ctor assoc id: done] .
@@ -70,11 +77,11 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
   op got : Job Bool -> Arr [ctor] .
 
   --- A turn's guard: its segment, redirects, stop offers, the job out, the verdict back,
-  --- whether the last check it heard failed, whether the turn is partial, and the jobs
-  --- it has put out.
-  op g : Nat Nat Nat Pend Arr Bool Bool Nat -> Guard [ctor] .
+  --- whether the last check it heard failed, whether the turn is partial, the jobs it
+  --- has put out, and whether a redirect is on its way.
+  op g : Nat Nat Nat Pend Arr Bool Bool Nat Bool -> Guard [ctor] .
   op fresh : -> Guard .
-  eq fresh = g(0, 0, 0, nojob, noverdict, false, false, 0) .
+  eq fresh = g(0, 0, 0, nojob, noverdict, false, false, 0, false) .
 
   --- The plugin's turn under way for the thread, if any.
   op free : -> Watch [ctor] .
@@ -98,22 +105,24 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
   --- The plugin: its turn, and the runs whose turn taught the envelope.
   op watching : Watch -> Item [ctor] .
   op taught : Nat -> Item [ctor] .
-  --- The judge: a job asked, and its verdict on the way back.
+  --- The judge: a job asked, and its verdict on the way back. drop stops the run's jobs
+  --- asked (a verdict already sent still comes).
   op asking : Job -> Item [ctor] .
   op verdict : Job Bool -> Item [ctor] .
+  op drop : Nat -> Item [ctor] .
   --- Deliveries under way, and what landed in the thread: a redirect's notice, a
   --- redirect for one run in another, a redirect that ran as a turn of its own, a stop
-  --- offer. early marks a redirect that landed before its notice.
+  --- offer; and the task's word to the plugin of whether a redirect was taken.
   op task : Nat Acts -> Item .
   op noticed : Nat -> Item [ctor] .
   op steered : Nat Nat -> Item [ctor] .
   op followup : Nat -> Item [ctor] .
   op offered : Nat -> Item [ctor] .
-  op early : Nat -> Item [ctor] .
+  op taken : Nat Bool -> Item [ctor] .
   --- A verdict read in a turn or segment it was not asked for.
   op wrong : Job -> Item [ctor] .
 
-  op cfg : Bool Bool Bool Bool Bool Bool Bool Bool Bool -> Item [ctor] .
+  op cfg : Bool Bool Bool Bool Bool Bool Bool Bool Bool Bool Bool -> Item [ctor] .
   op budget : Nat -> Item [ctor] .
   --- Events the feed may miss, judge jobs that may never answer, and whether a job that
   --- answers may go stale first.
@@ -130,7 +139,7 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
   op {_} : Conf -> Sys [ctor] .
 
   vars R R' S S' N O J J' BU F L M : Nat .
-  vars KY RS ON ST AM FI WH GR WI B V OK T RD PT SP SL : Bool .
+  vars KY RS ON ST AM TO WH GR WI LA CA B V OK T RD PT RO SP SL : Bool .
   vars JB JB' : Job .
   var P : Pend .
   var A : Arr .
@@ -139,7 +148,7 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
   var K : Kind .
   var E : Ev .
   var FD : Feed .
-  var AS : Acts .
+  vars AS AS' : Acts .
   var LF : Left .
   var C : Conf .
 
@@ -162,6 +171,10 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
   eq watches(turn(R, G), R) = true .
   eq watches(W, R) = false [owise] .
 
+  op redirecting : Watch Nat -> Bool .
+  eq redirecting(turn(R, g(S, N, O, P, A, RD, PT, J, true)), R) = true .
+  eq redirecting(W, R) = false [owise] .
+
   op running : Nat Conf -> Bool .
   eq running(R, active(R, LF) C) = true .
   eq running(R, C) = false [owise] .
@@ -172,80 +185,92 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
   eq coming(JB, verdict(JB, V) C) = true .
   eq coming(JB, C) = false [owise] .
 
-  op noticed? : Nat Conf -> Bool .
-  eq noticed?(R, noticed(R) C) = true .
-  eq noticed?(R, C) = false [owise] .
-
   eq task(R, done) = empty .
+
+  --- cancel/2: a run's jobs asked are stopped.
+  eq { drop(R) asking(job(R, S, J)) C } = { drop(R) C } .
+  eq { drop(R) C } = { C } [owise] .
 
   --- missed/2: an event missed marks the turn under way partial.
   op mark : Watch Bool -> Watch .
   eq mark(free, B) = free .
-  eq mark(turn(R, g(S, N, O, P, A, RD, PT, J)), B) = turn(R, g(S, N, O, P, A, RD, PT or B, J)) .
+  eq mark(turn(R, g(S, N, O, P, A, RD, PT, J, RO)), B) = turn(R, g(S, N, O, P, A, RD, PT or B, J, RO)) .
 
   --- The call folded: whether the turn's last check failed (Turn.resolved_proxy/2).
   op see : Watch Kind -> Watch .
-  eq see(turn(R, g(S, N, O, P, A, RD, PT, J)), fail) = turn(R, g(S, N, O, P, A, true, PT, J)) .
-  eq see(turn(R, g(S, N, O, P, A, RD, PT, J)), ok) = turn(R, g(S, N, O, P, A, false, PT, J)) .
+  eq see(turn(R, g(S, N, O, P, A, RD, PT, J, RO)), fail) = turn(R, g(S, N, O, P, A, true, PT, J, RO)) .
+  eq see(turn(R, g(S, N, O, P, A, RD, PT, J, RO)), ok) = turn(R, g(S, N, O, P, A, false, PT, J, RO)) .
 
-  --- close/3: the turn ends, and teaches if it may.
-  op close : Watch Bool Bool Bool -> Conf .
-  eq close(free, OK, WH, GR) = empty .
-  eq close(turn(R, g(S, N, O, P, A, RD, PT, J)), OK, WH, GR) =
-    if (not WH or not PT) and (not GR or (OK and not RD and O == 0)) then taught(R) else empty fi .
+  --- close/3: the turn ends, and teaches if it may; its jobs asked are stopped (Cancel).
+  op close : Watch Bool Bool Bool Bool -> Conf .
+  eq close(free, OK, WH, GR, CA) = empty .
+  eq close(turn(R, g(S, N, O, P, A, RD, PT, J, RO)), OK, WH, GR, CA) =
+    (if (not WH or not PT) and (not GR or (OK and not RD and O == 0)) then taught(R) else empty fi)
+    (if CA then drop(R) else empty fi) .
 
-  --- act/5: the guard found the turn stuck. Under the budget it redirects, the notice
-  --- and the redirect going out in one task, and starts a fresh segment; then it offers
-  --- the stop. After the offer it does nothing (Once).
-  op act : Watch Nat Bool Bool Bool -> Conf .
-  ceq act(turn(R, g(S, N, O, P, A, RD, PT, J)), BU, ON, RS, FI) =
-    watching(turn(R, g(S, N, O, P, A, RD, PT, J))) if ON and O > 0 .
-  ceq act(turn(R, g(S, N, O, P, A, RD, PT, J)), BU, ON, RS, FI) =
-    watching(turn(R, if RS then g(s S, s N, O, nojob, noverdict, RD, PT, J)
-                          else g(s S, s N, O, P, A, RD, PT, J) fi))
-    task(R, if FI then notice then steer else steer then notice fi)
+  --- Turn.redirected/2 of a redirect taken: the next segment, without the job out or the
+  --- verdict back (Reset), and nothing on its way.
+  op seg : Guard Bool -> Guard .
+  eq seg(g(S, N, O, P, A, RD, PT, J, RO), RS) =
+    if RS then g(s S, N, O, nojob, noverdict, RD, PT, J, false)
+    else g(s S, N, O, P, A, RD, PT, J, false) fi .
+
+  --- act/5: the guard found the turn stuck. Under the budget it redirects, the redirect
+  --- and its notice going out in one task, and waits to hear it was taken (Landed), or
+  --- starts the next segment at once; then it offers the stop. After the offer it does
+  --- nothing (Once), nor while a redirect is on its way.
+  op act : Watch Nat Bool Bool Bool Bool Bool -> Conf .
+  ceq act(turn(R, g(S, N, O, P, A, RD, PT, J, RO)), BU, ON, RS, TO, LA, CA) =
+    watching(turn(R, g(S, N, O, P, A, RD, PT, J, RO))) if (ON and O > 0) or RO .
+  ceq act(turn(R, g(S, N, O, P, A, RD, PT, J, false)), BU, ON, RS, TO, LA, CA) =
+    (if LA then watching(turn(R, g(S, s N, O, P, A, RD, PT, J, true)))
+     else watching(turn(R, seg(g(S, s N, O, P, A, RD, PT, J, false), RS)))
+          (if CA then drop(R) else empty fi) fi)
+    task(R, if TO then steer then notice else notice then steer fi)
     if not (ON and O > 0) /\ N < BU .
-  eq act(turn(R, g(S, N, O, P, A, RD, PT, J)), BU, ON, RS, FI) =
-    watching(turn(R, g(S, N, s O, P, A, RD, PT, J))) task(R, offer) [owise] .
+  eq act(turn(R, g(S, N, O, P, A, RD, PT, J, RO)), BU, ON, RS, TO, LA, CA) =
+    watching(turn(R, g(S, N, s O, P, A, RD, PT, J, RO))) task(R, offer) [owise] .
 
   --- ask_judge/3: a verdict back is read, and acted on if it says stuck; a fresh job
   --- out answers nothing yet; otherwise a new job goes out (the rate limit only spaces
   --- jobs out by calls, which a stuck turn keeps making). A stale job blocks only without
-  --- Stale. Nothing after the stop offer (Once).
-  op ask : Watch Nat Bool Bool Bool Bool -> Conf .
-  ceq ask(turn(R, g(S, N, O, P, A, RD, PT, J)), BU, ON, RS, FI, ST) =
-    watching(turn(R, g(S, N, O, P, A, RD, PT, J))) if ON and O > 0 .
-  ceq ask(turn(R, g(S, N, O, P, got(JB, V), RD, PT, J)), BU, ON, RS, FI, ST) =
+  --- Stale. Nothing after the stop offer (Once), nor while a redirect is on its way.
+  op ask : Watch Nat Bool Bool Bool Bool Bool Bool -> Conf .
+  ceq ask(turn(R, g(S, N, O, P, A, RD, PT, J, RO)), BU, ON, RS, TO, LA, CA, ST) =
+    watching(turn(R, g(S, N, O, P, A, RD, PT, J, RO))) if (ON and O > 0) or RO .
+  ceq ask(turn(R, g(S, N, O, P, got(JB, V), RD, PT, J, false)), BU, ON, RS, TO, LA, CA, ST) =
     (if about(JB, R, S) then empty else wrong(JB) fi)
-    (if V then act(turn(R, g(S, N, O, nojob, noverdict, RD, PT, J)), BU, ON, RS, FI)
-          else watching(turn(R, g(S, N, O, nojob, noverdict, RD, PT, J))) fi)
+    (if V then act(turn(R, g(S, N, O, nojob, noverdict, RD, PT, J, false)), BU, ON, RS, TO, LA, CA)
+          else watching(turn(R, g(S, N, O, nojob, noverdict, RD, PT, J, false))) fi)
     if not (ON and O > 0) .
-  ceq ask(turn(R, g(S, N, O, out(JB, true), noverdict, RD, PT, J)), BU, ON, RS, FI, ST) =
-    watching(turn(R, g(S, N, O, out(JB, true), noverdict, RD, PT, J))) if not (ON and O > 0) .
-  ceq ask(turn(R, g(S, N, O, out(JB, false), noverdict, RD, PT, J)), BU, ON, RS, FI, false) =
-    watching(turn(R, g(S, N, O, out(JB, false), noverdict, RD, PT, J))) if not (ON and O > 0) .
-  eq ask(turn(R, g(S, N, O, P, A, RD, PT, J)), BU, ON, RS, FI, ST) =
-    watching(turn(R, g(S, N, O, out(job(R, S, s J), true), A, RD, PT, s J)))
+  ceq ask(turn(R, g(S, N, O, out(JB, true), noverdict, RD, PT, J, false)), BU, ON, RS, TO, LA, CA, ST) =
+    watching(turn(R, g(S, N, O, out(JB, true), noverdict, RD, PT, J, false))) if not (ON and O > 0) .
+  ceq ask(turn(R, g(S, N, O, out(JB, false), noverdict, RD, PT, J, false)), BU, ON, RS, TO, LA, CA, false) =
+    watching(turn(R, g(S, N, O, out(JB, false), noverdict, RD, PT, J, false))) if not (ON and O > 0) .
+  eq ask(turn(R, g(S, N, O, P, A, RD, PT, J, RO)), BU, ON, RS, TO, LA, CA, ST) =
+    watching(turn(R, g(S, N, O, out(job(R, S, s J), true), A, RD, PT, s J, RO)))
     asking(job(R, S, s J)) [owise] .
 
   --- handle_info of a verdict: kept for the turn under way, if it is the job out with
   --- Keyed, or while any is out without it.
   op arrive : Watch Job Bool Bool -> Watch .
-  ceq arrive(turn(R, g(S, N, O, out(JB', T), A, RD, PT, J)), JB, V, KY) =
-    turn(R, g(S, N, O, out(JB', T), got(JB, V), RD, PT, J))
+  ceq arrive(turn(R, g(S, N, O, out(JB', T), A, RD, PT, J, RO)), JB, V, KY) =
+    turn(R, g(S, N, O, out(JB', T), got(JB, V), RD, PT, J, RO))
     if runof(JB) == R and (JB == JB' or not KY) .
   eq arrive(W, JB, V, KY) = W [owise] .
 
   --- A redirect lands: in its run while that is under way; without Aimed, in whichever
-  --- run is under way, or as a message that starts a turn.
+  --- run is under way, or as a message that starts a turn. Else the MC refuses it.
   op land : Nat Bool Conf -> Conf .
+  op lands : Nat Bool Conf -> Bool .
   op under : Conf -> Nat .
   eq under(active(R, LF) C) = R .
   eq under(C) = 0 [owise] .
+  eq lands(R, AM, C) = running(R, C) or not AM .
   eq land(R, AM, C) =
-    if running(R, C) then steered(R, R) (if noticed?(R, C) then empty else early(R) fi)
-    else if AM then empty
-    else if under(C) == 0 then followup(R) else steered(R, under(C)) fi fi fi .
+    if running(R, C) then steered(R, R) taken(R, true)
+    else if AM then taken(R, false)
+    else if under(C) == 0 then followup(R) taken(R, true) else steered(R, under(C)) taken(R, true) fi fi fi .
 
   --- The MC runs the turns. A call waits for room in the feed (its queue is long; a
   --- missed event is a fault).
@@ -266,18 +291,18 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
 
   --- The feed misses the newest event, one that found its queue full; the next one it
   --- delivers says so. Without Window only that one marks the turn under way.
-  rl [drop] : feed(FD ; E) gap(M) faults(s F) cfg(KY, RS, ON, ST, AM, FI, WH, GR, WI)
+  rl [drop] : feed(FD ; E) gap(M) faults(s F) cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA)
     => feed(FD) gap(if WI then max(M, max(len(FD), 1)) else 1 fi) faults(F)
-       cfg(KY, RS, ON, ST, AM, FI, WH, GR, WI) .
+       cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA) .
 
   --- The plugin hears the feed (observe/2), one event at a time.
-  rl [hear-start] : { feed(started(R) ; FD) gap(M) watching(W) cfg(KY, RS, ON, ST, AM, FI, WH, GR, WI) C }
+  rl [hear-start] : { feed(started(R) ; FD) gap(M) watching(W) cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA) C }
     => { feed(FD) gap(dec(M)) watching(mark(turn(R, fresh), WI and M > 0))
-         close(mark(W, M > 0), false, WH, GR)
-         cfg(KY, RS, ON, ST, AM, FI, WH, GR, WI) C } .
-  rl [hear-finish] : { feed(finished(R, OK) ; FD) gap(M) watching(turn(R, G)) cfg(KY, RS, ON, ST, AM, FI, WH, GR, WI) C }
-    => { feed(FD) gap(dec(M)) watching(free) close(mark(turn(R, G), M > 0), OK, WH, GR)
-         cfg(KY, RS, ON, ST, AM, FI, WH, GR, WI) C } .
+         close(mark(W, M > 0), false, WH, GR, CA)
+         cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA) C } .
+  rl [hear-finish] : { feed(finished(R, OK) ; FD) gap(M) watching(turn(R, G)) cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA) C }
+    => { feed(FD) gap(dec(M)) watching(free) close(mark(turn(R, G), M > 0), OK, WH, GR, CA)
+         cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA) C } .
   crl [hear-other] : feed(called(R, K) ; FD) gap(M) watching(W) => feed(FD) gap(dec(M)) watching(mark(W, M > 0))
     if not watches(W, R) .
   crl [hear-other] : feed(finished(R, OK) ; FD) gap(M) watching(W) => feed(FD) gap(dec(M)) watching(mark(W, M > 0))
@@ -288,39 +313,53 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
   rl [calm] : { feed(called(R, K) ; FD) gap(M) watching(turn(R, G)) stuckloop(false) C }
     => { feed(FD) gap(dec(M)) watching(see(mark(turn(R, G), M > 0), K)) stuckloop(false) C } .
   rl [backstop] : { feed(called(R, K) ; FD) gap(M) watching(turn(R, G)) stuckloop(false) budget(BU)
-                   cfg(KY, RS, ON, ST, AM, FI, WH, GR, WI) C }
-    => { feed(FD) gap(dec(M)) stuckloop(false) budget(BU) cfg(KY, RS, ON, ST, AM, FI, WH, GR, WI) C
-         act(see(mark(turn(R, G), M > 0), K), BU, ON, RS, FI) } .
+                   cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA) C }
+    => { feed(FD) gap(dec(M)) stuckloop(false) budget(BU) cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA) C
+         act(see(mark(turn(R, G), M > 0), K), BU, ON, RS, TO, LA, CA) } .
   rl [judge] : { feed(called(R, K) ; FD) gap(M) watching(turn(R, G)) budget(BU)
-                cfg(KY, RS, ON, ST, AM, FI, WH, GR, WI) C }
-    => { feed(FD) gap(dec(M)) budget(BU) cfg(KY, RS, ON, ST, AM, FI, WH, GR, WI) C
-         ask(see(mark(turn(R, G), M > 0), K), BU, ON, RS, FI, ST) } .
+                cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA) C }
+    => { feed(FD) gap(dec(M)) budget(BU) cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA) C
+         ask(see(mark(turn(R, G), M > 0), K), BU, ON, RS, TO, LA, CA, ST) } .
 
   --- The judge answers, stuck or (if it may) productive, or never; a job out goes stale,
   --- one that never answers or, if slow, one whose verdict is still to come.
   rl [answer] : asking(JB) => verdict(JB, true) .
   rl [answer] : asking(JB) spares(true) => verdict(JB, false) spares(true) .
   rl [lose] : asking(JB) losses(s F) => losses(F) .
-  crl [stale] : { watching(turn(R, g(S, N, O, out(JB, true), A, RD, PT, J))) slow(SL) C }
-    => { watching(turn(R, g(S, N, O, out(JB, false), A, RD, PT, J))) slow(SL) C }
+  crl [stale] : { watching(turn(R, g(S, N, O, out(JB, true), A, RD, PT, J, RO))) slow(SL) C }
+    => { watching(turn(R, g(S, N, O, out(JB, false), A, RD, PT, J, RO))) slow(SL) C }
     if SL or not coming(JB, C) .
-  rl [verdict] : { verdict(JB, V) watching(W) cfg(KY, RS, ON, ST, AM, FI, WH, GR, WI) C }
-    => { watching(arrive(W, JB, V, KY)) cfg(KY, RS, ON, ST, AM, FI, WH, GR, WI) C } .
+  rl [verdict] : { verdict(JB, V) watching(W) cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA) C }
+    => { watching(arrive(W, JB, V, KY)) cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA) C } .
 
   --- A delivery task does its next step. A notice lands in its run whether or not that
-  --- has ended (Host.notice/5 needs only the run).
+  --- has ended (Host.notice/5 needs only the run). A redirect refused ends the task. The
+  --- MC may refuse any (a provider that cannot take a message while it works).
   rl [deliver] : task(R, notice then AS) => task(R, AS) noticed(R) .
   rl [deliver] : task(R, offer then AS) => task(R, AS) offered(R) .
-  rl [deliver] : { task(R, steer then AS) cfg(KY, RS, ON, ST, AM, FI, WH, GR, WI) C }
-    => { task(R, AS) cfg(KY, RS, ON, ST, AM, FI, WH, GR, WI) C land(R, AM, C) } .
+  rl [deliver] : { task(R, steer then AS) cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA) C }
+    => { (if lands(R, AM, C) then task(R, AS) else empty fi)
+         cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA) C land(R, AM, C) } .
+  rl [refuse] : task(R, steer then AS) => taken(R, false) .
+
+  --- handle_info of a delivery's result: a redirect taken starts the next segment of the
+  --- turn it was sent in, and stops the old segment's jobs (Cancel); one refused leaves
+  --- the segment as it was. Else the word is only logged.
+  rl [steered] : { taken(R, B) watching(turn(R, g(S, N, O, P, A, RD, PT, J, true)))
+                   cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA) C }
+    => { watching(turn(R, if B then seg(g(S, N, O, P, A, RD, PT, J, true), RS)
+                          else g(S, N, O, P, A, RD, PT, J, false) fi))
+         (if B and CA then drop(R) else empty fi)
+         cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA) C } .
+  crl [steered] : taken(R, B) watching(W) => watching(W) if not redirecting(W, R) .
 
   --- Switches, the budget, the calls each run makes, the runs, the events the feed may
   --- miss, the judge jobs that may never answer, whether one that answers may go stale
   --- first, whether the judge may spare a turn, and whether every call goes to the judge.
-  op start : Bool Bool Bool Bool Bool Bool Bool Bool Bool Nat Left Nat Nat Nat Bool Bool Bool -> Sys .
-  eq start(KY, RS, ON, ST, AM, FI, WH, GR, WI, BU, LF, L, F, J, SL, SP, B) =
+  op start : Bool Bool Bool Bool Bool Bool Bool Bool Bool Bool Bool Nat Left Nat Nat Nat Bool Bool Bool -> Sys .
+  eq start(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA, BU, LF, L, F, J, SL, SP, B) =
     { next(1) runs(L) idle calls(LF) feed(noev) gap(0) watching(free) faults(F) losses(J)
-      slow(SL) spares(SP) stuckloop(B) budget(BU) cfg(KY, RS, ON, ST, AM, FI, WH, GR, WI) } .
+      slow(SL) spares(SP) stuckloop(B) budget(BU) cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA) } .
 
   --- A verdict read in a turn or segment it was not asked for.
   op wrongly : Sys -> Bool .
@@ -335,14 +374,32 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
 
   --- More redirects than the budget, or more than one stop offer, in a turn.
   op overrun : Sys -> Bool .
-  ceq overrun({ watching(turn(R, g(S, N, O, P, A, RD, PT, J))) budget(BU) C }) = true
+  ceq overrun({ watching(turn(R, g(S, N, O, P, A, RD, PT, J, RO))) budget(BU) C }) = true
     if N > BU or O > 1 .
   eq overrun({ C }) = false [owise] .
 
-  --- A redirect landed before the notice that explains it.
-  op unexplained : Sys -> Bool .
-  eq unexplained({ early(R) C }) = true .
-  eq unexplained({ C }) = false [owise] .
+  --- The thread says a run was redirected when no redirect reached it, nor is on its way.
+  op unfounded : Sys -> Bool .
+  op sent? : Nat Conf -> Bool .
+  eq sent?(R, steered(R, R') C) = true .
+  eq sent?(R, followup(R) C) = true .
+  eq sent?(R, task(R, AS then steer then AS') C) = true .
+  eq sent?(R, C) = false [owise] .
+  ceq unfounded({ noticed(R) C }) = true if not sent?(R, C) .
+  eq unfounded({ C }) = false [owise] .
+
+  --- A stop offered while the turn's redirect is still on its way.
+  op hasty : Sys -> Bool .
+  eq hasty({ offered(R) task(R, AS then steer then AS') C }) = true .
+  eq hasty({ C }) = false [owise] .
+
+  --- A judge job still asked for a segment or turn the guard has left.
+  op wasted : Sys -> Bool .
+  op on : Watch Job -> Bool .
+  eq on(turn(R, g(S, N, O, P, A, RD, PT, J, RO)), job(R, S, J')) = true .
+  eq on(W, JB) = false [owise] .
+  ceq wasted({ asking(JB) watching(W) C }) = true if not on(W, JB) .
+  eq wasted({ C }) = false [owise] .
 
   --- The envelope learned a turn that did not end on its own with its last check green.
   op mistaught : Sys -> Bool .
@@ -354,7 +411,8 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
 
   op unsafe : Sys -> Bool .
   eq unsafe(X:Sys) =
-    wrongly(X:Sys) or misaimed(X:Sys) or overrun(X:Sys) or unexplained(X:Sys) or mistaught(X:Sys) .
+    wrongly(X:Sys) or misaimed(X:Sys) or overrun(X:Sys) or unfounded(X:Sys) or hasty(X:Sys) or
+    wasted(X:Sys) or mistaught(X:Sys) .
 
   --- Every run has ended and the feed is empty (a turn whose end the feed missed is
   --- still watched, until the thread's next turn starts).

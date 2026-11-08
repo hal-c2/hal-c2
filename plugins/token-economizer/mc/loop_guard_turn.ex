@@ -15,8 +15,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   Per call it folds the result into a `State`, checks the cumulative backstop, and asks
   the rules (gate, then the background judge, then the envelope fallback) whether the
   turn is stuck. The first stuck verdict is answered with a redirect, a later one with a
-  stop verdict (which the plugin delivers as a notice, never as a stop). After a redirect
-  the segment's state starts afresh: the agent's fair window to recover.
+  stop verdict (which the plugin delivers as a notice, never as a stop). Once a redirect
+  reaches the agent the segment's state starts afresh: the agent's fair window to recover.
 
     * The unit is a turn, one message to the agent's end: a person already splits work
       into short turns, and a whole thread folded as one would look stuck merely by being
@@ -46,15 +46,14 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # run whose status was replaced (a pipe, `||`, a report of the status) is read by its
   # output's markers; a run followed by other commands keeps the status the agent
   # reported, since their output is in the result too.
-  @shells ~w(sh bash zsh dash ksh)
   @quoted ~r/'[^']*'|"(?:\\.|[^"\\])*"/
   @sep ~r/(&&|\|\||\|&|(?<!>)\||;|\n)/
   # A runner asked for its help, version or test list, not to run the tests.
   @not_a_run ~r/\s(?:-h|--help|--version|--collect-only|--co|--list\S*)(?!\S)/
   # What may precede the command itself: `FOO=1 timeout 60 npm test`, and a launcher that
   # runs it in the project's environment, `uv run pytest`, `npx jest`, `bundle exec rspec`,
-  # `dotenv -e .env.local -- npx vitest run`.
-  @prefix ~r/^\s*(?:(?:\w+=\S*|time|nice|nohup|command|env|timeout(?:\s+(?:-\S+|[A-Z]+|\d\S*))+|(?:(?:uv|poetry|pipenv|pdm|hatch|rye)\s+run|npx|bunx|(?:npm|pnpm|yarn)\s+(?:exec|dlx)|bundle\s+exec|xvfb-run)(?:\s+-\S+)*|dotenv(?:\s+(?!--(?:\s|$))\S+)*\s+--)\s+)*/
+  # `dotenv -e .env.local -- npx vitest run`, `mise exec -- mix test`.
+  @prefix ~r/^\s*(?:(?:\w+=\S*|time|nice|nohup|command|env|timeout(?:\s+(?:-\S+|[A-Z]+|\d\S*))+|(?:(?:uv|poetry|pipenv|pdm|hatch|rye)\s+run|npx|bunx|(?:npm|pnpm|yarn)\s+(?:exec|dlx)|bundle\s+exec|xvfb-run)(?:\s+-\S+)*|(?:dotenv|mise\s+(?:exec|x))(?:\s+(?!--(?:\s|$))\S+)*\s+--)\s+)*/
   # What only reports on the run before it: `echo "exit=$?"`, `true`, `exit 0`.
   @report ~r/^\s*(?:echo|printf|true|:|exit)(?:\s|$)/
   @rank %{"own" => 0, "hidden" => 1, "mixed" => 2}
@@ -154,7 +153,11 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       # The verdict of the pending job, once it came back: {:ok, verdict | nil}.
       judge_arrived: nil,
       # A redirect the judge wrote with its verdict.
-      nudge_ready: nil
+      nudge_ready: nil,
+      # A redirect sent, until it is known whether it reached the agent (`redirected/2`).
+      redirecting: false,
+      # The redirects that reached the agent.
+      redirects: 0
     }
   end
 
@@ -164,15 +167,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # quoted text masked, and whether it sets `pipefail`. A command recorded as
   # `bash -lc '<script>'` (Codex) is split by its script.
   defp pieces(cmd) do
-    cmd =
-      case posix_split(cmd) do
-        [shell, "-" <> flags, script | _] ->
-          if basename(shell) in @shells and String.contains?(flags, "c"), do: script, else: cmd
-
-        _ ->
-          cmd
-      end
-
+    cmd = ShellEdits.script(cmd)
     masked = Regex.replace(~r/[(){}]/, Regex.replace(@quoted, cmd, "Q"), " ")
     pieces = Regex.split(@sep, masked, include_captures: true)
     {drop_trailing(pieces), String.contains?(cmd, "pipefail")}
@@ -285,34 +280,40 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   defp track(g, name, args, result, exit_code, shell_edits) do
     canon = State.canon_tool(name)
 
-    if canon in ["edit", "create"] do
-      %{g | last_edit: g.cum_turns, edits: g.edits + 1}
-    else
-      cmd = if canon == "bash", do: args["command"]
-      verifies = status_of_tests(cmd) != nil
-
-      g =
-        if shell_edits != [],
-          # `sed -i ... && pytest`: the edit comes first, so the run verifies it.
-          do: %{g | last_edit: g.cum_turns - if(verifies, do: 1, else: 0), edits: g.edits + 1},
-          else: g
-
-      if verifies do
-        failed =
-          if exit_code != nil,
-            do: exit_code != 0,
-            # No status, or one another command gave (a pipe).
-            else: Regex.match?(State.error_re(), result || "")
-
-        %{
-          g
-          | last_verify: g.cum_turns,
-            verifications: g.verifications + 1,
-            last_verify_failed: failed
-        }
-      else
+    cond do
+      # An edit that failed ("String to replace not found") changed nothing to verify.
+      canon in ["edit", "create"] and exit_code not in [nil, 0] ->
         g
-      end
+
+      canon in ["edit", "create"] ->
+        %{g | last_edit: g.cum_turns, edits: g.edits + 1}
+
+      true ->
+        cmd = if canon == "bash", do: args["command"]
+        verifies = status_of_tests(cmd) != nil
+
+        g =
+          if shell_edits != [],
+            # `sed -i ... && pytest`: the edit comes first, so the run verifies it.
+            do: %{g | last_edit: g.cum_turns - if(verifies, do: 1, else: 0), edits: g.edits + 1},
+            else: g
+
+        if verifies do
+          failed =
+            if exit_code != nil,
+              do: exit_code != 0,
+              # No status, or one another command gave (a pipe).
+              else: Regex.match?(State.error_re(), result || "")
+
+          %{
+            g
+            | last_verify: g.cum_turns,
+              verifications: g.verifications + 1,
+              last_verify_failed: failed
+          }
+        else
+          g
+        end
     end
   end
 
@@ -475,7 +476,11 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
 
     g = track(g, name, args, result, exit_code, shell_edits)
 
-    if g.aborted, do: {g, nil, nil}, else: decide(g, envelope, thr, budget, opts)
+    # While a redirect is on its way the calls are the ones the agent made before it, so
+    # nothing is decided on them.
+    if g.aborted or g.redirecting,
+      do: {g, nil, nil},
+      else: decide(g, envelope, thr, budget, opts)
   end
 
   defp decide(g, envelope, thr, budget, opts) do
@@ -566,13 +571,23 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   def nudge_body(g), do: {Rules.nudge_text(g.st), g}
 
   @doc """
-  Starts the segment after a nudge with a fresh state: the agent's fair window to
-  recover. A verdict on the old segment is about the old one.
+  A redirect was sent: it spends the budget, and the guard decides nothing until
+  `redirected/2` says whether it reached the agent.
   """
-  def after_nudge(g) do
+  def redirect(g), do: %{g | nudges_done: g.nudges_done + 1, redirecting: true}
+
+  @doc """
+  Whether the redirect sent reached the agent. One that did starts the segment after it
+  with a fresh state: the agent's fair window to recover, which the calls made before it
+  are not part of. A verdict on the old segment is about the old one. One that did not
+  (the provider cannot take a message while it works) leaves the segment as it was, and
+  the next stuck call is offered a stop.
+  """
+  def redirected(g, true) do
     %{
       g
-      | nudges_done: g.nudges_done + 1,
+      | redirecting: false,
+        redirects: g.redirects + 1,
         segment: g.segment + 1,
         st: State.new(),
         judge_last: -999,
@@ -582,6 +597,11 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
         nudge_ready: nil
     }
   end
+
+  def redirected(g, false), do: %{g | redirecting: false}
+
+  @doc "A redirect sent and taken at once, as watching decides."
+  def after_nudge(g), do: g |> redirect() |> redirected(true)
 
   def summary(g, stopped_normally \\ true) do
     %{
@@ -595,45 +615,4 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       "judgeTokens" => g.judge_tokens
     }
   end
-
-  # ---- Python's shlex.split (POSIX, no comments): only the first words matter, to find
-  # `bash -lc '<script>'`. [] when the quotes do not balance, as shlex raises.
-
-  defp posix_split(text) do
-    case psplit(String.to_charlist(text), :space, [], false, []) do
-      :error -> []
-      words -> words
-    end
-  end
-
-  @ws ~c" \t\r\n"
-
-  defp psplit([], {:quote, _}, _, _, _), do: :error
-  defp psplit([], _, tok, quoted, acc), do: Enum.reverse(pemit(tok, quoted, acc))
-
-  defp psplit([c | rest], state, tok, quoted, acc) when state in [:space, :word] do
-    cond do
-      c in @ws -> psplit(rest, :space, [], false, pemit(tok, quoted, acc))
-      c in [?', ?"] -> psplit(rest, {:quote, c}, tok, true, acc)
-      c == ?\\ -> pescape(rest, :word, tok, quoted, acc)
-      true -> psplit(rest, :word, [c | tok], quoted, acc)
-    end
-  end
-
-  defp psplit([q | rest], {:quote, q}, tok, quoted, acc),
-    do: psplit(rest, :word, tok, quoted, acc)
-
-  defp psplit([?\\, c | rest], {:quote, ?"} = state, tok, quoted, acc) when c in [?", ?\\],
-    do: psplit(rest, state, [c | tok], quoted, acc)
-
-  defp psplit([c | rest], {:quote, _} = state, tok, quoted, acc),
-    do: psplit(rest, state, [c | tok], quoted, acc)
-
-  defp pescape([], _, _, _, _), do: :error
-
-  defp pescape([c | rest], state, tok, quoted, acc),
-    do: psplit(rest, state, [c | tok], quoted, acc)
-
-  defp pemit([], false, acc), do: acc
-  defp pemit(tok, _, acc), do: [tok |> Enum.reverse() |> List.to_string() | acc]
 end

@@ -15,6 +15,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.State do
   that separates a loop from a hard but productive grind).
   """
 
+  alias HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits
+
   # An output that ran code to verify behaviour (the test step of the edit-test loop).
   @test_run ~r/(runtests(\.py)?|\bpytest\b|py\.test|manage\.py\s+test|python\s+-m\s+unittest|\btox\b|\bnox\b|\btrial\b|python\d?\s+-c\b)/i
   # Other ecosystems' failing-test summaries, which name no error: TAP (`node --test`)
@@ -44,6 +46,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.State do
     "create" => "create"
   }
   @recent 40
+  @quoted ~r/\$?'[^']*'|"(?:\\.|[^"\\])*"/
 
   def test_run_re, do: @test_run
   def error_re, do: @error
@@ -136,7 +139,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.State do
     {state, action} =
       cond do
         is_binary(cmd) and cmd != "" ->
-          short = cmd |> String.trim() |> String.replace(~r/\s+/, " ") |> String.slice(0, 90)
+          short =
+            cmd |> shown() |> String.trim() |> String.replace(~r/\s+/, " ") |> String.slice(0, 90)
 
           state =
             if Regex.match?(@test_run, cmd),
@@ -250,6 +254,19 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.State do
       end
 
     %{state | edit_counts: counts, recent: recent}
+  end
+
+  # What the action log keeps of a command: never a heredoc's body, and for a command
+  # that writes files, none of its quoted text, which is what it writes (`printf '...' >
+  # a.py`, `sed -i 's/x/y/' a.py`, a patch given inline). `fold_shell_edits/2` names the
+  # files it wrote.
+  defp shown(cmd) do
+    script = ShellEdits.script(cmd)
+    {shell, _bodies} = ShellEdits.split_heredocs(script)
+
+    if ShellEdits.targets(script) == [],
+      do: shell,
+      else: Regex.replace(@quoted, shell, "'…'")
   end
 
   defp text(nil), do: ""

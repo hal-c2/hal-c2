@@ -33,5 +33,5 @@ From `apps/server-ex`:
 - upstream's tests, ported: `mise exec -- mix test test/hal_c2/token_economizer_loop_guard_test.exs`;
 - a state machine of one turn's guard: `mise exec -- mix prop prop/hal_c2/token_economizer_prop_test.exs`;
 - a Maude model of the plugin hearing a thread's turns, with a feed that may miss
-  events, late or lost verdicts and redirects delivered late:
+  events, late or lost verdicts and redirects delivered late or refused:
   `mise exec -- mix proof proof/hal_c2/token_economizer_loop_guard_proof_test.exs`.
