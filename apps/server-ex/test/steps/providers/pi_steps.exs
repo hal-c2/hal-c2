@@ -4099,4 +4099,90 @@ defmodule HalC2.Steps.Providers.Pi do
     assert last_prompt(context) =~ "/skill:deploy"
     context
   end
+
+  # --- updates ---
+
+  # The latest Pi release, as if already read from the registry.
+  @pi_latest "0.81.0"
+
+  defp pi_latest(context) do
+    :persistent_term.put(
+      {HalC2.ProviderUpdates, "pi"},
+      {@pi_latest, System.monotonic_time(:millisecond)}
+    )
+
+    ExUnit.Callbacks.on_exit(fn ->
+      for key <- [
+            {HalC2.ProviderUpdates, "pi"},
+            {HalC2.ProviderUpdates, "pi", :state},
+            {HalC2.ProviderUpdates, "pi", :offered}
+          ],
+          do: :persistent_term.erase(key)
+    end)
+
+    context
+  end
+
+  # A global npm prefix: `bin/pi` links into `lib/node_modules`, and its npm logs
+  # what it was asked and makes the fake report the latest version.
+  step "the pi command on the MC was installed with npm", context do
+    prefix = HalC2.Test.Mc.Host.path(context, "/usr/local")
+    real = Path.join(prefix, "lib/node_modules/@earendil-works/pi-coding-agent/dist/pi")
+    link = Path.join(prefix, "bin/pi")
+    context = context |> pi_latest() |> install(%{}, path: real)
+    %{dir: dir} = FakeAcp.fake(context)
+    File.mkdir_p!(Path.dirname(link))
+    File.ln_s!(real, link)
+    FakeAcp.settings(&put_in(&1, ["providers", "pi", "binaryPath"], link))
+    npm = Path.join(prefix, "bin/npm")
+    config = Path.join(dir, "config.json")
+
+    File.write!(npm, """
+    #!/bin/sh
+    echo "$@" >> '#{Path.join(prefix, "npm.log")}'
+    python3 -c 'import json,sys; p=sys.argv[1]; c=json.load(open(p)); c["version"]="#{@pi_latest}"; json.dump(c,open(p,"w"))' '#{config}'
+    """)
+
+    File.chmod!(npm, 0o755)
+    Map.put(context, :npm_prefix, prefix)
+  end
+
+  step "the user updates Pi from HAL-C2", context do
+    {reply, context} =
+      World.call_keeping(context, "server.updateProvider", %{"provider" => "pi"})
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "the Pi package is updated by npm", context do
+    prefix = context.npm_prefix
+
+    assert File.read!(Path.join(prefix, "npm.log")) ==
+             "install -g --prefix #{prefix} @earendil-works/pi-coding-agent@latest\n"
+
+    assert {:ok, %{"providers" => providers}} = context.reply
+    pi = FakeAcp.find(providers, "pi")
+    assert %{"version" => @pi_latest, "updateState" => %{"status" => "succeeded"}} = pi
+    assert pi["versionAdvisory"]["status"] == "current"
+    context
+  end
+
+  # A pi of its own (here the fake's plain script) is shown behind with no update
+  # to run, and asking for one is refused.
+  step "a Pi that npm does not own can only be updated by hand", context do
+    context = install(context)
+
+    {reply, context} =
+      World.call_keeping(context, "server.updateProvider", %{"provider" => "pi"})
+
+    assert {:error, "This installation cannot be updated from here.", _} = reply
+    input = %{"instanceId" => "pi", "refreshModels" => true}
+
+    {{:ok, %{"providers" => providers}}, context} =
+      World.call_keeping(context, "server.refreshProviders", input, "default", 60_000)
+
+    advisory = FakeAcp.find(providers, "pi")["versionAdvisory"]
+    assert %{"status" => "behind_latest", "canUpdate" => false, "updateCommand" => nil} = advisory
+    context
+  end
 end

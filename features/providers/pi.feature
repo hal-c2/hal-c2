@@ -944,7 +944,6 @@ Feature: Pi
     When the MC restarts and the thread is read back from Pi's session file
     Then only the turns on Pi's current branch are shown
 
-  @backlog
   Scenario: Pi is updated through npm
     Given the pi command on the MC was installed with npm
     When the user updates Pi from HAL-C2
