@@ -130,11 +130,14 @@ public:
   Q_INVOKABLE void show(const QString& tabId);
   // The tab as the MC last said, or {} when there is none.
   QJsonObject tab(const QString& tabId) const;
+  // Why the MC did not take a report: it said no (Refused), the connection
+  // was down so it never went (Unsent), or the connection dropped with it on
+  // the way, so the MC may have it anyway (Dropped).
+  enum class Unheard { Refused, Unsent, Dropped };
   // What the page showing the tab did: `preview.reportStatus`, navStatus a
-  // PreviewNavStatus. `unheard` runs when the MC did not take it: `refused`
-  // by the MC, or not, the connection being down to carry it.
+  // PreviewNavStatus. `unheard` runs when the MC did not answer that it took it.
   void report(const QString& tabId, const QJsonObject& navStatus, bool canGoBack, bool canGoForward,
-              std::function<void(bool refused)> unheard = {});
+              std::function<void(Unheard)> unheard = {});
   // The size the tab's page is shown at: `preview.resize`, viewport a
   // PreviewViewportSetting. `done` runs once the MC answers, with why it
   // refused; the tab changes with the MC's event.

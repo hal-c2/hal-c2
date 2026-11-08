@@ -436,6 +436,57 @@ private slots:
     QCOMPARE(loads.count(), 0);
   }
 
+  // A report the MC took just before the connection dropped lost its echo, so
+  // back, the MC listing the tab where that report put it was taken for an
+  // agent's navigation: the page snapped back from where the user had gone
+  // meanwhile, and the MC never heard of it.
+  void aPageStaysWhereItWentWhenADroppedReportWasTaken() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"), loadedAt(kPageA))}, 1)));
+    BrowserPage page;
+    page.setPreviews(f.previews.get());
+    page.setTabId(QStringLiteral("tab-1"));
+    QSignalSpy loads(&page, &BrowserPage::loadRequested);
+    page.report(QStringLiteral("loaded"), kPageB, QString(), 0, QString(), true, false);
+    // The MC takes it, and the socket goes before its event and answer do.
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.reportStatus")).isEmpty(); }));
+    f.mc.stopAccepting();
+    f.mc.drop();
+    QVERIFY(QTest::qWaitFor([&f] { return !f.client->isReady(); }));
+    page.report(QStringLiteral("loaded"), kPageC, QString(), 0, QString(), true, false);
+    QVERIFY(f.barrier());
+    f.held.clear();
+    f.mc.startAccepting();
+    QVERIFY(QTest::qWaitFor([&f] { return f.client->isReady() && !f.held.value(QStringLiteral("preview.list")).isEmpty(); }));
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"), loadedAt(kPageB))}, 2)));
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.reportStatus")).isEmpty(); }));
+    const QJsonObject said = f.held.value(QStringLiteral("preview.reportStatus")).constLast().payload;
+    QCOMPARE(said.value(QLatin1String("navStatus")).toObject().value(QLatin1String("url")).toString(), kPageC);
+    QCOMPARE(loads.count(), 0);
+  }
+
+  // A tab not at a page yet that changed size while the page's first report
+  // was on its way forgot that report: the MC saying it back reloaded the page.
+  void aTabResizedBeforeThePagesFirstReportLeavesThePageBe() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"))}, 1)));
+    BrowserPage page;
+    page.setPreviews(f.previews.get());
+    page.setTabId(QStringLiteral("tab-1"));
+    QSignalSpy loads(&page, &BrowserPage::loadRequested);
+    page.report(QStringLiteral("loaded"), kPageB, QString(), 0, QString(), true, false);
+    QJsonObject sized = tab(QStringLiteral("tab-1"));
+    sized.insert(QStringLiteral("viewport"), phone());
+    f.emitEvent(QStringLiteral("resized"), QStringLiteral("tab-1"), 2, {{QStringLiteral("snapshot"), sized}});
+    QJsonObject there = tab(QStringLiteral("tab-1"), loadedAt(kPageB));
+    there.insert(QStringLiteral("viewport"), phone());
+    f.emitEvent(QStringLiteral("navigated"), QStringLiteral("tab-1"), 3, {{QStringLiteral("snapshot"), there}});
+    QVERIFY(f.barrier());
+    QCOMPARE(loads.count(), 0);
+  }
+
   // The MC said back the page's second report from where its tab already was,
   // which left that echo waiting: an agent taking the tab back there later
   // was taken for it, and the page stayed put.

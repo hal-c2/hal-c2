@@ -211,10 +211,13 @@ void BrowserPage::refresh() {
     emit viewportChanged();
   }
   const QString at = url();
-  // A tab gone, or not at a page yet: its page starts afresh when one comes.
+  // A tab gone: its page starts afresh when one comes. Not at a page yet (a
+  // size, say, before the page's first report): where the page went stands.
   if (at.isEmpty()) {
-    m_at.clear();
-    m_echoes.clear();
+    if (tab.isEmpty()) {
+      m_at.clear();
+      m_echoes.clear();
+    }
     return;
   }
   // The MC saying back where the page went, in order (the page is where it
@@ -336,12 +339,13 @@ void BrowserPage::send() {
   const bool canGoBack = m_lastReport.value(QLatin1String("canGoBack")).toBool();
   const bool canGoForward = m_lastReport.value(QLatin1String("canGoForward")).toBool();
   went(url);
-  m_previews->report(m_tabId, navStatus, canGoBack, canGoForward, [this, url, tabId = m_tabId, guard = QPointer<BrowserPage>(this)](bool refused) {
+  m_previews->report(m_tabId, navStatus, canGoBack, canGoForward, [this, url, tabId = m_tabId, guard = QPointer<BrowserPage>(this)](ThreadPreviews::Unheard why) {
     if (!guard || tabId != m_tabId) return;
-    // The MC will not say it back.
-    m_echoes.removeAll(url);
-    if (!refused) {
-      // It never heard: the page stays where it went, and says so on the way back.
+    // Dropped on the way, the MC may have taken it and say it back once
+    // listed again: the echo stays. Otherwise the MC will not say it back.
+    if (why != ThreadPreviews::Unheard::Dropped) m_echoes.removeAll(url);
+    if (why != ThreadPreviews::Unheard::Refused) {
+      // It may not have heard: the page stays where it went, and says so on the way back.
       m_unsent = true;
       return;
     }

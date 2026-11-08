@@ -600,7 +600,7 @@ QJsonObject ThreadPreviews::tab(const QString& tabId) const {
   return row < 0 ? QJsonObject() : m_rows.at(row);
 }
 
-void ThreadPreviews::report(const QString& tabId, const QJsonObject& navStatus, bool canGoBack, bool canGoForward, std::function<void(bool)> unheard) {
+void ThreadPreviews::report(const QString& tabId, const QJsonObject& navStatus, bool canGoBack, bool canGoForward, std::function<void(Unheard)> unheard) {
   if (rowOf(tabId) < 0 || m_thread.isEmpty() || m_closing.contains(tabId)) return;
   // The MC's event says it back.
   m_client->call(this, m_environment, QStringLiteral("preview.reportStatus"),
@@ -611,8 +611,11 @@ void ThreadPreviews::report(const QString& tabId, const QJsonObject& navStatus, 
                              {QStringLiteral("canGoForward"), canGoForward}},
                  [unheard](const QJsonValue&, const std::optional<QString>& error) {
                    if (!error || !unheard) return;
-                   // McClient's own errors: the socket was not there to carry it.
-                   unheard(*error != QLatin1String("not connected") && *error != QLatin1String("disconnected"));
+                   // McClient's own errors: the socket was not there to carry it,
+                   // or went with the report already written to it.
+                   if (*error == QLatin1String("not connected")) return unheard(Unheard::Unsent);
+                   if (*error == QLatin1String("disconnected")) return unheard(Unheard::Dropped);
+                   unheard(Unheard::Refused);
                  });
 }
 

@@ -27,9 +27,11 @@
 // the page the MC says its tab is at. The user picks the page's device size
 // (`preview.resize`, held too): the page shows the size picked at once and
 // waits on the MC, and once every answer is in it waits on nothing and shows
-// the size the MC has. The connection can go down for a while: the page stays
-// where it is (nothing asks its view to load), and once back the MC hears
-// where it went.
+// the size the MC has. The connection can go down for a while, the MC taking
+// some of the reports on their way first: the page stays where it is (nothing
+// asks its view to load, unless its tab went and came back), and once back
+// the MC hears where it went. Nothing ever takes the page back to where its
+// own report put the MC's tab.
 
 #include "Prop.h"
 
@@ -37,6 +39,7 @@
 #include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QSet>
 
 #include <memory>
 
@@ -136,6 +139,8 @@ struct Sut {
   struct Held {
     FakeMc::Rpc rpc;
     QJsonObject list;
+    // A report: the view it came from (views, when made).
+    int view = 0;
   };
   // A link the user opened for a thread, not yet in the browser. One that
   // `forwards` was a loopback address of a thread on another MC while the
@@ -178,8 +183,10 @@ struct Sut {
   int linkErrors = 0;
   QStringList misrouted;
   QList<QUrl> stray;
-  // Since the step began: rows redrawn (by tab), resets, count signals.
+  // Since the step began: rows redrawn showing what they showed already (by
+  // tab), resets, count signals; and each row as last shown.
   QList<QString> redrawn;
+  QHash<QString, Row> lastShown;
   int resets = 0;
   int countSignals = 0;
   QList<Row> before;
@@ -192,6 +199,12 @@ struct Sut {
   // The connection is down (McDown), and what the view was asked to load since.
   bool down = false;
   QStringList pulledWhileDown;
+  // Tabs the MC has where a report from the view shown now put them (the
+  // views so far: a view whose tab went is a new one), and the page asked to
+  // load one of those.
+  QSet<QString> reportedTabs;
+  int views = 0;
+  QStringList pulledBack;
 
   Sut() {
     mc.environmentId = kEnvironment;
@@ -211,7 +224,7 @@ struct Sut {
     });
     for (const QString& method : {QStringLiteral("preview.close"), QStringLiteral("preview.open"), QStringLiteral("preview.forward"),
                                   QStringLiteral("preview.reportStatus"), QStringLiteral("preview.resize")}) {
-      mc.onRpc(method, [this](const FakeMc::Rpc& rpc) { held.append({rpc, {}}); });
+      mc.onRpc(method, [this](const FakeMc::Rpc& rpc) { held.append({rpc, {}, views}); });
     }
     client = std::make_unique<McClient>();
     client->setRetryDelays({20});
@@ -227,19 +240,40 @@ struct Sut {
     tester = std::make_unique<QAbstractItemModelTester>(previews.get(), QAbstractItemModelTester::FailureReportingMode::Warning);
     QObject::connect(previews.get(), &QAbstractItemModel::dataChanged, previews.get(),
                      [this](const QModelIndex& top, const QModelIndex& bottom) {
-                       for (int row = top.row(); row <= bottom.row(); ++row) redrawn.append(rows().value(row).tabId);
+                       // A row may change and change back within a step: each redraw is of its own change.
+                       const QList<Row> now = rows();
+                       for (int row = top.row(); row <= bottom.row(); ++row) {
+                         const Row& at = now.at(row);
+                         if (lastShown.value(at.tabId) == at) redrawn.append(at.tabId);
+                         lastShown.insert(at.tabId, at);
+                       }
                      });
-    QObject::connect(previews.get(), &QAbstractItemModel::modelReset, previews.get(), [this] { ++resets; });
+    QObject::connect(previews.get(), &QAbstractItemModel::rowsInserted, previews.get(), [this](const QModelIndex&, int first, int last) {
+      const QList<Row> now = rows();
+      for (int row = first; row <= last; ++row) lastShown.insert(now.at(row).tabId, now.at(row));
+    });
+    QObject::connect(previews.get(), &QAbstractItemModel::modelReset, previews.get(), [this] {
+      ++resets;
+      lastShown.clear();
+      for (const Row& row : rows()) lastShown.insert(row.tabId, row);
+    });
     QObject::connect(previews.get(), &ThreadPreviews::countChanged, previews.get(), [this] { ++countSignals; });
     QObject::connect(previews.get(), &ThreadPreviews::showRequested, previews.get(), [this](const QString& tabId) {
       showRequests.append(tabId);
       const int at = indexOf(tabId);
+      const QJsonObject listed = previews->tab(tabId);
       // A link is answered by the tab it opened or the one it found, and
       // that tab is asked to show by its "opened" event and by the reply.
-      if (at < 0 || linked.contains(tabId) || (!opening && !userTabs.contains(tabId))) return;
-      const QUrl url(tabs.at(at).value(QLatin1String("navStatus")).toObject().value(QLatin1String("url")).toString());
+      if ((at < 0 && listed.isEmpty()) || linked.contains(tabId) || (!opening && !userTabs.contains(tabId))) return;
+      // Where the MC has the tab, or (one it found) where the client last heard
+      // it was, the MC since moving it on or closing it unheard while the
+      // connection was down.
+      const auto urlOf = [](const QJsonObject& tab) { return QUrl(tab.value(QLatin1String("navStatus")).toObject().value(QLatin1String("url")).toString()); };
+      const QUrl url = at < 0 ? QUrl() : urlOf(tabs.at(at));
+      const QUrl heard = urlOf(listed);
       for (qsizetype link = 0; link < tabLinks.size(); ++link) {
-        if (tabLinks.at(link).thread == threadOf.value(tabId) && tabLinks.at(link).url.matches(url, QUrl::StripTrailingSlash)) {
+        if (tabLinks.at(link).thread == threadOf.value(tabId) &&
+            (tabLinks.at(link).url.matches(url, QUrl::StripTrailingSlash) || tabLinks.at(link).url.matches(heard, QUrl::StripTrailingSlash))) {
           tabLinks.removeAt(link);
           linked.insert(tabId);
           return;
@@ -250,8 +284,22 @@ struct Sut {
     page = std::make_unique<BrowserPage>();
     page->setPreviews(previews.get());
     // The view loads what it is asked to and says where it is, as the brick's does.
+    // Its tab gone, the view shows no page, and loads the tab's when it comes back.
+    QObject::connect(page.get(), &BrowserPage::tabChanged, page.get(), [this] {
+      if (!page->exists() && !viewUrl.isEmpty()) {
+        viewUrl.clear();
+        ++views;
+      }
+    });
     QObject::connect(page.get(), &BrowserPage::loadRequested, page.get(), [this](const QString& url) {
-      if (down) pulledWhileDown.append(url);
+      // A view showing no page is not pulled anywhere.
+      const bool pulled = !viewUrl.isEmpty();
+      if (down && pulled) pulledWhileDown.append(url);
+      const int at = indexOf(page->tabId());
+      if (pulled && at >= 0 && reportedTabs.contains(page->tabId()) &&
+          tabs.at(at).value(QLatin1String("navStatus")).toObject().value(QLatin1String("url")).toString() == url) {
+        pulledBack.append(url);
+      }
       go(url);
     });
   }
@@ -291,6 +339,8 @@ struct Sut {
   void begin() {
     before = rows();
     redrawn.clear();
+    lastShown.clear();
+    for (const Row& row : std::as_const(before)) lastShown.insert(row.tabId, row);
     resets = 0;
     countSignals = 0;
     modelTestFailures = 0;
@@ -338,6 +388,17 @@ struct Sut {
     return false;
   }
 
+  // The MC takes a page's held report, while its tab is there, saying nothing yet.
+  bool take(const Held& call) {
+    const QString tabId = call.rpc.payload.value(QLatin1String("tabId")).toString();
+    const int index = indexOf(tabId);
+    if (index < 0) return false;
+    tabs[index].insert(QStringLiteral("navStatus"), call.rpc.payload.value(QLatin1String("navStatus")));
+    if (call.view == views) reportedTabs.insert(tabId);
+    else reportedTabs.remove(tabId);
+    return true;
+  }
+
   // Answers the held call, or refuses it.
   void answer(int at, bool ok) {
     const Held call = held.takeAt(at);
@@ -356,7 +417,7 @@ struct Sut {
         mc.refuse(call.rpc, QStringLiteral("no such tab"));
         return;
       }
-      tabs[index].insert(QStringLiteral("navStatus"), payload.value(QLatin1String("navStatus")));
+      take(call);
       emitEvent(tabs.at(index), QStringLiteral("navigated"), {{QStringLiteral("snapshot"), tabs.at(index)}});
       mc.reply(call.rpc, QJsonValue::Null);
       return;
@@ -476,6 +537,7 @@ struct Sut {
     // Away from the MC, nothing takes the page anywhere, and what it shows is
     // what the MC said last, not what it has now.
     RC_ASSERT(pulledWhileDown.isEmpty());
+    RC_ASSERT(pulledBack.isEmpty());
     if (down) return;
     if (model.embedded && !page->tabId().isEmpty()) {
       const auto row = std::find_if(now.cbegin(), now.cend(), [&](const Row& shown) { return shown.tabId == page->tabId(); });
@@ -522,8 +584,11 @@ struct SetPage : Step {
   QString tab = pick(QStringList(kTabs) << QString());
   void apply(Model&) const override {}
   void act(const Model&, Sut& sut) const override {
+    // The tab it shows already: nothing changes.
+    if (tab == sut.page->tabId()) return;
     sut.page->setTabId(tab);
     sut.viewUrl = sut.page->url();
+    ++sut.views;
   }
   void show(std::ostream& os) const override { os << "SetPage(" << tab.toStdString() << ")"; }
 };
@@ -552,6 +617,7 @@ struct PageResize : Step {
       if (rows.isEmpty()) return;
       sut.page->setTabId(rows.at(row % int(rows.size())).tabId);
       sut.viewUrl = sut.page->url();
+      ++sut.views;
       if (!sut.page->exists()) return;
     }
     sut.page->setViewport(viewport().toVariantMap());
@@ -683,6 +749,7 @@ struct McNavigate : Step {
     if (at < 0) return;
     sut.tabs[at].insert(QStringLiteral("navStatus"),
                         QJsonObject{{QStringLiteral("_tag"), QStringLiteral("Success")}, {QStringLiteral("url"), url}, {QStringLiteral("title"), title}});
+    sut.reportedTabs.remove(tab);
     sut.emitEvent(sut.tabs.at(at), QStringLiteral("navigated"), {{QStringLiteral("snapshot"), sut.tabs.at(at)}});
   }
   void show(std::ostream& os) const override { os << "McNavigate(" << tab.toStdString() << ", " << url.toStdString() << ", " << title.toStdString() << ")"; }
@@ -737,18 +804,28 @@ struct McRestart : Step {
 };
 
 // The connection goes down (a LAN or Tailscale blip) with what the MC held
-// unanswered, and stays down, the MC taking no new one, until McUp.
+// unanswered, and stays down, the MC taking no new one, until McUp. The MC
+// may have taken the first `taken` of the page's reports it held: the drop
+// lost their events and answers, not what they did.
 struct McDown : Step {
+  int taken = *rc::gen::inRange(0, 3);
   void apply(Model&) const override {}
   void act(const Model&, Sut& sut) const override {
     if (sut.down) return;
     sut.down = true;
+    int left = taken;
+    for (const Sut::Held& call : std::as_const(sut.held)) {
+      if (left > 0 && call.rpc.method == QLatin1String("preview.reportStatus") && sut.take(call)) {
+        ++sut.revision;
+        --left;
+      }
+    }
     sut.mc.stopAccepting();
     sut.mc.drop();
     sut.held.clear();
     RC_ASSERT(halc2::prop::until([&] { return !sut.client->isReady(); }, 1000));
   }
-  void show(std::ostream& os) const override { os << "McDown"; }
+  void show(std::ostream& os) const override { os << "McDown(" << taken << " taken)"; }
 };
 
 // The connection comes back, to the same MC.
@@ -785,7 +862,7 @@ private slots:
       rc::state::check(model, sut,
                        rc::state::gen::execOneOfWithArgs<SetThread, SetActive, SetPage, PageGo, PageResize, PageResize, Reload, UserClose, UserNewTab,
                                                          OpenLink, OpenLink, SetHere, Answer, Answer, AnswerAll, McOpen, McOpen,
-                                                         McNavigate, McNavigate, McFail, McClose, McRestart, McDown, McUp>());
+                                                         McNavigate, McNavigate, McFail, McClose, McRestart, McDown, McDown, McUp, McUp>());
     }));
   }
 };
