@@ -19,7 +19,8 @@ defmodule HalC2.OpenShellInstallPropTest do
     * an install, update or rotation that fails changes nothing: the installed
       state, the certificates, the database and the unit are what they were; one
       over a service that will not stop fails;
-    * an uninstall over a service that will not stop fails and removes nothing;
+    * an uninstall over a service that will not stop fails and removes nothing, and
+      the service's unit is not rewritten over one that will not stop;
     * one that succeeds installs what was asked, and only a fresh install or a
       rotation brings new certificates;
     * a gateway run as a service has its current unit, running; any other has none;
@@ -37,7 +38,9 @@ defmodule HalC2.OpenShellInstallPropTest do
       gateway as a service changes none of this home's: it never names this home's
       unit to the service manager, and this home's unit, certificates, database and
       installed state are what they were. It has a service manager stand-in of its
-      own, so this home's unit keeps running whatever the other home's does.
+      own, so this home's unit keeps running whatever the other home's does;
+    * this home reached by another spelling, through a link to it or to its parent,
+      is the same home: every step through it is the step through the home itself.
   """
 
   use ExUnit.Case, async: false
@@ -182,8 +185,13 @@ defmodule HalC2.OpenShellInstallPropTest do
         {2, {:call, __MODULE__, :rotate, [oneof([:ok, :smoke_fails, :stop_fails])]}},
         {2, {:call, __MODULE__, :reuse, [oneof([:clean, :shared])]}},
         {1, {:call, __MODULE__, :uninstall, [oneof([:ok, :stop_fails])]}},
-        {2, {:call, __MODULE__, :other_home, [oneof([:install, :update, :uninstall])]}}
+        {2, {:call, __MODULE__, :other_home, [oneof([:install, :update, :uninstall])]}},
+        {1, {:call, __MODULE__, :spell, [oneof([:direct, :linked_home, :linked_parent])]}}
       ] ++
+        if(managed?(state),
+          do: [{1, {:call, __MODULE__, :rewrite_unit_stop_fails, [oneof(["0.1.6", "0.1.7"])]}}],
+          else: []
+        ) ++
         if(writable?(state),
           do: [{2, {:call, __MODULE__, :write_db, [oneof(["a", "b"])]}}],
           else: []
@@ -204,12 +212,14 @@ defmodule HalC2.OpenShellInstallPropTest do
   end
 
   defp external?(state), do: match?({"external", _, _}, state.installed)
+  defp managed?(state), do: match?({"managed", _, _}, state.installed)
   defp writable?(state), do: state.installed != nil and not external?(state)
 
   defp outcome,
     do: frequency([{3, :ok}, {1, :smoke_fails}, {1, :preflight_fails}, {1, :stop_fails}])
 
   def precondition(state, {:call, _, :write_db, _}), do: writable?(state)
+  def precondition(state, {:call, _, :rewrite_unit_stop_fails, _}), do: managed?(state)
 
   def precondition(state, {:call, _, name, _})
       when name in [:other_environment_arrives, :connect, :status],
@@ -282,6 +292,12 @@ defmodule HalC2.OpenShellInstallPropTest do
     do: seen(%{state | installed: nil, pki: nil, db: nil, shared: false, retained: false}, :ok)
 
   defp step(state, {:call, _, :write_db, [marker]}), do: seen(%{state | db: marker}, :ok)
+
+  # Another spelling of the home changes nothing about it.
+  defp step(state, {:call, _, :spell, _}), do: seen(state, :ok)
+
+  # A unit is not written over a gateway that did not stop: it stays current, running.
+  defp step(state, {:call, _, :rewrite_unit_stop_fails, _}), do: seen(state, :stop_failed)
 
   # The other home's result; this home's observation is what it was.
   defp step(state, {:call, _, :other_home, [op]}) do
@@ -397,6 +413,42 @@ defmodule HalC2.OpenShellInstallPropTest do
       fun.()
     after
       File.rm_rf!(path)
+    end
+  end
+
+  # Reaches this home by `how`: as itself, through a link to it, or through a link
+  # to its parent. The links live in the home, so the case's cleanup takes them.
+  def spell(how) do
+    home = Process.get(:openshell).home
+
+    spelled =
+      case how do
+        :direct ->
+          home
+
+        :linked_home ->
+          link(home, Path.join(home, "alias"))
+
+        :linked_parent ->
+          Path.join(link(Path.dirname(home), Path.join(home, "up")), Path.basename(home))
+      end
+
+    Application.put_env(:hal_c2, :home, spelled)
+    observe(:ok)
+  end
+
+  defp link(target, link) do
+    unless match?({:ok, _}, File.read_link(link)), do: File.ln_s!(target, link)
+    link
+  end
+
+  # Writes the unit of `version` over the running gateway while it will not stop.
+  def rewrite_unit_stop_fails(version) do
+    state = %{OpenShell.state() | "version" => version, "driver" => "docker"}
+
+    case stop_fails(true, fn -> Service.install(state) end) do
+      {:error, _} -> observe(:stop_failed)
+      other -> observe(other)
     end
   end
 

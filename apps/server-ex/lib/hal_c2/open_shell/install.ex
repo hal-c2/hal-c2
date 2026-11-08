@@ -58,6 +58,7 @@ defmodule HalC2.OpenShell.Install do
 
     with :ok <- not_external(previous),
          :ok <- Service.owned(),
+         :ok <- Service.moved(previous),
          :ok <- foreground_stopped(previous),
          {:ok, platform} <- platform(),
          {:ok, release} <- release(platform.target, opts) do
@@ -68,7 +69,8 @@ defmodule HalC2.OpenShell.Install do
           "port" => (previous && previous["port"]) || free_port(),
           "driver" => platform.driver,
           "socket" => platform.socket,
-          "previous" => previous && previous["version"]
+          "previous" => previous && previous["version"],
+          "instance" => OpenShell.instance()
         }
 
         state = Map.put(state, "endpoint", "https://127.0.0.1:#{state["port"]}")
@@ -97,10 +99,12 @@ defmodule HalC2.OpenShell.Install do
           pki = Path.join(staging, "pki")
 
           with :ok <- Service.owned(),
+               :ok <- Service.moved(state),
                :ok <- foreground_stopped(state),
                :ok <- issue(state["version"], pki),
                :ok <- drained(state, opts) do
-            switch(state, state, opts, fn -> replace_dir(pki, OpenShell.pki_dir()) end)
+            rotated = Map.put(state, "instance", OpenShell.instance())
+            switch(state, rotated, opts, fn -> replace_dir(pki, OpenShell.pki_dir()) end)
           end
         end)
 
@@ -1211,6 +1215,7 @@ defmodule HalC2.OpenShell.Install do
     )
     |> add(service != nil and not service["installed"], "service-missing")
     |> add(service != nil and service["foreign"] == true, "service-not-ours")
+    |> add(Service.moved(state) != :ok, "home-moved")
     |> add(ours?(service) and not service["current"], "service-outdated")
     |> add(ours?(service) and not service["running"], "service-stopped")
     |> add(not match?({:ok, _}, health), "gateway-unreachable")
@@ -1240,6 +1245,7 @@ defmodule HalC2.OpenShell.Install do
 
       state ->
         with :ok <- Service.owned(),
+             :ok <- Service.moved(state),
              :ok <- foreground_stopped(state),
              :ok <- drained(state, opts),
              :ok <- if(state["mode"] == "managed", do: service_stopped(), else: :ok),

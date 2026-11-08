@@ -72,6 +72,8 @@ defmodule HalC2.OpenShell.ServiceTest do
       assert File.read!(path) == Service.render(:systemd, @state)
 
       assert Storage.service_calls(log) == [
+               # Stopped before its unit is written.
+               "systemctl --user stop #{Service.name(:systemd)}",
                "systemctl --user daemon-reload",
                "systemctl --user enable #{Service.name(:systemd)}",
                "systemctl --user restart #{Service.name(:systemd)}"
@@ -103,13 +105,19 @@ defmodule HalC2.OpenShell.ServiceTest do
       assert :ok = Service.uninstall()
     end
 
-    test "a stop that fails leaves the unit in place", %{log: log} do
+    test "a stop that fails leaves the unit in place, as it was", %{log: log} do
       assert :ok = Service.install(@state)
+      unit = File.read!(Service.unit_path(:systemd))
       Storage.service_state(log, "stop-fails", true)
+      File.rm!(log)
 
       assert {:error, _} = Service.stop()
       assert {:error, _} = Service.uninstall()
-      assert File.exists?(Service.unit_path(:systemd))
+      # The next version's unit is not written over a gateway that did not stop.
+      assert {:error, _} = Service.install(%{@state | "version" => "0.1.8", "driver" => "docker"})
+      assert File.read!(Service.unit_path(:systemd)) == unit
+      refute Enum.any?(Storage.service_calls(log), &(&1 =~ ~r/daemon-reload|restart/))
+      assert %{"running" => true, "current" => true} = Service.status(@state)
     end
 
     test "uninstall stops a gateway whose unit file is already gone", %{log: log} do
@@ -183,16 +191,21 @@ defmodule HalC2.OpenShell.ServiceTest do
       assert :ok = Service.uninstall()
     end
 
-    test "a bootout that fails is an error, and leaves the agent and its plist", %{log: log} do
+    test "a bootout that fails is an error, and leaves the agent and its plist as they were",
+         %{log: log} do
       assert :ok = Service.install(@state)
+      plist = File.read!(Service.unit_path(:launchd))
       Storage.service_state(log, "stop-fails", true)
+      File.rm!(log)
 
       assert {:error, message} = Service.stop()
       assert message =~ "Boot-out failed: 5"
       assert {:error, _} = Service.uninstall()
-      assert {:error, _} = Service.install(@state)
-      assert File.exists?(Service.unit_path(:launchd))
-      assert %{"running" => true} = Service.status(@state)
+      # The next version's plist is not written over an agent that did not stop.
+      assert {:error, _} = Service.install(%{@state | "version" => "0.1.8", "driver" => "docker"})
+      assert File.read!(Service.unit_path(:launchd)) == plist
+      refute Enum.any?(Storage.service_calls(log), &(&1 =~ "bootstrap"))
+      assert %{"running" => true, "current" => true} = Service.status(@state)
     end
 
     test "uninstall boots out an agent whose plist is already gone", %{log: log} do

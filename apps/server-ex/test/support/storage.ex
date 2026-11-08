@@ -396,7 +396,7 @@ defmodule HalC2.Test.Storage do
   files beside them and not logged: `enabled`, `active` and `linger` follow what
   the service manager was asked to do, and `service_state/3` can set or clear
   them, or `no-user-manager` and `no-logind` to make those questions fail.
-  `stop-fails` makes a stop (or a loaded agent's bootout) fail, and `not-loaded` makes
+  `stop-fails` makes the stop of an active unit (or a loaded agent's bootout) fail, and `not-loaded` makes
   systemd answer a stop as a unit it does not have. launchctl's agent is `loaded`
   between a bootstrap and a bootout.
   """
@@ -416,7 +416,7 @@ defmodule HalC2.Test.Storage do
       enable) touch "$state/enabled" ;;
       restart) touch "$state/active" ;;
       stop)
-        [ -f "$state/stop-fails" ] && exit 1
+        [ -f "$state/stop-fails" ] && [ -f "$state/active" ] && exit 1
         [ -f "$state/not-loaded" ] && [ ! -f "$state/active" ] && { echo "Unit $3 not loaded."; exit 5; }
         rm -f "$state/active" ;;
       disable) rm -f "$state/enabled" "$state/active" ;;

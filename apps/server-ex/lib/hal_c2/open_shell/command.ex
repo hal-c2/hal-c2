@@ -150,6 +150,10 @@ defmodule HalC2.OpenShell.Command do
     do:
       "The service under this home's name runs another HAL-C2 home's gateway, so this MC leaves it alone. If no HAL-C2 home uses it, remove its unit, then run `hal-c2-service openshell install`."
 
+  def problem_message("home-moved"),
+    do:
+      "OpenShell was installed when this HAL-C2 home was at another path, and that path's gateway service is still there. Stop and remove it, or run the MC from the path it was installed at, then run `hal-c2-service openshell install`."
+
   def problem_message("service-outdated"),
     do:
       "The gateway's service is not the one this MC writes. Run `hal-c2-service openshell install` to repair it."

@@ -60,5 +60,9 @@ backed up, and put back if the new gateway fails its check.
   restarting does not restart the gateway or its sandboxes. Their names, and the gateway's
   Docker label or Podman network, carry the home's instance (`HalC2.OpenShell.instance/0`):
   two HAL-C2 homes on one machine and user each run a gateway of their own, and a home
-  refuses (`unit-not-ours`) a unit under its name that another home wrote. Podman's driver
-  never removes its network, so uninstall leaves `hal-c2-<instance>` behind.
+  refuses (`unit-not-ours`) a unit under its name that another home wrote. The instance
+  hashes the home's path with every symlink resolved, so a home reached through a link is
+  one home; one reached through a bind mount, or moved, is not, so installed.json records
+  the instance and a home refuses (`home-moved`) while the recorded one's service is still
+  there. Podman's driver never removes its network, so uninstall leaves `hal-c2-<instance>`
+  behind.

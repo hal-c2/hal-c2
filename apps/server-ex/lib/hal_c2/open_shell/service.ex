@@ -24,17 +24,48 @@ defmodule HalC2.OpenShell.Service do
   alias HalC2.OpenShell.Config
   alias HalC2.Service
 
-  @doc "This home's gateway service: its systemd unit or its launchd label."
-  def name(:systemd), do: "hal-c2-openshell-#{OpenShell.instance()}.service"
-  def name(:launchd), do: "io.github.halc2.openshell.#{OpenShell.instance()}"
+  @doc """
+  This home's gateway service: its systemd unit or its launchd label, under
+  `instance` (`HalC2.OpenShell.instance/0`).
+  """
+  def name(manager, instance \\ OpenShell.instance())
+  def name(:systemd, instance), do: "hal-c2-openshell-#{instance}.service"
+  def name(:launchd, instance), do: "io.github.halc2.openshell.#{instance}"
 
   def manager, do: Service.manager()
 
-  def unit_path(:systemd),
-    do: Path.join([Service.user_home(), ".config", "systemd", "user", name(:systemd)])
+  def unit_path(manager, instance \\ OpenShell.instance())
 
-  def unit_path(:launchd),
-    do: Path.join([Service.user_home(), "Library", "LaunchAgents", name(:launchd) <> ".plist"])
+  def unit_path(:systemd, instance),
+    do: Path.join([Service.user_home(), ".config", "systemd", "user", name(:systemd, instance)])
+
+  def unit_path(:launchd, instance),
+    do:
+      Path.join([
+        Service.user_home(),
+        "Library",
+        "LaunchAgents",
+        name(:launchd, instance) <> ".plist"
+      ])
+
+  @doc """
+  `:ok` unless `state` (`HalC2.OpenShell.state/0`) was installed as a service under
+  another instance than this home's now, and that service is still there: its unit
+  exists or it runs. The home moved, or is reached through a bind mount, and acting
+  under this name would leave that gateway running on the same files.
+  """
+  def moved(%{"mode" => "managed", "instance" => recorded}) when is_binary(recorded) do
+    manager = manager()
+
+    if manager != nil and recorded != OpenShell.instance() and
+         (File.exists?(unit_path(manager, recorded)) or running?(manager, recorded)),
+       do:
+         {:error,
+          "[home-moved] OpenShell was installed when this HAL-C2 home was at another path, and its gateway's service #{name(manager, recorded)} (#{unit_path(manager, recorded)}) is still there. Stop and remove that service, or run the MC from the path it was installed at, then try again."},
+       else: :ok
+  end
+
+  def moved(_state), do: :ok
 
   @doc """
   `:ok` unless the unit at this home's path was written by another home: it runs a
@@ -105,18 +136,23 @@ defmodule HalC2.OpenShell.Service do
     end
   end
 
-  @doc "Writes the unit for `state` (`HalC2.OpenShell.state/0`) and (re)starts it."
+  @doc """
+  Stops the gateway, writes the unit for `state` (`HalC2.OpenShell.state/0`) and
+  starts it. The unit is not written unless the gateway stopped, so a failed stop
+  leaves the old one to start at the next login.
+  """
   # Only the gateway's unit and log directory, under the user's own home.
   # sobelow_skip ["Traversal.FileModule"]
   def install(state) do
     with {:ok, manager} <- fetch_manager(),
          :ok <- owned(),
-         :ok <- prerequisites(manager) do
+         :ok <- prerequisites(manager),
+         :ok <- shutdown(manager) do
       path = unit_path(manager)
       File.mkdir_p!(Path.dirname(path))
       File.mkdir_p!(Path.dirname(OpenShell.log_path()))
       File.write!(path, render(manager, state))
-      activate(manager, path)
+      load(manager, path)
     end
   end
 
@@ -220,14 +256,25 @@ defmodule HalC2.OpenShell.Service do
       else: :ok
   end
 
-  defp running?(:systemd),
-    do: Service.probe("systemctl", ["--user", "is-active", name(:systemd)]) != :error
+  defp running?(manager, instance \\ OpenShell.instance())
 
-  defp running?(:launchd), do: Service.probe("launchctl", ["print", target()]) != :error
+  defp running?(:systemd, instance),
+    do: Service.probe("systemctl", ["--user", "is-active", name(:systemd, instance)]) != :error
 
-  defp target, do: "gui/#{Service.uid()}/#{name(:launchd)}"
+  defp running?(:launchd, instance),
+    do: Service.probe("launchctl", ["print", target(instance)]) != :error
 
-  defp activate(:systemd, _path) do
+  defp target(instance \\ OpenShell.instance()),
+    do: "gui/#{Service.uid()}/#{name(:launchd, instance)}"
+
+  # launchd bootstraps only an agent it does not have loaded.
+  defp activate(:systemd, path), do: load(:systemd, path)
+
+  defp activate(:launchd, path),
+    do: with(:ok <- shutdown(:launchd), do: load(:launchd, path))
+
+  # Starts the unit at `path` as it is on disk.
+  defp load(:systemd, _path) do
     Service.run_all([
       {"systemctl", ["--user", "daemon-reload"]},
       {"systemctl", ["--user", "enable", name(:systemd)]},
@@ -235,10 +282,8 @@ defmodule HalC2.OpenShell.Service do
     ])
   end
 
-  defp activate(:launchd, path) do
-    with :ok <- shutdown(:launchd),
-         do: Service.run_all([{"launchctl", ["bootstrap", "gui/#{Service.uid()}", path]}])
-  end
+  defp load(:launchd, path),
+    do: Service.run_all([{"launchctl", ["bootstrap", "gui/#{Service.uid()}", path]}])
 
   @doc "The unit `install/1` writes for `state`."
   def render(:systemd, state) do

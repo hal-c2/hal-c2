@@ -36,7 +36,12 @@ defmodule HalC2.OpenShell do
   `HAL_C2_MC_HOME`, a test run), each with a gateway of its own. Everything one
   home's gateway is known by outside its own directories, its service's name and
   the label its driver puts on runtime resources, carries `instance/0`, so no
-  home's install, update, stop or uninstall reaches another's gateway.
+  home's install, update, stop or uninstall reaches another's gateway. The paths
+  here have every symlink resolved, so a home reached by two spellings (a linked
+  home, or a linked parent) is one home with one gateway. installed.json records
+  the instance it was installed under, and a home whose instance changed (it moved,
+  or is reached through a bind mount) refuses to act while the service of the
+  recorded one is still there (`HalC2.OpenShell.Service.moved/1`).
   """
 
   @doc "The workspace every MC request is scoped to."
@@ -48,16 +53,21 @@ defmodule HalC2.OpenShell do
   @doc "This MC's value for `owner_label/0`."
   def owner, do: HalC2.Environment.id()
 
-  def root, do: Path.join(HalC2.Paths.data_dir(), "openshell")
+  def root, do: canonical(Path.join(HalC2.Paths.data_dir(), "openshell"))
 
   @doc """
   This home's gateway among the others on the machine: 12 hex digits of the hash
-  of `root/0`. The service's name (`HalC2.OpenShell.Service.name/1`) and the
-  driver's resource label (`HalC2.OpenShell.Config.render/1`) carry it.
+  of `root/0`, whose symlinks are resolved. The service's name
+  (`HalC2.OpenShell.Service.name/1`) and the driver's resource label
+  (`HalC2.OpenShell.Config.render/1`) carry it.
   """
   def instance do
     :crypto.hash(:sha256, root()) |> binary_part(0, 6) |> Base.encode16(case: :lower)
   end
+
+  # The physical path, however the home was spelled. A directory that does not
+  # exist yet resolves as far as its parents do.
+  defp canonical(path), do: HalC2.Paths.canonical(path) || Path.expand(path)
 
   def state_path, do: Path.join(root(), "installed.json")
   def release_dir(version), do: Path.join([root(), "releases", version])
@@ -66,12 +76,13 @@ defmodule HalC2.OpenShell do
   def client_ca_path, do: Path.join(pki_dir(), "client-ca.crt")
   def config_path, do: Path.join(root(), "gateway.toml")
   def backup_dir(version), do: Path.join([root(), "backups", version])
-  def db_path, do: Path.join([HalC2.Paths.state_dir(), "openshell", "openshell.db"])
-  def log_path, do: Path.join([HalC2.Paths.state_dir(), "logs", "openshell.log"])
+  def db_path, do: canonical(Path.join([HalC2.Paths.state_dir(), "openshell", "openshell.db"]))
+  def log_path, do: canonical(Path.join([HalC2.Paths.state_dir(), "logs", "openshell.log"]))
 
   @doc """
   What is installed, or nil: `%{"mode" => "managed" | "external", "version", "port",
-  "driver", "socket", "previous", "endpoint"}`. A managed gateway is one this MC
+  "driver", "socket", "previous", "endpoint", "instance"}` (`instance/0` when it
+  was installed). A managed gateway is one this MC
   installed and runs; an external one is one the user pointed it at
   (`HalC2.OpenShell.Install.reuse/1`), which it only talks to.
   """

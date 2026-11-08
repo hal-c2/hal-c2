@@ -3,6 +3,7 @@
 #   https://github.com/hal-c2/hal-c2/issues/1417 (the MC's client certificate comes from a CA of its own)
 #   https://github.com/hal-c2/hal-c2/issues/1418 (one gateway per HAL-C2 environment)
 #   https://github.com/hal-c2/hal-c2/pull/1421 (Copilot review 5819948882: homes, probe cleanup, Docker)
+#   https://github.com/hal-c2/hal-c2/pull/1421 (Copilot review 5820095093: a home by two spellings, the unit after a failed stop)
 #   apps/server-ex/lib/hal_c2/open_shell.ex (where the gateway's files live, the owner label)
 #   apps/server-ex/lib/hal_c2/open_shell/install.ex (install, update, rollback, drain, rotate, reuse, smoke, status, uninstall)
 #   apps/server-ex/lib/hal_c2/open_shell/platform.ex (the support matrix, rootless runtimes only)
@@ -246,6 +247,29 @@ Feature: The OpenShell gateway review sandboxes run in
     And the service manager was asked nothing
     When the user asks for OpenShell's status
     Then the status says "service-not-ours"
+
+  @mc
+  Scenario Outline: A HAL-C2 home reached through a link runs one gateway
+    Given OpenShell is installed
+    When the MC reaches its home through a link to <link>
+    Then the gateway's service is the one OpenShell was installed under
+    When the user uninstalls OpenShell
+    Then the service OpenShell was installed under is stopped and removed
+
+    Examples:
+      | link              |
+      | its home          |
+      | its home's parent |
+
+  @mc
+  Scenario: A home whose path changed leaves the service it was installed under alone
+    Given OpenShell is installed
+    And OpenShell was installed when this home was at another path, whose service is still there
+    When the user installs OpenShell
+    Then the install is refused because "home-moved"
+    And the service manager was asked nothing
+    When the user asks for OpenShell's status
+    Then the status says "home-moved"
 
   @mc
   Scenario: Uninstalling removes the gateway and its files
