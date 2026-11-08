@@ -89,6 +89,13 @@ Feature: Plugins that watch and shape turns
       | OpenCode | anything      | nothing      | every tool it had       |
 
   @mc
+  Scenario: A plugin's context comes ahead of the goal a new Codex conversation starts with
+    Given a plugin that shapes runs with the context "Keep answers short." and "collaboration" off
+    When a Codex thread works toward the goal "ship the fix", then runs a turn
+    Then Codex is asked to work toward "ship the fix" after "Keep answers short."
+    And the turn after the goal comes without "Keep answers short."
+
+  @mc
   Scenario Outline: A plugin that fails while shaping a conversation leaves it as it was
     Given a plugin that <fails> when asked to shape a run
     When a Claude thread runs a turn
@@ -144,6 +151,14 @@ Feature: Plugins that watch and shape turns
     When the plugin steers that turn with "Too late"
     Then the plugin is told the turn cannot take it
     And no turn is queued and no message kept for "Too late"
+
+  @mc
+  Scenario: A plugin's steer that names no turn is refused and starts none
+    Given a plugin on turns granted "threads:steer"
+    And a Claude thread whose turn ended
+    When the plugin steers the thread with "Unnamed", naming no turn
+    Then the plugin is told the turn cannot take it
+    And no turn is queued and no message kept for "Unnamed"
 
   @mc
   Scenario: A plugin's notice sits in the turn it is about and offers to stop it

@@ -372,6 +372,19 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
   end
 
   defp turn_fails(context) do
+    if context[:cursor_world] do
+      # An ACP provider feature on the AcpFixtures world (Cursor): the run
+      # the scenario started has failed.
+      assert [%{"status" => "failed"}] =
+               HalC2.Test.AcpFixtures.runs(context.threads[context.thread])
+
+      context
+    else
+      batch_or_subagent_fails(context)
+    end
+  end
+
+  defp batch_or_subagent_fails(context) do
     if context[:batch_pending] do
       # An Antigravity batch held by its scenario (features/providers):
       # kill its agent process, so its turn fails around it.
