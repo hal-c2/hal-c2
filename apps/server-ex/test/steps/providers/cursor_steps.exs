@@ -602,13 +602,18 @@ defmodule HalC2.Steps.Providers.Cursor do
     Map.put(ctx, :thread, "Cursor")
   end
 
-  # The agent of the thread works in the project with Cursor's project settings on,
-  # which is where the SDK reads the rules and skills from.
+  # The agent of the thread works in the project with every setting source
+  # named, which is what makes the SDK read the rules and skills at all.
   step "Cursor receives the project's skills and rules", context do
     root = World.project(context).root
 
-    assert [%{"cwd" => ^root, "settingSources" => nil, "loaded" => loaded}] =
-             Enum.filter(agents(context), &(&1["mode"] == "agent" and &1["cwd"] == root))
+    assert [
+             %{
+               "cwd" => ^root,
+               "settingSources" => ["project", "user", "team", "mdm", "plugins"],
+               "loaded" => loaded
+             }
+           ] = Enum.filter(agents(context), &(&1["mode"] == "agent" and &1["cwd"] == root))
 
     assert loaded == ["rules/style.mdc", "skills/deploy"]
     context
@@ -2447,6 +2452,37 @@ defmodule HalC2.Steps.Providers.Cursor do
 
     refute log =~ token
     refute log =~ "Bearer"
+    context
+  end
+
+  # --- the user's own MCP servers --------------------------------------------------------------
+
+  defp mcp_settings(dir, servers) do
+    File.mkdir_p!(dir)
+
+    File.write!(
+      Path.join(dir, "mcp.json"),
+      JSON.encode!(%{"mcpServers" => Map.new(servers, &{&1, %{"command" => "true"}})})
+    )
+  end
+
+  step "the user's Cursor settings, the project and a Cursor plugin each configure an MCP server",
+       context do
+    home = HalC2.Test.Mc.Host.home(context)
+    mcp_settings(Path.join([home, ".cursor"]), ["user-tools"])
+    mcp_settings(Path.join([World.project(context).root, ".cursor"]), ["project-tools"])
+    mcp_settings(Path.join([home, ".cursor", "plugins", "demo"]), ["plugin-tools"])
+    Map.put(context, :cursor_world, true)
+  end
+
+  step "the user sends a message on a Cursor thread", context do
+    Mc.ensure(HalC2.Mcp)
+    context |> ready_cursor() |> run_on_cursor("full-access")
+  end
+
+  step "the Cursor agent can use those MCP servers and HAL-C2's MCP server", context do
+    assert [%{"mcpServers" => servers}] = Enum.filter(log(context), &(&1["event"] == "send"))
+    assert servers == ["hal-c2", "plugin-tools", "project-tools", "user-tools"]
     context
   end
 end

@@ -1,6 +1,8 @@
 import type { InteractionUpdate, SendOptions, StoredSdkCredentials } from "@cursor/sdk";
 import { describe, expect, it } from "vite-plus/test";
 
+import type { AgentOptions } from "@cursor/sdk";
+
 import { makeCursorAcp, makeUpdateTranslator, type CursorSdk } from "./agent.ts";
 
 const credentials: StoredSdkCredentials = {
@@ -303,6 +305,36 @@ describe("Cursor over ACP", () => {
 
     failure = { message: "Invalid parameters for registry model: model not found" };
     expect((await prompt()).error.message).toContain("is not one this Cursor account offers");
+  });
+
+  it("names every setting source and passes HAL-C2's MCP servers at creation", async () => {
+    const { sdk } = fakeSdk([]);
+    await sdk.store.save(credentials);
+    const created: Array<AgentOptions> = [];
+    const counting: CursorSdk = {
+      ...sdk,
+      createAgent: async (options) => {
+        created.push(options);
+        return sdk.createAgent(options);
+      },
+    };
+    const { call } = client(counting);
+    await call("session/new", {
+      cwd: "/work",
+      mcpServers: [{ type: "http", name: "hal-c2", url: "http://127.0.0.1:3780/mcp", headers: [] }],
+    });
+
+    expect(created).toHaveLength(1);
+    // Without sources the SDK loads no CLI settings at all — the user's own
+    // MCP servers, rules and skills with them.
+    expect(created[0]?.local?.settingSources).toEqual([
+      "project",
+      "user",
+      "team",
+      "mdm",
+      "plugins",
+    ]);
+    expect(Object.keys(created[0]?.mcpServers ?? {})).toEqual(["hal-c2"]);
   });
 
   it("reads the account only for a probe, and refuses it before any agent exists", async () => {

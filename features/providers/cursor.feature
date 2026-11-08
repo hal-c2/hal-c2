@@ -412,7 +412,7 @@ Feature: Cursor
 
   # Upstream #15875. HAL-C2's own MCP server is added when the agent opens or resumes;
   # a send that named MCP servers replaced the user's, project's and plugins' ones.
-  @backlog
+
   Scenario: Cursor keeps the user's own MCP servers alongside HAL-C2's
     Given the user's Cursor settings, the project and a Cursor plugin each configure an MCP server
     When the user sends a message on a Cursor thread

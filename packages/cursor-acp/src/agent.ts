@@ -232,11 +232,20 @@ export function makeCursorAcp(input: {
     windows && input.mode === "auto-accept-edits"
       ? "Cursor cannot sandbox on Windows, so auto-accept edits cannot run on a Windows MC."
       : undefined;
-  const agentOptions = (cwd: string, key: string, model: ModelSelection): AgentOptions => ({
+  const agentOptions = (
+    cwd: string,
+    key: string,
+    model: ModelSelection,
+    servers: Record<string, McpServerConfig>,
+  ): AgentOptions => ({
     model,
     name: "HAL-C2",
     mode: text ? "plan" : "agent",
     apiKey: key,
+    // HAL-C2's servers ride at creation too: the SDK merges them with the
+    // MCP servers the setting sources load, where a send that named servers
+    // replaced the user's own (upstream #15875).
+    ...(Object.keys(servers).length === 0 ? {} : { mcpServers: servers }),
     local: {
       cwd,
       // Auto reviews escalations instead of denying them (upstream #19712).
@@ -246,7 +255,9 @@ export function makeCursorAcp(input: {
           input.mode !== "full-access" && input.mode !== "text-generation-unsandboxed" && !windows,
       },
       enableAgentRetries: true,
-      ...(text ? { settingSources: [] } : {}),
+      // The SDK loads no CLI settings — rules, skills, the user's own MCP
+      // servers — unless its setting sources are named.
+      settingSources: text ? [] : ["project", "user", "team", "mdm", "plugins"],
     },
   });
 
@@ -308,10 +319,11 @@ export function makeCursorAcp(input: {
     const { options, catalogError } = await modelOption(key, model.id, stored);
     const probe = (params._meta as { readonly probe?: unknown } | undefined)?.probe === true;
     const who = probe ? await account(key, stored) : undefined;
+    const servers = mcpServers(params.mcpServers);
     const agent = await guard(
       agentId === undefined
-        ? sdk.createAgent(agentOptions(cwd, key, model))
-        : sdk.resumeAgent(agentId, agentOptions(cwd, key, model)),
+        ? sdk.createAgent(agentOptions(cwd, key, model, servers))
+        : sdk.resumeAgent(agentId, agentOptions(cwd, key, model, servers)),
     );
     sessions.get(agent.agentId)?.agent.close();
     sessions.set(agent.agentId, {
@@ -319,7 +331,7 @@ export function makeCursorAcp(input: {
       model,
       mode: "agent",
       run: undefined,
-      mcpServers: mcpServers(params.mcpServers),
+      mcpServers: servers,
       warnedNoSandbox: false,
     });
     return {

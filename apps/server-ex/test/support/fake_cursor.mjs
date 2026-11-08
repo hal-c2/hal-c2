@@ -62,17 +62,46 @@ const makeAgent = (options, resumed) => {
   if (refused(options.apiKey)) throw authError();
   const agentId = resumed ?? `cursor-agent-${process.pid}-${++agents}`;
   // The SDK loads the project's rules and skills from the agent's working directory
-  // unless its setting sources leave the project out.
-  const sources = options.local?.settingSources;
+  // when its setting sources name the project — and no CLI settings at all when
+  // no sources are supplied.
+  const sources = options.local?.settingSources ?? [];
   const cwd = options.local?.cwd;
   const loaded = [];
-  if (cwd && (sources === undefined || sources.includes("project") || sources.includes("all"))) {
+  if (cwd && (sources.includes("project") || sources.includes("all"))) {
     for (const kind of ["rules", "skills"]) {
       const folder = path.join(cwd, ".cursor", kind);
       if (fs.existsSync(folder))
         for (const name of fs.readdirSync(folder).sort()) loaded.push(`${kind}/${name}`);
     }
   }
+  // The user's own MCP servers, from the settings the sources name. Servers
+  // HAL-C2 passes at creation or on a send merge with these.
+  const fromSettings = (file) => {
+    try {
+      return Object.keys(JSON.parse(fs.readFileSync(file, "utf8")).mcpServers ?? {});
+    } catch {
+      return [];
+    }
+  };
+  const home = process.env.HOME ?? "";
+  const settingsServers = [
+    ...(sources.includes("user") || sources.includes("all")
+      ? fromSettings(path.join(home, ".cursor", "mcp.json"))
+      : []),
+    ...(cwd && (sources.includes("project") || sources.includes("all"))
+      ? fromSettings(path.join(cwd, ".cursor", "mcp.json"))
+      : []),
+    ...(sources.includes("plugins") || sources.includes("all")
+      ? fs.existsSync(path.join(home, ".cursor", "plugins"))
+        ? fs
+            .readdirSync(path.join(home, ".cursor", "plugins"))
+            .flatMap((plugin) =>
+              fromSettings(path.join(home, ".cursor", "plugins", plugin, "mcp.json")),
+            )
+        : []
+      : []),
+  ];
+  const createdServers = Object.keys(options.mcpServers ?? {});
   log({
     event: "agent",
     agentId,
@@ -102,7 +131,13 @@ const makeAgent = (options, resumed) => {
           mimeType: image.mimeType ?? null,
           bytes: typeof image.data === "string" ? image.data.length : 0,
         })),
-        mcpServers: Object.keys(sendOptions.mcpServers ?? {}),
+        mcpServers: [
+          ...new Set([
+            ...settingsServers,
+            ...createdServers,
+            ...Object.keys(sendOptions.mcpServers ?? {}),
+          ]),
+        ].sort(),
       });
       let cancel;
       const cancelled = new Promise((resolve) => (cancel = resolve));
