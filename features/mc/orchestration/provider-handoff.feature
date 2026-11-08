@@ -356,6 +356,7 @@ Feature: Changing model and provider mid-thread
     When the user sends the command "/goal make the tests pass" to "t1"
     Then Claude gets the conversation in a block ahead of "/goal make the tests pass"
     And the command is the last block of the message
+    And Claude sets the goal "make the tests pass"
 
   # Codex's `/goal <objective>` sends its own prompt for the goal's first turn, and the
   # conversation goes ahead of it: the turn starting confirms the handoff, so history

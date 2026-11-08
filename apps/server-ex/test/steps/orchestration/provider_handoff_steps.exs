@@ -988,13 +988,17 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     context
   end
 
+  # A command's turn can stay open (a goal works on), so each outcome waits for its own.
   step "the user sends the command {string} to {string}", %{args: [text, thread]} = context do
-    run(context, thread, text)
+    context = World.dispatch_message(context, thread, text, %{})
+    assert {:ok, _} = context.reply
+    context |> Map.delete(:reply) |> Map.put(:thread, thread)
   end
 
   step "Claude gets the conversation in a block ahead of {string}",
        %{args: [command]} = context do
-    await_run_on(context, "claudeAgent")
+    # Claude has read the message once it ran the command, whose turn stays open.
+    await_goal(context, String.replace_prefix(command, "/goal ", ""))
     blocks = List.last(claude_messages(context))
 
     assert [%{"type" => "text", "text" => history}, %{"type" => "text", "text" => ^command}] =
@@ -1008,6 +1012,27 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
   step "the command is the last block of the message", context do
     assert "/goal" <> _ = List.last(context.blocks)["text"]
     context
+  end
+
+  step "Claude sets the goal {string}", %{args: [objective]} = context do
+    await_goal(context, objective)
+    context
+  end
+
+  # Claude ran the command: the fake's "/goal" says "Goal set" and keeps the turn open.
+  defp await_goal(context, objective) do
+    World.await_state(
+      context,
+      context.thread,
+      fn state ->
+        Enum.any?(
+          HalC2.StreamState.list(state, "provider-thread"),
+          &(&1["providerInstanceId"] == "claudeAgent" and
+              match?(%{"objective" => ^objective, "status" => "active"}, &1["goal"]))
+        )
+      end,
+      30_000
+    )
   end
 
   step "Codex gets the conversation ahead of the prompt for the goal {string}",

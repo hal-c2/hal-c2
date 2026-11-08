@@ -360,7 +360,10 @@ for line in sys.stdin:
               **({"user_message_uuids": [msg["uuid"]]} if msg.get("uuid") else {})})
         continue
     turn += 1
-    text = msg["message"]["content"] if isinstance(msg["message"]["content"], str) else ""
+    # A message in blocks reads as its text blocks joined: the handoff sends the history
+    # and the user's message as two (`HalC2.Claude.ThreadRuntime`).
+    content = msg["message"]["content"]
+    text = content if isinstance(content, str) else "".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
     if os.environ.get("FAKE_CLAUDE_LOG"):
         with open(os.environ["FAKE_CLAUDE_LOG"], "a") as f:
             f.write(json.dumps({"text": text}) + "\n")
