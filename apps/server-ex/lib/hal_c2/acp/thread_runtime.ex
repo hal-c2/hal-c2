@@ -2352,9 +2352,16 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     entry = state.subagents[id]
 
-    # A background spawn's acknowledgement ends the tool call, not the subagent.
+    # A background spawn's acknowledgement ends the tool call, not the subagent. So
+    # does a call that joins the run of a subagent still working, a steer: OpenCode
+    # sends one report for both.
+    joined =
+      Enum.any?(state.subagents, fn {other, e} ->
+        other != id and not e.done and entry.session != nil and e.session == entry.session
+      end)
+
     cond do
-      call["status"] in ["completed", "failed"] and spawn_ack?(output) ->
+      call["status"] in ["completed", "failed"] and (spawn_ack?(output) or joined) ->
         %{state | subagents: Map.put(state.subagents, id, Map.put(entry, :background, true))}
 
       # A task the user's stop cut off was stopped, though OpenCode 1 reports it failed
@@ -2591,16 +2598,25 @@ defmodule HalC2.Acp.ThreadRuntime do
   # may be the last thing a delegated task of this thread waited on: checked as a run's
   # end is, retried while a thread it reads is busy (`Delegation.report/5`).
   defp end_task(state, task, status) do
-    subagent =
-      Enum.find(state.subagents, fn {id, e} ->
-        not e.done and (id == task or e.session == task)
-      end)
+    # A steer joins the run of the subagent it names, and one report ends them all
+    # with what the subagent said.
+    running =
+      for {id, e} <- state.subagents, not e.done, id == task or e.session == task, do: {id, e}
+
+    said = Enum.find_value(running, fn {_, e} -> NativeSubagent.said(e.sub) end)
 
     ended =
       cond do
-        Map.has_key?(state.tasks, task) -> end_tool_task(state, task, status)
-        subagent -> end_subagent(state, elem(subagent, 0), status)
-        true -> state
+        Map.has_key?(state.tasks, task) ->
+          end_tool_task(state, task, status)
+
+        running != [] ->
+          Enum.reduce(running, state, fn {id, _}, state ->
+            end_subagent(state, id, status, said)
+          end)
+
+        true ->
+          state
       end
 
     if ended != state and ended.turn == nil do
@@ -2612,9 +2628,9 @@ defmodule HalC2.Acp.ThreadRuntime do
     ended
   end
 
-  defp end_subagent(state, id, status) do
+  defp end_subagent(state, id, status, result \\ nil) do
     entry = state.subagents[id]
-    sub = NativeSubagent.finish(entry.sub, status, nil)
+    sub = NativeSubagent.finish(entry.sub, status, result)
     %{state | subagents: Map.put(state.subagents, id, %{entry | sub: sub, done: true})}
   end
 

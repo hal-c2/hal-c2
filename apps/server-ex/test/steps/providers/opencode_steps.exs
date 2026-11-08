@@ -4538,13 +4538,12 @@ defmodule HalC2.Steps.Providers.Opencode do
     }
   end
 
-  defp background_thread(context, steps) do
+  defp background_thread(context, steps, more \\ []) do
     turn = %{"match" => "work in the background", "steps" => steps ++ [%{"text" => "Started."}]}
+    turns = [turn | more] ++ FakeAcp.turns()
 
     context
-    |> FakeAcp.install("opencode", %{"version" => "2.2.0", "turns" => [turn | FakeAcp.turns()]},
-      enabled: true
-    )
+    |> FakeAcp.install("opencode", %{"version" => "2.2.0", "turns" => turns}, enabled: true)
     |> FakeAcp.thread(@thread)
     |> Map.put(:thread, @thread)
     |> FakeAcp.send_message("work in the background")
@@ -4612,5 +4611,90 @@ defmodule HalC2.Steps.Providers.Opencode do
              subagents(context)
 
     context
+  end
+
+  defp spawn_a, do: task_call("task-1", "Subagent started in background.\nsubagent_id: #{@child}")
+
+  # The agent calls the subagent it already started again, to steer it.
+  defp steer_turn(output) do
+    %{"match" => "steer it", "steps" => task_call("task-2", output) ++ [%{"text" => "Steered."}]}
+  end
+
+  defp started_a(context, more \\ []) do
+    context = background_thread(context, spawn_a(), more)
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  defp steer(context) do
+    context = FakeAcp.send_message(context, "steer it")
+    FakeAcp.await_runs(context, 2)
+    context
+  end
+
+  defp a_reports(context, how \\ "completed successfully") do
+    context
+    |> says(child_says("A's report."))
+    |> says(Map.put(report(@child, how), "sessionId", root_session(context)))
+  end
+
+  defp await_no_background(context) do
+    World.await_row(World.thread_id(context, @thread), &(background_subagents(&1) == []))
+    context
+  end
+
+  step ~r/^an OpenCode 2 turn started the background subagent "A"$/, context do
+    started_a(context, [steer_turn("Steering.\nsubagent_id: #{@child}")])
+  end
+
+  step(~r/^the agent steers "A" while it is still running$/, context, do: steer(context))
+
+  step(~r/^"A" reports back once$/, context, do: a_reports(context))
+
+  step "both the subagent call and the steer show \"A\"'s report", context do
+    await_no_background(context)
+    assert [%{"result" => "A's report."}, %{"result" => "A's report."}] = subagents(context)
+    context
+  end
+
+  step "the thread is no longer waiting on background work", context do
+    await_no_background(context)
+  end
+
+  step ~r/^an OpenCode 2 background subagent "A" is running$/, context do
+    started_a(context, [steer_turn("Running.\nsubagent_id: #{@child}")])
+  end
+
+  step(~r/^the agent steers "A" without asking for it to run in the background$/, context,
+    do: context
+  )
+
+  step("the turn ends before \"A\" reports back", context, do: steer(context))
+
+  step "the steer stays running until \"A\"'s report arrives", context do
+    assert [%{"status" => "running"}, %{"status" => "running"}] = subagents(context)
+    World.await_row(World.thread_id(context, @thread), &(length(background_subagents(&1)) == 2))
+
+    context = a_reports(context)
+    await_no_background(context)
+    assert [%{"status" => "completed"}, %{"status" => "completed"}] = subagents(context)
+    context
+  end
+
+  step(~r/^the OpenCode 2 subagent "A" runs in the background$/, context, do: started_a(context))
+
+  step ~r/^OpenCode reports the run of "A" failed$/, context do
+    context
+    |> says(Map.put(report(@child, "failed"), "sessionId", root_session(context)))
+  end
+
+  step ~r/^the call to "A" ends as failed$/, context do
+    await_no_background(context)
+    assert [%{"status" => "failed"}] = subagents(context)
+    context
+  end
+
+  step "the thread no longer shows an agent working in the background", context do
+    await_no_background(context)
   end
 end

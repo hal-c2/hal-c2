@@ -1270,7 +1270,7 @@ Feature: OpenCode
 
   # Upstream #17134: steering a running subagent joins its run, and OpenCode sends one
   # report for both calls; the second call stayed "Running" until a restart.
-  @backlog @mc @plugin-opencode @priority-low
+  @mc @plugin-opencode @priority-low
   Scenario: Steering a running OpenCode 2 subagent finishes with the run it joined
     Given an OpenCode 2 turn started the background subagent "A"
     When the agent steers "A" while it is still running
@@ -1278,7 +1278,7 @@ Feature: OpenCode
     Then both the subagent call and the steer show "A"'s report
     And the thread is no longer waiting on background work
 
-  @backlog @mc @plugin-opencode @priority-low
+  @mc @plugin-opencode @priority-low
   Scenario: A steer that joins a background run waits for its report
     Given an OpenCode 2 background subagent "A" is running
     When the agent steers "A" without asking for it to run in the background
@@ -1293,10 +1293,10 @@ Feature: OpenCode
     And the new call waits for the report of its own run
 
   # Upstream #21979: a failed OpenCode background subagent no longer leaves its thread working
-  @backlog @priority-low
+  @priority-low
   Scenario: A failed OpenCode 2 background subagent stops counting as background work
     Given the OpenCode 2 subagent "A" runs in the background
-    When the turn of "A" fails
+    When OpenCode reports the run of "A" failed
     Then the call to "A" ends as failed
     And the thread no longer shows an agent working in the background
 
