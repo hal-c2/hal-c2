@@ -1039,7 +1039,22 @@ defmodule HalC2.PullRequests do
       else: @action_refusals["enable-auto-merge"]
   end
 
-  defp refusal(action, _viewer), do: @action_refusals[action]
+  # The toggle offered follows the current state, so a request that already holds
+  # (the page was stale) is answered as such, not as a lack of rights.
+  defp refusal("allow-maintainer-edits", %{"actions" => actions} = viewer) do
+    if "stop-maintainer-edits" in actions,
+      do: "Maintainers can already edit this branch.",
+      else: refusal_default("allow-maintainer-edits", viewer)
+  end
+
+  defp refusal("stop-maintainer-edits", %{"actions" => actions} = viewer) do
+    if "allow-maintainer-edits" in actions,
+      do: "Maintainers already can't edit this branch.",
+      else: refusal_default("stop-maintainer-edits", viewer)
+  end
+
+  defp refusal(action, viewer), do: refusal_default(action, viewer)
+  defp refusal_default(action, _viewer), do: @action_refusals[action]
 
   @doc """
   `pullRequests.runAction`: refused when GitHub cannot do it or this account may not,
@@ -1078,7 +1093,7 @@ defmodule HalC2.PullRequests do
           with {:ok, viewer} <-
                  GitHub.viewer_permissions(
                    ctx,
-                   action in ["update-branch", "allow-maintainer-edits", "stop-maintainer-edits"]
+                   action == "update-branch"
                  ) do
             cond do
               if(stack_rebase,

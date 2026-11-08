@@ -230,7 +230,8 @@ defmodule HalC2.PullRequests.GitHub do
   query($owner: String!, $name: String!, $number: Int!) {
     repository(owner: $owner, name: $name) {
       mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed viewerPermission
-      pullRequest(number: $number) { mergeStateStatus viewerCanUpdate viewerDidAuthor }
+      pullRequest(number: $number) {
+        mergeStateStatus isCrossRepository state maintainerCanModify viewerCanUpdate viewerDidAuthor }
     }
   }
   """
@@ -1396,7 +1397,8 @@ defmodule HalC2.PullRequests.GitHub do
 
   @doc """
   What the signed-in account may do here, asked fresh. Updating the branch is only
-  known from the base comparison, which the detail read carries (`update_branch?`).
+  known from the base comparison, which the detail read carries (`update_branch?`);
+  the maintainer-edit toggles need only the light read.
   """
   def viewer_permissions(ctx, update_branch? \\ false) do
     if update_branch? do
@@ -1411,6 +1413,7 @@ defmodule HalC2.PullRequests.GitHub do
           repo
           |> access(pr["viewerCanUpdate"], pr["viewerDidAuthor"])
           |> Map.put(:auto_merge_waits, auto_merge_waits?(repo, pr))
+          |> Map.put(:maintainer_edits, maintainer_edits(pr))
 
         {:ok, permissions(access)}
       else

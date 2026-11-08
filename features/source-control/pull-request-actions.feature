@@ -187,6 +187,19 @@ Feature: Acting on a pull request
     When the user looks at its actions
     Then allowing edits from maintainers is not offered
 
+  # Upstream #25588: the choice offered follows the state now; a stale page is told what holds.
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
+  Scenario Outline: A maintainer-edit change that already holds is answered with the state
+    Given the user opened pull request 42 from their fork of "acme/shop"
+    And maintainer edits are <state>
+    When the user <action> edits from maintainers
+    Then the user is told "<message>"
+
+    Examples:
+      | state | action | message                                |
+      | on    | allows | Maintainers can already edit this branch.  |
+      | off   | stops  | Maintainers already can't edit this branch. |
+
   # Upstream #30518: GitLab merge requests from forks can allow or stop maintainer edits.
   @backlog @mc @shared @priority-low
   Scenario Outline: The author of a GitLab merge request from a fork lets maintainers edit it, or stops them

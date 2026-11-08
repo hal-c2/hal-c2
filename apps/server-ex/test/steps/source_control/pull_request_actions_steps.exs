@@ -238,6 +238,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestActions do
     |> Map.put(:permission, "READ")
     |> Shared.reshape_pr(%{
       "isCrossRepository" => true,
+      "state" => "OPEN",
       "viewerDidAuthor" => true,
       "viewerCanUpdate" => true
     })
@@ -257,6 +258,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestActions do
     |> Map.put(:permission, "READ")
     |> Shared.reshape_pr(%{
       "isCrossRepository" => true,
+      "state" => "OPEN",
       "viewerDidAuthor" => true,
       "viewerCanUpdate" => true,
       "maintainerCanModify" => state == "on"
