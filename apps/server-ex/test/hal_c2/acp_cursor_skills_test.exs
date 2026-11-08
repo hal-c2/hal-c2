@@ -209,4 +209,25 @@ defmodule HalC2.Acp.CursorSkillsTest do
     assert {:error, detail} = CursorSkills.probe(project, Path.join(dir, "home"))
     assert detail =~ "was incomplete (filesystem-error)"
   end
+
+  test "a mention with no snapshot reads the skills of the home given, not the MC's",
+       %{tmp_dir: dir} do
+    project = Path.join(dir, "project")
+    home = Path.join(dir, "instance-home")
+    skill!(Path.join([home, ".cursor", "skills", "deploy"]))
+    File.mkdir_p!(project)
+
+    assert HalC2.Acp.cursor_skill_mentions("run $deploy now", "no-such-cursor", project, home) ==
+             "run /deploy now"
+  end
+
+  test "refreshing a workspace reads the home given", %{tmp_dir: dir} do
+    project = Path.join(dir, "project")
+    home = Path.join(dir, "instance-home")
+    skill!(Path.join([home, ".cursor", "skills", "deploy"]))
+    File.mkdir_p!(project)
+
+    assert {:ok, found} = CursorSkills.probe(project, home)
+    assert names(found) == ["deploy"]
+  end
 end

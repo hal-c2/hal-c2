@@ -369,9 +369,10 @@ const makeAgent = (options, resumed) => {
             } else if (message.includes("tour: delete")) {
               tool("t-delete", { type: "delete", args: { path: "old.txt" } }, { fileSize: 12 });
             } else if (message.includes("tour: image")) {
+              // Cursor picks the path itself: the call is announced before it has one.
               tool(
                 "t-image",
-                { type: "generateImage", args: { description: "a cat", filePath: "cat.png" } },
+                { type: "generateImage", args: { description: "a cat" } },
                 { filePath: "cat.png", imageData: "iVBORw0KGgo=" },
               );
             } else if (message.includes("tour: read")) {

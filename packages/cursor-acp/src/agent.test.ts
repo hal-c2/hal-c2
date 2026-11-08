@@ -281,6 +281,22 @@ describe("Cursor over ACP", () => {
     expect(sent).toEqual([]);
   });
 
+  it("fails a /compact whose only reply is a transport error in the run's result", () => {
+    const sent: Array<Record<string, unknown>> = [];
+    const updates = makeUpdateTranslator(
+      (update) => sent.push(update as never),
+      () => {},
+      { suppressText: true },
+    );
+    expect(
+      updates.finish({
+        status: "finished",
+        result: "Something went wrong communicating with the server. Please try again.",
+      }),
+    ).toMatchObject({ message: "Provider turn failed." });
+    expect(sent).toEqual([]);
+  });
+
   it("shows nothing of a late-resumed /compact reply either", () => {
     const sent: Array<Record<string, unknown>> = [];
     const updates = makeUpdateTranslator(

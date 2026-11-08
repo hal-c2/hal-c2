@@ -39,7 +39,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Acp.Kimi
   alias HalC2.Acp.OpenCode
 
-  @state_version 19
+  @state_version 20
   @registry HalC2.Acp.Registry
 
   # Grok's background task notifications.
@@ -1415,6 +1415,10 @@ defmodule HalC2.Acp.ThreadRuntime do
   # Older ACP session modes are read from the session's next options.
   defp migrate(%{v: 18} = state),
     do: state |> Map.merge(%{v: 19, legacy_modes: nil}) |> migrate()
+
+  # Whether the agent itself cancelled the last run; states from before it lack the key.
+  defp migrate(%{v: 19} = state),
+    do: state |> Map.put_new(:agent_cancelled, false) |> Map.put(:v, 20) |> migrate()
 
   # --- session -------------------------------------------------------------------
 
@@ -3095,14 +3099,15 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp opencode_child(_params, state), do: state
 
-  defp child_update(%{"sessionId" => session, "update" => update}, state) do
+  @doc false
+  def child_update(%{"sessionId" => session, "update" => update}, state) do
     case Enum.find(state.subagents, fn {_id, entry} -> entry.session == session end) do
       {id, %{sub: sub} = entry} ->
         sub =
           case update do
             %{"sessionUpdate" => "agent_message_chunk", "content" => %{"text" => text}}
             when is_binary(text) ->
-              NativeSubagent.append(sub, text)
+              child_text(sub, update["messageId"], text)
 
             %{"sessionUpdate" => kind, "toolCallId" => call_id}
             when kind in ["tool_call", "tool_call_update"] and is_binary(call_id) ->
@@ -3121,9 +3126,33 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   # A subagent's own tool call, in its child thread, in the same item shapes
   # the parent thread's calls take.
+  # An update carries only what changed, so it is merged into the call the child
+  # announced before the item is computed, as the parent's calls are. A tool call also
+  # ends the message before it: what the child says after it is a new message.
   defp child_tool(sub, call_id, call, state) do
+    calls = Map.get(sub, :calls, %{})
+    changed = call |> Enum.reject(fn {_key, value} -> is_nil(value) end) |> Map.new()
+    call = Map.merge(Map.get(calls, call_id, %{}), changed)
     {type, status, fields} = child_item(call, state)
-    NativeSubagent.item(sub, "cursor-task-tool:#{call_id}", type, status, fields)
+
+    sub
+    |> Map.merge(%{calls: Map.put(calls, call_id, call), segment: Map.get(sub, :segment, 0) + 1})
+    |> NativeSubagent.item("cursor-task-tool:#{call_id}", type, status, fields)
+  end
+
+  # The child's text, one message per message id (one per stretch between tool calls
+  # when the agent names none), so "Checking", a tool and "Done" stay in that order.
+  defp child_text(sub, _message_id, ""), do: sub
+
+  defp child_text(sub, message_id, text) do
+    key = message_id || "segment-#{Map.get(sub, :segment, 0)}"
+    chunks = Map.update(Map.get(sub, :chunks, %{}), key, text, &(&1 <> text))
+
+    sub
+    |> Map.put(:chunks, chunks)
+    |> NativeSubagent.item("cursor-task-message:#{key}", "assistant_message", "completed", %{
+      "text" => chunks[key]
+    })
   end
 
   @doc false
@@ -3149,7 +3178,8 @@ defmodule HalC2.Acp.ThreadRuntime do
         true -> "running"
       end
 
-    output = content_text(call["content"]) || raw_output(call["rawOutput"])
+    # The child thread keeps the last `CommandTail.kept/0` bytes, as the parent's does.
+    output = bounded_output(content_text(call["content"]) || raw_output(call["rawOutput"]))
 
     fields =
       fields
@@ -4114,6 +4144,16 @@ defmodule HalC2.Acp.ThreadRuntime do
         :file ->
           entity
           |> Map.put("diffStr", output || entity["diffStr"] || "")
+          # A file named only once the call completes (a generated image's path).
+          |> then(fn entity ->
+            case call do
+              %{"locations" => [%{"path" => path} | _]} when is_binary(path) ->
+                Map.put(entity, "fileName", path)
+
+              _ ->
+                entity
+            end
+          end)
           |> then(fn entity ->
             case call["rawOutput"] do
               %{"linesAdded" => added, "linesRemoved" => removed}

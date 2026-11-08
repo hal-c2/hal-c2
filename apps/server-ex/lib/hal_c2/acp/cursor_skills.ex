@@ -43,6 +43,17 @@ defmodule HalC2.Acp.CursorSkills do
     end
   end
 
+  @doc """
+  The home directory Cursor runs with for instance `id`: the `HOME` its environment
+  sets, else nil (the MC's own, which `discover/2` then reads).
+  """
+  def home(id) do
+    case List.keyfind(HalC2.Acp.instance_env(id), "HOME", 0) do
+      {_name, home} when home != "" -> home
+      _ -> nil
+    end
+  end
+
   @doc "The entry's workspace snapshots of Cursor skills read so far."
   def workspaces(id) do
     for {cwd, snapshot} <- :persistent_term.get({HalC2.Acp, id, :workspaces}, %{}),
@@ -54,10 +65,10 @@ defmodule HalC2.Acp.CursorSkills do
   `:ok`, or `{:error, detail}` with no snapshot kept, so a failed read never
   leaves a partial skill list behind.
   """
-  def refresh_workspace(id, cwd) do
+  def refresh_workspace(id, cwd, home \\ nil) do
     epoch = HalC2.Acp.workspaces_epoch(id)
 
-    case probe(cwd) do
+    case probe(cwd, home || home(id)) do
       {:ok, found} ->
         snapshot = %{
           "checkedAt" => HalC2.Orchestration.Entities.now(),

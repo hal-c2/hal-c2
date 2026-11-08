@@ -2122,11 +2122,17 @@ defmodule HalC2.Acp do
   `cwd` names the skills when one was read; only a send with no snapshot yet
   pays for a discovery scan.
   """
-  def cursor_skill_mentions(text, instance, cwd) do
+  def cursor_skill_mentions(text, instance, cwd, home \\ nil) do
     names =
       case Enum.find(HalC2.Acp.CursorSkills.workspaces(instance), &(&1["cwd"] == cwd)) do
-        %{"skills" => skills} -> MapSet.new(skills, & &1["name"])
-        _ -> MapSet.new(HalC2.Acp.CursorSkills.discover(cwd), & &1["name"])
+        %{"skills" => skills} ->
+          MapSet.new(skills, & &1["name"])
+
+        _ ->
+          skills =
+            HalC2.Acp.CursorSkills.discover(cwd, home || HalC2.Acp.CursorSkills.home(instance))
+
+          MapSet.new(skills, & &1["name"])
       end
 
     Regex.replace(@skill_mention, text, fn match, prefix, name ->

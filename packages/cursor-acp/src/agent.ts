@@ -815,7 +815,7 @@ export function makeUpdateTranslator(
     }
     if (tailFailure) return { message: "Provider turn failed." };
     // An answer that arrives only with the run's result is still the answer.
-    if (!streamedText && result.result && options.suppressText !== true) {
+    if (!streamedText && result.result) {
       const probe = new TransportFailure();
       probe.push(result.result);
       if (probe.failure !== undefined) return { message: "Provider turn failed." };
