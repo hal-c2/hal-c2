@@ -916,12 +916,12 @@ defmodule HalC2.Steps.Orchestration.McpServer do
     context = acp_agent(context, %{"mcpCapabilities" => %{"http" => true}})
     context = World.send_turn(context, @acp_thread, text)
     World.await_runs(context, @acp_thread, ["completed"])
-    context
+    Map.put(context, :slash_text, text)
   end
 
   step "the prompt is sent without HAL-C2's instructions in front of it", context do
     [first | _] = acp_prompts(context)
-    assert String.starts_with?(first, "/compact")
+    assert String.starts_with?(first, context.slash_text)
     refute first =~ "HAL-C2 orchestration"
     context
   end
