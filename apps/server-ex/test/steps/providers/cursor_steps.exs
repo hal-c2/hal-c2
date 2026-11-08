@@ -728,6 +728,110 @@ defmodule HalC2.Steps.Providers.Cursor do
     context
   end
 
+  # The MC's own Cursor sign-in, or a CURSOR_API_KEY, with no Cursor CLI login on the
+  # machine. Cursor's default endpoint is played on loopback: it trades the key for a
+  # token and reads the usage with that token.
+  step ~r/^the user signed in to Cursor with (?<credential>Sign in with Cursor|a CURSOR_API_KEY in the instance's environment) and has no Cursor CLI login$/,
+       %{args: [credential]} = context do
+    home = Path.join(context.mc.home, "no-cursor-login")
+    File.mkdir_p!(home)
+
+    {url, log} =
+      HalC2.Test.FakeHttp.start(%{
+        "/auth/exchange_user_api_key" => {200, %{"accessToken" => "exchanged-token"}},
+        @usage_path =>
+          {200,
+           %{
+             "billingCycleEnd" => "1790000000000",
+             "planUsage" => %{"totalPercentUsed" => 40, "autoPercentUsed" => 25}
+           }}
+      })
+
+    World.put_app_env(:cursor_api_url, url)
+    context = Acp.ready(context)
+
+    {key, env} =
+      if credential == "Sign in with Cursor" do
+        sign_in("cursor")
+        {"cursor-key", []}
+      else
+        {@api_key, [{"CURSOR_API_KEY", @api_key}]}
+      end
+
+    instance = %{
+      "driver" => "cursor",
+      "enabled" => true,
+      "environment" =>
+        for(
+          {name, value} <- [{"HOME", home}, {"XDG_CONFIG_HOME", Path.join(home, "config")} | env],
+          do: %{"name" => name, "value" => value}
+        )
+    }
+
+    Acp.put_instance("cursor", instance)
+    Map.merge(context, %{cursor_usage_log: log, cursor_instance: instance, cursor_key: key})
+  end
+
+  step "the Cursor instance uses a custom API endpoint", context do
+    {url, log} = HalC2.Test.FakeHttp.start(%{})
+
+    Acp.put_instance(
+      "cursor",
+      Map.put(context.cursor_instance, "config", %{"apiEndpoint" => url})
+    )
+
+    Map.put(context, :cursor_custom_log, log)
+  end
+
+  step "Cursor shows its monthly allowance", context do
+    cursor = Enum.find(context.providers, &(&1["instanceId"] == "cursor"))
+
+    assert [
+             {"autoPercentUsed", "Monthly · Auto", 25},
+             {"totalPercentUsed", "Monthly", 40}
+           ] =
+             for(
+               w <- cursor["usageLimits"]["windows"],
+               do: {w["id"], w["label"], w["usedPercent"]}
+             )
+
+    # The key was traded for a token, and the usage read with that token.
+    key = "Bearer " <> context.cursor_key
+
+    assert [
+             %{"path" => "/auth/exchange_user_api_key", "authorization" => ^key},
+             %{"path" => @usage_path, "authorization" => "Bearer exchanged-token"}
+           ] = HalC2.Test.FakeHttp.requests(context.cursor_usage_log) |> Enum.take(2)
+
+    context
+  end
+
+  step "the user is not asked to allow access to a Cursor CLI login", context do
+    cursor = Enum.find(context.providers, &(&1["instanceId"] == "cursor"))
+    refute Map.has_key?(cursor["usageLimits"], "unavailable")
+    context
+  end
+
+  step "Cursor says usage for an API key needs the default Cursor endpoint", context do
+    cursor = Enum.find(context.providers, &(&1["instanceId"] == "cursor"))
+
+    assert %{
+             "windows" => [],
+             "unavailable" => %{
+               "reason" => "unsupported",
+               "message" => "Cursor usage for an API key requires the default Cursor endpoint."
+             }
+           } = cursor["usageLimits"]
+
+    context
+  end
+
+  step "the API key was not sent anywhere", context do
+    assert HalC2.Test.FakeHttp.requests(context.cursor_usage_log) == []
+    assert HalC2.Test.FakeHttp.requests(context.cursor_custom_log) == []
+    context
+  end
+
   # --- commands ------------------------------------------------------------------------
 
   defp commands(ctx) do
