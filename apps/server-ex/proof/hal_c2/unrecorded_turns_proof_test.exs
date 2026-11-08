@@ -54,6 +54,10 @@ defmodule HalC2.UnrecordedTurnsProofTest do
       "HalC2.Codex.ThreadRuntime handle_info {:interrupt_deadline, _}" => "deadline",
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:notification, _, _}}" =>
         ~w(finish hand-over leftover-end ignored-end unrecorded),
+      # A Codex goal's grace ends its run as Codex's turn end does; a stale one changes
+      # nothing.
+      "HalC2.Codex.ThreadRuntime handle_info {:goal_grace, _}" =>
+        ~w(finish hand-over unrecorded ignored-end),
       # Every message, the wrapper's clause included: one it does not know is ignored.
       "HalC2.Codex.ThreadRuntime handle_info _" => ~w(unrecorded hand-over ignored-end),
       "HalC2.Codex.ThreadRuntime handle_call _" => ~w(take refuse-start interrupt-driven)
