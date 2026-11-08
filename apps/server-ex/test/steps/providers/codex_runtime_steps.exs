@@ -119,8 +119,9 @@ defmodule HalC2.Steps.Providers.CodexRuntime do
   # Not waiting the second a program's stop is given, and not its exit code once
   # that stop killed it.
   step "within a quarter of a second the request fails saying Codex's input ended", context do
-    assert {:error, %{"message" => message}} = Task.await(context.pending_call, 5_000)
-    assert message == "Input from Codex App Server ended while it was still running"
+    assert Task.await(context.pending_call, 5_000) ==
+             {:error, %{"message" => "Codex App Server input stream ended.", "ended" => true}}
+
     assert System.monotonic_time(:millisecond) - context.muted_at < 1_000
     context
   end
@@ -132,14 +133,16 @@ defmodule HalC2.Steps.Providers.CodexRuntime do
       GenServer.start(Connection,
         cmd: ["python3", "-u", fake],
         handler: self(),
-        program: "Codex App Server"
+        program: "Codex App Server",
+        eof_grace: 250
       )
 
     open = Task.async(fn -> Connection.call(conn, "test/hang", %{}, 30_000) end)
     Connection.notify(conn, "test/mute-exit", nil)
 
     assert Task.await(open, 5_000) ==
-             {:error, %{"message" => "Codex App Server process exited with code 3"}}
+             {:error,
+              %{"message" => "Codex App Server process exited with code 3", "ended" => true}}
 
     context
   end

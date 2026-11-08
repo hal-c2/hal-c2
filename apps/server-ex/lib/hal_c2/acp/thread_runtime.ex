@@ -322,6 +322,7 @@ defmodule HalC2.Acp.ThreadRuntime do
          {:ok, state} <- check_model(state, driver, turn.model),
          {:ok, state} <- select_model(state, turn.model),
          state = set_options(state, turn),
+         {:ok, state} <- set_session_options(state, turn),
          state = set_parameters(state, turn) do
       # A run that ended while the session opened never reaches the agent.
       case started(state) do
@@ -336,9 +337,14 @@ defmodule HalC2.Acp.ThreadRuntime do
         finish(state, "failed", message)
         {:reply, :ok, %{state | turn: nil}}
 
+      # Refused before the agent heard of it, in words that need no agent's name.
+      {:refused, message, state} ->
+        finish(state, "failed", message)
+        {:reply, :ok, %{state | turn: nil}}
+
       {:error, reason, state} ->
         reason = Antigravity.failure(driver, reason)
-        Logger.warning("#{driver} turn failed to start: #{inspect(reason)}")
+        Logger.warning("#{driver} turn failed to start: #{redacted(reason)}")
         failure = if reason == :closed, do: reason, else: format(reason)
         finish(state, "failed", start_failure(HalC2.Acp.label(driver), failure))
         {:reply, :ok, %{state | turn: nil}}
@@ -1018,6 +1024,17 @@ defmodule HalC2.Acp.ThreadRuntime do
         {:error, %{"code" => -32003}} ->
           {"failed", "Grok usage limit reached. Try again later."}
 
+        # A registry agent's exit (`exits/1`), with what it last wrote to its error output.
+        # The log keeps all of it; the failure the end that fits beside the exit, in the
+        # 4,096 characters a thread keeps of one (`HalC2.Orchestration.UserFacingErrors`).
+        {:error, %{"message" => message, "stderr" => stderr}} ->
+          Logger.warning(
+            "#{HalC2.Acp.label(state.agent)} failed: #{message}\n#{HalC2.Acp.Stderr.redact(stderr)}"
+          )
+
+          room = HalC2.Acp.Stderr.max() - String.length(message) - 1
+          {"failed", String.trim("#{message}\n#{HalC2.Acp.Stderr.sanitize(stderr, room)}")}
+
         {:error, %{"message" => message} = error} when is_binary(message) ->
           {"failed", usage_limit(state, error) || prompt_failure(state, error)}
 
@@ -1042,8 +1059,25 @@ defmodule HalC2.Acp.ThreadRuntime do
     state = compacted(state, status)
     state = end_turn(state, status, failure)
     # A turn that did not complete takes its background work, and earlier turns', down.
-    {:noreply, if(status == "completed", do: state, else: stop_work(state, status))}
+    state = if status == "completed", do: state, else: stop_work(state, status)
+    {:noreply, if(ended?(result), do: dropped(state), else: state)}
   end
+
+  # The connection failed the call because the agent ended (`HalC2.JsonRpc.Connection`
+  # marks those errors `"ended"`): it is on its way out, and the next message starts
+  # the agent afresh rather than waiting on it. An error the agent answers itself,
+  # with or without a code, leaves it running.
+  defp ended?({:error, :closed}), do: true
+  defp ended?({:error, %{"ended" => true}}), do: true
+  defp ended?(_result), do: false
+
+  # Its exit, when it comes, no longer matches `state.conn` and is ignored.
+  defp dropped(%{conn: conn} = state) when is_pid(conn) do
+    Process.unlink(conn)
+    released(%{state | conn: nil, session_id: nil, prompt: nil, server: nil})
+  end
+
+  defp dropped(state), do: state
 
   # OpenCode 2 names why a prompt failed (`data.errorName`): its quota, rate-limit and
   # plan-limit stops are usage limits, with no reset time it does not give. A Claude plan
@@ -1317,6 +1351,15 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # A registry agent's connection fails its calls with how the agent ended, in the ACP
+  # client's words ("ACP process exited with code 1", "ACP input stream ended."), and
+  # keeps its error output for the failure. Built-in agents keep their own wording.
+  defp exits(instance) do
+    if HalC2.Acp.driver(instance) == "acpRegistry",
+      do: [program: "ACP", stderr_tail: :whole, eof_grace: 100],
+      else: []
+  end
+
   # A new agent process for `instance` in the working directory of `context` (a turn,
   # or a rewind's plan), initialized; OpenCode's serves its HTTP API.
   defp launch(state, instance, mode, %{cwd: cwd} = context) do
@@ -1338,15 +1381,21 @@ defmodule HalC2.Acp.ThreadRuntime do
          env = subagents_off(instance, mcp, env),
          {:ok, conn} <-
            Connection.start_link(
-             cmd: command,
-             handler: self(),
-             cd: cwd,
-             env: env,
-             dialect: :v2,
-             log: state.thread_id,
-             durable: state.thread_id,
-             program: HalC2.Acp.label(instance),
-             stderr_prefix: Antigravity.stderr_prefix(instance)
+             Keyword.merge(
+               [
+                 cmd: command,
+                 handler: self(),
+                 cd: cwd,
+                 env: env,
+                 dialect: :v2,
+                 log: state.thread_id,
+                 durable: state.thread_id,
+                 program: HalC2.Acp.label(instance),
+                 stderr_prefix: Antigravity.stderr_prefix(instance)
+               ],
+               # A registry agent's own wording of its exit wins over the label.
+               exits(instance)
+             )
            ),
          {:ok, init} <-
            Connection.call(conn, "initialize", %{
@@ -1696,12 +1745,14 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp check_model(state, driver, model) do
     case Antigravity.check_model(driver, model, state.options) do
-      :ok -> {:ok, state}
+      :ok -> offered(state, driver, model)
       {:error, message} -> {:error, message, state}
     end
   end
 
   defp remember_config(state, %{"configOptions" => [_ | _] = options}) do
+    HalC2.Acp.put_config(state.agent, options)
+
     %{
       state
       | config: Map.new(options, &{&1["id"], &1["currentValue"]}),
@@ -1827,13 +1878,59 @@ defmodule HalC2.Acp.ThreadRuntime do
           %{state | model: model}
 
         {:error, reason} ->
-          Logger.warning("could not set Cursor's model options: #{inspect(reason)}")
+          Logger.warning("could not set Cursor's model options: #{redacted(reason)}")
           state
       end
     else
       state
     end
   end
+
+  # The options picked for a registry agent's model that are its session's own
+  # (`HalC2.Acp.session_options/1`): a value it does not offer is refused before
+  # the turn reaches the agent, one it already has is not sent again, and an option
+  # its session does not offer is skipped. An id the model's own descriptors share is
+  # the model's, as `HalC2.Acp.taken/2` offers it.
+  defp set_session_options(%{agent: agent} = state, turn) when agent != nil do
+    options = Map.get(turn, :options) || %{}
+
+    if options == %{} or HalC2.Acp.driver(agent) != "acpRegistry" do
+      {:ok, state}
+    else
+      model = Enum.find(state.options || [], &(&1["slug"] == state.model))
+      own = get_in(model || %{}, ["capabilities", "optionDescriptors"]) || []
+      offered = agent |> HalC2.Acp.session_options() |> HalC2.Acp.taken(model)
+
+      options
+      |> Enum.sort()
+      |> Enum.reduce_while({:ok, state}, fn {id, value}, {:ok, state} ->
+        case HalC2.Acp.check_option(offered, id, value) do
+          :ok ->
+            {:cont, {:ok, set_config(state, id, value)}}
+
+          # The model's own option (its `_meta.parameters`) is not the session's to set.
+          :skip ->
+            if Enum.any?(own, &(&1["id"] == id)),
+              do: Logger.debug("#{agent}: the option #{id} is the model's, not its session's"),
+              else:
+                Logger.warning(
+                  "#{agent}: skipped the option #{id}, which its session does not offer"
+                )
+
+            {:cont, {:ok, state}}
+
+          {:error, message} ->
+            {:halt, {:refused, message, state}}
+        end
+      end)
+    end
+  end
+
+  defp set_session_options(state, _turn), do: {:ok, state}
+
+  # An agent's error as the MC's log keeps it, its secrets redacted.
+  defp redacted(reason) when is_binary(reason), do: HalC2.Acp.Stderr.redact(reason)
+  defp redacted(reason), do: reason |> inspect() |> HalC2.Acp.Stderr.redact()
 
   # The choice of a select option (flat or grouped) that plans, if it has one.
   defp plan_choice(option) do
@@ -1844,21 +1941,22 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp set_config(state, id, value)
-       when is_binary(value) and is_map_key(state.config, id) do
+       when (is_binary(value) or is_boolean(value)) and is_map_key(state.config, id) do
     if state.config[id] == value do
       state
     else
-      case Connection.call(state.conn, "session/set_config_option", %{
-             "sessionId" => state.session_id,
-             "configId" => id,
-             "value" => value
-           }) do
+      case Connection.call(
+             state.conn,
+             "session/set_config_option",
+             %{"sessionId" => state.session_id, "configId" => id, "value" => value}
+             |> then(&if(is_boolean(value), do: Map.put(&1, "type", "boolean"), else: &1))
+           ) do
         {:ok, result} ->
           state = remember_config(state, result || %{})
           %{state | config: Map.put(state.config, id, value)}
 
         {:error, reason} ->
-          Logger.warning("could not set #{id} to #{value}: #{inspect(reason)}")
+          Logger.warning("could not set #{id} to #{value}: #{redacted(reason)}")
           state
       end
     end
@@ -1912,6 +2010,34 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # A registry agent's session lists the models its account may use: a model it does
+  # not offer, and the user did not add (`config.customModels`), is refused rather than
+  # skipped for the agent's own default (upstream #26623). The default alias, and an
+  # agent that lists no models, leave the choice to the agent.
+  defp offered(state, instance, model) do
+    offered = for %{"slug" => slug} <- state.options || [], do: slug
+
+    if HalC2.Acp.driver(instance) == "acpRegistry" and is_binary(model) and
+         model not in ["", "default"] and offered != [] and model not in offered and
+         not custom_model?(instance, model) do
+      {:error,
+       "the model #{model} is not available to this account. Pick another model and try again.",
+       state}
+    else
+      {:ok, state}
+    end
+  end
+
+  defp custom_model?(instance, model) do
+    case HalC2.Acp.entry(instance) do
+      %{"models" => models} when is_list(models) ->
+        Enum.any?(models, &(&1["isCustom"] == true and &1["slug"] == model))
+
+      _ ->
+        false
+    end
+  end
+
   # Grok's `grok-build` is the CLI's product name, not a model it accepts: choosing it
   # keeps the model the session has. A reasoning level goes with the model, as
   # `session/set_model`'s `_meta.reasoningEffort`, and only when it is a plain word and
@@ -1950,7 +2076,7 @@ defmodule HalC2.Acp.ThreadRuntime do
             |> Map.put(:reasoning, effort)
 
           {:error, reason} ->
-            Logger.warning("could not select #{target}: #{inspect(reason)}")
+            Logger.warning("could not select #{target}: #{redacted(reason)}")
             state
         end
     end
@@ -1970,9 +2096,20 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp session_reasoning(_result), do: nil
 
-  # "Pi default" leaves the model to the user's own Pi settings.
+  # "Pi default" leaves the model to the user's own Pi settings, and a registry agent's
+  # default to the agent when its session offers no model of that name.
   defp set_model(%{agent: agent} = state, "default") when agent != nil do
-    if HalC2.Acp.driver(agent) == "pi", do: state, else: set_model_now(state, "default")
+    case HalC2.Acp.driver(agent) do
+      "pi" ->
+        state
+
+      "acpRegistry" ->
+        offered = for %{"slug" => slug} <- state.options || [], do: slug
+        if offered == [] or "default" in offered, do: set_model_now(state, "default"), else: state
+
+      _ ->
+        set_model_now(state, "default")
+    end
   end
 
   defp set_model(state, model), do: set_model_now(state, model)
@@ -1990,12 +2127,12 @@ defmodule HalC2.Acp.ThreadRuntime do
             %{state | model: model, model_method: "session/set_model"}
 
           {:error, reason} ->
-            Logger.warning("could not select #{model}: #{inspect(reason)}")
+            Logger.warning("could not select #{model}: #{redacted(reason)}")
             state
         end
 
       {:error, reason} ->
-        Logger.warning("could not select #{model}: #{inspect(reason)}")
+        Logger.warning("could not select #{model}: #{redacted(reason)}")
         state
     end
   end
@@ -2050,7 +2187,7 @@ defmodule HalC2.Acp.ThreadRuntime do
             %{state | titled: {session, title}}
 
           {:error, reason} ->
-            Logger.warning("could not name the OpenCode session: #{reason}")
+            Logger.warning("could not name the OpenCode session: #{redacted(reason)}")
             state
         end
     end
@@ -2065,7 +2202,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         {:ok, leaf}
 
       {:error, reason} ->
-        Logger.warning("could not read the OpenCode session: #{reason}")
+        Logger.warning("could not read the OpenCode session: #{redacted(reason)}")
         :unknown
     end
   end

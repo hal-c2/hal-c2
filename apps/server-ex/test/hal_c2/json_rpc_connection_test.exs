@@ -82,7 +82,41 @@ defmodule HalC2.JsonRpc.ConnectionTest do
       )
 
     assert {:error, error} = Connection.call(conn, "start", %{})
-    assert error == %{"message" => "Peer process exited with code 1"}
+    assert error == %{"message" => "Peer process exited with code 1", "ended" => true}
+  end
+
+  # Reads the call, closes its output and sleeps on without answering.
+  @closes ["sh", "-c", ~S(read l; exec 1>&-; sleep 30)]
+
+  test "a program that closes its output and keeps running fails its calls at once" do
+    conn =
+      start_supervised!(
+        {Connection, cmd: @closes, handler: self(), program: "Peer", eof_grace: 100},
+        id: :eof,
+        restart: :temporary
+      )
+
+    started = System.monotonic_time(:millisecond)
+
+    assert {:error, %{"message" => "Peer input stream ended."}} =
+             Connection.call(conn, "start", %{})
+
+    assert System.monotonic_time(:millisecond) - started < 1_000
+  end
+
+  test "a program that exits within the grace fails its calls with its exit" do
+    conn =
+      start_supervised!(
+        {Connection,
+         cmd: @dies, handler: self(), program: "Peer", eof_grace: 1_000, stderr_tail: :whole},
+        id: :eof_exit,
+        restart: :temporary
+      )
+
+    assert {:error, %{"message" => "Peer process exited with code 1", "stderr" => said}} =
+             Connection.call(conn, "start", %{})
+
+    assert said == "noise\nERROR config is not trusted"
   end
 
   # A refused OpenCode (macOS quarantine) dies before its first call; the read stops
@@ -122,8 +156,14 @@ defmodule HalC2.JsonRpc.ConnectionTest do
     open = Task.async(fn -> Connection.call(conn, "start", %{}) end)
     assert_receive {:json_rpc, ^conn, {:notification, "deaf", _}}, 5_000
 
-    assert {:error, %{"message" => "Peer stopped taking input (write failed: epipe)"} = error} =
-             Connection.call(conn, "next", %{})
+    # Marked `"ended"`, as an exit is: the ACP runtime drops the connection on it
+    # (`HalC2.Acp.ThreadRuntime.ended?/1`) and starts the agent afresh.
+    assert {:error, error} = Connection.call(conn, "next", %{})
+
+    assert error == %{
+             "message" => "Peer stopped taking input (write failed: epipe)",
+             "ended" => true
+           }
 
     assert Task.await(open) == {:error, error}
     assert_receive {:DOWN, ^ref, :process, ^conn, {:shutdown, {:write_failed, ^error}}}, 5_000
