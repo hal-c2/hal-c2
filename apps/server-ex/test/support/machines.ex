@@ -409,9 +409,19 @@ defmodule HalC2.Test.Machines do
     Application.put_env(:hal_c2, :acp_commands, Map.put(commands, instance, command))
     HalC2.Acp.forget(instance)
 
-    # The registry lists the agent, as if it had been fetched just now.
+    # The registry lists the agent, as if it had been fetched just now, with a build for
+    # this machine so the instance is ready (`HalC2.Acp.Catalog.readiness/1`); the
+    # override above is what runs.
     if agent_id do
-      agent = %{"id" => agent_id, "name" => agent_id, "version" => "1.0.0", "distribution" => %{}}
+      build = %{HalC2.Acp.Catalog.platform() => %{"archive" => "unused", "cmd" => "./agent"}}
+
+      agent = %{
+        "id" => agent_id,
+        "name" => agent_id,
+        "version" => "1.0.0",
+        "distribution" => %{"binary" => build}
+      }
+
       now = System.system_time(:millisecond)
       :persistent_term.put({HalC2.Acp.Catalog, :index}, {now, [agent]})
     end

@@ -232,6 +232,30 @@ defmodule HalC2.Test.Mc do
   end
 
   @doc """
+  The list a `localServers` subscription `id` holds once the scan its subscribe started
+  has finished (on `mc`, this node by default): the first frame answers from the last
+  scan, and the scan's own result follows as a change. Returns `{frame, client}`.
+  """
+  def await_local_servers(client, id, mc \\ node()) do
+    shape = &(&1["t"] == "localServers" and &1["id"] == id)
+    {first, client} = await(client, shape, 10_000)
+
+    sync = fn client ->
+      client = WsClient.send_json(client, %{"t" => "ping"})
+      {_, skipped, client} = WsClient.recv_until(client, &(&1["t"] == "pong"), 10_000)
+      {Enum.filter(skipped, shape), client}
+    end
+
+    # The ping ends after the subscribe was taken, so its scan is queued; the scan
+    # asked for now is done when the call returns, its change sent before the pong.
+    {early, client} = sync.(client)
+    :erpc.call(mc, Kernel, :send, [HalC2.LocalServers, :scan])
+    :erpc.call(mc, :sys, :get_state, [HalC2.LocalServers])
+    {late, client} = sync.(client)
+    {List.last([first | early ++ late]), client}
+  end
+
+  @doc """
   The config frame of the subscription `id`. A config the MC could not build comes as an
   error frame saying why, and waiting on past it would only report a missing frame.
   """
@@ -1034,20 +1058,24 @@ defmodule HalC2.Test.Mc.World do
   @doc "Waits until a stream's sidebar row satisfies `fun`; the test process must be subscribed to the shell."
   def await_row(id, fun, timeout \\ 10_000) do
     case HalC2.Shell.row(node(), id) do
-      {_kind, row} -> if fun.(row), do: row, else: await_next_row(id, fun, timeout)
-      nil -> await_next_row(id, fun, timeout)
+      {_kind, row} -> if fun.(row), do: row, else: await_next_row(id, fun, timeout, row)
+      nil -> await_next_row(id, fun, timeout, nil)
     end
   end
 
-  defp await_next_row(id, fun, timeout) do
+  # `last` is the row as last seen, which a failure shows.
+  defp await_next_row(id, fun, timeout, last) do
     receive do
       {:hal_c2_shell, {:rows, _, rows}} ->
         case List.keyfind(rows, id, 0) do
-          {^id, {_kind, row}} -> if fun.(row), do: row, else: await_next_row(id, fun, timeout)
-          nil -> await_next_row(id, fun, timeout)
+          {^id, {_kind, row}} ->
+            if fun.(row), do: row, else: await_next_row(id, fun, timeout, row)
+
+          nil ->
+            await_next_row(id, fun, timeout, last)
         end
     after
-      timeout -> flunk("#{id}'s row never changed as expected")
+      timeout -> flunk("#{id}'s row never changed as expected; last seen: #{inspect(last)}")
     end
   end
 
@@ -1451,10 +1479,10 @@ defmodule HalC2.Test.Mc.World do
   Like `call/4`, but frames the MC pushed before the reply (a `config.providers`
   after a refresh, rows a command wrote) stay in the socket's inbox to be received.
   """
-  def call_keeping(context, method, payload \\ %{}, name \\ "default") do
+  def call_keeping(context, method, payload \\ %{}, name \\ "default", timeout \\ 5_000) do
     id = System.unique_integer([:positive])
     client = Mc.rpc(client(context, name), context.mc.environment, id, method, payload)
-    {frame, skipped, client} = HalC2.Test.WsClient.recv_until(client, Mc.reply?(id))
+    {frame, skipped, client} = HalC2.Test.WsClient.recv_until(client, Mc.reply?(id), timeout)
     client = %{client | inbox: skipped ++ client.inbox}
 
     reply =

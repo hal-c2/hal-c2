@@ -94,6 +94,10 @@ defmodule HalC2.Steps.Common do
     %{context | mc: Mc.restart(context.mc), clients: %{}}
   end
 
+  step "the MC restarted", context do
+    %{context | mc: Mc.restart(context.mc), clients: %{}}
+  end
+
   step "the MC starts again", context do
     %{context | mc: Mc.restart(context.mc), clients: %{}}
   end
@@ -301,7 +305,10 @@ defmodule HalC2.Steps.Common do
         do: %{"instanceId" => context.provider, "refreshModels" => true},
         else: %{"refreshModels" => true}
 
-    {reply, context} = World.call_keeping(context, "server.refreshProviders", input)
+    # A refresh probes CLIs synchronously; a slow one is given a minute.
+    {reply, context} =
+      World.call_keeping(context, "server.refreshProviders", input, "default", 60_000)
+
     context = Map.put(context, :reply, reply)
 
     case reply do

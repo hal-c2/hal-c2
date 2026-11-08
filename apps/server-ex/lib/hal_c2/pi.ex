@@ -117,9 +117,16 @@ defmodule HalC2.Pi do
       extension = not bare and not ephemeral
       args = if bare, do: without_extensions(args), else: args
 
+      # A short-lived Pi (discovery, text generation, a fork copy) runs offline:
+      # Pi renews expired logins as it starts, and stopping it mid-renewal can
+      # spend a single-use token the user's next Pi turn still needs.
+      offline =
+        if (ephemeral or bare) and "--offline" not in args, do: ["--offline"], else: []
+
       argv =
         [HalC2.Acp.binary_path(instance), "--mode", "rpc"] ++
           if(ephemeral, do: ["--no-session"], else: []) ++
+          offline ++
           args ++
           if(bare, do: ["--no-extensions", "--no-tools"], else: []) ++
           if(extension, do: ["--extension", extension_path()], else: []) ++
@@ -142,21 +149,24 @@ defmodule HalC2.Pi do
     end
   end
 
+  # Drops the user's extension and tool picks (flags and their values), which
+  # the bare process replaces with `--no-extensions --no-tools`.
   defp without_extensions(args) do
     {kept, _skip} =
       Enum.reduce(args, {[], false}, fn
         _arg, {kept, true} -> {kept, false}
-        arg, {kept, false} when arg in ["--extension", "-e"] -> {kept, true}
+        arg, {kept, false} when arg in ["--extension", "-e", "--tools", "-t"] -> {kept, true}
         "--extension=" <> _, acc -> acc
+        "--tools=" <> _, acc -> acc
         arg, {kept, false} -> {[arg | kept], false}
       end)
 
-    kept
-    |> Enum.reverse()
-    |> Enum.reject(&(&1 in ["--tools", "-t"]))
+    Enum.reverse(kept)
   end
 
   @doc "HAL-C2's Pi extension, written to the MC's cache directory where Pi can load it."
+  # The path is fixed under the MC's own cache directory; nothing a client sends reaches it.
+  # sobelow_skip ["Traversal.FileModule"]
   def extension_path do
     path = Path.join([HalC2.Paths.cache_dir(), "pi", "pi-hal-c2-mcp-extension.ts"])
 
@@ -168,7 +178,11 @@ defmodule HalC2.Pi do
 
     if File.read(path) != {:ok, source} do
       File.mkdir_p!(Path.dirname(path))
-      File.write!(path, source)
+      # Written out whole and renamed over the old one, so a Pi session starting
+      # during the write loads the extension whole, before or after the write.
+      tmp = "#{path}.#{System.unique_integer([:positive])}.tmp"
+      File.write!(tmp, source)
+      File.rename!(tmp, path)
     end
 
     path
@@ -184,19 +198,30 @@ defmodule HalC2.Pi do
          {:ok, conn} <-
            Connection.start_link(cmd: argv, handler: self(), cd: cwd, env: env, dialect: :pi) do
       try do
-        with {:ok, state} <- Connection.call(conn, "get_state", %{}, 15_000),
-             {:ok, available} <- Connection.call(conn, "get_available_models", %{}, 15_000) do
+        # Discovery waits up to 30 seconds per read: Pi's extensions can load
+        # slowly, and their models are part of what discovery finds.
+        wait = Application.get_env(:hal_c2, :pi_discover_ms, 30_000)
+
+        with {:ok, state} <- Connection.call(conn, "get_state", %{}, wait),
+             {:ok, available} <- Connection.call(conn, "get_available_models", %{}, wait) do
           commands =
-            case Connection.call(conn, "get_commands", %{}, 15_000) do
+            case Connection.call(conn, "get_commands", %{}, wait) do
               {:ok, data} -> data
               {:error, _} -> nil
             end
 
           {slash, skills} = parse_commands(commands)
+          state = state || %{}
+
+          current =
+            case state["model"] do
+              %{"provider" => provider, "id" => id} -> "#{provider}/#{id}"
+              _ -> nil
+            end
 
           {:ok,
            %{
-             models: models(available, (state || %{})["thinkingLevel"]),
+             models: models(available, state["thinkingLevel"], current),
              commands: [@compact | Enum.reject(slash, &(&1["name"] == "compact"))],
              skills: skills
            }}
@@ -209,7 +234,55 @@ defmodule HalC2.Pi do
     :exit, reason -> {:error, reason}
   end
 
-  defp models(data, level) do
+  @doc """
+  Reads the commands and skills Pi offers in `cwd` (its `.pi/skills` and
+  `.pi/prompts` with the user's own) from a throwaway session there, and keeps them
+  as that folder's workspace snapshot on instance `id`'s entry. A read that fails
+  keeps the snapshot the folder had: `{:error, detail}`.
+  """
+  def refresh_workspace(id, cwd) do
+    case workspace_commands(id, cwd) do
+      {:ok, {slash, skills}} ->
+        snapshot = %{
+          "checkedAt" => HalC2.Orchestration.Entities.now(),
+          "slashCommands" => [@compact | Enum.reject(slash, &(&1["name"] == "compact"))],
+          "skills" => skills
+        }
+
+        key = {HalC2.Acp, id, :workspaces}
+        :persistent_term.put(key, Map.put(:persistent_term.get(key, %{}), cwd, snapshot))
+        HalC2.Settings.notify_providers()
+        :ok
+
+      {:error, _reason} ->
+        {:error, "Could not read Pi's commands and skills for this workspace."}
+    end
+  end
+
+  @doc "Instance `id`'s workspace snapshots (`refresh_workspace/2`), each with its `cwd`."
+  def workspaces(id) do
+    for {cwd, snapshot} <- :persistent_term.get({HalC2.Acp, id, :workspaces}, %{}),
+        do: Map.put(snapshot, "cwd", cwd)
+  end
+
+  defp workspace_commands(instance, cwd) do
+    with {:ok, argv, env} <- launch(instance, ephemeral: true),
+         {:ok, conn} <-
+           Connection.start_link(cmd: argv, handler: self(), cd: cwd, env: env, dialect: :pi) do
+      try do
+        wait = Application.get_env(:hal_c2, :pi_discover_ms, 30_000)
+
+        with {:ok, data} <- Connection.call(conn, "get_commands", %{}, wait),
+             do: {:ok, parse_commands(data)}
+      after
+        Connection.stop(conn)
+      end
+    end
+  catch
+    :exit, reason -> {:error, reason}
+  end
+
+  defp models(data, level, current) do
     for %{"provider" => provider, "id" => id} = model <- (data || %{})["models"] || [],
         is_binary(provider) and is_binary(id),
         uniq: true do
@@ -218,8 +291,14 @@ defmodule HalC2.Pi do
       %{
         "slug" => slug,
         "name" => text(model["name"]) || slug,
+        # A discovered model keeps its underlying provider, so the model
+        # picker can show and search it by that name.
+        "subProvider" => provider,
         "isCustom" => false,
-        "capabilities" => %{"optionDescriptors" => thinking(model, level)}
+        # Only the model Pi is set to marks Pi's thinking level as its default.
+        "capabilities" => %{
+          "optionDescriptors" => thinking(model, if(slug == current, do: level))
+        }
       }
     end
   end
@@ -313,6 +392,18 @@ defmodule HalC2.Pi do
           {slash ++ [put_text(%{"name" => name}, "description", command["description"])], skills}
       end
     end)
+  end
+
+  @doc """
+  The names of the extension commands in Pi's `get_commands` answer: the
+  commands an extension may handle without starting the agent (prompt
+  templates and skills expand into agent prompts instead).
+  """
+  def extension_commands(data) do
+    for %{"source" => "extension", "name" => name} <-
+          (is_map(data) && List.wrap(data["commands"])) || [],
+        is_binary(name),
+        do: name
   end
 
   defp scope(nil), do: nil

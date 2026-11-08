@@ -1,4 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { Type } from "typebox";
 
 const URL_ENV = "HAL_C2_MCP_URL";
@@ -16,6 +19,38 @@ type JsonRpcResponse = {
   readonly result?: unknown;
   readonly error?: { readonly message?: string };
 };
+
+// What Pi skips in a folder it does not trust (docs/security.md, "Resources
+// protected by project trust"), under Pi's default project config directory.
+const PROTECTED: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
+  ["settings", [".pi/settings.json"]],
+  ["MCP servers", [".pi/mcp.json"]],
+  ["extensions", [".pi/extensions"]],
+  ["skills", [".pi/skills"]],
+  ["prompt templates", [".pi/prompts"]],
+  ["themes", [".pi/themes"]],
+  ["system prompt files", [".pi/SYSTEM.md", ".pi/APPEND_SYSTEM.md"]],
+];
+
+/** What Pi skipped in `cwd`, an untrusted folder: the kinds of its protected resources there. */
+function skippedResources(cwd: string): string[] {
+  const skipped = PROTECTED.filter(([, paths]) =>
+    paths.some((path) => existsSync(join(cwd, path))),
+  ).map(([kind]) => kind);
+  // Project skills in `.agents/skills` count from the folder or any folder above it,
+  // except the home directory, whose are the user's own.
+  let dir = cwd;
+  while (!skipped.includes("skills") && dir !== homedir()) {
+    if (existsSync(join(dir, ".agents/skills"))) skipped.push("skills");
+    if (dirname(dir) === dir) break;
+    dir = dirname(dir);
+  }
+  return skipped;
+}
+
+function listed(items: readonly string[]): string {
+  return items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+}
 
 type McpTool = {
   readonly name: string;
@@ -184,6 +219,20 @@ export default async function halC2McpExtension(pi: ExtensionAPI) {
   // then reserves almost all remaining context for output. OpenRouter can
   // reject even a short conversation. Remove this cap when Pi accounts for
   // the current request prefix reliably (api/simple-options + utils/estimate).
+  // Pi quietly skips a folder's own settings, extensions and skills until the folder
+  // is trusted. A Pi process says so once, as it starts; HAL-C2 shows the notice in
+  // the thread's next turn.
+  pi.on("session_start", (event, ctx) => {
+    if (event.reason !== "startup" || ctx.isProjectTrusted()) return;
+    const skipped = skippedResources(ctx.cwd);
+    if (skipped.length === 0) return;
+    ctx.ui.notify(
+      `Pi does not trust ${ctx.cwd}, so it skipped the folder's ${listed(skipped)}. ` +
+        `To trust the folder, run "/trust" in Pi's terminal app there.`,
+      "warning",
+    );
+  });
+
   pi.on("before_provider_request", (event, ctx) => {
     if (ctx.model?.provider !== "openrouter") return;
     const payload = event.payload;

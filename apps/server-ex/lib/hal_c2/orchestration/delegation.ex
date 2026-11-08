@@ -1378,9 +1378,11 @@ defmodule HalC2.Orchestration.Delegation do
   # delivers (`delegatedCompletion`), so the provider's acceptance and a later
   # dispose can find it, and what the user is shown in place of its text
   # (`notification`): that the tasks ended, and how. On a provider that takes a
-  # message mid-turn as its next prompt (Claude, OpenCode, Pi, Muse) an
-  # always-wake joins the running turn; elsewhere it waits behind it. A wake
-  # never interrupts or restarts the turn it wakes.
+  # message mid-turn as its next prompt (OpenCode, Pi, Muse) an always-wake joins
+  # the running turn; elsewhere it waits behind it. Claude is not one: a message
+  # mid-turn cancels the tool calls it has pending (Upstream #15892), so only the
+  # user's own steer goes in at once. A wake never interrupts or restarts the
+  # turn it wakes.
   defp wake_command(state, parent_id, thread, tasks) do
     first = hd(tasks)
     active = Enum.find(StreamState.list(state, "run"), &(&1["status"] in @active))
@@ -1417,8 +1419,7 @@ defmodule HalC2.Orchestration.Delegation do
     driver = Orchestration.driver_for(instance)
 
     run["status"] in ["running", "waiting"] and instance == thread_instance(thread) and
-      (driver == "claudeAgent" or
-         (HalC2.Acp.driver(driver) || driver) in ["opencode", "pi", "muse"])
+      (HalC2.Acp.driver(driver) || driver) in ["opencode", "pi", "muse"]
   end
 
   defp thread_instance(thread) do
