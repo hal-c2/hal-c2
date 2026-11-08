@@ -97,6 +97,7 @@ turn = 0
 session_rules = []  # Bash commands the session allows without asking
 asked_before_plan = False  # a "question first" turn waiting on its answer
 asking_subagent = None  # (Agent tool id, command) of a subagent waiting on its permission answer
+pending_tool = None  # the Bash call a "leave a tool pending" turn has not answered yet
 pending_elicit = None  # (request id, asks again after an accept) of an MCP elicitation waiting on its answer
 dialogs = []  # the dialog kinds the host said it can show (initialize)
 mcp_servers = {}  # the MCP servers the host handed over stdin (mcp_set_servers)
@@ -279,9 +280,10 @@ for line in sys.stdin:
             send(stopped)
         elif sub == "interrupt" and not os.environ.get("FAKE_CLAUDE_HOLD_INTERRUPT"):
             send({"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": session})
-        # A stopped turn's elicitation is no longer waiting on its answer.
+        # A stopped turn's elicitation is no longer waiting on its answer, nor its tool.
         if sub == "interrupt":
             pending_elicit = None
+            pending_tool = None
         continue
     if msg.get("type") != "user":
         continue
@@ -301,6 +303,13 @@ for line in sys.stdin:
             steer_text = "".join(b.get("text", "") for b in content) + f" (+{images} image)"
         # A steer saying "fold" is folded into the running turn instead: no result
         # cuts that turn short, and the one result answers both.
+        # Claude does not run the tool call a steer cuts off, and marks it so.
+        if pending_tool:
+            send({"type": "user", "session_id": session, "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": pending_tool, "is_error": True,
+                 "content": "The user doesn't want to proceed with this tool use."}]},
+                  "tool_result_meta": [{"id": pending_tool, "non_execution_kind": "cancelled"}]})
+            pending_tool = None
         if "fold" not in steer_text:
             send({"type": "result", "subtype": "error_during_execution", "is_error": True, "terminal_reason": "aborted_streaming", "session_id": session})
         send({"type": "assistant", "session_id": session, "message": {"id": "m-steer", "role": "assistant", "content": [{"type": "text", "text": "steered: " + steer_text}]}})
@@ -364,6 +373,13 @@ for line in sys.stdin:
     # as a turn the user stops mid-answer.
     if "answer halfway" in text.split("</conversation_history>")[-1]:
         send({"type": "assistant", "session_id": session, "uuid": f"half-uuid-{turn}", "message": {"id": f"m{turn}h", "role": "assistant", "content": [{"type": "text", "text": "Half an answer"}]}})
+        continue
+    # "leave a tool pending": Claude calls Bash (tool-pending-N) and the call runs on, so
+    # the turn stays open with a tool call pending.
+    if "leave a tool pending" in text:
+        pending_tool = f"tool-pending-{turn}"
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}p", "role": "assistant", "content": [
+            {"type": "tool_use", "id": pending_tool, "name": "Bash", "input": {"command": "npm test"}}]}})
         continue
     # A handoff's earlier conversation is history, not a directive, and so is a
     # delegated task's worker preamble (it asks the worker to finish its own waiting).

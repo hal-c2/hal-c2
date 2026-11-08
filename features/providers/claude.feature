@@ -2247,13 +2247,26 @@ Feature: Claude
     Then the follow-up is accepted and the background command keeps running
     And a real model or settings change is still refused while that command runs
 
-  @backlog @mc @plugin-claude @priority-high
-  Scenario: Child completion notices wait for Claude's pending tools
-    Given Claude has tool calls pending
-    When a delegated task finishes, or a scheduled prompt comes due
+  # A message Claude takes mid-turn cancels the tool calls it has pending (Upstream
+  # #15892): the notices of work that ended wait for the run, and only the user's own
+  # steer goes in at once.
+  @priority-high
+  Scenario Outline: Child completion notices wait for Claude's pending tools
+    Given Claude has a tool call pending
+    When <notice> while the run is active
     Then the notice is queued and delivered after the active run ends
-    And a tool call Claude did not execute shows as cancelled, not as denied permission
-    And the user's own steering still goes in at once
+
+    Examples:
+      | notice                       |
+      | a delegated task finishes    |
+      | a scheduled prompt comes due |
+
+  @priority-high
+  Scenario: The user's own steer still goes in at once and cancels Claude's pending tool
+    Given Claude has a tool call pending
+    When the user steers the run
+    Then the steer goes in at once
+    And the tool call Claude did not run shows as cancelled, not as denied permission
 
   @backlog @mc @shared @plugin-claude
   Scenario: Claude's goal shows as a work state

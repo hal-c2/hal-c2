@@ -719,7 +719,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     do: {:noreply, Durable.save_due(state, &flush(&1, :timer))}
 
   def handle_info({:claude, _session, {:message, message}}, state),
-    do: {:noreply, receive_message(message, state)}
+    do: {:noreply, receive_message(result_meta(message), state)}
 
   # The thread would not run the wake (`wake/2`): its messages go on as between turns.
   def handle_info(:wake_refused, %{turn: nil, wake: %{buffer: [_ | _] = buffer} = wake} = state) do
@@ -2911,7 +2911,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         sub
 
       {kind, tools} ->
-        status = if result["is_error"] == true, do: "failed", else: "completed"
+        status = result_status(result)
         field = result_field(kind)
         fields = if field, do: %{field => result_text(result["content"])}, else: %{}
 
@@ -3095,6 +3095,31 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp result_field(:tool), do: "output"
   defp result_field(_kind), do: nil
 
+  # Claude marks a tool call it did not run, one an explicit steer cut short say, in the
+  # message's `tool_result_meta`; each result carries its mark, and a call Claude did not
+  # run ends cancelled, not failed as a denied one does (Upstream #15892).
+  defp result_meta(
+         %{"tool_result_meta" => [_ | _] = meta, "message" => %{"content" => [_ | _]}} = message
+       ) do
+    kinds = Map.new(meta, &{&1["id"], &1["non_execution_kind"]})
+
+    update_in(message, ["message", "content"], fn content ->
+      Enum.map(content, fn
+        %{"type" => "tool_result", "tool_use_id" => id} = block when is_map_key(kinds, id) ->
+          Map.put(block, "non_execution_kind", kinds[id])
+
+        block ->
+          block
+      end)
+    end)
+  end
+
+  defp result_meta(message), do: message
+
+  defp result_status(%{"non_execution_kind" => "cancelled"}), do: "cancelled"
+  defp result_status(%{"is_error" => true}), do: "failed"
+  defp result_status(_result), do: "completed"
+
   defp tool_result(state, tool_id, result) do
     case state.work[tool_id] do
       nil ->
@@ -3149,7 +3174,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   defp work_result(state, tool_id, work, result) do
-    status = if result["is_error"] == true, do: "failed", else: "completed"
+    status = result_status(result)
     output = result_text(result["content"])
     state = if work.sub, do: end_work(state, tool_id, status, output), else: state
     state = %{state | work: Map.delete(state.work, tool_id)}
@@ -3162,7 +3187,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         state
 
       %{kind: kind} ->
-        status = if result["is_error"] == true, do: "failed", else: "completed"
+        status = result_status(result)
         output = result_text(result["content"])
 
         finish_item(state, tool_id, status, fn entity ->

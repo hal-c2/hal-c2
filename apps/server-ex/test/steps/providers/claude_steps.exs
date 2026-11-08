@@ -4615,6 +4615,136 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- notices wait for Claude's pending tools (Upstream #15892) -------------------------
+
+  # The fake's turn calls Bash (tool-pending-1) and the call runs on.
+  step "Claude has a tool call pending", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "leave a tool pending")
+
+    World.await_state(context, @thread, fn state ->
+      Enum.any?(
+        StreamState.list(state, "turn-item"),
+        &(&1["type"] == "command_execution" and &1["status"] == "running")
+      )
+    end)
+
+    [run] = World.runs(context, @thread)
+    Map.merge(context, %{thread: @thread, active_run: run["id"]})
+  end
+
+  # Its delegated task's child (a Codex thread) is steered to its answer.
+  step "a delegated task finishes while the run is active", context do
+    input = %{
+      "task" => "wait for it",
+      "mode" => "async",
+      "target" => %{"providerInstanceId" => "codex"}
+    }
+
+    # The tool finds its caller by the thread's sidebar row.
+    World.await_row(World.thread_id(context, @thread), & &1)
+
+    assert {:ok, %{"taskId" => task_id}} =
+             World.mcp_tool(context, @thread, "delegate_task", input, "claudeAgent")
+
+    task = fn state -> StreamState.get(state, "subagent")[task_id] end
+    child = World.await_state(context, @thread, &task.(&1)) |> task.()
+    context = put_in(context, [:threads, "delegated child"], child["childThreadId"])
+    World.await_runs(context, "delegated child", ["running"])
+    World.send_turn(context, "delegated child", "say Done")
+    World.await_state(context, @thread, &(task.(&1)["status"] == "completed"))
+    Map.put(context, :notice, &(get_in(&1, ["delegatedCompletion", "taskIds"]) == [task_id]))
+  end
+
+  # A schedule bound to the thread, run now as it would be when it comes due.
+  step "a scheduled prompt comes due while the run is active", context do
+    Mc.ensure(HalC2.ScheduledTasks)
+    [run] = World.runs(context, @thread)
+
+    {:ok, %{"task" => %{"id" => id}}} =
+      HalC2.ScheduledTasks.upsert(%{
+        "title" => "Check the build",
+        "prompt" => "Check the build",
+        "enabled" => false,
+        "schedule" => %{"type" => "interval", "everyMs" => 3_600_000},
+        "projectId" => World.project(context).id,
+        "threadId" => World.thread_id(context, @thread),
+        "workspaceStrategy" => %{"type" => "root"},
+        "modelSelection" => run["modelSelection"],
+        "runtimeMode" => "full-access",
+        "interactionMode" => "default"
+      })
+
+    {:ok, _} = HalC2.ScheduledTasks.run_now(%{"id" => id})
+    Map.put(context, :notice, &(&1["scheduledTaskId"] == id))
+  end
+
+  step "the notice is queued and delivered after the active run ends", context do
+    notice = fn state -> Enum.find(StreamState.list(state, "message"), context.notice) end
+    state = World.await_state(context, @thread, &(notice.(&1) != nil))
+    message = notice.(state)
+
+    assert [%{"id" => active, "status" => "running"}, %{"status" => "queued"} = queued] =
+             World.runs(context, @thread)
+
+    assert active == context.active_run
+    assert queued["userMessageId"] == message["id"]
+
+    claude_says(context, %{
+      "type" => "user",
+      "message" => %{
+        "role" => "user",
+        "content" => [
+          %{"type" => "tool_result", "tool_use_id" => "tool-pending-1", "content" => "ok"}
+        ]
+      }
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "result" => "Tests pass"})
+
+    World.await_state(context, @thread, fn state ->
+      match?(
+        [%{"status" => "completed"}, %{"status" => status}] when status != "queued",
+        StreamState.list(state, "run") |> Enum.sort_by(& &1["ordinal"])
+      )
+    end)
+
+    World.await_provider_log(context, "claude", fn entry ->
+      get_in(entry, ["in", "type"]) == "user" and
+        inspect(get_in(entry, ["in", "message", "content"])) =~
+          String.slice(message["text"], 0, 20)
+    end)
+
+    context
+  end
+
+  step "the user steers the run", context do
+    World.send_turn(context, @thread, "Look at this instead", %{
+      "dispatchMode" => %{"type" => "steer_active", "targetRunId" => context.active_run}
+    })
+  end
+
+  step "the steer goes in at once", context do
+    World.await_provider_log(context, "claude", &(get_in(&1, ["in", "priority"]) == "now"))
+    state = World.await_runs(context, @thread, ["completed"])
+
+    assert Enum.any?(
+             StreamState.list(state, "message"),
+             &(&1["role"] == "assistant" and &1["text"] =~ "steered: Look at this instead")
+           )
+
+    context
+  end
+
+  step "the tool call Claude did not run shows as cancelled, not as denied permission",
+       context do
+    items = StreamState.list(World.stream(context, @thread), "turn-item")
+    assert %{"status" => "cancelled"} = Enum.find(items, &(&1["type"] == "command_execution"))
+    context
+  end
+
   # --- a wake turn keeps the thread working (Upstream ClaudeAdapterV2 continuations) -----
 
   # The fake's first turn leaves a background command (task task-build-1) running, and
