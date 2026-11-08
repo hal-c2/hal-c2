@@ -272,6 +272,25 @@ defmodule HalC2.ClaudeProviderTest do
            ]
   end
 
+  test "a sign-in read forgotten while in flight cannot land its stale answer" do
+    key = {"claudeAgent", "/fake/claude", 42}
+    on_exit(fn -> Provider.forget_auth(["claudeAgent"]) end)
+
+    # A read starts, is forgotten (a refresh by hand), then lands signed out:
+    # its answer is refused and no in-flight token is left behind.
+    assert Provider.auth_claim(key, 1)
+    refute Provider.auth_claim(key, 2)
+    Provider.forget_auth(["claudeAgent"])
+    refute Provider.auth_land(key, 1, :signed_out, 100)
+    assert Provider.auth_lookup(key) == nil
+
+    # The next read claims and lands normally.
+    assert Provider.auth_claim(key, 2)
+    assert Provider.auth_land(key, 2, :signed_in, 200)
+    assert Provider.auth_lookup(key) == {:signed_in, 200}
+    assert Provider.auth_claim(key, 3)
+  end
+
   test "a relative --add-dir without a session folder offers no skills", %{tmp_dir: dir} do
     skill = Path.join([dir, "tools", ".claude", "skills", "leaked"])
     File.mkdir_p!(skill)

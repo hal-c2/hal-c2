@@ -16,7 +16,6 @@ defmodule HalC2.Claude.Provider do
   @models {__MODULE__, :models}
   @capabilities {__MODULE__, :capabilities}
   @health {__MODULE__, :health}
-  @auth {__MODULE__, :auth}
   @workspaces {__MODULE__, :workspaces}
   @probe_timeout 20_000
   # Claude gets up to 20 seconds to report its version before it is called broken.
@@ -423,67 +422,97 @@ defmodule HalC2.Claude.Provider do
   # `:unreadable` (unknown), and providers are re-announced when it does.
   defp auth_status(id, path, env) do
     key = {id, path, :erlang.phash2(Enum.sort(Map.take(env, @auth_env_keys)))}
-    {records, _reading} = auth_cache()
 
-    case Map.get(records, key) do
+    case auth_lookup(key) do
       {result, at} ->
         if System.monotonic_time(:millisecond) - at >= @capabilities_ttl_ms,
           do: refresh_auth(key, id, path)
 
         result
 
-      _ ->
+      nil ->
         refresh_auth(key, id, path)
         :unreadable
     end
   end
 
-  # The sign-in reads kept and in flight: `{records, reading}`, where `reading`
-  # holds the token of the read allowed to land for a key. Forgetting a read
-  # (`forget_auth/1`, or the whole cache going) revokes its token, so a read
-  # started before the forget cannot put its stale answer back.
-  defp auth_cache, do: :persistent_term.get(@auth, {%{}, %{}})
+  # The sign-in reads, one ETS row per key: `{key, result, read_at, token}`,
+  # where `result`/`read_at` are the last landed read (or nil/0) and `token`
+  # is the read in flight allowed to land (or nil). Every update is a single
+  # atomic ETS operation on that key's row — a claim (`insert_new`, or
+  # `select_replace` on a tokenless row), a landing (`select_replace` on the
+  # read's own token), a forget (`match_delete` by instance) — so concurrent
+  # reads, landings and forgets on other keys can never undo one another, and
+  # forgetting a key revokes its in-flight read: its landing matches nothing.
+  # The table is a cache only: made on first use, and made again empty if its
+  # owner went away. The three operations are exercised directly by the
+  # property in `prop/hal_c2/claude_auth_cache_prop_test.exs`.
+
+  @doc false
+  def auth_table, do: HalC2.Claude.AuthCache.table()
+
+  @doc false
+  # The last landed read for `key`, as `{result, read_at}`, or nil.
+  def auth_lookup(key) do
+    case :ets.lookup(auth_table(), key) do
+      [{^key, result, at, _token}] when result != nil -> {result, at}
+      _ -> nil
+    end
+  rescue
+    ArgumentError -> nil
+  end
+
+  # The match-spec guard that `$1` is `key` (a tuple literal in a head is not
+  # one `select_replace` can prove keeps the key; a variable guarded equal is).
+  defp auth_key_guard({id, path, hash}), do: [{:==, :"$1", {{id, path, hash}}}]
+
+  @doc false
+  # Claims the in-flight read for `key` under `token`; false when one is
+  # already claimed.
+  def auth_claim(key, token) do
+    table = auth_table()
+
+    :ets.insert_new(table, {key, nil, 0, token}) or
+      :ets.select_replace(table, [
+        {{:"$1", :"$2", :"$3", nil}, auth_key_guard(key), [{{:"$1", :"$2", :"$3", token}}]}
+      ]) == 1
+  rescue
+    ArgumentError -> false
+  end
+
+  @doc false
+  # Lands `result` read at `at` for the read claimed under `token`; false when
+  # that claim is gone (forgotten or superseded), leaving no token behind.
+  def auth_land(key, token, result, at) do
+    :ets.select_replace(auth_table(), [
+      {{:"$1", :_, :_, token}, auth_key_guard(key), [{{:"$1", result, at, nil}}]}
+    ]) == 1
+  rescue
+    ArgumentError -> false
+  end
 
   # One read per key at a time, whoever asked first.
   defp refresh_auth(key, id, path) do
-    {records, reading} = auth_cache()
+    token = System.unique_integer([:positive, :monotonic])
 
-    if Map.has_key?(reading, key) do
-      :ok
-    else
-      token = System.unique_integer([:positive, :monotonic])
-      :persistent_term.put(@auth, {records, Map.put(reading, key, token)})
-
+    if auth_claim(key, token) do
       Task.start(fn ->
         result = run_auth_status(id, path)
-        {records, reading} = auth_cache()
+        previous = auth_lookup(key)
+        landed? = auth_land(key, token, result, System.monotonic_time(:millisecond))
 
-        if Map.get(reading, key) == token do
-          previous =
-            case Map.get(records, key) do
-              {old, _at} -> old
-              _ -> :unreadable
-            end
-
-          :persistent_term.put(
-            @auth,
-            {Map.put(records, key, {result, System.monotonic_time(:millisecond)}),
-             Map.delete(reading, key)}
-          )
-
-          # Announce only a landing that changes what the entry shows: a first
-          # signed-in read confirms the authenticated entry already served
-          # (unless it was shown unverified), and re-announcing it would make
-          # every provider check echo itself.
-          if previous != result and
-               not (result == :signed_in and previous == :unreadable and
-                      not auth_unverified?(id, path)),
-             do: HalC2.Settings.notify_providers()
-        end
+        # Announce only a landing that changes what the entry shows: a first
+        # signed-in read confirms the authenticated entry already served
+        # (unless it was shown unverified), and re-announcing it would make
+        # every provider check echo itself.
+        if landed? and elem(previous || {:unreadable, 0}, 0) != result and
+             not (result == :signed_in and previous == nil and
+                    not auth_unverified?(id, path)),
+           do: HalC2.Settings.notify_providers()
       end)
-
-      :ok
     end
+
+    :ok
   end
 
   @doc """
@@ -493,10 +522,11 @@ defmodule HalC2.Claude.Provider do
   """
   @spec forget_auth([String.t()]) :: :ok
   def forget_auth(ids) do
-    {records, reading} = auth_cache()
-    drop = fn map -> Map.reject(map, fn {{id, _path, _env}, _} -> id in ids end) end
-    :persistent_term.put(@auth, {drop.(records), drop.(reading)})
+    table = auth_table()
+    for id <- ids, do: :ets.match_delete(table, {{id, :_, :_}, :_, :_, :_})
     :ok
+  rescue
+    ArgumentError -> :ok
   end
 
   # `path` is the instance's resolved claude executable, as every spawn runs it.
