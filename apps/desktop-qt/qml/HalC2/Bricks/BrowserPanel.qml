@@ -41,6 +41,24 @@ Rectangle {
     property url failedUrl
     // The address field's complaint about what was typed.
     property string addressProblem: ""
+    // The engine's requests (webEnginePermission) waiting on the user, by the
+    // id of their question in Browser.permissions.
+    property var waiting: ({})
+    // What Browser.permissions calls each thing a page can ask for.
+    readonly property var permissionKinds: {
+        const kinds = {};
+        kinds[WebEnginePermission.PermissionType.ClipboardReadWrite] = "clipboard";
+        kinds[WebEnginePermission.PermissionType.Notifications] = "notifications";
+        kinds[WebEnginePermission.PermissionType.Geolocation] = "geolocation";
+        kinds[WebEnginePermission.PermissionType.MediaVideoCapture] = "camera";
+        kinds[WebEnginePermission.PermissionType.MediaAudioCapture] = "microphone";
+        kinds[WebEnginePermission.PermissionType.MediaAudioVideoCapture] = "camera-and-microphone";
+        kinds[WebEnginePermission.PermissionType.DesktopVideoCapture] = "screen";
+        kinds[WebEnginePermission.PermissionType.DesktopAudioVideoCapture] = "screen-and-audio";
+        kinds[WebEnginePermission.PermissionType.MouseLock] = "mouse-lock";
+        kinds[WebEnginePermission.PermissionType.LocalFontsAccess] = "fonts";
+        return kinds;
+    }
 
     objectName: "browserPanel"
     color: Theme.palette.color("surface", "#0f0f11")
@@ -119,6 +137,40 @@ Rectangle {
         root.failure = BrowserJs.describeError(code, description);
         root.failedUrl = url;
         report("failed", code, description);
+    }
+
+    // The page asked the engine for `permission` (a webEnginePermission):
+    // answered at once, or once the user has (answerQuestion).
+    function permissionAsked(permission) {
+        const decided = Browser.permissions.request(page.tabId, permission.origin.toString(), root.permissionKinds[permission.permissionType] ?? "");
+        if (decided.answer === "grant") {
+            permission.grant();
+        } else if (decided.answer === "deny") {
+            // The engine keeps a refusal for as long as the page is open; the
+            // answer is Browser.permissions' to keep, so the page may ask again.
+            permission.deny();
+            Qt.callLater(() => permission.reset());
+        } else {
+            root.waiting[decided.id] = permission;
+        }
+    }
+
+    // The user answered the question on screen, which is this tab's.
+    function answerQuestion(allow) {
+        const asked = Browser.permissions.answer(Browser.permissions.question.id, allow);
+        const permission = root.waiting[asked.id];
+        delete root.waiting[asked.id];
+        if (asked.kind === "link" && allow)
+            Shell.openApp(asked.url);
+        else if (permission !== undefined)
+            allow ? permission.grant() : permission.deny();
+        webView.forceActiveFocus();
+    }
+
+    Component.onDestruction: {
+        Browser.permissions.forget(page.tabId);
+        for (const id in root.waiting)
+            root.waiting[id].deny();
     }
 
     function report(phase, code, description) {
@@ -546,6 +598,7 @@ Rectangle {
                     audioMuted: page.muted
                     settings.errorPageEnabled: false
                     settings.focusOnNavigationEnabled: false
+                    settings.javascriptCanAccessClipboard: true
 
                     onLoadingChanged: info => {
                         switch (info.status) {
@@ -572,13 +625,25 @@ Rectangle {
                     onTitleChanged: if (!loading)
                         root.report("loaded", 0, "")
                     onJavaScriptConsoleMessage: (level, message, lineNumber, sourceID) => page.consoleMessage(level, message, lineNumber, sourceID)
+                    onPermissionRequested: permission => root.permissionAsked(permission)
+                    // A page never captures the screen or a window.
+                    onDesktopMediaRequested: request => request.cancel()
+                    // A link to another app (slack:, mailto:) is the user's to open.
+                    onNavigationRequested: request => {
+                        if (Browser.permissions.openLink(page.tabId, request.url) > 0)
+                            request.reject();
+                    }
                     onNewWindowRequested: request => {
                         // A sign-in popup is a real window, so it can answer
                         // the page; a link to a new window stays in the tab.
                         const requested = request.requestedUrl.toString();
-                        if (requested.startsWith("view-source:")) {
-                            // The page's source: in this view, and the MC's tab stays on the page.
+                        if (requested === "view-source:" + webView.url.toString()) {
+                            // The page's source (its menu's View page source): in this
+                            // view, and the MC's tab stays on the page.
                             root.go(requested, false);
+                        } else if (/^(data|file|javascript|view-source):/i.test(requested)) {
+                            // A local or inline address is never a popup: left
+                            // unopened, the request is refused.
                         } else if (request.destination === WebEngineNewWindowRequest.InNewDialog) {
                             const popup = popupWindow.createObject(root, {
                                 width: Math.max(320, request.requestedGeometry.width || 500),
@@ -586,9 +651,11 @@ Rectangle {
                             });
                             request.openIn(popup.view);
                             popup.show();
-                        } else {
+                        } else if (requested !== "" && requested !== "about:blank") {
                             root.go(requested, true);
                         }
+                        // A blank window that is not a popup has nothing to
+                        // show in the tab: left unopened, it is refused.
                     }
                     Component.onCompleted: {
                         webView.zoomFactor = page.zoom;
@@ -756,6 +823,71 @@ Rectangle {
             }
         }
 
+        // A question the page put to the user (Browser.permissions), over the
+        // page. It takes the keyboard on its refusing choice, so Enter typed
+        // into the page refuses rather than accepts.
+        Rectangle {
+            id: question
+
+            readonly property var asked: Browser.permissions.question
+            readonly property bool link: asked.kind === "link"
+
+            objectName: "browserQuestion"
+            visible: asked.tabId !== undefined && asked.tabId === page.tabId
+            z: 2
+            anchors.top: parent.top
+            anchors.topMargin: Theme.space.sm
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: Math.min(parent.width - 2 * Theme.space.md, 420)
+            height: questionColumn.implicitHeight + 2 * Theme.space.md
+            radius: Theme.radiusMd
+            color: Theme.palette.color("surfaceRaised", "#18181b")
+            border.color: root.edge
+            onVisibleChanged: if (visible)
+                refuse.forceActiveFocus()
+            Keys.onReturnPressed: root.answerQuestion(false)
+            Keys.onEnterPressed: root.answerQuestion(false)
+            Keys.onEscapePressed: root.answerQuestion(false)
+
+            Column {
+                id: questionColumn
+
+                x: Theme.space.md
+                y: Theme.space.md
+                width: parent.width - 2 * Theme.space.md
+                spacing: Theme.space.sm
+
+                Text {
+                    objectName: "browserQuestionText"
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    text: question.link ? qsTr("Open this %1 link in another app?").arg(question.asked.origin)
+                                        : qsTr("Let %1 see what you copied?").arg(BrowserJs.hostOf(question.asked.origin ?? ""))
+                    color: root.foreground
+                    font.pixelSize: Theme.type.body.size
+                }
+
+                Row {
+                    spacing: Theme.space.sm
+
+                    ShellButton {
+                        id: refuse
+
+                        objectName: "browserQuestionRefuse"
+                        primary: true
+                        text: question.link ? qsTr("Don't open") : qsTr("Block")
+                        onClicked: root.answerQuestion(false)
+                    }
+
+                    ShellButton {
+                        objectName: "browserQuestionAllow"
+                        text: question.link ? qsTr("Open") : qsTr("Allow")
+                        onClicked: root.answerQuestion(true)
+                    }
+                }
+            }
+        }
+
         // Why the page could not load.
         Rectangle {
             objectName: "browserFailure"
@@ -850,6 +982,11 @@ Rectangle {
                 profile: webView.profile
                 // Left unopened, the request is refused.
                 onNewWindowRequested: request => {}
+                onPermissionRequested: permission => root.permissionAsked(permission)
+                onNavigationRequested: request => {
+                    if (Browser.permissions.openLink(page.tabId, request.url) > 0)
+                        request.reject();
+                }
                 onWindowCloseRequested: popup.close()
             }
 

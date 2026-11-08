@@ -34,6 +34,7 @@ void registerBrowser() {
     return browser;
   });
   qmlRegisterType<BrowserPage>("HalC2.Shell", 1, 0, "BrowserPage");
+  qmlRegisterUncreatableType<PagePermissions>("HalC2.Shell", 1, 0, "PagePermissions", QStringLiteral("Browser.permissions"));
 }
 
 }  // namespace

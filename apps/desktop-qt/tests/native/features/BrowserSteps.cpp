@@ -180,6 +180,8 @@ void embed(World& world) {
   model(world).setEmbedded(true);
   Browser* browser = Browser::instance();
   browser->setStore(nullptr, nullptr);
+  // A new run of the app: no answer kept.
+  browser->permissions()->clear();
   browser->setDevToolsDock(QStringLiteral("bottom"));
   browser->setDevToolsShare(0.4);
   browser->setDevicesView(false);

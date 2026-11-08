@@ -1008,7 +1008,7 @@ Feature: In-app preview browser
       When the user submits a form on the page that posts to a new window
       Then the form's result loads in the same browser tab
 
-    @backlog @desktop @priority-low
+    @desktop @priority-low
     Scenario: A page that opens a blank window keeps its own page
       When the page opens a blank window
       Then no tab or window opens and the page is told it was refused
@@ -1016,7 +1016,7 @@ Feature: In-app preview browser
 
     # Upstream #24866: a popup to a data: address replaced the page, past the browser's own block
     # on pages moving themselves to such addresses.
-    @backlog @desktop @priority-high
+    @desktop @priority-high
     Scenario Outline: A page cannot open a local or inline address as a popup
       When the page opens a window at "<address>"
       Then no tab or window opens and the page is told it was refused
@@ -1039,7 +1039,7 @@ Feature: In-app preview browser
     # in the app's name; notifications are now refused like the other unlisted permissions.
     # Upstream #22835: tabs reported loopback access as denied, which stopped Okta FastPass sign-in.
     # Upstream #25275: browser games and 3D viewers could not capture the mouse; Escape releases it.
-    @backlog @desktop
+    @desktop
     Scenario Outline: A page may ask for some things and not others
       Given a page in a browser tab asks for <permission>
       Then the request is <outcome>
@@ -1052,14 +1052,25 @@ Feature: In-app preview browser
         | the camera                         | refused |
         | the microphone                     | refused |
         | the list of installed fonts        | refused |
+        | anything else a page can ask for   | refused |
+
+    # Upstream #22835. QtWebEngine, the desktop's engine, has no local network permission
+    # to grant or refuse. Upstream #25275: the desktop grants the pointer lock, but Chromium asks
+    # for it only from a focused window, which the offscreen runner never has.
+    @backlog @desktop
+    Scenario Outline: A page may lock the pointer and reach this computer but not the rest of the local network
+      Given a page in a browser tab asks for <permission>
+      Then the request is <outcome>
+
+      Examples:
+        | permission                         | outcome |
         | to lock the mouse pointer          | allowed |
         | this computer's own addresses      | allowed |
         | other devices on the local network | refused |
-        | anything else a page can ask for   | refused |
 
     # Upstream #26173: every page could read the clipboard without asking, the user's tabs and an
     # agent's alike.
-    @backlog @desktop @priority-high
+    @desktop @priority-high
     Scenario Outline: A page asks before it reads the clipboard
       Given a page from "https://example.com" in a browser tab asks to read the clipboard
       Then the user is asked whether "https://example.com" may see what was copied
@@ -1073,14 +1084,14 @@ Feature: In-app preview browser
         | blocks it | gets nothing        |
 
     # Upstream #26173
-    @backlog @desktop
+    @desktop
     Scenario: Each site is asked on its own whether it may read the clipboard
       Given the user allowed "https://example.com" to read the clipboard
       When a page from "https://other.example" asks to read the clipboard
       Then the user is asked about "https://other.example"
 
     # Upstream #26173: Enter typed into the page could otherwise accept a prompt the page raised.
-    @backlog @desktop @priority-high
+    @desktop @priority-high
     Scenario Outline: A page's prompt starts on its refusing choice
       When a page <asks>
       Then the prompt's default choice refuses it
@@ -1092,7 +1103,7 @@ Feature: In-app preview browser
         | asks to open an outside link |
 
     # Upstream #20237: refusing a page notifications leaves the app's own notifications alone.
-    @backlog @desktop @priority-high
+    @desktop @priority-high
     Scenario: A page cannot raise a system notification in the app's name
       Given a page in a browser tab asks to show notifications
       When the page tries to raise a system notification
@@ -1233,14 +1244,14 @@ Feature: In-app preview browser
         | toggle the right panel        | toggles the right panel                  |
         | maximise the right panel      | maximises or restores the right panel    |
 
-    @backlog @desktop
+    @desktop
     Scenario: A page's link to another app asks before opening it
       When a page in a browser tab follows the link "slack://channel?team=T1"
       Then the user is asked whether to open this slack link
       And the link opens in the system only if the user agrees
       And a second such link waits until the first question is answered
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A page's link to a local or inline scheme is never handed to the system
       When a page in a browser tab follows a link with the scheme "<scheme>" to another app
       Then the system is not asked to open it
