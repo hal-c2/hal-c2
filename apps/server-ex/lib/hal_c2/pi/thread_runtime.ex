@@ -326,8 +326,11 @@ defmodule HalC2.Pi.ThreadRuntime do
   # only when it gets to its exit, so a lookup right after the release would find a pid
   # that is gone. `terminate/2` runs after that, with the key free: a turn may start a
   # new runtime meanwhile, so for a moment two run for the thread, and nothing in
-  # `terminate/2` may count on having the thread to itself.
-  def handle_call(:release, _from, %{turn: nil, wake: nil} = state) do
+  # `terminate/2` may count on having the thread to itself. Pi at work by itself (an
+  # open wake) keeps it too; a settled wake whose run never came does not, and a run
+  # that comes after all shows nothing.
+  def handle_call(:release, _from, %{turn: nil, wake: wake} = state)
+      when wake == nil or not wake.open do
     Registry.unregister(@registry, state.thread_id)
     {:stop, {:shutdown, :released}, :ok, state}
   end
@@ -427,7 +430,7 @@ defmodule HalC2.Pi.ThreadRuntime do
       file = pi["sessionFile"]
       head = entries["leafId"]
       # A settled wake's work is the discarded conversation's: its run shows none of it.
-      state = %{state | session: file, leaf: head, wake: state.wake && %{open: false, buffer: []}}
+      state = %{state | session: file, leaf: head, wake: nil}
 
       {:reply,
        {:ok,
@@ -608,8 +611,9 @@ defmodule HalC2.Pi.ThreadRuntime do
      %{
        state
        | conn: nil,
-         # A wake waiting for its run ends there, cut short (`replay_wake/2`).
-         wake: state.wake && %{state.wake | open: false},
+         # A wake waiting for its run ends there, cut short (`replay_wake/2`); one with
+         # nothing for its run to show is gone.
+         wake: if(match?(%{buffer: [_ | _]}, state.wake), do: %{state.wake | open: false}),
          compact: nil,
          compact_steer: nil,
          abandoned_compacts: MapSet.new(),
@@ -1430,8 +1434,9 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   # A turn that starts while Pi is at work by itself takes the work over: what Pi did
   # so far joins the turn, and its message follows the work (`send_prompt/3`). The
-  # wake's own run, still on its way, then has nothing to show. A wake that already
-  # settled keeps its events for its own run.
+  # wake is gone: its own run, if it still comes, has nothing to show, and work Pi
+  # starts by itself after the turn is a wake of its own. A wake that already settled
+  # keeps its events for its own run.
   defp take_wake(%{wake: %{open: true} = wake} = state) do
     state =
       (wake.buffer || [])
@@ -1440,7 +1445,7 @@ defmodule HalC2.Pi.ThreadRuntime do
         event(type, event, state)
       end)
 
-    {%{state | wake: %{open: false, buffer: []}}, true}
+    {%{state | wake: nil}, true}
   end
 
   defp take_wake(state), do: {state, false}

@@ -538,6 +538,102 @@ defmodule HalC2.TurnLifecycleTest do
     await_statuses(thread_id, ["completed", "failed", "completed"])
   end
 
+  # Regressions prop/hal_c2/pi_steer_prop_test.exs found: a Pi wake whose own run never
+  # came stuck in the runtime, so Pi's next wake got no run and the idle runtime would
+  # not let Pi go. Here the thread refuses the wake's run outright, which is the same
+  # to the runtime as a run cancelled from the queue.
+  test "a Pi wake a turn took over leaves the next wake a run of its own", %{work: work} do
+    thread_id = create_thread(work, "pi", "default")
+    {:ok, _} = send_message(thread_id, "m1", "hello")
+    await_statuses(thread_id, ["completed"])
+    {runtime, conn} = pi_runtime(thread_id)
+
+    refuse_wakes(hold: true)
+    send(runtime, {:json_rpc, conn, {:notification, "agent_start", %{}}})
+    assert_receive {:wake_held, task}, 5_000
+    {:ok, _} = send_message(thread_id, "m2", "take it over")
+    await_statuses(thread_id, ["completed", "completed"])
+    await_refused(task)
+
+    assert_wakes_again(thread_id, runtime, conn, ["completed", "completed"])
+  end
+
+  test "a refused Pi wake that Pi exited at leaves the next wake a run of its own",
+       %{work: work} do
+    thread_id = create_thread(work, "pi", "default")
+    {:ok, _} = send_message(thread_id, "m1", "hello")
+    await_statuses(thread_id, ["completed"])
+    {runtime, conn} = pi_runtime(thread_id)
+
+    refuse_wakes(hold: false)
+    send(runtime, {:json_rpc, conn, {:notification, "agent_start", %{}}})
+    assert_receive {:wake_held, task}, 5_000
+    await_refused(task)
+    assert %{wake: %{open: true, buffer: nil}} = :sys.get_state(runtime)
+    ref = Process.monitor(conn)
+    Process.exit(conn, :kill)
+    assert_receive {:DOWN, ^ref, _, _, _}, 5_000
+    assert %{conn: nil} = :sys.get_state(runtime)
+
+    {:ok, _} = send_message(thread_id, "m2", "hello again")
+    await_statuses(thread_id, ["completed", "completed"])
+    {^runtime, conn} = pi_runtime(thread_id)
+    assert_wakes_again(thread_id, runtime, conn, ["completed", "completed"])
+  end
+
+  # Pi wakes once more, and settles: the wake runs as a turn of its own, after which the
+  # idle runtime lets Pi go.
+  defp assert_wakes_again(thread_id, runtime, conn, before) do
+    Application.delete_env(:hal_c2, :wake_hook)
+    send(runtime, {:json_rpc, conn, {:notification, "agent_start", %{}}})
+    await_statuses(thread_id, before ++ ["running"])
+    send(runtime, {:json_rpc, conn, {:notification, "agent_settled", %{}}})
+    await_statuses(thread_id, before ++ ["completed"])
+    assert Orchestration.release_session(thread_id) == :ok
+  end
+
+  defp pi_runtime(thread_id) do
+    [{runtime, _}] = Registry.lookup(HalC2.Pi.Registry, thread_id)
+    {runtime, :sys.get_state(runtime).conn}
+  end
+
+  # The thread refuses every try of a wake's run, the first held until the test's turn
+  # has taken the wake over (`hold: true`).
+  defp refuse_wakes(hold: hold) do
+    Application.put_env(:hal_c2, :wake_hook, {__MODULE__, :refuse_wake, [self(), hold]})
+    Application.put_env(:hal_c2, :wake_pause, {__MODULE__, :no_pause, []})
+
+    on_exit(fn ->
+      Application.delete_env(:hal_c2, :wake_hook)
+      Application.delete_env(:hal_c2, :wake_pause)
+    end)
+  end
+
+  def refuse_wake(test, hold, _command) do
+    if Process.put(:wake_tried, true) == nil do
+      send(test, {:wake_held, self()})
+
+      if hold do
+        receive do
+          :go -> :ok
+        after
+          5_000 -> :ok
+        end
+      end
+    end
+
+    {:error, "refused"}
+  end
+
+  def no_pause(_attempt), do: 0
+
+  # Every try refused, the runtime has heard (`on_dropped`) by the time the task ends.
+  defp await_refused(task) do
+    ref = Process.monitor(task)
+    send(task, :go)
+    assert_receive {:DOWN, ^ref, _, _, _}, 5_000
+  end
+
   # A turn Claude only compacts in has no assistant message, so its compact boundary
   # is where a rollback to it resumes. The boundary is on the provider turn by the
   # time anything sees the run end: a resume read on that end would otherwise miss it.
