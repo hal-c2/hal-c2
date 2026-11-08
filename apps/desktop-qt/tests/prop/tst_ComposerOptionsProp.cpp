@@ -1,9 +1,11 @@
 // The options each model keeps in the composer (ComposerController::selectModel,
-// setOption), against a fake MC: the effort a model shows is the last one set or
-// sent for it on this device, else the one its thread (or, for a new thread, the
-// project) saved with it, else the provider's default, whatever is picked in
-// between and however the provider's model list changes. What a thread shows
-// never names a model under another provider.
+// setOption, selection), against a fake MC: the effort a model shows is the last one
+// set or sent for it on this device, else the one its thread (or, for a new thread,
+// the project) saved with it, else the provider's default, whatever is picked in
+// between and however the provider's model list changes. An account that cannot run
+// a turn hands what it shows to another account of its driver that lists the model;
+// failing that a thread keeps it and a new thread starts on the first provider that
+// can run. What a target shows never names a model under another provider.
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -26,15 +28,25 @@ namespace {
 const QStringList kTargets{QStringLiteral("t1"), QStringLiteral("t2"), QStringLiteral("draft")};
 const QStringList kModels{QStringLiteral("gpt-a"), QStringLiteral("gpt-b"), QStringLiteral("claude-a")};
 const QStringList kEfforts{QStringLiteral("low"), QStringLiteral("high")};
+// In the order the composer lists them: Codex's default account, a second Codex
+// account, then Claude. The second account stays ready, so some provider always can run.
+const QStringList kInstances{QStringLiteral("codex"), QStringLiteral("codexTeam"), QStringLiteral("claudeAgent")};
+const QStringList kFlaky{QStringLiteral("codex"), QStringLiteral("claudeAgent")};
 
 QString pick(const QStringList& pool) { return *rc::gen::elementOf(std::vector<QString>(pool.cbegin(), pool.cend())); }
 
-QString instanceOf(const QString& model) {
-  return model.startsWith(QLatin1String("claude")) ? QStringLiteral("claudeAgent") : QStringLiteral("codex");
+QString driverOf(const QString& instance) { return instance == QLatin1String("claudeAgent") ? instance : QStringLiteral("codex"); }
+
+// What an instance lists: the second account never lists `gpt-x`, the model that comes and goes.
+QStringList modelsOf(const QString& instance, bool extra) {
+  if (instance == QLatin1String("claudeAgent")) return {QStringLiteral("claude-a")};
+  QStringList slugs{QStringLiteral("gpt-a"), QStringLiteral("gpt-b")};
+  if (extra && instance == QLatin1String("codex")) slugs.prepend(QStringLiteral("gpt-x"));
+  return slugs;
 }
 
-QJsonObject selectionOf(const QString& model, const QString& effort) {
-  return {{QStringLiteral("instanceId"), instanceOf(model)},
+QJsonObject selectionOf(const QString& instance, const QString& model, const QString& effort) {
+  return {{QStringLiteral("instanceId"), instance},
           {QStringLiteral("model"), model},
           {QStringLiteral("options"), QJsonArray{QJsonObject{{QStringLiteral("id"), QStringLiteral("effort")}, {QStringLiteral("value"), effort}}}}};
 }
@@ -51,58 +63,75 @@ QJsonObject effortDescriptor() {
           {QStringLiteral("currentValue"), kEfforts.first()}};
 }
 
-// Codex's models, then Claude's; `extra` is a Codex model that comes and goes.
-QJsonArray providers(bool extra) {
+// An instance that is down still lists its models, as one whose sign-in lapsed does.
+QJsonArray providers(bool extra, const QSet<QString>& down) {
   QJsonArray list;
-  for (const QString& instance : {QStringLiteral("codex"), QStringLiteral("claudeAgent")}) {
-    QStringList slugs;
-    for (const QString& model : kModels) {
-      if (instanceOf(model) == instance) slugs.append(model);
-    }
-    if (extra && instance == QLatin1String("codex")) slugs.prepend(QStringLiteral("gpt-x"));
+  for (const QString& instance : kInstances) {
     QJsonArray models;
-    for (const QString& slug : slugs) {
+    for (const QString& slug : modelsOf(instance, extra)) {
       models.append(QJsonObject{{QStringLiteral("slug"), slug},
                                 {QStringLiteral("name"), slug},
                                 {QStringLiteral("capabilities"), QJsonObject{{QStringLiteral("optionDescriptors"), QJsonArray{effortDescriptor()}}}}});
     }
     list.append(QJsonObject{{QStringLiteral("instanceId"), instance},
-                            {QStringLiteral("driver"), instance},
+                            {QStringLiteral("driver"), driverOf(instance)},
                             {QStringLiteral("enabled"), true},
                             {QStringLiteral("installed"), true},
-                            {QStringLiteral("status"), QStringLiteral("ready")},
+                            {QStringLiteral("status"), down.contains(instance) ? QStringLiteral("error") : QStringLiteral("ready")},
                             {QStringLiteral("models"), models}});
   }
   return list;
 }
 
-// What a target starts with: its thread's saved selection, or the project's default.
-struct Base {
+// A model selection; no effort means it carries no options, so the provider's default shows.
+struct Sel {
+  QString instance;
   QString model;
-  QString effort;
+  std::optional<QString> effort;
 };
 
 struct Model {
   QString open = QStringLiteral("t1");
-  QMap<QString, QString> picked;  // by target
-  QMap<QString, QString> given;   // the effort last set or sent for a model
-  QSet<QString> bare;  // targets showing a model the default alone fills in: nothing is kept for it
-  QMap<QString, QString> shownEffort;  // by target, once a pick or a change has set it
-  QMap<QString, Base> base;
+  QMap<QString, Sel> picked;   // by target, once a pick or a change has set it
+  QMap<QString, Sel> base;     // the thread's saved selection, or the project's default
+  QMap<QString, QString> kept;  // the effort last set or sent, by instance and model
+  QSet<QString> down;           // instances that cannot run a turn
+  bool extra = false;
   Model() {
-    base[QStringLiteral("t1")] = {QStringLiteral("gpt-a"), QStringLiteral("high")};
-    base[QStringLiteral("t2")] = {QStringLiteral("claude-a"), QStringLiteral("high")};
-    base[QStringLiteral("draft")] = {QStringLiteral("gpt-b"), QStringLiteral("high")};
+    base[QStringLiteral("t1")] = {QStringLiteral("codex"), QStringLiteral("gpt-a"), QStringLiteral("high")};
+    base[QStringLiteral("t2")] = {QStringLiteral("claudeAgent"), QStringLiteral("claude-a"), QStringLiteral("high")};
+    base[QStringLiteral("draft")] = {QStringLiteral("codex"), QStringLiteral("gpt-b"), QStringLiteral("high")};
   }
+  static QString key(const QString& instance, const QString& model) { return instance + u'\n' + model; }
   bool isThread(const QString& target) const { return target != QLatin1String("draft"); }
-  QString model(const QString& target) const { return picked.value(target, base.value(target).model); }
-  // What choosing `shown` in `target` gives: the effort kept for it, else the target's own, else the default.
-  QString chosen(const QString& target, const QString& shown) const {
-    if (given.contains(shown)) return given.value(shown);
-    return shown == base.value(target).model ? base.value(target).effort : kEfforts.first();
+  bool lists(const QString& instance, const QString& model) const { return modelsOf(instance, extra).contains(model); }
+  std::optional<QString> keptFor(const QString& instance, const QString& model) const {
+    const auto found = kept.constFind(key(instance, model));
+    return found == kept.cend() ? std::nullopt : std::optional<QString>(*found);
   }
-  QString effort(const QString& target) const {
-    return shownEffort.contains(target) ? shownEffort.value(target) : base.value(target).effort;
+  Sel defaultOf(const QString& instance) const {
+    const QString model = modelsOf(instance, extra).first();
+    return {instance, model, keptFor(instance, model)};
+  }
+  // What the target shows. An account that is down hands its model to another
+  // ready account of the same driver that lists it; failing that a thread keeps
+  // it, and a new thread starts on the first provider that can run.
+  Sel selection(const QString& target) const {
+    const Sel chosen = picked.value(target, base.value(target));
+    if (!down.contains(chosen.instance)) {
+      if (!isThread(target) && !lists(chosen.instance, chosen.model)) return defaultOf(chosen.instance);
+      return chosen;
+    }
+    for (const QString& other : kInstances) {
+      if (down.contains(other) || other == chosen.instance || driverOf(other) != driverOf(chosen.instance) || !lists(other, chosen.model)) continue;
+      const std::optional<QString> own = keptFor(other, chosen.model);
+      return {other, chosen.model, own ? own : chosen.effort};
+    }
+    if (isThread(target)) return chosen;
+    for (const QString& other : kInstances) {
+      if (!down.contains(other)) return defaultOf(other);
+    }
+    return {};
   }
 };
 
@@ -113,6 +142,7 @@ struct Sut {
   std::unique_ptr<NativeShell> native;
   QString draftId;
   bool extra = false;
+  QSet<QString> down;
 
   Sut() {
     QJsonObject project{{QStringLiteral("id"), QStringLiteral("p1")},
@@ -121,22 +151,23 @@ struct Sut {
                         {QStringLiteral("createdAt"), QStringLiteral("2026-09-01T09:00:00Z")},
                         {QStringLiteral("updatedAt"), QStringLiteral("2026-09-01T09:00:00Z")},
                         {QStringLiteral("scripts"), QJsonArray()},
-                        {QStringLiteral("defaultModelSelection"), selectionOf(QStringLiteral("gpt-b"), QStringLiteral("high"))}};
+                        {QStringLiteral("defaultModelSelection"), selectionOf(QStringLiteral("codex"), QStringLiteral("gpt-b"), QStringLiteral("high"))}};
     mc.projects.insert(QStringLiteral("p1"), project);
-    for (const auto& [id, model] : {std::pair{QStringLiteral("t1"), QStringLiteral("gpt-a")}, std::pair{QStringLiteral("t2"), QStringLiteral("claude-a")}}) {
+    for (const auto& [id, instance, model] : {std::tuple{QStringLiteral("t1"), QStringLiteral("codex"), QStringLiteral("gpt-a")},
+                                              std::tuple{QStringLiteral("t2"), QStringLiteral("claudeAgent"), QStringLiteral("claude-a")}}) {
       mc.threads.insert(id, QJsonObject{{QStringLiteral("id"), id},
                                         {QStringLiteral("projectId"), QStringLiteral("p1")},
                                         {QStringLiteral("title"), id},
                                         {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")},
                                         {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")},
-                                        {QStringLiteral("modelSelection"), selectionOf(model, QStringLiteral("high"))}});
+                                        {QStringLiteral("modelSelection"), selectionOf(instance, model, QStringLiteral("high"))}});
     }
     mc.onShape(QStringLiteral("config"), [this](int id, const QJsonObject& shape) {
       if (shape.value(QLatin1String("environment")).toString() != mc.environmentId) return;
       mc.send({{QStringLiteral("t"), QStringLiteral("config")},
                {QStringLiteral("id"), id},
                {QStringLiteral("mc"), mc.name},
-               {QStringLiteral("config"), QJsonObject{{QStringLiteral("providers"), providers(extra)}, {QStringLiteral("settings"), QJsonObject()}}}});
+               {QStringLiteral("config"), QJsonObject{{QStringLiteral("providers"), providers(extra, down)}, {QStringLiteral("settings"), QJsonObject()}}}});
     });
     mc.onShape(QStringLiteral("stream"), [this](int id, const QJsonObject&) {
       mc.send({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), id}, {QStringLiteral("part"), 0},
@@ -191,6 +222,13 @@ struct Sut {
     return {};
   }
 
+  void republish() {
+    for (const int id : mc.subscribers(QStringLiteral("config"))) {
+      mc.send({{QStringLiteral("t"), QStringLiteral("config.providers")}, {QStringLiteral("id"), id}, {QStringLiteral("providers"), providers(extra, down)}});
+    }
+    barrier();
+  }
+
   // A round trip, so what the client sent has been answered.
   void barrier() {
     bool done = false;
@@ -203,13 +241,19 @@ struct Sut {
 void verify(const Model& m, Sut& sut) {
   const QString key = m.open == QLatin1String("draft") ? sut.draftId : QStringLiteral("env-a:") + m.open;
   RC_ASSERT(prop::until([&] { return sut.shown().value(QStringLiteral("target")).toString() == key; }));
-  const bool agrees = prop::until([&] { return sut.shown().value(QStringLiteral("selectedModel")).toString() == m.model(m.open) && sut.effort() == m.effort(m.open); });
-  if (!agrees) {
-    qWarning().noquote() << "shows" << sut.shown().value(QStringLiteral("selectedModel")).toString() << sut.effort() << "expected" << m.model(m.open) << m.effort(m.open);
+  const Sel want = m.selection(m.open);
+  const QString effort = want.effort.value_or(kEfforts.first());
+  const auto agrees = [&] {
+    const QVariantMap shown = sut.shown();
+    return shown.value(QStringLiteral("selectedInstanceId")).toString() == want.instance &&
+           shown.value(QStringLiteral("selectedModel")).toString() == want.model && sut.effort() == effort;
+  };
+  if (!prop::until(agrees)) {
+    qWarning().noquote() << "shows" << sut.shown().value(QStringLiteral("selectedInstanceId")).toString()
+                         << sut.shown().value(QStringLiteral("selectedModel")).toString() << sut.effort() << "expected" << want.instance
+                         << want.model << effort;
+    RC_FAIL("the composer shows another selection than the model");
   }
-  RC_ASSERT(agrees);
-  // The instance named is the model's own provider.
-  RC_ASSERT(sut.shown().value(QStringLiteral("selectedInstanceId")).toString() == instanceOf(m.model(m.open)));
 }
 
 using Command = rc::state::Command<Model, Sut>;
@@ -226,33 +270,37 @@ struct Open : Command {
   void show(std::ostream& os) const override { os << "Open(" << target.toStdString() << ")"; }
 };
 
+// A pick from the picker, which offers only a ready account's own models; any
+// other pick is refused and changes nothing.
 struct PickModel : Command {
   QString model = pick(kModels);
+  QString instance = model.startsWith(QLatin1String("claude")) ? QStringLiteral("claudeAgent") : pick({QStringLiteral("codex"), QStringLiteral("codexTeam")});
   void apply(Model& m) const override {
-    m.picked[m.open] = model;
-    m.shownEffort[m.open] = m.chosen(m.open, model);
-    if (m.given.contains(model) || model == m.base.value(m.open).model) {
-      m.bare.remove(m.open);
-    } else {
-      m.bare.insert(m.open);
+    if (m.down.contains(instance) || !m.lists(instance, model)) return;
+    // Its own effort when it has one, else what the composer shows or the target saved for it.
+    std::optional<QString> effort = m.keptFor(instance, model);
+    for (const Sel& held : {m.selection(m.open), m.base.value(m.open)}) {
+      if (!effort && held.instance == instance && held.model == model) effort = held.effort;
     }
+    m.picked[m.open] = {instance, model, effort};
   }
   void run(const Model& m0, Sut& sut) const override {
-    sut.bridge->dispatch(QStringLiteral("composer.model.select"),
-                         QVariantMap{{QStringLiteral("instanceId"), instanceOf(model)}, {QStringLiteral("model"), model}});
+    sut.bridge->dispatch(QStringLiteral("composer.model.select"), QVariantMap{{QStringLiteral("instanceId"), instance}, {QStringLiteral("model"), model}});
     Model next = m0;
     apply(next);
     verify(next, sut);
   }
-  void show(std::ostream& os) const override { os << "PickModel(" << model.toStdString() << ")"; }
+  void show(std::ostream& os) const override { os << "PickModel(" << instance.toStdString() << ", " << model.toStdString() << ")"; }
 };
 
+// An effort set on what the composer shows; refused while that account is down.
 struct SetEffort : Command {
   QString value = pick(kEfforts);
   void apply(Model& m) const override {
-    m.given[m.model(m.open)] = value;
-    m.shownEffort[m.open] = value;
-    m.bare.remove(m.open);
+    const Sel shown = m.selection(m.open);
+    if (m.down.contains(shown.instance)) return;
+    m.kept[Model::key(shown.instance, shown.model)] = value;
+    m.picked[m.open] = {shown.instance, shown.model, value};
   }
   void run(const Model& m0, Sut& sut) const override {
     sut.bridge->dispatch(QStringLiteral("composer.option.set"), QVariantMap{{QStringLiteral("id"), QStringLiteral("effort")}, {QStringLiteral("value"), value}});
@@ -263,16 +311,17 @@ struct SetEffort : Command {
   void show(std::ostream& os) const override { os << "SetEffort(" << value.toStdString() << ")"; }
 };
 
-// A message from a thread: the model and effort it shows are kept for the model, and
-// the MC moves the thread to them when they are another provider's.
+// A message from a thread whose provider can run it: the effort it shows is kept
+// for its model, and the MC moves the thread when it shows another account.
 struct Send : Command {
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.isThread(m.open)); }
+  void checkPreconditions(const Model& m) const override {
+    RC_PRE(m.isThread(m.open));
+    RC_PRE(!m.down.contains(m.selection(m.open).instance));
+  }
   void apply(Model& m) const override {
-    const QString shown = m.model(m.open);
-    const QString effort = m.effort(m.open);
-    if (!m.bare.contains(m.open)) m.given[shown] = effort;
-    if (instanceOf(shown) != instanceOf(m.base.value(m.open).model)) m.base[m.open] = {shown, effort};
-    m.shownEffort[m.open] = effort;
+    const Sel shown = m.selection(m.open);
+    if (shown.effort) m.kept[Model::key(shown.instance, shown.model)] = *shown.effort;
+    if (shown.instance != m.base.value(m.open).instance) m.base[m.open] = shown;
   }
   void run(const Model& m0, Sut& sut) const override {
     const qsizetype before = sut.mc.commands.size();
@@ -290,16 +339,31 @@ struct Send : Command {
 
 // The provider lists another Codex model, or stops.
 struct Relist : Command {
-  void apply(Model&) const override {}
+  void apply(Model& m) const override { m.extra = !m.extra; }
   void run(const Model& m0, Sut& sut) const override {
     sut.extra = !sut.extra;
-    for (const int id : sut.mc.subscribers(QStringLiteral("config"))) {
-      sut.mc.send({{QStringLiteral("t"), QStringLiteral("config.providers")}, {QStringLiteral("id"), id}, {QStringLiteral("providers"), providers(sut.extra)}});
-    }
-    sut.barrier();
-    verify(m0, sut);
+    sut.republish();
+    Model next = m0;
+    apply(next);
+    verify(next, sut);
   }
   void show(std::ostream& os) const override { os << "Relist"; }
+};
+
+// An account stops being able to run a turn (its sign-in lapsed, say), or can again.
+struct Readiness : Command {
+  QString instance = pick(kFlaky);
+  void apply(Model& m) const override {
+    if (!m.down.remove(instance)) m.down.insert(instance);
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    if (!sut.down.remove(instance)) sut.down.insert(instance);
+    sut.republish();
+    Model next = m0;
+    apply(next);
+    verify(next, sut);
+  }
+  void show(std::ostream& os) const override { os << "Readiness(" << instance.toStdString() << ")"; }
 };
 
 }  // namespace
@@ -309,12 +373,12 @@ class ComposerOptionsProp : public QObject {
 
 private slots:
   void optionsFollowTheModel() {
-    QVERIFY(rc::check("a model shows the effort last set or sent for it, else its thread's or project's, else the default", [] {
+    QVERIFY(rc::check("a model shows the effort last set or sent for it, else its thread's or project's, else the default, on whichever account can run it", [] {
       Sut sut;
       Model model;
       verify(model, sut);
       const auto commands = *rc::gen::scale(
-          0.4, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Open, PickModel, PickModel, SetEffort, SetEffort, Send, Relist>()));
+          0.4, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Open, PickModel, PickModel, SetEffort, SetEffort, Send, Relist, Readiness, Readiness>()));
       rc::state::runAll(commands, model, sut);
     }));
   }
