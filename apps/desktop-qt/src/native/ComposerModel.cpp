@@ -645,7 +645,7 @@ QString shownRuntimeMode(const Instance* instance, const QString& saved) {
   return values.isEmpty() ? saved : values.first();
 }
 
-QString noProviderLabel(const QList<Instance>& list) {
+QString noProviderStandIn(const QList<Instance>& list) {
   // No providers reported yet is not "none can run a turn": the composer
   // still shows the thread's model while it waits.
   if (list.isEmpty()) return {};
@@ -654,7 +654,7 @@ QString noProviderLabel(const QList<Instance>& list) {
     if (instance.ready()) return {};
     if (instance.canSetUp) setUp = true;
   }
-  return setUp ? QStringLiteral("Open provider settings") : QStringLiteral("No provider available");
+  return setUp ? QStringLiteral("open-provider-settings") : QStringLiteral("no-provider-available");
 }
 
 // What Enter and its modified forms send.

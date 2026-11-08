@@ -617,6 +617,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user looks at the composer
     Then the permissions read "Supervised"
     And the thread's saved permissions are unchanged until the user chooses
+    And the next turn runs in Supervised
 
   # Upstream #21406: the phone sums the options up too, beside both model controls.
   @backlog @desktop @mobile

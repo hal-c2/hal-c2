@@ -938,9 +938,17 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   const bool implement = planFollowUp && trimmed.isEmpty();
 
   const QString createdAt = sidebar::formatIso(m_now());
+  const QJsonObject modelSelection = selection(target);
   // Only a mode the user changed is set; a thread the MC has no mode for
-  // keeps the MC's default.
-  const QString runtimeMode = m_drafts.value(target).runtimeMode;
+  // keeps the MC's default. A saved mode the provider no longer offers is
+  // set to the mode the composer shows instead, so the turn runs as read.
+  QString runtimeMode = m_drafts.value(target).runtimeMode;
+  if (!runtimeMode.isEmpty()) {
+    runtimeMode = composer::shownRuntimeMode(instanceOf(modelSelection), runtimeMode);
+  } else if (!thread->runtimeMode.isEmpty()) {
+    const QString shown = composer::shownRuntimeMode(instanceOf(modelSelection), thread->runtimeMode);
+    if (shown != thread->runtimeMode) runtimeMode = shown;
+  }
   QString interactionMode = interactionModeOf(target);
   if (planFollowUp) interactionMode = implement ? QStringLiteral("default") : QStringLiteral("plan");
   if (thread->interactionMode.isEmpty() && interactionMode == QLatin1String("default")) interactionMode.clear();
@@ -964,7 +972,6 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   // Another provider takes the thread over, handed its conversation by the MC.
   // A thread that names no provider is not leaving one: the message's model
   // selection is what the MC runs it on.
-  const QJsonObject modelSelection = selection(target);
   const QString instanceId = str(modelSelection, QLatin1String("instanceId"));
   const QString current = str(thread->modelSelection, QLatin1String("instanceId"));
   if (!instanceId.isEmpty() && !current.isEmpty() && instanceId != current) {
@@ -1011,7 +1018,8 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   const QString messageId = str(message, QLatin1String("messageId"));
   // What the outbox sends again, and gives back with a refusal.
   const QJsonObject choices{{QStringLiteral("modelSelection"), modelSelection},
-                            {QStringLiteral("runtimeMode"), runtimeModeOf(target)},
+                            {QStringLiteral("runtimeMode"),
+                             composer::shownRuntimeMode(instanceOf(modelSelection), runtimeModeOf(target))},
                             {QStringLiteral("interactionMode"), interactionMode.isEmpty() ? interactionModeOf(target) : interactionMode}};
   if (waits) {
     m_kept.unsent.removeIf([&](const Unsent& unsent) { return unsent.kept && unsent.target == target; });
@@ -1144,7 +1152,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
       {QStringLiteral("projectId"), where.projectId},
       {QStringLiteral("title"), launchTitle(trimmed, attachments.isEmpty() ? QString() : attachments.constFirst().name)},
       {QStringLiteral("generateTitle"), true},
-      {QStringLiteral("runtimeMode"), runtimeModeOf(draftId)},
+      {QStringLiteral("runtimeMode"), composer::shownRuntimeMode(instanceOf(modelSelection), runtimeModeOf(draftId))},
       {QStringLiteral("interactionMode"), interactionModeOf(draftId)},
       {QStringLiteral("workspaceStrategy"), where.strategy},
       {QStringLiteral("initialMessage"), QJsonObject{{QStringLiteral("messageId"), messageId},
@@ -1403,6 +1411,8 @@ bool ComposerController::submitToModels(const QString& draftId, const QList<QJso
     launch.insert(QStringLiteral("commandId"), newId());
     launch.insert(QStringLiteral("threadId"), threadId);
     launch.insert(QStringLiteral("modelSelection"), model);
+    // Each model's own provider decides which of the saved permissions stand.
+    launch.insert(QStringLiteral("runtimeMode"), composer::shownRuntimeMode(instanceOf(model), runtimeModeOf(draftId)));
     launch.insert(QStringLiteral("workspaceStrategy"), worktree);
     launch.insert(QStringLiteral("initialMessage"), message);
     const QString name = str(model, QLatin1String("model"));
@@ -3186,7 +3196,8 @@ bool ComposerController::submitPage(const QString& target, const QString& text) 
   for (const QJsonValue& file : fileRecords(kept.attachments)) attachments.append(file);
   const QJsonObject modelSelection = selection(target);
   QJsonObject ask{{QStringLiteral("request"), message.value(QLatin1String("text")).toString()},
-                  {QStringLiteral("runtimeMode"), runtimeModeOf(target)},
+                  {QStringLiteral("runtimeMode"),
+                   composer::shownRuntimeMode(instanceOf(modelSelection), runtimeModeOf(target))},
                   {QStringLiteral("interactionMode"), interactionModeOf(target)}};
   if (const QString projectId = pageProject(); !projectId.isEmpty()) ask.insert(QStringLiteral("projectId"), projectId);
   if (!modelSelection.isEmpty()) ask.insert(QStringLiteral("modelSelection"), modelSelection);
@@ -4358,11 +4369,11 @@ QVariantMap ComposerController::pickerState() const {
                                               current.value(QLatin1String("model")).toString())},
       {QStringLiteral("locked"), !onImages() && thread && bool(thread->runtime)},
       // What stands where the model would be when no provider can run a turn.
-      {QStringLiteral("noProviderLabel"),
+      {QStringLiteral("noProvider"),
        onImages() ? QVariant::fromValue(nullptr)
                   : [&]() -> QVariant {
-                      const QString label = composer::noProviderLabel(m_catalogue);
-                      return label.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(label);
+                      const QString standIn = composer::noProviderStandIn(m_catalogue);
+                      return standIn.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(standIn);
                     }()},
       // Image models are not starred.
       {QStringLiteral("favorites"), !onImages()},

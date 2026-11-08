@@ -95,20 +95,20 @@ Item {
         }
 
         // Background: a project with an open thread on Codex.
-        function createPicker(instances, favorites) {
+        function createPicker(instances, favorites, catalogue) {
             Shell.state = {
                 composer: Object.assign(Shell.defaultComposer(), {
                     selectedInstanceId: "codex",
                     selectedModel: "gpt-5-codex"
                 }),
-                modelPicker: {
+                modelPicker: Object.assign({
                     instances: instances,
                     favorites: favorites ?? true,
                     shortcut: "Ctrl+Shift+M",
                     previousProvider: chord("arrowup", true),
                     nextProvider: chord("arrowdown", true),
                     jump: [1, 2, 3, 4, 5, 6, 7, 8, 9].map(index => chord(String(index), false))
-                },
+                }, catalogue ?? {}),
                 workspace: null
             };
             const composer = createTemporaryObject(composerComponent, root);
@@ -166,6 +166,25 @@ Item {
                 compare(picker.rows.every(row => row.instance.instanceId === instanceId), true, instanceId);
                 compare(listed(picker), expected[instanceId], instanceId);
             }
+        }
+
+        // No provider can run a turn: the stand-in stands where the model
+        // would be, even though the chosen model still resolves, and the
+        // one naming provider settings goes there when clicked.
+        function test_no_provider_standin() {
+            const settings = createPicker([codex()], true, {
+                noProvider: "open-provider-settings"
+            });
+            compare(settings.triggerTitle, "Open provider settings");
+            mouseClick(settings);
+            const navigations = Shell.dispatchedActions.filter(entry => entry.action === "settings.navigate");
+            compare(navigations.length, 1);
+            compare(navigations[0].payload.to, "/settings/providers");
+            compare(settings.popup.opened, false);
+            const none = createPicker([codex()], true, {
+                noProvider: "no-provider-available"
+            });
+            compare(none.triggerTitle, "No provider available");
         }
 
         function test_the_chosen_model_is_shown_with_its_provider() {

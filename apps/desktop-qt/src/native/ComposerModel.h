@@ -96,10 +96,11 @@ QVariantList runtimeModes(const Instance* instance);
 // offers it, else Supervised (or the first mode it offers). The saved value
 // itself stays until the user chooses.
 QString shownRuntimeMode(const Instance* instance, const QString& saved);
-// What stands where the model would be when no provider can run a turn:
-// an invitation to set one up when the MC says one can be, else the plain
-// fact. Empty when some provider is ready.
-QString noProviderLabel(const QList<Instance>& list);
+// What stands where the model would be when no provider can run a turn, as
+// a key the QML words and translates: "open-provider-settings" when the MC
+// says one can be set up, else "no-provider-available". Empty when some
+// provider is ready, or none has been reported yet.
+QString noProviderStandIn(const QList<Instance>& list);
 
 // `composer.enterIntents`: {singleLine, multiline}, each held-modifier set
 // ("ctrl+meta+alt+shift" order, "" for none) to what Enter sends.

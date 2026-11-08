@@ -463,14 +463,22 @@ const Steps steps([] {
            QStringLiteral("the thread is on %1").arg(show(world.mc.threads.value(kThread).toVariantMap())));
   });
 
-  // A composer with no usable provider.
+  // A composer with no usable provider. The thread runs on OpenCode, a
+  // keep-unlisted driver, so its dropped model still resolves in the picker:
+  // the stand-in has to win over the model name on the trigger itself.
   step(QStringLiteral("no provider can run a turn"), [](World& world, const Captures&, const Table&) {
     offer(world, {provider(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"), {QStringLiteral("gpt-5")},
                            {{QStringLiteral("installed"), false},
                             {QStringLiteral("status"), QStringLiteral("error")},
                             {QStringLiteral("message"), QStringLiteral("codex not found")}}),
                   provider(QStringLiteral("claudeAgent"), QStringLiteral("claudeAgent"), QStringLiteral("Claude"), {QStringLiteral("claude-opus")},
+                           {{QStringLiteral("installed"), false}, {QStringLiteral("status"), QStringLiteral("error")}}),
+                  provider(QStringLiteral("opencode"), QStringLiteral("opencode"), QStringLiteral("OpenCode"), {QStringLiteral("big-pickle")},
                            {{QStringLiteral("installed"), false}, {QStringLiteral("status"), QStringLiteral("error")}})});
+    updateThread(world, {{QStringLiteral("modelSelection"),
+                          QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("opencode")}, {QStringLiteral("model"), QStringLiteral("kimi-k2")}}}});
+    world.waitFor([&] { return composer(world).value(QStringLiteral("selectedModel")) == QLatin1String("kimi-k2"); },
+                  [&] { return QStringLiteral("the composer on kimi-k2; it shows %1").arg(show(composer(world))); });
   });
   step(QStringLiteral("one of the providers can be set up"), [](World& world, const Captures&, const Table&) {
     add(world, provider(QStringLiteral("cursor"), QStringLiteral("cursor"), QStringLiteral("Cursor"), {QStringLiteral("cursor-auto")},
@@ -480,8 +488,11 @@ const Steps steps([] {
   });
   step(QStringLiteral("none of the providers can be set up"), [](World& world, const Captures&, const Table&) { world.sync(); });
   step(QStringLiteral("the composer shows %1 where the model would be").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QString label = world.state(QStringLiteral("modelPicker")).toMap().value(QStringLiteral("noProviderLabel")).toString();
-    expect(label == c[0], QStringLiteral("the composer shows \"%1\", not \"%2\"").arg(label, c[0]));
+    composerBrick(world);
+    QQuickItem* picker = composerPart(world, QStringLiteral("modelPicker"));
+    expect(picker != nullptr, QStringLiteral("the composer has no model picker"));
+    world.waitFor([&] { return picker->property("triggerTitle") == c[0]; },
+                  [&] { return QStringLiteral("the trigger to read \"%1\"; it reads \"%2\"").arg(c[0], picker->property("triggerTitle").toString()); });
   });
   step(QStringLiteral("no message can be sent"), [](World& world, const Captures&, const Table&) {
     expect(!composer(world).value(QStringLiteral("canSend")).toBool() &&

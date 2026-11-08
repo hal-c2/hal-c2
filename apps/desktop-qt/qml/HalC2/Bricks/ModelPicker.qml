@@ -38,7 +38,11 @@ AbstractButton {
     readonly property var activeModel: Picker.findModel(activeInstance, selectedModel)
     // The models a new thread's prompt goes to, once more than one is chosen.
     readonly property var multiple: onlyInstances === null ? (catalogue?.multiple ?? null) : null
-    readonly property string triggerTitle: multiple !== null ? qsTr("%1 models").arg(multiple.length) : activeModel ? Picker.displayName(activeModel, true) : (catalogue?.noProviderLabel ? catalogue.noProviderLabel : (selectedModel ? selectedModel : qsTr("Choose model")))
+    // What stands where the model would be when no provider can run a turn
+    // (catalogue.noProvider, keyed in C++): it wins over the model name,
+    // which a keep-unlisted provider can still resolve while unready.
+    readonly property string noProviderText: catalogue?.noProvider === "open-provider-settings" ? qsTr("Open provider settings") : catalogue?.noProvider === "no-provider-available" ? qsTr("No provider available") : ""
+    readonly property string triggerTitle: multiple !== null ? qsTr("%1 models").arg(multiple.length) : noProviderText.length > 0 ? noProviderText : activeModel ? Picker.displayName(activeModel, true) : (selectedModel ? selectedModel : qsTr("Choose model"))
 
     function inMultiple(instanceId, model) {
         return multiple !== null && multiple.some(entry => entry.instanceId === instanceId && entry.model === model);
@@ -218,7 +222,18 @@ AbstractButton {
     ToolTip.delay: 500
     ToolTip.text: catalogue && catalogue.shortcut ? triggerLabel + " · " + catalogue.shortcut : triggerLabel
 
-    onClicked: popup.visible ? popup.close() : popup.open()
+    onClicked: {
+        // The stand-in that names provider settings goes there, as it says.
+        if (catalogue?.noProvider === "open-provider-settings") {
+            Shell.dispatch("settings.navigate", {
+                to: "/settings/providers"
+            });
+        } else if (popup.visible) {
+            popup.close();
+        } else {
+            popup.open();
+        }
+    }
 
     background: Rectangle {
         id: triggerBackground

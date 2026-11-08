@@ -198,11 +198,11 @@ private slots:
         setUp = setUp || instance.canSetUp;
         list.append(instance);
       }
-      const QString label = composer::noProviderLabel(list);
+      const QString label = composer::noProviderStandIn(list);
       if (ready || list.isEmpty()) {
         RC_ASSERT(label.isEmpty());
       } else {
-        RC_ASSERT(label == (setUp ? QLatin1String("Open provider settings") : QLatin1String("No provider available")));
+        RC_ASSERT(label == (setUp ? QLatin1String("open-provider-settings") : QLatin1String("no-provider-available")));
       }
     }));
   }
