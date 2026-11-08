@@ -3861,6 +3861,17 @@ bool ComposerController::selectModel(const QString& target, const QString& insta
   if (const auto remembered = m_kept.modelOptions.constFind(instanceId + u'\n' + model);
       remembered != m_kept.modelOptions.cend()) {
     chosen.insert(QStringLiteral("options"), *remembered);
+  } else {
+    // Nothing given to it on this device: the options the thread (or the
+    // project's default, for a draft) already holds for this model, or the
+    // ones the composer shows for it now, stay with it.
+    for (const QJsonObject& held : {selection(target), baseSelection(target)}) {
+      if (held.value(QLatin1String("instanceId")) == instanceId && held.value(QLatin1String("model")) == model &&
+          held.contains(QLatin1String("options"))) {
+        chosen.insert(QStringLiteral("options"), held.value(QLatin1String("options")));
+        break;
+      }
+    }
   }
   kept.modelSelection = chosen;
   kept.multipleModels.reset();
