@@ -273,8 +273,16 @@ defmodule HalC2.Claude.Provider do
 
     with {:ok, text} <- File.read(path),
          {:ok, %{"env" => env}} when is_map(env) <- HalC2.Claude.Skills.decode_lenient(text) do
-      Map.new(env, fn {key, value} -> {to_string(key), to_string(value)} end)
+      # Only the keys asked for, and only values an environment can carry: a
+      # nested value in the file is Claude's business, not a reason to raise.
+      env
       |> Map.take(keys)
+      |> Enum.flat_map(fn
+        {key, value} when is_binary(value) -> [{key, value}]
+        {key, value} when is_number(value) or is_boolean(value) -> [{key, to_string(value)}]
+        _ -> []
+      end)
+      |> Map.new()
     else
       _ -> %{}
     end
@@ -326,7 +334,10 @@ defmodule HalC2.Claude.Provider do
           not Map.has_key?(own, key),
           do: key
 
-    if unset == [] or elem(Application.get_env(:hal_c2, :os_type, :os.type()), 0) == :win32 do
+    # A command that is not there stays unwrapped, so the spawn itself reports
+    # it missing instead of `env` exiting 127 in its name.
+    if unset == [] or elem(Application.get_env(:hal_c2, :os_type, :os.type()), 0) == :win32 or
+         System.find_executable(List.first(command) || "") == nil do
       command
     else
       ["env"] ++ Enum.flat_map(unset, &["-u", &1]) ++ command
@@ -404,34 +415,88 @@ defmodule HalC2.Claude.Provider do
     end
   end
 
-  # `claude auth status` for `id`, read at most once in five minutes per
-  # executable and environment: `:signed_in`, `:signed_out`, or `:unreadable`
-  # when the CLI has no such command or its answer is not the JSON it prints.
+  # `claude auth status` for `id`, as last read (at most once in five minutes
+  # per executable and environment): `:signed_in`, `:signed_out`, or
+  # `:unreadable` when the CLI has no such command or its answer is not the
+  # JSON it prints. The read runs in the background — a provider check never
+  # waits on spawning Claude — so until the first read lands the sign-in is
+  # `:unreadable` (unknown), and providers are re-announced when it does.
   defp auth_status(id, path, env) do
     key = {id, path, :erlang.phash2(Enum.sort(Map.take(env, @auth_env_keys)))}
-    records = :persistent_term.get(@auth, %{})
+    {records, _reading} = auth_cache()
 
     case Map.get(records, key) do
       {result, at} ->
-        if System.monotonic_time(:millisecond) - at < @capabilities_ttl_ms,
-          do: result,
-          else: read_auth_status(key, id, path)
+        if System.monotonic_time(:millisecond) - at >= @capabilities_ttl_ms,
+          do: refresh_auth(key, id, path)
+
+        result
 
       _ ->
-        read_auth_status(key, id, path)
+        refresh_auth(key, id, path)
+        :unreadable
     end
   end
 
-  defp read_auth_status(key, id, path) do
-    result = run_auth_status(id, path)
-    records = :persistent_term.get(@auth, %{})
+  # The sign-in reads kept and in flight: `{records, reading}`, where `reading`
+  # holds the token of the read allowed to land for a key. Forgetting a read
+  # (`forget_auth/1`, or the whole cache going) revokes its token, so a read
+  # started before the forget cannot put its stale answer back.
+  defp auth_cache, do: :persistent_term.get(@auth, {%{}, %{}})
 
-    :persistent_term.put(
-      @auth,
-      Map.put(records, key, {result, System.monotonic_time(:millisecond)})
-    )
+  # One read per key at a time, whoever asked first.
+  defp refresh_auth(key, id, path) do
+    {records, reading} = auth_cache()
 
-    result
+    if Map.has_key?(reading, key) do
+      :ok
+    else
+      token = System.unique_integer([:positive, :monotonic])
+      :persistent_term.put(@auth, {records, Map.put(reading, key, token)})
+
+      Task.start(fn ->
+        result = run_auth_status(id, path)
+        {records, reading} = auth_cache()
+
+        if Map.get(reading, key) == token do
+          previous =
+            case Map.get(records, key) do
+              {old, _at} -> old
+              _ -> :unreadable
+            end
+
+          :persistent_term.put(
+            @auth,
+            {Map.put(records, key, {result, System.monotonic_time(:millisecond)}),
+             Map.delete(reading, key)}
+          )
+
+          # Announce only a landing that changes what the entry shows: a first
+          # signed-in read confirms the authenticated entry already served
+          # (unless it was shown unverified), and re-announcing it would make
+          # every provider check echo itself.
+          if previous != result and
+               not (result == :signed_in and previous == :unreadable and
+                      not auth_unverified?(id, path)),
+             do: HalC2.Settings.notify_providers()
+        end
+      end)
+
+      :ok
+    end
+  end
+
+  @doc """
+  Forgets the sign-in read for instances `ids`, so their next entry reads it
+  again: a refresh by hand after `claude auth login` must not keep serving
+  the signed-out answer for the rest of its five minutes.
+  """
+  @spec forget_auth([String.t()]) :: :ok
+  def forget_auth(ids) do
+    {records, reading} = auth_cache()
+    drop = fn map -> Map.reject(map, fn {{id, _path, _env}, _} -> id in ids end) end
+    :persistent_term.put(@auth, {drop.(records), drop.(reading)})
+    :ok
   end
 
   # `path` is the instance's resolved claude executable, as every spawn runs it.

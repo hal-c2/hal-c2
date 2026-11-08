@@ -224,4 +224,76 @@ defmodule HalC2.ClaudeProviderTest do
     HalC2.Settings.watch(self())
     refute_received {:hal_c2_providers_changed, _}
   end
+
+  # A system variable set for one test, put back when it ends.
+  defp with_env(key, value) do
+    old = System.get_env(key)
+    if value, do: System.put_env(key, value), else: System.delete_env(key)
+
+    on_exit(fn ->
+      if old, do: System.put_env(key, old), else: System.delete_env(key)
+    end)
+  end
+
+  test "a nested value in Claude's settings env breaks no read of it", %{tmp_dir: dir} do
+    config = Path.join(dir, "claude-config")
+    File.mkdir_p!(config)
+
+    File.write!(
+      Path.join(config, "settings.json"),
+      ~s({"env": {"ANTHROPIC_API_KEY": {"nested": 1}, "ANTHROPIC_AUTH_TOKEN": "tok", ) <>
+        ~s("CLAUDE_CODE_ENTRYPOINT": {"also": "nested"}, "OTHER": [1, 2]}})
+    )
+
+    with_env("CLAUDE_CONFIG_DIR", config)
+    with_env("ANTHROPIC_API_KEY", nil)
+
+    assert Provider.effective_env()["ANTHROPIC_AUTH_TOKEN"] == "tok"
+    refute Map.has_key?(Provider.effective_env(), "ANTHROPIC_API_KEY")
+    assert Provider.entrypoint() == "hal-c2"
+  end
+
+  test "a missing Claude stays unwrapped, so the spawn reports it missing", %{tmp_dir: dir} do
+    with_env("CLAUDECODE", "1")
+    with_env("CLAUDE_CODE_SESSION_ID", nil)
+    with_env("CLAUDE_CODE_TOOL_USE_ID", nil)
+    with_env("CLAUDE_CODE_CHILD_SESSION", nil)
+    missing = Path.join(dir, "no-such-claude")
+
+    assert Provider.scrubbed_command([missing, "--version"]) == [missing, "--version"]
+
+    assert Provider.scrubbed_command(["python3", "-u", "x"]) == [
+             "env",
+             "-u",
+             "CLAUDECODE",
+             "python3",
+             "-u",
+             "x"
+           ]
+  end
+
+  test "a relative --add-dir without a session folder offers no skills", %{tmp_dir: dir} do
+    skill = Path.join([dir, "tools", ".claude", "skills", "leaked"])
+    File.mkdir_p!(skill)
+    File.write!(Path.join(skill, "SKILL.md"), "---\ndescription: Leaked\n---\nDo it.\n")
+    config = Path.join(dir, "config")
+    File.mkdir_p!(config)
+
+    HalC2.Settings.update(fn settings ->
+      put_in(settings, [Access.key("providers", %{}), "claudeAgent"], %{
+        "launchArgs" => "--add-dir tools"
+      })
+    end)
+
+    names = fn cwd ->
+      "claudeAgent"
+      |> HalC2.Claude.Skills.discover(cwd, config)
+      |> Enum.map(& &1["name"])
+    end
+
+    File.cd!(dir, fn ->
+      refute "leaked" in names.(nil)
+      assert "leaked" in names.(dir)
+    end)
+  end
 end

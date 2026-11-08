@@ -21,12 +21,15 @@ defmodule HalC2.Claude.Skills do
     overrides = skill_overrides(config_dir, cwd)
 
     # Folders the instance's launch arguments add (`--add-dir`) are in Claude's
-    # reach, and their `.claude/skills` are offered with the project's.
+    # reach, and their `.claude/skills` are offered with the project's. A
+    # relative folder is the session folder's, so without one it names nothing
+    # here (never the MC process's own folder).
     added =
       case Provider.launch_args(instance) do
         {:ok, args} ->
-          for dir <- Provider.add_dirs(args) do
-            root = if cwd, do: Path.absname(dir, cwd), else: dir
+          for dir <- Provider.add_dirs(args),
+              root = if(cwd, do: Path.absname(dir, cwd), else: Path.type(dir) == :absolute && dir),
+              root do
             {Path.join([root, ".claude", "skills"]), "project"}
           end
 
@@ -332,7 +335,7 @@ defmodule HalC2.Claude.Skills do
   @doc "Whether a decoded Claude settings map turns bypassing permissions off."
   @spec bypass_disabled_in?(term) :: boolean
   def bypass_disabled_in?(settings),
-    do: get_in(settings || %{}, ["permissions", "disableBypassPermissionsMode"]) == "disable"
+    do: match?(%{"permissions" => %{"disableBypassPermissionsMode" => "disable"}}, settings)
 
   # Reads only Claude's own settings files: fixed names under its config dir and
   # the project's root, never a path a client sent.

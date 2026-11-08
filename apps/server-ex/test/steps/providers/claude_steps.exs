@@ -837,17 +837,66 @@ defmodule HalC2.Steps.Providers.Claude do
     Map.put(context, :providers, providers)
   end
 
+  # The sign-in read lands in the background and re-announces the providers;
+  # wait for the announcement that carries `status`, and keep its list.
+  defp await_claude_auth(context, status) do
+    if get_in(claude(context.providers || []), ["auth", "status"]) == status do
+      context
+    else
+      id = System.unique_integer([:positive])
+      # A connection of its own: the default one already holds a config
+      # subscription, and a second on it gets no first frame.
+      name = "claude-auth-#{id}"
+
+      client =
+        Mc.sub(World.client(context, name), id, %{
+          "type" => "config",
+          "mc" => Atom.to_string(node())
+        })
+
+      # The first frame is the whole config; re-announcements carry only the
+      # providers (`config.providers`).
+      providers_of = fn
+        %{"t" => "config", "config" => %{"providers" => providers}} -> providers
+        %{"t" => "config.providers", "providers" => providers} -> providers
+        _ -> nil
+      end
+
+      settled = fn frame ->
+        frame["id"] == id and
+          get_in(claude(providers_of.(frame) || []), ["auth", "status"]) == status
+      end
+
+      {frame, client} = Mc.await(client, settled, 10_000)
+
+      context
+      |> World.put_client(name, client)
+      |> Map.put(:providers, providers_of.(frame))
+    end
+  end
+
   step "Claude is shown as not signed in, with {string} as the fix",
        %{args: [fix]} = context do
+    context = await_claude_auth(context, "unauthenticated")
     assert %{"status" => "unauthenticated"} = claude(context.providers)["auth"]
     assert claude(context.providers)["message"] =~ fix
     context
   end
 
   step "Claude is shown as signed in", context do
+    context = await_claude_auth(context, "authenticated")
     assert %{"status" => "authenticated"} = claude(context.providers)["auth"]
     assert claude(context.providers)["status"] == "ready"
     context
+  end
+
+  step "the user signs in with Claude and refreshes the providers", context do
+    World.put_os_env("FAKE_CLAUDE_AUTH_STATUS", ~s({"loggedIn":true,"authMethod":"claude.ai"}))
+
+    {result, context} =
+      World.call!(context, "server.refreshProviders", %{"instanceId" => "claudeAgent"})
+
+    Map.put(context, :providers, result["providers"])
   end
 
   step "the user is told to update Claude Code to use that model", context do
@@ -859,6 +908,7 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   step "the sign-in hint is still shown", context do
+    context = await_claude_auth(context, "unauthenticated")
     assert %{"status" => "unauthenticated"} = claude(context.providers)["auth"]
     assert claude(context.providers)["message"] =~ "claude auth login"
     context

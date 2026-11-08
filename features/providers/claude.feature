@@ -884,6 +884,14 @@ Feature: Claude
       | runs through Bedrock or Vertex                         | signed in                                          |
       | is too old to report its account                       | signed in                                          |
 
+  @mc
+  Scenario: Signing in and refreshing the providers shows Claude signed in
+    Given the Claude CLI is not signed in
+    When the user looks at Claude in the provider settings
+    Then Claude is shown as not signed in, with "claude auth login" as the fix
+    When the user signs in with Claude and refreshes the providers
+    Then Claude is shown as signed in
+
   @mc @priority-high
   Scenario: The HAL-C2 tools' credential is never in Claude's command line
     Given the project allows the HAL-C2 tools
