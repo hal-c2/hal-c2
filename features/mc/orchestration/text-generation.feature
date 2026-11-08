@@ -58,7 +58,7 @@ Feature: Generated titles, branch names and source control text
     Then titles are written by "gpt-6-luna" on "codex" with low reasoning effort
 
   # Upstream #21882: settings name the title model but cannot say how titles are written.
-  @backlog @mc
+  @mc
   Scenario: Thread title instructions are given to the title writer
     Given the project "demo" has the thread title instructions "Start with the ticket number"
     When a title is generated for "Fix ABC-12 login redirect loop"
@@ -692,7 +692,8 @@ Feature: Generated titles, branch names and source control text
       | "!!!"                        | "update"                 |
 
   # Upstream #15615. A suggested namespace such as fix/ is kept instead of nested under
-  # feature/; only a name with no namespace gets feature/.
+  # feature/; only a name with no namespace gets feature/. Only a short list of leading words
+  # (feat, fix, chore, docs, ...) is a namespace: a slash after any other word is part of the name.
   @mc @priority-low
   Scenario Outline: A generated branch keeps the namespace the writer chose
     Given the repository has the branches <existing>
@@ -705,6 +706,7 @@ Feature: Generated titles, branch names and source control text
       | "main"                   | "calendar-filter"            | "feature/calendar-filter"       |
       | "main" and "fix"         | "fix/calendar-filter"        | "fix-2/calendar-filter"         |
       | "main" and "fix/calendar-filter" | "fix/calendar-filter" | "fix/calendar-filter-2"         |
+      | "main"                   | "add login/logout page"      | "feature/add-login-logout-page" |
 
   @mc @plugin-pi
   Scenario: Pi can write titles and branch names

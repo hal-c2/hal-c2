@@ -707,12 +707,8 @@ defmodule HalC2.GitActions do
 
   # --- helpers --------------------------------------------------------------------
 
-  @doc "A `feature/…` branch name from free text."
-  def feature_branch_name(raw) do
-    fragment = TextGeneration.branch_fragment(raw)
-
-    if String.starts_with?(fragment, "feature/"), do: fragment, else: "feature/#{fragment}"
-  end
+  @doc "A branch name from free text, under `feature/` unless it names a namespace."
+  def feature_branch_name(raw), do: TextGeneration.namespaced_branch(raw)
 
   # A name no branch has, and no branch sits on the path of: a branch `fix` blocks every
   # `fix/…`, so the namespace becomes `fix-2/…` (the next number that is free).

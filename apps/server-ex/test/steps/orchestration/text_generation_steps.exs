@@ -109,6 +109,33 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     title(context, message)
   end
 
+  step "the project {string} has the thread title instructions {string}",
+       %{args: [_project, text]} = context do
+    World.update_settings(context, %{"threadTitleInstructions" => text})
+  end
+
+  step "the title writer is asked to follow {string}", %{args: [text]} = context do
+    assert prompt(context) =~ text
+    context
+  end
+
+  # Clearing the instructions takes exactly their section out of the request.
+  step "with no instructions set the title request is unchanged", context do
+    [%{"prompt" => with_text}] = calls(context)
+
+    assert [_, section] =
+             Regex.run(~r/(\n\nAdditional title instructions.*?)(?=\n\n|\z)/s, with_text)
+
+    context =
+      context
+      |> World.update_settings(%{"threadTitleInstructions" => ""})
+      |> title("Fix ABC-12 login redirect loop")
+
+    assert [_, %{"prompt" => without}] = calls(context)
+    assert without == String.replace(with_text, section, "")
+    context
+  end
+
   step "a title is generated", context do
     title(context, "Fix the login redirect loop")
   end

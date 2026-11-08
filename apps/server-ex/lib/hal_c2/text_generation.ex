@@ -139,7 +139,14 @@ defmodule HalC2.TextGeneration do
 
     with {:ok, selection} <- usable_selection(cwd, :text),
          linked = linked_context(cwd, message),
-         prompt = Prompts.thread_title(message, opts[:previous_title], linked, attachments),
+         prompt =
+           Prompts.thread_title(
+             message,
+             opts[:previous_title],
+             linked,
+             attachments,
+             settings(cwd)["threadTitleInstructions"]
+           ),
          # Titles need only the prompt, not the checkout's configuration.
          {:ok, out} <-
            run(selection, cwd, prompt, schema,
@@ -1239,10 +1246,23 @@ defmodule HalC2.TextGeneration do
     |> then(&if(&1 == "", do: "update", else: &1))
   end
 
-  # A name under the namespace the model chose (`fix/…`); `feature/` only when it chose none.
-  defp namespaced_branch(raw) do
-    fragment = branch_fragment(raw)
-    if String.contains?(fragment, "/"), do: fragment, else: "feature/" <> fragment
+  # Namespaces a writer may choose; any other leading word is part of the name.
+  @branch_namespaces ~w(feat feature fix bugfix hotfix chore docs refactor test perf ci build style release)
+
+  @doc """
+  A branch name under the namespace the writer chose (`fix/…`) when it is one of
+  `@branch_namespaces`; any other name goes under `feature/`, its slashes flattened
+  (`add login/logout page` is `feature/add-login-logout-page`).
+  """
+  def namespaced_branch(raw) do
+    {namespace, rest} =
+      case String.split(branch_fragment(raw), "/", parts: 2) do
+        [namespace, rest] when namespace in @branch_namespaces -> {namespace, rest}
+        [fragment] -> {"feature", fragment}
+        [first, rest] -> {"feature", first <> "/" <> rest}
+      end
+
+    namespace <> "/" <> (rest |> String.replace("/", "-") |> String.replace(~r/-+/, "-"))
   end
 
   # Prompts ask for under 40 characters; 120 only stops a runaway model.
