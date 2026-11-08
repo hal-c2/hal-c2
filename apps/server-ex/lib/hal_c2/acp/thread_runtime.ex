@@ -3556,23 +3556,18 @@ defmodule HalC2.Acp.ThreadRuntime do
     case acp_prompt(turn, prompt_capabilities(state), text) do
       {:ok, prompt} ->
         # Grok's prompt carries an id of its own, which its completion notice
-        # names when the prompt request itself is never answered. A prompt
-        # that replaces one still out (a steer taken as a new turn) retires
-        # the replaced id, so its late notice settles nothing.
+        # names when the prompt request itself is never answered. The
+        # previous turn's id is already retired: every turn ends through
+        # `end_turn/3`, which moves it to `grok_done`.
         {params, state} =
           if grok?(state) do
             id = "hal-c2-xai-prompt-#{state.grok_seq + 1}"
-
-            done =
-              if state.grok_prompt,
-                do: Enum.take(state.grok_done ++ [state.grok_prompt], -128),
-                else: state.grok_done
 
             {%{
                "sessionId" => state.session_id,
                "prompt" => prompt,
                "_meta" => %{"promptId" => id, "requestId" => id}
-             }, %{state | grok_prompt: id, grok_seq: state.grok_seq + 1, grok_done: done}}
+             }, %{state | grok_prompt: id, grok_seq: state.grok_seq + 1}}
           else
             {%{"sessionId" => state.session_id, "prompt" => prompt}, state}
           end
