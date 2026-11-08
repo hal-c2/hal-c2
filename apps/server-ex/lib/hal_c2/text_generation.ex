@@ -245,10 +245,32 @@ defmodule HalC2.TextGeneration do
 
   defp fallback(settings) do
     Enum.find_value(@fallback_order, fn driver ->
-      selection = %{"instanceId" => driver, "model" => @default_models[driver]}
+      selection =
+        custom_default(settings, driver) ||
+          %{"instanceId" => driver, "model" => @default_models[driver]}
+
       if usable?(settings, selection), do: selection
     end)
   end
+
+  # A Claude or Codex instance whose default thread model is one the user added
+  # (`customModels`) is written with that model and its options: the built-in default may
+  # be refused where only the custom one is allowed. A built-in default model is not used.
+  defp custom_default(settings, driver) when driver in ["claudeAgent", "codex"] do
+    with %{"instanceId" => ^driver, "model" => model} = default when is_binary(model) <-
+           settings["defaultModelSelection"],
+         custom =
+           get_in(settings, ["providerInstances", driver, "config", "customModels"]) ||
+             get_in(settings, ["providers", driver, "customModels"]),
+         true <-
+           Enum.any?(List.wrap(custom), &(&1 == model or (is_map(&1) and &1["slug"] == model))) do
+      Map.take(default, ["instanceId", "model", "options"])
+    else
+      _ -> nil
+    end
+  end
+
+  defp custom_default(_settings, _driver), do: nil
 
   @doc "The provider driver of a model selection or an instance id."
   def driver(%{"instanceId" => id}), do: driver(id)

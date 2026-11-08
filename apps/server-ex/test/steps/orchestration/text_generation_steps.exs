@@ -136,6 +136,50 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     context
   end
 
+  step "no usable text generation model is chosen", context do
+    context
+    |> install(["claudeAgent"])
+    |> World.update_settings(%{"textGenerationModelSelection" => selection("codex", "chosen")})
+  end
+
+  step "the default thread model is {string}, a custom model of the Claude instance text falls back to",
+       %{args: [model]} = context do
+    World.update_settings(context, %{
+      "defaultModelSelection" => %{
+        "instanceId" => "claudeAgent",
+        "model" => model,
+        "options" => [%{"id" => "effort", "value" => "high"}]
+      },
+      "providers" => %{"claudeAgent" => %{"enabled" => true, "customModels" => [model]}}
+    })
+  end
+
+  step "{string} writes it with {string} and that model's options",
+       %{args: [provider, model]} = context do
+    assert {:ok, _} = context.reply, "text generation failed: #{inspect(context.reply)}"
+    assert [call] = calls(context)
+    assert writer(call) == provider
+    assert after_flag(call, "--model") == model
+    assert after_flag(call, "--effort") == "high"
+    context
+  end
+
+  step "when the default thread model is a built-in one the fallback still uses {string}",
+       %{args: [model]} = context do
+    context =
+      World.update_settings(context, %{
+        "defaultModelSelection" => %{
+          "instanceId" => "claudeAgent",
+          "model" => "claude-sonnet-5-5"
+        }
+      })
+
+    context = commit(context, root(context))
+    assert {:ok, _} = context.reply
+    assert after_flag(List.last(calls(context)), "--model") == model
+    context
+  end
+
   step "a title is generated", context do
     title(context, "Fix the login redirect loop")
   end

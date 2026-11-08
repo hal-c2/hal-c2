@@ -168,7 +168,7 @@ Feature: Generated titles, branch names and source control text
     When a title is generated
     Then "claudeAgent" writes it with "claude-haiku-4-5"
 
-  @backlog @mc
+  @mc
   Scenario: The fallback uses the thread's custom model where the built-in default could be refused
     Given no usable text generation model is chosen
     And the default thread model is "router/claude-guarded", a custom model of the Claude instance text falls back to
