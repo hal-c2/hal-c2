@@ -53,6 +53,43 @@ defmodule HalC2.SubprocessPropTest do
     end
   end
 
+  # The durable reader's offset (where a resumed reader starts) after
+  # feeding these reads: it must sit at the start of the unfinished line,
+  # even while that line is being skipped as oversized, never inside it.
+  property "the durable offset stays at the unfinished line's start, however reads are cut",
+    numtests: HalC2.Prop.numtests(200),
+    max_size: 30 do
+    forall lines <- list(stdout_line()) do
+      pieces = Enum.intersperse(lines, ["\n"]) |> List.flatten()
+
+      fed =
+        lines
+        |> Enum.map(&Enum.reject(&1, fn p -> p == :cut end))
+        |> Enum.map_join("\n", &Enum.join/1)
+
+      # Byte index just after the last newline fed, or 0: the current line's start.
+      expected =
+        case :binary.matches(fed, "\n") do
+          [] -> 0
+          matches -> matches |> List.last() |> elem(0) |> Kernel.+(1)
+        end
+
+      {offset, _partial} =
+        pieces
+        |> chunks()
+        |> Enum.reduce({0, ""}, fn chunk, {offset, partial} ->
+          {_lines, rest} = Subprocess.split_lines(partial, chunk, @line_limit)
+          {offset + rest_bytes(partial) + byte_size(chunk) - rest_bytes(rest), rest}
+        end)
+
+      (offset == expected)
+      |> when_fail(IO.puts("expected offset #{expected}\nreceived #{offset}"))
+    end
+  end
+
+  defp rest_bytes({:skip, bytes}), do: bytes
+  defp rest_bytes(partial), do: byte_size(partial)
+
   # What a stdout reader sends: each read's whole lines that fit the limit.
   defp feed_stdout(chunks) do
     {lines, _partial} =

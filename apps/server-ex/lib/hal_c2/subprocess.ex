@@ -462,8 +462,11 @@ defmodule HalC2.Subprocess do
     end
   end
 
-  # The bytes an unsplit rest holds; a dropped line's rest (`:skip`) holds none.
-  defp line_bytes(:skip), do: 0
+  # The bytes an unsplit rest holds, counting a dropped line's so far: with
+  # them in the offset formula, the offset stays at that line's start while
+  # it is skipped, so a reader resumed from a saved offset re-reads (and
+  # re-drops) the whole line instead of handing up its tail.
+  defp line_bytes({:skip, bytes}), do: bytes
   defp line_bytes(partial), do: byte_size(partial)
 
   @doc false
@@ -597,9 +600,10 @@ defmodule HalC2.Subprocess do
   @doc """
   Splits `partial <> data` into whole lines: `{lines, rest}`. A line longer
   than `max` bytes is dropped, and so is the rest of it as it arrives (`rest`
-  is then `:skip` until the next newline), so one oversized message neither
-  reaches the owner nor piles up in the reader. Lines are copied so a
-  retained line never pins the whole read chunk.
+  is then `{:skip, bytes}` — how much of it has been seen — until the next
+  newline), so one oversized message neither reaches the owner nor piles up
+  in the reader. Lines are copied so a retained line never pins the whole
+  read chunk.
   """
   def split_lines(partial, data, max \\ @max_line) do
     case :binary.split(data, "\n", [:global]) do
@@ -608,7 +612,7 @@ defmodule HalC2.Subprocess do
 
       [head | parts] ->
         {middle, [tail]} = Enum.split(parts, -1)
-        first = if partial == :skip, do: [], else: [partial <> head]
+        first = if match?({:skip, _}, partial), do: [], else: [partial <> head]
 
         lines =
           for line <- first ++ middle,
@@ -620,11 +624,10 @@ defmodule HalC2.Subprocess do
     end
   end
 
-  defp grow_line(:skip, _data, _max), do: :skip
+  defp grow_line({:skip, bytes}, data, _max), do: {:skip, bytes + byte_size(data)}
 
   defp grow_line(partial, data, max) do
-    if byte_size(partial) + byte_size(data) > max,
-      do: :skip,
-      else: :binary.copy(partial <> data)
+    seen = byte_size(partial) + byte_size(data)
+    if seen > max, do: {:skip, seen}, else: :binary.copy(partial <> data)
   end
 end
