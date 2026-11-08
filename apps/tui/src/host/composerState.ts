@@ -909,7 +909,7 @@ export function createComposer(options: ComposerOptions): Composer {
       visibleAttachments: attachments.slice(0, visibleCount),
       moreAttachments: hiddenCount > 0 ? `+${hiddenCount} more` : "",
       footer: {
-        model: footerChip("model", model?.model ?? "—", { muted: !model, dropdown: true }),
+        model: footerChip("model", modelButtonLabel(model), { muted: !model, dropdown: true }),
         effort: footerChip("effort", effort ?? "—", { muted: !effort, dropdown: true }),
         access: footerChip("^O", runtimeModeLabel(runtimeMode), { dropdown: true }),
         mode: footerChip("^B", interactionModeLabel(interactionMode), {
@@ -917,7 +917,7 @@ export function createComposer(options: ComposerOptions): Composer {
         }),
         compactModel: styled(
           chunk("model ", { fg: palette.dim }),
-          chunk(clip(model?.model ?? "—", Math.max(1, footerWidth - (showOptions ? 18 : 8))), {
+          chunk(clip(modelButtonLabel(model), Math.max(1, footerWidth - (showOptions ? 18 : 8))), {
             fg: model ? palette.text : palette.dim,
           }),
           chunk(" ▾", { fg: palette.dim }),
@@ -941,6 +941,15 @@ export function createComposer(options: ComposerOptions): Composer {
       limitLines,
       chromeRows,
     };
+  };
+
+  /** The name the model control shows: the one the user would say, else the slug. */
+  const modelButtonLabel = (model: ModelSelection | null): string => {
+    if (!model) return "—";
+    const option = modelOptions.find(
+      (candidate) => candidate.instanceId === model.instanceId && candidate.model === model.model,
+    );
+    return option?.buttonLabel ?? option?.label ?? model.model;
   };
 
   /** Why the selected model's provider cannot run a turn right now, and how to fix it. */

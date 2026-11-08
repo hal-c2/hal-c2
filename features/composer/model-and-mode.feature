@@ -79,6 +79,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #25511: a second instance showed the default instance's draft model, whose slug its
   # own catalog lacks, so its effort control vanished and sending asked for a model it had disabled.
+  # The TUI's picker chooses an instance and its model together, so it cannot switch only the instance.
   @shared @backlog-mobile @backlog-tui
   Scenario: A second instance with no draft model of its own uses its own default
     Given the draft picked "Kimi K3.1 Pro" on the default OpenCode instance
@@ -93,6 +94,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #24205: the model button repeated what the provider icon says ("Claude Opus 5.5" beside
   # the Claude icon), and aggregator catalogs added a vendor ("NVIDIA: Nemotron 3 Super").
+  # The TUI's model control reads the short name and its picker the full one, but it has no tooltips.
   @shared @backlog-mobile @backlog-tui
   Scenario Outline: The model button shows the name the user would say
     When the user chooses the <provider> model "<full>"
@@ -110,7 +112,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
   # here said "5.5", which upstream never did.
 
   # Upstream #24205
-  @shared @backlog-mobile @backlog-tui @priority-low
+  @shared @backlog-mobile @priority-low
   Scenario: A short name the model manifest gives wins over the worked-out one
     Given the model manifest names "Claude Opus 5.5" "Opus" for short
     When the user chooses "Claude Opus 5.5"

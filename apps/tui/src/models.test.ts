@@ -27,7 +27,7 @@ const provider = (
   }) as unknown as ServerProvider;
 
 describe("flattenModelOptions", () => {
-  it("Given providers with models, then it flattens them with labels", () => {
+  it("Given providers with models, then it flattens them with their full and short names", () => {
     const options = flattenModelOptions([
       provider("codex", "Codex", [{ slug: "gpt-5", name: "GPT-5", shortName: "5" }]),
       provider("claude", "Claude", [{ slug: "opus", name: "Opus 4" }]),
@@ -36,7 +36,8 @@ describe("flattenModelOptions", () => {
       {
         instanceId: "codex",
         model: "gpt-5",
-        label: "5",
+        label: "GPT-5",
+        buttonLabel: "5",
         providerLabel: "Codex",
         capabilities: null,
       },
@@ -44,6 +45,7 @@ describe("flattenModelOptions", () => {
         instanceId: "claude",
         model: "opus",
         label: "Opus 4",
+        buttonLabel: "Opus 4",
         providerLabel: "Claude",
         capabilities: null,
       },

@@ -34,7 +34,7 @@ Feature: Composer controls and new-thread drafts in the terminal
   Scenario: The footer reads like the OpenTUI client
     Given the terminal is 140 columns wide
     And the open thread runs in Supervised
-    Then the composer footer reads "model gpt-5 ▾ │ effort medium ▾ │ ^O Supervised ▾ │ ^B Build" with "▸ Send ⏎" at the right
+    Then the composer footer reads "model GPT-5 ▾ │ effort medium ▾ │ ^O Supervised ▾ │ ^B Build" with "▸ Send ⏎" at the right
     And the footer's separators are faint, its captions dim and its values in the text colour
 
   @tui
@@ -64,7 +64,7 @@ Feature: Composer controls and new-thread drafts in the terminal
   @tui
   Scenario: A compact composer puts the primary action under the model
     Given the conversation column is narrow
-    Then the composer footer's first row reads "model gpt-5 ▾" with "^K options" at the right
+    Then the composer footer's first row reads "model GPT-5 ▾" with "^K options" at the right
     And its second row has "▸ Send ⏎" at the right
 
   @tui

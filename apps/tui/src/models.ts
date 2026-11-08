@@ -13,6 +13,8 @@ import {
   getProviderOptionDescriptors,
 } from "@hal-c2/shared/model";
 
+import { modelButtonName, modelFullName } from "./modelNames.ts";
+
 // Flatten the server config's providers into a flat, selectable model list for the
 // picker, at the level the TUI needs: provider + model slug + display labels. Pure.
 
@@ -20,7 +22,10 @@ export interface ModelOption {
   readonly instanceId: ServerProvider["instanceId"];
   /** The provider-specific model slug sent back as the selection. */
   readonly model: string;
+  /** The full name, as the picker lists it. */
   readonly label: string;
+  /** The name the user would say, as the composer's model control shows it. */
+  readonly buttonLabel?: string;
   readonly providerLabel: string;
   readonly capabilities: ModelCapabilities | null;
   /** The provider cannot change models once a conversation has started. */
@@ -36,7 +41,8 @@ export function flattenModelOptions(providers: ReadonlyArray<ServerProvider>): M
       options.push({
         instanceId: provider.instanceId,
         model: model.slug,
-        label: model.shortName ?? model.name ?? model.slug,
+        label: modelFullName(model),
+        buttonLabel: modelButtonName(model, provider.driver),
         providerLabel,
         capabilities: model.capabilities,
         ...(provider.requiresNewThreadForModelChange === true

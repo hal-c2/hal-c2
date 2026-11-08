@@ -1,8 +1,9 @@
 // What the composer's footer names (composer/model-and-mode.feature): the
-// permissions only when they differ from the default (upstream #25869).
+// permissions only when they differ from the default (upstream #25869), and
+// the model as the user would say it (upstream #24205).
 import { expect } from "bun:test";
 
-import { DEFAULT_SERVER_SETTINGS, type RuntimeMode } from "@hal-c2/contracts";
+import { DEFAULT_SERVER_SETTINGS, type RuntimeMode, type ServerProvider } from "@hal-c2/contracts";
 
 import { step } from "../../steps.ts";
 import { RUNTIME_MODE_META } from "../../../src/controls.ts";
@@ -102,3 +103,73 @@ step("the user can pick other permissions for the thread", (ctx: World) => {
     expect.arrayContaining(["Supervised", "Full access"]),
   );
 });
+
+// --- The model's names (upstream #24205) --------------------------------------
+
+type NamingWorld = ControlsWorld & { shortNames?: Record<string, string> };
+
+/** One model per provider, named as its catalog names it. */
+const namedProviders = (shortNames: Record<string, string> = {}) =>
+  (
+    [
+      ["claude", "claudeAgent", "Claude", "claude-opus-5-5", "Claude Opus 5.5"],
+      ["codex", "codex", "Codex", "gpt-5.5", "GPT-5.5"],
+      ["opencode", "opencode", "OpenCode", "nvidia/nemotron-3-super", "NVIDIA: Nemotron 3 Super"],
+    ] as const
+  ).map(([instanceId, driver, displayName, slug, name]) => ({
+    instanceId,
+    driver,
+    displayName,
+    enabled: true,
+    models: [
+      {
+        slug,
+        name,
+        ...(shortNames[name] ? { shortName: shortNames[name] } : {}),
+        isCustom: false,
+        capabilities: null,
+      },
+    ],
+  })) as unknown as ReadonlyArray<ServerProvider>;
+
+async function chooseNamedModel(ctx: NamingWorld, name: string): Promise<void> {
+  await restartClient(ctx, { providers: namedProviders(ctx.shortNames) });
+  await pressKey(ctx, "Ctrl+Shift+M");
+  await settle(ctx);
+  expect(select(ctx)).toMatchObject({ open: true, kind: "model", status: "ready" });
+  await chooseInPicker(ctx, name);
+}
+
+step(
+  "the model manifest names {string} {string} for short",
+  (ctx: NamingWorld, name: string, short: string) => {
+    ctx.shortNames = { ...ctx.shortNames, [name]: short };
+  },
+);
+
+step(
+  /^the user chooses the (?:Claude|Codex|OpenCode) model "([^"]+)"$/,
+  (ctx: NamingWorld, name: string) => chooseNamedModel(ctx, name),
+);
+
+step(/^the user chooses "(Claude [^"]+)"$/, (ctx: NamingWorld, name: string) =>
+  chooseNamedModel(ctx, name),
+);
+
+step("the model button reads {string}", async (ctx: World, short: string) => {
+  await settle(ctx);
+  expect(shownText(findObject(ctx, "composerModel").get("text"))).toBe(`model ${short} ▾`);
+});
+
+step(
+  "the full name {string} is shown in its tooltip and in the model picker",
+  async (ctx: World, full: string) => {
+    await pressKey(ctx, "Ctrl+Shift+M");
+    await settle(ctx);
+    expect(select(ctx).options.map((option) => option.label)).toContain(full);
+    await pressKey(ctx, "Esc");
+    throw new Error(
+      "The terminal client has no tooltips; the model picker, which the model control opens, lists the full name.",
+    );
+  },
+);

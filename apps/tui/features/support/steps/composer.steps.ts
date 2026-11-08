@@ -1006,7 +1006,7 @@ step(
       const at = await textAt(ctx, `${caption} `);
       expectColour((await cellAt(ctx, at.x, at.y)).span.fg, THEME.dim);
     }
-    for (const value of ["gpt-5", "medium", composer(ctx).runtimeModeLabel, "Build"]) {
+    for (const value of ["GPT-5", "medium", composer(ctx).runtimeModeLabel, "Build"]) {
       const at = await textAt(ctx, value);
       expectColour((await cellAt(ctx, at.x, at.y)).span.fg, THEME.text);
     }
