@@ -189,6 +189,8 @@ defmodule HalC2.TurnsProofTest do
         "saves state to a file for a later boot; no run changes",
       "HalC2.Codex.ThreadRuntime handle_info {:leftover_deadline, _}" =>
         "fails a follow-up held behind a turn left over from one the store could not record (#{@unrecorded})",
+      "HalC2.Codex.ThreadRuntime handle_info {:leftover_ended, _, _}" =>
+        "records the end of a turn left over from one the store could not record (#{@unrecorded})",
       "HalC2.Orchestration.Recovery.start_link/0" => "runs run/0 at boot, as restart does",
       "HalC2.Orchestration.Recovery.stopping?/0" =>
         "a runtime stopping with the MC leaves its turn to Recovery, as restart's wipe does",

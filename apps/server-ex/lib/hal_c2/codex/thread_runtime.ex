@@ -836,6 +836,11 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   def handle_info({:leftover_deadline, _hold}, state), do: {:noreply, state}
 
+  def handle_info({:leftover_ended, id, status}, state) do
+    record_leftover_end(state, id, status)
+    {:noreply, state}
+  end
+
   # A grace whose run already ended (Stop, or the app-server exited) has nothing
   # left to end.
   def handle_info({:goal_grace, hold}, %{turn: %{}, goal_hold: hold} = state) when hold != nil,
@@ -1058,11 +1063,20 @@ defmodule HalC2.Codex.ThreadRuntime do
   # Codex may have started the held turn when the store refuses its start: replayed dry
   # (`Unrecorded`), it would start another. The runtime stops instead, Codex's turn with
   # it, as a `start_turn` call the store refuses does, and TurnWatch, which holds the
-  # run's claim (`hold_for_leftover/1`), fails the run.
-  defp begin_held(state) do
+  # run's claim (`hold_for_leftover/1`), fails the run, and records the left-over turn's
+  # end the store refused with it.
+  defp begin_held(state, leftover) do
     turn_begun(begin_turn(state, state.turn))
   rescue
-    error in HalC2.Streams.Unrecorded -> exit({:unrecorded_start, error.message})
+    error in HalC2.Streams.Unrecorded ->
+      TurnWatch.unrecorded(state.thread_id, state.turn.ids.run, %{
+        at: Entities.now(),
+        failure: "The turn could not be saved: #{error.message}",
+        provider_turn: nil,
+        leftover: leftover
+      })
+
+      exit({:unrecorded_start, error.message})
   end
 
   defp begin_turn({:leftover, message, state}, _turn), do: {:error, {:leftover, message}, state}
@@ -2112,10 +2126,11 @@ defmodule HalC2.Codex.ThreadRuntime do
        ) do
     status = if turn["status"] in ["completed", "failed"], do: turn["status"], else: "interrupted"
     held? = Map.has_key?(state.leftover, :hold)
+    leftover = {state.leftover[:provider_turn], status}
     state = leftover_ended(state, status)
 
     # The turn held for it (`stop_leftover/1`) starts now.
-    if held? and state.turn, do: begin_held(state), else: state
+    if held? and state.turn, do: begin_held(state, leftover), else: state
   end
 
   # Codex's goal for this thread, and the turns Codex starts for it (see "Codex
@@ -2609,19 +2624,31 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp leftover_ended(%{leftover: %{provider_turn: id}} = state, status) do
-    if is_binary(id) do
-      try do
-        HalC2.Orchestration.TurnWriter.provider_turn_ended(state.thread_id, id, status)
-      rescue
-        error in HalC2.Streams.Unrecorded ->
-          Logger.warning("codex left-over turn #{id} ended unrecorded: #{error.message}")
-      end
-    end
-
+    if is_binary(id), do: record_leftover_end(state, id, status)
     %{state | leftover: nil}
   end
 
   defp leftover_ended(state, _status), do: state
+
+  # Nothing else ends the left-over turn's provider turn, its run long over: an end the
+  # store refuses, or that a turn it failed drops (`Unrecorded`), is tried again until
+  # it records.
+  defp record_leftover_end(state, id, status) do
+    recorded? =
+      not Map.has_key?(state, :unrecorded) and
+        try do
+          HalC2.Orchestration.TurnWriter.provider_turn_ended(state.thread_id, id, status)
+        rescue
+          error in HalC2.Streams.Unrecorded ->
+            Logger.warning("codex left-over turn #{id} ended unrecorded: #{error.message}")
+            false
+        end
+
+    unless recorded? do
+      retry = Application.get_env(:hal_c2, :unrecorded_retry_ms, 1_000)
+      Process.send_after(self(), {:leftover_ended, id, status}, retry)
+    end
+  end
 
   # `stream` is `:ended` when the turn ends because its app-server (and with
   # it the event stream) is gone, not because Codex reported the turn's end.

@@ -949,6 +949,9 @@ defmodule HalC2.Orchestration.TurnWriter do
   whichever run (a subagent it resumed, background work an earlier turn left), and
   leaves the run's background work it did not end (`@background_work`) running, as
   its recorded end would have. Without it, everything the run left open ends.
+
+  `leftover:`, `{id, status}`, is how a provider turn an earlier run left running
+  ended, which the runtime heard and the store refused (`provider_turn_ended/3`).
   """
   def abandon(thread_id, run_id, status, failure, opts \\ []) do
     at = opts[:at] || Entities.now()
@@ -972,6 +975,7 @@ defmodule HalC2.Orchestration.TurnWriter do
               baseline_changes(stream, baselines) ++
                 checkpoint_changes(stream, turn, checkpoint, at) ++
                 left_open(stream, run, status, at, ended) ++
+                leftover_ended(stream, opts[:leftover], at) ++
                 ended(
                   stream,
                   state.turn.ids,
@@ -1003,6 +1007,17 @@ defmodule HalC2.Orchestration.TurnWriter do
     end
   end
 
+  defp leftover_ended(stream, {id, status}, at) when is_binary(id) do
+    if provider_turn_running?(stream, id) do
+      done = %{"status" => status, "completedAt" => at}
+      [Orchestration.upsert(stream, "provider-turn", id, &Map.merge(&1, done))]
+    else
+      []
+    end
+  end
+
+  defp leftover_ended(_stream, _leftover, _at), do: []
+
   @doc """
   Records how provider turn `id` of `thread_id` ended after its run did: one the
   provider kept running when asked to stop (still `"running"` here), and that it stopped
@@ -1010,14 +1025,7 @@ defmodule HalC2.Orchestration.TurnWriter do
   """
   def provider_turn_ended(thread_id, id, status) do
     HalC2.Streams.transact(thread_id, :thread, fn stream ->
-      case StreamState.get(stream, "provider-turn")[id] do
-        %{"status" => "running"} ->
-          done = %{"status" => status, "completedAt" => Entities.now()}
-          {[Orchestration.upsert(stream, "provider-turn", id, &Map.merge(&1, done))], :ok}
-
-        _ ->
-          {[], :ok}
-      end
+      {leftover_ended(stream, {id, status}, Entities.now()), :ok}
     end)
   end
 

@@ -59,6 +59,7 @@ defmodule HalC2.UnrecordedTurnsProofTest do
       "HalC2.Codex.ThreadRuntime handle_call {:interrupt, _, _}" => "interrupt-driven",
       "HalC2.Codex.ThreadRuntime handle_info {:interrupt_deadline, _}" => "deadline",
       "HalC2.Codex.ThreadRuntime handle_info {:leftover_deadline, _}" => "held-deadline",
+      "HalC2.Codex.ThreadRuntime handle_info {:leftover_ended, _, _}" => "leftover-retry",
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:notification, _, _}}" =>
         ~w(finish hand-over leftover-end held-start ignored-end unrecorded goal-hold),
       # A Codex goal's grace ends its run as Codex's turn end does; a stale one changes
@@ -67,7 +68,7 @@ defmodule HalC2.UnrecordedTurnsProofTest do
         ~w(finish hand-over unrecorded ignored-end goal-end),
       # Every message, the wrapper's clause included: one it does not know is ignored.
       "HalC2.Codex.ThreadRuntime handle_info _" =>
-        ~w(unrecorded hand-over ignored-end held-start held-deadline),
+        ~w(unrecorded hand-over ignored-end held-start held-deadline leftover-retry),
       "HalC2.Codex.ThreadRuntime handle_call _" => ~w(take hold refuse-start interrupt-driven)
     },
     abstracts: %{
@@ -125,7 +126,9 @@ defmodule HalC2.UnrecordedTurnsProofTest do
         "A run failure that could not be recorded is recorded once storage recovers",
         "A follow-up first stops a provider turn an earlier failed run left running",
         "A run whose events cannot be recorded keeps how its provider turn ended",
-        "A run whose events cannot be recorded leaves the next run to record as usual"
+        "A run whose events cannot be recorded leaves the next run to record as usual",
+        "A left-over provider turn that ends while the MC cannot record it reads as ended once storage recovers",
+        "A follow-up held for a left-over turn that ends while the MC cannot record it fails, the turn ended"
       ]
     }
 
@@ -175,6 +178,10 @@ defmodule HalC2.UnrecordedTurnsProofTest do
       refute_reachable(proof, unquote(init), "orphan", depth: @depth)
     end
 
+    test "a provider turn that ended reads as ended, from #{init}", %{proof: proof} do
+      refute_reachable(proof, unquote(init), "stale", depth: @depth)
+    end
+
     test "nothing is left waiting, from #{init}", %{proof: proof} do
       refute_deadlock(proof, unquote(init), "quiet", besides: @faults)
     end
@@ -203,7 +210,8 @@ defmodule HalC2.UnrecordedTurnsProofTest do
         {"noActiveCheck", "twice", "abandon/5 leaving a run that already ended"},
         {"keepMark", "misfiled", "the failure going with its turn when a call ends it"},
         {"goalStop goals", "overwritten", "a dry goal hold handing over its completed turn"},
-        {"reend goals", "overwritten", "the run's end leaving a provider turn that ended"}
+        {"reend goals", "overwritten", "the run's end leaving a provider turn that ended"},
+        {"noLeftoverRetry", "stale", "a left-over turn's refused end being tried again"}
       ] do
     [part | with] = String.split(part)
 

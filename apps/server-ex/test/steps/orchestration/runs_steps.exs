@@ -2300,6 +2300,52 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
+  # Codex ends the turn it kept running past the stop, with nothing held for it, while
+  # the store refuses the thread's writes.
+  step "Codex ends the left-over turn while the MC cannot record it", context do
+    {pid, runtime} = World.codex_runtime(context, context.thread)
+    unrecordable(context)
+
+    context
+    |> notify("turn/completed", leftover_end(runtime))
+    |> tap(fn _ -> :sys.get_state(pid) end)
+  end
+
+  # Codex keeps the left-over turn past the follow-up's stop, so the follow-up is held
+  # for its end (`stop_leftover/1`), which comes while the store refuses the writes.
+  step "the user sends {string} another message and the left-over turn ends while the MC cannot record it",
+       %{args: [thread]} = context do
+    World.put_app_env(:codex_interrupt_deadline_ms, 10_000)
+    watch = Process.whereis(HalC2.Orchestration.TurnWatch)
+    :erlang.trace(watch, true, [:receive])
+    context = World.dispatch_message(context, thread, "Next")
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+
+    assert_receive {:trace, ^watch, :receive, {:"$gen_call", {pid, _}, {:claim, _, _, held}}},
+                   5_000
+
+    :erlang.trace(watch, false, [:receive])
+    unrecordable(context)
+    context = notify(context, "turn/completed", leftover_end(:sys.get_state(pid)))
+    assert {:unrecorded, _} = HalC2.Orchestration.TurnWatch.attempted(held)
+    context
+  end
+
+  step "the new run fails because it could not be saved", context do
+    World.await_runs(context, context.thread, ["failed", "failed"])
+    assert [_, %{"failure" => failure}] = World.runs(context, context.thread)
+    assert failure =~ "The turn could not be saved"
+    context
+  end
+
+  step "the left-over provider turn reads as interrupted", context do
+    World.await_state(context, context.thread, fn state ->
+      match?(%{"status" => "interrupted"}, state.entities["provider-turn"][context.leftover])
+    end)
+
+    context
+  end
+
   step "the left-over provider turn still reads as running", context do
     assert %{"status" => "running"} = provider_turn(context, context.leftover)
     context
@@ -2623,6 +2669,17 @@ defmodule HalC2.Steps.Orchestration.Runs do
 
     context
   end
+
+  # The store refuses the thread's writes until "the database recovers".
+  defp unrecordable(context) do
+    World.put_app_env(:unrecorded_retry_ms, 20)
+    HalC2.Test.Machines.refuse_changes(World.thread_id(context, context.thread))
+    ExUnit.Callbacks.on_exit(fn -> HalC2.Test.Machines.refuse_changes(nil) end)
+  end
+
+  # Codex's end of the turn left over, as it reports a turn it stopped.
+  defp leftover_end(%{leftover: %{turn: turn, thread: thread}}),
+    do: %{"threadId" => thread, "turn" => %{"id" => turn, "status" => "interrupted"}}
 
   defp refuse(context, n) do
     left = :counters.new(1, [])

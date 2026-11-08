@@ -297,6 +297,25 @@ Feature: Runs and turns
     Then the new run fails because the previous turn is still running
     And the left-over provider turn still reads as running
 
+  # hal-c2#1398: Codex ending a turn it kept running past the stop while the store refused
+  # the thread's writes left that provider turn reading as running, its run long failed.
+  @mc
+  Scenario: A left-over provider turn that ends while the MC cannot record it reads as ended once storage recovers
+    Given an earlier run of "t1" failed while its provider turn kept running
+    When Codex ends the left-over turn while the MC cannot record it
+    And the database recovers
+    Then the left-over provider turn reads as interrupted
+
+  # hal-c2#1398: the follow-up held for that turn's end could not start either, and its
+  # runtime stopped with the left-over turn's end still unrecorded.
+  @mc
+  Scenario: A follow-up held for a left-over turn that ends while the MC cannot record it fails, the turn ended
+    Given an earlier run of "t1" failed while its provider turn kept running
+    When the user sends "t1" another message and the left-over turn ends while the MC cannot record it
+    And the database recovers
+    Then the new run fails because it could not be saved
+    And the left-over provider turn reads as interrupted
+
   # hal-c2#1398: while the follow-up waited for the left-over turn to end, what Codex
   # reported of that turn was recorded as the follow-up's, and its approvals asked for it.
   @mc
