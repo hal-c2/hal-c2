@@ -311,31 +311,6 @@ defmodule HalC2.OpenShellInstallPropTest do
   end
 
   # A gateway release whose binary is a shell script (see the moduledoc).
-  defp release(home, control, version) do
-    script = """
-    #!/bin/sh
-    control="#{control}"
-    case "$1" in
-      generate-certs)
-        out="$3"
-        mkdir -p "$out/jwt"
-        cp -R "$control/pki/." "$out/"
-        echo key > "$out/ca.key"
-        echo s > "$out/jwt/signing.pem"; echo p > "$out/jwt/public.pem"; echo k > "$out/jwt/kid"
-        exit 0 ;;
-      config)
-        exit "$(cat "$control/preflight" 2>/dev/null || echo 0)" ;;
-    esac
-    exit 0
-    """
-
-    dir = Path.join(home, "archives")
-    File.mkdir_p!(dir)
-    archive = Path.join(dir, "gateway-#{version}.tar.gz")
-    :ok = :erl_tar.create(to_charlist(archive), [{~c"openshell-gateway", script}], [:compressed])
-    sha = :crypto.hash(:sha256, File.read!(archive)) |> Base.encode16(case: :lower)
-
-    {%{name: "openshell-gateway-#{version}.tar.gz", url: "unused", sha256: sha, version: version},
-     archive}
-  end
+  defp release(home, control, version),
+    do: FakeOpenShell.release(control, Path.join(home, "archives"), version)
 end

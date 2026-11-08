@@ -88,6 +88,54 @@ defmodule HalC2.Test.FakeOpenShell do
     end)
   end
 
+  @doc """
+  A gateway release `{release, archive}` for `HalC2.OpenShell.Install.install/1`'s
+  `:release` and `:archive`, whose binary is a shell script. `generate-certs` copies
+  the certificates in `control/pki` (issue them with `stranger/1`) and adds a CA key
+  and the token key; `config preflight` exits with the number in
+  `control/preflight` (0 if there is none). Anything else prints its environment
+  and arguments. Every call is appended to `control/calls`.
+  """
+  def release(control, archives, version) do
+    script = """
+    #!/bin/sh
+    control="#{control}"
+    echo "$*" >> "$control/calls"
+    case "$1" in
+      generate-certs)
+        out="$3"
+        mkdir -p "$out/jwt"
+        cp -R "$control/pki/." "$out/"
+        echo key > "$out/ca.key"
+        echo s > "$out/jwt/signing.pem"; echo p > "$out/jwt/public.pem"; echo k > "$out/jwt/kid"
+        exit 0 ;;
+      config)
+        echo "preflight checked $*"
+        exit "$(cat "$control/preflight" 2>/dev/null || echo 0)" ;;
+    esac
+    env | sort
+    echo "args: $*"
+    """
+
+    File.mkdir_p!(control)
+    archive = tar(archives, "gateway-#{version}.tar.gz", [{~c"openshell-gateway", script}])
+
+    {%{
+       name: "openshell-gateway-#{version}.tar.gz",
+       url: "unused",
+       sha256: :crypto.hash(:sha256, File.read!(archive)) |> Base.encode16(case: :lower),
+       version: version
+     }, archive}
+  end
+
+  @doc "A gzipped tar at `dir/name` holding `entries` (`{charlist name, contents}`)."
+  def tar(dir, name, entries) do
+    File.mkdir_p!(dir)
+    path = Path.join(dir, name)
+    :ok = :erl_tar.create(to_charlist(path), entries, [:compressed])
+    path
+  end
+
   @doc "Puts a sandbox in the fake's store as if someone had created it."
   def put_sandbox(%{store: store}, name, labels) do
     Agent.update(store, &put_in(&1, [:sandboxes, name], sandbox(name, labels)))

@@ -48,47 +48,10 @@ defmodule HalC2.OpenShell.InstallTest do
     %{log: log, control: control, archives: Path.join(dir, "archives")}
   end
 
-  # A gateway release whose binary is a shell script. `generate-certs` copies the
-  # certificates in `control/pki` and adds a CA key and the token key;
-  # `config preflight` exits with the number in `control/preflight` (0 if there is
-  # none). Anything else prints its environment and arguments.
-  defp release(%{control: control, archives: archives}, version) do
-    script = """
-    #!/bin/sh
-    control="#{control}"
-    echo "$*" >> "$control/calls"
-    case "$1" in
-      generate-certs)
-        out="$3"
-        mkdir -p "$out/jwt"
-        cp -R "$control/pki/." "$out/"
-        echo key > "$out/ca.key"
-        echo s > "$out/jwt/signing.pem"; echo p > "$out/jwt/public.pem"; echo k > "$out/jwt/kid"
-        exit 0 ;;
-      config)
-        echo "preflight checked $*"
-        exit "$(cat "$control/preflight" 2>/dev/null || echo 0)" ;;
-    esac
-    env | sort
-    echo "args: $*"
-    """
+  defp release(%{control: control, archives: archives}, version),
+    do: FakeOpenShell.release(control, archives, version)
 
-    archive = tar(archives, "gateway-#{version}.tar.gz", [{~c"openshell-gateway", script}])
-
-    {%{
-       name: "openshell-gateway-#{version}.tar.gz",
-       url: "unused",
-       sha256: sha256(archive),
-       version: version
-     }, archive}
-  end
-
-  defp tar(dir, name, entries) do
-    File.mkdir_p!(dir)
-    path = Path.join(dir, name)
-    :ok = :erl_tar.create(to_charlist(path), entries, [:compressed])
-    path
-  end
+  defdelegate tar(dir, name, entries), to: FakeOpenShell
 
   defp sha256(path), do: :crypto.hash(:sha256, File.read!(path)) |> Base.encode16(case: :lower)
 
