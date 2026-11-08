@@ -331,7 +331,7 @@ defmodule HalC2.Space.PageAgent do
     for %{"id" => run_id, "status" => status} <- Enum.sort_by(runs, &(&1["status"] != "queued")),
         status == "queued" or status in @run_active do
       type = if status == "queued", do: "queued-run.cancel", else: "run.interrupt"
-
+      # Every caller replays the user's Stop on the page, so the outcome names the user.
       _ =
         Orchestration.dispatch(%{
           "type" => type,

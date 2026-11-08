@@ -115,6 +115,11 @@ Feature: An agent in a page
       And the agent's thread of "Roadmap" uses the model of "Work"
       And the agent's thread of "Roadmap" has a message naming "Roadmap", "Research" and the page tools
 
+    Scenario: The user's Stop on a page reads in the agent's thread as the user's
+      Given the user asks "tidy this and wait" on the page "Roadmap"
+      When the user stops the agent of "Roadmap"
+      Then the thread of the agent of "Roadmap" says the user stopped it
+
     Scenario Outline: A thread started in the background is not where the user last worked
       Given <starter> started a newer thread in the project "lab"
       When the user asks "tidy this and wait" on the page "Roadmap"

@@ -68,7 +68,15 @@ defmodule HalC2.Claude.Protocol do
   """
 
   # HAL-C2's own MCP server, its tools allowed without a prompt, and what it is for.
-  defp mcp_args(nil, _workers_only, _opts), do: []
+  # Instructions appended in the instance's launch arguments follow HAL-C2's
+  # own in the one `--append-system-prompt` (a second flag would lose one of
+  # them); without HAL-C2's tools they are the whole of it.
+  defp mcp_args(nil, _workers_only, opts) do
+    case appended(opts) do
+      "" -> []
+      text -> ["--append-system-prompt", text]
+    end
+  end
 
   defp mcp_args(%{url: _url, authorization: _authorization}, workers_only, opts) do
     # A read-only run pre-approves only HAL-C2's reading tools, so it cannot
@@ -90,8 +98,22 @@ defmodule HalC2.Claude.Protocol do
       # model and the effort this session runs with.
       HalC2.Mcp.Instructions.for_session(
         runtime: %{harness: "Claude Code", model: opts[:model], effort: opts[:effort]}
-      ) <> @background_wait_note <> if(workers_only, do: HalC2.Mcp.workers_only_note(), else: "")
+      ) <>
+        @background_wait_note <>
+        if(workers_only, do: HalC2.Mcp.workers_only_note(), else: "") <>
+        case appended(opts) do
+          "" -> ""
+          text -> "\n\n" <> text
+        end
     ]
+  end
+
+  defp appended(opts) do
+    opts[:appended]
+    |> List.wrap()
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join("\n\n")
   end
 
   defp flag(_name, nil), do: []

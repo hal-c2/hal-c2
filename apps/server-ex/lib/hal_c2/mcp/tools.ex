@@ -102,7 +102,7 @@ defmodule HalC2.Mcp.Tools do
     do: HalC2.Orchestration.Delegation.task_status(caller.thread_id, id)
 
   def call("task_cancel", %{"taskId" => id}, caller),
-    do: HalC2.Orchestration.Delegation.cancel(caller.thread_id, id)
+    do: HalC2.Orchestration.Delegation.cancel(caller.thread_id, id, requested_by: "agent")
 
   # The browser tools are the credential's preview capability to give: a
   # credential minted while the user withheld agent browser access (or while
@@ -1017,10 +1017,18 @@ defmodule HalC2.Mcp.Tools do
                        "type" => "run.interrupt",
                        "commandId" => command_id,
                        "threadId" => id,
-                       "runId" => run
+                       "runId" => run,
+                       "requestedBy" => "agent"
                      },
                      # An agent's Stop holds the queue as the user's does, unless it asks not to.
-                     Map.take(args, ["holdQueue"])
+                     args
+                     |> Map.take(["holdQueue"])
+                     |> then(
+                       &if(is_binary(args["reason"]),
+                         do: Map.put(&1, "reason", args["reason"]),
+                         else: &1
+                       )
+                     )
                    )
                  )
                ) do
