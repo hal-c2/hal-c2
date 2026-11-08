@@ -115,6 +115,26 @@ defmodule HalC2.PreviewAutomationTest do
     assert {:ok, _} = Task.await(call)
   end
 
+  test "preview_open reads a scheme only at the start, and a bracketed IPv6 loopback is http" do
+    connection_id = host("desk")
+
+    for {given, sent} <- [
+          {"localhost:3000/login?next=http://example.com/",
+           "http://localhost:3000/login?next=http://example.com/"},
+          {"[::1]:3000", "http://[::1]:3000"}
+        ] do
+      call =
+        Task.async(fn ->
+          HalC2.Mcp.Preview.call("preview_open", %{"url" => given}, @caller)
+        end)
+
+      {_, request} = next_request("desk")
+      assert request["input"]["url"] == sent
+      answer("desk", connection_id, request, %{"tabId" => "tab-1"})
+      assert {:ok, _} = Task.await(call)
+    end
+  end
+
   test "a snapshot leaves its screenshot out unless the agent asks for it" do
     host("desk")
 

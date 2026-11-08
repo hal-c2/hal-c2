@@ -125,8 +125,9 @@ defmodule HalC2.Mcp.Preview do
         {:error, "PreviewAutomationInvalidInputError",
          "Preview address is empty. " <> @address_guidance}
 
-      String.contains?(address, "://") ->
-        scheme = address |> String.split("://", parts: 2) |> hd() |> String.downcase()
+      # Only a leading scheme counts: a "://" in a query is part of the page.
+      match = Regex.run(~r/^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//, address) ->
+        scheme = match |> List.last() |> String.downcase()
 
         if scheme in ["http", "https"],
           do: {:ok, address},
@@ -148,10 +149,9 @@ defmodule HalC2.Mcp.Preview do
   defp navigate_input(args) do
     case args["url"] do
       url when is_binary(url) ->
-        if String.contains?(url, "://") or
-             Regex.match?(~r/^[a-zA-Z][a-zA-Z0-9+.-]*:(?!\d)/, String.trim(url)),
-           do: args,
-           else: Map.put(args, "url", with_scheme(String.trim(url)))
+        if Regex.match?(~r/^[a-zA-Z][a-zA-Z0-9+.-]*:(?!\d)/, String.trim(url)),
+          do: args,
+          else: Map.put(args, "url", with_scheme(String.trim(url)))
 
       _ ->
         args
@@ -165,9 +165,7 @@ defmodule HalC2.Mcp.Preview do
       |> hd()
       |> String.split("@")
       |> List.last()
-      |> String.trim_leading("[")
-      |> String.split(~r/[:\]]/, parts: 2)
-      |> hd()
+      |> bracketed_or_host()
       |> String.downcase()
 
     if host == "localhost" or String.ends_with?(host, ".localhost") or
@@ -175,6 +173,10 @@ defmodule HalC2.Mcp.Preview do
        do: "http://" <> address,
        else: "https://" <> address
   end
+
+  # "[::1]:3000" is the host ::1; otherwise the host ends at the port colon.
+  defp bracketed_or_host("[" <> rest), do: rest |> String.split("]", parts: 2) |> hd()
+  defp bracketed_or_host(host), do: host |> String.split(":", parts: 2) |> hd()
 
   # --- broker ----------------------------------------------------------------------
 
