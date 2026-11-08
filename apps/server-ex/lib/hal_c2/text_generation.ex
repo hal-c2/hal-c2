@@ -732,8 +732,20 @@ defmodule HalC2.TextGeneration do
 
       # The user text stays generic; what Cursor said is only for the log.
       {:ok, {:error, %{} = reason}} when cursor ->
-        Logger.warning("Cursor text generation ended with an error: #{inspect(reason)}")
-        {:error, "Cursor SDK request finished with an error."}
+        message = reason["message"]
+
+        cond do
+          # A sandbox stop is retried unsandboxed; a usage limit is said plainly.
+          is_binary(message) and cursor_sandbox_retry?(selection, retried, message) ->
+            acp(selection, prompt, label, attachments, "text-generation-unsandboxed")
+
+          is_binary(message) and String.contains?(String.downcase(message), "usage limit") ->
+            {:error, "#{label} request failed: #{message}"}
+
+          true ->
+            Logger.warning("Cursor text generation ended with an error: #{inspect(reason)}")
+            {:error, "Cursor SDK request finished with an error."}
+        end
 
       {:ok, {:error, reason}} when is_binary(reason) ->
         if cursor_sandbox_retry?(selection, retried, reason),
