@@ -9,9 +9,6 @@ defmodule HalC2.TextGeneration.Prompts do
 
   @omitted "[Earlier content truncated]\n\n"
   @truncated "\n[Content truncated]\n"
-  # How much of a thread's history a pull request writer is given.
-  @thread_history_chars 8_000
-
   @initial_title """
   Generate a title that will help the user recognize this HAL-C2 thread weeks later.
   Return JSON with keys title and needsRefinement.
@@ -159,15 +156,13 @@ defmodule HalC2.TextGeneration.Prompts do
     )
   end
 
-  # What the thread did (`Handoff.transcript/2`), newest last and cut from the start, so
+  # What the thread did (`Handoff.transcript/2`), already fitted to its budget by the caller, so
   # the writer can say which checks ran and how they ended instead of "not run".
   defp thread_history(history) when is_binary(history) and history != "" do
-    kept = String.slice(history, -@thread_history_chars, @thread_history_chars)
-
     [
       "",
       "Thread history (the work this thread did, in order; its checks and their results are real):",
-      kept
+      history
     ]
   end
 

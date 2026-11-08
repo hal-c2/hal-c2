@@ -507,9 +507,9 @@ defmodule HalC2.Orchestration.Handoff do
   @doc """
   The conversation of the runs before `ordinal` that finished, as `User:`,
   `Assistant:` and `Command:` entries in the order they happened, selected to fit
-  (see the module doc); nil when there is none.
+  (see the module doc) to `max_chars`; nil when there is none.
   """
-  def transcript(state, ordinal, after_ordinal \\ 0) do
+  def transcript(state, ordinal, after_ordinal \\ 0, max_chars \\ @max_chars) do
     runs =
       state
       |> StreamState.list("run")
@@ -535,7 +535,7 @@ defmodule HalC2.Orchestration.Handoff do
 
     case Enum.flat_map(runs, &Map.get(entries, &1["id"], [])) do
       [] -> nil
-      entries -> fit(entries)
+      entries -> fit(entries, max_chars)
     end
   end
 
@@ -599,11 +599,11 @@ defmodule HalC2.Orchestration.Handoff do
 
   # Every entry when they fit; otherwise the selection of the module doc, in the
   # order the entries happened, under a note that some were left out.
-  defp fit(entries) do
+  defp fit(entries, max_chars) do
     texts = Enum.map(entries, &elem(&1, 1))
     whole = Enum.join(texts, "\n\n")
 
-    if String.length(whole) <= @max_chars do
+    if String.length(whole) <= max_chars do
       whole
     else
       indexed = Enum.with_index(entries)
@@ -616,8 +616,8 @@ defmodule HalC2.Orchestration.Handoff do
 
       {kept, _left} =
         (Enum.reject(first, &is_nil/1) ++ newest)
-        |> Enum.reduce({MapSet.new(), @max_chars - @omitted_note}, fn {{_role, text}, index},
-                                                                      {kept, left} ->
+        |> Enum.reduce({MapSet.new(), max_chars - @omitted_note}, fn {{_role, text}, index},
+                                                                     {kept, left} ->
           cost = String.length(text) + 2
 
           if MapSet.member?(kept, index) or cost > left,

@@ -459,7 +459,7 @@ defmodule HalC2.TextGeneration do
 
   defp option(selection, id) do
     # An off switch (`false`) is a choice too, so it cannot come from `find_value`.
-    case Enum.find(selection["options"] || [], &(&1["id"] == id)) do
+    case Enum.find(List.wrap(selection["options"]), &match?(%{"id" => ^id}, &1)) do
       %{"value" => value} -> value
       _ -> nil
     end

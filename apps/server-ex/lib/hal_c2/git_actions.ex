@@ -18,6 +18,8 @@ defmodule HalC2.GitActions do
   alias HalC2.TextGeneration.Style
 
   @commit_actions ~w(commit commit_push commit_push_pr)
+  # How much of a thread's history a pull request writer is given.
+  @thread_history_chars 8_000
 
   @doc "Runs the action (`GitRunStackedActionInput`) in a new process."
   def start(%{"actionId" => action_id} = input, subscriber) do
@@ -647,7 +649,10 @@ defmodule HalC2.GitActions do
   # ran. The thread's runs that were rolled back are not part of it. A thread this MC does
   # not hold gives nothing.
   defp thread_history(thread_id) when is_binary(thread_id) do
-    HalC2.Streams.read(thread_id, &HalC2.Orchestration.Handoff.transcript(&1, 1_000_000))
+    HalC2.Streams.read(
+      thread_id,
+      &HalC2.Orchestration.Handoff.transcript(&1, 1_000_000, 0, @thread_history_chars)
+    )
   end
 
   defp thread_history(_thread_id), do: nil

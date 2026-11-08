@@ -282,6 +282,24 @@ defmodule HalC2.Orchestration.HandoffTest do
     assert String.length(transcript) <= 60_000
   end
 
+  test "a smaller budget keeps the first request and the note, and cuts only between entries" do
+    state =
+      state(
+        turn(1, "first request", String.duplicate("a", 3_000)) ++
+          turn(2, "second request", String.duplicate("b", 3_000)) ++
+          turn(3, "third request", String.duplicate("c", 3_000))
+      )
+
+    transcript = Handoff.transcript(state, 4, 0, 8_000)
+
+    assert String.length(transcript) <= 8_000
+    assert "[earlier messages omitted: " <> _ = transcript
+    assert transcript =~ "User: first request"
+    assert transcript =~ "User: third request"
+    assert transcript =~ String.duplicate("c", 3_000)
+    refute transcript =~ String.duplicate("a", 3_000)
+  end
+
   # A thread a restart left a note on, about the background work its last turn left.
   defp noted do
     state([

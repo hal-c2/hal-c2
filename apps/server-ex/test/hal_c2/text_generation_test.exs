@@ -116,6 +116,28 @@ defmodule HalC2.TextGenerationTest do
       assert codex["prompt"] =~ "User message:\nFix the login page"
     end
 
+    test "options that are not a list of id/value maps are ignored, not a crash", %{
+      repo: repo,
+      log: log
+    } do
+      install([:claude])
+
+      for options <- [%{"effort" => "high"}, ["high", %{"id" => "effort", "value" => "low"}]] do
+        settings!(%{
+          "textGenerationModelSelection" => %{
+            "instanceId" => "claudeAgent",
+            "model" => "claude-text",
+            "options" => options
+          }
+        })
+
+        assert {:ok, %{"branch" => _}} = TextGeneration.branch_name(repo, "Add login")
+      end
+
+      assert [_, second] = calls(log)
+      assert after_flag(second["argv"], "--effort") == "low"
+    end
+
     test "a writer on a disabled provider falls back to the text generation model", %{
       repo: repo,
       log: log
