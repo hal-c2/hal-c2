@@ -9,7 +9,10 @@ defmodule HalC2.ClaudeSessionPropTest do
   thread between turns. Every resumed process first runs a turn of its own, reporting a
   background task the previous one left behind. Each process is handed HAL-C2's MCP
   server over stdin, which Claude takes or refuses (`HalC2.Claude.Session`), and a
-  turn can ask which tools it has.
+  turn can ask which tools it has. A turn on a new process can find Claude slow to
+  answer about that server, so its message is held: meanwhile the MC can go down and
+  the next one adopt the process (it runs durable), and the user can stop the turn,
+  until Claude answers.
 
   The promise: a turn on another selection (fast mode off and unset are one) while
   background work runs is refused, and the work and its Claude process are kept; any
@@ -21,7 +24,9 @@ defmodule HalC2.ClaudeSessionPropTest do
   and `/compact` once its compaction is in. A `/compact` before any turn has started
   Claude's session has nothing to compact, and is refused without starting Claude.
   Every user message reaches Claude, whether its process took HAL-C2's server or
-  refused it, and the process has HAL-C2's tools exactly when it took them.
+  refused it, and the process has HAL-C2's tools exactly when it took them. A held
+  message reaches Claude once it answers, across an MC that went down meanwhile, and a
+  stop sent while it is held ends its turn as interrupted.
   """
 
   use ExUnit.Case, async: false
@@ -29,6 +34,9 @@ defmodule HalC2.ClaudeSessionPropTest do
   use PropCheck.StateM
 
   alias HalC2.{Orchestration, StreamState}
+  alias HalC2.Claude.ThreadRuntime
+  alias HalC2.Orchestration.Recovery
+  alias HalC2.Subprocess.Durable
 
   @moduletag timeout: :infinity
 
@@ -41,7 +49,8 @@ defmodule HalC2.ClaudeSessionPropTest do
     which_mode: "which mode",
     compact: "/compact",
     never_start: "never start a turn",
-    which_tools: "which tools"
+    which_tools: "which tools",
+    halfway: "answer halfway"
   }
   @fake_claude Path.expand("../../test/support/fake_claude.py", __DIR__)
   @wait_ms 15_000
@@ -57,6 +66,9 @@ defmodule HalC2.ClaudeSessionPropTest do
         Application.delete_env(:hal_c2, :claude_command)
         System.delete_env("FAKE_CLAUDE_ORPHANED")
         System.delete_env("FAKE_CLAUDE_MCP_REFUSE")
+        System.delete_env("FAKE_CLAUDE_MCP_HOLD")
+        Application.put_env(:hal_c2, :durable_programs, false)
+        Application.delete_env(:hal_c2, :claude_interrupt_timeout_ms)
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -71,6 +83,10 @@ defmodule HalC2.ClaudeSessionPropTest do
     File.mkdir_p!(work)
     {_, 0} = System.cmd("git", ~w(init -q -b main), cd: work)
     Application.put_env(:hal_c2, :claude_command, ["python3", "-u", @fake_claude])
+    # Durable, so a process outlives the MC that started it (`adopt/0`).
+    Application.put_env(:hal_c2, :durable_programs, true)
+    # A stopped turn is Claude's to end: no settling it while its message is held.
+    Application.put_env(:hal_c2, :claude_interrupt_timeout_ms, 600_000)
     System.put_env("FAKE_CLAUDE_ORPHANED", "task-agent-1")
 
     HalC2.Prop.start_services([
@@ -116,21 +132,62 @@ defmodule HalC2.ClaudeSessionPropTest do
   #   nil before the first turn; session: whether that process is up; background:
   #   whether work it left running in the background still runs; refusing: whether a
   #   process started now refuses HAL-C2's server; tools: whether the thread's process
-  #   took it; n: a counter.
+  #   took it; held: the turn whose message waits on Claude's answer about the
+  #   server (%{n, text, interrupted}), or nil; n: a counter.
   def initial_state,
-    do: %{launch: nil, session: false, background: false, refusing: false, tools: false, n: 1}
+    do: %{
+      launch: nil,
+      session: false,
+      background: false,
+      refusing: false,
+      tools: false,
+      held: nil,
+      n: 1
+    }
 
-  def command(%{n: n}) do
+  @turn_texts Map.keys(@texts) -- [:halfway]
+  @held_texts [:hello, :which_tools, :halfway]
+
+  def command(%{held: nil, n: n}) do
     frequency([
       {6,
        {:call, __MODULE__, :turn,
-        [n, oneof(@models), oneof([:unset, false, true]), oneof(Map.keys(@texts))]}},
+        [n, oneof(@models), oneof([:unset, false, true]), oneof(@turn_texts)]}},
       {1, {:call, __MODULE__, :stop, []}},
-      {1, {:call, __MODULE__, :refuse_tools, [boolean()]}}
+      {1, {:call, __MODULE__, :refuse_tools, [boolean()]}},
+      {2,
+       {:call, __MODULE__, :held_turn,
+        [n, oneof(@models), oneof([:unset, false, true]), oneof(@held_texts)]}}
     ])
   end
 
-  def precondition(_state, _call), do: true
+  def command(%{held: %{text: :halfway, interrupted: false}}),
+    do:
+      frequency([
+        {2, {:call, __MODULE__, :interrupt, []}},
+        {1, {:call, __MODULE__, :adopt, []}}
+      ])
+
+  def command(%{held: held}),
+    do:
+      frequency([
+        {2, {:call, __MODULE__, :release, [held.n]}},
+        {1, {:call, __MODULE__, :adopt, []}}
+      ])
+
+  # A held turn starts a new process; one half-answered runs until it is stopped.
+  def precondition(%{held: nil} = state, {:call, _, :held_turn, [_n, model, fast, _text]}),
+    do: not reused?(state, model, fast) and not refused?(state, model, fast)
+
+  def precondition(%{held: nil}, {:call, _, name, _}), do: name in [:turn, :stop, :refuse_tools]
+
+  def precondition(%{held: held}, {:call, _, :release, [n]}),
+    do: held.n == n and (held.text != :halfway or held.interrupted)
+
+  def precondition(%{held: held}, {:call, _, :interrupt, []}),
+    do: held.text == :halfway and not held.interrupted
+
+  def precondition(%{held: %{}}, {:call, _, name, _}), do: name == :adopt
 
   def next_state(state, _result, {:call, _, :turn, [_n, model, fast, text]}) do
     state = %{state | n: state.n + 1}
@@ -148,6 +205,23 @@ defmodule HalC2.ClaudeSessionPropTest do
 
   def next_state(state, _result, {:call, _, :refuse_tools, [refusing]}),
     do: %{state | refusing: refusing}
+
+  def next_state(state, _result, {:call, _, :held_turn, [n, model, fast, text]}),
+    do: %{
+      state
+      | n: state.n + 1,
+        launch: {model, fast == true},
+        session: true,
+        tools: not state.refusing,
+        held: %{n: n, text: text, interrupted: false}
+    }
+
+  def next_state(state, _result, {:call, _, :release, [_n]}), do: %{state | held: nil}
+
+  def next_state(state, _result, {:call, _, :interrupt, []}),
+    do: put_in(state.held.interrupted, true)
+
+  def next_state(state, _result, {:call, _, :adopt, []}), do: state
 
   def next_state(%{background: true} = state, _result, {:call, _, :stop, []}),
     do: %{state | session: false, background: false}
@@ -197,6 +271,28 @@ defmodule HalC2.ClaudeSessionPropTest do
 
   def postcondition(_state, {:call, _, :refuse_tools, [_]}, seen), do: seen == :ok
 
+  # Nothing reaches Claude before it has answered about the server.
+  def postcondition(_state, {:call, _, :held_turn, _}, seen),
+    do: seen == %{status: "running", held: true}
+
+  def postcondition(%{held: held} = state, {:call, _, :release, [_n]}, seen) do
+    if held.interrupted,
+      do: seen.status == "interrupted",
+      else:
+        seen.status == "completed" and
+          seen.reply ==
+            if(held.text == :hello,
+              do: "Hello from claude",
+              else: if(state.tools, do: "tools: hal-c2", else: "tools: none")
+            )
+  end
+
+  def postcondition(_state, {:call, _, :interrupt, []}, seen),
+    do: seen == %{stopped: true, held: true}
+
+  def postcondition(_state, {:call, _, :adopt, []}, seen),
+    do: seen == %{adopted: :ok, held: true}
+
   # --- commands -------------------------------------------------------------------
 
   # Sends a message on a selection and waits for its run to end: how it ended, whether
@@ -206,6 +302,21 @@ defmodule HalC2.ClaudeSessionPropTest do
     before = current(@tid)
     runs = MapSet.new(StreamState.list(before, "run"), & &1["id"])
     session = session()
+
+    dispatch(n, model, fast, text)
+    run = await_run(runs, System.monotonic_time(:millisecond) + @wait_ms)
+    state = current(@tid)
+
+    %{
+      status: run["status"],
+      reused: session != nil and session() == session,
+      background: background?(),
+      reply: reply(state, run),
+      compactions: Enum.count(items(state, run), &(&1["type"] == "compaction"))
+    }
+  end
+
+  defp dispatch(n, model, fast, text) do
     options = if fast == :unset, do: [], else: [%{"id" => "fastMode", "value" => fast}]
 
     {:ok, _} =
@@ -222,27 +333,74 @@ defmodule HalC2.ClaudeSessionPropTest do
         },
         "dispatchMode" => %{"type" => "start_immediately"}
       })
-
-    run = await_run(runs, System.monotonic_time(:millisecond) + @wait_ms)
-    state = current(@tid)
-
-    items =
-      for item <- Enum.sort_by(StreamState.list(state, "turn-item"), & &1["ordinal"]),
-          item["runId"] == run["id"],
-          do: item
-
-    %{
-      status: run["status"],
-      reused: session != nil and session() == session,
-      background: background?(),
-      reply: List.last(for %{"type" => "assistant_message"} = item <- items, do: item["text"]),
-      compactions: Enum.count(items, &(&1["type"] == "compaction"))
-    }
   end
+
+  defp items(state, run) do
+    for item <- Enum.sort_by(StreamState.list(state, "turn-item"), & &1["ordinal"]),
+        item["runId"] == run["id"],
+        do: item
+  end
+
+  defp reply(state, run),
+    do:
+      List.last(
+        for %{"type" => "assistant_message"} = item <- items(state, run), do: item["text"]
+      )
+
+  defp release_file(n), do: Path.join(Application.fetch_env!(:hal_c2, :home), "release-#{n}")
 
   # Whether the next Claude process refuses the MCP servers it is handed.
   def refuse_tools(true), do: System.put_env("FAKE_CLAUDE_MCP_REFUSE", "1")
   def refuse_tools(false), do: System.delete_env("FAKE_CLAUDE_MCP_REFUSE")
+
+  # A turn on a new process whose answer about HAL-C2's server waits on a file:
+  # returns once its message is held.
+  def held_turn(n, model, fast, text) do
+    System.put_env("FAKE_CLAUDE_MCP_HOLD", release_file(n))
+    # The turn the user stops starts on a process with nothing of its own to report:
+    # the fake would run that report to its result before it read the stop, where
+    # Claude stops the turn it is running.
+    if text == :halfway, do: System.put_env("FAKE_CLAUDE_ORPHANED", "")
+    runs = ended_runs()
+    dispatch(n, model, fast, text)
+    held = await_held(System.monotonic_time(:millisecond) + @wait_ms)
+    System.delete_env("FAKE_CLAUDE_MCP_HOLD")
+    System.put_env("FAKE_CLAUDE_ORPHANED", "task-agent-1")
+    run = Enum.find(StreamState.list(current(@tid), "run"), &(not MapSet.member?(runs, &1["id"])))
+    %{status: run["status"], held: held}
+  end
+
+  # Claude answers about the server: the held turn runs, and ends.
+  def release(n) do
+    runs = ended_runs()
+    File.write!(release_file(n), "")
+    run = await_run(runs, System.monotonic_time(:millisecond) + @wait_ms)
+    %{status: run["status"], reply: reply(current(@tid), run)}
+  end
+
+  # The MC goes down with the message held, and the next one adopts the process.
+  def adopt do
+    [{runtime, _}] = Registry.lookup(HalC2.Claude.Registry, @tid)
+    session = Process.monitor(:sys.get_state(runtime).session)
+    Recovery.leaving(true)
+    GenServer.stop(runtime, :shutdown)
+
+    receive do
+      {:DOWN, ^session, :process, _, _} -> :ok
+    after
+      @wait_ms -> raise "the session outlived its runtime"
+    end
+
+    Recovery.leaving(false)
+    survivor = Map.fetch!(Durable.survivors_peek(), @tid)
+    %{adopted: ThreadRuntime.adopt(@tid, survivor), held: held?()}
+  end
+
+  # The user stops the turn whose message is held.
+  def interrupt do
+    stopped = ThreadRuntime.interrupt(@tid, nil) == :ok
+    %{stopped: stopped, held: held?()}
+  end
 
   # The user stops the thread between turns.
   def stop do
@@ -264,6 +422,36 @@ defmodule HalC2.ClaudeSessionPropTest do
       %{session: session} when is_pid(session) -> if Process.alive?(session), do: session
       _ -> nil
     end
+  end
+
+  # Whether the thread's Claude session holds a message for Claude's answer.
+  defp held? do
+    case session() do
+      nil -> false
+      session -> :sys.get_state(session).held != []
+    end
+  end
+
+  # Until the runtime has a turn and its session holds the turn's message.
+  defp await_held(deadline) do
+    case runtime() do
+      %{turn: turn} when turn != nil ->
+        held?()
+
+      _ ->
+        receive do
+          {:hal_c2_stream, @tid, _} -> await_held(deadline)
+        after
+          max(deadline - System.monotonic_time(:millisecond), 0) -> raise "the turn never started"
+        end
+    end
+  end
+
+  defp ended_runs do
+    for run <- StreamState.list(current(@tid), "run"),
+        run["status"] in ["completed", "failed", "interrupted"],
+        into: MapSet.new(),
+        do: run["id"]
   end
 
   defp background? do

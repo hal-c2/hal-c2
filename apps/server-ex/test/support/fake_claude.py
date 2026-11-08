@@ -24,7 +24,7 @@
 # answers with what it printed.
 # Each turn's message text is appended to
 # $FAKE_CLAUDE_LOG when it is set.
-import json, os, re, sys, time, uuid
+import json, os, re, sys, threading, time, uuid
 
 # With FAKE_CLAUDE_TRACE set, the argv and every message read are appended to it as JSON lines.
 TRACE = os.environ.get("FAKE_CLAUDE_TRACE")
@@ -33,9 +33,12 @@ def trace(entry):
         with open(TRACE, "a") as f:
             f.write(json.dumps(entry) + "\n")
 
+# A held MCP answer is sent from its own thread (answer_mcp_servers).
+sending = threading.Lock()
 def send(msg):
-    sys.stdout.write(json.dumps(msg) + "\n")
-    sys.stdout.flush()
+    with sending:
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
 
 session = "fake-session-1"
 # With FAKE_SESSIONS set, the fake keeps transcripts the way Claude Code does:
@@ -97,6 +100,23 @@ asking_subagent = None  # (Agent tool id, command) of a subagent waiting on its 
 pending_elicit = None  # (request id, asks again after an accept) of an MCP elicitation waiting on its answer
 dialogs = []  # the dialog kinds the host said it can show (initialize)
 mcp_servers = {}  # the MCP servers the host handed over stdin (mcp_set_servers)
+
+def answer_mcp_servers(msg):
+    global mcp_servers
+    scrub = os.environ.get("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB")
+    expand = lambda v: re.sub(r"\$\{(\w+)\}", lambda m: "" if scrub else os.environ.get(m.group(1), ""), v)
+    servers = {name: {**spec, "headers": {k: expand(v) for k, v in spec.get("headers", {}).items()}}
+               for name, spec in msg["request"].get("servers", {}).items()}
+    if os.environ.get("FAKE_CLAUDE_MCP_LOG"):
+        with open(os.environ["FAKE_CLAUDE_MCP_LOG"], "a") as f:
+            f.write(json.dumps(servers) + "\n")
+    if os.environ.get("FAKE_CLAUDE_MCP_REFUSE"):
+        # The error's text can echo what it was sent, the credential too.
+        result = {"added": [], "removed": [], "errors": {name: f"Connection failed with {json.dumps(spec)}" for name, spec in servers.items()}}
+    else:
+        mcp_servers = servers
+        result = {"added": list(servers), "removed": [], "errors": {}}
+    send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": result}})
 # FAKE_CLAUDE_ORPHANED names a background task the previous process left running. A
 # resumed process queues its first message behind a turn of its own that reports the
 # task stopped: its result has origin task-notification and echoes no message's uuid.
@@ -212,24 +232,20 @@ for line in sys.stdin:
         # headers from its environment, which CLAUDE_CODE_SUBPROCESS_ENV_SCRUB empties.
         # FAKE_CLAUDE_MCP_LOG gets each set's servers, expanded, as one JSON line;
         # FAKE_CLAUDE_MCP_REFUSE fails every one, as Claude reports a server it cannot add.
-        # FAKE_CLAUDE_MCP_HOLD: a set Claude never answers.
-        if sub == "mcp_set_servers" and os.environ.get("FAKE_CLAUDE_MCP_HOLD"):
+        # FAKE_CLAUDE_MCP_HOLD=1: a set Claude never answers; naming a file instead, one
+        # it answers once that file exists, reading its input meanwhile.
+        hold = os.environ.get("FAKE_CLAUDE_MCP_HOLD")
+        if sub == "mcp_set_servers" and hold == "1":
+            continue
+        if sub == "mcp_set_servers" and hold:
+            def answer_later(msg=msg):
+                while not os.path.exists(hold):
+                    time.sleep(0.02)
+                answer_mcp_servers(msg)
+            threading.Thread(target=answer_later, daemon=True).start()
             continue
         if sub == "mcp_set_servers":
-            scrub = os.environ.get("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB")
-            expand = lambda v: re.sub(r"\$\{(\w+)\}", lambda m: "" if scrub else os.environ.get(m.group(1), ""), v)
-            servers = {name: {**spec, "headers": {k: expand(v) for k, v in spec.get("headers", {}).items()}}
-                       for name, spec in msg["request"].get("servers", {}).items()}
-            if os.environ.get("FAKE_CLAUDE_MCP_LOG"):
-                with open(os.environ["FAKE_CLAUDE_MCP_LOG"], "a") as f:
-                    f.write(json.dumps(servers) + "\n")
-            if os.environ.get("FAKE_CLAUDE_MCP_REFUSE"):
-                # The error's text can echo what it was sent, the credential too.
-                result = {"added": [], "removed": [], "errors": {name: f"Connection failed with {json.dumps(spec)}" for name, spec in servers.items()}}
-            else:
-                mcp_servers = servers
-                result = {"added": list(servers), "removed": [], "errors": {}}
-            send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": result}})
+            answer_mcp_servers(msg)
             continue
         if sub == "set_permission_mode":
             mode = msg["request"]["mode"]

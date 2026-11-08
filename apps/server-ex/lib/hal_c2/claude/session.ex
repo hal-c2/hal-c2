@@ -13,8 +13,12 @@ defmodule HalC2.Claude.Session do
 
   With `:mcp` (`%{url, authorization}`) the session hands Claude HAL-C2's MCP server
   over stdin right after `initialize` (`mcp_set_servers`), and holds the user's
-  messages until Claude has answered it. A server Claude refuses or cannot reach
-  leaves the session without HAL-C2's tools; no answer in 90 s ends the session.
+  messages until Claude has answered it. A control sent after a held message waits
+  behind it, so an interrupt reaches Claude after the message it stops, and is answered
+  `:held` at once; questions about the session (`mcp_status`, `get_usage`) are asked
+  at once. A server Claude refuses or cannot reach leaves the session without HAL-C2's
+  tools; no answer in 90 s ends the session. What is held goes in the durable
+  checkpoint, so an adopted session sends it once Claude answers.
 
   With `:durable` (a thread id) the CLI outlives the MC: the handler gets
   `{:claude, session, {:checkpoint, checkpoint}}` after each batch to save with its state
@@ -30,6 +34,8 @@ defmodule HalC2.Claude.Session do
   alias HalC2.Subprocess
 
   @mcp_deadline_ms 90_000
+  # Controls that ask about the session rather than act on its conversation: never held.
+  @questions ["mcp_status", "get_usage"]
 
   @state_version 1
 
@@ -62,7 +68,8 @@ defmodule HalC2.Claude.Session do
   def answer_dialog(session, request_id, result),
     do: GenServer.cast(session, {:answer_dialog, request_id, result})
 
-  @spec control(GenServer.server(), String.t(), map, timeout) :: {:ok, map} | {:error, term}
+  @spec control(GenServer.server(), String.t(), map, timeout) ::
+          {:ok, map} | :held | {:error, term}
   def control(session, subtype, params \\ %{}, timeout \\ 30_000),
     do: GenServer.call(session, {:control, subtype, params}, timeout)
 
@@ -72,6 +79,8 @@ defmodule HalC2.Claude.Session do
 
     with {:ok, sub, mcp_wait} <- subprocess(opts) do
       channel = get_in(opts, [:adopt, :channel]) || %{next_id: 1, permissions: %{}}
+      # A CLI an earlier MC left waiting on its servers still owes that answer.
+      mcp_wait = mcp_wait or Map.get(channel, :mcp_wait, false)
       # `:mcp_deadline` (ms) shortens the wait, in tests.
       deadline = Keyword.get(opts, :mcp_deadline, @mcp_deadline_ms)
       if mcp_wait, do: Process.send_after(self(), :mcp_deadline, deadline)
@@ -90,7 +99,7 @@ defmodule HalC2.Claude.Session do
          # Waiting on Claude's answer to `mcp_set_servers`, with the user messages held
          # until then, oldest first.
          mcp_wait: mcp_wait,
-         held: []
+         held: Map.get(channel, :held, [])
        }}
     else
       {:error, reason} -> {:stop, reason}
@@ -142,6 +151,13 @@ defmodule HalC2.Claude.Session do
   end
 
   @impl true
+  def handle_call({:control, subtype, params}, _from, %{held: [_ | _]} = state)
+      when subtype not in @questions do
+    id = "hal-c2-#{state.next_id}"
+    line = Protocol.control_request(id, subtype, params)
+    {:reply, :held, checkpoint(%{state | next_id: state.next_id + 1, held: state.held ++ [line]})}
+  end
+
   def handle_call({:control, subtype, params}, from, state) do
     id = "hal-c2-#{state.next_id}"
     :ok = Subprocess.write_line(state.sub, Protocol.control_request(id, subtype, params))
@@ -154,8 +170,11 @@ defmodule HalC2.Claude.Session do
   def handle_cast({:user_message, content}, state),
     do: handle_cast({:user_message, content, []}, state)
 
+  # Saved at once, as a message written is: lost, the restored turn would never end.
   def handle_cast({:user_message, content, opts}, %{mcp_wait: true} = state),
-    do: {:noreply, %{state | held: state.held ++ [Protocol.user_message(content, opts)]}}
+    do:
+      {:noreply,
+       checkpoint(%{state | held: state.held ++ [Protocol.user_message(content, opts)]})}
 
   def handle_cast({:user_message, content, opts}, state) do
     :ok = Subprocess.write_line(state.sub, Protocol.user_message(content, opts))
@@ -239,7 +258,12 @@ defmodule HalC2.Claude.Session do
          dir: dir,
          wrote: wrote,
          offset: state.offset,
-         channel: %{next_id: state.next_id, permissions: state.permissions}
+         channel: %{
+           next_id: state.next_id,
+           permissions: state.permissions,
+           mcp_wait: state.mcp_wait,
+           held: state.held
+         }
        }}
     )
 

@@ -193,6 +193,69 @@ defmodule HalC2.Claude.SessionLaunchTest do
     GenServer.stop(adopted)
   end
 
+  test "a message held for Claude's servers survives the MC, and reaches Claude once they answer",
+       %{home: home, argv_log: log} do
+    Application.put_env(:hal_c2, :durable_programs, true)
+    release = Path.join(home, "release")
+    prompts = Path.join(Path.dirname(log), "prompts.log")
+
+    session =
+      start_session(home, log,
+        mcp: server("held-secret"),
+        durable: "thread-held",
+        env: [{"FAKE_CLAUDE_MCP_HOLD", release}, {"FAKE_CLAUDE_PROMPT_LOG", prompts}]
+      )
+
+    await_initialized(session)
+    Session.send_message(session, "hello")
+    checkpoint = await_held(session)
+
+    Recovery.leaving(true)
+    GenServer.stop(session)
+    Recovery.leaving(false)
+
+    adopted =
+      start_session(home, log,
+        adopt: %{dir: checkpoint.dir, offset: checkpoint.offset, channel: checkpoint.channel}
+      )
+
+    # Questions about the session are not held behind the message.
+    assert {:ok, _} = Session.control(adopted, "mcp_status")
+    refute File.exists?(prompts)
+
+    File.write!(release, "")
+    assert %{"subtype" => "success", "result" => "Hello from claude"} = await_result(adopted)
+    assert read_lines(prompts) == ["hello"]
+    GenServer.stop(adopted)
+  end
+
+  test "an interrupt sent while a message is held reaches Claude after it", %{
+    home: home,
+    argv_log: log
+  } do
+    release = Path.join(home, "release")
+
+    session =
+      start_session(home, log,
+        mcp: server("held-secret"),
+        env: [{"FAKE_CLAUDE_MCP_HOLD", release}]
+      )
+
+    await_initialized(session)
+    # "answer halfway" writes half an answer and stays open until it is interrupted.
+    Session.send_message(session, "answer halfway")
+    assert :held = Session.control(session, "interrupt")
+
+    File.write!(release, "")
+
+    assert [
+             %{"type" => "assistant"} = half,
+             %{"type" => "result", "subtype" => "error_during_execution"}
+           ] = said_until_result(session)
+
+    assert half["message"]["content"] == [%{"type" => "text", "text" => "Half an answer"}]
+  end
+
   test "startup sweeps the MCP configs earlier MCs left behind", %{home: home} do
     stale = Path.join([McpConfig.root(), "abandoned", "mcp.json"])
     File.mkdir_p!(Path.dirname(stale))
@@ -229,6 +292,41 @@ defmodule HalC2.Claude.SessionLaunchTest do
         restart: :temporary
       )
     )
+  end
+
+  # The session's checkpoint once it holds a message.
+  defp await_held(session) do
+    receive do
+      {:claude, ^session, {:checkpoint, %{channel: %{held: [_ | _]}} = checkpoint}} -> checkpoint
+      {:claude, ^session, _other} -> await_held(session)
+    after
+      5_000 -> flunk("the message was never held")
+    end
+  end
+
+  defp await_result(session) do
+    receive do
+      {:claude, ^session, {:message, %{"type" => "result"} = result}} -> result
+      {:claude, ^session, _other} -> await_result(session)
+    after
+      5_000 -> flunk("no result")
+    end
+  end
+
+  # The assistant messages and result Claude says, up to its result.
+  defp said_until_result(session, said \\ []) do
+    receive do
+      {:claude, ^session, {:message, %{"type" => "result"} = result}} ->
+        Enum.reverse([result | said])
+
+      {:claude, ^session, {:message, %{"type" => "assistant"} = message}} ->
+        said_until_result(session, [message | said])
+
+      {:claude, ^session, _other} ->
+        said_until_result(session, said)
+    after
+      5_000 -> flunk("no result")
+    end
   end
 
   defp await_initialized(session) do
