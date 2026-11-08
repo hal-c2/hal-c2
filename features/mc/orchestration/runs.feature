@@ -633,6 +633,8 @@ Feature: Runs and turns
   # A failure the provider itself reports is not this case: there the subagents carry on in their
   # own threads (providers/codex.feature, "A failed Codex turn does not hold the thread for its
   # subagents"). Here the provider process is gone, so nothing can report the subagent again.
+  # A store that refused the runtime's own end of the subagent leaves it to the run's end recorded
+  # once storage recovers (hal-c2#1398).
   @mc
   Scenario Outline: A turn that does not complete ends the provider subagents it left open
     Given "t1" has a running turn with a provider subagent still at work
@@ -641,10 +643,11 @@ Feature: Runs and turns
     And nothing of the subagent is left streaming
 
     Examples:
-      | cause                        | status      |
-      | the user interrupts it       | interrupted |
-      | its provider process exits   | failed      |
-      | its thread is deleted        | cancelled   |
+      | cause                                                                   | status      |
+      | the user interrupts it                                                  | interrupted |
+      | its provider process exits                                              | failed      |
+      | its thread is deleted                                                   | cancelled   |
+      | the MC cannot record it or its subagent's thread until storage recovers | failed      |
 
   @backlog @mc
   Scenario Outline: Only a bare compact command compacts the conversation

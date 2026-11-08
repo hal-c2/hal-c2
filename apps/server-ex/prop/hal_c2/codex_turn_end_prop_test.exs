@@ -21,7 +21,8 @@ defmodule HalC2.CodexTurnEndPropTest do
   on Codex's next event, which the runtime then stops the turn for, on that stop being
   ignored past its deadline, or on the turn's own end. Until the store takes writes
   again the thread shows the run running as it was. Then the run is failed, at the
-  time it failed, its subagents left running fail with it, and its provider turn reads
+  time it failed, its subagents left running fail with it, the work in their own
+  threads too, and its provider turn reads
   as it ended: stopped, as Codex ended it, or still running when Codex ignored the
   stop, until Codex ends it late or its app-server goes. The store may refuse the
   subagents' threads as well, which changes none of that (#1398). A message sent while
@@ -329,17 +330,25 @@ defmodule HalC2.CodexTurnEndPropTest do
     expected = next_state(state, nil, call)
 
     seen.run == expected.run and seen.subs == expected.subs and
-      seen.follows == expected.follows and seen.strays == 0 and
+      seen.follows == expected.follows and seen.strays == 0 and seen.open_children == 0 and
       (expected.pt == nil or seen.pt == expected.pt) and
       (name != :recover or seen.on_time)
   end
 
   # --- commands ------------------------------------------------------------------
 
-  # Codex starts subagent `n`, still working on its task.
+  # Codex starts subagent `n`, still working on its task: a command running in its
+  # own thread.
   def spawn(n) do
     notify("item/started", collab(n, "inProgress", %{"status" => "running"}))
     await_until(fn -> length(observed().subs) >= n end, "subagent #{n} never showed")
+
+    notify("item/started", %{
+      "threadId" => "native-child-#{n}",
+      "turnId" => "native-child-turn-#{n}",
+      "item" => %{"type" => "commandExecution", "id" => "child-cmd-#{n}", "command" => "ls lib"}
+    })
+
     settle_runtime()
     observed()
   end
@@ -587,12 +596,26 @@ defmodule HalC2.CodexTurnEndPropTest do
   defp observed do
     state = current(@tid)
     first = Process.get(:run)
-    {[run], follows} = state |> StreamState.list("run") |> Enum.split_with(&(&1["id"] == first))
+    {[run], later} = state |> StreamState.list("run") |> Enum.split_with(&(&1["id"] == first))
+    # A subagent finishing after a completed turn wakes the thread in a task of its own
+    # (`HalC2.Orchestration.Wake`); only the messages sent here are follow-ups.
+    follows = Enum.filter(later, &(&1["userMessageId"] =~ ~r/^m\d+$/))
     turn = StreamState.get(state, "provider-turn")[Process.get(:provider_turn)]
+
+    subagents = StreamState.list(state, "subagent")
 
     %{
       run: run["status"],
-      subs: state |> StreamState.list("subagent") |> Enum.map(& &1["status"]),
+      subs: Enum.map(subagents, & &1["status"]),
+      # Subagents shown as ended whose own thread still has work running.
+      open_children:
+        Enum.count(subagents, fn sub ->
+          sub["status"] != "running" and
+            sub["childThreadId"]
+            |> current()
+            |> StreamState.list("turn-item")
+            |> Enum.any?(&(&1["status"] == "running"))
+        end),
       pt: turn && turn["status"],
       follows: follows |> Enum.sort_by(& &1["ordinal"]) |> Enum.map(& &1["status"]),
       strays:

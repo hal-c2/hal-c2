@@ -670,7 +670,7 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
-  step ~r/^the turn ends because (?<cause>the user interrupts it|its provider process exits|its thread is deleted)$/,
+  step ~r/^the turn ends because (?<cause>the user interrupts it|its provider process exits|its thread is deleted|the MC cannot record it or its subagent's thread until storage recovers)$/,
        %{args: [cause]} = context do
     {context, status} =
       case cause do
@@ -695,6 +695,16 @@ defmodule HalC2.Steps.Orchestration.Runs do
              "type" => "thread.delete",
              "threadId" => World.thread_id(context, context.thread)
            }), "cancelled"}
+
+        # The runtime's end of the subagent is refused with the rest; the run's end that
+        # TurnWatch records once the store recovers ends it (hal-c2#1398).
+        "the MC cannot record it or its subagent's thread until storage recovers" ->
+          World.put_app_env(:unrecorded_retry_ms, 20)
+          World.put_app_env(:store_hook, {__MODULE__, :refuse_every, []})
+          context = deliver(context, :item)
+          assert {:unrecorded, _} = HalC2.Orchestration.TurnWatch.attempted(context.running)
+          HalC2.Test.Machines.refuse_changes(nil)
+          {context, "failed"}
       end
 
     await_status(context, context.running, status)
@@ -2126,6 +2136,13 @@ defmodule HalC2.Steps.Orchestration.Runs do
   end
 
   def refuse_writes(_left, _id, _stage, _stream_id), do: :ok
+
+  # Every stream's changes are refused, its subagents' threads too.
+  def refuse_every(:append_change, _stream_id) do
+    if self() == Process.whereis(HalC2.Store), do: raise("the disk is full"), else: :ok
+  end
+
+  def refuse_every(_stage, _stream_id), do: :ok
 
   step "the MC fails to record the turn's events", context do
     context |> refuse(1) |> deliver(:item) |> await_unrecorded_end()

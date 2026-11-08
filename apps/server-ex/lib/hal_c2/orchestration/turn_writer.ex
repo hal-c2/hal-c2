@@ -10,7 +10,16 @@ defmodule HalC2.Orchestration.TurnWriter do
   """
 
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.{CommandOutput, CommandTail, Entities, TurnWatch, UserFacingErrors}
+
+  alias HalC2.Orchestration.{
+    CommandOutput,
+    CommandTail,
+    Entities,
+    NativeSubagent,
+    TurnWatch,
+    UserFacingErrors
+  }
+
   alias HalC2.PullRequests.Opened
   alias HalC2.StreamState
 
@@ -929,6 +938,10 @@ defmodule HalC2.Orchestration.TurnWriter do
   def abandon(thread_id, run_id, status, failure, opts \\ []) do
     at = opts[:at] || Entities.now()
     failure = UserFacingErrors.sanitize_failure(failure)
+    # First, so a child thread the store refuses leaves the run to be tried again.
+    if active?(HalC2.Streams.state(thread_id), run_id),
+      do: NativeSubagent.settle_run_children(thread_id, run_id, status, at)
+
     {scope_id, checkpoint, cwd} = stopped_checkpoint(thread_id, run_id, status, at)
 
     abandoned =

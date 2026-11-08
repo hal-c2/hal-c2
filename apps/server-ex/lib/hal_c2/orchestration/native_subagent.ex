@@ -481,6 +481,24 @@ defmodule HalC2.Orchestration.NativeSubagent do
     :ok
   end
 
+  @doc """
+  Ends the still-running work in the child threads of the provider subagents of
+  `thread_id`'s run `run_id`, each as its subagent ended or as `status`: for a run
+  ended from the thread's record (`TurnWriter.abandon/5`), whose runtime's own end of
+  them the store refused or that crashed before it. A child thread the store refuses
+  raises.
+  """
+  def settle_run_children(thread_id, run_id, status, at) do
+    for subagent <- StreamState.list(stream(thread_id), "subagent"),
+        subagent["runId"] == run_id and subagent["origin"] == "provider_native",
+        is_binary(subagent["childThreadId"]) do
+      ended = if subagent["status"] in @terminal, do: subagent["status"], else: status
+      settle_child(%{child: subagent["childThreadId"]}, ended, at)
+    end
+
+    :ok
+  end
+
   # Work still open in the child thread (a tool call, the progress) ends with it.
   defp settle_child(sub, status, at) do
     HalC2.Streams.transact(sub.child, :thread, fn state ->
