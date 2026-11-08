@@ -37,7 +37,7 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview.claims/1" => ~w(peers started defer post peer-claims restartingBy),
       "HalC2Plugins.CodeReview.claims_changed/0" => ~w(note peer-claims),
       "HalC2Plugins.CodeReview handle_call {:looked, _}" => ~w(polled pump),
-      "HalC2Plugins.CodeReview handle_call {:publish, _, _}" =>
+      "HalC2Plugins.CodeReview handle_call {:publish, _, _, _}" =>
         ~w(publish post-lock post refused covered),
       "HalC2Plugins.CodeReview handle_call {:published, _, _, _}" => "published",
       "HalC2Plugins.CodeReview handle_call {:report, _, _}" => "report",
@@ -82,6 +82,7 @@ defmodule HalC2.CodeReviewClaimsProofTest do
         "closes the code fences the agent's prose leaves open; text, no claim or run state",
       "HalC2Plugins.CodeReview.comment_body/2" =>
         "the text of an inline comment as posted; no claim or run state",
+      "HalC2Plugins.CodeReview handle_call {:preview, _}" => @reads,
       "HalC2Plugins.CodeReview handle_call {:discard, _}" => @user,
       "HalC2Plugins.CodeReview handle_call {:settings, _}" =>
         "a save applies from the next step: the model looks at any time, starts a queued review in the step that queues it and has no display",

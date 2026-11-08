@@ -31,6 +31,15 @@ defmodule HalC2.CodeReviewPropTest do
   - turning the plugin off or restarting it calls off the checkouts and posts in flight,
     and the look for pull requests, and leaves no checkout no review points at;
   - a settings save keeps them going, and starts queued reviews when it makes room;
+  - a review the look found starts only while its author and repository are under
+    their daily limits, restarts included, and waits as ready, limited, otherwise; one
+    the user asked for starts anyway and counts toward them. Steps whose outcome would
+    hang on which of two reviews reached the limit first are not generated;
+  - an automatic review of a pull request nobody trusted waits for the user, as a draft
+    does;
+  - a draft saved before reports were made safe (`age/1`) is shown with its mentions,
+    images and markup neutralised once the plugin loads it, and is neither previewed
+    nor posted until it is reviewed again;
   - each review's thread is listed with the threads as the display last saved says,
     and a discarded review's stays out of the list, even when the display was saved
     just before and its listing is still under way;
@@ -293,11 +302,17 @@ defmodule HalC2.CodeReviewPropTest do
         concurrency: 2,
         activation: "selective",
         new_pushes: false,
-        display: "threads"
+        display: "threads",
+        per_author: 3,
+        per_repository: 2
       },
       prs: Map.new(@keys, &{&1, %{open: true, head: 1, broken: false, trusted: true}}),
       reviews: %{},
       runs: %{},
+      # The starts the review limits count, by repository, and the reviews the step
+      # being looked at tried to start (`contested?/2`), with whether each was asked for.
+      starts: %{},
+      tried: [],
       posts: [],
       github: MapSet.new(),
       gate: :open,
@@ -365,6 +380,7 @@ defmodule HalC2.CodeReviewPropTest do
         {1, {:call, __MODULE__, :disable, [oneof([:plain, :polling])]}}
       ] ++
         if(m.crashes < 2, do: [{1, {:call, __MODULE__, :crash, []}}], else: []) ++
+        if(waiting != [], do: [{1, {:call, __MODULE__, :age, [elements(waiting)]}}], else: []) ++
         if(launched != [],
           do: [
             {6,
@@ -401,29 +417,41 @@ defmodule HalC2.CodeReviewPropTest do
             {"reviewNewPushes", boolean()},
             {"display", oneof(~w(page threads both))}
           ])
+        ]}},
+      # The watch's own starts, which the review limits hold back, and the limits.
+      {2, {:call, __MODULE__, :save, [{"activation", "automatic"}]}},
+      {2,
+       {:call, __MODULE__, :save,
+        [
+          oneof([
+            {"reviewsPerAuthorPerDay", oneof([0, 1, 3, 6])},
+            {"reviewsPerRepositoryPerDay", oneof([0, 1, 2])}
+          ])
         ]}}
     ]
 
     frequency(if(m.enabled, do: on, else: off) ++ always)
   end
 
-  @plugin_commands ~w(refresh poll start retry approve unapprove dismiss discard relist_discard publish disable report turn_finished limited late_published)a
+  @plugin_commands ~w(refresh poll start retry approve unapprove dismiss discard relist_discard publish age disable report turn_finished limited late_published)a
 
-  def precondition(m, {:call, _, :enable, _}), do: not m.enabled
-  def precondition(m, {:call, _, :crash, _}), do: m.enabled and m.crashes < 2
+  def precondition(m, call), do: allowed?(m, call) and not contested?(m, call)
 
-  def precondition(m, {:call, _, cmd, [{key, k} | _]})
-      when cmd in [:report, :turn_finished, :limited],
-      do: m.enabled and Enum.at(m.runs[key] || [], k - 1) == true
+  defp allowed?(m, {:call, _, :enable, _}), do: not m.enabled
+  defp allowed?(m, {:call, _, :crash, _}), do: m.enabled and m.crashes < 2
 
-  def precondition(m, {:call, _, :late_published, [{key, k}]}),
+  defp allowed?(m, {:call, _, cmd, [{key, k} | _]})
+       when cmd in [:report, :turn_finished, :limited],
+       do: m.enabled and Enum.at(m.runs[key] || [], k - 1) == true
+
+  defp allowed?(m, {:call, _, :late_published, [{key, k}]}),
     do: m.enabled and k < length(m.runs[key] || [])
 
-  def precondition(m, {:call, _, cmd, _}) when cmd in @plugin_commands, do: m.enabled
-  def precondition(m, {:call, _, :push, [key]}), do: not m.prs[key].broken
-  def precondition(_m, _call), do: true
+  defp allowed?(m, {:call, _, cmd, _}) when cmd in @plugin_commands, do: m.enabled
+  defp allowed?(m, {:call, _, :push, [key]}), do: not m.prs[key].broken
+  defp allowed?(_m, _call), do: true
 
-  def next_state(m, _result, call), do: m |> step(call) |> elem(0)
+  def next_state(m, _result, call), do: %{elem(step(m, call), 0) | tried: []}
 
   def postcondition(m, call, observed) do
     {m, reply} = step(m, call)
@@ -438,6 +466,7 @@ defmodule HalC2.CodeReviewPropTest do
       orphans: [],
       unstopped: [],
       posts: Enum.sort(m.posts),
+      starts: if(m.enabled, do: m.starts, else: :off),
       # A plugin turned off has no process to report from; its pause is saved with the
       # reviews and shows again once it is on.
       problems: if(m.enabled and m.paused, do: ["code-review reports: #{m.pause_text}"], else: [])
@@ -478,7 +507,7 @@ defmodule HalC2.CodeReviewPropTest do
         {m
          |> unpause()
          |> put_review(key, %{fresh(m, key) | followed: true})
-         |> queue(key)
+         |> queue(key, true)
          |> pump(), :ok}
 
       m.reviews[key].status in [:queued, :running] ->
@@ -489,7 +518,7 @@ defmodule HalC2.CodeReviewPropTest do
 
       true ->
         m = put_review(m, key, %{m.reviews[key] | trusted: m.prs[key].trusted})
-        {m |> unpause() |> follow(key) |> queue(key) |> pump(), :ok}
+        {m |> unpause() |> follow(key) |> queue(key, true) |> pump(), :ok}
     end
   end
 
@@ -503,7 +532,7 @@ defmodule HalC2.CodeReviewPropTest do
 
         if r.status in [:queued, :running, :publishing] or r.reviewed == seen,
           do: {m, :ok},
-          else: {m |> unpause() |> follow(key) |> queue(key) |> pump(), :ok}
+          else: {m |> unpause() |> follow(key) |> queue(key, true) |> pump(), :ok}
 
       _ ->
         {m, :error}
@@ -538,7 +567,7 @@ defmodule HalC2.CodeReviewPropTest do
       r ->
         if gated?(r, r.seen),
           do: {m, :error},
-          else: {m |> unpause() |> follow(key) |> queue(key) |> pump(), :ok}
+          else: {m |> unpause() |> follow(key) |> queue(key, true) |> pump(), :ok}
     end
   end
 
@@ -567,6 +596,10 @@ defmodule HalC2.CodeReviewPropTest do
 
   defp step(m, {:call, _, :publish, [key, fresh]}) do
     case m.reviews[key] do
+      # A draft saved before reports were made safe is reviewed again first.
+      %{status: :waiting, old: true} = r when fresh ->
+        {put_review(m, key, %{r | publish_error: true}), :error}
+
       %{status: :waiting} = r when fresh ->
         m |> put_review(key, %{r | status: :publishing, publish_error: false}) |> post(key)
 
@@ -588,10 +621,14 @@ defmodule HalC2.CodeReviewPropTest do
           {verdict, comments} =
             if kind == :findings, do: {"request-changes", [false, false]}, else: {"approve", []}
 
-          status =
-            %{"local" => :kept, "draft" => :waiting, "automatic" => :publishing}[
-              m.settings.publishing
-            ]
+          # A pull request nobody trusted is never posted on its own: an automatic
+          # review of one waits for the user, as a draft does.
+          mode =
+            if m.settings.publishing == "automatic" and not r.trusted,
+              do: "draft",
+              else: m.settings.publishing
+
+          status = %{"local" => :kept, "draft" => :waiting, "automatic" => :publishing}[mode]
 
           r = %{r | status: status, verdict: verdict, comments: comments, publish_error: false}
           m = %{put_review(m, key, r) | failures: 0}
@@ -630,7 +667,7 @@ defmodule HalC2.CodeReviewPropTest do
     case m.reviews[key] do
       %{run: ^k, status: :running} ->
         {%{
-           queue(m, key)
+           queue(m, key, m.reviews[key].asked)
            | paused: true,
              failures: 0,
              pause_text:
@@ -650,6 +687,23 @@ defmodule HalC2.CodeReviewPropTest do
   defp step(m, {:call, _, :enable, []}), do: {restart(%{m | enabled: true, crashes: 0}), :ok}
   defp step(m, {:call, _, :crash, []}), do: {restart(%{m | crashes: m.crashes + 1}), nil}
 
+  # A waiting draft is saved as before reports were made safe, and the plugin loads it.
+  defp step(m, {:call, _, :age, [key]}) do
+    m =
+      case m.reviews[key] do
+        %{status: :waiting} = r -> put_review(m, key, %{r | old: true})
+        _ -> m
+      end
+
+    m = restart(m)
+
+    case m.reviews[key] do
+      %{status: :waiting, old: true} -> {m, :refused}
+      %{status: :waiting} -> {m, :shown}
+      _ -> {m, :none}
+    end
+  end
+
   defp step(m, {:call, _, :save, [{field, value}]}) do
     name =
       %{
@@ -657,7 +711,9 @@ defmodule HalC2.CodeReviewPropTest do
         "concurrency" => :concurrency,
         "activation" => :activation,
         "reviewNewPushes" => :new_pushes,
-        "display" => :display
+        "display" => :display,
+        "reviewsPerAuthorPerDay" => :per_author,
+        "reviewsPerRepositoryPerDay" => :per_repository
       }[field]
 
     # The running plugin takes it as it is: the next look reads the rest.
@@ -739,25 +795,36 @@ defmodule HalC2.CodeReviewPropTest do
       # approved, and both as its run started with them.
       trusted: m.prs[key].trusted,
       approved: nil,
-      launched: nil
+      launched: nil,
+      # Whether the user asked for its run, and whether a review limit held its
+      # start back; the watch leaves one held back alone for the rest of the day.
+      asked: false,
+      limited: false,
+      # Whether its findings were saved before reports were made safe.
+      old: false
     }
   end
 
   # Whether the review waits for the user's approval of `head`.
   defp gated?(r, head), do: not r.trusted and r.approved != head
 
-  defp queue(m, key) do
+  # `asked`: whether the user asked for it (a start, a retry or an approval), so the
+  # review limits count it but never hold it back; the watch's own are held back.
+  defp queue(m, key, asked) do
     r = m.reviews[key]
 
     review = %{
       r
       | status: :queued,
+        asked: asked,
+        limited: false,
         past: if(r.run, do: [r.run | r.past], else: r.past),
         seq: m.seq + 1,
         verdict: nil,
         comments: [],
         publish_error: false,
-        changed: false
+        changed: false,
+        old: false
     }
 
     %{put_review(m, key, review) | seq: m.seq + 1}
@@ -794,16 +861,16 @@ defmodule HalC2.CodeReviewPropTest do
             r = %{(known || fresh(m, key)) | seen: pr.head}
             m = put_review(m, key, r)
 
-            if (automatic or r.followed) and not gated?(r, pr.head),
-              do: queue(m, key),
+            if (automatic or r.followed) and not gated?(r, pr.head) and not r.limited,
+              do: queue(m, key, false),
               else: m
 
           known.reviewed == pr.head ->
             put_review(m, key, %{known | seen: pr.head, changed: false})
 
           m.settings.new_pushes and (automatic or known.followed) and
-              not gated?(known, pr.head) ->
-            m |> put_review(key, %{known | seen: pr.head}) |> queue(key)
+            not gated?(known, pr.head) and not known.limited ->
+            m |> put_review(key, %{known | seen: pr.head}) |> queue(key, false)
 
           true ->
             put_review(m, key, %{known | seen: pr.head, changed: true})
@@ -828,25 +895,80 @@ defmodule HalC2.CodeReviewPropTest do
       |> Enum.take(max(m.settings.concurrency - running, 0))
       |> Enum.map(&elem(&1, 0))
 
-    m =
-      Enum.reduce(taken, m, fn key, m ->
-        runs = (m.runs[key] || []) ++ [false]
-        m = %{m | runs: Map.put(m.runs, key, runs)}
+    m = %{m | tried: m.tried ++ Enum.map(taken, &{&1, m.reviews[&1].asked})}
+
+    # A start the review limits hold back goes back to ready, with no thread, and the
+    # next queued review starts in its place.
+    {m, held} =
+      Enum.reduce(taken, {m, false}, fn key, {m, held} ->
         r = m.reviews[key]
 
-        put_review(m, key, %{
-          r
-          | status: :running,
-            run: length(runs),
-            launched: {r.trusted, r.approved}
-        })
+        if not r.asked and over_budget?(m, key) do
+          {put_review(m, key, %{r | status: :ready, limited: true}), true}
+        else
+          runs = (m.runs[key] || []) ++ [false]
+          {repo, _} = @prs[key]
+
+          m = %{
+            m
+            | runs: Map.put(m.runs, key, runs),
+              starts: Map.update(m.starts, repo, 1, &(&1 + 1))
+          }
+
+          {put_review(m, key, %{
+             r
+             | status: :running,
+               run: length(runs),
+               launched: {r.trusted, r.approved}
+           }), held}
+        end
       end)
 
-    started = Enum.map(taken, &{&1, m.reviews[&1].run})
+    started =
+      for key <- taken, m.reviews[key].status == :running, do: {key, m.reviews[key].run}
+
+    m = if held, do: pump(m), else: m
 
     if m.hold,
       do: %{m | held_runs: m.held_runs ++ started},
       else: Enum.reduce(started, m, fn {key, k}, m -> resolve(m, key, k) end)
+  end
+
+  # Whether a start of `key` goes over a review limit: every pull request here is
+  # octocat's, so the author's limit counts every start.
+  defp over_budget?(m, key) do
+    {repo, _} = @prs[key]
+    total = m.starts |> Map.values() |> Enum.sum()
+    %{per_author: author, per_repository: repository} = m.settings
+
+    (author > 0 and total >= author) or
+      (repository > 0 and Map.get(m.starts, repo, 0) >= repository)
+  end
+
+  # Whether which of the reviews `call` starts a review limit holds back depends on the
+  # order their starts are counted in, which the plugin leaves to its processes: some
+  # limit with room for more starts than none, yet fewer than it starts, one of them the
+  # watch's own.
+  defp contested?(m, call) do
+    {after_call, _} = step(%{m | tried: []}, call)
+    tried = after_call.tried
+    total = m.starts |> Map.values() |> Enum.sum()
+
+    buckets =
+      [{m.settings.per_author, tried, total}] ++
+        for repo <- ~w(api web) do
+          {m.settings.per_repository,
+           Enum.filter(tried, fn {key, _} -> elem(@prs[key], 0) == repo end),
+           Map.get(m.starts, repo, 0)}
+        end
+
+    length(tried) > 1 and
+      Enum.any?(buckets, fn {limit, members, count} ->
+        room = limit - count
+
+        limit > 0 and room > 0 and room < length(members) and
+          Enum.any?(members, fn {_, asked} -> not asked end)
+      end)
   end
 
   # Run `k` of `key` gets past the fetch: a broken head fails it, any other is checked
@@ -983,7 +1105,9 @@ defmodule HalC2.CodeReviewPropTest do
     end)
     |> Enum.map(fn {key, r} ->
       run = if r.status in [:queued, :ready], do: nil, else: r.run
-      {key, r.status, run, r.seen, r.reviewed, r.changed, r.verdict, r.comments, r.publish_error}
+
+      {key, r.status, run, r.seen, r.reviewed, r.changed, r.verdict, r.comments, r.publish_error,
+       r.limited}
     end)
   end
 
@@ -1096,7 +1220,7 @@ defmodule HalC2.CodeReviewPropTest do
     ref = make_ref()
     shown = Enum.find(GenServer.call(@server, :snapshot)["reviews"], &(&1["key"] == key))
     version = if fresh, do: shown && shown["version"], else: "stale"
-    send(@server, {:"$gen_call", {self(), ref}, {:publish, key, version}})
+    send(@server, {:"$gen_call", {self(), ref}, {:publish, key, version, nil}})
     drain()
 
     receive do
@@ -1253,6 +1377,56 @@ defmodule HalC2.CodeReviewPropTest do
     observe(plugins("enable", %{"id" => @id, "acceptPermissions" => permissions()}), :restarted)
   end
 
+  # Saves the review of `key`, if it waits, as a draft was saved before reports were
+  # made safe: no report version, and its text as an agent might have written it. The
+  # plugin restarts on it, and says whether its preview was refused.
+  def age(key) do
+    file = Path.join(data_dir(), "reviews.json")
+    saved = file |> File.read!() |> JSON.decode!()
+
+    saved =
+      case saved["reviews"][key] do
+        %{"status" => "waiting"} = r ->
+          raw = "@octocat ![x](https://example.com/x.png) <img src=x>\n```"
+
+          r =
+            r
+            |> Map.delete("report")
+            |> Map.update("summary", raw, &(raw <> &1))
+            |> Map.update("comments", [], fn cs ->
+              Enum.map(cs, &%{&1 | "body" => raw <> &1["body"]})
+            end)
+
+          put_in(saved, ["reviews", key], r)
+
+        _ ->
+          saved
+      end
+
+    File.write!(file, JSON.encode!(saved))
+    reply = killing(fn -> plugins("restart", %{"id" => @id}) end)
+    await_restart(Process.get(:cr_pid))
+    observed = observe(reply, :restarted)
+
+    preview =
+      case HalC2.Plugins.handle("call", %{
+             "id" => @id,
+             "method" => "preview",
+             "input" => %{"key" => key}
+           }) do
+        {:ok, _} ->
+          :shown
+
+        {:error, %{"message" => "The review of " <> _ = message}} ->
+          if message =~ "review it again", do: :refused, else: :none
+
+        _ ->
+          :none
+      end
+
+    %{observed | reply: preview}
+  end
+
   def crash do
     pid = Process.whereis(@server)
 
@@ -1372,6 +1546,13 @@ defmodule HalC2.CodeReviewPropTest do
       if pid do
         snapshot = GenServer.call(@server, :snapshot)
         if snapshot["problem"], do: problem("code-review reports: #{snapshot["problem"]}")
+
+        # No findings are shown as an agent wrote them, however old the draft they are in.
+        for r <- snapshot["reviews"],
+            text <- [r["summary"] | Enum.map(r["comments"] || [], & &1["body"])],
+            is_binary(text) and (text =~ ~r/(?<![\w@])@(?=[\w-])/u or text =~ ~r/!\[|<[A-Za-z]/),
+            do: problem("#{r["key"]} shows findings not made safe: #{inspect(text)}")
+
         published = snapshot |> JSON.encode!() |> JSON.decode!()
 
         if Process.get(:cr_topic) != published,
@@ -1392,6 +1573,7 @@ defmodule HalC2.CodeReviewPropTest do
       orphans: orphans(),
       unstopped: unstopped(view),
       posts: posts(),
+      starts: if(pid, do: starts(), else: :off),
       problems: Process.put(:cr_problems, []) |> Enum.reverse()
     }
   end
@@ -1419,7 +1601,15 @@ defmodule HalC2.CodeReviewPropTest do
 
     {key, @statuses[r["status"]], run(key, r["threadId"]), head(r["headSha"]),
      head(r["reviewedSha"]), r["changed"] == true, r["verdict"],
-     Enum.map(r["comments"] || [], &(&1["dismissed"] == true)), r["publishError"] != nil}
+     Enum.map(r["comments"] || [], &(&1["dismissed"] == true)), r["publishError"] != nil,
+     r["limited"] != nil}
+  end
+
+  # The starts the plugin counts toward the review limits, by repository, each once.
+  defp starts do
+    apply(@server, :starts, [])
+    |> Enum.uniq_by(& &1["id"])
+    |> Enum.frequencies_by(fn %{"repository" => "acme/" <> repo} -> repo end)
   end
 
   # The run a thread id is: its place among the thread ids seen for the review.
@@ -1811,9 +2001,9 @@ defmodule HalC2.CodeReviewPropTest do
           "reviewNewPushes" => false,
           "readReviewMd" => false,
           "display" => "threads",
-          # The model counts no reviews a day.
-          "reviewsPerAuthorPerDay" => 0,
-          "reviewsPerRepositoryPerDay" => 0
+          # As `initial_state/0` has them.
+          "reviewsPerAuthorPerDay" => 3,
+          "reviewsPerRepositoryPerDay" => 2
         }
       })
 

@@ -121,11 +121,15 @@ an approval or a request for changes. On your own pull requests, which GitHub
 does not let you approve or request changes on, it always is. If GitHub refuses
 a review, you are told why and the review keeps waiting with its comments.
 
-**Publish** posts the review as you see it. If it changes in the meantime, say
-a comment is dismissed from another of your devices, nothing is posted and you
-are asked to look again. An agent reports once per review; what it writes
+**Publish** posts the review as you see it. In a review's thread it first shows
+the summary and comments it will post, and posts only that; if the review
+changes while it is shown, it shows the new one. If it changes in the meantime,
+say a comment is dismissed from another of your devices, nothing is posted and
+you are asked to look again. An agent reports once per review; what it writes
 mentions nobody on GitHub, shows no images and hides nothing, and a report too
-long to post is sent back for the agent to shorten.
+long to post is sent back for the agent to shorten. A draft kept from before
+code review checked reports this way is shown the same way, but is not posted:
+review it again, then publish.
 
 ## Where reviews show up
 

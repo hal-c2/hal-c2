@@ -613,6 +613,33 @@ Feature: Agent code review
       And nothing is posted to #12
 
     @mc
+    Scenario: Publishing posts the review its preview showed
+      Given the review of #12 is waiting with three comments
+      When the user dismisses one comment and reads what publishing the review of #12 would post
+      And the user publishes the review of #12 as previewed
+      Then #12 gets the review the preview showed
+
+    @mc
+    Scenario: A review whose post would no longer be what its preview showed is not published
+      Given the review of #12 is waiting to be published
+      And the user read what publishing the review of #12 would post
+      When the user posts verdicts as comments
+      And the user publishes the review of #12 as previewed
+      Then the user is told "changed since you looked at it"
+      And nothing is posted to #12
+
+    @mc
+    Scenario: A draft saved before its findings were made safe is shown safe and is reviewed again before it is posted
+      Given the review of #12 is waiting to be published
+      And the review of #12 was saved before code review made findings safe, as its agent wrote them
+      When code review starts again
+      Then the review of #12 shows no mention, image or markup as its agent wrote them
+      And what publishing the review of #12 would post is refused with "review it again"
+      When the user publishes the review of #12
+      Then the user is told "review it again"
+      And nothing is posted to #12
+
+    @mc
     Scenario: The user publishes a draft review with the comments they kept
       Given the review of #12 is waiting with three comments
       When the user dismisses one comment and publishes the review
@@ -757,6 +784,17 @@ Feature: Agent code review
       Given the review of #13 finished with the verdict "approved"
       When the user opens the review's thread
       Then the pull request, the verdict and the publish action are shown above the conversation
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: Publishing from a review thread first shows what will be posted
+      Given the review of #13 finished with the verdict "approved"
+      When the user opens the review's thread
+      And the user publishes the review from above the conversation
+      Then the summary and comments that will be posted are shown, and nothing is posted yet
+      When the review changes while they are shown
+      Then what is shown is read again
+      When the user confirms what will be posted
+      Then the review is published as it was shown
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: A review thread is marked as a review in the thread list

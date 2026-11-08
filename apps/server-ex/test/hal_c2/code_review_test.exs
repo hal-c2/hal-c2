@@ -300,7 +300,7 @@ defmodule HalC2.CodeReviewTest do
     first = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
     {:ok, _} = HalC2.Plugins.call_tool("code_review_report", first, review["threadId"])
     settle()
-    again = %{first | "verdict" => "request_changes", "summary" => "Wait, no."}
+    again = %{first | "verdict" => "request-changes", "summary" => "Wait, no."}
 
     assert {:error, "plugin_failed", message} =
              HalC2.Plugins.call_tool("code_review_report", again, review["threadId"])
@@ -401,6 +401,125 @@ defmodule HalC2.CodeReviewTest do
 
     assert body.(%{"body" => closed, "suggestion" => "x"}, "new") ==
              "#{closed}\n\n```suggestion\nx\n```"
+  end
+
+  test "the preview of a review is what publishing it posts", context do
+    review = start_review()
+
+    arguments = %{
+      "verdict" => "request-changes",
+      "summary" => "Two things.",
+      "comments" => [
+        %{"path" => "src/limits.ts", "line" => 1, "body" => "One.", "severity" => "major"},
+        %{"path" => "src/limits.ts", "line" => 1, "body" => "Two."}
+      ]
+    }
+
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+    settle()
+    {:ok, _} = call("dismiss", %{"key" => @key, "commentId" => "c2"})
+
+    assert {:ok, preview} = call("preview", %{"key" => @key})
+    assert preview["version"] == review()["version"]
+    assert [%{"path" => "src/limits.ts", "line" => 1, "body" => one}] = preview["comments"]
+    assert one =~ "One."
+
+    assert {:ok, _} =
+             call("publish", Map.merge(seen(), Map.take(preview, ~w(version verdict))))
+
+    assert [post] = posts(context)
+    sent = post |> Jason.decode!() |> Map.fetch!("stdin") |> Jason.decode!()
+    assert sent["body"] == preview["body"]
+    assert sent["event"] == "REQUEST_CHANGES" and preview["verdict"] == review()["verdict"]
+    assert Enum.map(sent["comments"], & &1["body"]) == [one]
+  end
+
+  test "a draft saved before reports were made safe is shown safe and is not published",
+       context do
+    review = start_review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+    settle()
+
+    # As reviews.json held a waiting draft before: its text as the agent wrote it, and
+    # no report version.
+    raw = "Ping @octocat and @acme/core. ![x](https://example.com/x.png) <img src=x>\n```"
+
+    comment = %{
+      "id" => "c1",
+      "path" => "src/limits.ts\nREADME.md",
+      "line" => 1,
+      "side" => "new",
+      "body" => raw <> String.duplicate("y", 9_000),
+      "severity" => "major",
+      "position" => 1,
+      "dismissed" => false
+    }
+
+    file = Path.join([context.dir, "home", "plugin-data", "code-review", "reviews.json"])
+    saved = file |> File.read!() |> JSON.decode!()
+
+    old =
+      saved["reviews"][@key]
+      |> Map.delete("report")
+      |> Map.merge(%{
+        "summary" => raw <> String.duplicate("x", 70_000),
+        "comments" =>
+          List.duplicate(comment, 40)
+          |> Enum.with_index(1)
+          |> Enum.map(fn {c, i} -> %{c | "id" => "c#{i}"} end),
+        "validation" => %{"ran" => [%{"command" => "@octocat\nmix test", "result" => "ok"}]}
+      })
+
+    File.write!(file, JSON.encode!(put_in(saved, ["reviews", @key], old)))
+    {:ok, _} = HalC2.Plugins.handle("restart", %{"id" => @id})
+    settle()
+
+    shown = review()
+    texts = [shown["summary"] | Enum.map(shown["comments"], & &1["body"])]
+
+    for text <- texts do
+      refute text =~ ~r/(?<![\w@])@(?=[\w-])/u
+      refute text =~ "!["
+      refute text =~ ~r/<[A-Za-z]/
+      # No code block left open.
+      assert text |> String.split("\n") |> Enum.count(&String.starts_with?(&1, "```")) |> rem(2) ==
+               0
+    end
+
+    assert byte_size(shown["summary"]) <= 60_100
+    assert length(shown["comments"]) <= 30
+    assert Enum.all?(shown["comments"], &(byte_size(&1["body"]) <= 4_200))
+    assert Enum.all?(shown["comments"], &(not String.contains?(&1["path"], "\n")))
+    assert [%{"command" => "@\u200Boctocat mix test"}] = shown["validation"]["ran"]
+
+    # What the plugin holds is as safe as what it shows.
+    held = :sys.get_state(@server).reviews[@key]
+    assert held["summary"] == shown["summary"]
+
+    # It is not posted, from its preview or from Publish: it is reviewed again first.
+    assert {:error, %{"message" => message}} = call("preview", %{"key" => @key})
+    assert message =~ "review it again"
+    assert {:error, %{"message" => message}} = call("publish", seen())
+    assert message =~ "review it again"
+    assert %{"status" => "waiting"} = review()
+    assert posts(context) == []
+  end
+
+  test "a review whose post would change from its preview is not published", context do
+    review = start_review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+    settle()
+    {:ok, preview} = call("preview", %{"key" => @key})
+    save_settings(%{"verdictAsComment" => true})
+
+    assert {:error, %{"message" => message}} =
+             call("publish", Map.merge(seen(), Map.take(preview, ~w(version verdict))))
+
+    assert message =~ "changed since you looked at it"
+    assert %{"status" => "waiting"} = review()
+    assert posts(context) == []
   end
 
   test "a review run again with the same findings is not published on what the run before showed",
@@ -1154,7 +1273,7 @@ defmodule HalC2.CodeReviewTest do
   # Asks to publish #1 without waiting for GitHub. Returns the ref its reply comes with.
   defp publishing do
     ref = make_ref()
-    send(@server, {:"$gen_call", {self(), ref}, {:publish, @key, review()["version"]}})
+    send(@server, {:"$gen_call", {self(), ref}, {:publish, @key, review()["version"], nil}})
     :sys.get_state(@server)
     ref
   end

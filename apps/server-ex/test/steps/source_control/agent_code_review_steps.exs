@@ -408,6 +408,87 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "the user dismisses one comment and reads what publishing the review of \#{int} would post",
+       %{args: [number]} = context do
+    {reply, context} =
+      plugin(context, "dismiss", %{"key" => key(context, number), "commentId" => "c1"})
+
+    assert {:ok, _} = reply
+    preview(context, number)
+  end
+
+  step "the user read what publishing the review of \#{int} would post",
+       %{args: [number]} = context do
+    preview(context, number)
+  end
+
+  # As reviews.json held a draft before findings were made safe where they are
+  # reported: no report version, and its text as an agent may have written it.
+  step "the review of \#{int} was saved before code review made findings safe, as its agent wrote them",
+       %{args: [number]} = context do
+    file = Path.join(HalC2.Plugins.Host.data_dir(@id), "reviews.json")
+    saved = file |> File.read!() |> JSON.decode!()
+    key = key(context, number)
+    raw = "@octocat ![x](https://example.com/x.png) <img src=x>\n```"
+
+    old =
+      saved["reviews"][key]
+      |> Map.delete("report")
+      |> Map.update!("summary", &(raw <> &1))
+      |> Map.update!("comments", fn cs -> Enum.map(cs, &%{&1 | "body" => raw <> &1["body"]}) end)
+
+    File.write!(file, JSON.encode!(put_in(saved, ["reviews", key], old)))
+    context
+  end
+
+  step "code review starts again", context do
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => @id})
+    context
+  end
+
+  step "the review of \#{int} shows no mention, image or markup as its agent wrote them",
+       %{args: [number]} = context do
+    {review, context} =
+      await_review(context, number, &(&1["status"] == "waiting" and &1["summary"] =~ "octocat"))
+
+    for text <- [review["summary"] | Enum.map(review["comments"], & &1["body"])] do
+      refute text =~ ~r/(?<![\w@])@(?=[\w-])/u
+      refute text =~ "!["
+      refute text =~ ~r/<[A-Za-z]/
+    end
+
+    context
+  end
+
+  step "what publishing the review of \#{int} would post is refused with {string}",
+       %{args: [number, message]} = context do
+    {reply, context} = plugin(context, "preview", %{"key" => key(context, number)})
+    assert {:error, _, _} = reply
+    assert inspect(reply) =~ message
+    context
+  end
+
+  step "the user publishes the review of \#{int} as previewed", %{args: [number]} = context do
+    input = Map.put(Map.take(context.preview, ~w(version verdict)), "key", key(context, number))
+    {reply, context} = plugin(context, "publish", input)
+    Map.put(context, :reply, reply)
+  end
+
+  step "\#{int} gets the review the preview showed", %{args: [number]} = context do
+    assert {:ok, _} = context.reply
+    assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
+    posted = JSON.decode!(call["stdin"])
+    assert posted["body"] == context.preview["body"]
+
+    assert posted["event"] == "REQUEST_CHANGES" and
+             context.preview["verdict"] == "request-changes"
+
+    assert Enum.map(posted["comments"], &Map.take(&1, ~w(path line body))) ==
+             context.preview["comments"]
+
+    context
+  end
+
   step "the user asks for a review of \#{int}", %{args: [number]} = context do
     context |> open(number) |> start(number)
   end
@@ -2385,6 +2466,14 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   defp publish(context, number) do
     {reply, context} = plugin(context, "publish", seen(context, number))
     Map.put(context, :reply, reply)
+  end
+
+  # What publishing the review of `number` would post, as the user is shown it.
+  defp preview(context, number) do
+    {reply, context} = plugin(context, "preview", %{"key" => key(context, number)})
+    assert {:ok, preview} = reply
+    assert [_ | _] = preview["comments"]
+    Map.put(context, :preview, preview)
   end
 
   # The review of `number` as the user sees it, to publish: its key and its version.

@@ -44,6 +44,10 @@ defmodule HalC2Plugins.CodeReview do
   @review_md_limit 64 * 1024
   # How many threads a review remembers having replaced.
   @replaced_kept 20
+  # The shape of a report's findings: their text is made safe to post and to show where
+  # it is reported (`findings/2`). A review saved before had it as the agent wrote it,
+  # and has no `report`; once `safe/1` has made it safe it has report 1, never posted.
+  @report 2
   # Who is trusted to have a pull request reviewed, and to ask for its review: the
   # repository's members and collaborators by GitHub's association, and anyone with
   # write access or triage by their permission on it. Everyone else, a fork's author
@@ -242,10 +246,35 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
+  # What publishing the review of `key` would post, for the user to confirm: the
+  # verdict, the body and the comments, and the version they are of.
+  def call("preview", %{"key" => key}, _context) do
+    case server({:preview, key}) do
+      {:ok, review, settings} ->
+        input = post_input(review, settings)
+
+        {:ok,
+         %{
+           "version" => version(review),
+           "verdict" => input["verdict"],
+           "body" => input["body"],
+           "comments" =>
+             for c <- input["comments"] do
+               %{"path" => c["path"], "line" => c["line"], "body" => c["body"]}
+             end
+         }}
+
+      error ->
+        error
+    end
+  end
+
   # The post can take a while; the caller waits for GitHub's answer. `version` is the
   # findings' as the user saw them (`snapshot/1`): a review changed since is not posted.
+  # `verdict`, a preview's, holds the post to it too, so a post that would go as a
+  # comment where the preview had the verdict, or the other way round, is not made.
   def call("publish", %{"key" => key} = input, _context),
-    do: GenServer.call(__MODULE__, {:publish, key, input["version"]}, 120_000)
+    do: GenServer.call(__MODULE__, {:publish, key, input["version"], input["verdict"]}, 120_000)
 
   def call(method, _input, _context), do: {:error, "code-review has no method #{method}."}
 
@@ -645,7 +674,23 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
-  def handle_call({:publish, key, version}, from, state) do
+  def handle_call({:preview, key}, _from, state) do
+    case state.reviews[key] do
+      %{"status" => "waiting", "report" => @report} = review ->
+        {:reply, {:ok, review, state.settings}, state}
+
+      %{"status" => "waiting"} ->
+        {:reply, {:error, old_report(key)}, state}
+
+      nil ->
+        {:reply, {:error, "There is no review #{key}."}, state}
+
+      _ ->
+        {:reply, {:error, "The review of #{key} is not waiting to be published."}, state}
+    end
+  end
+
+  def handle_call({:publish, key, version, verdict}, from, state) do
     case state.reviews[key] do
       # Reserved here, so two asks cannot both post it, and posted from a process
       # linked to this one, so turning the plugin off calls the post off. What is
@@ -654,7 +699,7 @@ defmodule HalC2Plugins.CodeReview do
         if version == version(review) do
           review = Map.merge(review, %{"status" => "publishing", "publishError" => nil})
           settings = state.settings
-          spawn_link(fn -> GenServer.reply(from, publish(review, settings)) end)
+          spawn_link(fn -> GenServer.reply(from, publish(review, settings, verdict)) end)
           {:noreply, state |> put(review) |> changed()}
         else
           {:reply,
@@ -766,6 +811,7 @@ defmodule HalC2Plugins.CodeReview do
             "comments" => findings.comments,
             "general" => findings.general,
             "validation" => findings.validation,
+            "report" => @report,
             "finishedAt" => now(),
             "error" => nil,
             "publishError" => nil
@@ -779,7 +825,7 @@ defmodule HalC2Plugins.CodeReview do
 
           spawn_link(fn ->
             posted =
-              case publish(review, settings) do
+              case publish(review, settings, nil) do
                 {:ok, _} -> %{"status" => "published"}
                 {:error, error} -> %{"status" => "waiting", "publishError" => error}
               end
@@ -1582,6 +1628,7 @@ defmodule HalC2Plugins.CodeReview do
       if review["verdict"] do
         %{
           "reviewedSha" => review["reviewedSha"],
+          "report" => review["report"],
           "verdict" => review["verdict"],
           "summary" => review["summary"],
           "comments" =>
@@ -1619,6 +1666,7 @@ defmodule HalC2Plugins.CodeReview do
         "finishedAt" => nil,
         "threadId" => nil,
         "verdict" => nil,
+        "report" => nil,
         "summary" => nil,
         "comments" => [],
         "general" => [],
@@ -2403,6 +2451,98 @@ defmodule HalC2Plugins.CodeReview do
   defp longest_backticks(text),
     do: ~r/`+/ |> Regex.scan(text) |> Enum.map(&String.length(hd(&1))) |> Enum.max(fn -> 0 end)
 
+  # A review's findings made as safe as `findings/2` makes a report's, for one saved
+  # before it did (no `report`): the same neutralising, no code block left open, and
+  # its text cut to a report's limits. It is applied wherever findings leave the
+  # plugin (loaded, shown, previewed and posted), so no saved draft skips it, and
+  # marks what it made safe report 1, so it is made safe once. A current report is
+  # made safe where it is reported, which keeps its suggestions as written; this
+  # makes them safe as prose too.
+  defp safe(review) do
+    review =
+      if is_binary(review["verdict"]) and review["report"] not in [1, @report],
+        do:
+          Map.merge(review, %{
+            "report" => 1,
+            "summary" => safe_text(review["summary"], @max_body),
+            "comments" =>
+              for c <- Enum.take(List.wrap(review["comments"]), @max_comments), is_map(c) do
+                Map.merge(c, %{
+                  "path" => safe_path(c["path"]),
+                  "body" => safe_text(c["body"], @max_comment + @max_suggestion)
+                })
+              end,
+            "general" =>
+              for g <- List.wrap(review["general"]), is_map(g) do
+                Map.put(g, "path", safe_path(g["path"]))
+              end,
+            "validation" => safe_validation(review["validation"])
+          }),
+        else: review
+
+    case review["previous"] do
+      %{"report" => report} when report in [1, @report] ->
+        review
+
+      %{} = previous ->
+        comments =
+          for c <- Enum.take(List.wrap(previous["comments"]), @max_comments), is_map(c) do
+            Map.merge(c, %{
+              "path" => safe_path(c["path"]),
+              "body" => safe_text(c["body"], @max_comment + @max_suggestion)
+            })
+          end
+
+        %{
+          review
+          | "previous" =>
+              Map.merge(previous, %{
+                "report" => 1,
+                "summary" => safe_text(previous["summary"], @max_body),
+                "comments" => comments
+              })
+        }
+
+      _ ->
+        review
+    end
+  end
+
+  defp safe_text(text, bytes) when is_binary(text),
+    do: text |> cut(bytes) |> neutral() |> closed()
+
+  defp safe_text(_, _), do: ""
+
+  defp safe_path(path) when is_binary(path),
+    do: path |> String.replace(~r/[[:cntrl:]]/u, " ") |> one_line() |> cut(@max_path)
+
+  defp safe_path(_), do: ""
+
+  defp safe_validation(validation) when is_map(validation) do
+    lists =
+      for {list, name, value} <- @validation, is_list(validation[list]), into: %{} do
+        entries =
+          for e <- Enum.take(validation[list], @max_entries), is_map(e) do
+            Map.new(
+              [name, value],
+              &{&1, neutral(one_line(cut(to_string(e[&1] || ""), @max_entry)))}
+            )
+          end
+
+        {list, entries}
+      end
+
+    if Enum.all?(Map.values(lists), &(&1 == [])), do: nil, else: lists
+  end
+
+  defp safe_validation(_), do: nil
+
+  # `text` in at most `bytes`, cut where a character ends.
+  defp cut(text, bytes) when byte_size(text) <= bytes, do: text
+
+  defp cut(text, bytes),
+    do: (text |> binary_part(0, bytes) |> String.chunk(:valid) |> hd()) <> "\n[cut]"
+
   # --- publishing ----------------------------------------------------------------------
 
   defp publishing(settings, repository) do
@@ -2412,29 +2552,69 @@ defmodule HalC2Plugins.CodeReview do
     end)
   end
 
-  # Posts the review with the comments the user kept; the server hears how it went. A
-  # verdict the user may not give, as on their own pull request, is posted as a comment.
-  defp publish(review, settings) do
+  # The post of the review with the comments the user kept. A verdict the user may
+  # not give, as on their own pull request, is posted as a comment.
+  defp post_input(review, settings) do
+    review = safe(review)
+
     as_comment =
       review["verdict"] != "comment" and
         (settings["verdictAsComment"] == true or not may_give?(review))
 
-    body = review_body(review, as_comment)
-
-    input = %{
+    %{
       "projectId" => review["projectId"],
       "repository" => review["repository"],
       "number" => review["number"],
       "verdict" => if(as_comment, do: "comment", else: review["verdict"]),
-      "body" => body,
+      "body" => review_body(review, as_comment),
       # The comments' lines are the reviewed commit's, whatever has been pushed since.
       "commitId" => review["reviewedSha"],
       "comments" =>
         for c <- review["comments"] || [], not c["dismissed"] do
-          %{"path" => c["path"], "body" => severity_prefix(c), "position" => c["position"]}
+          %{
+            "path" => c["path"],
+            "line" => c["line"],
+            "body" => severity_prefix(c),
+            "position" => c["position"]
+          }
         end
     }
+  end
 
+  # Posts the review, unless it would go with another verdict than `verdict` when that
+  # is given; the server hears how it went.
+  # A review saved before its findings were made safe where they are reported is not
+  # posted: it is reviewed again first.
+  defp publish(review, settings, verdict) do
+    input = post_input(review, settings)
+
+    error =
+      cond do
+        review["report"] != @report ->
+          old_report(review["key"])
+
+        is_binary(verdict) and verdict != input["verdict"] ->
+          "The review of #{review["key"]} changed since you looked at it: it would be posted " <>
+            if(input["verdict"] == "comment", do: "as a comment", else: "with its verdict") <>
+            ". Look at it again, then publish."
+
+        true ->
+          nil
+      end
+
+    if error do
+      server({:published, review["key"], review["threadId"], error})
+      {:error, error}
+    else
+      post(review, input)
+    end
+  end
+
+  defp old_report(key),
+    do:
+      "The review of #{key} was saved by an older code review, which did not check what it posts; review it again, then publish."
+
+  defp post(review, input) do
     # Two machines that reviewed the same commit while apart post it once: the
     # post and its outcome are under one lock across the machines connected now.
     # A machine whose plugin is restarting cannot say whether it posted, so the
@@ -2811,7 +2991,7 @@ defmodule HalC2Plugins.CodeReview do
            -&1["number"]}
         )
         |> Enum.map(fn review ->
-          review = Map.drop(review, ["root", "replaced"])
+          review = review |> safe() |> Map.drop(["root", "replaced"])
 
           review =
             if review["elsewhere"],
@@ -2854,7 +3034,10 @@ defmodule HalC2Plugins.CodeReview do
       # run: the end of its turn may have come while the plugin was not there to hear
       # it. Its agent can still report, as to any failed review.
       # Where another machine had a review is read afresh at the first look.
-      reviews = Map.new(reviews, fn {key, review} -> {key, Map.delete(review, "elsewhere")} end)
+      reviews =
+        Map.new(reviews, fn {key, review} ->
+          {key, review |> Map.delete("elsewhere") |> safe()}
+        end)
 
       reviews =
         Map.new(reviews, fn
