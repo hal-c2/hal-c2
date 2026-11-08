@@ -11,9 +11,8 @@ defmodule HalC2.ProviderAuth do
   agent can open a session again; client responses go to the responder as
   `{:auth_response, response}`.
 
-  A flow belongs to the client that started it (its `owner`: the caller's session,
-  or `"local"` for the MC's own token; `nil` is the MC itself, which may act on any
-  flow). Only the owner answers or cancels it, and while it runs no one else starts
+  A flow belongs to the client that started it (its `owner/2`; `nil` is the MC
+  itself, which may act on any flow). Only the owner answers or cancels it, and while it runs no one else starts
   another; other clients see it running, without its address, code or id (`view/2`).
   Subscribers get the whole state with the owner under `"_owner"`, and each socket
   shows its client `view/2` of it. Signing out is anyone's, and runs off this process
@@ -88,6 +87,16 @@ defmodule HalC2.ProviderAuth do
 
     :ok
   end
+
+  @doc """
+  The owner a socket on `node` acts as: its paired session, so a device's sockets are
+  one client, or for the MC's own token (`nil`) that MC's local tools, one client too.
+  A sign-in may run on another MC of the cluster than the socket's, and a session, or
+  the own token, means something only on its own MC, so each is qualified by its node.
+  """
+  def owner(session, node \\ node())
+  def owner(nil, node), do: "own-token@#{node}"
+  def owner(session, node), do: "session:#{session}@#{node}"
 
   @doc """
   What the client `viewer` (`nil`: the MC itself, which sees all) is shown of a state

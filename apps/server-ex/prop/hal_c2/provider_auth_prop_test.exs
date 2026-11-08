@@ -1,7 +1,8 @@
 defmodule HalC2.ProviderAuthPropTest do
   @moduledoc """
-  Who may do what with a provider sign-in (`HalC2.ProviderAuth`), over the clients
-  "a" and "b" and the MC itself (`nil`). A flow belongs to whoever started it: only
+  Who may do what with a provider sign-in (`HalC2.ProviderAuth`), over two clients
+  and the MC itself (`nil`). The two are the local tools on the own tokens of two MCs
+  of a cluster, which reach one MC's sign-ins as different owners (`owner/2`). A flow belongs to whoever started it: only
   they, or the MC, answer or cancel it, and no one else starts another meanwhile;
   an answer or a cancel for a flow that ended or expired is refused. Signing out is
   anyone's and ends the flow and its ownership. After every step each viewer is
@@ -18,7 +19,7 @@ defmodule HalC2.ProviderAuthPropTest do
 
   @moduletag timeout: :infinity
   @instance "grok"
-  @owners ["a", "b", nil]
+  @owners [ProviderAuth.owner(nil, :"mc-a@host"), ProviderAuth.owner(nil, :"mc-b@host"), nil]
   @in_progress "Provider setup is already in progress."
   @not_active "This sign-in is no longer active in this client."
   @elsewhere "Sign-in is in progress in another client."

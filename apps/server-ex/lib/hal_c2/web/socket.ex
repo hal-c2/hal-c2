@@ -1998,10 +1998,8 @@ defmodule HalC2.Web.Socket do
       {{:provider_auth, instance}, "providerAuth",
        %{"state" => HalC2.ProviderAuth.view(auth, auth_owner(state))}}
 
-  # Whose sign-ins a socket acts on and sees whole: its paired session's, so a device's
-  # sockets are one client; the local tools on the MC's own token are one client too.
-  defp auth_owner(%{session: nil}), do: "local"
-  defp auth_owner(%{session: session}), do: session
+  # Whose sign-ins a socket acts on and sees whole (`HalC2.ProviderAuth.owner/2`).
+  defp auth_owner(%{session: session}), do: HalC2.ProviderAuth.owner(session)
 
   # This socket's device on a page: its session's, or for the MC's own token, itself.
   defp device(state) do
