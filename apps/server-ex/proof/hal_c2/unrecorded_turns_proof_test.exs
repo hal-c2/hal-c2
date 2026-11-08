@@ -6,8 +6,9 @@ defmodule HalC2.UnrecordedTurnsProofTest do
   # recovering, the provider ending its turn or ignoring a stop, the runtime crashing
   # and the MC restarting. Codex stands for every runtime: its stop is the one that can
   # time out and leave its provider turn running for the next message to stop first.
-  # One Claude or Muse answers but does not follow is ended by the runtime once its
-  # time is out, closing the provider, as the provider ending it would ([own-end]). A
+  # One Claude or Muse answers but does not follow, or an ACP agent or Pi never acts
+  # on, is ended by the runtime once its time is out, stopping the provider, as the
+  # provider ending it would ([own-end]). A
   # stop Muse refuses, or ACP answers at once, ends the turn inside the runtime's call
   # instead, and the failure goes with that turn too. A Codex goal's provider turn can
   # complete while its run goes on (`goal_hold`); it keeps how it ended however the run

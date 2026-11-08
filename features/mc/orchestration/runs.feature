@@ -348,6 +348,16 @@ Feature: Runs and turns
     Then the Grok run is failed because it could not be saved
     And the next message to Grok runs and its reply is recorded
 
+  # hal-c2#1398: a Pi turn that had shown output and went on after the MC's abort of it,
+  # when the store could not record it, had no deadline and left the run running.
+  @mc
+  Scenario: A run whose events cannot be recorded ends when Pi goes on after its abort
+    Given a Pi turn that has shown output is running on a Pi that ignores the MC's abort
+    And Pi has half a second to end a turn the MC aborted
+    When the MC fails to record the Pi turn's events
+    Then the Pi run is failed because it could not be saved
+    And the next message to Pi runs and its reply is recorded
+
   @mc
   Scenario: A provider session that cannot be opened fails the run
     Given the provider's session cannot be opened while "t1" starts a turn

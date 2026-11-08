@@ -2457,6 +2457,77 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
+  # --- the same on Pi, which goes on with a turn it has shown output for -------------
+
+  step "a Pi turn that has shown output is running on a Pi that ignores the MC's abort",
+       context do
+    turns = [
+      %{"match" => "a long task", "steps" => [%{"text" => "Working on it."}, %{"hang" => true}]}
+      | HalC2.Test.FakeAcp.pi_turns()
+    ]
+
+    context =
+      context
+      |> HalC2.Test.FakeAcp.install_pi(%{}, enabled: true, turns: turns)
+      |> HalC2.Test.FakeAcp.thread("Pi")
+      |> HalC2.Test.FakeAcp.send_message("a long task")
+
+    # Pi's reply starts in the stream once it has shown output for the turn.
+    World.await_stream(World.thread_id(context, "Pi"), fn state ->
+      Enum.any?(HalC2.StreamState.list(state, "message"), &(&1["role"] == "assistant"))
+    end)
+
+    [{pid, _}] = Registry.lookup(HalC2.Pi.Registry, World.thread_id(context, "Pi"))
+    assert %{turn_active: true} = :sys.get_state(pid)
+    [run] = World.entities(context, "Pi", "run")
+    Map.put(context, :running, run["id"])
+  end
+
+  step "Pi has half a second to end a turn the MC aborted", context do
+    World.put_app_env(:pi_abort_deadline_ms, 500)
+    context
+  end
+
+  # Pi's next tool fails to record; the MC's abort of the turn reaches Pi, which goes
+  # on, so the run's end waits on the turn's.
+  step "the MC fails to record the Pi turn's events", context do
+    context = refuse(context, 1)
+    [{pid, _}] = Registry.lookup(HalC2.Pi.Registry, World.thread_id(context, "Pi"))
+    %{conn: conn} = :sys.get_state(pid)
+
+    tool = %{
+      "toolCallId" => "tool-unrecorded",
+      "toolName" => "bash",
+      "args" => %{"command" => "ls"}
+    }
+
+    send(pid, {:json_rpc, conn, {:notification, "tool_execution_start", tool}})
+    assert %{unrecorded: %{run: run}, interrupted: true} = :sys.get_state(pid)
+    assert run == context.running
+    assert [%{"status" => "running"}] = World.entities(context, "Pi", "run")
+    context
+  end
+
+  step "the Pi run is failed because it could not be saved", context do
+    World.await_runs(context, "Pi", ["failed"])
+    [run] = World.entities(context, "Pi", "run")
+    assert run["failure"] =~ "The turn could not be saved"
+    context
+  end
+
+  step "the next message to Pi runs and its reply is recorded", context do
+    context = HalC2.Test.FakeAcp.send_message(context, "Next", "Pi")
+    World.await_runs(context, "Pi", ["failed", "completed"])
+    run = World.entities(context, "Pi", "run") |> Enum.max_by(& &1["ordinal"])
+
+    assert Enum.any?(
+             World.entities(context, "Pi", "message"),
+             &(&1["runId"] == run["id"] and &1["role"] == "assistant")
+           )
+
+    context
+  end
+
   # Muse refuses the user's stop, so the MC closes its host and ends the turn there.
   step "the user stops the Muse Code turn and Muse refuses", context do
     HalC2.Test.FakeAcp.configure(context, "muse", &Map.put(&1, "interruptFails", true))
