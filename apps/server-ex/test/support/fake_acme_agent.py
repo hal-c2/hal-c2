@@ -149,6 +149,18 @@ def prompt(pid, sid, text):
               "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
                           {"optionId": "deny", "name": "Deny", "kind": "reject_once"}]}})
         return
+    if "open bad url" in text:
+        send({"id": "url-bad", "method": "elicitation/create", "params": {"mode": "url",
+              "url": "file:///etc/passwd", "elicitationId": "bad", "message": "Sign in to Acme"}})
+        return finish(pid, sid, "asked for bad")
+    if "open anonymous url" in text:
+        send({"id": "url-anon", "method": "elicitation/create", "params": {"mode": "url",
+              "url": "https://acme.test/anon", "elicitationId": "", "message": "Sign in to Acme"}})
+        return finish(pid, sid, "asked for anon")
+    if "open long url" in text:
+        send({"id": "url-long", "method": "elicitation/create", "params": {"mode": "url",
+              "url": "https://acme.test/long", "elicitationId": "x" * 300, "message": "m" * 2000}})
+        return finish(pid, sid, "asked for long")
     m = re.search(r"open url (\S+)", text)
     if m:
         send({"id": "url-" + m.group(1), "method": "elicitation/create", "params": {"mode": "url",

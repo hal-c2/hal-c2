@@ -10,7 +10,8 @@ defmodule HalC2.OrchestrationPropTest do
   cancel, edit, reorder and promote queued messages (and have Codex refuse to take a
   promoted one, also after the thread was archived while Codex was asked); send a
   queued message now on an idle thread, held or not; resume a held queue; interrupt a turn, or the run of a message as a
-  client that read it as active does (#403, #474);
+  client that read it as active does (#403, #474), or as an agent does, which records
+  the agent and its reason as who stopped the run;
   crash a provider runtime mid-turn, or end only its provider stream (the app-server
   exiting), which fails the run, unless the MC is shutting down, when the run is left
   for the next boot's recovery to settle; stop a run nothing drives any more, which
@@ -222,6 +223,7 @@ defmodule HalC2.OrchestrationPropTest do
       {1, {:call, __MODULE__, :unarchive, [tid]}},
       {1, {:call, __MODULE__, :delete, [tid]}},
       {3, {:call, __MODULE__, :interrupt, [tid]}},
+      {2, {:call, __MODULE__, :interrupt_by_agent, [tid]}},
       {2, {:call, __MODULE__, :stop, [tid, oneof([:alone, :with_task, :with_held_up_task])]}},
       {1, {:call, __MODULE__, :resume, [tid]}},
       {1, {:call, __MODULE__, :release, [tid]}},
@@ -724,6 +726,11 @@ defmodule HalC2.OrchestrationPropTest do
     end
   end
 
+  # An agent's stop ends the turn and holds the queue as the user's does; who asked is
+  # the wrapper's to check on the run's interrupt items (`interrupt_by_agent/1`).
+  defp step(state, result, {:call, module, :interrupt_by_agent, [tid]}),
+    do: step(state, result, {:call, module, :interrupt, [tid]})
+
   # The user's stop holds the queue: nothing queued starts until they resume it or send.
   defp step(state, _result, {:call, _, :interrupt, [tid]}) do
     case refusal(state, tid, :interrupt) do
@@ -1131,6 +1138,9 @@ defmodule HalC2.OrchestrationPropTest do
   defp expected_reply(state, fun, [tid])
        when fun in [:archive, :unarchive, :delete, :interrupt],
        do: refusal(state, tid, fun) || :ok
+
+  defp expected_reply(state, :interrupt_by_agent, [tid]),
+    do: refusal(state, tid, :interrupt) || :ok
 
   defp expected_reply(state, :stop, [tid, _]),
     do: if(state.threads[tid], do: :ok, else: {:error, "unknown thread #{tid}"})
@@ -2049,6 +2059,57 @@ defmodule HalC2.OrchestrationPropTest do
   def interrupt(tid) do
     ending = active_runs(tid)
     reply(Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => tid}), ending)
+  end
+
+  # An agent's stop, as `hal_c2_thread_interrupt` sends it: the run it ended records
+  # the agent as who asked, with its reason, and its outcome says so (upstream
+  # #24299). A request an earlier stop already recorded is that stop's, not this one's.
+  def interrupt_by_agent(tid) do
+    ending = active_runs(tid)
+
+    asked =
+      MapSet.new(
+        StreamState.list(current(tid), "turn-item"),
+        & &1["id"]
+      )
+
+    result =
+      Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "threadId" => tid,
+        "requestedBy" => "agent",
+        "reason" => "wrong branch"
+      })
+
+    reply = reply(result, ending)
+    if match?({:ok, _}, result), do: check_agent_stop(tid, ending, asked)
+    reply
+  end
+
+  defp check_agent_stop(tid, ending, asked) do
+    state = current(tid)
+    items = StreamState.list(state, "turn-item")
+    by_id = Map.new(runs(state), &{&1["id"], &1})
+
+    for run_id <- ending, by_id[run_id]["status"] == "interrupted" do
+      request_id = "turn-item:run:#{run_id}:signal:interrupt-request"
+      request = Enum.find(items, &(&1["id"] == request_id))
+
+      # `reply/2` waited for `ending` to settle, so an interrupted run this stop ended
+      # must say who stopped it; only a request an earlier stop made is skipped.
+      if request == nil, do: raise("an agent's stop of #{tid} left #{run_id} with no request")
+
+      unless MapSet.member?(asked, request_id) do
+        unless request["stoppedBy"] == "agent" and request["message"] == "wrong branch",
+          do: raise("an agent's stop of #{tid} was recorded as #{inspect(request)}")
+
+        outcome =
+          Enum.find(items, &(&1["id"] == "turn-item:run:#{run_id}:signal:interrupt-result"))
+
+        unless outcome != nil and outcome["message"] == "Stopped by an agent: wrong branch",
+          do: raise("an agent's stop of #{tid} read as #{inspect(outcome && outcome["message"])}")
+      end
+    end
   end
 
   # What was queued when the stop began never starts, on the thread or on a task delegated

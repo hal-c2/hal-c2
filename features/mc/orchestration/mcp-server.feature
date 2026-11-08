@@ -588,10 +588,11 @@ Feature: The HAL-C2 MCP server agents receive
     When the agent receives its first prompt, then another in the same mode, then one after the mode changed
     Then the instructions are in the first prompt and in the one after the change, but not in the second
 
-  # Upstream #19393: native slash commands keep their prompt shape
+  # Upstream #19393: native slash commands keep their prompt shape. (A bare `/compact` on a
+  # thread with no conversation yet is refused before any prompt, so another command stands in.)
   @mc
   Scenario: A slash command stays at the start of an ACP prompt
-    When the user sends "/compact" to an ACP agent of "caller"
+    When the user sends "/review the open diff" to an ACP agent of "caller"
     Then the prompt is sent without HAL-C2's instructions in front of it
 
   # Runtime and pull-request instructions of apps/server/src/provider/RuntimeInstructions.ts,

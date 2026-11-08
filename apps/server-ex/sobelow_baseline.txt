@@ -111,8 +111,6 @@ Traversal.FileModule: Directory Traversal in `File.cp_r!` | lib/hal_c2/upgrade/d
 Traversal.FileModule: Directory Traversal in `File.cp_r!` | lib/hal_c2/upgrade/dev.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.cp_r!` | lib/hal_c2/upgrade/dev.ex | source
 Traversal.FileModule: Directory Traversal in `File.cp_r!` | lib/hal_c2/upgrade/dev.ex | target
-Traversal.FileModule: Directory Traversal in `File.cp` | lib/hal_c2/acp/catalog.ex | Elixir.Path
-Traversal.FileModule: Directory Traversal in `File.cp` | lib/hal_c2/acp/catalog.ex | archive
 Traversal.FileModule: Directory Traversal in `File.cp` | lib/hal_c2/checkpoint.ex | index
 Traversal.FileModule: Directory Traversal in `File.cp` | lib/hal_c2/checkpoint.ex | path
 Traversal.FileModule: Directory Traversal in `File.cp` | lib/hal_c2/space/image_generation.ex | file
