@@ -18,6 +18,8 @@ defmodule HalC2.ThreadFilesProofTest do
   #     they could be copied.
   #   - A move that sends the archive it built before the thread changed loses the
   #     message that changed it.
+  #   - A fork that names its source's file when a full disk refuses its copy loses
+  #     it with the source.
   @archive "builds, reads or writes archive files around a move or an import; the model has what a move carries"
   @upload "a client's upload before a message claims it, or serving a stored one"
   @files "names a file or reads it for a prompt; no file is written or removed by it"
@@ -34,10 +36,10 @@ defmodule HalC2.ThreadFilesProofTest do
     covers: %{
       "HalC2.Attachments.fold_long_text/3" => ~w(fold),
       "HalC2.Attachments.claim/2" => ~w(fold),
-      "HalC2.Attachments.copy_into/2" => ~w(copy),
+      "HalC2.Attachments.copy_into/2" => ~w(copy copy-failed),
       "HalC2.Attachments.delete_thread/1" => ~w(cleanup rmfiles),
       "HalC2.Attachments.path/1" => ~w(hasFile carried copy),
-      "HalC2.Orchestration.Fork.fork/1" => ~w(fork fork-gone read copy forked),
+      "HalC2.Orchestration.Fork.fork/1" => ~w(fork fork-gone read copy copy-failed forked),
       "HalC2.ThreadArchive.build/2" => ~w(build rebuild carried),
       "HalC2.ThreadArchive.import_archive/2" => ~w(import placed)
     },
@@ -110,18 +112,20 @@ defmodule HalC2.ThreadFilesProofTest do
         "A message over 120,000 characters reaches the agent as a file"
       ],
       "threads/fork-and-lineage.feature" => [
-        "A fork keeps the files its messages carry when the thread it came from is deleted"
+        "A fork keeps the files its messages carry when the thread it came from is deleted",
+        "A fork whose files cannot be copied is refused"
       ]
     }
 
-  # Ahead, Own, Recheck, Rebuild.
-  @design "true, true, true, true"
+  # Ahead, Own, Recheck, Rebuild, Refuse.
+  @design "true, true, true, true, true"
   @faults ~w(crash)
 
   # Two long messages, a move, a fork and deletes of both threads.
   @moving "send(1, 1) send(1, 2) move(1) fork(1, 2) del(1) del(2)"
-  # A fork that is sent to, moved and forked again while its source is deleted.
-  @forking "send(1, 1) fork(1, 2) send(2, 2) move(2) del(1) fork(2, 3) del(2)"
+  # A fork that is sent to, moved and forked again while its source is deleted, on a
+  # disk that may refuse one copy.
+  @forking "send(1, 1) fork(1, 2) send(2, 2) move(2) del(1) fork(2, 3) del(2) full(1)"
 
   test "no live thread shows a file it does not have, and no move loses a message",
        %{proof: proof} do
@@ -143,22 +147,36 @@ defmodule HalC2.ThreadFilesProofTest do
   end
 
   test "a message written before its file shows one that is not there", %{proof: proof} do
-    assert_reachable(proof, "start(false, true, true, true, 1, send(1, 1) move(1))", "unsafe")
+    assert_reachable(
+      proof,
+      "start(false, true, true, true, true, 1, send(1, 1) move(1))",
+      "unsafe"
+    )
   end
 
   test "a fork naming its source's files loses them with the source", %{proof: proof} do
-    init = "start(true, false, true, true, 0, send(1, 1) fork(1, 2) del(1))"
+    init = "start(true, false, true, true, true, 0, send(1, 1) fork(1, 2) del(1))"
     assert_reachable(proof, init, "dangling")
   end
 
   test "a fork that does not look at its source again takes one deleted while it copied",
        %{proof: proof} do
-    init = "start(true, true, false, true, 0, send(1, 1) fork(1, 2) del(1))"
+    init = "start(true, true, false, true, true, 0, send(1, 1) fork(1, 2) del(1))"
     assert_reachable(proof, init, "dangling")
   end
 
   test "a move that sends an archive built before the thread changed loses a message",
        %{proof: proof} do
-    assert_reachable(proof, "start(true, true, true, false, 0, send(1, 1) move(1))", "lost")
+    assert_reachable(
+      proof,
+      "start(true, true, true, false, true, 0, send(1, 1) move(1))",
+      "lost"
+    )
+  end
+
+  test "a fork that names its source's file when it cannot copy it loses it with the source",
+       %{proof: proof} do
+    init = "start(true, true, true, true, false, 0, send(1, 1) full(1) fork(1, 2) del(1))"
+    assert_reachable(proof, init, "dangling")
   end
 end

@@ -57,29 +57,31 @@ defmodule HalC2.Orchestration.Fork do
         transfer(command, "fork", source_id, target_id, point(source, run), nil, run, at)
 
       hook(:reading, source_id)
-      history = HalC2.Streams.read(source_id, &history(&1, run["ordinal"], target_id, at))
+      read = HalC2.Streams.read(source_id, &history(&1, run["ordinal"], target_id, at))
       hook(:copied, source_id)
 
-      changes =
-        [create("thread", target_id, target)] ++
-          history ++ [create("context-transfer", transfer["id"], transfer)]
+      with {:ok, history, copies} <- read do
+        changes =
+          [create("thread", target_id, target)] ++
+            history ++ [create("context-transfer", transfer["id"], transfer)]
 
-      # A delete of the source after it was read may have removed files before they
-      # were copied. Its files go only once the delete is written, so a source still
-      # live after the copies had every file while they were made.
-      result =
-        if live(state(source_id), source_id) do
-          HalC2.Streams.transact(target_id, :thread, fn state ->
-            if StreamState.get(state, "thread")[target_id],
-              do: {[], {:error, "Thread #{target_id} already exists."}},
-              else: {changes, :ok}
-          end)
-        else
-          {:error, "Thread #{source_id} was deleted."}
-        end
+        # A delete of the source after it was read may have removed files before they
+        # were copied. Its files go only once the delete is written, so a source still
+        # live after the copies had every file while they were made.
+        result =
+          if live(state(source_id), source_id) do
+            HalC2.Streams.transact(target_id, :thread, fn state ->
+              if StreamState.get(state, "thread")[target_id],
+                do: {[], {:error, "Thread #{target_id} already exists."}},
+                else: {changes, :ok}
+            end)
+          else
+            {:error, "Thread #{source_id} was deleted."}
+          end
 
-      unless result == :ok, do: drop_copies(history, target_id)
-      result
+        unless result == :ok, do: drop_copies(copies)
+        result
+      end
     end
   end
 
@@ -269,7 +271,9 @@ defmodule HalC2.Orchestration.Fork do
   end
 
   # The source's runs through `ordinal` and everything they produced, in creation
-  # order, as the target's own. A run the provider finished but the source has not
+  # order, as the target's own, with the files they name copied (`own_files/2`):
+  # `{:ok, changes, copies}`, or `{:error, message}` when a file cannot be copied.
+  # A run the provider finished but the source has not
   # settled is finished history in the copy: left "waiting" it would hold the fork's
   # first message in the queue behind a run nothing there will ever settle.
   # Selecting by ordinal is start order, so a held queued run a newer run passed
@@ -291,55 +295,96 @@ defmodule HalC2.Orchestration.Fork do
           into: MapSet.new(),
           do: checkpoint["scopeId"]
 
-    for {kind, id, entity} <- StreamState.rows(state),
-        (kind == "run" and Map.has_key?(runs, id)) or
-          (kind in @history and Map.has_key?(runs, entity["runId"])) or
-          (kind == "checkpoint-scope" and MapSet.member?(scopes, id)) do
-      entity =
-        cond do
-          kind == "run" and entity["status"] == "queued" ->
-            Map.merge(entity, %{"status" => "cancelled", "queuePosition" => nil})
+    rows =
+      for {kind, id, entity} <- StreamState.rows(state),
+          (kind == "run" and Map.has_key?(runs, id)) or
+            (kind in @history and Map.has_key?(runs, entity["runId"])) or
+            (kind == "checkpoint-scope" and MapSet.member?(scopes, id)) do
+        entity =
+          cond do
+            kind == "run" and entity["status"] == "queued" ->
+              Map.merge(entity, %{"status" => "cancelled", "queuePosition" => nil})
 
-          kind in ~w(run run-attempt node) and entity["status"] == "waiting" and
-              (entity["runId"] || id) in waiting ->
-            Map.merge(entity, %{
-              "status" => "completed",
-              "completedAt" => entity["completedAt"] || at
-            })
+            kind in ~w(run run-attempt node) and entity["status"] == "waiting" and
+                (entity["runId"] || id) in waiting ->
+              Map.merge(entity, %{
+                "status" => "completed",
+                "completedAt" => entity["completedAt"] || at
+              })
 
-          # Its files are copied, so the fork keeps them when the source is deleted.
-          kind == "message" and is_list(entity["attachments"]) and entity["attachments"] != [] ->
-            own_files(entity, target_id)
+            true ->
+              entity
+          end
 
-          true ->
-            entity
-        end
+        {kind, id, Map.put(entity, "threadId", target_id)}
+      end
 
-      create(kind, id, Map.put(entity, "threadId", target_id))
+    with {:ok, ids, copies} <- own_files(rows, target_id) do
+      changes =
+        for {kind, id, entity} <- rows, do: create(kind, id, with_files(entity, kind, ids))
+
+      {:ok, changes, copies}
     end
   end
 
-  defp own_files(%{"attachments" => attachments} = message, target_id) do
-    copied = HalC2.Attachments.copy_into(target_id, attachments)
-    context = HalC2.ComposerContext.remap_attachments(message["context"], attachments, copied)
-    message = Map.put(message, "attachments", copied)
-    if context, do: Map.put(message, "context", context), else: message
+  # The fork's own copy of each file its messages name, so it keeps them when the
+  # source is deleted: the copy's id for each source id, and the copies. A message and
+  # the turn item that shows it name the same files, and get the same copies.
+  defp own_files(rows, target_id) do
+    named =
+      for {kind, _id, entity} <- rows,
+          files?(kind, entity),
+          %{"id" => _} = attachment <- entity["attachments"],
+          do: attachment
+
+    named = Enum.uniq_by(named, & &1["id"])
+
+    case HalC2.Attachments.copy_into(target_id, named) do
+      {:ok, copied} ->
+        copies = for {was, now} <- Enum.zip(named, copied), was != now, do: now
+        ids = for {was, now} <- Enum.zip(named, copied), into: %{}, do: {was["id"], now["id"]}
+        {:ok, ids, copies}
+
+      {:error, reason} ->
+        {:error,
+         "The fork could not copy the files its messages carry: #{:file.format_error(reason)}."}
+    end
   end
 
+  # A message and the turn item that shows it carry attachments.
+  defp files?(kind, entity),
+    do:
+      kind in ~w(message turn-item) and is_list(entity["attachments"]) and
+        entity["attachments"] != []
+
+  # The entity naming the fork's copies, in its attachments and its context's records.
+  defp with_files(entity, kind, ids) do
+    if files?(kind, entity) do
+      before = entity["attachments"]
+
+      copied =
+        Enum.map(before, fn
+          %{"id" => id} = attachment when is_map_key(ids, id) ->
+            Map.put(attachment, "id", ids[id])
+
+          attachment ->
+            attachment
+        end)
+
+      context = HalC2.ComposerContext.remap_attachments(entity["context"], before, copied)
+      entity = Map.put(entity, "attachments", copied)
+      if context, do: Map.put(entity, "context", context), else: entity
+    else
+      entity
+    end
+  end
+
+  # The copies `own_files/2` made, for a fork that is not written.
   # The files come from `HalC2.Attachments.path/1`: `safe_id?` ids inside the
   # attachments folder.
   # sobelow_skip ["Traversal.FileModule"]
-  defp drop_copies(history, target_id), do: Enum.each(copies(history, target_id), &File.rm/1)
-
-  # The files `own_files/2` made for the target's messages: theirs by name.
-  defp copies(history, target_id) do
-    prefix = HalC2.Attachments.thread_segment(target_id) <> "-"
-
-    for {"message", _, %{"s" => message}} <- history,
-        %{"id" => id} = attachment <- List.wrap(message["attachments"]),
-        String.starts_with?(id, prefix),
-        path = HalC2.Attachments.path(attachment),
-        do: path
+  defp drop_copies(copies) do
+    for copy <- copies, path = HalC2.Attachments.path(copy), do: File.rm(path)
   end
 
   defp create(kind, id, entity), do: {kind, id, Patch.diff(nil, entity)}

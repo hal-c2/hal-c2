@@ -418,7 +418,7 @@ defmodule HalC2.AttachmentsTest do
   describe "copy_into/2" do
     test "a thread gets its own copy of another thread's file, which outlives that thread's" do
       {:ok, _text, [file]} = Attachments.fold_long_text("t1", String.duplicate("x", 120_001), [])
-      [copy] = Attachments.copy_into("t2", [file])
+      {:ok, [copy]} = Attachments.copy_into("t2", [file])
 
       assert Map.delete(copy, "id") == Map.delete(file, "id")
       assert String.starts_with?(copy["id"], "t2-")
@@ -430,10 +430,19 @@ defmodule HalC2.AttachmentsTest do
     test "an attachment whose file is not here passes through" do
       gone = %{"type" => "file", "id" => "t1-gone", "name" => "a.txt"}
 
-      assert Attachments.copy_into("t2", [gone, %{"name" => "no id"}]) == [
-               gone,
-               %{"name" => "no id"}
-             ]
+      assert Attachments.copy_into("t2", [gone, %{"name" => "no id"}]) ==
+               {:ok, [gone, %{"name" => "no id"}]}
+    end
+
+    # Passed through, the copy would name a file that goes with the other thread's.
+    test "a file that is here but cannot be copied is an error, and the copies made go" do
+      {:ok, _text, [file]} = Attachments.fold_long_text("t1", String.duplicate("x", 120_001), [])
+      # Neither linked nor copied, as a full disk refuses both.
+      File.mkdir_p!(Path.join(Attachments.dir(), "t1-stuck.txt"))
+      stuck = %{"type" => "file", "id" => "t1-stuck", "name" => "b.txt"}
+
+      assert {:error, _} = Attachments.copy_into("t2", [file, stuck])
+      assert Enum.filter(File.ls!(Attachments.dir()), &String.starts_with?(&1, "t2-")) == []
     end
   end
 end

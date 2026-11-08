@@ -6,11 +6,13 @@ sload model-checker
 --- them, and a send dying between its two steps.
 --- proof/hal_c2/thread_files_proof_test.exs maps it to the code and checks it.
 ---
---- Each part of the design is a switch, cfg(Ahead, Own, Recheck, Rebuild):
+--- Each part of the design is a switch, cfg(Ahead, Own, Recheck, Rebuild, Refuse):
 ---   Ahead    a send writes the file before the message that names it;
 ---   Own      a fork gives its messages their own copies of the files;
 ---   Recheck  a fork that copied files checks its source was not deleted meanwhile;
----   Rebuild  a move whose thread changed since its archive was built builds it again.
+---   Rebuild  a move whose thread changed since its archive was built builds it again;
+---   Refuse   a fork that cannot copy a file that is there (a full disk) is refused,
+---            its copies taken back, rather than name the source's file.
 
 mod THREAD-FILES is
   protecting NAT .
@@ -36,7 +38,7 @@ mod THREAD-FILES is
   op nofl : -> Fls [ctor] .
   op _&_ : Fls Fls -> Fls [ctor assoc comm id: nofl] .
 
-  op cfg : Bool Bool Bool Bool -> Item [ctor] .
+  op cfg : Bool Bool Bool Bool Bool -> Item [ctor] .
   --- Thread T on an MC: its state, how often it changed, its messages.
   op th : Mc Nat St Nat Msgs -> Item [ctor] .
   --- The file of message M named for thread O, on an MC.
@@ -60,6 +62,8 @@ mod THREAD-FILES is
   op del : Nat -> Item [ctor] .
   op cleanup : Mc Nat -> Item [ctor] .
   op faults : Nat -> Item [ctor] .
+  --- How many copies a full disk refuses still.
+  op full : Nat -> Item [ctor] .
 
   op empty : -> Conf [ctor] .
   op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
@@ -70,7 +74,7 @@ mod THREAD-FILES is
   var FS : Fls .
   var X : Mc .
   var St : St .
-  vars W OW K R : Bool .
+  vars W OW K R Q : Bool .
   var C : Conf .
 
   op hasFile : Mc Nat Nat Conf -> Bool .
@@ -119,13 +123,13 @@ mod THREAD-FILES is
   --- Attachments.fold_long_text/3 writes the whole message to a file named for the
   --- thread, then the thread's stream writes the message naming it, unless the thread
   --- is no longer live here; the file then goes, as no message names it.
-  rl [fold] : send(T, M) cfg(true, OW, K, R) => folded(T, M) file(a, T, M) cfg(true, OW, K, R) .
+  rl [fold] : send(T, M) cfg(true, OW, K, R, Q) => folded(T, M) file(a, T, M) cfg(true, OW, K, R, Q) .
   rl [append] : folded(T, M) th(a, T, still, V, ML) => th(a, T, still, s V, ML ; m(M, T)) .
   crl [refuse] : { folded(T, M) C } => { rmfile(a, T, M, C) } if not stillOn(T, C) .
   --- With Ahead off, the message first and its file after.
-  rl [tell] : send(T, M) th(a, T, still, V, ML) cfg(false, OW, K, R)
-    => told(T, M) th(a, T, still, s V, ML ; m(M, T)) cfg(false, OW, K, R) .
-  crl [refuse] : { send(T, M) cfg(false, OW, K, R) C } => { cfg(false, OW, K, R) C }
+  rl [tell] : send(T, M) th(a, T, still, V, ML) cfg(false, OW, K, R, Q)
+    => told(T, M) th(a, T, still, s V, ML ; m(M, T)) cfg(false, OW, K, R, Q) .
+  crl [refuse] : { send(T, M) cfg(false, OW, K, R, Q) C } => { cfg(false, OW, K, R, Q) C }
     if not stillOn(T, C) .
   rl [write] : told(T, M) => file(a, T, M) .
   --- The process sending dies between its steps.
@@ -139,11 +143,11 @@ mod THREAD-FILES is
     => { built(T, V, ML, carried(ML, th(a, T, still, V, ML) C)) th(a, T, still, V, ML) C } .
   --- begin/4 marks the thread moving; a thread that changed since its archive was built
   --- has it built again.
-  crl [begin] : built(T, V, ML, FS) th(a, T, still, V2, ML2) cfg(W, OW, K, R)
-    => sent(T, ML, FS) th(a, T, moving, V2, ML2) cfg(W, OW, K, R)
+  crl [begin] : built(T, V, ML, FS) th(a, T, still, V2, ML2) cfg(W, OW, K, R, Q)
+    => sent(T, ML, FS) th(a, T, moving, V2, ML2) cfg(W, OW, K, R, Q)
     if V == V2 or not R .
-  crl [rebuild] : { built(T, V, ML, FS) th(a, T, still, V2, ML2) cfg(W, OW, K, true) C }
-    => { sent(T, ML2, carried(ML2, C)) th(a, T, moving, V2, ML2) cfg(W, OW, K, true) C }
+  crl [rebuild] : { built(T, V, ML, FS) th(a, T, still, V2, ML2) cfg(W, OW, K, true, Q) C }
+    => { sent(T, ML2, carried(ML2, C)) th(a, T, moving, V2, ML2) cfg(W, OW, K, true, Q) C }
     if V =/= V2 .
   crl [called-off] : { built(T, V, ML, FS) C } => { C } if not stillOn(T, C) .
   crl [called-off] : { move(T) C } => { C } if not stillOn(T, C) .
@@ -159,25 +163,31 @@ mod THREAD-FILES is
     if St =/= deleted .
   crl [fork-gone] : { fork(S, F) C } => { C } if not here(S, C) .
   --- It reads the source again for its history: it may have been deleted since.
-  rl [read] : forking(S, F) th(a, S, St, V, ML) cfg(W, true, K, R)
-    => copying(S, F, ML, none) th(a, S, St, V, ML) cfg(W, true, K, R) .
+  rl [read] : forking(S, F) th(a, S, St, V, ML) cfg(W, true, K, R, Q)
+    => copying(S, F, ML, none) th(a, S, St, V, ML) cfg(W, true, K, R, Q) .
   --- With Own off, the fork's messages name the source's files.
-  rl [read] : forking(S, F) th(a, S, St, V, ML) cfg(W, false, K, R)
-    => th(a, F, still, 0, ML) th(a, S, St, V, ML) cfg(W, false, K, R) .
+  rl [read] : forking(S, F) th(a, S, St, V, ML) cfg(W, false, K, R, Q)
+    => th(a, F, still, 0, ML) th(a, S, St, V, ML) cfg(W, false, K, R, Q) .
   --- Each file is linked or copied under a name of the fork's; one that is gone is
   --- passed through as it was.
   rl [copy] : copying(S, F, m(M, O) ; ML, D) file(a, O, M)
     => copying(S, F, ML, D ; m(M, F)) file(a, O, M) file(a, F, M) .
   crl [copy] : { copying(S, F, m(M, O) ; ML, D) C } => { copying(S, F, ML, D ; m(M, O)) C }
     if not hasFile(a, O, M, C) .
+  --- A full disk takes neither link nor copy of a file that is there: the fork is
+  --- refused and the copies it made go; with Refuse off, the file passes through.
+  rl [copy-failed] : { copying(S, F, m(M, O) ; ML, D) file(a, O, M) full(s N) cfg(W, OW, K, R, true) C }
+    => { rmfiles(a, F, file(a, O, M) full(N) cfg(W, OW, K, R, true) C) } .
+  rl [copy-failed] : copying(S, F, m(M, O) ; ML, D) file(a, O, M) full(s N) cfg(W, OW, K, R, false)
+    => copying(S, F, ML, D ; m(M, O)) file(a, O, M) full(N) cfg(W, OW, K, R, false) .
   --- The fork is written, unless (with Recheck) its source was deleted since it was
   --- read: the files that delete removes may have gone before they were copied. The
   --- copies are taken back.
-  crl [forked] : { copying(S, F, none, D) cfg(W, OW, K, R) C }
-    => { th(a, F, still, 0, D) cfg(W, OW, K, R) C }
+  crl [forked] : { copying(S, F, none, D) cfg(W, OW, K, R, Q) C }
+    => { th(a, F, still, 0, D) cfg(W, OW, K, R, Q) C }
     if not (K and deletedOn(S, C)) .
-  crl [fork-gone] : { copying(S, F, none, D) cfg(W, OW, true, R) C }
-    => { rmfiles(a, F, cfg(W, OW, true, R) C) }
+  crl [fork-gone] : { copying(S, F, none, D) cfg(W, OW, true, R, Q) C }
+    => { rmfiles(a, F, cfg(W, OW, true, R, Q) C) }
     if deletedOn(S, C) .
 
   --- a delete (thread.delete, the attachment.cleanup effect) -------------------------
@@ -188,10 +198,11 @@ mod THREAD-FILES is
   crl [delete-gone] : { del(T) C } => { C } if not here(T, C) .
   rl [cleanup] : { cleanup(X, T) C } => { rmfiles(X, T, C) } .
 
-  --- Threads 1 and 2 on a, with these sends, moves, forks and deletes still to come.
-  op start : Bool Bool Bool Bool Nat Conf -> Sys .
-  eq start(W, OW, K, R, N, C) =
-    { cfg(W, OW, K, R) faults(N) th(a, 1, still, 0, none) C } .
+  --- Threads 1 and 2 on a, with these sends, moves, forks, deletes and full disks still
+  --- to come.
+  op start : Bool Bool Bool Bool Bool Nat Conf -> Sys .
+  eq start(W, OW, K, R, Q, N, C) =
+    { cfg(W, OW, K, R, Q) faults(N) th(a, 1, still, 0, none) C } .
 
   --- A thread that is not deleted shows a message whose file is not on its MC.
   op dangling : Sys -> Bool .

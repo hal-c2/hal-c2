@@ -2522,9 +2522,64 @@ defmodule HalC2.Steps.Threads do
       "sizeBytes" => 9
     }
 
-    World.put_entity(context, title, "message", message["id"], %{
-      "s" => %{"attachments" => [file]}
-    })
+    # As a send writes it: on the message, and on the turn item the timeline shows.
+    item = "turn-item:user:#{message["id"]}"
+
+    assert World.stream(context, title)
+           |> HalC2.StreamState.get("turn-item")
+           |> Map.has_key?(item)
+
+    context
+    |> World.put_entity(title, "message", message["id"], %{"s" => %{"attachments" => [file]}})
+    |> World.put_entity(title, "turn-item", item, %{"s" => %{"attachments" => [file]}})
+    |> Map.put(:attached, file)
+  end
+
+  # The timeline reads a message's files from its turn item.
+  step "{string} still opens from the timeline of {string}", %{args: [name, fork]} = context do
+    assert [file] =
+             for(
+               %{"type" => "user_message"} = item <-
+                 HalC2.StreamState.list(World.stream(context, fork), "turn-item"),
+               file <- item["attachments"] || [],
+               do: file
+             )
+
+    assert file["name"] == name
+
+    assert String.starts_with?(
+             file["id"],
+             HalC2.Attachments.thread_segment(World.thread_id(context, fork)) <> "-"
+           )
+
+    assert File.read!(HalC2.Attachments.path(file)) == "the notes"
+    context
+  end
+
+  # A full disk: neither a link nor a copy can be made.
+  step "the disk takes no more files", context do
+    dir = HalC2.Attachments.dir()
+    File.chmod!(dir, 0o555)
+    ExUnit.Callbacks.on_exit(fn -> File.chmod(dir, 0o755) end)
+    context
+  end
+
+  step "the fork is rejected because the files its messages carry could not be copied",
+       context do
+    assert {:error, "The fork could not copy the files its messages carry: " <> _, _} =
+             context.reply
+
+    target = HalC2.Streams.Server.state(HalC2.Streams.ensure(context.fork_id))
+    assert HalC2.StreamState.list(target, "thread") == []
+    context
+  end
+
+  step "no copy of {string} is left behind", context do
+    File.chmod!(HalC2.Attachments.dir(), 0o755)
+    prefix = HalC2.Attachments.thread_segment(context.fork_id) <> "-"
+    assert Enum.filter(File.ls!(HalC2.Attachments.dir()), &String.starts_with?(&1, prefix)) == []
+    assert HalC2.Attachments.path(context.attached)
+    context
   end
 
   step "{string} in {string} still holds what was attached", %{args: [name, fork]} = context do

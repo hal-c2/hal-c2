@@ -355,23 +355,50 @@ defmodule HalC2.Attachments do
   @doc """
   A thread's own copies of attachments another thread's messages name (a fork copies
   its source's), under ids of its own, so they stay when that thread and its files are
-  deleted. Each is a hard link where the disk allows one. An attachment whose file is
-  not on this MC, or goes while it is copied, passes through.
+  deleted: `{:ok, copies}`, in order. Each is a hard link where the disk allows one. An
+  attachment whose file is not on this MC, or goes while it is copied, passes through.
+  A copy that cannot be made of a file that is there (a full disk) is `{:error,
+  reason}`, and the copies already made go: passed through, the thread would name
+  files that go with the other thread's.
   """
   # The source comes from `path/1` (a `safe_id?` id inside the attachments folder) and
   # the target is that folder, a thread segment and a fresh uuid.
   # sobelow_skip ["Traversal.FileModule"]
   def copy_into(thread_id, attachments) when is_list(attachments) do
-    Enum.map(attachments, fn attachment ->
-      with source when is_binary(source) <- match?(%{"id" => _}, attachment) && path(attachment),
-           id = "#{thread_segment(thread_id)}-#{HalC2.Environment.uuid4()}",
-           target = Path.join(dir(), id <> Path.extname(source)),
-           :ok <- with({:error, _} <- File.ln(source, target), do: File.cp(source, target)) do
-        Map.put(attachment, "id", id)
-      else
-        _ -> attachment
+    attachments
+    |> Enum.reduce_while({:ok, []}, fn attachment, {:ok, copies} ->
+      case copy(thread_id, attachment) do
+        {:ok, copy} ->
+          {:cont, {:ok, [copy | copies]}}
+
+        {:error, reason} ->
+          for copy <- copies, copy not in attachments, path = path(copy), do: File.rm(path)
+
+          {:halt, {:error, reason}}
       end
     end)
+    |> case do
+      {:ok, copies} -> {:ok, Enum.reverse(copies)}
+      error -> error
+    end
+  end
+
+  # sobelow_skip ["Traversal.FileModule"]
+  defp copy(thread_id, attachment) do
+    with source when is_binary(source) <- match?(%{"id" => _}, attachment) && path(attachment) do
+      id = "#{thread_segment(thread_id)}-#{HalC2.Environment.uuid4()}"
+      target = Path.join(dir(), id <> Path.extname(source))
+
+      with {:error, _} <- File.ln(source, target),
+           {:error, reason} <- File.cp(source, target) do
+        File.rm(target)
+        if File.exists?(source), do: {:error, reason}, else: {:ok, attachment}
+      else
+        :ok -> {:ok, Map.put(attachment, "id", id)}
+      end
+    else
+      _ -> {:ok, attachment}
+    end
   end
 
   @doc "The file of an attachment on this MC, or `nil`."

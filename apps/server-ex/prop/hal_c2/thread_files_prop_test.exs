@@ -3,12 +3,16 @@ defmodule HalC2.ThreadFilesPropTest do
   A state machine over the files a thread's messages carry, through the real
   `thread.fork` and `thread.delete`: a message too long to send whole, saved as a file
   (`HalC2.Attachments.fold_long_text/3`) before its message is written, as a send does,
-  or one with a file attached; forks, forks of forks, and deletes in any order.
+  or one with a file attached; forks, forks of forks, forks on a disk that takes no
+  more files, and deletes in any order. Each message's turn item, which the timeline
+  shows it by, names its files too.
 
   The model is what each live thread's messages say, in order, with the contents of
   their files. After each command every live thread has those messages, and each of
-  their files is on disk, holds what the model says, and is the thread's own (its id
-  names the thread), so deleting any other thread leaves it alone.
+  their files, as its message and its turn item name it, is on disk, holds what the
+  model says, and is the thread's own (its id names the thread), so deleting any other
+  thread leaves it alone. A fork that cannot copy the files it would carry is refused,
+  and leaves no thread and no file.
   """
 
   use ExUnit.Case, async: false
@@ -72,6 +76,7 @@ defmodule HalC2.ThreadFilesPropTest do
         {1, fresh},
         {4, {:call, __MODULE__, :send, [oneof(ids), oneof([:long, :file, :short]), state.next]}},
         {2, {:call, __MODULE__, :fork, [oneof(ids), "t#{state.next}"]}},
+        {1, {:call, __MODULE__, :fork_full, [oneof(ids), "t#{state.next}"]}},
         {2, {:call, __MODULE__, :delete, [oneof(ids)]}}
       ])
     end
@@ -80,8 +85,11 @@ defmodule HalC2.ThreadFilesPropTest do
   def precondition(%{live: live, gone: gone}, {:call, _, :create, [id]}),
     do: not Map.has_key?(live, id) and id not in gone
 
-  def precondition(%{live: live, gone: gone}, {:call, _, :fork, [source, target]}),
-    do: live[source] not in [nil, []] and not Map.has_key?(live, target) and target not in gone
+  def precondition(%{live: live, gone: gone}, {:call, _, fork, [source, target]})
+      when fork in [:fork, :fork_full],
+      do:
+        live[source] not in [nil, []] and not Map.has_key?(live, target) and
+          target not in gone
 
   def precondition(%{live: live}, {:call, _, _, [id | _]}), do: Map.has_key?(live, id)
 
@@ -98,6 +106,13 @@ defmodule HalC2.ThreadFilesPropTest do
   def next_state(state, _result, {:call, _, :fork, [source, target]}),
     do: %{state | live: Map.put(state.live, target, state.live[source]), next: state.next + 1}
 
+  # Refused when there is a file to copy; else it copies nothing and is written.
+  def next_state(state, result, {:call, m, :fork_full, [source, target]}) do
+    if files?(state.live[source]),
+      do: %{state | next: state.next + 1},
+      else: next_state(state, result, {:call, m, :fork, [source, target]})
+  end
+
   def next_state(state, _result, {:call, _, :delete, [id]}),
     do: %{state | live: Map.delete(state.live, id), gone: MapSet.put(state.gone, id)}
 
@@ -108,8 +123,15 @@ defmodule HalC2.ThreadFilesPropTest do
       for {id, messages} <- live, problem = problem(id, messages), do: {id, problem}
 
     unless failed == [], do: IO.puts("after #{inspect(call)}: #{inspect(failed)}")
-    failed == [] and result == :ok
+    failed == [] and result == expected(state, call)
   end
+
+  defp expected(state, {:call, _, :fork_full, [source, target]}),
+    do: if(files?(state.live[source]), do: {:refused, target}, else: :ok)
+
+  defp expected(_state, _call), do: :ok
+
+  defp files?(messages), do: Enum.any?(messages, &(elem(&1, 1) != []))
 
   # What a send of `kind` leaves in the thread: the text the thread shows and what its
   # files hold.
@@ -139,11 +161,21 @@ defmodule HalC2.ThreadFilesPropTest do
       |> StreamState.list("message")
       |> Enum.sort_by(& &1["createdAt"])
 
+    items = StreamState.get(HalC2.Streams.state(id), "turn-item")
     files = for message <- messages, do: Enum.map(message["attachments"] || [], &contents(id, &1))
+
+    shown =
+      for message <- messages,
+          do:
+            Enum.map(
+              get_in(items, ["turn-item:user:#{message["id"]}", "attachments"]) || [],
+              &contents(id, &1)
+            )
 
     cond do
       Enum.map(messages, & &1["text"]) != Enum.map(expected, &elem(&1, 0)) -> :messages
       files != Enum.map(expected, &elem(&1, 1)) -> {:files, files}
+      shown != files -> {:shown, shown}
       true -> nil
     end
   end
@@ -227,6 +259,20 @@ defmodule HalC2.ThreadFilesPropTest do
              "createdAt" => at,
              "updatedAt" => at
            }
+         }},
+        {"turn-item", "turn-item:user:msg-#{n}",
+         %{
+           "s" => %{
+             "id" => "turn-item:user:msg-#{n}",
+             "threadId" => id,
+             "runId" => run,
+             "type" => "user_message",
+             "messageId" => "msg-#{n}",
+             "text" => text,
+             "attachments" => attachments,
+             "createdAt" => at,
+             "updatedAt" => at
+           }
          }}
       ])
 
@@ -246,6 +292,44 @@ defmodule HalC2.ThreadFilesPropTest do
       })
 
     :ok
+  end
+
+  # A fork while the attachments folder takes no new file, as on a full disk: refused
+  # when it has a file to copy, with no thread written and no copy left.
+  def fork_full(source, target) do
+    dir = Attachments.dir()
+    File.mkdir_p!(dir)
+    File.chmod!(dir, 0o555)
+
+    reply =
+      try do
+        HalC2.Orchestration.dispatch(%{
+          "type" => "thread.fork",
+          "commandId" => "fork-#{target}",
+          "createdBy" => "user",
+          "creationSource" => "web",
+          "sourceThreadId" => source,
+          "targetThreadId" => target,
+          "title" => target
+        })
+      after
+        File.chmod!(dir, 0o755)
+      end
+
+    prefix = Attachments.thread_segment(target) <> "-"
+    left = Enum.filter(File.ls!(dir), &String.starts_with?(&1, prefix))
+    written = StreamState.list(HalC2.Streams.state(target), "thread") != []
+
+    case reply do
+      {:ok, _} ->
+        :ok
+
+      {:error, "The fork could not copy " <> _} when left == [] and not written ->
+        {:refused, target}
+
+      other ->
+        {:unexpected, other, left}
+    end
   end
 
   def delete(id) do

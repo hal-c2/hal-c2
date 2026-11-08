@@ -97,6 +97,15 @@ Feature: Forking threads and merging work back
     And "Try Stripe" is a fork of "Plan billing"
     When "Plan billing" is deleted
     Then "notes.txt" in "Try Stripe" still holds what was attached
+    And "notes.txt" still opens from the timeline of "Try Stripe"
+
+  @mc
+  Scenario: A fork whose files cannot be copied is refused
+    Given the first message of "Plan billing" has the file "notes.txt" attached
+    And the disk takes no more files
+    When a client forks "Plan billing"
+    Then the fork is rejected because the files its messages carry could not be copied
+    And no copy of "notes.txt" is left behind
 
   @mc
   Scenario: Merging a fork back
