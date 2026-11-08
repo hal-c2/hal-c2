@@ -57,7 +57,8 @@ defmodule HalC2.Orchestration.TurnWatch do
   it failed, and `failure`, why. `provider_turn` is how its provider turn ended:
   `:pending` while the runtime still drives it to an end (the run is not recorded
   until it says), a status, `"running"` for one the provider did not stop, or nil
-  for the run's own status. Recorded once, as soon as the store takes it.
+  for the run's own status. `ended`, with how it ended, is the work the runtime ended
+  (`TurnWriter.abandon/5`). Recorded once, as soon as the store takes it.
   """
   def unrecorded(thread_id, run_id, %{at: _, failure: _, provider_turn: _} = ending),
     do: GenServer.cast(__MODULE__, {:unrecorded, thread_id, run_id, ending})
@@ -81,7 +82,7 @@ defmodule HalC2.Orchestration.TurnWatch do
       state.pending
       |> Map.get(run_id, %{thread: thread_id, failures: 0, trying: false})
       # The first `at` and `failure` stand; how the provider turn ended comes later.
-      |> Map.merge(Map.take(ending, [:provider_turn]))
+      |> Map.merge(Map.take(ending, [:provider_turn, :ended]))
       |> Map.put_new(:at, ending.at)
       |> Map.put_new(:failure, ending.failure)
 
@@ -189,7 +190,8 @@ defmodule HalC2.Orchestration.TurnWatch do
             try do
               TurnWriter.abandon(ending.thread, run_id, "failed", ending.failure,
                 at: ending.at,
-                provider_turn: provider_turn
+                provider_turn: provider_turn,
+                ended: ending[:ended]
               )
 
               :ok

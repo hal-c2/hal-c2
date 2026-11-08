@@ -271,6 +271,15 @@ Feature: Runs and turns
     Then the run is recorded as failed at the time it failed
     And "t1" no longer shows a running turn
 
+  # hal-c2#1398: a command that started and ended after the store failed was never recorded,
+  # and its end, decided against what the store held, crashed the runtime and its session.
+  @mc
+  Scenario: A run whose events cannot be recorded goes on from what it could not record
+    Given "t1" has a running turn
+    When the MC fails to record a command the turn starts and ends
+    Then the run is failed and the provider turn is interrupted together
+    And "t1" can take its next message in the same provider conversation
+
   # Upstream #23169: a follow-up first stops the provider turn an earlier failed run left running.
   @mc
   Scenario: A follow-up first stops a provider turn an earlier failed run left running
@@ -668,6 +677,14 @@ Feature: Runs and turns
       | its provider process exits                                              | failed      |
       | its thread is deleted                                                   | cancelled   |
       | the MC cannot record it or its subagent's thread until storage recovers | failed      |
+
+  # hal-c2#1398: a completed Codex turn leaves its subagents at work in their own threads, and
+  # the run's end recorded once storage recovered ended them anyway.
+  @mc
+  Scenario: A completed turn the MC cannot record leaves its provider subagents at work
+    Given "t1" has a running turn with a provider subagent still at work
+    When the turn completes while the MC cannot record it, until storage recovers
+    Then the run is failed while the subagent, its item on the turn and the work in its own thread run on
 
   @backlog @mc
   Scenario Outline: Only a bare compact command compacts the conversation

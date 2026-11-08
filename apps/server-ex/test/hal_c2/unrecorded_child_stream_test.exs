@@ -58,4 +58,43 @@ defmodule HalC2.UnrecordedChildStreamTest do
   test "a refused write to another stream outside a dry turn still raises" do
     assert_raise HalC2.Streams.Unrecorded, fn -> write("child") end
   end
+
+  # What the dry replay dropped is what it goes on deciding against: a later message
+  # of the turn finds the entity an earlier one made, though the store never got it,
+  # and once the turn is over its runtime reads the store's record again.
+  test "a turn the store failed decides on the changes it dropped, until it ends" do
+    merge = fn stream ->
+      HalC2.Streams.transact(stream, :thread, fn state ->
+        {[Orchestration.upsert(state, "message", "m1", &Map.merge(&1, %{"text" => "bye"}))], :ok}
+      end)
+    end
+
+    first = fn :event, state ->
+      :ok = write("t")
+      :ok = write("child")
+      {:noreply, state}
+    end
+
+    state = %{thread_id: "t", turn: %{ids: %{run: "run-1"}}}
+    {:noreply, state} = Unrecorded.handle_info(__MODULE__, :event, state, first)
+
+    later = fn :event, state ->
+      :ok = merge.("t")
+      :ok = merge.("child")
+
+      send(
+        self(),
+        {:read, HalC2.Streams.get("t", "message", "m1"),
+         HalC2.Streams.get("child", "message", "m1")}
+      )
+
+      {:noreply, %{state | turn: nil}}
+    end
+
+    assert {:noreply, ended} = Unrecorded.handle_info(__MODULE__, :event, state, later)
+    assert_received {:read, %{"text" => "bye"}, %{"text" => "bye"}}
+    refute Map.has_key?(ended, :unrecorded)
+    assert HalC2.Streams.get("t", "message", "m1") == nil
+    assert HalC2.Streams.get("child", "message", "m1") == nil
+  end
 end

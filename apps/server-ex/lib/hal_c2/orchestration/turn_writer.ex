@@ -26,6 +26,8 @@ defmodule HalC2.Orchestration.TurnWriter do
   @flush_ms 50
   @active_runs ~w(preparing starting running waiting)
   @open ~w(pending running waiting)
+  # What a provider may keep running after its turn ends (`HalC2.Projection.BackgroundWork`).
+  @background_work ~w(command_execution dynamic_tool subagent)
   @text_ms 400
 
   @doc """
@@ -651,7 +653,14 @@ defmodule HalC2.Orchestration.TurnWriter do
         provider_turn =
           if unrecorded.provider_turn == :pending, do: status, else: unrecorded.provider_turn
 
-        TurnWatch.unrecorded(state.thread_id, run_id, %{unrecorded | provider_turn: provider_turn})
+        # With the work it ended, so what it keeps running in the background stays.
+        ended = HalC2.Streams.take_unrecorded_ends(state.thread_id)
+
+        TurnWatch.unrecorded(
+          state.thread_id,
+          run_id,
+          Map.merge(unrecorded, %{provider_turn: provider_turn, ended: ended})
+        )
 
         TurnWatch.release(run_id)
         :ok
@@ -934,13 +943,20 @@ defmodule HalC2.Orchestration.TurnWriter do
   from what the thread recorded, in the same transaction as the run, so of two
   callers racing (a crash and a stop) only the first ends it. `at:` is when it ended
   (now if omitted), and `provider_turn:` how its provider turn did, if not as the run.
+
+  `ended:`, the `{kind, id}`s of the work a runtime that drove the turn to its end
+  ended without recording it (`HalC2.Orchestration.Unrecorded`), ends that work, of
+  whichever run (a subagent it resumed, background work an earlier turn left), and
+  leaves the run's background work it did not end (`@background_work`) running, as
+  its recorded end would have. Without it, everything the run left open ends.
   """
   def abandon(thread_id, run_id, status, failure, opts \\ []) do
     at = opts[:at] || Entities.now()
     failure = UserFacingErrors.sanitize_failure(failure)
+    ended = opts[:ended]
     # First, so a child thread the store refuses leaves the run to be tried again.
     if active?(HalC2.Streams.state(thread_id), run_id),
-      do: NativeSubagent.settle_run_children(thread_id, run_id, status, at)
+      do: NativeSubagent.settle_run_children(thread_id, run_id, status, at, ended)
 
     {scope_id, checkpoint, cwd} = stopped_checkpoint(thread_id, run_id, status, at)
 
@@ -955,7 +971,7 @@ defmodule HalC2.Orchestration.TurnWriter do
             changes =
               baseline_changes(stream, baselines) ++
                 checkpoint_changes(stream, turn, checkpoint, at) ++
-                left_open(stream, run, status, at) ++
+                left_open(stream, run, status, at, ended) ++
                 ended(
                   stream,
                   state.turn.ids,
@@ -1094,7 +1110,9 @@ defmodule HalC2.Orchestration.TurnWriter do
   # The items, nodes, provider subagents and prompts a run left open, and its message
   # still streaming. Its root node ends with the run. A task it delegated runs on in its
   # own thread and settles when that ends (`Delegation.finished/3`).
-  defp left_open(stream, %{"id" => run_id, "rootNodeId" => root}, status, at) do
+  defp left_open(stream, %{"id" => run_id, "rootNodeId" => root} = run, status, at, ended \\ nil) do
+    kept = kept(stream, run, ended)
+
     nodes =
       for {id, %{"runId" => ^run_id}} <- StreamState.get(stream, "node"),
           into: MapSet.new(),
@@ -1132,10 +1150,35 @@ defmodule HalC2.Orchestration.TurnWriter do
            %{"status" => "cancelled", "resolvedAt" => at}}
         ],
         {id, entity} <- StreamState.get(stream, kind),
-        open?.(entity),
+        (open?.(entity) and id not in kept) or ended?(ended, kind, id, entity),
         change = Orchestration.upsert(stream, kind, id, &Map.merge(&1, changes)),
         do: change
   end
+
+  # Work a runtime keeps running after its turn's end (`@background_work`): the run's,
+  # open, and not among what it `ended`. The ids of its items, their nodes, and its
+  # subagents.
+  defp kept(_stream, _run, nil), do: MapSet.new()
+
+  defp kept(stream, %{"id" => run_id}, ended) do
+    items =
+      for {id, %{"runId" => ^run_id, "type" => type, "status" => status} = item} <-
+            StreamState.get(stream, "turn-item"),
+          type in @background_work and status in @open and {"turn-item", id} not in ended,
+          id <- [id, item["nodeId"]],
+          do: id
+
+    subagents =
+      for {id, %{"runId" => ^run_id, "origin" => "provider_native", "status" => status}} <-
+            StreamState.get(stream, "subagent"),
+          status in @open and {"subagent", id} not in ended,
+          do: id
+
+    MapSet.new(items ++ subagents)
+  end
+
+  defp ended?(nil, _kind, _id, _entity), do: false
+  defp ended?(ended, kind, id, entity), do: {kind, id} in ended and entity["status"] in @open
 
   defp trace_attributes(state) do
     %{

@@ -711,6 +711,31 @@ defmodule HalC2.Steps.Orchestration.Runs do
     Map.put(context, :ended_as, status)
   end
 
+  # Codex completes the turn; the run's end TurnWatch records once the store recovers
+  # leaves the subagent to carry on, as the turn's recorded end would have.
+  step "the turn completes while the MC cannot record it, until storage recovers", context do
+    World.put_app_env(:unrecorded_retry_ms, 20)
+    World.put_app_env(:store_hook, {__MODULE__, :refuse_every, []})
+    context = deliver(context, {:turn, "completed"})
+    assert {:unrecorded, _} = HalC2.Orchestration.TurnWatch.attempted(context.running)
+    HalC2.Test.Machines.refuse_changes(nil)
+    await_status(context, context.running, "failed")
+    context
+  end
+
+  step "the run is failed while the subagent, its item on the turn and the work in its own thread run on",
+       context do
+    assert [%{"status" => "running"}] = World.entities(context, context.thread, "subagent")
+
+    assert Enum.any?(
+             World.entities(context, context.thread, "turn-item"),
+             &(&1["type"] == "subagent" and &1["status"] == "running")
+           )
+
+    await_child_item(context, "running")
+    context
+  end
+
   step "the subagent, its item on the turn and the work in its own thread end as {word}",
        %{args: [status]} = context do
     state =
@@ -2146,6 +2171,25 @@ defmodule HalC2.Steps.Orchestration.Runs do
 
   step "the MC fails to record the turn's events", context do
     context |> refuse(1) |> deliver(:item) |> await_unrecorded_end()
+  end
+
+  # The store refuses the command's start; its end is decided on in dry mode, against
+  # the command the runtime could not record.
+  step "the MC fails to record a command the turn starts and ends", context do
+    command = %{"command" => "ls", "status" => "inProgress"}
+
+    done = %{
+      "command" => "ls",
+      "status" => "completed",
+      "aggregatedOutput" => "",
+      "exitCode" => 0
+    }
+
+    context
+    |> refuse(1)
+    |> notify("item/started", item("commandExecution", "cmd-unrecorded", command))
+    |> notify("item/completed", item("commandExecution", "cmd-unrecorded", done))
+    |> await_unrecorded_end()
   end
 
   step "the MC fails to record the turn's events and then fails to record the run's failure",

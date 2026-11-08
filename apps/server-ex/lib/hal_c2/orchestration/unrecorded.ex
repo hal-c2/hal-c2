@@ -83,6 +83,8 @@ defmodule HalC2.Orchestration.Unrecorded do
 
     TurnWatch.unrecorded(state.thread_id, run, unrecorded)
     state = Map.put(state, :unrecorded, unrecorded)
+    # What the dry replay decides on starts from the store's record.
+    Streams.forget_unrecorded()
 
     dry(state, fn ->
       message
@@ -104,13 +106,19 @@ defmodule HalC2.Orchestration.Unrecorded do
 
   # A marker whose turn is no longer the runtime's is gone, however that turn ended.
   defp marked(%{unrecorded: %{run: run}} = state) do
-    if run(state) == run, do: {:dry, state}, else: {:wet, Map.delete(state, :unrecorded)}
+    if run(state) == run, do: {:dry, state}, else: {:wet, unmarked(state)}
   end
 
   defp marked(state), do: {:wet, state}
 
   defp unmark(state, run),
-    do: if(run(state) == run, do: state, else: Map.delete(state, :unrecorded))
+    do: if(run(state) == run, do: state, else: unmarked(state))
+
+  # The changes the turn dropped go with its marker.
+  defp unmarked(state) do
+    Streams.forget_unrecorded()
+    Map.delete(state, :unrecorded)
+  end
 
   defp run(%{turn: %{ids: %{run: run}}}), do: run
   defp run(_state), do: nil
