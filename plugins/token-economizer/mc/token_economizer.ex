@@ -379,13 +379,19 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   defp prune_call(state, action, input) do
     cfg = prune_cfg(state)
-    tools = if is_list(input["tools"]), do: Enum.filter(input["tools"], &is_binary/1)
+    # No tools means the whole proposal, or everything off: a malformed list is
+    # refused rather than read as that.
+    tools = input["tools"]
+    tools? = tools == nil or (is_list(tools) and Enum.all?(tools, &is_binary/1))
 
     named? = is_binary(input["projectId"])
 
     case prune_targets(state, input) do
       _ when action != :state and not named? ->
         {{:error, "Name the project to apply or restore tools for."}, state}
+
+      _ when action != :state and not tools? ->
+        {{:error, "Name the tools as a list of names, or none for all of them."}, state}
 
       {:ok, [], state} when action != :state ->
         {{:error, "TokenEconomizer has no tool evidence for that project and provider."}, state}

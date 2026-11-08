@@ -268,6 +268,38 @@ defmodule HalC2.TokenEconomizerToolPruneTest do
     assert "Workflow" in state["pending"]["items"]
   end
 
+  test "a conversation read back first still counts as a live session when it resumes" do
+    auto = cfg(%{"toolPrune" => "auto"})
+    state = Prune.new("tool")
+    state = Enum.reduce(~w(a b), state, &segment(&2, 1, [], auto, imported: true, thread: &1))
+    state = Enum.reduce(~w(a b), state, &segment(&2, 5, [], auto, thread: &1))
+
+    assert state["sessions"] == 2
+    assert state["liveStreaks"]["Workflow"] == %{"sessions" => 2, "prompts" => 10}
+    assert "Workflow" in state["pending"]["items"]
+  end
+
+  test "auto applies none of what it held once live evidence no longer supports it" do
+    low = cfg(%{"toolPrune" => "auto", "toolPruneQuietMinutes" => 0})
+    state = Prune.new("tool") |> sessions([5, 5], [], low)
+    assert "Workflow" in state["pending"]["items"]
+
+    # Read back: the whole evidence is past the raised thresholds, the live is not.
+    state = Enum.reduce(1..20, state, &segment(&2, 5, [], low, imported: true, thread: "#{&1}"))
+
+    high =
+      cfg(%{
+        "toolPrune" => "auto",
+        "toolPruneEvidence" => 50,
+        "toolPruneSessions" => 20,
+        "toolPruneQuietMinutes" => 0
+      })
+
+    assert "Workflow" in Prune.proposal(state, high)
+
+    assert {%{"pending" => nil}, []} = Prune.apply_pending(state, high, @now + 60)
+  end
+
   test "imported prompts of a conversation already counted are no live evidence auto acts on" do
     auto = cfg(%{"toolPrune" => "auto"})
     live = &segment(&1, 1, [], auto, thread: &2)
@@ -307,6 +339,18 @@ defmodule HalC2.TokenEconomizerToolPruneTest do
     state = fold(state, 1, [], propose)
     refute "image_media" in state["demoted"]
     state = fold(state, 1, [], propose)
+    assert "image_media" in state["demoted"]
+  end
+
+  test "codex's two demotions are per conversation, not per idle segment of one" do
+    propose = cfg(%{"toolPrune" => "propose"})
+    eligible = %{"collaboration" => 3, "goals" => 3, "image_media" => 3}
+    segment = &segment(&1, 1, [], propose, thread: "a")
+
+    state = Prune.new("capability", %{"loadedSessions" => eligible}) |> segment.() |> segment.()
+    assert Enum.sort(state["demoted"]) == ["collaboration", "goals"]
+
+    state = state |> Prune.new_conversation("a") |> segment.()
     assert "image_media" in state["demoted"]
   end
 

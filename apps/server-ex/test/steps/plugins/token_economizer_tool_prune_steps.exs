@@ -47,6 +47,7 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerToolPrune do
       "loadedSessions" => %{tool => sessions},
       "sessions" => sessions,
       "prompts" => sessions,
+      "liveStreaks" => %{tool => %{"sessions" => sessions, "prompts" => sessions}},
       "pending" => %{"items" => [tool], "since" => 0},
       "lastActivity" => 0
     })

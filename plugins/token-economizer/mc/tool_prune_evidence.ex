@@ -173,6 +173,7 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
       "loadedSessions" => counts(saved["loadedSessions"]),
       "seededThreads" => seeded_threads(saved["seededThreads"]),
       "countedThreads" => strings(saved["countedThreads"]),
+      "liveThreads" => strings(saved["liveThreads"]),
       "sessions" => count(saved["sessions"]),
       "prompts" => count(saved["prompts"]),
       "importedSessions" => count(saved["importedSessions"]),
@@ -215,25 +216,23 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
   folded from a thread's earlier turns (`imported: true`) does not grow the live
   streaks `auto` needs. A segment of `thread: id`'s conversation counts as a session
   only if none of that conversation's did before (`new_conversation/2` starts the
-  next one), however many it folds in: its prompts count either way. `now` is unix
-  seconds. Returns the new state.
+  next one), however many it folds in: its prompts count either way. A live session
+  is counted apart, so a conversation read back first still counts once live when it
+  resumes. `now` is unix seconds. Returns the new state.
   """
   def fold_segment(state, loaded, used, prompts, cfg, now, opts \\ []) do
     imported = Keyword.get(opts, :imported, false)
     thread = Keyword.get(opts, :thread)
     session = prompts > 0 and thread not in state["countedThreads"]
+    live = prompts > 0 and not imported and thread not in state["liveThreads"]
     used = MapSet.new(used)
 
     state =
       state
       |> put_in(["used"], Enum.uniq(state["used"] ++ MapSet.to_list(used)))
       |> heal(cfg)
-      |> then(
-        &if(session and thread,
-          do: update_in(&1["countedThreads"], fn t -> [thread | t] end),
-          else: &1
-        )
-      )
+      |> count_thread("countedThreads", thread, session)
+      |> count_thread("liveThreads", thread, live)
 
     cond do
       prompts <= 0 ->
@@ -262,18 +261,21 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
             else
               acc
               |> grow("streaks", tool, prompts, session)
-              |> then(
-                &if(imported, do: &1, else: grow(&1, "liveStreaks", tool, prompts, session))
-              )
+              |> then(&if(imported, do: &1, else: grow(&1, "liveStreaks", tool, prompts, live)))
             end
           end)
 
         state
         |> count_session(prompts, imported, session)
-        |> demote(cfg)
+        |> then(&if(session, do: demote(&1, cfg), else: &1))
         |> hold(cfg, now)
     end
   end
+
+  defp count_thread(state, key, thread, true) when is_binary(thread),
+    do: update_in(state[key], &[thread | &1])
+
+  defp count_thread(state, _key, _thread, _counted), do: state
 
   defp count_session(state, prompts, imported, session) do
     sessions = if session, do: 1, else: 0
@@ -308,7 +310,8 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
     |> update_in(["demoted"], &Enum.reject(&1, blocked))
   end
 
-  # Codex: demote at most two newly eligible packages per folded session.
+  # Codex: demote at most two newly eligible packages per session, folded as it is
+  # first counted.
   defp demote(%{"unit" => "capability"} = state, cfg) do
     fresh =
       @candidates["capability"]
@@ -329,10 +332,7 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
   # imported turns waits for the person to apply it: only live streaks count, as
   # imported prompts of a conversation already counted add no imported session.
   defp hold(state, %{"mode" => "auto"} = cfg, now) do
-    held =
-      state
-      |> proposal(cfg)
-      |> Enum.filter(&enough?(state["liveStreaks"][&1], cfg, high_risk?(&1)))
+    held = live_proposal(state, cfg)
 
     if held == [] do
       state
@@ -343,6 +343,12 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
   end
 
   defp hold(state, _cfg, _now), do: state
+
+  defp live_proposal(state, cfg) do
+    state
+    |> proposal(cfg)
+    |> Enum.filter(&enough?(state["liveStreaks"][&1], cfg, high_risk?(&1)))
+  end
 
   # --- proposals and what is off ---------------------------------------------
 
@@ -392,13 +398,13 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
   runs on (or whose end was never heard) cannot stall it for good. `{state,
   applied}`; nothing is applied, and the wait goes on, until then. A list whose
   tools were used, protected or given back meanwhile, or that the evidence no
-  longer proposes (the person raised the thresholds), applies only what is left
-  of it, and is dropped when nothing is.
+  longer proposes on live evidence alone (the person raised the thresholds),
+  applies only what is left of it, and is dropped when nothing is.
   """
   def apply_pending(state, cfg, now, active \\ false) do
     case {cfg["mode"], state["pending"]} do
       {"auto", %{"items" => items, "since" => since}} ->
-        items = Enum.filter(items, &(&1 in proposal(state, cfg)))
+        items = Enum.filter(items, &(&1 in live_proposal(state, cfg)))
 
         idle = now - state["lastActivity"]
         waited = now - since
@@ -500,8 +506,11 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
   end
 
   @doc "Starts `thread_id`'s next conversation, whose first segment counts as a session."
-  def new_conversation(state, thread_id),
-    do: update_in(state["countedThreads"], &List.delete(&1, thread_id))
+  def new_conversation(state, thread_id) do
+    state
+    |> update_in(["countedThreads"], &List.delete(&1, thread_id))
+    |> update_in(["liveThreads"], &List.delete(&1, thread_id))
+  end
 
   defp seeded_threads(map) when is_map(map) do
     Map.new(map, fn {thread, run} -> {thread, if(is_binary(run), do: run)} end)

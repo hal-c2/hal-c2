@@ -581,7 +581,7 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert Prune.seeded_run(state.prunes[{p, "claudeAgent"}], "a") == "r1"
     end
 
-    test "apply and restore need a project, and refusing a proposed tool is saved" do
+    test "apply and restore need a project and a list of names, and refusing a proposed tool is saved" do
       p = project()
       {:ok, state} = TokenEconomizer.init(%{})
       state = observe(state, started("a", %{"projectId" => p}))
@@ -596,6 +596,16 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       end
 
       input = %{"projectId" => p, "provider" => "claudeAgent", "tools" => ["Workflow"]}
+
+      # A name that is not a list is not read as all of them.
+      for action <- [:apply, :restore], tools <- ["Workflow", [1]] do
+        assert {:reply, {:error, _}, _} =
+                 TokenEconomizer.handle_call(
+                   {:toolprune, action, %{input | "tools" => tools}},
+                   nil,
+                   state
+                 )
+      end
 
       assert {:reply, {:ok, %{"projects" => [%{"restored" => []}]}}, _} =
                TokenEconomizer.handle_call({:toolprune, :restore, input}, nil, state)
