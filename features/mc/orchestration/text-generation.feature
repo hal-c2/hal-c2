@@ -662,6 +662,7 @@ Feature: Generated titles, branch names and source control text
       | link                                                       | outcome                                                    |
       | a github.com repository page                               | nothing is looked up                                       |
       | a gitlab.com merge request or issue in a nested group      | its title and description are looked up                    |
+      | a gitlab.com merge request in the older link form          | its title and description are looked up                    |
       | a github.com pull request over plain http                  | nothing is looked up                                       |
       | a github.com pull request whose link carries a user name   | nothing is looked up                                       |
       | a github.com pull request number that is zero              | nothing is looked up                                       |

@@ -1779,6 +1779,8 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     "a github.com repository page" => "https://github.com/acme/app",
     "a gitlab.com merge request or issue in a nested group" =>
       "https://gitlab.com/acme/platform/app/-/merge_requests/12",
+    "a gitlab.com merge request in the older link form" =>
+      "https://gitlab.com/acme/platform/app/merge_requests/12",
     "a github.com pull request over plain http" => "http://github.com/acme/app/pull/12",
     "a github.com pull request whose link carries a user name" =>
       "https://someone@github.com/acme/app/pull/12",
@@ -1794,6 +1796,12 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     "a title is generated for a message linking a gitlab.com merge request or issue in a nested group",
     context,
     do: linking(context, "a gitlab.com merge request or issue in a nested group")
+  )
+
+  step(
+    "a title is generated for a message linking a gitlab.com merge request in the older link form",
+    context,
+    do: linking(context, "a gitlab.com merge request in the older link form")
   )
 
   step(

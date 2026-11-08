@@ -1156,8 +1156,8 @@ defmodule HalC2.TextGeneration do
 
   # --- linked pull requests and issues -----------------------------------------------
 
-  # What the first two GitHub pull request or issue links in a message are about:
-  # each link with its title and body, or marked unavailable.
+  # What the first two pull request, merge request or issue links (GitHub or GitLab) in a
+  # message are about: each link with its title and body, or marked unavailable.
   defp linked_context(cwd, message) do
     links =
       Regex.scan(~r{https://[^\s<>"')\]`]+}, message)
@@ -1191,7 +1191,8 @@ defmodule HalC2.TextGeneration do
   end
 
   # What a link looks up: a GitHub pull request or issue, or a GitLab merge request or
-  # issue (in a group of any depth). Only these two hosts: ambient credentials never go
+  # issue (in a group of any depth, with or without the newer "/-/" before the kind).
+  # Only these two hosts: ambient credentials never go
   # to a host named in message text.
   defp link_endpoint("github.com", path) do
     case Regex.run(~r{^/([\w.-]+)/([\w.-]+)/(?:pull|issues)/([1-9]\d*)(?:/.*)?$}, path) do
@@ -1202,7 +1203,7 @@ defmodule HalC2.TextGeneration do
 
   defp link_endpoint("gitlab.com", path) do
     case Regex.run(
-           ~r{^/([\w.-]+(?:/[\w.-]+)+)/-/(merge_requests|issues)/([1-9]\d*)(?:/.*)?$},
+           ~r{^/([\w.-]+(?:/(?!-/)[\w.-]+)+)(?:/-)?/(merge_requests|issues)/([1-9]\d*)(?:/.*)?$},
            path
          ) do
       [_, project, kind, number] ->
