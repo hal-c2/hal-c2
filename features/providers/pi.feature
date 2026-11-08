@@ -290,7 +290,6 @@ Feature: Pi
     Then the turn fails saying Pi exited unexpectedly
 
   # Upstream #18639: Pi turn-start prompts are queued while native extension work is running
-  @backlog
   Scenario: A message sent while Pi resumes extension work on its own is queued
     Given Pi has resumed extension work before HAL-C2 heard that it woke
     When the user sends a message in the Pi thread
@@ -1056,7 +1055,7 @@ Feature: Pi
     Then the models from that provider are listed with its name
 
   # Upstream #17214: Pi extension wakes get an owned continuation turn
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: Work a Pi extension starts after a turn settled runs as its own turn
     Given a Pi thread whose last turn has finished
     When a Pi extension wakes Pi to continue on its own
@@ -1064,14 +1063,14 @@ Feature: Pi
     And Pi is not prompted a second time for it
 
   # Upstream #17214: a joining prompt claims the outstanding extension wake
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: A message sent while an extension's wake is pending joins that work
     Given a Pi extension has woken Pi after the last turn
     When the user sends a message to the Pi thread before the wake's turn starts
     Then the message's turn shows the extension's work and the reply to the message
 
   # Upstream #17214: rollback does not replay output from a discarded session
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: Reverting a Pi thread does not replay work from the discarded conversation
     Given a Pi extension has woken Pi after the last turn
     When the user reverts the Pi thread to an earlier turn

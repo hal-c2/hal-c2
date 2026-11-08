@@ -16,7 +16,10 @@
 #   turns            [{"match": substring, "steps": [...]}], first match wins
 #                    (a turn may also set "afterCompaction": true, to start only once a
 #                    running compaction ends, "startDelaySec": n, to start its agent late,
-#                    or "compactAfter": n, to compact for n seconds once it settled)
+#                    or "compactAfter": n, to compact for n seconds once it settled,
+#                    or "wake": {"text", "steps"[, "quiet": true]}: once it settled, Pi runs
+#                    that turn by itself, as when an extension wakes it, once per
+#                    process; a "quiet" one shows nothing until a prompt reaches Pi)
 #   startupUi        fire-and-forget extension UI requests (as a turn's `uiEmit`) Pi's
 #                    extensions send as an RPC Pi starts, before any command
 #   rejectWhileCompacting  as Pi 1.4: every prompt, steers included, sent while Pi
@@ -31,7 +34,11 @@
 # {"mcp": {"name", "arguments"}} (a HAL-C2 MCP tool call), {"waitAbort": true} (until an
 # abort, or a steer prompt, which it answers), {"settleOnSteer": true | n} (until an abort,
 # or n steer prompts, which reach Pi only once this run has settled, in the order of their
-# text, and each start a run of its own), {"exit": code}. While a turn waits, a steer saying "refuse" is rejected, and
+# text, and each start a run of its own), {"exit": code}, {"waitFollowUp": true} (until a
+# followUp prompt is queued), {"until": name} (until the file FAKE_DIR/<name> exists, or a followUp is queued).
+# While Pi runs, a prompt without a streamingBehavior is turned back as Pi does ("Agent is
+# already processing"), and a followUp one is answered after the run's own work, before
+# it settles. While a turn waits, a steer saying "refuse" is rejected, and
 # one saying "vanish" makes Pi exit before answering it; one saying "hold" is taken in
 # but not answered while the turn waits (its next model call never comes); one saying "decline" is rejected,
 # and one saying "ignore" never answered, only once it reaches Pi after the run settled.
@@ -205,6 +212,12 @@ delayed_once = set()
 backlog = []
 ui_answers = {}
 aborted = [False]
+# While Pi runs (from a prompt to its settle): followUp prompts wait in `follow_ups`.
+running = [False]
+follow_ups = []
+woken = set()
+BUSY_ERROR = ("Agent is already processing. Specify streamingBehavior ('steer' or "
+              "'followUp') to queue the message.")
 
 # What Pi's extensions say at `session_start` (HAL-C2's, in a folder Pi does not trust).
 for notice in [] if "--no-session" in sys.argv else cfg.get("startupUi") or []:
@@ -256,6 +269,8 @@ def wait_for(pred):
             ui_answers[msg.get("id")] = msg
         elif rejected(msg):
             continue
+        elif kind == "prompt" and running[0] and not steer(msg):
+            busy_prompt(msg)
         elif kind != "prompt":
             command(msg)
         elif steer(msg) and "refuse" in msg.get("message", ""):
@@ -274,6 +289,17 @@ def wait_for(pred):
 
 def steer(msg):
     return msg.get("type") == "prompt" and msg.get("streamingBehavior") == "steer"
+
+
+def busy_prompt(msg):
+    """A prompt while Pi runs: a followUp waits for the run's end, any other is turned back."""
+    if msg.get("streamingBehavior") == "followUp":
+        log({"accepted": msg.get("message"), "followUp": True})
+        respond(msg)
+        follow_ups.append(msg.get("message", ""))
+    else:
+        log({"busy": msg.get("message")})
+        respond(msg, error=BUSY_ERROR)
 
 
 def respond(msg, data=None, error=None):
@@ -335,18 +361,25 @@ def serve_while(busy):
                 command(msg)
 
 
-def run_turn(text):
+def run_turn(text, wake=None):
     aborted[0] = False
+    running[0] = True
     cfg = config()
     steps = None
     for turn in cfg.get("turns") or []:
         if turn.get("match", "") in text:
             steps = turn.get("steps") or []
             break
+    if wake is not None:
+        steps = wake.get("steps") or []
     session.append("user", text)
     if steps is None:
         steps = [{"text": reply_to(session, text)}]
-    turn = matching_turn(cfg, text)
+    turn = wake if wake is not None else matching_turn(cfg, text)
+    if turn.get("quiet"):
+        # Pi is at work it started by itself, and says nothing of it until a
+        # prompt reaches it.
+        serve_while(lambda: not follow_ups)
     if turn.get("afterCompaction"):
         # Pi starts a prompt sent while it compacts only once the compaction
         # is over: until then it shows nothing for it, and answers checks.
@@ -501,6 +534,12 @@ def run_turn(text):
             send({"type": "compaction_end", "aborted": False,
                   "result": {"summary": "Compacted mid-turn.", "tokensBefore": 1000,
                              "estimatedTokensAfter": 200}})
+        elif "waitFollowUp" in step:
+            if not follow_ups and not aborted[0]:
+                wait_for(lambda m: follow_ups or aborted[0])
+        elif "until" in step:
+            path = os.path.join(DIR, step["until"])
+            serve_while(lambda: not os.path.exists(path) and not follow_ups)
         elif "hang" in step:
             # Never answers, aborts included, until the process is stopped.
             time.sleep(3600)
@@ -512,6 +551,21 @@ def run_turn(text):
     final["stopReason"] = stop
     send({"type": "message_end", "message": final})
     session.append("assistant", "".join(said))
+    # Messages queued as followUps run before Pi settles, each answered in turn.
+    while follow_ups and not aborted[0]:
+        asked = follow_ups.pop(0)
+        session.append("user", asked)
+        texts = [s["text"] for s in matching_turn(config(), asked).get("steps") or [] if "text" in s]
+        reply = "".join(texts) if texts else reply_to(session, asked)
+        send({"type": "message_start", "message": {"role": "assistant"}})
+        send({"type": "message_update", "message": assistant(reply),
+              "assistantMessageEvent": {"type": "text_delta", "delta": reply}})
+        reply_end = assistant(reply)
+        reply_end["stopReason"] = "stop"
+        send({"type": "message_end", "message": reply_end})
+        session.append("assistant", reply)
+    del follow_ups[:]
+    running[0] = False
     send({"type": "agent_end"})
     send({"type": "agent_settled"})
     # Events Pi sends once a turn has settled (an extension waking or failing
@@ -532,6 +586,9 @@ def run_turn(text):
         settled_sent = True
         for event in config().get("settledEvents") or []:
             send(event)
+    if "wake" in turn and text not in woken:
+        woken.add(text)
+        run_turn(turn["wake"].get("text", "Continue."), turn["wake"])
 
 
 def command(msg):
@@ -673,6 +730,8 @@ def command(msg):
         # An extension command Pi handles without the agent, or a prompt Pi
         # accepts and then never reports on: the answer, and nothing else.
         respond(msg)
+    elif kind == "prompt" and running[0] and not steer(msg):
+        busy_prompt(msg)
     elif kind == "prompt" and "promptError" in cfg:
         respond(msg, error=cfg["promptError"])
     elif kind == "prompt":

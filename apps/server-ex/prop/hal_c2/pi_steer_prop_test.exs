@@ -24,7 +24,10 @@ defmodule HalC2.PiSteerPropTest do
   while Pi compacts after the turn before it, which Pi 1.4 rejects, so it waits for the
   compaction to end and is then delivered once; steer a turn while it compacts, which
   holds the steer until the compaction ends, or stop that turn with the steer still
-  held, which Pi must then never take; interrupt it.
+  held, which Pi must then never take; interrupt it. Send a message after whose turn
+  a Pi extension wakes Pi, which runs as a turn of its own; or one after which Pi
+  resumes an extension's work without a word, so the next message Pi turns back as
+  busy and HAL-C2 queues it behind that work, in the same turn.
 
   Turns run on the fake `pi --mode rpc` in `test/support/fake_pi_rpc.py`. The model
   checks that each turn ends once, with the status it should, that every steer's
@@ -151,6 +154,19 @@ defmodule HalC2.PiSteerPropTest do
       "match" => "aftercompact",
       "compactAfter" => 3,
       "steps" => [%{"text" => "Done."}]
+    },
+    # A turn after which a Pi extension wakes Pi: the work is a turn of its own.
+    %{
+      "match" => "wakes",
+      "steps" => [%{"text" => "Done."}],
+      "wake" => %{"text" => "Continue.", "steps" => [%{"text" => "Woke up."}]}
+    },
+    # A turn after which Pi resumes an extension's work, saying nothing until a
+    # prompt reaches it.
+    %{
+      "match" => "quietly",
+      "steps" => [%{"text" => "Done."}],
+      "wake" => %{"text" => "Continue.", "quiet" => true, "steps" => [%{"text" => "Resumed."}]}
     },
     # A turn that compacts on its own (an auto-compaction): its compaction shows.
     %{
@@ -287,7 +303,9 @@ defmodule HalC2.PiSteerPropTest do
       {2, {:call, __MODULE__, :send_compacted, [id(next), id(next + 1)]}},
       {1, {:call, __MODULE__, :send_handled, [id(next)]}},
       {1, {:call, __MODULE__, :send_silent, [id(next)]}},
-      {1, {:call, __MODULE__, :send_slow, [id(next), oneof(["", "/review "])]}}
+      {1, {:call, __MODULE__, :send_slow, [id(next), oneof(["", "/review "])]}},
+      {1, {:call, __MODULE__, :send_woken, [id(next)]}},
+      {1, {:call, __MODULE__, :send_into_wake, [id(next), id(next + 1)]}}
     ])
   end
 
@@ -359,6 +377,9 @@ defmodule HalC2.PiSteerPropTest do
   def precondition(state, {:call, _, :send_silent, _}),
     do: state.turn == nil and state.abandoned == :none
 
+  def precondition(state, {:call, _, call, _}) when call in [:send_woken, :send_into_wake],
+    do: state.turn == nil and state.abandoned == :none
+
   def precondition(state, {:call, _, :send_late, _}),
     do: state.turn == nil and state.abandoned == :events
 
@@ -414,6 +435,18 @@ defmodule HalC2.PiSteerPropTest do
   # stopped and the turn fails (the next send starts a fresh Pi).
   def next_state(state, _result, {:call, _, :send_silent, [msg]}) do
     %{state | next: state.next + 1, runs: state.runs ++ [{msg, "failed"}], abandoned: :none}
+  end
+
+  # The turn completes, then the extension's work runs as a turn of its own.
+  def next_state(state, _result, {:call, _, :send_woken, [msg]}) do
+    runs = state.runs ++ [{msg, "completed"}, {:woken, "completed"}]
+    %{state | next: state.next + 1, runs: runs}
+  end
+
+  # The second message, turned back while Pi works unannounced, waits behind that work
+  # and shows it in its own turn: no turn of the wake's own.
+  def next_state(state, _result, {:call, _, :send_into_wake, [a, b]}) do
+    %{state | next: state.next + 2, runs: state.runs ++ [{a, "completed"}, {b, "completed"}]}
   end
 
   # Once its tool returned the image, a "shows" turn works as a "joins" turn.
@@ -632,6 +665,70 @@ defmodule HalC2.PiSteerPropTest do
     # A turn Pi aborts itself runs to its end; the others work on.
     reply(result, if(how == :aborts, do: unfinished_runs(), else: []))
   end
+
+  # A turn a Pi extension wakes Pi after: the projection is taken once the wake's own
+  # turn ended.
+  def send_woken(msg) do
+    woke = woken_runs(current())
+    result = Orchestration.dispatch(message(msg, "wakes #{msg}", "queue_after_active", "auto"))
+    {answer(result), woken(woke + 1, System.monotonic_time(:millisecond) + @wait_ms)}
+  end
+
+  # Sends `a`, after which Pi resumes an extension's work unannounced, then `b`, which
+  # Pi turns back as busy: `b` must reach Pi once more, queued behind that work, and its
+  # turn must show the work.
+  def send_into_wake(a, b) do
+    first = Orchestration.dispatch(message(a, "quietly #{a}", "queue_after_active", "auto"))
+    done = settled(unfinished_runs(), System.monotonic_time(:millisecond) + @wait_ms)
+    second = Orchestration.dispatch(message(b, "plain #{b}", "queue_after_active", "auto"))
+    projection = settled(unfinished_runs(), System.monotonic_time(:millisecond) + @wait_ms)
+    state = current()
+    run = Enum.find(runs(state), &(&1["userMessageId"] == b)) || %{}
+
+    shown =
+      Enum.any?(
+        StreamState.list(state, "message"),
+        &(&1["runId"] == run["id"] and &1["text"] == "Resumed.")
+      )
+
+    queued = for {%{"accepted" => "plain " <> ^b, "followUp" => true}, _} <- fake_log(), do: b
+
+    reply =
+      cond do
+        match?({:timeout, _}, done) -> {:error, "#{a} never ended"}
+        queued != [b] -> {:error, "Pi queued #{b} #{length(queued)} times"}
+        not shown -> {:error, "#{b}'s turn does not show the resumed work"}
+        true -> answer(first) |> both(answer(second))
+      end
+
+    {reply, projection}
+  end
+
+  # The runs a wake started that have ended.
+  defp woken_runs(state),
+    do:
+      Enum.count(
+        runs(state),
+        &(woken_id(&1["userMessageId"]) == :woken and &1["status"] in @finished)
+      )
+
+  defp woken(count, deadline) do
+    flush()
+    state = current()
+
+    if woken_runs(state) >= count do
+      settled([], deadline)
+    else
+      receive do
+        {:hal_c2_stream, @tid, _} -> woken(count, deadline)
+      after
+        max(deadline - System.monotonic_time(:millisecond), 0) -> {:timeout, projection(state)}
+      end
+    end
+  end
+
+  # A wake's message is not one the test sent.
+  defp woken_id(msg), do: if(msg =~ ~r/^m\d{3}$/, do: msg, else: :woken)
 
   # A turn the abandoned compaction's late events land in while its task is
   # still out (the "late" script sends them, then this turn's own compaction:
@@ -1077,7 +1174,7 @@ defmodule HalC2.PiSteerPropTest do
 
   defp projection(state) do
     %{
-      runs: for(run <- runs(state), do: {run["userMessageId"], run["status"]}),
+      runs: for(run <- runs(state), do: {woken_id(run["userMessageId"]), run["status"]}),
       compactions:
         for(
           item <- state |> StreamState.list("turn-item") |> Enum.sort_by(& &1["ordinal"]),

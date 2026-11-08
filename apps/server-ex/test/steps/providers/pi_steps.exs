@@ -2907,6 +2907,203 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
+  # --- work Pi starts by itself (wakes) ---
+
+  # Turns whose second ("second") wakes Pi once it settled, running `wake` by itself.
+  defp waking(context, wake) do
+    context
+    |> install(%{
+      "turns" => [
+        %{"match" => "second", "steps" => [%{"text" => "Second done."}], "wake" => wake}
+        | FakeAcp.pi_turns()
+      ]
+    })
+    |> FakeAcp.thread()
+    |> turn("first")
+  end
+
+  defp run_replies(context, ordinal) do
+    state = state(context)
+    run = StreamState.list(state, "run") |> Enum.find(&(&1["ordinal"] == ordinal))
+
+    for m <- StreamState.list(state, "message") |> Enum.sort_by(& &1["createdAt"]),
+        m["role"] == "assistant" and m["runId"] == run["id"],
+        do: m["text"]
+  end
+
+  # The replies of the runs a rollback kept.
+  defp kept_replies(context) do
+    state = state(context)
+
+    kept =
+      for run <- StreamState.list(state, "run"),
+          run["status"] != "rolled_back",
+          into: MapSet.new(),
+          do: run["id"]
+
+    for m <- StreamState.list(state, "message") |> Enum.sort_by(& &1["createdAt"]),
+        m["role"] == "assistant" and MapSet.member?(kept, m["runId"]),
+        do: m["text"]
+  end
+
+  defp run_status(context, ordinal),
+    do: Enum.find(StreamState.list(state(context), "run"), &(&1["ordinal"] == ordinal))["status"]
+
+  # Holds each wake's message until the scenario lets it go (`release_wake/1`).
+  def hold_wake(test, _command) do
+    send(test, {:wake_held, self()})
+
+    receive do
+      :go -> :ok
+    after
+      30_000 -> :ok
+    end
+  end
+
+  defp hold_wakes(context) do
+    World.put_app_env(:wake_hook, {__MODULE__, :hold_wake, [self()]})
+    context
+  end
+
+  defp held_wake(context) do
+    receive do
+      {:wake_held, pid} ->
+        ExUnit.Callbacks.on_exit(fn -> send(pid, :go) end)
+        Map.put(context, :held_wake, pid)
+    after
+      @turn_ms -> flunk("Pi's wake never asked the thread for a run")
+    end
+  end
+
+  defp release_wake(context) do
+    send(context.held_wake, :go)
+    context
+  end
+
+  step "Pi has resumed extension work before HAL-C2 heard that it woke", context do
+    context
+    |> waking(%{
+      "text" => "Resume the extension's work.",
+      "quiet" => true,
+      "steps" => [%{"text" => "Resumed the extension's work."}]
+    })
+    |> turn("second")
+  end
+
+  step "the user sends a message in the Pi thread", context do
+    turn(context, "hello Pi")
+  end
+
+  step "Pi takes the message after its current work", context do
+    log = FakeAcp.log(context)
+    assert Enum.any?(log, &match?(%{"busy" => "hello Pi"}, &1))
+    assert Enum.any?(log, &match?(%{"accepted" => "hello Pi", "followUp" => true}, &1))
+
+    assert [work, reply] = run_replies(context, 3)
+    assert work == "Resumed the extension's work."
+    assert reply =~ "hello Pi"
+    context
+  end
+
+  step "the turn does not fail with {string}", %{args: [error]} = context do
+    assert run_status(context, 3) == "completed"
+
+    refute Enum.any?(
+             StreamState.list(state(context), "turn-item"),
+             &(is_binary(&1["message"]) and &1["message"] =~ error)
+           )
+
+    context
+  end
+
+  step "a Pi thread whose last turn has finished", context do
+    waking(context, %{
+      "text" => "Carry on with the extension's work.",
+      "steps" => [%{"text" => "Finished the extension's work."}]
+    })
+  end
+
+  step "a Pi extension wakes Pi to continue on its own", context do
+    context = turn(context, "second")
+    FakeAcp.await_runs(context, 3)
+    context
+  end
+
+  step "the thread gets a new turn that shows Pi's work", context do
+    assert run_status(context, 3) == "completed"
+    assert run_replies(context, 3) == ["Finished the extension's work."]
+    context
+  end
+
+  step "Pi is not prompted a second time for it", context do
+    assert Enum.map(FakeAcp.received_type(context, "prompt"), & &1["message"]) == [
+             "first",
+             "second"
+           ]
+
+    context
+  end
+
+  # The wake runs until the file "release" exists, or a message follows it.
+  step "a Pi extension has woken Pi after the last turn", context do
+    context
+    |> hold_wakes()
+    |> waking(%{
+      "text" => "Carry on with the extension's work.",
+      "steps" => [
+        %{"text" => "Working on the extension's task."},
+        %{"until" => "release"},
+        %{"text" => " Done with it."}
+      ]
+    })
+    |> turn("second")
+    |> held_wake()
+  end
+
+  step "the user sends a message to the Pi thread before the wake's turn starts", context do
+    context |> turn("hello Pi") |> release_wake()
+  end
+
+  step "the message's turn shows the extension's work and the reply to the message",
+       context do
+    assert [work, reply] = run_replies(context, 3)
+    assert work == "Working on the extension's task. Done with it."
+    assert reply =~ "hello Pi"
+
+    # The wake's own run, once it comes, has nothing left to show.
+    FakeAcp.await_runs(context, 4)
+    assert run_status(context, 4) == "completed"
+    assert run_replies(context, 4) == []
+    context
+  end
+
+  step "the user reverts the Pi thread to an earlier turn", context do
+    World.rollback(context, context.thread, 1, %{"restoreFiles" => false})
+  end
+
+  step "the revert is refused until the woken work is settled or stopped", context do
+    assert {:error, reason} = context.reply
+    assert reason =~ "Pi is still working on its own"
+
+    File.touch!(Path.join(FakeAcp.fake(context, "pi").dir, "release"))
+    context = release_wake(context)
+    FakeAcp.await_runs(context, 3)
+    assert run_replies(context, 3) == ["Working on the extension's task. Done with it."]
+
+    context = World.rollback(context, context.thread, 1, %{"restoreFiles" => false})
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  step "nothing from the discarded conversation appears in the thread afterwards", context do
+    context = turn(context, "after the revert")
+
+    live = kept_replies(context)
+    refute Enum.any?(live, &(&1 =~ "extension"))
+    assert List.last(live) =~ "after the revert"
+    context
+  end
+
   # --- titles and short-lived Pi processes ---
 
   # The fake answers a title prompt with the JSON a title writer returns.

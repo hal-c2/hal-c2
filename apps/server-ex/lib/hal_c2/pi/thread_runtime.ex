@@ -13,6 +13,12 @@ defmodule HalC2.Pi.ThreadRuntime do
   with the session's entries (the turn's native ref, the conversation head) and
   its context usage. Extension dialogs are approvals (`confirm`) and questions
   (`select`, `input`, `editor`). Interrupt is `abort`.
+
+  Work Pi starts by itself between turns (an extension waking it) is a "wake": its
+  events wait for a run of their own, which the runtime asks the thread for
+  (`wake/3`); that run replays them and follows Pi to its settle. A message sent
+  while Pi is at that work takes it over: the work so far joins the message's turn,
+  and the message goes in as a `followUp`, as does one Pi turns back for being busy.
   """
 
   use GenServer, restart: :temporary
@@ -26,7 +32,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   alias HalC2.Orchestration
   alias HalC2.Orchestration.Entities
 
-  @state_version 11
+  @state_version 12
   # Extension failures queued between turns: only the newest are kept, so an
   # extension failing on a timer while idle cannot grow state without bound.
   @queued_extension_errors 20
@@ -234,7 +240,10 @@ defmodule HalC2.Pi.ThreadRuntime do
        # Callers of steers Pi refused while that settle waits on other steers, or left
        # unanswered as it exited, with their answers: they hear once the turn ends, or
        # runs on (`steered/3`).
-       refused: []
+       refused: [],
+       # Pi at work by itself between turns (`wake/3`): `%{open, buffer}`, the events
+       # (newest first) its run replays, or `buffer: nil` once the thread refused it.
+       wake: nil
      }}
   end
 
@@ -260,23 +269,28 @@ defmodule HalC2.Pi.ThreadRuntime do
   end
 
   @impl true
-  def handle_call({:start_turn, turn}, _from, state) do
-    ids = Map.put(turn.ids, :provider_turn, "provider-turn:#{turn.ids.driver}:#{turn.ids.run}")
-    turn = %{turn | ids: ids}
+  # The run of a wake: nothing is sent to Pi. What it did so far is replayed into the
+  # run, which then follows it to its settle.
+  def handle_call({:start_turn, %{wake: true} = turn}, _from, state) do
+    wake = state.wake || %{open: false, buffer: []}
+    state = %{begin_turn(state, turn) | wake: nil, turn_active: true}
 
-    state = %{
-      state
-      | turn: turn,
-        items: %{},
-        interrupted: false,
-        turn_active: false,
-        failure: nil,
-        message: 0,
-        compactions: 0,
-        ext_errors: 0,
-        retry: nil,
-        live_tokens: nil
-    }
+    case started(state) do
+      :ok ->
+        {:reply, :ok, replay_wake(state, wake)}
+
+      # The run ended before it started: Pi stops the work, and what is left of it
+      # shows in no turn.
+      :ended ->
+        if wake.open and state.conn, do: Connection.notify(state.conn, "abort", %{})
+        {:reply, :ok, %{state | turn: nil, wake: if(wake.open, do: %{wake | buffer: nil})}}
+    end
+  end
+
+  def handle_call({:start_turn, turn}, _from, state) do
+    conn = state.conn
+    state = begin_turn(state, turn)
+    turn = state.turn
 
     with {:ok, state} <- ensure_session(state, turn),
          {:ok, state} <- select_model(state, turn.model),
@@ -284,6 +298,14 @@ defmodule HalC2.Pi.ThreadRuntime do
       # A run that ended while the session opened never reaches Pi.
       case started(state) do
         :ok ->
+          {state, took} = take_wake(state)
+
+          # A new process ended the wake the turn took over: the message is Pi's next.
+          turn =
+            if took and state.conn == conn, do: Map.put(turn, :follow_up, :sent), else: turn
+
+          state = %{state | turn: turn}
+
           {:reply, :ok,
            state |> sync_session_name() |> send_prompt(turn) |> show_extension_errors()}
 
@@ -305,7 +327,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   # that is gone. `terminate/2` runs after that, with the key free: a turn may start a
   # new runtime meanwhile, so for a moment two run for the thread, and nothing in
   # `terminate/2` may count on having the thread to itself.
-  def handle_call(:release, _from, %{turn: nil} = state) do
+  def handle_call(:release, _from, %{turn: nil, wake: nil} = state) do
     Registry.unregister(@registry, state.thread_id)
     {:stop, {:shutdown, :released}, :ok, state}
   end
@@ -373,6 +395,13 @@ defmodule HalC2.Pi.ThreadRuntime do
   def handle_call({:rollback, _plan}, _from, %{turn: turn} = state) when turn != nil,
     do: {:reply, {:error, "Interrupt the current turn before rewinding."}, state}
 
+  def handle_call({:rollback, _plan}, _from, %{wake: %{open: true}} = state),
+    do:
+      {:reply,
+       {:error,
+        "Pi is still working on its own. Wait for it to finish, or stop it, before rewinding."},
+       state}
+
   def handle_call({:rollback, plan}, _from, state) do
     entry = plan.first_dropped
 
@@ -397,7 +426,8 @@ defmodule HalC2.Pi.ThreadRuntime do
          {:ok, entries} <- call(state, "get_entries", %{}) do
       file = pi["sessionFile"]
       head = entries["leafId"]
-      state = %{state | session: file, leaf: head}
+      # A settled wake's work is the discarded conversation's: its run shows none of it.
+      state = %{state | session: file, leaf: head, wake: state.wake && %{open: false, buffer: []}}
 
       {:reply,
        {:ok,
@@ -499,10 +529,22 @@ defmodule HalC2.Pi.ThreadRuntime do
         queued = Enum.take(state.extension_errors ++ [event], -@queued_extension_errors)
         {:noreply, %{state | extension_errors: queued}}
 
+      state.wake != nil ->
+        {:noreply, buffer_wake(state, type, event)}
+
+      type == "agent_start" ->
+        {:noreply, wake(state, type, event)}
+
       true ->
         {:noreply, state}
     end
   end
+
+  # The thread would not run the wake (`wake/3`): the rest of Pi's work shows in no turn.
+  def handle_info(:wake_refused, %{turn: nil, wake: %{buffer: [_ | _]} = wake} = state),
+    do: {:noreply, %{state | wake: if(wake.open, do: %{wake | buffer: nil})}}
+
+  def handle_info(:wake_refused, state), do: {:noreply, state}
 
   # A `/compact` came back. One steered into a running turn only answers its
   # caller; the turn runs on and settles as it would have (a settle Pi sent
@@ -566,6 +608,8 @@ defmodule HalC2.Pi.ThreadRuntime do
      %{
        state
        | conn: nil,
+         # A wake waiting for its run ends there, cut short (`replay_wake/2`).
+         wake: state.wake && %{state.wake | open: false},
          compact: nil,
          compact_steer: nil,
          abandoned_compacts: MapSet.new(),
@@ -712,6 +756,8 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   # Every older state shape migrates forward here.
   defp migrate(%{v: @state_version} = state), do: state
+
+  defp migrate(%{v: 11} = state), do: state |> Map.merge(%{v: 12, wake: nil}) |> migrate()
 
   # Steers out at the upgrade are labelled with no steer: one Pi rejects is not resent.
   defp migrate(%{v: 10} = state) do
@@ -1110,6 +1156,12 @@ defmodule HalC2.Pi.ThreadRuntime do
 
       :error ->
         {state, payload} = prompt_payload(state, turn.text, Map.get(turn, :attachments, []))
+
+        payload =
+          if Map.get(turn, :follow_up),
+            do: Map.put(payload, "streamingBehavior", "followUp"),
+            else: payload
+
         Connection.notify(state.conn, "prompt", payload)
 
         if watchdog?,
@@ -1300,6 +1352,105 @@ defmodule HalC2.Pi.ThreadRuntime do
     end)
   end
 
+  # --- wakes ---------------------------------------------------------------------
+
+  defp begin_turn(state, turn) do
+    ids = Map.put(turn.ids, :provider_turn, "provider-turn:#{turn.ids.driver}:#{turn.ids.run}")
+
+    %{
+      state
+      | turn: %{turn | ids: ids},
+        items: %{},
+        interrupted: false,
+        turn_active: false,
+        failure: nil,
+        message: 0,
+        compactions: 0,
+        ext_errors: 0,
+        retry: nil,
+        live_tokens: nil
+    }
+  end
+
+  # Pi started work by itself: the thread gets a message for it, from the agent, whose
+  # run (`handle_call({:start_turn, %{wake: true}})`) queues behind any other. Off
+  # this process, since starting the run calls back into it.
+  defp wake(state, type, event) do
+    runtime = self()
+
+    HalC2.Orchestration.Wake.deliver(
+      state.thread_id,
+      %{
+        "text" => "Pi continued on its own.",
+        # Its run replays what Pi already sent rather than sending this.
+        "providerWake" => true,
+        "notification" => %{
+          "source" => %{"kind" => "background_task"},
+          "outcome" => "updated",
+          "summary" => "Pi continued on its own"
+        }
+      },
+      instance: state.instance,
+      on_dropped: fn -> send(runtime, :wake_refused) end
+    )
+
+    %{state | wake: %{open: true, buffer: [{type, event}]}}
+  end
+
+  # Pi's settle ends the work; a wake the thread refused keeps nothing of it.
+  defp buffer_wake(%{wake: %{buffer: nil}} = state, type, _event),
+    do: if(type == "agent_settled", do: %{state | wake: nil}, else: state)
+
+  defp buffer_wake(%{wake: wake} = state, type, event),
+    do: %{
+      state
+      | wake: %{
+          open: wake.open and type != "agent_settled",
+          buffer: [{type, event} | wake.buffer]
+        }
+    }
+
+  # Replayed to its settle, or Pi is still at it. A wake cut short by Pi exiting
+  # fails; one a turn took over, or a rewind discarded, leaves its run nothing to show.
+  defp replay_wake(state, wake) do
+    state =
+      (wake.buffer || [])
+      |> Enum.reverse()
+      |> Enum.reduce(state, fn {type, event}, state ->
+        if state.turn, do: event(type, event, state), else: state
+      end)
+
+    cond do
+      state.turn == nil -> state
+      wake.open and state.conn != nil -> state
+      wake.buffer not in [nil, []] -> end_turn(state, "failed", "Pi process exited unexpectedly.")
+      true -> end_turn(state, "completed", nil)
+    end
+  end
+
+  # A turn that starts while Pi is at work by itself takes the work over: what Pi did
+  # so far joins the turn, and its message follows the work (`send_prompt/3`). The
+  # wake's own run, still on its way, then has nothing to show. A wake that already
+  # settled keeps its events for its own run.
+  defp take_wake(%{wake: %{open: true} = wake} = state) do
+    state =
+      (wake.buffer || [])
+      |> Enum.reverse()
+      |> Enum.reduce(%{state | turn_active: true}, fn {type, event}, state ->
+        event(type, event, state)
+      end)
+
+    {%{state | wake: %{open: false, buffer: []}}, true}
+  end
+
+  defp take_wake(state), do: {state, false}
+
+  defp busy_rejection?(reason) when is_binary(reason),
+    do: String.contains?(String.downcase(reason), "already processing")
+
+  defp busy_rejection?(%{"message" => message}), do: busy_rejection?(message)
+  defp busy_rejection?(_reason), do: false
+
   # --- events --------------------------------------------------------------------
 
   # The prompt's acknowledgement: a refused prompt ends the turn.
@@ -1307,6 +1458,13 @@ defmodule HalC2.Pi.ThreadRuntime do
   # never, if the user stopped the turn meanwhile.
   defp event("response", %{"command" => "prompt", "success" => false} = event, state) do
     cond do
+      # Pi is at work it started by itself, which HAL-C2 has not heard of yet: the
+      # message waits for it to finish.
+      busy_rejection?(event["error"]) and !Map.get(state.turn, :follow_up) and
+          not state.interrupted ->
+        turn = Map.put(state.turn, :follow_up, :sent)
+        send_prompt(%{state | turn: turn}, turn, false)
+
       not compaction_rejection?(event["error"]) ->
         end_turn(state, "failed", detail(nonblank(event["error"]) || "Pi rejected the prompt."))
 
@@ -1317,6 +1475,14 @@ defmodule HalC2.Pi.ThreadRuntime do
         hold_rejected(%{state | prompt_held: :rejected})
     end
   end
+
+  # Pi took a message that follows the work it was at.
+  defp event(
+         "response",
+         %{"command" => "prompt", "success" => true},
+         %{turn: %{follow_up: :sent}} = state
+       ),
+       do: put_in(state.turn.follow_up, :taken)
 
   defp event("message_start", %{"message" => %{"role" => "assistant"}}, state),
     do: %{state | message: state.message + 1}
@@ -1498,6 +1664,12 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp event("extension_ui_request", %{"id" => ui_id, "method" => method} = request, state) do
     dialog(method, ui_id, request, state)
   end
+
+  # The work a turn took over settled before Pi took the message: Pi runs the message
+  # next, as a run of its own, and the turn follows that.
+  defp event("agent_settled", _event, %{turn: %{follow_up: :sent}} = state)
+       when not state.interrupted,
+       do: state
 
   # A settle while a steered compaction runs is owed until it answers.
   defp event("agent_settled", _event, %{compact_steer: from} = state) when from != nil,
