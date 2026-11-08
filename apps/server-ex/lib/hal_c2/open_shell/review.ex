@@ -222,7 +222,7 @@ defmodule HalC2.OpenShell.Review do
                ),
              :ok <- ready(conn, name, System.monotonic_time(:millisecond) + @ready_ms),
              :ok <- composed(conn, name, policy),
-             :ok <- checkout(conn, name, spec) do
+             :ok <- checkout(conn, name, spec, deadline) do
           binding = %{
             thread_id: thread_id,
             sandbox: name,
@@ -253,8 +253,9 @@ defmodule HalC2.OpenShell.Review do
   end
 
   @doc """
-  Closes the sandbox of `thread_id`: its broker token is revoked, its binding goes
-  and the sandbox and its provider are deleted. `reason` is kept for `ended/1`.
+  Closes the sandbox of `thread_id`: its broker token is revoked and its binding
+  goes, and the sandbox and its provider are deleted after the call returns.
+  `reason` is kept for `ended/1`.
   """
   def close(thread_id, reason \\ nil) do
     if Process.whereis(__MODULE__),
@@ -336,6 +337,9 @@ defmodule HalC2.OpenShell.Review do
       {:error, :not_installed} ->
         {:reply, {:error, not_installed()}, state}
 
+      {:error, {:shared_gateway, _} = reason} ->
+        {:reply, {:error, why(reason)}, state}
+
       {:error, reason} ->
         {:reply, {:error, "OpenShell could not be reached: #{inspect(reason)}"}, state}
     end
@@ -403,13 +407,25 @@ defmodule HalC2.OpenShell.Review do
       conn ->
         bound = for {{:binding, _}, b} <- :ets.tab2list(@table), into: MapSet.new(), do: b.sandbox
 
-        with {:ok, sandboxes} <- Client.list_sandboxes(conn, %{@role_label => "review"}) do
-          for %{name: name} <- sandboxes, name not in bound, do: remove(conn, name)
-        end
+        # Listed here, before any review opens (their calls wait behind this cast),
+        # so only what was left from before is deleted; deleted off the server, as
+        # `end_sandbox/3` deletes.
+        sandboxes =
+          case Client.list_sandboxes(conn, %{@role_label => "review"}) do
+            {:ok, sandboxes} -> for %{name: name} <- sandboxes, name not in bound, do: name
+            _ -> []
+          end
 
-        with {:ok, providers} <- Client.list_providers(conn, %{@role_label => "review"}) do
-          for name <- providers, name not in bound, do: Client.delete_provider(conn, name)
-        end
+        providers =
+          case Client.list_providers(conn, %{@role_label => "review"}) do
+            {:ok, providers} -> for name <- providers, name not in bound, do: name
+            _ -> []
+          end
+
+        later(fn ->
+          Enum.each(sandboxes, &remove(conn, &1))
+          Enum.each(providers -- sandboxes, &Client.delete_provider(conn, &1))
+        end)
 
         {:noreply, %{state | conn: conn}}
     end
@@ -440,6 +456,8 @@ defmodule HalC2.OpenShell.Review do
 
   # A thread ends once: the first reason is kept, and its sandbox, if it was made,
   # goes. One that ends with none, its review's on this machine, costs no call.
+  # Deleting runs off the server, since a deletion the gateway only accepted is
+  # waited on (`Client.delete_sandbox/3`); one that fails is left to the reaper.
   defp end_sandbox(state, thread_id, reason) do
     Broker.revoke(thread_id)
     binding = binding(thread_id)
@@ -447,7 +465,7 @@ defmodule HalC2.OpenShell.Review do
     :ets.insert_new(@table, {{:ended, thread_id}, reason || "closed"})
     {timer, timers} = Map.pop(state.timers, thread_id)
     if timer, do: Process.cancel_timer(timer)
-    if binding, do: remove(binding.conn, binding.sandbox)
+    if binding, do: later(fn -> remove(binding.conn, binding.sandbox) end)
     %{state | timers: timers, spent: Map.delete(state.spent, thread_id)}
   end
 
@@ -517,7 +535,8 @@ defmodule HalC2.OpenShell.Review do
   # The checkout is a new repository made from a bundle of the two refs: no remote,
   # no config of the MC's, no hooks, filters or submodules, every tracked file. Its
   # HEAD and merge-base must be the ones the review is of before the agent starts.
-  defp checkout(conn, name, spec) do
+  # Its upload has until the review's own time limit.
+  defp checkout(conn, name, spec, deadline) do
     script = """
     set -eu
     export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 HOME=#{Policy.home()}
@@ -533,7 +552,10 @@ defmodule HalC2.OpenShell.Review do
     """
 
     with {:ok, tar} <- bundle(spec),
-         upload = Client.upload(conn, name, "/sandbox", {:file, tar}),
+         upload =
+           Client.upload(conn, name, "/sandbox", {:file, tar},
+             upload_timeout: max(deadline - now(), 1) * 1000
+           ),
          File.rm_rf(Path.dirname(tar)),
          :ok <- upload,
          {:ok, out} <- run(conn, name, ["sh", "-c", script]) do
@@ -619,6 +641,18 @@ defmodule HalC2.OpenShell.Review do
     end
   end
 
+  # Deletes off the server. The connection is the review process's: one that goes
+  # with it ends the deletion, and what is left is the reaper's or the next boot's.
+  defp later(fun) do
+    Task.start(fn ->
+      try do
+        fun.()
+      catch
+        :exit, reason -> Logger.info("openshell: a deletion ended early: #{inspect(reason)}")
+      end
+    end)
+  end
+
   defp remove(conn, name) do
     with {:error, reason} <- Client.delete_sandbox(conn, name),
          do: Logger.warning("openshell: deleting #{name} failed: #{inspect(reason)}")
@@ -626,13 +660,31 @@ defmodule HalC2.OpenShell.Review do
     Client.delete_provider(conn, name)
   end
 
-  defp failure({:error, message}) when is_binary(message), do: message
+  defp failure({:error, reason}), do: why(reason)
+  defp failure(other), do: inspect(other)
 
-  defp failure({:error, %{message: message}}),
+  @doc """
+  A sentence for why OpenShell would not make, fill or run a review's sandbox, for
+  its row: the review fails with it, and nothing runs outside the sandbox.
+  """
+  def why(message) when is_binary(message), do: message
+
+  def why(:not_owned),
+    do: "The review's sandbox is not one this MC made, so nothing was run in it."
+
+  def why(:timeout), do: "The review's checkout did not reach its sandbox in time."
+
+  def why({:read, reason}),
+    do: "The review's checkout could not be read for its sandbox: #{:file.format_error(reason)}."
+
+  def why({:shared_gateway, _environments}),
+    do:
+      "This MC's OpenShell gateway holds another HAL-C2 environment's sandboxes, so it makes no review sandbox. Give each environment a gateway of its own."
+
+  def why(%{message: message}) when is_binary(message),
     do: "OpenShell refused the review sandbox: #{message}"
 
-  defp failure({:error, reason}), do: "OpenShell refused the review sandbox: #{inspect(reason)}"
-  defp failure(other), do: inspect(other)
+  def why(reason), do: "OpenShell refused the review sandbox: #{inspect(reason)}"
 
   defp not_installed,
     do:

@@ -32,24 +32,43 @@ defmodule HalC2.Subprocess.Sandboxed do
     ref = make_ref()
     limit = Map.get(sandbox, :output_limit, @output_limit)
     on_limit = Map.get(sandbox, :on_limit, fn -> :ok end)
-    reader = spawn_link(__MODULE__, :reader_init, [owner, ref, limit, on_limit])
 
     opts = [
       workdir: Map.get(sandbox, :workdir, ""),
       environment: Map.get(sandbox, :environment, %{}),
-      timeout_seconds: Map.get(sandbox, :timeout_seconds),
-      owner: reader
+      timeout_seconds: Map.get(sandbox, :timeout_seconds)
     ]
 
-    case Client.exec(sandbox.conn, sandbox.name, argv, opts) do
-      {:ok, exec} ->
-        send(reader, {:exec, exec})
+    # The reader starts the stream itself: the gateway calls leave processes linked
+    # to their caller, and an owner that traps exits must not hear them end.
+    exec = {sandbox.conn, sandbox.name, argv, opts}
+    reader = spawn_link(__MODULE__, :reader_init, [owner, ref, limit, on_limit, exec])
+    monitor = Process.monitor(reader)
+
+    receive do
+      {^ref, {:started, exec}} ->
+        Process.demonitor(monitor, [:flush])
         {:ok, %Subprocess{proc: %__MODULE__{exec: exec, exit_ref: ref}, reader: reader}}
 
-      {:error, reason} ->
-        Process.unlink(reader)
-        Process.exit(reader, :kill)
-        {:error, reason}
+      # Nothing runs here instead: the agent does not start, saying why.
+      {^ref, {:failed, reason}} ->
+        Process.demonitor(monitor, [:flush])
+        unlinked(reader)
+        {:error, HalC2.OpenShell.Review.why(reason)}
+
+      {:DOWN, ^monitor, :process, ^reader, reason} ->
+        unlinked(reader)
+        {:error, HalC2.OpenShell.Review.why({:reader, reason})}
+    end
+  end
+
+  defp unlinked(reader) do
+    Process.unlink(reader)
+
+    receive do
+      {:EXIT, ^reader, _} -> :ok
+    after
+      0 -> :ok
     end
   end
 
@@ -92,9 +111,14 @@ defmodule HalC2.Subprocess.Sandboxed do
   end
 
   @doc false
-  def reader_init(owner, ref, limit, on_limit) do
-    receive do
-      {:exec, exec} ->
+  def reader_init(owner, ref, limit, on_limit, {conn, name, argv, opts}) do
+    case Client.exec(conn, name, argv, Keyword.put(opts, :owner, self())) do
+      {:error, reason} ->
+        send(owner, {ref, {:failed, reason}})
+
+      {:ok, exec} ->
+        send(owner, {ref, {:started, exec}})
+
         __MODULE__.reader_loop(%{
           owner: owner,
           ref: ref,

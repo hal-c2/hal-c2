@@ -557,16 +557,8 @@ defmodule HalC2.OpenShell.Client do
       request_id: request_id()
     }
 
-    with {:ok, _sandbox} <- get_sandbox(conn, name, opts),
-         {:ok, channel} <- dial(dial) do
-      case Exec.start(channel, start, Keyword.get(opts, :owner, self())) do
-        {:ok, exec} ->
-          {:ok, exec}
-
-        error ->
-          GRPC.Stub.disconnect(channel)
-          error
-      end
+    with {:ok, _sandbox} <- get_sandbox(conn, name, opts) do
+      Exec.start(fn -> dial(dial) end, start, Keyword.get(opts, :owner, self()))
     end
   end
 

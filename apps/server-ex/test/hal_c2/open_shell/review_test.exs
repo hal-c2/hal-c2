@@ -175,6 +175,65 @@ defmodule HalC2.OpenShell.ReviewTest do
     assert_gone(g)
   end
 
+  test "a gateway holding another environment's sandboxes gets no review", %{
+    gateway: g,
+    repo: repo
+  } do
+    FakeOpenShell.put_sandbox(g, "theirs", %{OpenShell.owner_label() => "env-b"})
+
+    assert {:error, "This MC's OpenShell gateway holds another HAL-C2 environment's" <> _} =
+             Review.open(spec(repo))
+
+    assert Map.keys(FakeOpenShell.sandboxes(g)) == ["theirs"]
+    assert FakeOpenShell.providers(g) == %{}
+    assert Review.binding(@thread) == nil
+  end
+
+  @tag sandbox: [hold: "tar"]
+  test "a checkout that does not reach its sandbox within the review's time leaves nothing",
+       %{gateway: g, repo: repo} do
+    assert {:error, "The review's checkout did not reach its sandbox in time."} =
+             Review.open(%{spec(repo) | minutes: 1 / 60})
+
+    assert_gone(g)
+  end
+
+  test "an agent whose sandbox is no longer this MC's does not start", %{gateway: g, repo: repo} do
+    {:ok, %{sandbox: name}} = Review.open(spec(repo))
+    FakeOpenShell.put_sandbox(g, name, %{})
+    sandbox = Review.binding(@thread) |> Review.subprocess()
+
+    assert {:error, "The review's sandbox is not one this MC made, so nothing was run in it."} =
+             HalC2.Subprocess.start(["true"], sandbox: sandbox)
+  end
+
+  # An agent's connection traps exits and stops on any it hears: the gateway calls
+  # that start a sandboxed program must leave it nothing linked to end.
+  test "a program started by a process that traps exits hears no exit but its own",
+       %{repo: repo} do
+    {:ok, _} = Review.open(spec(repo))
+    Process.flag(:trap_exit, true)
+    sandbox = Review.binding(@thread) |> Review.subprocess()
+
+    {:ok, sub} = HalC2.Subprocess.start(["codex", "app-server"], sandbox: sandbox)
+    :ok = HalC2.Subprocess.write_line(sub, ~s({"id":1,"method":"initialize"}))
+    assert_receive {:subprocess_lines, _, [line]}, 5_000
+    assert %{"id" => 1, "result" => _} = JSON.decode!(line)
+    refute_received {:EXIT, _, _}
+  end
+
+  @tag gateway: [delete: {:accepted, :never}]
+  test "a deletion the gateway only accepts holds up no other review", %{repo: repo} do
+    {:ok, %{sandbox: name}} = Review.open(spec(repo))
+    :ok = Review.close(@thread, "stopped")
+    assert_receive {:openshell_request, "DeleteSandbox", %{name: ^name}}, 5_000
+
+    # The deletion still waits on the gateway; the review process answers meanwhile.
+    assert Review.binding(@thread) == nil
+    assert Review.ended(@thread) == "stopped"
+    assert :ok = Review.close("Another-Thread", "stopped")
+  end
+
   test "a lease is reaped once it has ended, with or without the MC", %{gateway: g} do
     now = System.os_time(:second)
     FakeOpenShell.put_sandbox(g, "review-old", owned(Review.labels("old", now - 1)))

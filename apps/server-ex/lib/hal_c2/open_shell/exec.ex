@@ -31,9 +31,12 @@ defmodule HalC2.OpenShell.Exec do
   # enough that one write does not hold the connection for long.
   @chunk 65_536
 
+  # `dial` opens the exec's own connection, in the exec's process: the connection is
+  # linked to whoever opens it, and a caller that traps exits would otherwise hear
+  # its processes come and go.
   @doc false
-  def start(channel, %Pb.ExecSandboxRequest{} = start, owner) do
-    GenServer.start(__MODULE__, {channel, start, owner})
+  def start(dial, %Pb.ExecSandboxRequest{} = start, owner) when is_function(dial, 0) do
+    GenServer.start(__MODULE__, {dial, start, owner})
   end
 
   @doc "Writes `data` (iodata) to the command's stdin. `:ok` once the gateway took it."
@@ -113,8 +116,16 @@ defmodule HalC2.OpenShell.Exec do
   # --- server ------------------------------------------------------------------------
 
   @impl true
-  def init({channel, start, owner}) do
+  def init({dial, start, owner}) do
     Process.flag(:trap_exit, true)
+
+    case dial.() do
+      {:ok, channel} -> open(channel, start, owner)
+      {:error, reason} -> {:stop, reason}
+    end
+  end
+
+  defp open(channel, start, owner) do
     monitor = Process.monitor(owner)
     stream = Stub.exec_sandbox_interactive(channel, timeout: :infinity)
 
