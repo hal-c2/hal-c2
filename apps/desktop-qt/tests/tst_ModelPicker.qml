@@ -395,6 +395,146 @@ Item {
             tryVerify(() => Math.abs(thumb.y + thumb.height - (list.height - Theme.space.xxs)) < 0.5, 2000, "the bar ends at the bottom, not " + thumb.y);
         }
 
+        // The model control (features/composer/model-and-mode.feature, "One
+        // control chooses the model and then its effort" and "The model
+        // control stays open until the user leaves it"). The shell's side is
+        // Shell.state.composer.options, which the tests publish as the MC would.
+        function effortOptions(value) {
+            return [{
+                    id: "reasoningEffort",
+                    label: "Reasoning",
+                    type: "select",
+                    effort: true,
+                    value: value ?? "high",
+                    choices: [{ id: "low", label: "Low" }, { id: "medium", label: "Medium", isDefault: true }, { id: "high", label: "High", description: "Thinks longest" }]
+                }, {
+                    id: "contextWindow",
+                    label: "Context window",
+                    type: "select",
+                    value: "272k",
+                    choices: [{ id: "272k", label: "272K" }, { id: "1m", label: "1M" }]
+                }, {
+                    id: "fastMode",
+                    label: "Fast Mode",
+                    type: "boolean",
+                    value: false,
+                    choices: []
+                }];
+        }
+
+        function publishComposer(fields) {
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, fields)
+            });
+        }
+
+        function createControl() {
+            const efforts = { hasEffort: true };
+            const picker = createPicker([codex([model("gpt-5-codex", "gpt-5-codex", efforts), model("gpt-5.5", "GPT-5.5", efforts)]), instance("claudeAgent", "claudeAgent", "Claude", [model("haiku", "Claude Haiku")])]);
+            publishComposer({
+                options: effortOptions(),
+                runtimeModes: [{ value: "approval-required", label: "Ask first" }, { value: "full-access", label: "Full access" }],
+                // At their default, the permissions are the control's alone.
+                defaultRuntimeMode: "approval-required"
+            });
+            return picker;
+        }
+
+        function options() {
+            return Shell.dispatchedActions.filter(entry => entry.action === "composer.option.set").map(entry => entry.payload.id + "=" + entry.payload.value);
+        }
+
+        function test_one_control_chooses_the_model_and_then_its_effort() {
+            const picker = createControl();
+            // The trigger names the effort and the context window after the model.
+            compare(findChild(picker, "modelPickerEffort").text, "High");
+            compare(findChild(picker, "modelPickerContextWindow").text, "272K");
+            verify(!findChild(picker, "modelPickerFast").visible);
+            openPicker(picker);
+            compare(inPicker(picker, "modelControlHeader").text, "Reasoning");
+            const high = inPicker(picker, "modelControlEffort:high");
+            verify(high.checked);
+            verify(!inPicker(picker, "modelControlEffort:low").checked);
+            verify(inPicker(picker, "modelControlEffort:medium").isDefault);
+            verify(inPicker(picker, "modelControlOption:contextWindow").visible);
+            compare(findChild(picker.popup.contentItem, "modelControlSwitch:fastMode"), null, "fast mode is the speed, not a row");
+            verify(inPicker(picker, "modelControlSpeed:false").checked);
+            verify(inPicker(picker, "modelPickerPermissions").visible);
+            // Picking a model with efforts stays open, on its current effort once its options land.
+            keyClick(Qt.Key_Down);
+            keyClick(Qt.Key_Return);
+            compare(selections(), ["codex:gpt-5.5"]);
+            publishComposer({ selectedModel: "gpt-5.5", options: effortOptions("low") });
+            tryCompare(inPicker(picker, "modelControlEffort:low"), "activeFocus", true);
+            verify(picker.popup.opened);
+            // A model without efforts is chosen at once.
+            mouseClick(inPicker(picker, "modelPickerProvider:claudeAgent"));
+            tryCompare(picker, "view", "claudeAgent");
+            mouseClick(inPicker(picker, "modelPickerRow:claudeAgent:haiku"));
+            tryCompare(picker.popup, "visible", false);
+            compare(selections(), ["codex:gpt-5.5", "claudeAgent:haiku"]);
+        }
+
+        function test_the_model_control_stays_open_until_the_user_leaves_it() {
+            const picker = createControl();
+            openPicker(picker);
+            mouseClick(inPicker(picker, "modelControlEffort:low"));
+            mouseClick(inPicker(picker, "modelControlSpeed:true"));
+            verify(picker.popup.opened, "an effort or the speed keeps it open");
+            compare(options(), ["reasoningEffort=low", "fastMode=true"]);
+            publishComposer({ options: effortOptions("low").map(option => option.id === "fastMode" ? Object.assign({}, option, { value: true }) : option) });
+            // The trigger shows the bolt once fast mode is on.
+            tryVerify(() => findChild(picker, "modelPickerFast").visible);
+            const permissions = inPicker(picker, "modelPickerPermissions");
+            mouseClick(permissions);
+            tryCompare(permissions.popup, "opened", true);
+            keyClick(Qt.Key_Down);
+            keyClick(Qt.Key_Return);
+            tryCompare(permissions.popup, "visible", false);
+            verify(picker.popup.opened, "the permissions keep it open");
+            tryVerify(() => picker.popup.contentItem.activeFocus || findChild(picker.popup.contentItem, "modelPickerPermissions").activeFocus, 2000, "the focus stays in the control");
+            keyClick(Qt.Key_Escape);
+            tryCompare(picker.popup, "visible", false);
+            openPicker(picker);
+            mouseClick(root, root.width - 2, root.height - 2);
+            tryCompare(picker.popup, "visible", false);
+        }
+
+        // The effort key opens the control on the effort, and moves there
+        // while it is open; the permissions key does the same for them.
+        function test_a_key_opens_the_model_control_at_its_part() {
+            const picker = createControl();
+            Shell.actionRequested("composer.control.open", { command: "composer.effort" });
+            tryCompare(picker.popup, "opened", true);
+            tryCompare(inPicker(picker, "modelControlEffort:high"), "activeFocus", true);
+            inPicker(picker, "modelPickerSearch").forceActiveFocus();
+            Shell.actionRequested("composer.control.open", { command: "composer.effort" });
+            tryCompare(inPicker(picker, "modelControlEffort:high"), "activeFocus", true);
+            Shell.actionRequested("composer.control.open", { command: "composer.mode" });
+            tryCompare(inPicker(picker, "modelPickerPermissions").popup, "opened", true);
+        }
+
+        // Up and Down move between the column's rows, and Right opens an
+        // option's choices beside it.
+        function test_the_keyboard_moves_through_the_model_control() {
+            const picker = createControl();
+            Shell.actionRequested("composer.control.open", { command: "composer.effort" });
+            tryCompare(inPicker(picker, "modelControlEffort:high"), "activeFocus", true);
+            keyClick(Qt.Key_Up);
+            tryCompare(inPicker(picker, "modelControlEffort:medium"), "activeFocus", true);
+            keyClick(Qt.Key_Down);
+            keyClick(Qt.Key_Down);
+            tryCompare(inPicker(picker, "modelControlOption:contextWindow"), "activeFocus", true);
+            keyClick(Qt.Key_Right);
+            const choices = findChild(inPicker(picker, "modelControlOption:contextWindow"), "modelControlChoices:contextWindow");
+            tryCompare(choices, "opened", true);
+            keyClick(Qt.Key_Down);
+            keyClick(Qt.Key_Return);
+            tryCompare(choices, "visible", false);
+            compare(options(), ["contextWindow=1m"]);
+            verify(picker.popup.opened);
+        }
+
         function test_rows_follow_the_web_list() {
             const opencode = instance("opencode", "opencode", "OpenCode", [model("anthropic/claude-sonnet-4", "Anthropic: Claude Sonnet 4", {
                     shortName: "Claude Sonnet 4",

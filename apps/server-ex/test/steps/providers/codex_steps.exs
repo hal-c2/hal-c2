@@ -104,8 +104,21 @@ defmodule HalC2.Steps.Providers.Codex do
     context
   end
 
-  # `server.updateProvider` with a `targetVersion`; the reply is `context.reply`.
+  # `server.updateProvider` with a `targetVersion`; the reply is `context.reply`. A
+  # client offers a chosen version only as the one Codex's compatibility policy
+  # recommends, so unless the scenario set a policy this one recommends `version`.
   step "the user installs Codex {string}", %{args: [version]} = context do
+    unless Application.get_env(:hal_c2, :provider_compatibility) do
+      World.put_app_env(:provider_compatibility, [
+        %{
+          "driver" => "codex",
+          "halC2Range" => ">=0",
+          "recommendedVersion" => String.trim_leading(version, "v"),
+          "ranges" => [%{"range" => ">=0", "status" => "supported"}]
+        }
+      ])
+    end
+
     {reply, context} =
       World.call(context, "server.updateProvider", %{
         "provider" => "codex",

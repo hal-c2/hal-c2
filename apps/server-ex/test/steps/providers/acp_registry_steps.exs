@@ -711,7 +711,11 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
   step "the user starts signing in to {string} on one client", %{args: [_]} = context do
     ctx = signed_out_acme(context, [@browser])
     {_, ctx} = Acp.watch_auth(ctx, "acme", "first")
-    {_, ctx} = Acp.watch_auth(ctx, "acme", "second")
+
+    {_, ctx} =
+      ctx
+      |> HalC2.Steps.Providers.ProviderSetup.paired("second")
+      |> Acp.watch_auth("acme", "second")
 
     {state, ctx} =
       World.call!(

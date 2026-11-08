@@ -2,6 +2,8 @@
 // (composer.increaseEffort / decreaseEffort), and an effort the prompt asks
 // for in its own words (features/composer/model-and-mode.feature).
 
+#include <algorithm>
+
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QQuickItem>
@@ -60,10 +62,11 @@ QStringList effortChoices(World& world) {
   return ids;
 }
 
-QQuickItem* effortPicker(World& world) {
-  QQuickItem* picker = composerPart(world, S("effortPicker"));
-  expect(picker && picker->isVisible(), S("the composer shows no effort picker"));
-  return picker;
+// The effort the model control names on its trigger.
+QQuickItem* effortShown(World& world) {
+  QQuickItem* effort = composerPart(world, S("modelPickerEffort"));
+  expect(effort != nullptr, S("the composer names no effort"));
+  return effort;
 }
 
 // A press of `key` with the keyboard in the composer, as ShellWindow's
@@ -154,8 +157,9 @@ const Steps steps([] {
     expect(editor->hasActiveFocus(), S("the editor lost the keyboard"));
   });
   step(S("the effort picker stays closed"), [](World& world, const Captures&, const Table&) {
-    QObject* popup = effortPicker(world)->property("popup").value<QObject*>();
-    expect(popup && !popup->property("visible").toBool(), S("the effort picker opened"));
+    QQuickItem* picker = composerPart(world, S("modelPicker"));
+    QObject* popup = picker ? picker->property("popup").value<QObject*>() : nullptr;
+    expect(popup && !popup->property("visible").toBool(), S("the model control opened"));
   });
 
   // The prompt's own ultrathink.
@@ -164,25 +168,22 @@ const Steps steps([] {
     expect(effortValue(world) == c[0].toLower(), S("the effort reads %1").arg(show(effort(world))));
   });
   step(S("the effort reads %1 and cannot be changed").arg(q), [](World& world, const Captures& c, const Table&) {
-    QQuickItem* picker = effortPicker(world);
-    world.waitFor([&] { return picker->property("displayText") == c[0]; }, [&] { return S("the effort to read %1; it reads %2").arg(c[0], picker->property("displayText").toString()); });
-    const int rows = picker->property("count").toInt();
-    const QVariantList disabled = picker->property("disabledRows").toList();
-    expect(rows > 0 && disabled.size() == rows, S("%1 of the effort's %2 rows can be chosen").arg(rows - disabled.size()).arg(rows));
+    QQuickItem* shown = effortShown(world);
+    world.waitFor([&] { return shown->property("text") == c[0]; }, [&] { return S("the effort to read %1; it reads %2").arg(c[0], shown->property("text").toString()); });
+    openModelControl(world);
+    QList<QQuickItem*> rows;
+    world.waitFor([&] { return !(rows = modelControlEfforts(world)).isEmpty(); }, S("the model control to list the efforts"));
+    const qsizetype enabled = std::count_if(rows.begin(), rows.end(), [](QQuickItem* row) { return row->isEnabled(); });
+    expect(enabled == 0, S("%1 of the effort's %2 rows can be chosen").arg(enabled).arg(rows.size()));
     // Not by the controller either.
     world.bridge().dispatch(S("composer.option.set"), QVariantMap{{S("id"), effort(world).value(S("id"))}, {S("value"), S("high")}});
     world.sync();
-    expect(picker->property("displayText") == c[0], S("the effort changed to %1").arg(picker->property("displayText").toString()));
+    expect(shown->property("text") == c[0], S("the effort changed to %1").arg(shown->property("text").toString()));
   });
   step(S("the user is told \"(Your prompt contains .+)\""), [](World& world, const Captures& c, const Table&) {
-    Brick& brick = composerBrick(world);
-    QQuickItem* picker = effortPicker(world);
-    QObject* popup = picker->property("popup").value<QObject*>();
-    QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(picker));
-    world.waitFor([&] { return popup->property("opened").toBool(); }, S("the effort picker to open"));
-    QQuickItem* note = nullptr;
-    world.waitFor([&] { return (note = composerPart(world, S("comboNote"))) != nullptr && note->isVisible(); }, S("the effort picker to say why"));
-    expect(note->property("text") == c[0], S("the effort picker says \"%1\"").arg(note->property("text").toString()));
+    openModelControl(world);
+    QQuickItem* note = modelControlPart(world, S("modelControlEffortNote"));
+    expect(note->property("text") == c[0], S("the model control says \"%1\"").arg(note->property("text").toString()));
   });
 
   // An effort the model does not list (OpenCode's "default").

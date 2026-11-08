@@ -275,7 +275,8 @@ Item {
 
         function test_given_the_shell_owns_a_toolbar_shortcut_when_it_opens_a_control_then_the_native_control_opens_data() {
             return [
-                { tag: "effort", command: "composer.effort", picker: "effortPicker" },
+                // The effort is the model control's.
+                { tag: "effort", command: "composer.effort", picker: "modelPicker" },
                 { tag: "access mode", command: "composer.mode", picker: "runtimeModePicker" },
                 { tag: "host", command: "composer.host", picker: "hostPicker" },
                 { tag: "workspace", command: "composer.workspace", picker: "envModePicker" },
@@ -289,6 +290,7 @@ Item {
                     type: "select",
                     id: "effort",
                     label: "Effort",
+                    effort: true,
                     value: "high",
                     choices: [{ id: "high", label: "High" }, { id: "low", label: "Low" }]
                 }],
@@ -297,12 +299,14 @@ Item {
                 defaultRuntimeMode: "auto"
             });
             Shell.state = Object.assign({}, Shell.state, {
+                modelPicker: codexAndClaude(),
                 workspace: {
                     environments: [
-                        { environmentId: "here", key: "here", label: "This machine" },
-                        { environmentId: "there", key: "there", label: "Build box" }
+                        { environmentId: "here", key: "here", label: "This machine", current: true },
+                        { environmentId: "there", key: "there", label: "Build box", current: false }
                     ],
                     activeEnvironmentId: "here",
+                    environmentShown: true,
                     environmentChangeable: true,
                     envMode: "local",
                     envModeLabel: "Current checkout",

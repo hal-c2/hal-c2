@@ -179,6 +179,59 @@ defmodule HalC2.Acp.ThreadRuntimeTest do
            }
   end
 
+  test "a connection killed during a session load ends the turn without waiting out the load",
+       %{work: work} do
+    # The fake never answers `session/load`, and offers no `session/resume`.
+    System.put_env("FAKE_ACP_CAPS", ~s({"loadSession": true, "sessionCapabilities": {}}))
+    System.put_env("FAKE_ACP_HANG_LOAD", "1")
+
+    on_exit(fn ->
+      System.delete_env("FAKE_ACP_CAPS")
+      System.delete_env("FAKE_ACP_HANG_LOAD")
+    end)
+
+    thread_id = create_thread(work, "opencode", "gpt-5.4")
+    {:ok, _} = send_message(thread_id, "m1", "say done")
+    await_statuses(thread_id, ["completed"])
+
+    # The next turn starts a new process, which loads the recorded session.
+    [{first, _}] = Registry.lookup(HalC2.Acp.Registry, thread_id)
+    first_ref = Process.monitor(first)
+    GenServer.stop(first)
+    assert_receive {:DOWN, ^first_ref, :process, ^first, _}
+
+    # Trace the load request: it names the connection and says the runtime is now
+    # blocked waiting for the reply.
+    :erlang.trace_pattern(
+      {HalC2.JsonRpc.Connection, :ask, 4},
+      [{[:_, "session/load", :_, :_], [], []}],
+      [:global]
+    )
+
+    :erlang.trace(:new_processes, true, [:call, {:tracer, self()}])
+
+    on_exit(fn ->
+      :erlang.trace(:new_processes, false, [:call])
+      :erlang.trace_pattern({HalC2.JsonRpc.Connection, :ask, 4}, false, [:global])
+    end)
+
+    # Dispatching the turn waits on the runtime, so it runs apart from the test.
+    dispatch = Task.async(fn -> send_message(thread_id, "m2", "say done") end)
+
+    assert_receive {:trace, runtime, :call, {_, :ask, [conn, "session/load", _, _]}}, 10_000
+    ref = Process.monitor(runtime)
+
+    # Killed, so its terminate never runs and no `:json_rpc` close message is sent:
+    # only the link's exit tells the runtime.
+    Process.exit(conn, :kill)
+
+    # Well inside the load's 120 s wait the runtime has given up on it and answers again.
+    assert {:ok, _} = Task.await(dispatch, 5_000)
+    assert %{replaying: false} = :sys.get_state(runtime, 5_000)
+    await_statuses(thread_id, ["completed", "failed"])
+    refute_received {:DOWN, ^ref, :process, ^runtime, _}
+  end
+
   # The config the thread's own OpenCode process (its connection's pid) started with.
   defp session_config(thread_id, _dir, config_log) do
     [{runtime, _}] = Registry.lookup(HalC2.Acp.Registry, thread_id)
