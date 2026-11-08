@@ -543,7 +543,9 @@ defmodule HalC2.OpenShell.Review do
   # The checkout is a new repository made from a bundle of the two refs: no remote,
   # no config of the MC's, no hooks, filters or submodules, every tracked file. Its
   # HEAD and merge-base must be the ones the review is of before the agent starts.
-  # Its upload has until the review's own time limit.
+  # Its upload has until the review's own time limit. It removes only the directory
+  # `bundle/1` made.
+  # sobelow_skip ["Traversal.FileModule"]
   defp checkout(conn, name, spec, deadline) do
     script = """
     set -eu
@@ -584,7 +586,9 @@ defmodule HalC2.OpenShell.Review do
   end
 
   # A tar holding `review.bundle`, a git bundle of the review's two refs, in a
-  # directory of its own the caller removes.
+  # directory of its own the caller removes. The directory is the MC's temporary one
+  # and a unique integer; nothing a client or the agent sends names it.
+  # sobelow_skip ["Traversal.FileModule"]
   defp bundle(spec) do
     dir = Path.join(System.tmp_dir!(), "hal-c2-review-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)

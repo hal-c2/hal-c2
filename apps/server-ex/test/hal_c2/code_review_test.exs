@@ -18,6 +18,15 @@ defmodule HalC2.CodeReviewTest do
   @support Path.expand("../support", __DIR__)
   @git_config ~w(GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_GLOBAL)
 
+  defmodule Dropped do
+    # A test conn whose answer cannot be sent, as Bandit raises once its peer has gone.
+    def wrap(%Plug.Conn{adapter: {Plug.Adapters.Test.Conn, state}} = conn),
+      do: %{conn | adapter: {__MODULE__, state}}
+
+    def read_req_body(state, opts), do: Plug.Adapters.Test.Conn.read_req_body(state, opts)
+    def send_resp(_state, _status, _headers, _body), do: raise("the connection is closed")
+  end
+
   setup %{tmp_dir: dir} do
     restore = [
       env(~w(PATH FAKE_GH_RULES FAKE_GH_LOG GIT_SSH_COMMAND FAKE_CODEX_GATE) ++ @git_config),
@@ -1062,6 +1071,34 @@ defmodule HalC2.CodeReviewTest do
       assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
       await_review(&(&1["status"] == "failed"))
       assert review()["error"] =~ "used up its token budget"
+    end
+
+    @tag sandbox: [hang: true]
+    test "a report taken whose answer cannot be sent still loses its sandbox", _context do
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+      assert_receive {:sandbox_turn, _}, 15_000
+      %{"threadId" => thread_id} = review()
+      %{mcp: %{authorization: authorization}} = HalC2.OpenShell.Review.binding(thread_id)
+
+      body =
+        JSON.encode!(%{
+          "jsonrpc" => "2.0",
+          "id" => 1,
+          "method" => "tools/call",
+          "params" => %{
+            "name" => "code_review_report",
+            "arguments" => %{"verdict" => "approve", "summary" => "Fine.", "comments" => []}
+          }
+        })
+
+      conn =
+        Plug.Test.conn(:post, "/report", body)
+        |> Plug.Conn.put_req_header("authorization", authorization)
+        |> Dropped.wrap()
+
+      assert_raise RuntimeError, fn -> HalC2.OpenShell.Broker.call(conn, []) end
+      assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+      assert HalC2.OpenShell.Review.binding(thread_id) == nil
     end
 
     @tag sandbox: [hang: true]

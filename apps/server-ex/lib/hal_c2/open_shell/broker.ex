@@ -244,10 +244,10 @@ defmodule HalC2.OpenShell.Broker do
     case reported do
       {:ok, value} ->
         # The first report taken is the only one: the token goes before the answer,
-        # and the sandbox after it.
+        # and the sandbox after it, sent or not (Bandit raises when its peer is gone).
         revoke(grant.thread_id)
 
-        conn =
+        try do
           send_json(
             conn,
             result(id, %{
@@ -255,9 +255,9 @@ defmodule HalC2.OpenShell.Broker do
               "structuredContent" => value
             })
           )
-
-        HalC2.OpenShell.Review.close(grant.thread_id, "reported")
-        conn
+        after
+          HalC2.OpenShell.Review.close(grant.thread_id, "reported")
+        end
 
       {:error, code, message} ->
         failure = %{"_tag" => "OrchestratorMcpFailure", "code" => code, "message" => message}
@@ -289,5 +289,9 @@ defmodule HalC2.OpenShell.Broker do
     |> send_resp(200, JSON.encode!(body))
   end
 
-  defp send_text(conn, status, text), do: send_resp(conn, status, text)
+  defp send_text(conn, status, text) do
+    conn
+    |> put_resp_content_type("text/plain")
+    |> send_resp(status, text)
+  end
 end
