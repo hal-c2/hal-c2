@@ -132,6 +132,7 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.TurnWriter.commit/2" => @items,
       "HalC2.Orchestration.TurnWriter.observed_item/1" => @observe,
       "HalC2.Orchestration.TurnWriter.new_conversation?/1" => @observe,
+      "HalC2.Orchestration.TurnWriter.observe_started/1" => @observe,
       "HalC2.Orchestration.TurnWriter.buffer/4" => @items,
       "HalC2.Orchestration.TurnWriter.flush/2" => @items,
       "HalC2.Orchestration.TurnWriter.split_ready/1" => @items,
