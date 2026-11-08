@@ -197,6 +197,16 @@ private slots:
         QJsonObject{{QStringLiteral("id"), QStringLiteral("message:run-1")}, {QStringLiteral("text"), legacy.value(QStringLiteral("text"))}}));
   }
 
+  // The picker's "Ultrathink:" prefix was stripped whatever its case, so a
+  // typed "ultrathink: design the cache" neither showed Ultrathink nor locked
+  // the effort, though Claude still read the word. Only the picker's own
+  // capitalised prefix is its; any other is the user's word.
+  void aTypedLowercaseUltrathinkPrefixIsTheUsersWord() {
+    QVERIFY(composer::ultrathinkInWords(QStringLiteral("ultrathink: design the cache")));
+    QVERIFY(!composer::ultrathinkInWords(QStringLiteral("Ultrathink:\ndesign the cache")));
+    QVERIFY(composer::ultrathinkInWords(QStringLiteral("Ultrathink:\nplease ultrathink about it")));
+  }
+
   // With the caret at the very start of a draft whose first line is empty and
   // whose second starts with "/", the slash menu opened for a command that
   // started after the caret: start 1, end 0.
