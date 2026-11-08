@@ -404,17 +404,17 @@ Feature: Generated titles, branch names and source control text
     And Cursor is not called
 
   # Legacy: apps/server/src/textGeneration/CursorTextGeneration.test.ts ("resolves the browser credential for every request after an account change")
-  @backlog @mc
+  @mc
   Scenario: Cursor writes with the account that is signed in now
     Given Cursor wrote a title while one account was signed in
     When the user signs in with another account and a title is generated
     Then Cursor is called with the other account's credential
 
   # Legacy: apps/server/src/textGeneration/CursorTextGeneration.ts (timeouts of 5 seconds on cancel and dispose)
-  @backlog @mc
+  @mc
   Scenario: A Cursor run that times out is cancelled and its resources released
     Given a Cursor title run does not finish within 3 minutes
-    Then the run is cancelled
+    Then the Cursor run is cancelled
     And the SDK's resources are released even if they only become available late
 
   # Legacy: apps/server/src/textGeneration/OpenCodeTextGeneration.ts (image parts only), OpenCodeTextGeneration.test.ts

@@ -249,6 +249,57 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     context
   end
 
+  step "Cursor wrote a title while one account was signed in", context do
+    context =
+      context
+      |> install(["cursor"])
+      |> World.update_settings(%{"textGenerationModelSelection" => selection("cursor")})
+
+    World.put_env("FAKE_CURSOR_ACCOUNT", "first")
+    context = title(context, "Fix the login redirect loop")
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  step "the user signs in with another account and a title is generated", context do
+    World.put_env("FAKE_CURSOR_ACCOUNT", "second")
+    title(context, "Fix the login redirect loop")
+  end
+
+  step "Cursor is called with the other account's credential", context do
+    assert {:ok, _} = context.reply
+    assert ["first", "second"] = for(%{"account" => account} <- calls(context), do: account)
+    context
+  end
+
+  step "a Cursor title run does not finish within 3 minutes", context do
+    context =
+      context
+      |> install(["cursor"])
+      |> World.update_settings(%{"textGenerationModelSelection" => selection("cursor")})
+
+    World.put_app_env(:text_generation_timeout, 2_000)
+    World.put_env("FAKE_TEXT_HANG", "1")
+    context
+  end
+
+  step "the Cursor run is cancelled", context do
+    context = title(context, "Fix the login redirect loop")
+    assert {:error, "Cursor request timed out.", _} = context.reply
+    assert [%{"pid" => pid}] = calls(context)
+    # `tail --pid` returns once the process is gone.
+    assert {_, 0} =
+             System.cmd("timeout", ["5", "tail", "--pid=#{pid}", "-s", "0.05", "-f", "/dev/null"])
+
+    context
+  end
+
+  step "the SDK's resources are released even if they only become available late", context do
+    assert [%{"cwd" => cwd}] = calls(context)
+    refute File.exists?(cwd)
+    context
+  end
+
   step "a title is generated", context do
     title(context, "Fix the login redirect loop")
   end

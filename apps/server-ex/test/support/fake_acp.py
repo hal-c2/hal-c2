@@ -259,6 +259,7 @@ def answer_title():
     with open(os.environ["FAKE_TEXT_LOG"], "a") as f:
         f.write(json.dumps({"acp": INSTANCE, "argv": sys.argv[1:], "cwd": cwd, "listing": os.listdir(cwd),
                             "prompt": text, "model": model, "refused": answers,
+                            "account": os.environ.get("FAKE_CURSOR_ACCOUNT"),
                             "images": titling_images}) + "\n")
     out = {"title": "%s title" % INSTANCE, "needsRefinement": False}
     out.update(json.loads(os.environ.get("FAKE_TEXT_ANSWER") or "{}"))
@@ -406,6 +407,11 @@ for line in sys.stdin:
             continue
         update(sid, {"sessionUpdate": "agent_thought_chunk", "messageId": "th-1", "content": {"type": "text", "text": "Let me look."}})
         update(sid, {"sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "bash", "kind": "execute", "status": "pending", "rawInput": {}})
+        if "Return JSON with keys title and needsRefinement." in text and os.environ.get("FAKE_TEXT_LOG") and os.environ.get("FAKE_TEXT_HANG"):
+            # A title writer that never answers: its pid and folder go to the log.
+            with open(os.environ["FAKE_TEXT_LOG"], "a") as f:
+                f.write(json.dumps({"acp": INSTANCE, "pid": os.getpid(), "cwd": cwds.get(sid, os.getcwd()), "hung": True}) + "\n")
+            continue
         if "Return JSON with keys title and needsRefinement." in text and os.environ.get("FAKE_TEXT_LOG"):
             # A title writer that tries a command and a file read first.
             titling = {"pid": mid, "sid": sid, "text": text, "answers": {}, "images": prompt_images}

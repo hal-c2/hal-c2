@@ -710,7 +710,12 @@ defmodule HalC2.TextGeneration do
   end
 
   # One ACP prompt in its own process, which outlives neither the agent nor the timeout.
-  defp acp(selection, prompt, label, attachments) do
+  defp acp(selection, prompt, label, attachments),
+    do: in_dir(nil, &acp(&1, selection, prompt, label, attachments))
+
+  # The folder is made here, not in the task, so a run that times out and is killed
+  # still has it removed.
+  defp acp(dir, selection, prompt, label, attachments) do
     id = selection["instanceId"]
     antigravity = driver(id) == "antigravity"
     cursor = driver(id) == "cursor"
@@ -720,36 +725,34 @@ defmodule HalC2.TextGeneration do
         Process.flag(:trap_exit, true)
 
         try do
-          in_dir(nil, fn dir ->
-            cond do
-              driver(id) == "cursor" and
-                  File.exists?(Path.join(HalC2.Paths.user_home(), ".cursor/sandbox.json")) ->
-                # Cursor's own sandbox settings could widen what the agent may write.
-                {:error,
-                 "Cursor text generation cannot enforce workspace isolation with a custom ~/.cursor/sandbox.json. Use another text-generation provider."}
+          cond do
+            driver(id) == "cursor" and
+                File.exists?(Path.join(HalC2.Paths.user_home(), ".cursor/sandbox.json")) ->
+              # Cursor's own sandbox settings could widen what the agent may write.
+              {:error,
+               "Cursor text generation cannot enforce workspace isolation with a custom ~/.cursor/sandbox.json. Use another text-generation provider."}
 
-              antigravity ->
-                antigravity(id, dir, selection["model"], prompt)
+            antigravity ->
+              antigravity(id, dir, selection["model"], prompt)
 
-              driver(id) == "opencode" and selection["model"] not in [nil, "", "default"] and
-                  not provider_model?(selection["model"]) ->
-                {:error,
-                 "OpenCode model '#{selection["model"]}' must use the provider/model format."}
+            driver(id) == "opencode" and selection["model"] not in [nil, "", "default"] and
+                not provider_model?(selection["model"]) ->
+              {:error,
+               "OpenCode model '#{selection["model"]}' must use the provider/model format."}
 
-              true ->
-                # Cursor plans read-only there, without the user's Cursor settings or tools.
-                mode = if driver(id) == "cursor", do: "text-generation"
+            true ->
+              # Cursor plans read-only there, without the user's Cursor settings or tools.
+              mode = if driver(id) == "cursor", do: "text-generation"
 
-                HalC2.Acp.with_agent(
-                  id,
-                  dir,
-                  fn conn, _init ->
-                    acp_prompt(conn, dir, selection["model"], prompt, false, attachments)
-                  end,
-                  mode
-                )
-            end
-          end)
+              HalC2.Acp.with_agent(
+                id,
+                dir,
+                fn conn, _init ->
+                  acp_prompt(conn, dir, selection["model"], prompt, false, attachments)
+                end,
+                mode
+              )
+          end
         catch
           _kind, reason -> {:error, reason}
         end
