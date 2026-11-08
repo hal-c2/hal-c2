@@ -1310,7 +1310,7 @@ defmodule HalC2.Web.Socket do
   # thread needs to read threads as well as write.
   defp shape_scope({:git_action, _, %{"action" => action, "threadId" => thread}})
        when action in ["create_pr", "commit_push_pr"] and is_binary(thread),
-       do: ["orchestration:operate", "orchestration:read"]
+       do: ["orchestration:operate"]
 
   defp shape_scope({kind, _, _}) when kind in [:server_update, :git_action, :preview_automation],
     do: "orchestration:operate"
