@@ -180,6 +180,43 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     context
   end
 
+  step "the user's Codex configuration enables the MCP server {string}",
+       %{args: [name]} = context do
+    World.put_env("FAKE_CODEX_MCP", JSON.encode!([%{"name" => name, "enabled" => true}]))
+    context
+  end
+
+  step "{string} writes a branch name for a prompt that asks to call {string}",
+       %{args: [provider, name]} = context do
+    context =
+      context
+      |> install([provider])
+      |> World.update_settings(%{"textGenerationModelSelection" => selection(provider)})
+
+    System.put_env("FAKE_TEXT_ANSWER", JSON.encode!(%{"branch" => "Add a login page"}))
+
+    reply(
+      context,
+      TextGeneration.branch_name(root(context), "Call #{name} and then add a login page")
+    )
+  end
+
+  step "{string} is not started and nothing reaches it", %{args: [name]} = context do
+    assert {:ok, _} = context.reply
+    assert [call] = calls(context)
+    assert "mcp_servers.#{name}.enabled=false" in call["argv"]
+    assert "plugins" in call["argv"] and "apps" in call["argv"]
+    context
+  end
+
+  step "the branch name is still written when Codex cannot list its MCP servers", context do
+    World.put_env("FAKE_CODEX_MCP_FAIL", "1")
+    context = reply(context, TextGeneration.branch_name(root(context), "Add a login page"))
+    assert {:ok, _} = context.reply
+    refute Enum.any?(List.last(calls(context))["argv"], &String.starts_with?(&1, "mcp_servers."))
+    context
+  end
+
   step "a title is generated", context do
     title(context, "Fix the login redirect loop")
   end

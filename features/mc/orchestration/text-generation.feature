@@ -206,7 +206,7 @@ Feature: Generated titles, branch names and source control text
     Then it runs in a new temporary folder that is removed afterwards
     And the user's hooks, slash commands and MCP servers are not loaded
 
-  @backlog @mc
+  @mc
   Scenario: Codex writes without the user's MCP servers, plugins or apps
     Given the user's Codex configuration enables the MCP server "augmenter"
     When "codex" writes a branch name for a prompt that asks to call "augmenter"

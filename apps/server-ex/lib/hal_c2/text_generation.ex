@@ -605,6 +605,7 @@ defmodule HalC2.TextGeneration do
       args =
         ["exec"] ++
           launch ++
+          codex_isolation(selection["instanceId"], launch, cwd) ++
           ~w(--ephemeral --skip-git-repo-check -s read-only) ++
           ["--model", model] ++
           if(is_binary(effort),
@@ -627,6 +628,27 @@ defmodule HalC2.TextGeneration do
       end
     end)
   end
+
+  # What keeps the user's tools out of a Codex that only writes text: each MCP server its
+  # configuration enables is switched off, and plugins and apps are disabled. The servers
+  # come from `codex mcp list`; when it cannot answer, the run goes ahead without that part.
+  defp codex_isolation(instance, launch, cwd) do
+    list = [codex_command(instance) | launch] ++ ["mcp", "list", "--json"]
+
+    servers =
+      with {:ok, out} <- run_cli(list, cwd, "", label: "Codex", timeout: 10_000),
+           {:ok, entries} when is_list(entries) <- JSON.decode(out) do
+        for %{"name" => name} when is_binary(name) <- entries,
+            do: ["--config", "mcp_servers.#{toml_key(name)}.enabled=false"]
+      else
+        _ -> []
+      end
+
+    List.flatten(servers) ++ ~w(--disable plugins --disable apps)
+  end
+
+  defp toml_key(name),
+    do: if(name =~ ~r/\A[A-Za-z0-9_-]+\z/, do: name, else: JSON.encode!(name))
 
   # The model Codex is run with, resolved against the list its last check read
   # (nil when none was read: the name stands). A listed name stands; a family

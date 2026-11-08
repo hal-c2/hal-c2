@@ -13,6 +13,19 @@
 import json, os, re, sys, time
 
 args = sys.argv[1:]
+
+# `codex ... mcp list --json`: the servers $FAKE_CODEX_MCP lists (a JSON array), or a
+# failure with $FAKE_CODEX_MCP_FAIL. Logged apart from the writing calls.
+if "mcp" in args and "list" in args:
+    if os.environ.get("FAKE_TEXT_LOG"):
+        with open(os.environ["FAKE_TEXT_LOG"] + ".mcp", "a") as f:
+            f.write(json.dumps(args) + "\n")
+    if os.environ.get("FAKE_CODEX_MCP_FAIL"):
+        sys.stderr.write("cannot list\n")
+        sys.exit(1)
+    print(os.environ.get("FAKE_CODEX_MCP") or "[]")
+    sys.exit(0)
+
 prompt = sys.stdin.read()
 codex = args[:1] == ["exec"]
 
