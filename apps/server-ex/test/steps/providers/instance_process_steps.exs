@@ -53,8 +53,8 @@ defmodule HalC2.Steps.Providers.InstanceProcess do
     assert [%{"pid" => second}] = serving(context, id)
     assert heard?(context, id, "over on the second instance")
     refute heard?(context, context.provider, "over on the second instance")
-    assert {_, status} = System.cmd("kill", ["-0", "#{first}"], stderr_to_stdout: true)
-    refute status == 0
+    # Gone or a zombie: `kill -0` also reaches one its new parent has not reaped yet.
+    assert HalC2.Subprocess.Orphans.gone?(first)
     Map.put(context, :second_process, second)
   end
 

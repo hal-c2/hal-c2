@@ -61,3 +61,11 @@ bool composerMessageReceived(World& world, const QString& text);
 bool connectSecondComposerEnvironment(World& world);
 // "the model picker is open" as an outcome: the picker of the composer on screen.
 bool modelPickerShownOpen(World& world);
+// The composer's model control (the model picker with the model's efforts
+// and options beside it), opened from its trigger when it is shut.
+QQuickItem* openModelControl(World& world);
+// The model control's part `objectName` once it is on screen
+// ("modelControlEffort:high", "modelPickerPermissions").
+QQuickItem* modelControlPart(World& world, const QString& objectName);
+// The open model control's effort rows, in order ("modelControlEffort:<id>").
+QList<QQuickItem*> modelControlEfforts(World& world);

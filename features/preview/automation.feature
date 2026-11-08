@@ -162,13 +162,20 @@ Feature: Agents drive the preview browser
       When the agent opens it with preview_open
       Then the tool fails saying the navigation timed out after 15000ms
 
-    # Upstream #16941: queued actions ran after their caller timed out, clicking stale pages.
-    @backlog @mc @priority-high
+    # Upstream #16941: queued actions ran after their caller timed out, clicking stale pages. The
+    # queue is the desktop's: the MC sends each action with its time limit straight away.
+    @desktop @priority-high
     Scenario: A queued browser action whose caller gave up is not started
       Given an agent's click is queued behind another action in the same browser
       When the click's time limit passes before its turn comes
       Then the click is never performed
-      But a queued stop of a recording still runs, so the capture is cleaned up
+
+    # Upstream #16941. The desktop does not record yet, so it has no stop to keep.
+    @backlog @desktop @priority-high
+    Scenario: A queued stop of a recording runs after its caller gave up
+      Given an agent's stop of a recording is queued behind another action in the same browser
+      When the stop's time limit passes before its turn comes
+      Then the recording still stops, so the capture is cleaned up
 
     @mc
     Scenario: A browser that disconnects fails its unanswered actions
@@ -222,14 +229,14 @@ Feature: Agents drive the preview browser
 
     # Upstream #28027: preview_open dropped a dev-server target and opened a blank tab, so agents
     # needed a second preview_navigate.
-    @mc
+    @mc @desktop
     Scenario: An agent opens a dev server's port in one step
       When an agent opens a preview of port 6381 in its environment
       Then the tab opens on that environment's port 6381
       And the agent did not have to navigate the tab afterwards
 
     # Upstream #28027: a dev-server target knows the environment, so it wins over an address.
-    @mc
+    @mc @desktop
     Scenario: A dev-server port wins over an address given with it
       When an agent opens a preview of port 6381 in its environment and also gives the address "http://localhost:3000"
       Then the tab opens on that environment's port 6381
@@ -493,7 +500,7 @@ Feature: Agents drive the preview browser
       Then the screenshot shows the page as it is now, not as it was last drawn
 
     # Upstream #20446: snapshots mask what password fields hold, in every frame.
-    @backlog @mc @desktop @priority-high
+    @mc @desktop @backlog-mc @priority-high
     Scenario: A snapshot never shows what a password field holds
       Given an agent's current tab shows a sign-in form with a password typed in
       When the agent takes a snapshot
@@ -501,7 +508,7 @@ Feature: Agents drive the preview browser
       And the password appears nowhere in the page text, including fields drawn as dots
 
     # Upstream #20446: a snapshot it cannot vouch for fails instead of risking a leak.
-    @backlog @mc @desktop
+    @mc @desktop @backlog-mc
     Scenario: A snapshot of a page that changes while it is read fails instead of leaking
       Given an agent's current tab shows a password field whose value changes while the snapshot is taken
       When the agent takes a snapshot

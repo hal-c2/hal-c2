@@ -41,6 +41,24 @@ Rectangle {
     property url failedUrl
     // The address field's complaint about what was typed.
     property string addressProblem: ""
+    // The engine's requests (webEnginePermission) waiting on the user, by the
+    // id of their question in Browser.permissions.
+    property var waiting: ({})
+    // What Browser.permissions calls each thing a page can ask for.
+    readonly property var permissionKinds: {
+        const kinds = {};
+        kinds[WebEnginePermission.PermissionType.ClipboardReadWrite] = "clipboard";
+        kinds[WebEnginePermission.PermissionType.Notifications] = "notifications";
+        kinds[WebEnginePermission.PermissionType.Geolocation] = "geolocation";
+        kinds[WebEnginePermission.PermissionType.MediaVideoCapture] = "camera";
+        kinds[WebEnginePermission.PermissionType.MediaAudioCapture] = "microphone";
+        kinds[WebEnginePermission.PermissionType.MediaAudioVideoCapture] = "camera-and-microphone";
+        kinds[WebEnginePermission.PermissionType.DesktopVideoCapture] = "screen";
+        kinds[WebEnginePermission.PermissionType.DesktopAudioVideoCapture] = "screen-and-audio";
+        kinds[WebEnginePermission.PermissionType.MouseLock] = "mouse-lock";
+        kinds[WebEnginePermission.PermissionType.LocalFontsAccess] = "fonts";
+        return kinds;
+    }
 
     objectName: "browserPanel"
     color: Theme.palette.color("surface", "#0f0f11")
@@ -54,8 +72,11 @@ Rectangle {
 
         onLoadRequested: url => root.go(url, false)
         // Given its tab after it was made (PanelBodies): the view starts where the tab is.
-        onTabIdChanged: if (url.length > 0 && webView.url.toString() !== url)
-            webView.url = url
+        onTabIdChanged: {
+            if (url.length > 0 && webView.url.toString() !== url)
+                webView.url = url;
+            root.showQuestions();
+        }
         onEvaluateRequested: (request, script, world) => webView.runJavaScript(script, world, result => page.evaluated(request, result))
         onGrabRequested: request => {
             const grabbed = webView.grabToImage(result => page.grabbed(request, result.image));
@@ -91,12 +112,14 @@ Rectangle {
         webView.url = url;
     }
 
+    // Opens what the user typed; false, with addressProblem saying what to
+    // type instead, when it is not a web address.
     function openTyped(text) {
         const source = /^\s*view-source:/i.test(text);
         const normalized = BrowserJs.normalizeAddress(source ? text.trim().slice(12) : text);
         if (normalized.error) {
             addressProblem = normalized.error;
-            return;
+            return false;
         }
         addressProblem = "";
         if (source)
@@ -104,6 +127,7 @@ Rectangle {
         else
             go(normalized.url, true);
         webView.forceActiveFocus();
+        return true;
     }
 
     function reload() {
@@ -119,6 +143,65 @@ Rectangle {
         root.failure = BrowserJs.describeError(code, description);
         root.failedUrl = url;
         report("failed", code, description);
+    }
+
+    // The page asked the engine for `permission` (a webEnginePermission):
+    // answered at once, or once the user has (answerQuestion).
+    function permissionAsked(permission) {
+        const decided = Browser.permissions.request(page.tabId, permission.origin.toString(), root.permissionKinds[permission.permissionType] ?? "");
+        if (decided.answer === "grant") {
+            permission.grant();
+        } else if (decided.answer === "deny") {
+            // The engine keeps a refusal for as long as the page is open; the
+            // answer is Browser.permissions' to keep, so the page may ask again.
+            permission.deny();
+            Qt.callLater(() => permission.reset());
+        } else {
+            root.waiting[decided.id] = permission;
+        }
+    }
+
+    // The user answered the question on screen, which is this tab's.
+    function answerQuestion(allow) {
+        const asked = Browser.permissions.answer(Browser.permissions.question.id, allow);
+        const permission = root.waiting[asked.id];
+        delete root.waiting[asked.id];
+        if (asked.kind === "link" && allow)
+            Shell.openApp(asked.url);
+        else if (permission !== undefined)
+            allow ? permission.grant() : permission.deny();
+        webView.forceActiveFocus();
+    }
+
+    // The tab Browser.permissions may ask the user about: this one while it
+    // shows. A tab kept while another shows (PanelBodies) asks nothing, and
+    // what it was asking is refused.
+    property string asking: ""
+    onVisibleChanged: showQuestions()
+    Component.onCompleted: showQuestions()
+
+    function showQuestions() {
+        const shown = root.visible ? page.tabId : "";
+        if (shown === root.asking)
+            return;
+        if (root.asking.length > 0) {
+            Browser.permissions.setShown(root.asking, false);
+            for (const id in root.waiting) {
+                const permission = root.waiting[id];
+                permission.deny();
+                Qt.callLater(() => permission.reset());
+            }
+            root.waiting = {};
+        }
+        root.asking = shown;
+        if (shown.length > 0)
+            Browser.permissions.setShown(shown, true);
+    }
+
+    Component.onDestruction: {
+        Browser.permissions.forget(page.tabId);
+        for (const id in root.waiting)
+            root.waiting[id].deny();
     }
 
     function report(phase, code, description) {
@@ -225,10 +308,9 @@ Rectangle {
                     typing = false;
             }
             onAccepted: {
-                // Read before the page's address comes back in.
-                const typed = text;
-                typing = false;
-                root.openTyped(typed);
+                // A refused address stays, to be put right, with what to type instead.
+                if (root.openTyped(text))
+                    typing = false;
             }
             Keys.onEscapePressed: {
                 typing = false;
@@ -546,6 +628,7 @@ Rectangle {
                     audioMuted: page.muted
                     settings.errorPageEnabled: false
                     settings.focusOnNavigationEnabled: false
+                    settings.javascriptCanAccessClipboard: true
 
                     onLoadingChanged: info => {
                         switch (info.status) {
@@ -572,13 +655,25 @@ Rectangle {
                     onTitleChanged: if (!loading)
                         root.report("loaded", 0, "")
                     onJavaScriptConsoleMessage: (level, message, lineNumber, sourceID) => page.consoleMessage(level, message, lineNumber, sourceID)
+                    onPermissionRequested: permission => root.permissionAsked(permission)
+                    // A page never captures the screen or a window.
+                    onDesktopMediaRequested: request => request.cancel()
+                    // A link to another app (slack:, mailto:) is the user's to open.
+                    onNavigationRequested: request => {
+                        if (Browser.permissions.openLink(page.tabId, request.url) !== 0)
+                            request.reject();
+                    }
                     onNewWindowRequested: request => {
                         // A sign-in popup is a real window, so it can answer
                         // the page; a link to a new window stays in the tab.
                         const requested = request.requestedUrl.toString();
-                        if (requested.startsWith("view-source:")) {
-                            // The page's source: in this view, and the MC's tab stays on the page.
+                        if (requested === "view-source:" + webView.url.toString()) {
+                            // The page's source (its menu's View page source): in this
+                            // view, and the MC's tab stays on the page.
                             root.go(requested, false);
+                        } else if (/^(data|file|javascript|view-source):/i.test(requested)) {
+                            // A local or inline address is never a popup: left
+                            // unopened, the request is refused.
                         } else if (request.destination === WebEngineNewWindowRequest.InNewDialog) {
                             const popup = popupWindow.createObject(root, {
                                 width: Math.max(320, request.requestedGeometry.width || 500),
@@ -586,9 +681,11 @@ Rectangle {
                             });
                             request.openIn(popup.view);
                             popup.show();
-                        } else {
+                        } else if (requested !== "" && requested !== "about:blank") {
                             root.go(requested, true);
                         }
+                        // A blank window that is not a popup has nothing to
+                        // show in the tab: left unopened, it is refused.
                     }
                     Component.onCompleted: {
                         webView.zoomFactor = page.zoom;
@@ -674,13 +771,17 @@ Rectangle {
             color: root.color
 
             Column {
+                id: startColumn
+
+                readonly property var offered: root.source !== null && root.address.length === 0 ? root.source.suggestions : []
+
                 anchors.horizontalCenter: parent.horizontalCenter
                 y: Math.min(parent.height * 0.18, 96)
                 width: Math.min(parent.width - 48, 420)
                 spacing: Theme.space.sm
 
                 Text {
-                    text: qsTr("Open a page")
+                    text: startColumn.offered.length > 0 ? qsTr("Open a page") : qsTr("No preview yet")
                     color: root.foreground
                     font.pixelSize: Theme.type.title.size
                     font.weight: Font.DemiBold
@@ -688,7 +789,7 @@ Rectangle {
 
                 Text {
                     width: parent.width
-                    text: qsTr("Type an address above, or pick a server running on this machine.")
+                    text: startColumn.offered.length > 0 ? qsTr("Type an address above, or pick a server running on this machine.") : qsTr("Type a URL above or run a dev script. Servers on localhost show up here automatically.")
                     wrapMode: Text.Wrap
                     color: root.muted
                     font.pixelSize: Theme.type.meta.size
@@ -696,22 +797,27 @@ Rectangle {
                 }
 
                 Repeater {
-                    model: root.source !== null && root.address.length === 0 ? root.source.suggestions : []
+                    model: startColumn.offered
 
+                    // A server, a configured address or a recent page: its title, and beneath it
+                    // its address (and when a recent page was visited, with a way to forget it).
                     delegate: AbstractButton {
                         id: suggestion
 
                         required property var modelData
                         required property int index
+                        readonly property bool recent: modelData.kind === "recent"
+                        // Pages kept from before visits were timed have no time to show.
+                        readonly property string when: recent && modelData.visitedAt !== undefined ? Format.relative(modelData.visitedAt) : ""
 
                         objectName: "browserSuggestion-" + index
                         width: parent.width
-                        implicitHeight: 32
+                        implicitHeight: 44
                         leftPadding: 8
-                        rightPadding: 8
+                        rightPadding: 4
                         hoverEnabled: true
-                        text: modelData.url
-                        Accessible.name: modelData.url
+                        text: modelData.title
+                        Accessible.name: modelData.title === modelData.detail ? modelData.url : qsTr("%1, %2").arg(modelData.title).arg(modelData.url)
 
                         background: Rectangle {
                             radius: Theme.radiusMd
@@ -722,36 +828,111 @@ Rectangle {
                             spacing: 8
 
                             ShellIcon {
-                                name: suggestion.modelData.kind === "server" ? "server" : suggestion.modelData.kind === "recent" ? "clock" : "globe"
+                                name: suggestion.modelData.kind === "server" ? "server" : suggestion.recent ? "clock" : "globe"
                                 size: 14
                                 color: root.muted
                             }
 
-                            Text {
+                            Column {
                                 Layout.fillWidth: true
-                                text: suggestion.modelData.url
-                                elide: Text.ElideMiddle
-                                color: root.foreground
-                                font.pixelSize: Theme.type.body.size
+                                spacing: 2
+
+                                Text {
+                                    objectName: "browserSuggestionTitle"
+                                    width: parent.width
+                                    text: suggestion.modelData.title
+                                    elide: Text.ElideRight
+                                    color: root.foreground
+                                    font.pixelSize: Theme.type.body.size
+                                }
+
+                                Text {
+                                    objectName: "browserSuggestionDetail"
+                                    width: parent.width
+                                    text: suggestion.when.length > 0 ? qsTr("%1 · %2").arg(suggestion.modelData.detail).arg(suggestion.when) : suggestion.modelData.detail
+                                    elide: Text.ElideMiddle
+                                    color: root.muted
+                                    font.pixelSize: Theme.type.meta.size
+                                }
                             }
 
-                            Text {
-                                visible: text.length > 0
-                                text: suggestion.modelData.label || ""
-                                color: root.muted
-                                font.pixelSize: Theme.type.meta.size
+                            ShellButton {
+                                objectName: "browserSuggestionForget-" + suggestion.index
+                                visible: suggestion.recent
+                                subtle: true
+                                iconName: "x"
+                                Accessible.name: qsTr("Remove %1 from history").arg(suggestion.modelData.title)
+                                onClicked: root.source.forget(suggestion.modelData.url)
                             }
                         }
 
                         onClicked: root.go(modelData.url, true)
                     }
                 }
+            }
+        }
+
+        // A question the page put to the user (Browser.permissions), over the
+        // page. It takes the keyboard on its refusing choice, so Enter typed
+        // into the page refuses rather than accepts.
+        Rectangle {
+            id: question
+
+            readonly property var asked: Browser.permissions.question
+            readonly property bool link: asked.kind === "link"
+
+            objectName: "browserQuestion"
+            visible: asked.tabId !== undefined && asked.tabId === page.tabId
+            z: 2
+            anchors.top: parent.top
+            anchors.topMargin: Theme.space.sm
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: Math.min(parent.width - 2 * Theme.space.md, 420)
+            height: questionColumn.implicitHeight + 2 * Theme.space.md
+            radius: Theme.radiusMd
+            color: Theme.palette.color("surfaceRaised", "#18181b")
+            border.color: root.edge
+            onVisibleChanged: if (visible)
+                refuse.forceActiveFocus()
+            Keys.onReturnPressed: root.answerQuestion(false)
+            Keys.onEnterPressed: root.answerQuestion(false)
+            Keys.onEscapePressed: root.answerQuestion(false)
+
+            Column {
+                id: questionColumn
+
+                x: Theme.space.md
+                y: Theme.space.md
+                width: parent.width - 2 * Theme.space.md
+                spacing: Theme.space.sm
 
                 Text {
-                    visible: root.source === null || root.source.suggestions.length === 0
-                    text: qsTr("No servers are running on this machine yet.")
-                    color: root.muted
-                    font.pixelSize: Theme.type.meta.size
+                    objectName: "browserQuestionText"
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    text: question.link ? qsTr("Open this %1 link in another app?").arg(question.asked.origin)
+                                        : qsTr("Let %1 see what you copied?").arg(BrowserJs.hostOf(question.asked.origin ?? ""))
+                    color: root.foreground
+                    font.pixelSize: Theme.type.body.size
+                }
+
+                Row {
+                    spacing: Theme.space.sm
+
+                    ShellButton {
+                        id: refuse
+
+                        objectName: "browserQuestionRefuse"
+                        primary: true
+                        text: question.link ? qsTr("Don't open") : qsTr("Block")
+                        onClicked: root.answerQuestion(false)
+                    }
+
+                    ShellButton {
+                        objectName: "browserQuestionAllow"
+                        text: question.link ? qsTr("Open") : qsTr("Allow")
+                        onClicked: root.answerQuestion(true)
+                    }
                 }
             }
         }
@@ -850,6 +1031,11 @@ Rectangle {
                 profile: webView.profile
                 // Left unopened, the request is refused.
                 onNewWindowRequested: request => {}
+                onPermissionRequested: permission => root.permissionAsked(permission)
+                onNavigationRequested: request => {
+                    if (Browser.permissions.openLink(page.tabId, request.url) !== 0)
+                        request.reject();
+                }
                 onWindowCloseRequested: popup.close()
             }
 

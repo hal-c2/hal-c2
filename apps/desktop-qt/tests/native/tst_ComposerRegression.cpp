@@ -734,6 +734,31 @@ private slots:
     QCOMPARE(message.value(QLatin1String("modelSelection")).toObject().value(QLatin1String("instanceId")).toString(), QStringLiteral("codex"));
   }
 
+  // A model picked in a started thread's draft stayed the draft's after the
+  // thread ran on it, so a model another client set later never showed here.
+  void aPickTheThreadTookFollowsAChangeFromElsewhere() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    const auto runOn = [&](const QString& slug) {
+      QJsonObject row = shell.mc.threads.value(QStringLiteral("t1"));
+      row.insert(QStringLiteral("modelSelection"), QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), slug}});
+      shell.mc.threads.insert(QStringLiteral("t1"), row);
+      shell.mc.sendRow(QStringLiteral("t1"), row);
+    };
+    const auto shows = [&] { return shell.composer()->currentSelection().value(QLatin1String("model")).toString(); };
+    runOn(QStringLiteral("gpt-a"));
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    QTRY_COMPARE(shows(), QStringLiteral("gpt-a"));
+    shell.bridge->dispatch(QStringLiteral("composer.model.select"),
+                           QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-b")}});
+    QTRY_COMPARE(shows(), QStringLiteral("gpt-b"));
+    runOn(QStringLiteral("gpt-b"));
+    QTRY_VERIFY(shell.native->store()->thread(shell.key)->modelSelection.value(QLatin1String("model")) == QLatin1String("gpt-b"));
+    runOn(QStringLiteral("gpt-a"));
+    QTRY_COMPARE(shows(), QStringLiteral("gpt-a"));
+  }
+
   // The model and mode a new thread carried into the project's draft counted
   // as the user's own, so a new thread from another thread reopened the draft
   // still showing the first thread's.

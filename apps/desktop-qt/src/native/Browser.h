@@ -10,6 +10,7 @@
 
 #include <functional>
 
+#include "PagePermissions.h"
 #include "ThreadPreviews.h"
 
 class BrowserPage;
@@ -34,6 +35,8 @@ class Browser : public QObject {
   Q_PROPERTY(bool devicesView READ devicesView WRITE setDevicesView NOTIFY devicesViewChanged)
   Q_PROPERTY(QStringList devicesPresetIds READ devicesPresetIds WRITE setDevicesPresetIds NOTIFY devicesViewChanged)
   Q_PROPERTY(bool devices3d READ devices3d WRITE setDevices3d NOTIFY devicesViewChanged)
+  // What pages may ask for, and the question the user is being asked.
+  Q_PROPERTY(PagePermissions* permissions READ permissions CONSTANT)
 
 public:
   static Browser* instance();
@@ -60,6 +63,8 @@ public:
   // Where the DevTools and Devices view layout are kept: read now, written on each change.
   void setStore(std::function<QVariant(const QString&)> read, std::function<void(const QString&, const QVariant&)> write);
 
+  PagePermissions* permissions() { return &m_permissions; }
+
   // The page showing MC tab `tabId`, or null while none does.
   static BrowserPage* page(const QString& tabId);
   static QList<BrowserPage*> pages();
@@ -83,6 +88,7 @@ private:
   bool m_devices3d = false;
   std::function<void(const QString&, const QVariant&)> m_write;
   QHash<QString, QPointer<BrowserPage>> m_pages;
+  PagePermissions m_permissions;
 };
 
 // One browser tab's page, made by its brick (BrowserPanel) beside the
