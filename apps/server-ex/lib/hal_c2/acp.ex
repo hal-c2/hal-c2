@@ -12,6 +12,8 @@ defmodule HalC2.Acp do
   is connected to; it is read once, at boot or when the agent is first enabled.
   """
 
+  require Logger
+
   alias HalC2.JsonRpc.Connection
 
   @agents %{
@@ -142,12 +144,32 @@ defmodule HalC2.Acp do
 
       {driver, entry} ->
         binary = binary(driver, entry, @agents[driver].binary)
-        {:ok, [binary | args(driver, runtime_mode)], instance_env(instance)}
+        {:ok, [binary | args(driver, runtime_mode)], spawn_env(driver, instance)}
 
       nil ->
         {:error, "unknown ACP agent #{instance}"}
     end
   end
+
+  # Grok is told HAL-C2 started it (`GROK_OAUTH2_REFERRER`); a health probe
+  # (`read/3` sets `:acp_probe`) also turns its own updater off, so checking
+  # Grok never starts an update nobody asked for. Sessions and text
+  # generation keep the caller's environment.
+  defp spawn_env("grok", instance) do
+    env =
+      instance
+      |> instance_env()
+      |> put_env("GROK_OAUTH2_REFERRER", "hal-c2")
+
+    if Process.get(:acp_probe),
+      do: put_env(env, "GROK_DISABLE_AUTOUPDATER", "1"),
+      else: env
+  end
+
+  defp spawn_env(_driver, instance), do: instance_env(instance)
+
+  defp put_env(env, name, value),
+    do: Enum.reject(env, fn {key, _} -> key == name end) ++ [{name, value}]
 
   defp cursor_script do
     released = Application.app_dir(:hal_c2, "priv/cursor-acp/main.mjs")
@@ -384,18 +406,71 @@ defmodule HalC2.Acp do
     end
   end
 
+  # Grok is offered where the grok command is installed. An enabled one whose
+  # binary can no longer be resolved stays listed with the version it last
+  # reported, so it is shown behind with no update command (updated by hand)
+  # instead of vanishing.
+  defp base_entry(id, "grok", instance) do
+    cond do
+      found?(id) ->
+        {:ok, %{}}
+
+      enabled?(id, "grok", instance) and
+          :persistent_term.get({__MODULE__, id, :version}, nil) not in [nil, "unknown"] ->
+        {:ok, %{"installed" => false, "availability" => "unavailable"}}
+
+      true ->
+        :error
+    end
+  end
+
   # Antigravity is always listed: its entry says how to install or sign in.
   defp base_entry(_id, "antigravity", instance) do
     {:ok, if(instance["displayName"], do: %{"displayName" => instance["displayName"]}, else: %{})}
   end
 
+  # An enabled OpenCode whose command is missing stays listed, saying so: the
+  # user turned it on, so its absence is the thing to fix, not a reason to
+  # hide it (as with Muse above).
+  defp base_entry(id, "opencode", instance) do
+    cond do
+      found?(id) ->
+        {:ok, opencode_name(instance)}
+
+      enabled?(id, "opencode", instance) ->
+        {:ok,
+         %{
+           "installed" => false,
+           "status" => "error",
+           "availability" => "unavailable",
+           "auth" => %{"status" => "unknown"}
+         }}
+
+      true ->
+        :error
+    end
+  end
+
   defp base_entry(id, _driver, instance) do
-    with {:ok, [executable | _], _env} <- command(id),
-         path when is_binary(path) <- System.find_executable(executable) do
+    if found?(id) do
       {:ok,
        if(instance["displayName"], do: %{"displayName" => instance["displayName"]}, else: %{})}
     else
-      _ -> :error
+      :error
+    end
+  end
+
+  defp opencode_name(instance),
+    do: if(instance["displayName"], do: %{"displayName" => instance["displayName"]}, else: %{})
+
+  defp overridden?(id), do: Map.has_key?(Application.get_env(:hal_c2, :acp_commands, %{}), id)
+
+  # Whether the command that would start the instance's agent resolves, so a
+  # test's `:acp_commands` override counts the same as the configured binary.
+  defp found?(id) do
+    case command(id) do
+      {:ok, [executable | _], _env} -> System.find_executable(executable) != nil
+      _ -> false
     end
   end
 
@@ -530,14 +605,31 @@ defmodule HalC2.Acp do
     dir = HalC2.Scratch.dir("hal-c2-acp")
 
     Process.put(staged_key(id), [])
+    Process.put(read_stage_key(id), :probe)
+    Process.put(:acp_probe, true)
     Process.put(:antigravity_disk_check, mode == :disk)
 
     try do
       result = read_agent(id, dir)
       # Worked out before the lock, which only `:persistent_term` work may run under.
       error = error_message(id, result)
+      if error, do: Logger.warning("reading #{label(id)} (#{id}) failed: #{error}")
       locked(id, fn -> publish(id, generation, result, error) end)
     catch
+      # The agent never answered at all: say so, instead of leaving the
+      # instance unchecked until something forgets it. Only a timeout before
+      # the session work began is the probe's own; a held session is not.
+      :exit, {:timeout, _} ->
+        reason =
+          if Process.get(read_stage_key(id)) == :session,
+            do: :read_timeout,
+            else: :probe_timeout
+
+        error = error_message(id, {:error, reason})
+        Logger.warning("reading #{label(id)} (#{id}) failed: #{error}")
+        locked(id, fn -> publish(id, generation, {:error, reason}, error) end)
+        :ok
+
       _, _ ->
         # This read published nothing. While its generation is still current,
         # clear `:loading` so the next `entry/1` starts another read instead
@@ -551,6 +643,10 @@ defmodule HalC2.Acp do
         :ok
     after
       Process.delete(staged_key(id))
+      Process.delete(read_stage_key(id))
+      Process.delete(:acp_probe)
+      Process.delete({:grok_previous_models, id})
+      Process.delete({:grok_previous_version, id})
       File.rm_rf(dir)
       HalC2.Settings.notify_providers()
     end
@@ -561,6 +657,12 @@ defmodule HalC2.Acp do
 
   defp error_message(_id, {:error, :antigravity_health_failed}),
     do: "Antigravity could not complete its local health check."
+
+  defp error_message(id, {:error, :probe_timeout}),
+    do: "#{label(id)} CLI version probe timed out."
+
+  defp error_message(id, {:error, :read_timeout}),
+    do: "#{label(id)} did not answer in time."
 
   defp error_message(id, {:error, :unauthenticated}), do: signed_out_message(id)
   defp error_message(_id, {:error, reason}), do: describe(reason)
@@ -574,6 +676,9 @@ defmodule HalC2.Acp do
       case result do
         :ok ->
           :persistent_term.erase({__MODULE__, id, :error})
+          # A started agent ends the failure streak: the next failed read
+          # diagnoses its binary afresh instead of reusing the last answer.
+          :persistent_term.erase({__MODULE__, :start_diagnosis, id})
 
         {:error, :unauthenticated} ->
           :persistent_term.put({__MODULE__, id, :error}, error)
@@ -598,6 +703,22 @@ defmodule HalC2.Acp do
 
   defp staged_key(id), do: {__MODULE__, :staged, id}
 
+  # How far a read got, for naming a timeout: `:probe` until the agent has
+  # answered and session work begins (`read_stage/2`), then `:session`.
+  defp read_stage_key(id), do: {__MODULE__, :read_stage, id}
+
+  defp read_stage(id, stage) do
+    Process.put(read_stage_key(id), stage)
+    :ok
+  end
+
+  defp staged_value(id, key) do
+    case List.keyfind(Process.get(staged_key(id), []), key, 0) do
+      {^key, value} -> value
+      nil -> nil
+    end
+  end
+
   # What a read learned, kept until `load/1` publishes it. Returns `:ok` like the
   # `:persistent_term.put/2` it replaces, so a read ending in `stage/3` still
   # counts as a success in `publish/4`. Keyed per instance so a nested read of
@@ -615,8 +736,17 @@ defmodule HalC2.Acp do
   # A probe's call, answering the agent meanwhile: a sign-in page it asks for waits
   # for a user (`HalC2.Acp.UrlAuth`), so the call may take as long as that allows.
   defp call_serving(conn, id, method, params) do
-    task = Task.async(fn -> Connection.call(conn, method, params, :timer.minutes(11)) end)
+    task = Task.async(fn -> call_open(conn, method, params, :timer.minutes(11)) end)
     serve(conn, id, task)
+  end
+
+  # An agent that dies at once (an OpenCode macOS refuses) can stop its connection
+  # before a call reaches it; that call has met a closed connection, not a crash.
+  # Caught here because `Connection.call/4` stays a tail call (see there).
+  defp call_open(conn, method, params, timeout) do
+    Connection.call(conn, method, params, timeout)
+  catch
+    :exit, {reason, _} when reason in [:noproc, :normal] -> {:error, :closed}
   end
 
   defp serve(conn, id, task) do
@@ -634,6 +764,20 @@ defmodule HalC2.Acp do
 
       {:json_rpc, ^conn, {:request, rpc_id, method, _params}} ->
         Connection.respond(conn, rpc_id, {:error, %{"code" => -32601, "message" => method}})
+        serve(conn, id, task)
+
+      {:json_rpc, ^conn, {:notification, "session/update", params}} ->
+        # A server still starting settles its model list with a config update
+        # before the session answers; the read that asked takes the settled
+        # options over the first, partial ones.
+        case get_in(params || %{}, ["update", "sessionUpdate"]) do
+          "config_option_update" ->
+            Process.put({__MODULE__, :settled, id}, params["update"]["configOptions"])
+
+          _ ->
+            :ok
+        end
+
         serve(conn, id, task)
 
       {:json_rpc, ^conn, _notification} ->
@@ -707,7 +851,8 @@ defmodule HalC2.Acp do
   # offers "Pi default"; refused launch arguments are the provider's error.
   defp read_agent(id, dir, "pi", entry) do
     with :ok <- check_version(id, "pi", entry),
-         {:ok, _args} <- HalC2.Pi.resolve_launch_args(setting(id, "launchArgs")) do
+         {:ok, _args} <- HalC2.Pi.resolve_launch_args(setting(id, "launchArgs")),
+         :ok <- read_stage(id, :session) do
       stage(id, :capabilities, %{})
 
       case HalC2.Pi.discover(id, dir) do
@@ -735,6 +880,7 @@ defmodule HalC2.Acp do
   # protocol says nothing of sign-in: an empty catalog is the only sign.
   defp read_agent(id, dir, "muse", entry) do
     with :ok <- check_version(id, "muse", entry),
+         :ok <- read_stage(id, :session),
          {:ok, models} <- HalC2.Muse.discover(id, dir) do
       stage(id, :models, models)
       stage(id, :muse_signed_out, models == [])
@@ -742,41 +888,212 @@ defmodule HalC2.Acp do
     end
   end
 
+  # Grok's probe is the generic one, with two Grok rules: a signed-out answer is
+  # checked once more (Grok refreshes an expired sign-in inside the probe that
+  # first reports it), and a probe that cannot report models keeps the last
+  # known ones with a warning instead of emptying the picker. A completed
+  # probe replaces the models outright, gateway models included.
+  @grok_probe_warning "Grok CLI is installed but ACP initialize failed. Model options may be incomplete."
+  defp read_agent(id, dir, "grok", entry) do
+    # A test's `:acp_commands` override is not a Grok CLI: it has no version
+    # to ask for, and the check must not reach a real `grok` on PATH instead.
+    case if(overridden?(id), do: :ok, else: check_version(id, "grok", entry)) do
+      # A binary that can no longer run keeps the version it last reported,
+      # so the entry stays listed (behind, updated by hand).
+      {:error, _} = error ->
+        if version = Process.get({:grok_previous_version, id}),
+          do: stage(id, :version, version)
+
+        error
+
+      :ok ->
+        read_grok(id, dir)
+    end
+  end
+
   defp read_agent(id, dir, driver, entry) do
-    with :ok <- check_version(id, driver, entry) do
-      with_agent(id, dir, fn conn, init ->
-        stage(
-          id,
-          :version,
-          get_in(init, ["agentInfo", "version"]) || "unknown"
-        )
+    with :ok <- check_version(id, driver, entry),
+         :ok <- check_installed(id) do
+      probe_session(id, dir, driver)
+    end
+  end
 
-        stage(id, :capabilities, init["agentCapabilities"] || %{})
-        stage(id, :auth_methods, length(init["authMethods"] || []))
-        stage(id, :meta, init["_meta"] || %{})
+  defp probe_session(id, dir, driver) do
+    with_agent(id, dir, fn conn, init ->
+      stage(
+        id,
+        :version,
+        get_in(init, ["agentInfo", "version"]) || "unknown"
+      )
 
-        # Antigravity's models come from its sign-in and sessions
-        # (`HalC2.Acp.Antigravity.account/1`); a probe session would need a Google login.
-        case if(driver == "antigravity",
-               do: {:ok, %{}},
-               else: call_serving(conn, id, "session/new", %{"cwd" => dir, "mcpServers" => []})
-             ) do
-          {:ok, session} ->
-            stage(id, :config, session["configOptions"] || [])
-            stage(id, :models, models(session))
-            # Antigravity skips `session/new`, so its success proves no sign-in;
-            # its signed-out flag is owned by `HalC2.Acp.Antigravity` instead.
-            if driver != "antigravity", do: stage(id, :unauthenticated, false)
-            :ok
+      stage(id, :capabilities, init["agentCapabilities"] || %{})
+      stage(id, :auth_methods, length(init["authMethods"] || []))
+      stage(id, :meta, init["_meta"] || %{})
 
-          # ACP's "authentication required".
-          {:error, %{"code" => -32000}} ->
-            {:error, :unauthenticated}
+      read_stage(id, :session)
 
-          {:error, _} = error ->
-            error
+      # Antigravity's models come from its sign-in and sessions
+      # (`HalC2.Acp.Antigravity.account/1`); a probe session would need a Google login.
+      case if(driver == "antigravity",
+             do: {:ok, %{}},
+             else: new_probe_session(conn, id, dir, driver)
+           ) do
+        {:ok, session} ->
+          session =
+            case Process.delete({__MODULE__, :settled, id}) do
+              [_ | _] = settled -> Map.put(session, "configOptions", settled)
+              _ -> session
+            end
+
+          stage(id, :config, session["configOptions"] || [])
+          stage(id, :models, models(session))
+          # Antigravity skips `session/new`, so its success proves no sign-in;
+          # its signed-out flag is owned by `HalC2.Acp.Antigravity` instead.
+          if driver != "antigravity", do: stage(id, :unauthenticated, false)
+          :ok
+
+        # ACP's "authentication required".
+        {:error, %{"code" => -32000}} ->
+          {:error, :unauthenticated}
+
+        {:error, _} = error ->
+          error
+      end
+    end)
+    |> case do
+      {:error, reason} -> {:error, start_failure(id, reason)}
+      other -> other
+    end
+  end
+
+  # Grok may refresh an expired sign-in inside the probe that first reports it
+  # signed out, so that answer is checked once more before it stands.
+  defp new_probe_session(conn, id, dir, driver) do
+    params = %{"cwd" => dir, "mcpServers" => []}
+
+    case call_serving(conn, id, "session/new", params) do
+      {:error, %{"code" => -32000}} = first when driver == "grok" ->
+        case call_serving(conn, id, "session/new", params) do
+          {:ok, _} = ok -> ok
+          _ -> first
         end
-      end)
+
+      result ->
+        result
+    end
+  end
+
+  defp read_grok(id, dir) do
+    previous =
+      Process.get({:grok_previous_models, id}) ||
+        :persistent_term.get({__MODULE__, id, :models}, nil)
+
+    result = probe_session(id, dir, "grok")
+    staged = staged_value(id, :models)
+
+    cond do
+      result == {:error, :unauthenticated} ->
+        result
+
+      result == :ok and staged not in [nil, []] ->
+        stage(id, :notice, nil)
+        :ok
+
+      true ->
+        if previous not in [nil, []], do: stage(id, :models, previous)
+        stage(id, :notice, @grok_probe_warning)
+        :ok
+    end
+  end
+
+  # The command a read would run, present on this machine. A registry agent
+  # installs on first use, so it is never missing in this sense.
+  defp check_installed(id) do
+    case command(id) do
+      {:ok, [executable | _], _env} ->
+        if driver(id) == @registry or System.find_executable(executable) do
+          :ok
+        else
+          {:error,
+           "#{label(id)} CLI (`#{Path.basename(executable)}`) is not installed or not on PATH."}
+        end
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  # Why an OpenCode that would not start would not start, when its own version
+  # run says: macOS refusing the binary (a bad code signature, quarantine)
+  # leaves nothing over ACP but a closed connection. Only a process that died
+  # before answering is diagnosed, and only OpenCode's: an auth refusal or an
+  # error the agent itself sent means it started. (Diagnosing every driver's
+  # failed read would run `--version` on binaries that serve ACP on stdin,
+  # which then wait out the whole diagnosis deadline — a signed-out Grok read
+  # took five seconds that way and starved the providers frame.)
+  defp start_failure(id, reason) do
+    if driver(id) == "opencode" and not started?(reason),
+      do: diagnose_start(id, reason),
+      else: reason
+  end
+
+  defp started?(:closed), do: false
+
+  defp started?(%{"message" => message}) when is_binary(message),
+    do: not String.contains?(message, "exited with code")
+
+  defp started?(_reason), do: true
+
+  # The answer is kept for that binary as last modified, so one failure
+  # streak runs it once, on its first failed read, not on every interval;
+  # a successful read ends the streak (`publish/4`).
+  defp diagnose_start(id, reason) do
+    with {:ok, [executable | _], _env} <- command(id),
+         path when is_binary(path) <- System.find_executable(executable) do
+      diagnosis(id, path) || reason
+    else
+      _ -> reason
+    end
+  end
+
+  defp diagnosis(id, path) do
+    key = {__MODULE__, :start_diagnosis, id}
+    mtime = with {:ok, %{mtime: mtime}} <- File.stat(path), do: mtime
+
+    case :persistent_term.get(key, nil) do
+      {^path, ^mtime, diagnosis} ->
+        diagnosis
+
+      _ ->
+        diagnosis = run_version(id, path)
+        :persistent_term.put(key, {path, mtime, diagnosis})
+        diagnosis
+    end
+  end
+
+  # Runs only the agent's own configured binary, found on PATH, with a fixed argument.
+  # sobelow_skip ["CI.System"]
+  defp run_version(id, path) do
+    output =
+      with task = Task.async(fn -> System.cmd(path, ["--version"], stderr_to_stdout: true) end),
+           {:ok, {out, _status}} <- Task.yield(task, 5_000) || Task.shutdown(task) do
+        String.downcase(out)
+      else
+        _ -> ""
+      end
+
+    name = label(id)
+    binary = id |> binary_path() |> to_string() |> Path.basename()
+
+    cond do
+      output =~ "signature" ->
+        "macOS killed the #{name} process due to an invalid code signature. The binary may be corrupted — try reinstalling #{name}."
+
+      output =~ "quarantine" ->
+        "macOS is blocking the #{name} binary (quarantine). Run `xattr -d com.apple.quarantine $(which #{binary})` to fix this."
+
+      true ->
+        nil
     end
   end
 
@@ -847,15 +1164,28 @@ defmodule HalC2.Acp do
               "slug" => "#{provider}/#{model["id"] || model_id}",
               "name" => String.trim(model["name"]),
               "isCustom" => false,
-              "capabilities" => nil
+              "capabilities" => nil,
+              # A provider the list cannot name (or names with nothing) bills
+              # under its own id, until it is named.
+              "subProvider" =>
+                case entry["name"] do
+                  name when is_binary(name) ->
+                    if String.trim(name) == "", do: provider, else: name
+
+                  _ ->
+                    provider
+                end
             }
-            |> then(&if(entry["name"], do: Map.put(&1, "subProvider", entry["name"]), else: &1))
           end
 
         stage(id, :models, Enum.sort_by(models, & &1["name"]))
+        stage(id, :unauthenticated, false)
         :ok
 
       {:ok, status, _} when status in [401, 403] ->
+        # Signed out as far as that server is concerned; the failure standing in
+        # for the read keeps later listings from probing it again unasked.
+        stage(id, :unauthenticated, true)
         {:error, "OpenCode server rejected authentication. Check the server URL and password."}
 
       {:ok, status, _} ->
@@ -927,21 +1257,124 @@ defmodule HalC2.Acp do
     end
   end
 
+  # Grok's health starts with `grok --version`, its own updater off. Ten
+  # seconds: a healthy CLI behind a shim or a virus scan can take eight.
+  defp check_version(id, "grok", entry) do
+    timeout = Application.get_env(:hal_c2, :grok_version_timeout_ms, 10_000)
+
+    env =
+      instance_env(id)
+      |> put_env("GROK_OAUTH2_REFERRER", "hal-c2")
+      |> put_env("GROK_DISABLE_AUTOUPDATER", "1")
+
+    result =
+      with path when is_binary(path) <- System.find_executable(binary("grok", entry, "grok")) do
+        grok_version(path, env, timeout)
+      else
+        _ -> :failed
+      end
+
+    case result do
+      {:ok, out} ->
+        version =
+          case Regex.run(~r/\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?/, out) do
+            [version] -> version
+            nil -> "unknown"
+          end
+
+        stage(id, :version, version)
+        :ok
+
+      :timeout ->
+        {:error, "Grok CLI is installed but timed out while running `grok --version`."}
+
+      :failed ->
+        {:error, "Grok CLI is installed but failed to run."}
+    end
+  end
+
   defp check_version(_id, _driver, _entry), do: :ok
+
+  # Runs `grok --version` under erlexec so a hang past the timeout kills the
+  # OS process too, not only the Elixir task waiting on it.
+  defp grok_version(path, env, timeout) do
+    options = [:stdout, {:stderr, :stdout}, :monitor, {:env, env}, {:kill_timeout, 1}]
+
+    case :exec.run([path, "--version"], options) do
+      {:ok, _pid, os_pid} ->
+        deadline = System.monotonic_time(:millisecond) + timeout
+        grok_version_output(os_pid, deadline, "")
+
+      _ ->
+        :failed
+    end
+  end
+
+  defp grok_version_output(os_pid, deadline, out) do
+    left = deadline - System.monotonic_time(:millisecond)
+
+    if left <= 0 do
+      kill_version(os_pid)
+    else
+      receive do
+        {:stdout, ^os_pid, data} ->
+          grok_version_output(os_pid, deadline, out <> IO.iodata_to_binary(data))
+
+        {:DOWN, ^os_pid, :process, _pid, :normal} ->
+          {:ok, out}
+
+        {:DOWN, ^os_pid, :process, _pid, _reason} ->
+          :failed
+      after
+        left -> kill_version(os_pid)
+      end
+    end
+  end
+
+  # Hard-kills the hung process and takes its DOWN, so no stray message is
+  # left for the caller.
+  defp kill_version(os_pid) do
+    :exec.kill(os_pid, 9)
+
+    receive do
+      {:stdout, ^os_pid, _data} -> kill_version(os_pid)
+      {:DOWN, ^os_pid, :process, _pid, _reason} -> :timeout
+    after
+      500 -> :timeout
+    end
+  end
 
   # --- per-driver fields --------------------------------------------------------
 
   defp driver_fields(entry, "grok", id, _instance) do
     meta = :persistent_term.get({__MODULE__, id, :meta}, nil) || %{}
+    path = HalC2.ProviderUpdates.executable("grok", id)
+    notice = :persistent_term.get({__MODULE__, id, :notice}, nil)
 
     entry
     |> Map.merge(%{
       # Grok cannot rewind its own conversation.
       "supportsConversationRollback" => false,
-      "slashCommands" => grok_commands(meta["availableCommands"])
+      "slashCommands" => grok_commands(meta["availableCommands"]),
+      "versionAdvisory" => HalC2.ProviderUpdates.advisory("grok", path, entry["version"], id)
     })
     |> Map.update!("models", &grok_reasoning(&1, get_in(meta, ["modelState", "availableModels"])))
     |> Map.update!("auth", &grok_auth(&1, id))
+    |> then(fn entry ->
+      cond do
+        # A probe that kept the last known models warns; chats still run.
+        notice && entry["status"] == "ready" ->
+          Map.put(entry, "status", "warning")
+
+        # The first look, before any probe has answered.
+        entry["enabled"] && entry["version"] == nil && loading?(id) &&
+            entry["status"] != "error" ->
+          Map.put(entry, "message", "Checking Grok CLI availability...")
+
+        true ->
+          entry
+      end
+    end)
   end
 
   defp driver_fields(entry, "opencode", id, instance) do
@@ -950,6 +1383,11 @@ defmodule HalC2.Acp do
     path = HalC2.ProviderUpdates.executable("opencode", id)
 
     entry
+    |> Map.merge(%{
+      "slashCommands" => :persistent_term.get({__MODULE__, id, :commands}, []),
+      "skills" => :persistent_term.get({__MODULE__, id, :skills}, [])
+    })
+    |> opencode_unchecked(id)
     |> Map.update!("models", &opencode_options(&1, config))
     |> then(
       &if(path,
@@ -1031,6 +1469,33 @@ defmodule HalC2.Acp do
 
   defp driver_fields(entry, _driver, _id, _instance), do: entry
 
+  # Enabled but never read in this session (its first read is still under way):
+  # the listing says so, as Codex's and Claude's do, instead of looking ready.
+  # Off, it says the server URL it keeps for when it is turned back on.
+  defp opencode_unchecked(entry, id) do
+    cond do
+      entry["enabled"] == false ->
+        if setting(id, "serverUrl"),
+          do:
+            Map.put(
+              entry,
+              "message",
+              "OpenCode is disabled in HAL-C2 settings. A server URL is configured."
+            ),
+          else: entry
+
+      :persistent_term.get({__MODULE__, id, :models}, nil) == nil and
+          :persistent_term.get({__MODULE__, id, :error}, nil) == nil ->
+        Map.merge(entry, %{
+          "status" => "warning",
+          "message" => "OpenCode provider status has not been checked in this session yet."
+        })
+
+      true ->
+        entry
+    end
+  end
+
   # An OpenCode that said no version when it started (staged as "unknown") cannot be
   # told apart from one too old to run.
   defp opencode_version(%{"version" => "unknown", "status" => status} = entry, _id, _instance)
@@ -1091,9 +1556,17 @@ defmodule HalC2.Acp do
           do: variants,
           else: ~w(low medium high xhigh)
 
+      # A model whose variants name no default HAL-C2 knows keeps OpenCode's
+      # own default as its choice, so its reasoning label is never blank.
+      {variants, default} =
+        case default_variant(provider, variants) do
+          nil -> {["default" | variants], "default"}
+          default -> {variants, default}
+        end
+
       descriptors =
         [
-          select("variant", "Reasoning", variants, default_variant(provider, variants)),
+          select("variant", "Reasoning", variants, default),
           agents != [] &&
             select("agent", "Agent", agents, if("build" in agents, do: "build", else: hd(agents)))
         ]
@@ -1295,7 +1768,13 @@ defmodule HalC2.Acp do
          {:ok, conn} <-
            Connection.start_link(cmd: command, handler: self(), cd: cwd, env: env, dialect: :v2) do
       try do
-        with {:ok, init} <- Connection.call(conn, "initialize", initialize_params()),
+        with {:ok, init} <-
+               call_open(
+                 conn,
+                 "initialize",
+                 initialize_params(),
+                 Application.get_env(:hal_c2, :acp_initialize_timeout, 30_000)
+               ),
              do: fun.(conn, init)
       after
         Connection.stop(conn)
@@ -1384,6 +1863,19 @@ defmodule HalC2.Acp do
     # the instance meanwhile forgets it after, which drops this read's generation.
     enabled = enabled?(id) or HalC2.Settings.provider_on_in_a_project?(id)
 
+    # A Grok refresh that finds no models keeps these (see the Grok read).
+    if driver(id) == "grok" do
+      Process.put(
+        {:grok_previous_models, id},
+        :persistent_term.get({__MODULE__, id, :models}, nil)
+      )
+
+      Process.put(
+        {:grok_previous_version, id},
+        :persistent_term.get({__MODULE__, id, :version}, nil)
+      )
+    end
+
     case locked(id, fn ->
            forget_now(id)
            if enabled, do: start_read(id)
@@ -1423,6 +1915,7 @@ defmodule HalC2.Acp do
     # never equals a read's ref, and a forgotten (or deleted) instance leaves
     # no generation entry behind.
     :persistent_term.erase({__MODULE__, id, :generation})
+    :persistent_term.erase({__MODULE__, :start_diagnosis, id})
     :ok
   end
 
@@ -1443,9 +1936,18 @@ defmodule HalC2.Acp do
     if Enum.any?(config_options, &(&1["id"] == "model")) do
       models = models(%{"configOptions" => config_options})
 
-      locked(id, fn -> :persistent_term.put({__MODULE__, id, :models}, models) end)
+      # As in `put_commands/2`: an unchanged list neither rewrites the
+      # catalog (a `:persistent_term` put is a global GC pass) nor
+      # rebroadcasts the provider list to every client.
+      changed =
+        :persistent_term.get({__MODULE__, id, :models}, nil) != models and
+          locked(id, fn ->
+            changed = :persistent_term.get({__MODULE__, id, :models}, nil) != models
+            if changed, do: :persistent_term.put({__MODULE__, id, :models}, models)
+            changed
+          end)
 
-      HalC2.Settings.notify_providers()
+      if changed, do: HalC2.Settings.notify_providers()
     end
 
     :ok
@@ -1454,12 +1956,14 @@ defmodule HalC2.Acp do
   @max_commands 200
 
   @doc """
-  Replaces a registry instance's commands with those its session advertises (ACP's
+  Replaces an instance's commands with those its session advertises (ACP's
   `available_commands_update`), and tells subscribed clients. A name starting with
-  `$` is a skill of the agent's; the rest are its slash commands.
+  `$` is a skill of the agent's; the rest are its slash commands. OpenCode
+  advertises the commands and skills it read for the session's project, and a
+  registry agent its own; other drivers' commands come from their own reads.
   """
   def put_commands(id, commands) when is_list(commands) do
-    if driver(id) == "acpRegistry" do
+    if driver(id) in ["acpRegistry", "opencode"] do
       offered =
         for(%{"name" => name} = command when is_binary(name) <- commands, do: command)
         |> Enum.map(&Map.put(&1, "name", String.trim(&1["name"])))
@@ -1680,8 +2184,16 @@ defmodule HalC2.Acp do
     for %{"value" => slug} = model <- option["options"] || [] do
       {sub, name} =
         case String.split(model["name"] || slug, "/", parts: 2) do
-          [sub, name] -> {sub, name}
-          [name] -> {nil, name}
+          [sub, name] ->
+            {sub, name}
+
+          [name] ->
+            # A name with no provider in it (OpenCode 2's) still groups under
+            # the provider its slug names.
+            case String.split(slug, "/", parts: 2) do
+              [sub, _] -> {sub, name}
+              _ -> {nil, name}
+            end
         end
 
       %{
