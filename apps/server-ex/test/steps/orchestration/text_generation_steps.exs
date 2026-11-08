@@ -2187,6 +2187,8 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
   # another host (`context.forge`, its URL) pushes to a local bare repository but names the
   # host in its URL, and `gh` is the fake: the host kind reaches the template the real way.
   defp pull_request(%{forge: url} = context) do
+    extra = Map.get(context, :git_extra, %{})
+
     context =
       github(context, [
         %{"args" => ["pr list"], "stdout" => "[]"},
@@ -2203,7 +2205,7 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     World.git!(root, ["remote", "add", "origin", url])
     World.git!(root, ["config", "remote.origin.pushurl", bare])
 
-    {events, context} = World.git_action(context, root, "create_pr")
+    {events, context} = World.git_action(context, root, "create_pr", extra)
     context |> Map.put(:cwd, root) |> Map.put(:git_events, events)
   end
 
@@ -2225,6 +2227,111 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
         template: Style.pr_template(cwd, "main")
       )
     )
+  end
+
+  # --- text from a thread ---------------------------------------------------------------
+
+  # A run that completed with a command, and a rolled-back run with another, so what the
+  # writer is given can be told from what the thread undid.
+  step "a thread ran {string} and it passed", %{args: [command]} = context do
+    context =
+      context
+      |> World.create_thread("Login work")
+      |> World.numbered_run("Login work", 1, "completed")
+      |> World.numbered_run("Login work", 2, "rolled_back")
+
+    context =
+      context
+      |> World.add_item("Login work", "cmd-1", "command_execution", "run-1", %{
+        "input" => command,
+        "exitCode" => 0,
+        "output" => "0 failures"
+      })
+      |> World.add_item("Login work", "cmd-2", "command_execution", "run-2", %{
+        "input" => "mix undone",
+        "exitCode" => 0
+      })
+
+    context
+    |> Map.put(:forge, "https://github.com/acme/shop.git")
+    |> Map.put(:git_extra, %{"threadId" => World.thread_id(context, "Login work")})
+    |> Map.put(:thread_command, command)
+  end
+
+  step "pull request text is generated for that thread's branch", context do
+    pull_request(install(context))
+  end
+
+  step "the writer is given a short account of the thread's visible history with the check and its result",
+       context do
+    prompt = pr_prompt(context)
+    assert prompt =~ "Thread history"
+    assert prompt =~ context.thread_command
+    assert prompt =~ "0 failures" or prompt =~ "exit"
+    context
+  end
+
+  step "turns that were rolled back are left out of it", context do
+    refute pr_prompt(context) =~ "mix undone"
+    context
+  end
+
+  step "a client that may write to source control but may not read threads", context do
+    context = World.create_thread(context, "Login work")
+
+    context
+    |> Map.put(:forge, "https://github.com/acme/shop.git")
+    |> Map.put(:git_extra, %{"threadId" => World.thread_id(context, "Login work")})
+    |> install()
+    |> then(fn context ->
+      access = HalC2.Test.Mc.pair(["orchestration:operate"], "Source control only")
+      World.put_client(context, "device", HalC2.Test.Mc.connect_as(context.mc, access))
+    end)
+  end
+
+  step "it asks for pull request text for a thread", context do
+    id = System.unique_integer([:positive])
+    root = root(context)
+
+    client =
+      HalC2.Test.Mc.sub(World.client(context, "device"), id, %{
+        "type" => "gitAction",
+        "mc" => Atom.to_string(node()),
+        "input" => %{
+          "actionId" => "act-#{id}",
+          "cwd" => root,
+          "action" => "create_pr",
+          "threadId" => context.git_extra["threadId"]
+        }
+      })
+
+    {frame, client} =
+      HalC2.Test.Mc.await(client, &(&1["t"] == "error" and &1["id"] == id), 10_000)
+
+    context |> World.put_client("device", client) |> Map.put(:refused, frame)
+  end
+
+  @doc false
+  def refused(%{refused: frame} = context) do
+    assert frame["reason"] =~ "orchestration:read is required"
+    context
+  end
+
+  step "committing and pushing for that thread are still allowed", context do
+    {events, context} =
+      World.git_action(context, root(context), "commit", context.git_extra, "device")
+
+    refute Enum.any?(events, &(&1["kind"] == "action_failed")),
+           "commit was refused: #{inspect(events)}"
+
+    context
+  end
+
+  defp pr_prompt(context) do
+    calls(context)
+    |> Enum.map(& &1["prompt"])
+    |> Enum.find(&(is_binary(&1) and &1 =~ "Head branch:"))
+    |> Kernel.||(flunk("no pull request prompt in #{inspect(calls(context))}"))
   end
 
   defp commit_files(context, files) do

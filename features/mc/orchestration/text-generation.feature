@@ -426,6 +426,7 @@ Feature: Generated titles, branch names and source control text
     And the PDF is not sent
 
   # Legacy: apps/server/src/textGeneration/OpenCodeTextGeneration.ts (warm server, idle TTL), OpenCodeTextGeneration.test.ts
+  # Blocked on hal-c2#1299: this assumes OpenCode's HTTP/SDK server; the MC drives OpenCode over ACP, one process per thread.
   @backlog @mc @priority-low
   Scenario: OpenCode's server is kept warm between requests and closed when idle
     Given OpenCode writes text on a server the MC started
@@ -436,6 +437,7 @@ Feature: Generated titles, branch names and source control text
     And the next request starts a new one
 
   # Legacy: apps/server/src/textGeneration/OpenCodeTextGeneration.ts (configured server URL, auth), OpenCodeTextGeneration.test.ts
+  # Blocked on hal-c2#1299: this assumes OpenCode's HTTP/SDK server; the MC drives OpenCode over ACP, one process per thread.
   @backlog @mc @priority-low
   Scenario: A configured OpenCode server is used as is and never closed by the MC
     Given OpenCode is set up with the URL of a server the user runs
@@ -446,6 +448,7 @@ Feature: Generated titles, branch names and source control text
     And the password saved in the OpenCode settings is
 
   # Legacy: apps/server/src/textGeneration/OpenCodeTextGeneration.ts (connection check before the session), OpenCodeTextGeneration.test.ts
+  # Blocked on hal-c2#1299: this assumes OpenCode's HTTP/SDK server; the MC drives OpenCode over ACP, one process per thread.
   @backlog @mc @priority-low
   Scenario: An OpenCode server that is too old is refused before a session is created
     Given a configured OpenCode server older than the supported version
@@ -497,6 +500,7 @@ Feature: Generated titles, branch names and source control text
 
   # Upstream #29819: OpenCode 2 text generation attached every image, so on an external server, or
   # with a missing or SVG image, the title failed while the turn worked.
+  # Blocked on hal-c2#1299: this assumes OpenCode's HTTP/SDK server; the MC drives OpenCode over ACP, one process per thread.
   @backlog @mc @plugin-opencode @priority-low
   Scenario Outline: OpenCode writes a title sending only the images it can open
     Given OpenCode 2 runs on <server>
@@ -813,7 +817,7 @@ Feature: Generated titles, branch names and source control text
     And no other template in ".gitlab/merge_request_templates" is used in its place
 
   # Upstream #18291: generated pull requests said tests were not run because the writer saw only the diff.
-  @mc @backlog
+  @mc
   Scenario: Pull request text generated from a thread knows what the thread checked
     Given a thread ran "mix test" and it passed
     When pull request text is generated for that thread's branch
@@ -821,7 +825,7 @@ Feature: Generated titles, branch names and source control text
     And turns that were rolled back are left out of it
 
   # Upstream #18291: generated pull requests include the thread's context, such as the checks it ran.
-  @mc @backlog
+  @mc
   Scenario: Pull request text from a thread needs permission to read the thread
     Given a client that may write to source control but may not read threads
     When it asks for pull request text for a thread

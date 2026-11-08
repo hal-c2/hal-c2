@@ -101,7 +101,8 @@ defmodule HalC2.TextGeneration do
         diff_stat,
         diff_patch,
         opts[:template],
-        opts[:policy] || %{}
+        opts[:policy] || %{},
+        opts[:thread_history]
       )
 
     with {:ok, out} <-
