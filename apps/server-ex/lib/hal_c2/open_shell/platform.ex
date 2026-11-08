@@ -266,9 +266,13 @@ defmodule HalC2.OpenShell.Platform do
     end
   end
 
+  # Podman serves its own API only under a version prefix (its unversioned `/info`
+  # is the Docker-compatible one, without `host.security`). v5.0.0 is the oldest
+  # Podman `check/1` accepts.
   defp runtime_info(:podman, socket) do
     with {:ok, %{"Version" => version}} <- get_json(socket, "/version"),
-         {:ok, %{"host" => %{"security" => security}}} <- get_json(socket, "/libpod/info") do
+         {:ok, %{"host" => %{"security" => security}}} <-
+           get_json(socket, "/v5.0.0/libpod/info") do
       {:ok, %{version: version, rootless: security["rootless"] == true}}
     else
       _ -> :error
