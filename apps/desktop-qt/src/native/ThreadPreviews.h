@@ -131,8 +131,10 @@ public:
   // The tab as the MC last said, or {} when there is none.
   QJsonObject tab(const QString& tabId) const;
   // What the page showing the tab did: `preview.reportStatus`, navStatus a
-  // PreviewNavStatus. `unheard` runs when the MC refused it or never got it.
-  void report(const QString& tabId, const QJsonObject& navStatus, bool canGoBack, bool canGoForward, std::function<void()> unheard = {});
+  // PreviewNavStatus. `unheard` runs when the MC did not take it: `refused`
+  // by the MC, or not, the connection being down to carry it.
+  void report(const QString& tabId, const QJsonObject& navStatus, bool canGoBack, bool canGoForward,
+              std::function<void(bool refused)> unheard = {});
   // The size the tab's page is shown at: `preview.resize`, viewport a
   // PreviewViewportSetting. `done` runs once the MC answers, with why it
   // refused; the tab changes with the MC's event.
@@ -149,6 +151,9 @@ signals:
   void emptyTabChanged();
   // The MC said something new of the tab, or it went.
   void tabChanged(const QString& tabId);
+  // The MC listed the thread's tabs (on showing, a reload, a reconnect); the
+  // rows that changed said so first.
+  void listed();
   // Embedded: the tab is to be shown: the user asked (show, newTab,
   // openAddress), or someone opened it just now (an agent, another window).
   void showRequested(const QString& tabId);

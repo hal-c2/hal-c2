@@ -7,6 +7,7 @@
 #include <QtQml/qqml.h>
 
 #include <algorithm>
+#include <utility>
 
 namespace {
 
@@ -161,6 +162,7 @@ void BrowserPage::setTabId(const QString& tabId) {
   if (tabId == m_tabId) return;
   m_tabId = tabId;
   m_lastReport = {};
+  m_unsent = false;
   // A size picked for the old tab is not the new tab's.
   ++m_viewportPick;
   setPending({}, false);
@@ -176,6 +178,13 @@ void BrowserPage::follow() {
     disconnect(m_previews, &ThreadPreviews::tabChanged, this, nullptr);
     connect(m_previews, &ThreadPreviews::tabChanged, this, [this](const QString& tabId) {
       if (tabId == m_tabId) refresh();
+    });
+    disconnect(m_previews, &ThreadPreviews::listed, this, nullptr);
+    connect(m_previews, &ThreadPreviews::listed, this, [this] {
+      // Back from a drop, the MC's tab still where it was: where the page went is news.
+      if (!std::exchange(m_unsent, false) || m_lastReport.isEmpty() || m_tab.isEmpty()) return;
+      const QString where = m_lastReport.value(QLatin1String("navStatus")).toObject().value(QLatin1String("url")).toString();
+      if (where == m_at && where != url()) send();
     });
   }
   // What the MC has now is where the page starts: the brick loads `url`.
@@ -220,6 +229,7 @@ void BrowserPage::refresh() {
   if (at == m_at) return;
   // Somewhere the page did not go by itself: an agent, or another window.
   m_at = at;
+  m_unsent = false;
   emit loadRequested(at);
 }
 
@@ -315,11 +325,27 @@ void BrowserPage::report(const QString& phase, const QString& url, const QString
                            {QStringLiteral("canGoForward"), canGoForward}};
   if (report == m_lastReport) return;
   m_lastReport = report;
+  send();
+}
+
+// The last report to the MC.
+void BrowserPage::send() {
+  m_unsent = false;
+  const QJsonObject navStatus = m_lastReport.value(QLatin1String("navStatus")).toObject();
+  const QString url = navStatus.value(QLatin1String("url")).toString();
+  const bool canGoBack = m_lastReport.value(QLatin1String("canGoBack")).toBool();
+  const bool canGoForward = m_lastReport.value(QLatin1String("canGoForward")).toBool();
   went(url);
-  m_previews->report(m_tabId, navStatus, canGoBack, canGoForward, [this, url, tabId = m_tabId, guard = QPointer<BrowserPage>(this)] {
+  m_previews->report(m_tabId, navStatus, canGoBack, canGoForward, [this, url, tabId = m_tabId, guard = QPointer<BrowserPage>(this)](bool refused) {
     if (!guard || tabId != m_tabId) return;
-    // The MC will not say it back, and its tab is where the page is.
+    // The MC will not say it back.
     m_echoes.removeAll(url);
+    if (!refused) {
+      // It never heard: the page stays where it went, and says so on the way back.
+      m_unsent = true;
+      return;
+    }
+    // Refused: its tab is where the page is.
     m_lastReport = {};
     const QString at = this->url();
     if (at.isEmpty() || at == m_at) return;

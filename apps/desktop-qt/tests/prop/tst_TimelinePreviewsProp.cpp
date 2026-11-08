@@ -27,7 +27,9 @@
 // the page the MC says its tab is at. The user picks the page's device size
 // (`preview.resize`, held too): the page shows the size picked at once and
 // waits on the MC, and once every answer is in it waits on nothing and shows
-// the size the MC has.
+// the size the MC has. The connection can go down for a while: the page stays
+// where it is (nothing asks its view to load), and once back the MC hears
+// where it went.
 
 #include "Prop.h"
 
@@ -187,6 +189,9 @@ struct Sut {
   QString viewUrl;
   QStringList showRequests;
   QStringList changed;
+  // The connection is down (McDown), and what the view was asked to load since.
+  bool down = false;
+  QStringList pulledWhileDown;
 
   Sut() {
     mc.environmentId = kEnvironment;
@@ -245,7 +250,10 @@ struct Sut {
     page = std::make_unique<BrowserPage>();
     page->setPreviews(previews.get());
     // The view loads what it is asked to and says where it is, as the brick's does.
-    QObject::connect(page.get(), &BrowserPage::loadRequested, page.get(), [this](const QString& url) { go(url); });
+    QObject::connect(page.get(), &BrowserPage::loadRequested, page.get(), [this](const QString& url) {
+      if (down) pulledWhileDown.append(url);
+      go(url);
+    });
   }
 
   // The page's view is at `url` now.
@@ -465,6 +473,10 @@ struct Sut {
         return call.rpc.method == QLatin1String("preview.resize") && call.rpc.payload.value(QLatin1String("tabId")).toString() == page->tabId();
       }));
     }
+    // Away from the MC, nothing takes the page anywhere, and what it shows is
+    // what the MC said last, not what it has now.
+    RC_ASSERT(pulledWhileDown.isEmpty());
+    if (down) return;
     if (model.embedded && !page->tabId().isEmpty()) {
       const auto row = std::find_if(now.cbegin(), now.cend(), [&](const Row& shown) { return shown.tabId == page->tabId(); });
       RC_ASSERT(page->exists() == (row != now.cend()));
@@ -711,6 +723,7 @@ struct McRestart : Step {
   bool keep = *rc::gen::arbitrary<bool>();
   void apply(Model&) const override {}
   void act(const Model&, Sut& sut) const override {
+    if (sut.down) return;
     QSignalSpy ready(sut.client.get(), &McClient::readyChanged);
     RC_ASSERT(sut.mc.connected());
     sut.mc.drop();
@@ -721,6 +734,33 @@ struct McRestart : Step {
     RC_ASSERT(halc2::prop::until([&] { return !ready.isEmpty() && ready.last().first().toBool(); }, 1000));
   }
   void show(std::ostream& os) const override { os << "McRestart(" << (keep ? "tabs kept" : "tabs gone") << ")"; }
+};
+
+// The connection goes down (a LAN or Tailscale blip) with what the MC held
+// unanswered, and stays down, the MC taking no new one, until McUp.
+struct McDown : Step {
+  void apply(Model&) const override {}
+  void act(const Model&, Sut& sut) const override {
+    if (sut.down) return;
+    sut.down = true;
+    sut.mc.stopAccepting();
+    sut.mc.drop();
+    sut.held.clear();
+    RC_ASSERT(halc2::prop::until([&] { return !sut.client->isReady(); }, 1000));
+  }
+  void show(std::ostream& os) const override { os << "McDown"; }
+};
+
+// The connection comes back, to the same MC.
+struct McUp : Step {
+  void apply(Model&) const override {}
+  void act(const Model&, Sut& sut) const override {
+    if (!sut.down) return;
+    sut.mc.startAccepting();
+    RC_ASSERT(halc2::prop::until([&] { return sut.client->isReady(); }, 1000));
+    sut.down = false;
+  }
+  void show(std::ostream& os) const override { os << "McUp"; }
 };
 
 }  // namespace
@@ -745,7 +785,7 @@ private slots:
       rc::state::check(model, sut,
                        rc::state::gen::execOneOfWithArgs<SetThread, SetActive, SetPage, PageGo, PageResize, PageResize, Reload, UserClose, UserNewTab,
                                                          OpenLink, OpenLink, SetHere, Answer, Answer, AnswerAll, McOpen, McOpen,
-                                                         McNavigate, McNavigate, McFail, McClose, McRestart>());
+                                                         McNavigate, McNavigate, McFail, McClose, McRestart, McDown, McUp>());
     }));
   }
 };

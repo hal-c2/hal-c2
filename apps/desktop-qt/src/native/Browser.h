@@ -96,7 +96,9 @@ private:
 // tab (ThreadPreviews) and tells the MC what the page does.
 //
 // What the view did comes in through report(); the MC hears it as
-// `preview.reportStatus`. The MC's tab moving to an address the page did not
+// `preview.reportStatus`; one the MC refuses takes the page back to its tab,
+// one the connection could not carry goes again once the MC lists the tabs.
+// The MC's tab moving to an address the page did not
 // report (an agent's `preview.navigate`, another window) asks the view to load
 // it (loadRequested). The device size is the MC's (`viewport`): setViewport
 // shows the new size at once (`resizing` until the MC answers) and sends
@@ -205,6 +207,7 @@ private:
   void follow();
   void refresh();
   void went(const QString& url);
+  void send();
   void setPending(const QJsonObject& viewport, bool waiting);
 
   QPointer<ThreadPreviews> m_previews;
@@ -216,6 +219,9 @@ private:
   QString m_at;
   QStringList m_echoes;
   QJsonObject m_lastReport;
+  // The last report never reached the MC (the connection was down): it goes
+  // again once the MC lists the tabs, unless its tab has moved on since.
+  bool m_unsent = false;
   // A size picked that the MC's tab does not show yet, whether the MC is yet
   // to answer it, and which pick it was.
   QJsonObject m_pendingViewport;

@@ -407,6 +407,35 @@ private slots:
     QCOMPARE(loads.constFirst().constFirst().toString(), kPageB);
   }
 
+  // A report the connection dropped, or one made while it was down, was taken
+  // for the MC's refusal: the link the user followed snapped back to the MC's
+  // old address during a network blip. Back, the MC hears where the page is.
+  void aPageStaysWhereItWentWhileTheMcIsAway() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"), loadedAt(kPageA))}, 1)));
+    BrowserPage page;
+    page.setPreviews(f.previews.get());
+    page.setTabId(QStringLiteral("tab-1"));
+    QSignalSpy loads(&page, &BrowserPage::loadRequested);
+    page.report(QStringLiteral("loaded"), kPageB, QString(), 0, QString(), true, false);
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.reportStatus")).isEmpty(); }));
+    f.mc.stopAccepting();
+    f.mc.drop();
+    QVERIFY(QTest::qWaitFor([&f] { return !f.client->isReady(); }));
+    page.report(QStringLiteral("loaded"), kPageC, QString(), 0, QString(), true, false);
+    QVERIFY(f.barrier());
+    QCOMPARE(loads.count(), 0);
+    f.held.clear();
+    f.mc.startAccepting();
+    QVERIFY(QTest::qWaitFor([&f] { return f.client->isReady() && !f.held.value(QStringLiteral("preview.list")).isEmpty(); }));
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"), loadedAt(kPageA))}, 1)));
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.reportStatus")).isEmpty(); }));
+    const QJsonObject said = f.held.value(QStringLiteral("preview.reportStatus")).constLast().payload;
+    QCOMPARE(said.value(QLatin1String("navStatus")).toObject().value(QLatin1String("url")).toString(), kPageC);
+    QCOMPARE(loads.count(), 0);
+  }
+
   // The MC said back the page's second report from where its tab already was,
   // which left that echo waiting: an agent taking the tab back there later
   // was taken for it, and the page stayed put.
