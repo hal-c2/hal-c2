@@ -28,7 +28,8 @@ Rectangle {
     readonly property color edge: Theme.palette.color("border", "#27272a")
     // The window's zoom, undone around the page.
     readonly property real appZoom: Shell.state.layout ? (Shell.state.layout.zoom ?? 1) : 1
-    readonly property var viewport: page.viewport
+    // The size shown: the page's, or what an edge being dragged makes it.
+    readonly property var viewport: handles.size ?? page.viewport
     readonly property bool framed: viewport._tag === "preset" || viewport._tag === "freeform"
     readonly property var device: viewport._tag === "preset" ? BrowserJs.preset(viewport.presetId) : null
     // Where the page is, as the view has it; empty for the start page. A
@@ -416,6 +417,22 @@ Rectangle {
         }
     }
 
+    BrowserDeviceToolbar {
+        id: deviceToolbar
+
+        anchors.top: chrome.bottom
+        width: parent.width
+        height: visible ? implicitHeight : 0
+        visible: root.framed && !Browser.devicesView
+        page: page
+        viewport: root.viewport
+    }
+
+    // Shows the device toolbar: the page keeps the room it has, less the toolbar's.
+    function showDeviceToolbar() {
+        page.setViewport(BrowserJs.viewportOf("freeform", pageArea.width - 32, pageArea.height - 24 - 32 - deviceToolbar.implicitHeight * root.appZoom));
+    }
+
     ShellMenu {
         id: deviceMenu
 
@@ -504,6 +521,13 @@ Rectangle {
         ShellMenuSeparator {}
 
         ShellMenuItem {
+            objectName: "browserDeviceToolbarItem"
+            text: root.framed ? qsTr("Hide device toolbar") : qsTr("Show device toolbar")
+            iconName: "smartphone"
+            onTriggered: root.framed ? deviceToolbar.apply(BrowserJs.viewportOf("fill"), 0) : root.showDeviceToolbar()
+        }
+
+        ShellMenuItem {
             objectName: "browserMuteItem"
             text: page.muted ? qsTr("Unmute tab") : qsTr("Mute tab")
             iconName: page.muted ? "volume-2" : "volume-x"
@@ -534,7 +558,7 @@ Rectangle {
     Item {
         id: area
 
-        anchors.top: chrome.bottom
+        anchors.top: deviceToolbar.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
@@ -676,6 +700,20 @@ Rectangle {
                     entry: PreviewAutomation.activity[root.tabId] ?? null
                     pageScale: page.zoom * webView.scale
                     reduceMotion: PreviewAutomation.reduceMotion
+                }
+
+                BrowserResizeHandles {
+                    id: handles
+
+                    anchors.fill: parent
+                    visible: root.framed
+                    frame: Qt.rect(webView.x, webView.y, webView.width * webView.scale, webView.height * webView.scale)
+                    pageScale: webView.scale
+                    room: Qt.size(width, height - 24)
+                    source: page.viewport
+                    ratio: deviceToolbar.ratio
+                    busy: page.resizing
+                    onPicked: viewport => page.setViewport(viewport)
                 }
 
                 Text {

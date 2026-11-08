@@ -170,11 +170,19 @@ const FakeMc::Extension pages([](FakeMc& mc) {
     }
     mc.reply(rpc, QJsonValue::Null);
   });
+  // A size waits while `preview.resize` is held, and is refused while `refusals` has it.
   mc.onRpc(QStringLiteral("preview.resize"), [&mc, update](const FakeMc::Rpc& rpc) {
-    const auto tab = update(rpc, {QStringLiteral("viewport")});
-    if (!tab) return;
-    preview::emitEvent(mc, *tab, QStringLiteral("resized"), {{QStringLiteral("snapshot"), *tab}});
-    mc.reply(rpc, *tab);
+    const auto answer = [&mc, update, rpc] {
+      if (mc.refusals.contains(rpc.method)) return mc.refuse(rpc, mc.refusals.value(rpc.method));
+      const auto tab = update(rpc, {QStringLiteral("viewport")});
+      if (!tab) return;
+      preview::emitEvent(mc, *tab, QStringLiteral("resized"), {{QStringLiteral("snapshot"), *tab}});
+      mc.reply(rpc, *tab);
+    };
+    if (mc.holding(rpc.method))
+      mc.defer(answer);
+    else
+      answer();
   });
 });
 

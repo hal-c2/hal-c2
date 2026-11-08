@@ -99,8 +99,9 @@ private:
 // `preview.reportStatus`. The MC's tab moving to an address the page did not
 // report (an agent's `preview.navigate`, another window) asks the view to load
 // it (loadRequested). The device size is the MC's (`viewport`): setViewport
-// shows the new size at once and sends `preview.resize`; refused or timed
-// out, the size the MC has comes back unless a newer one was picked since.
+// shows the new size at once (`resizing` until the MC answers) and sends
+// `preview.resize`; answered or timed out, the size the MC has is the size
+// unless a newer one was picked since.
 // Zoom, appearance, mute and DevTools are the page's own, not the MC's.
 //
 // For drivers in C++: `view` is the WebEngineView (a QQuickItem; call its
@@ -117,6 +118,8 @@ class BrowserPage : public QObject {
   Q_PROPERTY(bool exists READ exists NOTIFY tabChanged)
   // {_tag: "fill"} or {_tag: "preset"|"freeform", width, height, presetId?}.
   Q_PROPERTY(QVariantMap viewport READ viewport NOTIFY viewportChanged)
+  // A size was picked (setViewport) and the MC has not confirmed it yet.
+  Q_PROPERTY(bool resizing READ resizing NOTIFY resizingChanged)
   Q_PROPERTY(qreal zoom READ zoom WRITE setZoom NOTIFY zoomChanged)
   // system, light or dark: the page's prefers-color-scheme.
   Q_PROPERTY(QString appearance READ appearance WRITE setAppearance NOTIFY appearanceChanged)
@@ -139,6 +142,7 @@ public:
   QString status() const;
   bool exists() const { return !m_tab.isEmpty(); }
   QVariantMap viewport() const;
+  bool resizing() const { return !m_pendingViewport.isEmpty(); }
   qreal zoom() const { return m_zoom; }
   void setZoom(qreal zoom);
   QString appearance() const { return m_appearance; }
@@ -176,6 +180,7 @@ signals:
   void tabIdChanged();
   void tabChanged();
   void viewportChanged();
+  void resizingChanged();
   void zoomChanged();
   void appearanceChanged();
   void mutedChanged();
@@ -199,6 +204,7 @@ private:
   void follow();
   void refresh();
   void went(const QString& url);
+  void setPending(const QJsonObject& viewport);
 
   QPointer<ThreadPreviews> m_previews;
   QString m_tabId;

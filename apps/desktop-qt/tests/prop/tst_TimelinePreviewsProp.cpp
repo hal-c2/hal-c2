@@ -24,13 +24,17 @@
 // can follow a link inside the page. Only embedded is a tab asked to show,
 // and only one of the thread shown; a row that changed says so (tabChanged);
 // the page reads its tab's row; and once every answer is in, the view is on
-// the page the MC says its tab is at.
+// the page the MC says its tab is at. The user picks the page's device size
+// (`preview.resize`, held too): the page shows the size picked at once and
+// waits on the MC, and once every answer is in it waits on nothing and shows
+// the size the MC has.
 
 #include "Prop.h"
 
 #include <QAbstractItemModelTester>
 #include <QHostAddress>
 #include <QJsonArray>
+#include <QJsonDocument>
 
 #include <memory>
 
@@ -201,7 +205,7 @@ struct Sut {
       held.append({rpc, {{QStringLiteral("sessions"), sessions}, {QStringLiteral("serverEpoch"), epoch}, {QStringLiteral("revision"), revision}}});
     });
     for (const QString& method : {QStringLiteral("preview.close"), QStringLiteral("preview.open"), QStringLiteral("preview.forward"),
-                                  QStringLiteral("preview.reportStatus")}) {
+                                  QStringLiteral("preview.reportStatus"), QStringLiteral("preview.resize")}) {
       mc.onRpc(method, [this](const FakeMc::Rpc& rpc) { held.append({rpc, {}}); });
     }
     client = std::make_unique<McClient>();
@@ -349,6 +353,18 @@ struct Sut {
       mc.reply(call.rpc, QJsonValue::Null);
       return;
     }
+    // A size is taken while its tab is there.
+    if (method == QLatin1String("preview.resize")) {
+      const int index = indexOf(payload.value(QLatin1String("tabId")).toString());
+      if (!ok || index < 0) {
+        mc.refuse(call.rpc, QStringLiteral("no"));
+        return;
+      }
+      tabs[index].insert(QStringLiteral("viewport"), payload.value(QLatin1String("viewport")));
+      emitEvent(tabs.at(index), QStringLiteral("resized"), {{QStringLiteral("snapshot"), tabs.at(index)}});
+      mc.reply(call.rpc, tabs.at(index));
+      return;
+    }
     if (!ok || (method == QLatin1String("preview.open") && tabs.size() >= kMaxTabs) ||
         (method == QLatin1String("preview.forward") && !tabAt(thread, port))) {
       mc.refuse(call.rpc, QStringLiteral("no"));
@@ -449,6 +465,13 @@ struct Sut {
       if (row != now.cend()) {
         RC_ASSERT(page->url() == row->url);
         if (held.isEmpty() && !row->url.isEmpty() && previews->status() == QStringLiteral("ready")) RC_ASSERT(viewUrl == row->url);
+        const int at = indexOf(row->tabId);
+        if (held.isEmpty() && previews->status() == QStringLiteral("ready") && at >= 0) {
+          QJsonObject size = tabs.at(at).value(QLatin1String("viewport")).toObject();
+          if (size.isEmpty()) size = {{QStringLiteral("_tag"), QStringLiteral("fill")}};
+          RC_ASSERT(!page->resizing());
+          RC_ASSERT(QJsonObject::fromVariantMap(page->viewport()) == size);
+        }
       }
     }
     if (!held.isEmpty() || !model.active || model.thread.isEmpty()) return;
@@ -485,6 +508,30 @@ struct SetPage : Step {
     sut.viewUrl = sut.page->url();
   }
   void show(std::ostream& os) const override { os << "SetPage(" << tab.toStdString() << ")"; }
+};
+
+// The user picks a device size for the page: it shows at once, waiting on the MC.
+struct PageResize : Step {
+  int size = *rc::gen::inRange(0, 3);
+  QJsonObject viewport() const {
+    switch (size) {
+    case 0:
+      return {{QStringLiteral("_tag"), QStringLiteral("fill")}};
+    case 1:
+      return {{QStringLiteral("_tag"), QStringLiteral("preset")}, {QStringLiteral("width"), 375}, {QStringLiteral("height"), 667},
+              {QStringLiteral("presetId"), QStringLiteral("iphone-se")}};
+    default:
+      return {{QStringLiteral("_tag"), QStringLiteral("freeform")}, {QStringLiteral("width"), 500}, {QStringLiteral("height"), 800}};
+    }
+  }
+  void apply(Model&) const override {}
+  void act(const Model&, Sut& sut) const override {
+    if (!sut.page->exists()) return;
+    sut.page->setViewport(viewport().toVariantMap());
+    RC_ASSERT(sut.page->resizing());
+    RC_ASSERT(QJsonObject::fromVariantMap(sut.page->viewport()) == viewport());
+  }
+  void show(std::ostream& os) const override { os << "PageResize(" << QJsonDocument(viewport()).toJson(QJsonDocument::Compact).toStdString() << ")"; }
 };
 
 // The user follows a link inside the page.
@@ -681,7 +728,7 @@ private slots:
       sut.previews->setEmbedded(model.embedded);
       sut.previews->setActive(model.active);
       rc::state::check(model, sut,
-                       rc::state::gen::execOneOfWithArgs<SetThread, SetActive, SetPage, PageGo, Reload, UserClose, UserNewTab,
+                       rc::state::gen::execOneOfWithArgs<SetThread, SetActive, SetPage, PageGo, PageResize, PageResize, Reload, UserClose, UserNewTab,
                                                          OpenLink, OpenLink, SetHere, Answer, Answer, AnswerAll, McOpen, McOpen,
                                                          McNavigate, McNavigate, McFail, McClose, McRestart>());
     }));

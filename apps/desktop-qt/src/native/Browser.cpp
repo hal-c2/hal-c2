@@ -161,6 +161,9 @@ void BrowserPage::setTabId(const QString& tabId) {
   if (tabId == m_tabId) return;
   m_tabId = tabId;
   m_lastReport = {};
+  // A size picked for the old tab is not the new tab's.
+  ++m_viewportPick;
+  setPending({});
   follow();
   emit tabIdChanged();
 }
@@ -191,7 +194,7 @@ void BrowserPage::refresh() {
   emit tabChanged();
   // The MC confirming the size picked ends the pick.
   if (!m_pendingViewport.isEmpty() && m_tab.value(QLatin1String("viewport")).toObject() == m_pendingViewport) {
-    m_pendingViewport = {};
+    setPending({});
   } else if (m_tab.value(QLatin1String("viewport")) != before && m_pendingViewport.isEmpty()) {
     emit viewportChanged();
   }
@@ -212,6 +215,12 @@ void BrowserPage::refresh() {
   // Somewhere the page did not go by itself: an agent, or another window.
   m_at = at;
   emit loadRequested(at);
+}
+
+void BrowserPage::setPending(const QJsonObject& viewport) {
+  const bool was = resizing();
+  m_pendingViewport = viewport;
+  if (resizing() != was) emit resizingChanged();
 }
 
 void BrowserPage::went(const QString& url) {
@@ -312,19 +321,19 @@ void BrowserPage::navigate(const QString& url) {
 void BrowserPage::setViewport(const QVariantMap& viewport) {
   if (!m_previews || m_tabId.isEmpty()) return;
   const QJsonObject next = QJsonObject::fromVariantMap(viewport);
-  m_pendingViewport = next;
   const int pick = ++m_viewportPick;
+  setPending(next);
   emit viewportChanged();
-  m_previews->resizeTab(m_tabId, next, [this, pick, guard = QPointer<BrowserPage>(this)](const QString&) {
-    // Refused or timed out: the MC's size comes back, unless the user has
-    // picked another since.
-    if (!guard || pick != m_viewportPick) return;
-    m_pendingViewport = {};
+  m_previews->resizeTab(m_tabId, next, [this, pick, guard = QPointer<BrowserPage>(this)](const std::optional<QString>&) {
+    // Answered: the MC's size is the size, confirmed (refresh) or not (refused,
+    // or the MC kept another), unless the user has picked another since.
+    if (!guard || pick != m_viewportPick || !resizing()) return;
+    setPending({});
     emit viewportChanged();
   });
   QTimer::singleShot(kResizeTimeoutMs, this, [this, pick] {
     if (pick != m_viewportPick || m_pendingViewport.isEmpty()) return;
-    m_pendingViewport = {};
+    setPending({});
     emit viewportChanged();
   });
 }

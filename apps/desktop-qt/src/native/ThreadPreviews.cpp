@@ -530,18 +530,18 @@ void ThreadPreviews::report(const QString& tabId, const QJsonObject& navStatus, 
                  [](const QJsonValue&, const std::optional<QString>&) {});
 }
 
-void ThreadPreviews::resizeTab(const QString& tabId, const QJsonObject& viewport, std::function<void(const QString&)> failed) {
-  if (rowOf(tabId) < 0 || m_thread.isEmpty()) return;
+void ThreadPreviews::resizeTab(const QString& tabId, const QJsonObject& viewport, std::function<void(const std::optional<QString>&)> done) {
+  if (rowOf(tabId) < 0 || m_thread.isEmpty()) {
+    if (done) done(QStringLiteral("no such tab"));
+    return;
+  }
   const int generation = m_generation;
   m_client->call(this, m_environment, QStringLiteral("preview.resize"),
                  QJsonObject{{QStringLiteral("threadId"), m_thread}, {QStringLiteral("tabId"), tabId}, {QStringLiteral("viewport"), viewport}},
-                 [this, generation, failed](const QJsonValue& result, const std::optional<QString>& error) {
-                   if (error) {
-                     m_notify(QStringLiteral("error"), QStringLiteral("Could not resize the page"), *error);
-                     if (failed) failed(*error);
-                     return;
-                   }
-                   if (generation == m_generation && result.isObject() && m_status == QLatin1String("ready")) upsert(result.toObject());
+                 [this, generation, done](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (error) m_notify(QStringLiteral("error"), QStringLiteral("Unable to resize browser viewport"), *error);
+                   else if (generation == m_generation && result.isObject() && m_status == QLatin1String("ready")) upsert(result.toObject());
+                   if (done) done(error);
                  });
 }
 

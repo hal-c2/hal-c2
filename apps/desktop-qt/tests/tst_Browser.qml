@@ -161,4 +161,54 @@ TestCase {
         compare(frames[0].scale, 400 / 1440);
         compare(frames[0].frameHeight, 900 * (400 / 1440));
     }
+
+    function test_sizesThePreviewRenders_data() {
+        return [
+            { tag: "smallest", width: 240, height: 800, allowed: true },
+            { tag: "too narrow", width: 239, height: 800, allowed: false },
+            { tag: "too short", width: 800, height: 239, allowed: false },
+            { tag: "too wide", width: 3841, height: 800, allowed: false },
+            { tag: "largest", width: 3840, height: 2160, allowed: true },
+            { tag: "too large", width: 3840, height: 2161, allowed: false },
+            { tag: "fractional", width: 500.5, height: 800, allowed: false },
+            { tag: "not a number", width: Number("abc"), height: 800, allowed: false }
+        ];
+    }
+
+    function test_sizesThePreviewRenders(data) {
+        compare(BrowserJs.sizeAllowed(data.width, data.height), data.allowed);
+    }
+
+    function test_sizeAtRatioFollowsTheLeadingSide() {
+        compare(BrowserJs.sizeAtRatio(2560, 16 / 9, "width"), { width: 2560, height: 1440 });
+        compare(BrowserJs.sizeAtRatio(600, 0.5, "height"), { width: 300, height: 600 });
+    }
+
+    function test_sizeAtRatioKeepsBothSidesInBounds() {
+        // 120 wide at 1:2 would be too narrow: the smallest that can is 240 by 480.
+        compare(BrowserJs.sizeAtRatio(120, 0.5, "width"), { width: 240, height: 480 });
+        const widest = BrowserJs.sizeAtRatio(5000, 16 / 9, "width");
+        verify(BrowserJs.sizeAllowed(widest.width, widest.height));
+        compare(widest.width, 3840);
+    }
+
+    function test_resizedFreely() {
+        compare(BrowserJs.resized({ width: 400, height: 800 }, -100, 0, 0), { width: 300, height: 800 });
+        compare(BrowserJs.resized({ width: 400, height: 800 }, -300, 0, 0), { width: 240, height: 800 });
+        // Wider than the largest area: the side that moved gives way.
+        compare(BrowserJs.resized({ width: 2000, height: 3840 }, 2000, 0, 0), { width: 2160, height: 3840 });
+    }
+
+    function test_resizedAtALockedRatio() {
+        compare(BrowserJs.resized({ width: 400, height: 800 }, -100, 0, 0.5), { width: 300, height: 600 });
+        compare(BrowserJs.resized({ width: 400, height: 800 }, 0, 200, 0.5), { width: 500, height: 1000 });
+    }
+
+    function test_draggedEdgeFollowsThePointerOnACentredPage() {
+        // The page is centred, so its edge moving 50 pixels makes it 100 wider.
+        compare(BrowserJs.dragged({ width: 400, height: 800 }, 50, 0, { width: 900, height: 1000 }, 1, 0), { width: 500, height: 800 });
+        // Shown at half size, the edge moving 25 pixels makes it 100 wider.
+        compare(BrowserJs.dragged({ width: 400, height: 800 }, 25, 0, { width: 900, height: 1000 }, 0.5, 0), { width: 500, height: 800 });
+        compare(BrowserJs.dragged({ width: 400, height: 800 }, 0, -50, { width: 900, height: 1000 }, 1, 0), { width: 400, height: 700 });
+    }
 }

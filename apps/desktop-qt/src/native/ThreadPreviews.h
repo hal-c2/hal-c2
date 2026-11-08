@@ -7,6 +7,7 @@
 #include <QUrl>
 
 #include <functional>
+#include <optional>
 #include <utility>
 
 class McClient;
@@ -126,7 +127,7 @@ public:
   void report(const QString& tabId, const QJsonObject& navStatus, bool canGoBack, bool canGoForward);
   // The size the tab's page is shown at: `preview.resize`, viewport a
   // PreviewViewportSetting. `failed` runs when the MC refused it.
-  void resizeTab(const QString& tabId, const QJsonObject& viewport, std::function<void(const QString&)> failed = {});
+  void resizeTab(const QString& tabId, const QJsonObject& viewport, std::function<void(const std::optional<QString>&)> done = {});
 
   int rowCount(const QModelIndex& parent = QModelIndex()) const override;
   QVariant data(const QModelIndex& index, int role) const override;
