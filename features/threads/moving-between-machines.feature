@@ -546,6 +546,18 @@ Feature: Moving a thread and its agent to another machine
       When the plugin "code-review" is uninstalled from "laptop"
       Then "Alpha" moves to "desktop"
 
+    # The machine a thread leaves may not keep it: an MC from before plugins kept their threads,
+    # or one whose version of the plugin does not say so. The machine it reaches then refuses it,
+    # by the thread's mark or by its own copy of the plugin, and the thread stays where it was.
+    @mc
+    Scenario: A thread its plugin keeps is refused by the machine it would arrive on
+      Given "Alpha" was started by the plugin "code-review" before it kept its threads on the machine
+      And the plugin "code-review" is installed on "desktop" and keeps its threads there, but is turned off
+      When the user moves "Alpha" to "desktop"
+      Then the user is told "Alpha was started by code-review, which keeps it on the machine it started on. Alpha was not imported."
+      And "Alpha" stays on "laptop" as it was
+      And nothing of "Alpha" is left on "desktop"
+
     @mc
     Scenario Outline: A move the destination cannot take is refused before anything is copied
       Given <situation>

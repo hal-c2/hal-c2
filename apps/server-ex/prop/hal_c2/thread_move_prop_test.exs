@@ -24,7 +24,10 @@ defmodule HalC2.ThreadMovePropTest do
   keeps go, nor one it starts then leave without the mark. The plugin host may also start
   again while the manifest is broken, loading no version of it: a package that is there
   with a manifest that cannot be read is taken to keep its threads (#1432), so the ones
-  from before the mark still stay, and so do the ones it starts then.
+  from before the mark still stay, and so do the ones it starts then. A case may also
+  remove the package from a machine, which then lets the threads from before the mark go,
+  as an MC from before plugins kept their threads does: a machine that has the package
+  refuses such a thread when it arrives, and it stays where it was.
 
   The promises checked after every step: once a move settles, a thread lives on exactly
   one machine (the model's) with all its history and its attachment intact, the machines
@@ -101,8 +104,8 @@ defmodule HalC2.ThreadMovePropTest do
   #   at is where the thread lives once the destination has it (it may move on from
   #   there), and let_go whether the source has let go of it already
   # running: the machines the plugin runs on
-  # keeper: the machines whose keeper package `Cluster.keeper/1` left :broken or
-  #   :replacing; the others have it installed
+  # keeper: the machines whose keeper package `Cluster.keeper/1` left :broken,
+  #   :replacing or :removed; the others have it installed
   def initial_state, do: %{threads: %{}, held: nil, running: [], keeper: %{}}
 
   def command(state) do
@@ -115,11 +118,15 @@ defmodule HalC2.ThreadMovePropTest do
     frequency(
       # The plugin host starting again with the manifest broken (#1432): it loads no
       # version of the package, so only the disk speaks for it.
+      # A thread from before the mark, on a machine that removed its package: the
+      # machine it would reach decides.
       [
         {1,
          {:call, __MODULE__, :restart, [oneof(@mcs), oneof([:thread_move, :store, :plugins])]}},
         {2, {:call, __MODULE__, :plugin, [oneof(@mcs), boolean()]}},
-        {2, {:call, __MODULE__, :keeper, [oneof(@mcs), oneof([:installed, :broken, :replacing])]}}
+        {2,
+         {:call, __MODULE__, :keeper,
+          [oneof(@mcs), oneof([:installed, :broken, :replacing, :removed])]}}
       ] ++
         for(
           {mc, :broken} <- state.keeper,
@@ -140,6 +147,12 @@ defmodule HalC2.ThreadMovePropTest do
         for(
           t <- staying(state),
           do: {1, {:call, __MODULE__, :destinations, [t, state.threads[t].at]}}
+        ) ++
+        for(
+          t <- free,
+          state.threads[t].plugin == :legacy,
+          state.keeper[state.threads[t].at] == :removed,
+          do: {3, {:call, __MODULE__, :move, [t, state.threads[t].at, oneof(@mcs)]}}
         ) ++
         if(fresh != [],
           do: [{3, {:call, __MODULE__, :create, [oneof(fresh), oneof(@mcs)]}}],
@@ -248,13 +261,16 @@ defmodule HalC2.ThreadMovePropTest do
   def precondition(state, {:call, _, :create_legacy, [t, _]}),
     do: not is_map_key(state.threads, t)
 
-  def precondition(state, {:call, _, :create_kept, [t, _]}),
-    do: not is_map_key(state.threads, t)
+  def precondition(state, {:call, _, :create_kept, [t, mc]}),
+    do: not is_map_key(state.threads, t) and state.keeper[mc] != :removed
 
-  # A manifest breaks or goes aside from an installed package: a manifest broken while
-  # aside has no version loaded to speak for it.
+  # A manifest breaks or goes aside from an installed package, or the package is removed:
+  # a manifest broken while aside has no version loaded to speak for it. Not while a
+  # thread from before the mark moves, which the package on either machine decides.
   def precondition(state, {:call, _, :keeper, [mc, how]}),
-    do: how == :installed or not is_map_key(state.keeper, mc)
+    do:
+      (how == :installed or not is_map_key(state.keeper, mc)) and
+        not (state.held != nil and state.threads[state.held.t].plugin == :legacy)
 
   def precondition(state, {:call, _, :destinations, [t, at]}),
     do: t in staying(state) and state.threads[t].at == at
@@ -262,7 +278,7 @@ defmodule HalC2.ThreadMovePropTest do
   def precondition(state, {:call, _, :hold, [t, from, to, _]}),
     do:
       state.held == nil and is_map_key(state.threads, t) and state.threads[t].at == from and
-        from != to and not pinned?(state, t, from)
+        from != to and not pinned?(state, t, from) and not kept_on?(state, t, to)
 
   # The held move as the model has it (but for its ids, symbolic until run), so shrinking
   # drops a release of a hold it dropped.
@@ -312,6 +328,7 @@ defmodule HalC2.ThreadMovePropTest do
   def next_state(state, _result, {:call, _, :move, [t, from, to]}) do
     cond do
       not moves?(state, t, from, to) -> state
+      refused_there?(state, t, from, to) -> state
       moving?(state, t) -> put_in(state.held.at, to)
       true -> arrive(state, t, to)
     end
@@ -381,12 +398,26 @@ defmodule HalC2.ThreadMovePropTest do
 
   # Whether `t` is a plugin's thread whose plugin runs on `mc`, or one the plugin keeps.
   defp pinned?(state, t, mc),
-    do: kept?(state.threads[t]) or (state.threads[t].plugin and mc in state.running)
+    do: kept_on?(state, t, mc) or (state.threads[t].plugin == true and mc in state.running)
 
-  defp kept?(thread), do: thread.plugin in [:stays, :legacy, :kept]
+  # Whether `mc` keeps `t` for its plugin: by its mark, or by the keeper's package there
+  # for one from before the mark.
+  defp kept_on?(state, t, mc) do
+    case state.threads[t].plugin do
+      kept when kept in [:stays, :kept] -> true
+      :legacy -> state.keeper[mc] != :removed
+      _ -> false
+    end
+  end
 
-  # The threads its plugin keeps on the machine.
-  defp staying(state), do: for({t, thread} <- state.threads, kept?(thread), do: t)
+  # Whether the destination of a move that would go ahead refuses `t` as it arrives: the
+  # machine it leaves has no package to keep it, the machine it reaches does.
+  defp refused_there?(state, t, from, to),
+    do: moves?(state, t, from, to) and kept_on?(state, t, to)
+
+  # The threads its plugin keeps on the machine they are on.
+  defp staying(state),
+    do: for({t, thread} <- state.threads, kept_on?(state, t, thread.at), do: t)
 
   # A thread that arrives is an ordinary one: the plugin's mark stays behind.
   defp arrive(state, t, to),
@@ -421,15 +452,20 @@ defmodule HalC2.ThreadMovePropTest do
     # Refused for its plugin, unless already moving or not here, which is said first.
     plugin? = pinned?(state, t, from) and state.threads[t].at == from and not moving?(state, t)
 
+    there? = refused_there?(state, t, from, to)
+
     told? =
       case result do
         {:ok, %{"status" => "moved"}} ->
-          moves?(state, t, from, to)
+          moves?(state, t, from, to) and not there?
 
         {:error, %{"code" => "thread_not_movable", "message" => message}} when plugin? ->
-          if kept?(state.threads[t]),
+          if kept_on?(state, t, from),
             do: message =~ "keeps it on this machine",
             else: message =~ "stays on this machine while"
+
+        {:error, %{"code" => _, "message" => message}} when there? ->
+          message =~ "keeps it on the machine it started on"
 
         {:error, %{"code" => _}} ->
           not plugin? and not moves?(state, t, from, to)

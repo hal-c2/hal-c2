@@ -135,6 +135,54 @@ defmodule HalC2.ThreadArchiveTest do
     assert ThreadArchive.stays(%{"title" => "X", "plugin" => escape}) == :ok
   end
 
+  # An MC from before plugins kept their threads sends such a thread on, by a move or a
+  # file, so the MC it reaches refuses it: by its mark, or by the plugin's manifest here.
+  test "a thread its plugin keeps on its machine is not imported", %{root: root} do
+    with_mark = fn mark ->
+      archive(root, %{
+        "entities" => [
+          [
+            "thread",
+            "th-cart",
+            %{
+              "id" => "th-cart",
+              "title" => "Cart",
+              "projectId" => "shop-laptop",
+              "plugin" => mark
+            }
+          ]
+        ]
+      })
+    end
+
+    refused =
+      {:error,
+       "Cart was started by code-review, which keeps it on the machine it started on. Cart was not imported."}
+
+    stays = %{"id" => "code-review", "kind" => "review", "stays" => true}
+    assert ThreadArchive.import_archive(with_mark.(stays), project: "shop") == refused
+    assert ThreadArchive.local_thread("th-cart") == nil
+
+    package = Path.join(HalC2.Paths.data_dir(), "plugins/code-review")
+    File.mkdir_p!(package)
+
+    File.write!(
+      Path.join(package, "plugin.json"),
+      JSON.encode!(%{"id" => "code-review", "threadsStay" => true})
+    )
+
+    old_mark = %{"id" => "code-review", "kind" => "review"}
+    assert ThreadArchive.import_archive(with_mark.(old_mark), project: "shop") == refused
+    assert ThreadArchive.local_thread("th-cart") == nil
+
+    other = %{"id" => "notes", "kind" => "note"}
+
+    assert {:ok, %{thread: "th-cart"}} =
+             ThreadArchive.import_archive(with_mark.(other), project: "shop")
+
+    assert ThreadArchive.local_thread("th-cart")["plugin"] == nil
+  end
+
   # The plugin host never loaded a version of this package (it started, or the package
   # was dropped in, with the manifest broken), so only the disk can speak for it: a
   # package that is there with a manifest that says nothing keeps its threads (#1432).

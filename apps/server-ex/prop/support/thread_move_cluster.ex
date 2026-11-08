@@ -293,7 +293,8 @@ defmodule HalC2.Prop.ThreadMoveCluster do
   Puts the keeper package in a state: `:installed`; `:broken`, a new version whose
   manifest is not valid JSON, which fails to load and leaves the one before it loaded;
   or `:replacing`, moved aside as `mix hal_c2.plugins.install` leaves it between its
-  two renames (`HalC2.Plugins.Package.aside_dir/2`), which a scan then finds gone.
+  two renames (`HalC2.Plugins.Package.aside_dir/2`), which a scan then finds gone; or
+  `:removed`, uninstalled, as on an MC from before plugins kept their threads.
   """
   def keeper(how) do
     plugins = Path.join(HalC2.Paths.data_dir(), "plugins")
@@ -311,6 +312,9 @@ defmodule HalC2.Prop.ThreadMoveCluster do
 
       :replacing ->
         File.rename!(installed, aside)
+
+      :removed ->
+        File.rm_rf!(installed)
     end
 
     {:ok, _} = HalC2.Plugins.handle("rescan", %{})

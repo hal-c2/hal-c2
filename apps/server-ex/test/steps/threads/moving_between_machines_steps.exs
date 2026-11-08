@@ -1144,16 +1144,12 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
 
   step "the plugin {string} is installed on {string} and keeps its threads there, but is turned off",
        %{args: [plugin, machine]} = context do
-    assert Machines.machine(context, machine) == :local
-    dir = Path.join([HalC2.Paths.data_dir(), "plugins", plugin])
-    File.mkdir_p!(dir)
-
-    File.write!(
-      Path.join(dir, "plugin.json"),
-      JSON.encode!(%{"id" => plugin, "name" => plugin, "threadsStay" => true})
-    )
-
-    refute HalC2.Plugins.running?(plugin)
+    on = &Machines.on(context, machine, &1, &2, &3)
+    dir = Path.join([on.(HalC2.Paths, :data_dir, []), "plugins", plugin])
+    on.(File, :mkdir_p!, [dir])
+    manifest = JSON.encode!(%{"id" => plugin, "name" => plugin, "threadsStay" => true})
+    on.(File, :write!, [Path.join(dir, "plugin.json"), manifest])
+    refute on.(HalC2.Plugins, :running?, [plugin])
     context
   end
 

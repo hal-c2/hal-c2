@@ -463,11 +463,30 @@ defmodule HalC2.ThreadArchive do
   @spec import_archive(binary | map, keyword) :: {:ok, map} | {:error, String.t()}
   def import_archive(data, opts \\ []) do
     with {:ok, archive} <- decode(data),
+         :ok <- not_kept(archive),
          :ok <- not_here(archive, opts),
          :ok <- no_clash(archive),
          {:ok, project} <- resolve_project(archive, opts[:project]) do
       write(archive, project, opts)
     end
+  end
+
+  # A thread its plugin keeps on its machine (`stays/1`) is not taken in either, for an
+  # MC from before plugins kept their threads sends it on: by its mark, or by the
+  # plugin's manifest here for a mark from before the mark said so.
+  defp not_kept(%{"thread" => %{"id" => id} = meta} = archive) do
+    title = meta["title"]
+
+    Enum.find_value(List.wrap(archive["entities"]), :ok, fn
+      ["thread", ^id, %{"plugin" => %{"id" => owner} = mark}] when is_binary(owner) ->
+        if mark["stays"] == true or HalC2.Plugins.threads_stay?(owner),
+          do:
+            {:error,
+             "#{title} was started by #{owner}, which keeps it on the machine it started on. #{title} was not imported."}
+
+      _ ->
+        nil
+    end)
   end
 
   # An attachment lands under its own name, so a different file this machine already

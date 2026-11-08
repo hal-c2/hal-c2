@@ -98,7 +98,8 @@ defmodule HalC2.ThreadMoveProofTest do
         "The source restarting while the destination takes the thread does not undo the move",
         "The source going offline after the destination confirmed does not undo the move",
         "A thread cannot be moved twice at once",
-        "A thread its plugin keeps on the machine is not moved"
+        "A thread its plugin keeps on the machine is not moved",
+        "A thread its plugin keeps is refused by the machine it would arrive on"
       ]
     }
 
@@ -125,6 +126,16 @@ defmodule HalC2.ThreadMoveProofTest do
   # A thread its plugin keeps never begins to move, whatever else happens to the cluster.
   test "a thread its plugin keeps on the machine never begins to move", %{proof: proof} do
     refute_reachable(proof, "kept(2, 1)", "broken", [])
+  end
+
+  # A source from before plugins kept their threads begins the move; the destination
+  # refuses the thread, and the move ends with it where it was.
+  test "a thread its plugin keeps never arrives from a source that lets it go", %{proof: proof} do
+    refute_reachable(proof, "old(2, 1)", "broken", [])
+  end
+
+  test "a move a destination refuses for its plugin never gets stuck", %{proof: proof} do
+    refute_deadlock(proof, "old(2, 1)", "settled", besides: @faults)
   end
 
   # The thread keeps only the last move from each MC. Keeping only the last of all fails
