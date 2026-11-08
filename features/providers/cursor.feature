@@ -660,11 +660,17 @@ Feature: Cursor
     When the user looks at the subagent's card
     Then the card reads the effort "High"
 
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
+  Scenario: A Cursor subagent on another model does not inherit the parent's effort
+    Given Cursor starts a subagent on another model than its high-effort parent
+    When the user looks at the subagent's card
+    Then the card names no effort
+
   @backlog @priority-low
   Scenario Outline: A Cursor subagent that never reported back takes the run's outcome
     Given a Cursor subagent is still working
     When the Cursor run <ends> without the subagent reporting a result
-    Then the subagent is shown as <status>
+    Then the Cursor subagent is shown as <status>
 
     Examples:
       | ends                   | status      |

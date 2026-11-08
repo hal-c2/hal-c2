@@ -2501,6 +2501,25 @@ defmodule HalC2.Steps.Providers.Cursor do
     ctx
   end
 
+  step "Cursor starts a subagent on another model than its high-effort parent", context do
+    ctx = ready_cursor(context)
+
+    ctx =
+      Acp.launch(ctx, "Cursor", "cursor", "hand a task to a subagent on another model",
+        model: "gpt-5",
+        options: [%{"id" => "reasoning_effort", "value" => "high"}]
+      )
+
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    ctx
+  end
+
+  step "the card names no effort", context do
+    assert context.subagent_card["model"] == "composer-2"
+    refute Enum.any?(context.subagent_card["options"] || [], &(&1["id"] == "reasoning_effort"))
+    context
+  end
+
   step "the user looks at the subagent's card", context do
     child = subagent_of(context, "Cursor")["childThreadId"]
     thread = HalC2.StreamState.get(Acp.stream(child), "thread")[child]
@@ -2512,6 +2531,63 @@ defmodule HalC2.Steps.Providers.Cursor do
              Enum.find(context.subagent_card["options"] || [], &(&1["id"] == "reasoning_effort"))
 
     assert String.capitalize(value) == label
+    context
+  end
+
+  # --- a subagent that never reported back ---------------------------------------------------
+
+  step "a Cursor subagent is still working", context do
+    ctx = ready_cursor(context)
+    ctx = launch_cursor(ctx, "hand a task to a subagent and say nothing more about it")
+
+    Acp.await_stream(ctx.threads["Cursor"], fn _ -> subagent_of(ctx, "Cursor") end)
+    ctx
+  end
+
+  step ~r/^the Cursor run (finishes|is cancelled|fails|is stopped by the user) without the subagent reporting a result$/,
+       %{args: [ends]} = context do
+    {release, ctx} =
+      case ends do
+        "finishes" -> {"finished", context}
+        "is cancelled" -> {"cancelled", context}
+        "fails" -> {"error", context}
+        "is stopped by the user" -> {nil, context}
+      end
+
+    ctx =
+      if release do
+        Acp.control(ctx, "cursor-cursor", %{"releaseRun" => release})
+        ctx
+      else
+        {:ok, _} =
+          HalC2.Orchestration.dispatch(%{
+            "type" => "run.interrupt",
+            "commandId" => "cmd-#{System.unique_integer([:positive])}",
+            "threadId" => ctx.threads["Cursor"]
+          })
+
+        ctx
+      end
+
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    ctx
+  end
+
+  step ~r/^the Cursor subagent is shown as (idle|cancelled|failed|interrupted)$/,
+       %{args: [shown]} = context do
+    # A finished run leaves its subagent completed — its thread idle, with
+    # nothing left running in it.
+    expected = if shown == "idle", do: "completed", else: shown
+    sub = subagent_of(context, "Cursor")
+    assert sub["status"] == expected
+
+    child = Acp.stream(sub["childThreadId"])
+
+    refute Enum.any?(
+             HalC2.StreamState.list(child, "turn-item"),
+             &(&1["status"] == "running")
+           )
+
     context
   end
 end

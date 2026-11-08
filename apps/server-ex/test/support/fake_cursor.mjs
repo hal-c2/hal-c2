@@ -493,7 +493,11 @@ const makeAgent = (options, resumed) => {
           if (message.includes("hand a task to a subagent")) {
             const task = {
               type: "task",
-              args: { description: "Survey the code", prompt: "List the modules" },
+              args: {
+                description: "Survey the code",
+                prompt: "List the modules",
+                ...(message.includes("on another model") ? { model: "composer-2" } : {}),
+              },
             };
             started("task-1", task);
             const nested = (taskUpdate) =>
@@ -501,6 +505,25 @@ const makeAgent = (options, resumed) => {
                 update: { type: "tool-call-delta", callId: "task-1", taskUpdate },
               });
             nested({ type: "text-delta", text: "Looking around." });
+            if (message.includes("and say nothing more about it")) {
+              // The subagent never reports back; the run ends however the
+              // control file (or a cancel) ends it.
+              for (;;) {
+                const release = control().releaseRun;
+                if (release === "finished") {
+                  say("Done.");
+                  return { status: "finished" };
+                }
+                if (release === "cancelled") return { status: "cancelled" };
+                if (release === "error")
+                  return { status: "error", error: { message: "the run broke" } };
+                const tick = await Promise.race([
+                  cancelled.then(() => "cancel"),
+                  new Promise((resolve) => setTimeout(() => resolve("tick"), 25)),
+                ]);
+                if (tick === "cancel") return { status: "cancelled" };
+              }
+            }
             if (message.includes("empty ls")) {
               const ls = { type: "ls", args: { path: "src" } };
               nested({ type: "tool-call-started", callId: "sub-ls", toolCall: ls });

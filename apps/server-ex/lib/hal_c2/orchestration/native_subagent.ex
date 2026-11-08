@@ -97,11 +97,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
           "threadId" => child_id,
           "projectId" => parent["projectId"],
           "title" => title(parent["title"] || "", task["title"], prompt, ordinal),
-          "modelSelection" =>
-            if(task["model"],
-              do: Map.put(parent["modelSelection"] || %{}, "model", task["model"]),
-              else: parent["modelSelection"]
-            ),
+          "modelSelection" => subagent_selection(parent["modelSelection"], task["model"]),
           "runtimeMode" => parent["runtimeMode"],
           "interactionMode" => parent["interactionMode"],
           "createdBy" => "agent",
@@ -532,6 +528,18 @@ defmodule HalC2.Orchestration.NativeSubagent do
 
   # The child's title (upstream `subagentThreadTitle`): its given title, else its
   # prompt, cut to 72 characters; with neither, it is named after its parent.
+  # A subagent on its own model keeps the parent's instance but not its options:
+  # the parent's reasoning effort belongs to the parent's model.
+  defp subagent_selection(parent, nil), do: parent
+
+  defp subagent_selection(parent, model) do
+    parent = parent || %{}
+
+    if parent["model"] in [nil, model],
+      do: Map.put(parent, "model", model),
+      else: parent |> Map.put("model", model) |> Map.delete("options")
+  end
+
   defp title(parent_title, given, prompt, ordinal) do
     case trimmed(given) || trimmed(prompt) do
       nil ->

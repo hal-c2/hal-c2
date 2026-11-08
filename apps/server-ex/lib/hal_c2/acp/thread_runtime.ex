@@ -2521,10 +2521,14 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp poll_wire(state), do: state
 
-  # A turn's foreground subagents end with it: Kimi may have exited, or the turn been
-  # interrupted, before the subagent's end reached its record or its call.
-  defp end_kimi_subagents(%{kimi: true} = state, status) do
-    state = read_wire(state)
+  # A turn's foreground subagents end with it: the agent may have exited, or
+  # the turn been interrupted, before a subagent that never reported back
+  # reached its record or its call. It takes the run's outcome — a run the
+  # agent itself cancelled (not the user's stop) cancels its subagents.
+  # Background subagents outlive the turn.
+  defp end_turn_subagents(state, status) do
+    state = if state.kimi, do: read_wire(state), else: state
+    status = if status == "interrupted" and not state.interrupted, do: "cancelled", else: status
 
     subagents =
       Map.new(state.subagents, fn
@@ -2539,8 +2543,6 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     %{state | subagents: subagents}
   end
-
-  defp end_kimi_subagents(state, _status), do: state
 
   @kimi_ends %{
     "subagent.completed" => "completed",
@@ -3488,7 +3490,7 @@ defmodule HalC2.Acp.ThreadRuntime do
       state
       |> close_batches(status)
       |> close_open_items(status)
-      |> end_kimi_subagents(status)
+      |> end_turn_subagents(status)
       |> cancel_requests()
 
     finish(state, status, failure)
