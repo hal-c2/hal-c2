@@ -666,7 +666,7 @@ Feature: Cursor
     When the user looks at the subagent's card
     Then the card names no effort
 
-  @backlog @priority-low
+  @priority-low
   Scenario Outline: A Cursor subagent that never reported back takes the run's outcome
     Given a Cursor subagent is still working
     When the Cursor run <ends> without the subagent reporting a result

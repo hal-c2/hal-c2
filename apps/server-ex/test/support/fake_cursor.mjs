@@ -28,6 +28,15 @@ try {
   control = JSON.parse(fs.readFileSync(path.join(dir, "control.json"), "utf8"))[name] ?? {};
 } catch {}
 
+// The control file as it is now, for a run that waits on the test to release it.
+const liveControl = () => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(dir, "control.json"), "utf8"))[name] ?? {};
+  } catch {
+    return {};
+  }
+};
+
 const log = (entry) =>
   fs.appendFileSync(path.join(dir, `${name}.log`), `${JSON.stringify(entry)}\n`);
 
@@ -509,7 +518,7 @@ const makeAgent = (options, resumed) => {
               // The subagent never reports back; the run ends however the
               // control file (or a cancel) ends it.
               for (;;) {
-                const release = control().releaseRun;
+                const release = liveControl().releaseRun;
                 if (release === "finished") {
                   say("Done.");
                   return { status: "finished" };
