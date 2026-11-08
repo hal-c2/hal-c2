@@ -1458,12 +1458,18 @@ defmodule HalC2.Acp do
   @skill_mention ~r/(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/u
 
   @doc """
-  `text` with each `$name` that mentions one of Cursor's skills in `cwd` written as
-  Cursor takes it, `/name`. Other
-  mentions, and amounts of money, are left as they are.
+  `text` with each `$name` that mentions one of instance `instance`'s Cursor
+  skills in `cwd` written as Cursor takes it, `/name`. Other mentions, and
+  amounts of money, are left as they are. The entry's workspace snapshot for
+  `cwd` names the skills when one was read; only a send with no snapshot yet
+  pays for a discovery scan.
   """
-  def cursor_skill_mentions(text, cwd) do
-    names = MapSet.new(HalC2.Acp.CursorSkills.discover(cwd), & &1["name"])
+  def cursor_skill_mentions(text, instance, cwd) do
+    names =
+      case Enum.find(HalC2.Acp.CursorSkills.workspaces(instance), &(&1["cwd"] == cwd)) do
+        %{"skills" => skills} -> MapSet.new(skills, & &1["name"])
+        _ -> MapSet.new(HalC2.Acp.CursorSkills.discover(cwd), & &1["name"])
+      end
 
     Regex.replace(@skill_mention, text, fn match, prefix, name ->
       if MapSet.member?(names, name), do: prefix <> "/" <> name, else: match

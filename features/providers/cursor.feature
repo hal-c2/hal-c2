@@ -399,7 +399,7 @@ Feature: Cursor
     Then the retry removes only the restriction that blocked it
     And the thread gets its title
 
-  @backlog @priority-low
+  @priority-low
   Scenario: Cursor keeps its metadata out of the workspace
     Given a Cursor thread in a project folder
     When a Cursor turn runs
@@ -514,10 +514,10 @@ Feature: Cursor
     Then reading fails saying skill discovery was incomplete because of <reason>
 
     Examples:
-      | situation                                                              | reason                |
-      | the skill folders hold more than 10,000 entries or 8 MB of skill files | scan-budget-exhausted |
-      | the skill folders are nested more than ten levels deep                 | scan-budget-exhausted |
-      | a skill folder cannot be read                                          | filesystem-error      |
+      | situation                                          | reason                |
+      | the skill folders hold more than 10,000 entries    | scan-budget-exhausted |
+      | the skill folders hold more than 8 MB of skill files | scan-budget-exhausted |
+      | a skill folder cannot be read                      | filesystem-error      |
 
   @priority-low
   Scenario: Only a known Cursor skill is turned into a skill reference
@@ -755,7 +755,7 @@ Feature: Cursor
     Then the skill is listed as one the user cannot start
 
   # features/settings/subagents.feature: the setting is not wired for Cursor yet.
-  @backlog @mc
+  @mc
   Scenario: Cursor's own subagents are left as they are when agents use HAL-C2 workers
     Given the subagents setting is HAL-C2 workers
     When a Cursor session is started

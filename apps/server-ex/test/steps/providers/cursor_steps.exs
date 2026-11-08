@@ -2201,22 +2201,26 @@ defmodule HalC2.Steps.Providers.Cursor do
     context
   end
 
-  step ~r/^(the skill folders hold more than 10,000 entries or 8 MB of skill files|the skill folders are nested more than ten levels deep|a skill folder cannot be read)$/,
+  step ~r/^(the skill folders hold more than 10,000 entries|the skill folders hold more than 8 MB of skill files|a skill folder cannot be read)$/,
        %{args: [situation]} = context do
     root = Path.join([World.project(context).root, ".cursor", "skills"])
     File.mkdir_p!(root)
 
     case situation do
-      "the skill folders hold more than 10,000 entries or 8 MB of skill files" ->
+      "the skill folders hold more than 10,000 entries" ->
         for i <- 1..10_001, do: File.mkdir!(Path.join(root, "d#{i}"))
 
-      "the skill folders are nested more than ten levels deep" ->
-        Enum.reduce(1..11, root, fn _level, dir ->
-          for i <- 1..1_000, do: File.mkdir!(Path.join(dir, "s#{i}"))
-          next = Path.join(dir, "next")
-          File.mkdir!(next)
-          next
-        end)
+      "the skill folders hold more than 8 MB of skill files" ->
+        # Nine readable skill files just under the per-file limit: the byte
+        # budget runs out part-way (a genuinely deep tree alone never does;
+        # depth is its own scenario above).
+        for i <- 1..9 do
+          write_skill(
+            Path.join(root, "s#{i}"),
+            "description: skill #{i}\n",
+            String.duplicate("x", 950_000)
+          )
+        end
 
       "a skill folder cannot be read" ->
         locked = Path.join(root, "locked")
@@ -2342,6 +2346,46 @@ defmodule HalC2.Steps.Providers.Cursor do
 
   step "the skill is listed as one the user cannot start", context do
     assert listed_skill(context, context.cursor_skill_name)["userInvocable"] == false
+    context
+  end
+
+  # --- workspace and subagents setting -------------------------------------------------------
+
+  defp project_files(root) do
+    root
+    |> Path.join("**/*")
+    |> Path.wildcard(match_dot: true)
+    |> Enum.reject(&String.contains?(&1, "/.git/"))
+    |> Enum.filter(&File.regular?/1)
+    |> Enum.map(&Path.relative_to(&1, root))
+    |> Enum.sort()
+  end
+
+  step "a Cursor thread in a project folder", context do
+    ctx = ready_cursor(context)
+    Map.put(ctx, :files_before, project_files(World.project(ctx).root))
+  end
+
+  step "a Cursor turn runs", context do
+    ctx = launch_cursor(context, "hello")
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    ctx
+  end
+
+  step "the project folder gains no files generated for Cursor", context do
+    assert project_files(World.project(context).root) == context.files_before
+    context
+  end
+
+  step "a Cursor session is started", context do
+    tour(context, ["hand a task to a subagent"])
+  end
+
+  step "Cursor starts as usual, because it has no switch for its subagents", context do
+    assert [%{"status" => "completed"}] = Acp.runs(context.threads["Cursor"])
+    # Its own subagent still ran, in its own child thread, untouched by the setting.
+    assert subagent_of(context, "Cursor")["childThreadId"]
+    assert Enum.all?(agents(context), &(&1["mode"] == "agent"))
     context
   end
 end

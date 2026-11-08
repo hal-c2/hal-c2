@@ -157,6 +157,36 @@ defmodule HalC2.Acp.CursorSkillsTest do
     assert detail =~ "was incomplete (scan-budget-exhausted)"
   end
 
+  test "a scan over its byte budget is reported, not cut short", %{tmp_dir: dir} do
+    project = Path.join(dir, "project")
+
+    for i <- 1..9 do
+      skill!(
+        Path.join([project, ".cursor", "skills", "s#{i}"]),
+        "description: skill #{i}\n",
+        String.duplicate("x", 950_000)
+      )
+    end
+
+    assert {:error, detail} = CursorSkills.probe(project, Path.join(dir, "home"))
+    assert detail =~ "was incomplete (scan-budget-exhausted)"
+  end
+
+  test "a folder tree deeper than the scan reaches is left, not a failure", %{tmp_dir: dir} do
+    project = Path.join(dir, "project")
+    skill!(Path.join([project, ".cursor", "skills", "review"]))
+
+    deep =
+      Enum.reduce(1..12, Path.join([project, ".claude", "skills"]), fn i, path ->
+        Path.join(path, "level#{i}")
+      end)
+
+    skill!(Path.join(deep, "buried"))
+
+    assert {:ok, found} = CursorSkills.probe(project, Path.join(dir, "home"))
+    assert names(found) == ["review"]
+  end
+
   test "a skill folder that cannot be read is reported", %{tmp_dir: dir} do
     project = Path.join(dir, "project")
     locked = Path.join([project, ".cursor", "skills", "locked"])

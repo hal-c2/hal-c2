@@ -115,6 +115,35 @@ defmodule HalC2.AcpTest do
     assert File.exists?(legacy)
   end
 
+  test "a Cursor skill mention reads the workspace snapshot, not a fresh scan",
+       %{tmp_dir: dir} do
+    home = Path.join(dir, "home")
+    File.mkdir_p!(home)
+    previous = System.get_env("HOME")
+    System.put_env("HOME", home)
+
+    on_exit(fn ->
+      if previous, do: System.put_env("HOME", previous), else: System.delete_env("HOME")
+      :persistent_term.erase({HalC2.Acp, "cursor", :workspaces})
+    end)
+
+    work = Path.join(dir, "work")
+    skill = Path.join([work, ".cursor", "skills", "deploy"])
+    File.mkdir_p!(skill)
+    File.write!(Path.join(skill, "SKILL.md"), "---\n---\nShip it.\n")
+
+    # No snapshot yet: the mention resolves by scanning the workspace.
+    assert HalC2.Acp.cursor_skill_mentions("run $deploy now", "cursor", work) ==
+             "run /deploy now"
+
+    # With a snapshot read, its names decide — the folder can even be gone.
+    assert :ok = HalC2.Acp.CursorSkills.refresh_workspace("cursor", work)
+    File.rm_rf!(Path.join(work, ".cursor"))
+
+    assert HalC2.Acp.cursor_skill_mentions("run $deploy now", "cursor", work) ==
+             "run /deploy now"
+  end
+
   test "Pi is offered only where its binary is installed" do
     {:ok, _} =
       HalC2.Settings.put(

@@ -102,6 +102,26 @@ defmodule HalC2.Acp.ThreadRuntimeTest do
     end
   end
 
+  # A Grok command the agent reports completed with only a non-zero exit in
+  # its raw output failed: the plain-`exitCode`-is-not-a-failure reading is
+  # Antigravity's and Cursor's alone (their features assert it).
+  test "a Grok command with a non-zero exit code and no failed status is shown as failed",
+       %{work: work} do
+    thread_id = create_thread(work, "grok", "grok-4")
+    {:ok, _} = send_message(thread_id, "m1", "run a failing command")
+    await_statuses(thread_id, ["completed"])
+
+    items = StreamState.list(current(thread_id), "turn-item")
+
+    assert [%{"status" => "failed", "exitCode" => 1, "output" => output}] =
+             Enum.filter(
+               items,
+               &(&1["type"] == "command_execution" and &1["input"] == "make test")
+             )
+
+    assert output =~ "boom"
+  end
+
   test "an OpenCode config from the instance keeps its settings when its task tool is denied",
        %{work: work, dir: dir, config_log: config_log} do
     start_supervised!(HalC2.Mcp)

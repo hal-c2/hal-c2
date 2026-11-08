@@ -213,7 +213,9 @@ defmodule HalC2.Acp.CursorSkills do
 
   # The folder's own skill, when it keeps one: known by the folder's name,
   # shown by the name in its header. A header that cannot be read drops it;
-  # a skill file over the reading limit is offered with no description.
+  # a skill file over the reading limit is offered with no description. A
+  # file the remaining byte budget cannot pay to read exhausts the scan:
+  # its header might have hidden the skill, so the list may be wrong.
   # sobelow_skip ["Traversal.FileModule"]
   defp maybe_skill(directory, scope, budget, skills) do
     path = Path.join(directory, "SKILL.md")
@@ -221,13 +223,18 @@ defmodule HalC2.Acp.CursorSkills do
     case stat(path, budget) do
       {%File.Stat{type: :regular, size: size}, budget} ->
         {frontmatter, budget} =
-          if size <= @max_skill_bytes and size <= budget.bytes do
-            case File.read(path) do
-              {:ok, body} -> {parse_frontmatter(body), %{budget | bytes: budget.bytes - size}}
-              _ -> {%{cli_visible: true}, budget}
-            end
-          else
-            {%{cli_visible: true}, budget}
+          cond do
+            size > @max_skill_bytes ->
+              {%{cli_visible: true}, budget}
+
+            size > budget.bytes ->
+              {%{cli_visible: true}, %{budget | exhausted: true}}
+
+            true ->
+              case File.read(path) do
+                {:ok, body} -> {parse_frontmatter(body), %{budget | bytes: budget.bytes - size}}
+                _ -> {%{cli_visible: true}, budget}
+              end
           end
 
         name = directory |> Path.basename() |> String.trim()

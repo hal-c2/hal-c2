@@ -2841,6 +2841,11 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp antigravity_turn?(_state), do: false
 
+  defp cursor_turn?(%{agent: agent}) when not is_nil(agent),
+    do: HalC2.Acp.driver(agent) == "cursor"
+
+  defp cursor_turn?(_state), do: false
+
   # Antigravity's `start_subagent` tool starts a batch of subagents. The
   # batch shows its own output, or else its detail, or else its title.
   defp subagent_shape(call) do
@@ -2997,16 +3002,20 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     # A command's reported exit code is shown either way; whether it failed
     # the tool depends on who reported it. OpenCode reports a shell command's
-    # exit in its metadata alone, where a non-zero one failed the command.
-    # Antigravity and Cursor report a plain `exitCode` on a completed call:
-    # the command ran, and its exit code is not a failed tool by itself.
+    # exit in its metadata alone, where a non-zero one failed the command,
+    # and other agents' plain non-zero `exitCode` with no failed status of
+    # their own failed it too. Antigravity and Cursor report a plain
+    # `exitCode` on a completed call: the command ran, and its exit code is
+    # not a failed tool by itself.
     exit_code = kind == :command && reported_exit(call["rawOutput"])
 
     failed_exit? =
       match?(
         %{"metadata" => %{"exit" => code}} when is_integer(code) and code != 0,
         call["rawOutput"]
-      )
+      ) or
+        (is_integer(exit_code) and exit_code != 0 and
+           not (antigravity_turn?(state) or cursor_turn?(state)))
 
     status =
       cond do
@@ -3479,7 +3488,12 @@ defmodule HalC2.Acp.ThreadRuntime do
     # Cursor invokes a skill by its slash name; HAL-C2's composer mentions one as `$name`.
     message =
       if turn.ids.driver == "cursor" and message =~ @skill_mention,
-        do: HalC2.Acp.cursor_skill_mentions(message, turn.cwd),
+        do:
+          HalC2.Acp.cursor_skill_mentions(
+            message,
+            HalC2.Orchestration.Entities.instance(turn.ids),
+            turn.cwd
+          ),
         else: message
 
     message =
