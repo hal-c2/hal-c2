@@ -256,13 +256,13 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.State do
   end
 
   # What the action log keeps of a command: never a heredoc's body, and of a command that
-  # writes files only the programs it runs, for any of its words may be what it writes
-  # (`printf '...' > a.py`, `echo SECRET=1 > a.py`, `sed -i 's/x/y/' a.py`).
-  # `fold_shell_edits/2` names the files it wrote.
+  # writes a file, source or not, only the programs it runs, for any of its words may be
+  # what it writes (`printf '...' > a.py`, `echo SECRET=1 > Main.qml`, `sed -i 's/x/y/'
+  # a.py`). `fold_shell_edits/2` names the source files it wrote.
   defp shown(cmd) do
     script = ShellEdits.script(cmd)
 
-    if ShellEdits.targets(script) == [],
+    if not ShellEdits.writes?(script),
       do: script |> ShellEdits.split_heredocs() |> elem(0),
       else: Enum.join(ShellEdits.programs(script), "; ") <> " …"
   end

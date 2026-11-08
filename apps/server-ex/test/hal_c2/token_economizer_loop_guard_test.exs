@@ -341,6 +341,35 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert [{_, {:nudge, _}}, {_, {:abort, _}}] = decisions
     end
 
+    test "a turn whose checks pass after its last edit is not stopped at the backstop" do
+      # Five learned four-call turns: an envelope of 5 calls, a backstop at 12.5.
+      tracker = Envelope.new("default", %{}, %{"resolved_turns" => [4, 4, 4, 4, 4]})
+      thr = Envelope.turn_thresholds(tracker)
+      assert thr["backstop_turns"] == 12.5
+      # As the plugin wires it: the judge is out on its job, its verdict still to come.
+      thr = Map.merge(thr, %{"gate_over_envelope" => false, "gate_min_turns" => thr["min_turns"]})
+
+      for budget <- [1, 0] do
+        opts = [
+          envelope: Envelope.envelope(tracker),
+          thr: thr,
+          judge: true,
+          nudge_budget: budget,
+          now: 0
+        ]
+
+        {g, []} = stuck_turn(Turn.new("t"), 12, opts)
+        passing = %{"command" => "pytest -q"}
+        assert {g, nil, nil} = Turn.fold(g, "Bash", passing, "3 passed in 0.10s", 0, opts)
+        assert {_g, nil, nil} = Turn.fold(g, "Read", %{"file_path" => "/r/a.py"}, "", nil, opts)
+        assert g.nudges_done == 0 and not g.aborted
+
+        # An edit after it is unverified again, and the stuck turn is acted on.
+        {_g, decision, _} = Turn.fold(g, "Edit", %{"file_path" => "/r/a.py"}, "ok", nil, opts)
+        assert decision != nil
+      end
+    end
+
     test "with no redirects left is offered a stop straight away" do
       {_g, decisions} =
         stuck_turn(Turn.new("t"), 120, envelope: 10.0, thr: Rules.defaults(), nudge_budget: 0)
@@ -487,6 +516,23 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       refute Turn.resolved_proxy(g)
     end
 
+    test "mix features, prop and proof are test runs, and a failing one is not green" do
+      for task <- ~w(features prop proof),
+          do: assert(Turn.status_of_tests("mise exec -- mix #{task} a.feature") == "own")
+
+      g =
+        Turn.new()
+        |> fold("Edit", %{"file_path" => "/r/a.ex"}, "ok")
+        |> fold(
+          "Bash",
+          %{"command" => "mise exec -- mix features plugins/token-economizer-loop-guard.feature"},
+          "Result: 0/1 passed\nFailed: 1 test",
+          2
+        )
+
+      refute Turn.resolved_proxy(g)
+    end
+
     test "a pipe after pipefail is turned off hides the run's status, so its failing summary counts" do
       cmd = "set +o pipefail; pytest -q 2>&1 | tail -n 2"
       assert Turn.status_of_tests(cmd) == "hidden"
@@ -603,6 +649,25 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       # What only runs or searches keeps its words.
       assert digest(~s(grep -rn "def handle" src)) =~ ~s(grep -rn "def handle" src)
     end
+
+    test "never shows what a command writes to a file it does not count as an edit" do
+      for cmd <- [
+            "echo SECRET=1 > Makefile",
+            "echo SECRET=1 > /tmp/a.py",
+            "printf 'SECRET=1' | tee out.log",
+            "bash -lc 'echo SECRET=1 > .env'"
+          ] do
+        text = shell_edit(cmd)
+        refute text =~ "SECRET", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
+      # A QML file is source: written, it is an edit, and its words are not shown.
+      assert ShellEdits.targets("echo SECRET=1 > src/Main.qml") == ["Main.qml"]
+      refute shell_edit("echo SECRET=1 > src/Main.qml") =~ "SECRET"
+
+      # Output thrown away writes nothing.
+      assert shell_edit("pytest -q tests/test_a.py > /dev/null 2>&1") =~ "tests/test_a.py"
+    end
   end
 
   describe "missed events" do
@@ -627,14 +692,30 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
     test "mark partial the turns under way and those heard before the feed's queue drains" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = observe(state, started("a"))
-      # Reported on an event queued before the missed ones: "b" may have lost them.
-      state = state |> observe(started("b", %{"dropped" => 3})) |> observe(started("c"))
+      # Reported on an event queued before the missed ones, with one more waiting: "b"
+      # and "c" may have lost them.
+      state =
+        state
+        |> observe(started("b", %{"dropped" => 3, "waiting" => 1}))
+        |> observe(started("c"))
+
       assert state.turns["a"].partial and state.turns["b"].partial and state.turns["c"].partial
 
-      queued = HalC2.Plugins.Feed.max_queue() - 2
-      state = Enum.reduce(1..queued, state, fn _, s -> observe(s, %{"type" => "noop"}) end)
       state = observe(state, started("d"))
       refute state.turns["d"].partial
+    end
+
+    test "count what was waiting, which a full queue does not bound" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      # Senders that found room together put more than the limit in the queue.
+      waiting = HalC2.Plugins.Feed.max_queue() + 5
+      state = observe(state, %{"type" => "noop", "dropped" => 1, "waiting" => waiting})
+      state = Enum.reduce(2..waiting, state, fn _, s -> observe(s, %{"type" => "noop"}) end)
+      state = observe(state, started("last"))
+      assert state.turns["last"].partial
+
+      state = observe(state, started("after"))
+      refute state.turns["after"].partial
     end
   end
 
