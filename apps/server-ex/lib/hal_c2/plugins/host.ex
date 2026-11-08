@@ -363,11 +363,6 @@ defmodule HalC2.Plugins.Host do
   defp turns(stream, limit, before) do
     alias HalC2.StreamState
 
-    items =
-      stream
-      |> StreamState.list("turn-item")
-      |> Enum.group_by(& &1["runId"])
-
     attempts = StreamState.get(stream, "run-attempt")
     provider_turns = StreamState.get(stream, "provider-turn")
     provider_threads = StreamState.get(stream, "provider-thread")
@@ -379,12 +374,22 @@ defmodule HalC2.Plugins.Host do
         _ -> fn _run -> true end
       end
 
-    runs
-    |> Map.values()
-    |> Enum.filter(&(&1["status"] in @ended and cutoff.(&1)))
-    |> Enum.sort_by(& &1["ordinal"])
-    |> Enum.take(-limit)
-    |> Enum.map(fn run ->
+    selected =
+      runs
+      |> Map.values()
+      |> Enum.filter(&(&1["status"] in @ended and cutoff.(&1)))
+      |> Enum.sort_by(& &1["ordinal"])
+      |> Enum.take(-limit)
+
+    # The items of those runs alone, an older run's read back from the store once it
+    # has gone cold (`HalC2.StreamState`, "Hot and cold").
+    items =
+      for {"turn-item", _id, item} <- StreamState.run_rows(stream, Enum.map(selected, & &1["id"])),
+          reduce: %{} do
+        acc -> Map.update(acc, item["runId"], [item], &[item | &1])
+      end
+
+    Enum.map(selected, fn run ->
       provider_turn = (attempts[run["activeAttemptId"]] || %{})["providerTurnId"]
 
       %{

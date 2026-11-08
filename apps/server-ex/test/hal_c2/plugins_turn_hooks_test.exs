@@ -417,6 +417,42 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert {:error, _} = Host.history("reader", "thread-none")
   end
 
+  test "a plugin reads an older turn's calls after they went cold" do
+    grant(%{"reader" => ["turns:observe"]})
+    Application.put_env(:hal_c2, :stream_hot_items, 2)
+    on_exit(fn -> Application.delete_env(:hal_c2, :stream_hot_items) end)
+
+    {:ok, _} = HalC2.Streams.commit("th-cold", :thread, [{"thread", "th-cold", %{"s" => %{}}}])
+
+    for i <- 1..6 do
+      run = "r#{i}"
+
+      item =
+        &{"turn-item", "#{run}-i#{&1}",
+         %{"s" => %{"runId" => run, "ordinal" => &1, "type" => "command_execution"}}}
+
+      {:ok, _} =
+        HalC2.Streams.commit("th-cold", :thread, [
+          {"run", run, %{"s" => %{"id" => run, "ordinal" => i, "status" => "running"}}},
+          item.(1),
+          item.(2)
+        ])
+
+      {:ok, _} =
+        HalC2.Streams.commit("th-cold", :thread, [
+          {"run", run, %{"s" => %{"status" => "completed"}}}
+        ])
+    end
+
+    stream = HalC2.Streams.state("th-cold")
+    refute HalC2.StreamState.get(stream, "turn-item")["r1-i1"]
+
+    assert {:ok, turns} = Host.history("reader", "th-cold")
+    assert Enum.map(turns, &length(&1["items"])) == [2, 2, 2, 2, 2, 2]
+    assert {:ok, [first]} = Host.history("reader", "th-cold", before: "r2")
+    assert [%{"itemType" => "command_execution"}, _] = first["items"]
+  end
+
   test "a plugin reads each turn with the provider it ran on, and the turns before one it heard of late",
        %{thread_id: thread_id} do
     grant(%{"reader" => ["turns:observe"]})
