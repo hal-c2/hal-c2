@@ -7,18 +7,11 @@ beams = Path.join(Mix.Project.build_path(), "plugins/token-economizer")
 
 :global.trans({:token_economizer_beams, self()}, fn ->
   unless :persistent_term.get(:token_economizer_beams, false) do
-    File.rm_rf!(beams)
-    File.mkdir_p!(beams)
-    docs = Code.get_compiler_option(:docs)
-    Code.put_compiler_option(:docs, true)
+    "../../../../plugins/token-economizer/mc/*.ex"
+    |> Path.expand(__DIR__)
+    |> Path.wildcard()
+    |> HalC2.Proof.compile_plugin(beams)
 
-    {:ok, _, _} =
-      "../../../../plugins/token-economizer/mc/*.ex"
-      |> Path.expand(__DIR__)
-      |> Path.wildcard()
-      |> Kernel.ParallelCompiler.compile_to_path(beams, return_diagnostics: true)
-
-    Code.put_compiler_option(:docs, docs)
     :persistent_term.put(:token_economizer_beams, true)
   end
 end)
