@@ -1633,11 +1633,6 @@ defmodule HalC2.Test.Mc.World do
     File.write!(ssh, """
     #!/bin/sh
     dir="$HAL_C2_FAKE_REMOTES"
-    # `ssh -G <alias>`: the hostname of the alias in `aliases/<alias>`, else the name itself.
-    if [ "$1" = "-G" ]; then
-      echo "hostname $(cat "$dir/aliases/$2" 2>/dev/null || echo "$2")"
-      exit 0
-    fi
     for arg; do
       case "$arg" in *@*) [ -d "$HAL_C2_FAKE_REMOTES/@${arg#*@}" ] && dir="$HAL_C2_FAKE_REMOTES/@${arg#*@}" ;; esac
       last="$arg"
@@ -1647,19 +1642,12 @@ defmodule HalC2.Test.Mc.World do
 
     File.chmod!(ssh, 0o755)
     previous = {System.get_env("GIT_SSH_COMMAND"), System.get_env("HAL_C2_FAKE_REMOTES")}
-    previous_command = Application.fetch_env(:hal_c2, :ssh_command)
-    Application.put_env(:hal_c2, :ssh_command, ssh)
     System.put_env("GIT_SSH_COMMAND", ssh)
     System.put_env("HAL_C2_FAKE_REMOTES", dir)
 
     ExUnit.Callbacks.on_exit(fn ->
       restore_env("GIT_SSH_COMMAND", elem(previous, 0))
       restore_env("HAL_C2_FAKE_REMOTES", elem(previous, 1))
-
-      case previous_command do
-        {:ok, command} -> Application.put_env(:hal_c2, :ssh_command, command)
-        :error -> Application.delete_env(:hal_c2, :ssh_command)
-      end
     end)
 
     dir
