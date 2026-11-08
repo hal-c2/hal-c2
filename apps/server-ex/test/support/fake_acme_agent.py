@@ -230,6 +230,17 @@ def prompt(pid, sid, text):
         send({"id": "url-" + m.group(1), "method": "elicitation/create", "params": {"mode": "url",
               "url": "https://acme.test/" + m.group(1), "elicitationId": m.group(1), "message": "Sign in to Acme"}})
         return finish(pid, sid, "asked for " + m.group(1))
+    # "say N characters": one text update that long.
+    m = re.search(r"say (\d+) characters", text)
+    if m and "<conversation_history>" not in text:
+        say(sid, "x" * int(m.group(1)), "long-%s" % pid)
+        return finish(pid, sid, "")
+    # "updates [...]": sends each session update as given, then ends the turn.
+    m = re.search(r"updates (\[.*\])", text)
+    if m and "<conversation_history>" not in text:
+        for u in json.loads(m.group(1)):
+            update(sid, u)
+        return finish(pid, sid, "")
     m = re.search(r"ask (\S+) (\{.*\})", text)
     if m:
         # One client request; the turn ends with its answer.

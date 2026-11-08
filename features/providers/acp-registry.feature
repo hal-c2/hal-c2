@@ -1266,24 +1266,20 @@ Feature: ACP registry agents
     And updates in between are shown only once 256 new characters or ten skipped updates have built up
 
   # Upstream #25559: a tool the agent cancelled kept running and was marked completed when the turn ended.
-  @backlog
   Scenario: A tool call the agent cancels ends as failed
     Given a tool of "acme" is running
     When "acme" reports the tool call as cancelled
     Then the tool stops showing as running
     And it is not marked completed when the turn ends
 
-  @backlog
   Scenario: Streamed text arrives in bounded pieces
     When "acme" sends a single piece of text longer than 65,536 characters
     Then the thread receives it cut to 65,536 characters in that update
 
-  @backlog
   Scenario: Embedded binary content is never kept in the thread
     When "acme" sends an image, audio clip or binary resource inline
     Then the thread keeps a short placeholder naming its type and not the bytes
 
-  @backlog
   Scenario: Content of a kind HAL-C2 does not know is shown as unsupported
     When "acme" sends content of the unknown kind "hologram"
     Then the thread shows "[Unsupported ACP content: hologram]"
@@ -1370,7 +1366,6 @@ Feature: ACP registry agents
     When "acme" asks the client for the file "src/app.ts" without a full path
     Then the request is refused with "ACP fs requests require an absolute path, received 'src/app.ts'."
 
-  @backlog
   Scenario: An agent can read part of a workspace file
     When "acme" asks the client for 20 lines of a workspace file starting at line 100
     Then it receives lines 100 to 119
@@ -1462,7 +1457,6 @@ Feature: ACP registry agents
     When the MC starts a session on "acme"
     Then the MC speaks the generation the agent's first answer is shaped as
 
-  @backlog
   Scenario: A request HAL-C2 does not implement is answered rather than left waiting
     When "acme" sends the client a request "x/unknown" that HAL-C2 does not know
     Then "acme" is answered with the error "Method not found: x/unknown"
@@ -1658,7 +1652,6 @@ Feature: ACP registry agents
     When "acme" reports that it is waiting for the user to act
     Then the work log shows "Action required" with what the agent is waiting for
 
-  @backlog
   Scenario: An update of a kind HAL-C2 does not know is shown, not dropped
     When "acme" sends a session update of the unknown kind "hologram"
     Then the work log shows "Unsupported ACP update: hologram"

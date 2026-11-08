@@ -49,6 +49,41 @@ defmodule HalC2.Acp.ThreadRuntime do
   # Grok's own requests (`x.ai/...`), bare or wrapped in `{method, params}`.
   @xai_questions ["x.ai/ask_user_question", "_x.ai/ask_user_question"]
   @xai_plan ["x.ai/exit_plan_mode", "_x.ai/exit_plan_mode"]
+  # A single text update is cut to this many characters.
+  @max_chunk 65_536
+  # The session update kinds of the ACP schema, and the ones HAL-C2's agents add.
+  @session_updates [
+    "user_message_chunk",
+    "agent_message_chunk",
+    "agent_thought_chunk",
+    "tool_call",
+    "tool_call_update",
+    "plan",
+    "available_commands_update",
+    "current_mode_update",
+    "config_option_update",
+    "session_info_update",
+    "usage_update",
+    "proposed_plan",
+    "terminal_update",
+    "terminal_output_chunk",
+    "turn_completed",
+    "task_completed"
+  ]
+
+  # ACP's client methods: this client answers each, or says it does not support it.
+  @client_methods [
+    "fs/read_text_file",
+    "fs/write_text_file",
+    "terminal/create",
+    "terminal/output",
+    "terminal/wait_for_exit",
+    "terminal/kill",
+    "terminal/release",
+    "session/request_permission",
+    "elicitation/create"
+  ]
+
   @terminal_requests [
     "terminal/output",
     "terminal/wait_for_exit",
@@ -784,13 +819,15 @@ defmodule HalC2.Acp.ThreadRuntime do
     {:noreply, state}
   end
 
-  # This client writes no files and runs no terminal; say so rather than hang.
+  # This client writes no files and runs no terminal; say so rather than hang. A
+  # request outside ACP's client methods is answered as JSON-RPC's unknown method.
   def handle_info({:json_rpc, conn, {:request, id, method, _params}}, state) do
-    Connection.respond(
-      conn,
-      id,
-      {:error, %{"code" => -32601, "message" => "#{method} is not supported"}}
-    )
+    message =
+      if method in @client_methods,
+        do: "#{method} is not supported",
+        else: "Method not found: #{String.slice(method, 0, 256)}"
+
+    Connection.respond(conn, id, {:error, %{"code" => -32601, "message" => message}})
 
     {:noreply, state}
   end
@@ -2150,6 +2187,26 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # A registry agent's update of a kind the protocol does not name is shown in the
+  # work log rather than dropped. Built-in agents send vendor kinds of their own.
+  defp update(%{"sessionUpdate" => kind}, state) when is_binary(kind) do
+    if kind in @session_updates or HalC2.Acp.driver(state.agent) != "acpRegistry" do
+      state
+    else
+      text = "Unsupported ACP update: #{String.slice(kind, 0, 256)}"
+      native = "acp-update:#{state.turn.ids.provider_turn}:#{kind}"
+
+      if Map.has_key?(state.items, native) do
+        state
+      else
+        state
+        |> flush()
+        |> ensure_item(native, :notice, %{"title" => text, "message" => text})
+        |> finish_item(native, "completed", & &1)
+      end
+    end
+  end
+
   defp update(_update, state), do: state
 
   defp terminal_bytes(data) when is_binary(data) do
@@ -2172,7 +2229,7 @@ defmodule HalC2.Acp.ThreadRuntime do
       task = started_task(call) ->
         start_task(state, id, task, call)
 
-      call["status"] in ["completed", "failed"] ->
+      call["status"] in ["completed", "failed", "cancelled"] ->
         state |> killed(id, call) |> finish_tool(id, call)
 
       true ->
@@ -2202,7 +2259,7 @@ defmodule HalC2.Acp.ThreadRuntime do
       id in Map.values(state.tasks) ->
         running_command(state, id, call)
 
-      call["status"] in ["completed", "failed"] ->
+      call["status"] in ["completed", "failed", "cancelled"] ->
         state |> killed(id, call) |> finish_tool(id, call)
 
       true ->
@@ -2837,7 +2894,9 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp non_empty(_, fallback), do: fallback
 
-  defp chunk(state, %{"content" => %{"type" => "text", "text" => text}} = u, kind) do
+  defp chunk(state, %{"content" => %{"type" => "text", "text" => text}} = u, kind)
+       when is_binary(text) do
+    text = String.slice(text, 0, @max_chunk)
     # Message ids are optional and need only be unique within a turn, so each turn
     # gets its own messages rather than overwriting an earlier turn's.
     key = "#{kind}:#{state.turn.ids.run}:#{u["messageId"] || "current"}"
@@ -2852,6 +2911,11 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp chunk(state, %{"content" => %{"type" => type} = content} = u, kind)
        when type in ["image", "audio", "resource", "resource_link"] do
     chunk(state, %{u | "content" => %{"type" => "text", "text" => placeholder(content)}}, kind)
+  end
+
+  defp chunk(state, %{"content" => %{"type" => type}} = u, kind) when is_binary(type) do
+    text = "[Unsupported ACP content: #{meta(type, "unknown")}]"
+    chunk(state, %{u | "content" => %{"type" => "text", "text" => text}}, kind)
   end
 
   defp chunk(state, _u, _kind), do: state
@@ -3088,7 +3152,8 @@ defmodule HalC2.Acp.ThreadRuntime do
         # A tool the user's stop cut off was stopped: OpenCode 1 rewrites it as an
         # error, and agents report a stopped command done like any other.
         stopped?(state, call) -> "interrupted"
-        call["status"] == "failed" -> "failed"
+        # A tool the agent cancelled did not complete (upstream #25559).
+        call["status"] in ["failed", "cancelled"] -> "failed"
         kind == :command and state.interrupted -> "interrupted"
         is_integer(exit_code) and exit_code != 0 -> "failed"
         true -> "completed"

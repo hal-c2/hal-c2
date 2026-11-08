@@ -1409,6 +1409,150 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     {error, ctx}
   end
 
+  # The client's answer to one request "acme" sends it, through the fake's "ask".
+  defp ask_answer(context, method, params) do
+    ctx = context |> acme() |> run_on_acme("ask #{method} #{JSON.encode!(params)}")
+    Acp.await_runs(thread(ctx), 1)
+    answer = Enum.find(Acp.log(ctx, "acme"), &(&1["event"] == "response" and &1["id"] =~ "ask-"))
+    Map.put(ctx, :answer, answer)
+  end
+
+  step "{string} asks the client for 20 lines of a workspace file starting at line 100",
+       %{args: [_]} = context do
+    ctx = acme(context)
+    path = Path.join(World.project(ctx).root, "long.txt")
+    File.write!(path, Enum.map_join(1..200, "\n", &"line #{&1}"))
+    ask_answer(ctx, "fs/read_text_file", %{"path" => path, "line" => 100, "limit" => 20})
+  end
+
+  step "it receives lines 100 to 119", context do
+    assert context.answer["result"]["content"] == Enum.map_join(100..119, "\n", &"line #{&1}")
+    context
+  end
+
+  step "{string} sends the client a request {string} that HAL-C2 does not know",
+       %{args: [_, method]} = context do
+    ask_answer(context, method, %{})
+  end
+
+  step "{string} is answered with the error {string}", %{args: [_, message]} = context do
+    assert %{"code" => -32601, "message" => ^message} = context.answer["error"]
+    context
+  end
+
+  # --- what an agent's updates become in the thread ----------------------------------
+
+  # Runs one turn in which "acme" sends `updates`, as given.
+  defp send_updates(context, updates) do
+    ctx = context |> acme() |> run_on_acme("updates " <> JSON.encode!(updates))
+    Acp.await_runs(thread(ctx), 1)
+    ctx
+  end
+
+  # The thread's items for the agent's tool call "t1".
+  defp items(context) do
+    Acp.stream(thread(context))
+    |> HalC2.StreamState.list("turn-item")
+    |> Enum.filter(&match?(%{"nativeItemRef" => %{"nativeId" => "t1"}}, &1))
+  end
+
+  defp message_chunk(content),
+    do: %{"sessionUpdate" => "agent_message_chunk", "messageId" => "m1", "content" => content}
+
+  step "a tool of {string} is running", %{args: [_]} = context do
+    running = %{
+      "sessionUpdate" => "tool_call",
+      "toolCallId" => "t1",
+      "title" => "Search the docs",
+      "kind" => "search",
+      "status" => "in_progress"
+    }
+
+    Map.put(context, :tool_updates, [running])
+  end
+
+  step "{string} reports the tool call as cancelled", %{args: [_]} = context do
+    cancelled = %{
+      "sessionUpdate" => "tool_call_update",
+      "toolCallId" => "t1",
+      "status" => "cancelled"
+    }
+
+    send_updates(context, context.tool_updates ++ [cancelled])
+  end
+
+  step "the tool stops showing as running", context do
+    assert [%{"status" => status}] = items(context)
+    refute status in ["running", "inProgress", "in_progress", "pending"]
+    context
+  end
+
+  step "it is not marked completed when the turn ends", context do
+    assert [%{"status" => "failed"}] = items(context)
+    context
+  end
+
+  step "{string} sends a single piece of text longer than 65,536 characters",
+       %{args: [_]} = context do
+    ctx = context |> acme() |> run_on_acme("say 70000 characters")
+    Acp.await_runs(thread(ctx), 1)
+    ctx
+  end
+
+  step "the thread receives it cut to 65,536 characters in that update", context do
+    assert Acp.assistant_text(thread(context)) == String.duplicate("x", 65_536)
+    context
+  end
+
+  @inline_bytes Base.encode64(String.duplicate("\xFF\x00secret-bytes", 300))
+
+  step "{string} sends an image, audio clip or binary resource inline", %{args: [_]} = context do
+    send_updates(context, [
+      message_chunk(%{"type" => "image", "mimeType" => "image/png", "data" => @inline_bytes}),
+      message_chunk(%{"type" => "audio", "mimeType" => "audio/wav", "data" => @inline_bytes}),
+      message_chunk(%{
+        "type" => "resource",
+        "resource" => %{
+          "uri" => "file:///blob.bin",
+          "mimeType" => "application/octet-stream",
+          "blob" => @inline_bytes
+        }
+      })
+    ])
+  end
+
+  step "the thread keeps a short placeholder naming its type and not the bytes", context do
+    text = Acp.assistant_text(thread(context))
+    assert text =~ "[ACP image (image/png)]"
+    assert text =~ "[ACP audio (audio/wav)]"
+    assert text =~ "[ACP binary resource (application/octet-stream)"
+    refute text =~ String.slice(@inline_bytes, 0, 16)
+    assert String.length(text) < 300
+    context
+  end
+
+  step "{string} sends content of the unknown kind {string}", %{args: [_, kind]} = context do
+    send_updates(context, [message_chunk(%{"type" => kind, "data" => "3d"})])
+  end
+
+  step "the thread shows {string}", %{args: [text]} = context do
+    assert Acp.assistant_text(thread(context)) =~ text
+    context
+  end
+
+  step "{string} sends a session update of the unknown kind {string}",
+       %{args: [_, kind]} = context do
+    send_updates(context, [%{"sessionUpdate" => kind, "data" => "3d"}])
+  end
+
+  step "the work log shows {string}", %{args: [text]} = context do
+    assert Acp.stream(thread(context))
+           |> HalC2.StreamState.list("turn-item")
+           |> Enum.any?(&(&1["type"] == "system_notice" and &1["title"] == text))
+
+    context
+  end
+
   step "the request is refused rather than left waiting", context do
     text = Acp.assistant_text(thread(context))
     assert text =~ "fs: -32002"
