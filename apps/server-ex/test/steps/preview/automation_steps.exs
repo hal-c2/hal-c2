@@ -1050,15 +1050,9 @@ defmodule HalC2.Steps.Preview.Automation do
     context
   end
 
-  # Opened by the desktop on the agent's behalf, as `preview.open` from its socket.
+  # The agent's open, for which the desktop makes a new tab of the thread.
   step "the thread has a browser tab the agent opened", context do
     context = agent_thread(context)
-
-    {tab, context} =
-      World.call!(context, "preview.open", %{
-        "threadId" => caller(context).thread_id,
-        "url" => @page
-      })
 
     watcher =
       context.mc
@@ -1068,13 +1062,35 @@ defmodule HalC2.Steps.Preview.Automation do
     {{:ok, _}, watcher} =
       Mc.call(watcher, context.mc.environment, "preview.list", %{"threadId" => "none"})
 
-    # The agent's own open of it, which is what makes the tab its to close.
-    context = tool(context, "preview_open", %{"tabId" => tab["tabId"]})
-    assert {:ok, %{"tabId" => _}} = context.result
+    context = context |> desktop_makes_tabs() |> tool("preview_open", %{"url" => @page})
+    assert {:ok, %{"tabId" => tab}} = context.result
 
     context
-    |> Map.put(:tab, tab["tabId"])
+    |> Map.put(:tab, tab)
     |> World.put_client("watcher", watcher)
+  end
+
+  step "the desktop registers again after being dropped", context do
+    connect_desktop(context, "desktop-1")
+  end
+
+  # Reusing the user's tab, named or as the session's current tab after a read.
+  step ~r/^the agent opens a preview on that tab (?<how>by naming it|after reading it)$/,
+       %{args: [how]} = context do
+    context = desktop_makes_tabs(context)
+
+    context =
+      if how == "by naming it",
+        do: tool(context, "preview_open", %{"tabId" => context.tab}),
+        else:
+          context
+          |> tool("preview_snapshot", %{"tabId" => context.tab})
+          |> tool("preview_open", %{"url" => @page})
+
+    assert {:ok, %{"tabId" => tab}} = context.result
+    assert tab == context.tab
+    assert [{_, %{"tabId" => ^tab}}] = requests(context, "open")
+    context
   end
 
   step "a tab the user opened", context do
@@ -1101,22 +1117,16 @@ defmodule HalC2.Steps.Preview.Automation do
   # open lands on the tab, which is what makes the tab its own.
   step "another agent session opened the browser tab {string}",
        %{args: [name]} = context do
-    context = agent_thread(context)
-
-    {tab, context} =
-      World.call!(context, "preview.open", %{
-        "threadId" => caller(context).thread_id,
-        "url" => @page
-      })
-
     context =
       context
+      |> agent_thread()
+      |> desktop_makes_tabs()
       |> Map.put(:agent_instance, "claude")
-      |> tool("preview_open", %{"tabId" => tab["tabId"]})
+      |> tool("preview_open", %{"url" => @page})
       |> Map.delete(:agent_instance)
 
-    assert {:ok, %{"tabId" => _}} = context.result
-    Map.put(context, :named_tabs, %{name => tab["tabId"]})
+    assert {:ok, %{"tabId" => tab}} = context.result
+    Map.put(context, :named_tabs, %{name => tab})
   end
 
   step "an agent asks to close {string}", %{args: [name]} = context do
@@ -1259,6 +1269,21 @@ defmodule HalC2.Steps.Preview.Automation do
       Mc.call!(desktop.client, context.mc.environment, "previewAutomation.focusHost", payload)
 
     put_in(context, [:desktops, name, :client], client)
+  end
+
+  # Opens as the desktop does: the tab asked for (or the session's current
+  # one), else a new tab of the thread made with `preview.open`.
+  defp desktop_makes_tabs(context) do
+    answer(context, "open", fn request, _context ->
+      tab =
+        request["tabId"] ||
+          then(
+            HalC2.Preview.open(%{"threadId" => request["threadId"], "url" => @page}),
+            fn {:ok, snapshot} -> snapshot["tabId"] end
+          )
+
+      {:ok, %{"tabId" => tab, "done" => "open"}}
+    end)
   end
 
   defp answer(context, operation, fun),

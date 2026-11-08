@@ -183,6 +183,56 @@ defmodule HalC2.PreviewAutomationTest do
              HalC2.Mcp.Preview.call("preview_resize", %{"mode" => "fill"}, @caller)
   end
 
+  # An open the host answers as the desktop does: `tab`, or a new tab of the
+  # thread made with `preview.open`.
+  defp open(client_id, opts, tab \\ :new) do
+    call = Task.async(fn -> HalC2.PreviewAutomation.invoke(@caller, "open", %{}, opts) end)
+    {connection_id, request} = next_request(client_id)
+
+    tab =
+      if tab == :new,
+        do: elem(HalC2.Preview.open(%{"threadId" => "th-1"}), 1)["tabId"],
+        else: tab
+
+    answer(client_id, connection_id, request, %{"tabId" => tab})
+    assert {:ok, %{"tabId" => ^tab}} = Task.await(call)
+    {connection_id, request, tab}
+  end
+
+  # Regression: ownership lived on the host's session assignment, so the
+  # eviction of a timed-out host cost the agent its own tab.
+  test "a tab the agent opened stays its own after its host is dropped and registers again" do
+    start_supervised!(HalC2.Preview)
+    host("desk")
+    {_, _, tab} = open("desk", [])
+    assert HalC2.PreviewAutomation.tab_ownership(@caller, tab) == :own
+
+    call = Task.async(fn -> HalC2.PreviewAutomation.invoke(@caller, "click", %{}) end)
+    {_, request} = next_request("desk")
+    send(Process.whereis(HalC2.PreviewAutomation), {:timeout, request["requestId"]})
+    assert {:error, %{"_tag" => "PreviewAutomationTimeoutError"}} = Task.await(call)
+    assert_receive {:hal_c2_preview_automation, _, "desk", :end}
+
+    host("desk")
+    assert HalC2.PreviewAutomation.tab_ownership(@caller, tab) == :own
+  end
+
+  # Regression: every open claimed the tab it landed on, the user's included.
+  test "an open that reuses the user's tab, named or current, does not make it the agent's" do
+    start_supervised!(HalC2.Preview)
+    host("desk")
+    {:ok, %{"tabId" => user_tab}} = HalC2.Preview.open(%{"threadId" => "th-1"})
+
+    {_, request, _} = open("desk", [tab_id: user_tab], user_tab)
+    assert request["tabIdExplicit"]
+    assert HalC2.PreviewAutomation.tab_ownership(@caller, user_tab) == :not_agent
+
+    # Now the session's current tab, which an open without a tab reuses.
+    {_, request, _} = open("desk", [], user_tab)
+    assert %{"tabId" => ^user_tab, "tabIdExplicit" => false} = request
+    assert HalC2.PreviewAutomation.tab_ownership(@caller, user_tab) == :not_agent
+  end
+
   test "an unanswered request fails and drops the host, whose stream ends" do
     host("desk")
 

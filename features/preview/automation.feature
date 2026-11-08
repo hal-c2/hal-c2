@@ -336,6 +336,28 @@ Feature: Agents drive the preview browser
       When an agent closes that tab
       Then the tab stays open and the agent is told it did not open it
 
+    @mc
+    Scenario Outline: An agent's open that reuses the user's tab does not make it the agent's
+      Given a tab the user opened
+      When the agent opens a preview on that tab <how>
+      And an agent closes that tab
+      Then the tab stays open and the agent is told it did not open it
+
+      Examples:
+        | how              |
+        | by naming it     |
+        | after reading it |
+
+    # Ownership belongs to the tab, not to the desktop's connection.
+    @mc
+    Scenario: An agent still owns its tab after its browser is dropped and registers again
+      Given the thread has a browser tab the agent opened
+      And the desktop does not answer an action within its time limit
+      And the MC drops that desktop so it has to register again
+      When the desktop registers again after being dropped
+      And the agent closes that tab
+      Then the tab is gone for every client
+
     # Upstream #17429: closing another session's tab says why it was refused.
     @mc
     Scenario: An agent refused a tab it did not open is told whose it is

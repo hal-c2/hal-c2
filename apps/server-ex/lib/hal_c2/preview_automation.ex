@@ -11,8 +11,15 @@ defmodule HalC2.PreviewAutomation do
   one browser, or else to the host showing — failing that, with a live page
   for — the tab asked about, then the most capable, focused, most recently
   focused host. A host that holds only a browser snapshot is never offered to
-  a new session. The tab a session last touched is its current tab, and the
-  tabs its `open` calls landed on are the ones it opened (`tab_ownership/2`).
+  a new session. The tab a session last touched is its current tab.
+
+  A tab an agent session's `open` created is that session's to close
+  (`tab_ownership/2`): one that was not in `HalC2.Preview` before the open and
+  is there after it, since a desktop makes new tabs with `preview.open`. An open
+  that reused a tab (the one asked for, or the session's current tab) claims
+  nothing. Ownership is keyed by tab, so it outlives the host reconnecting or
+  being dropped, and lives in memory like the tabs themselves: an MC restart
+  forgets both.
 
   A request unanswered within its timeout drops that host's connection, whose
   stream then ends so the desktop registers again; actions are never replayed.
@@ -111,7 +118,19 @@ defmodule HalC2.PreviewAutomation do
 
   @impl true
   def init(nil) do
-    {:ok, %{clients: %{}, assignments: %{}, pending: %{}, seq: 0, focus_seq: 0}}
+    {:ok, %{clients: %{}, assignments: %{}, owners: %{}, pending: %{}, seq: 0, focus_seq: 0}}
+  end
+
+  # An older broker kept the tabs a session opened on its assignment.
+  @impl true
+  def code_change(_old_vsn, state, _extra) do
+    owners =
+      for {key, %{opened: opened}} <- state.assignments, tab <- opened, into: %{}, do: {tab, key}
+
+    assignments = Map.new(state.assignments, fn {key, a} -> {key, Map.delete(a, :opened)} end)
+
+    {:ok,
+     %{state | assignments: assignments} |> Map.update(:owners, owners, &Map.merge(owners, &1))}
   end
 
   @impl true
@@ -219,6 +238,7 @@ defmodule HalC2.PreviewAutomation do
           key: key,
           seq: state.seq,
           explicit_tab: opts[:tab_id],
+          tabs_before: if(operation == "open", do: thread_tabs(scope.thread_id)),
           update_tab: Keyword.get(opts, :update_current_tab, true),
           timer: Process.send_after(self(), {:timeout, request_id}, timeout)
         }
@@ -227,8 +247,7 @@ defmodule HalC2.PreviewAutomation do
           client_id: client_id,
           connection_id: client.connection_id,
           tab_id: tab,
-          tab_seq: (assigned && elem(assigned, 2)[:tab_seq]) || -1,
-          opened: (assigned && elem(assigned, 2)[:opened]) || MapSet.new()
+          tab_seq: (assigned && elem(assigned, 2)[:tab_seq]) || -1
         }
 
         {:noreply,
@@ -244,16 +263,11 @@ defmodule HalC2.PreviewAutomation do
   def handle_call({:tab_ownership, scope, tab_id}, _from, state) do
     key = {scope.thread_id, scope.instance}
 
-    owners =
-      for {owner, %{opened: opened}} <- state.assignments,
-          MapSet.member?(opened, tab_id),
-          do: owner
-
     ownership =
-      cond do
-        key in owners -> :own
-        owners != [] -> :other_agent
-        true -> :not_agent
+      case state.owners[tab_id] do
+        nil -> :not_agent
+        ^key -> :own
+        _ -> :other_agent
       end
 
     {:reply, ownership, state}
@@ -261,16 +275,9 @@ defmodule HalC2.PreviewAutomation do
 
   @impl true
   def handle_cast({:forget_tab, scope, tab_id}, state) do
-    key = {scope.thread_id, scope.instance}
-
-    case state.assignments[key] do
-      %{opened: opened} = assignment ->
-        assignment = %{assignment | opened: MapSet.delete(opened, tab_id)}
-        {:noreply, %{state | assignments: Map.put(state.assignments, key, assignment)}}
-
-      _ ->
-        {:noreply, state}
-    end
+    if state.owners[tab_id] == {scope.thread_id, scope.instance},
+      do: {:noreply, %{state | owners: Map.delete(state.owners, tab_id)}},
+      else: {:noreply, state}
   end
 
   def handle_cast({:disconnect, client_id, pid}, state) do
@@ -322,7 +329,7 @@ defmodule HalC2.PreviewAutomation do
         if response["ok"] == true do
           result = response["result"]
           GenServer.reply(pending.from, {:ok, result})
-          {:noreply, track_tab(state, pending, result)}
+          {:noreply, state |> track_tab(pending, result) |> claim_tab(pending, result)}
         else
           GenServer.reply(
             pending.from,
@@ -429,18 +436,40 @@ defmodule HalC2.PreviewAutomation do
     with {:ok, tab} <- tab,
          %{connection_id: ^connection_id, tab_seq: seq} = assignment when seq <= pending.seq <-
            state.assignments[pending.key] do
-      # A tab an `open` lands on is one this session opened; acting on a tab
-      # someone else opened never makes it the agent's to close.
-      opened =
-        if pending.context["operation"] == "open",
-          do: MapSet.put(Map.get(assignment, :opened) || MapSet.new(), tab),
-          else: Map.get(assignment, :opened) || MapSet.new()
-
-      assignment = %{assignment | tab_id: tab, tab_seq: pending.seq, opened: opened}
+      assignment = %{assignment | tab_id: tab, tab_seq: pending.seq}
       %{state | assignments: Map.put(state.assignments, pending.key, assignment)}
     else
       _ -> state
     end
+  end
+
+  # An `open` claims its tab only when it created it: absent from the thread's
+  # tabs before, present after. Reusing a tab someone else opened never makes
+  # it the agent's to close. The thread's owners of tabs since closed go too.
+  defp claim_tab(state, %{tabs_before: before} = pending, %{"tabId" => tab})
+       when is_struct(before, MapSet) and is_binary(tab) do
+    {thread, _instance} = pending.key
+    now = thread_tabs(thread)
+
+    owners =
+      Map.reject(state.owners, fn {t, {th, _}} -> th == thread and not MapSet.member?(now, t) end)
+
+    owners =
+      if MapSet.member?(now, tab) and not MapSet.member?(before, tab),
+        do: Map.put(owners, tab, pending.key),
+        else: owners
+
+    %{state | owners: owners}
+  end
+
+  defp claim_tab(state, _pending, _result), do: state
+
+  # The thread's tab ids in `HalC2.Preview`, which never calls back here.
+  defp thread_tabs(thread) do
+    {:ok, %{"sessions" => sessions}} = HalC2.Preview.list(%{"threadId" => thread})
+    MapSet.new(sessions, & &1["tabId"])
+  catch
+    :exit, {:noproc, _} -> MapSet.new()
   end
 
   # How well a host serves the tab a new session asks about: showing it beats
