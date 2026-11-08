@@ -235,6 +235,12 @@ defmodule HalC2.Orchestration do
     do: {:error, "Only a thread launch can defer a message's start."}
 
   def dispatch(%{"type" => "message.dispatch", "threadId" => thread_id} = command) do
+    # The message's id from here on, so what follows its send finds the message.
+    command =
+      if command["messageId"],
+        do: command,
+        else: Map.put(command, "messageId", Entities.new_id("message"))
+
     # A resend of a message the thread already has was delivered, plan and all.
     ref = command["sourcePlanRef"]
     plan = unless ref == nil or delivered?(thread_id, command["messageId"]), do: ref
@@ -520,8 +526,8 @@ defmodule HalC2.Orchestration do
 
     with :ok <- users_run(state, run_id, "edited"),
          :ok <- not_emptied(state, run_id, command),
-         {:ok, claimed_command, folded} <- edit_claims(thread_id, state, run_id, command) do
-      sent = command
+         {:ok, uploads, claimed_command, folded} <-
+           edit_claims(thread_id, state, run_id, command) do
       command = claimed_command
 
       edited =
@@ -548,12 +554,12 @@ defmodule HalC2.Orchestration do
       # refused it) gives its copies back.
       with {:ok, _} = ok <- result do
         unless edit_applied?(thread_id, run_id, edited),
-          do: HalC2.Attachments.release(sent["attachments"] || [], edited["attachments"] || [])
+          do: HalC2.Attachments.release(uploads, edited["attachments"] || [])
 
         ok
       else
         {:error, _} = refused ->
-          HalC2.Attachments.release(sent["attachments"] || [], command["attachments"] || [])
+          HalC2.Attachments.release(uploads, command["attachments"] || [])
           refused
       end
     end
@@ -3359,25 +3365,35 @@ defmodule HalC2.Orchestration do
   end
 
   # An edit that names no attachments keeps the message's, which a text too long to send
-  # whole is folded beside. With the file it was folded into, if any.
+  # whole is folded beside. The file the message's old text was folded into holds that
+  # text, not the edit's, so it is not kept, and goes once the edit lands. With the
+  # uploads it claimed from, and the files to drop unless the message names them.
   defp edit_claims(thread_id, state, run_id, command) do
+    message_id = StreamState.get(state, "run")[run_id]["userMessageId"]
+    message = StreamState.get(state, "message")[message_id] || %{}
+    stale = HalC2.Attachments.folded_into(message["text"], message["attachments"] || [])
+    stale_ids = Enum.map(stale, & &1["id"])
+    unstale = &Enum.reject(&1, fn a -> a["id"] in stale_ids end)
+
     case command["attachments"] do
       attachments when is_list(attachments) ->
-        with {:ok, claimed} <- HalC2.Attachments.claim(thread_id, attachments),
+        uploads = unstale.(attachments)
+        command = Map.put(command, "attachments", uploads)
+
+        with {:ok, claimed} <- HalC2.Attachments.claim(thread_id, uploads),
              {:ok, command} <- claimed(thread_id, command, claimed),
-             do: {:ok, command, command["attachments"] -- claimed}
+             do: {:ok, uploads, command, (command["attachments"] -- claimed) ++ stale}
 
       _ ->
-        message_id = StreamState.get(state, "run")[run_id]["userMessageId"]
-        kept = (StreamState.get(state, "message")[message_id] || %{})["attachments"] || []
+        kept = unstale.(message["attachments"] || [])
 
         case HalC2.Attachments.fold_long_text(thread_id, command["text"], kept) do
-          {:ok, _text, ^kept} ->
-            {:ok, command, []}
+          {:ok, _text, ^kept} when stale == [] ->
+            {:ok, [], command, []}
 
           {:ok, text, attachments} ->
-            {:ok, %{command | "text" => text} |> Map.put("attachments", attachments),
-             attachments -- kept}
+            {:ok, [], command |> Map.put("text", text) |> Map.put("attachments", attachments),
+             (attachments -- kept) ++ stale}
 
           error ->
             error

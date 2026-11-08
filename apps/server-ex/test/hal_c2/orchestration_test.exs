@@ -2112,6 +2112,77 @@ defmodule HalC2.OrchestrationTest do
       assert File.read!(HalC2.Attachments.path(file)) == long
     end
 
+    # The file a long text was folded into holds that text: an edit never leaves it
+    # beside text it no longer matches (#1363 review).
+    test "an edit of a folded queued message drops the file the old text was folded into" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", String.duplicate("y", 130_000))
+      [_, second] = runs(await_statuses(thread_id, ["running", "queued"]))
+      [old] = StreamState.get(current(thread_id), "message")["m2"]["attachments"]
+      longer = String.duplicate("z", 140_000)
+
+      {:ok, _} = queue_command("queued-run.edit", thread_id, second["id"], %{"text" => longer})
+
+      assert [%{"name" => "message.txt"} = file] =
+               StreamState.get(current(thread_id), "message")["m2"]["attachments"]
+
+      assert File.read!(HalC2.Attachments.path(file)) == longer
+      refute HalC2.Attachments.path(old)
+
+      {:ok, _} = queue_command("queued-run.edit", thread_id, second["id"], %{"text" => "short"})
+
+      assert %{"text" => "short", "attachments" => []} =
+               StreamState.get(current(thread_id), "message")["m2"]
+
+      refute HalC2.Attachments.path(file)
+    end
+
+    test "an edit naming a folded message's attachments leaves out the file its old text was in" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", String.duplicate("y", 130_000))
+      [_, second] = runs(await_statuses(thread_id, ["running", "queued"]))
+      [old] = StreamState.get(current(thread_id), "message")["m2"]["attachments"]
+      upload = pending_upload()
+
+      {:ok, _} =
+        queue_command("queued-run.edit", thread_id, second["id"], %{
+          "text" => "short",
+          "attachments" => [old, upload]
+        })
+
+      assert [%{"name" => "a.png"} = claimed] =
+               StreamState.get(current(thread_id), "message")["m2"]["attachments"]
+
+      assert HalC2.Attachments.path(claimed)
+      refute HalC2.Attachments.path(old)
+    end
+
+    test "a long message sent without an id keeps the file it was folded into" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      long = String.duplicate("y", 130_000)
+
+      {:ok, _} =
+        Orchestration.dispatch(%{
+          "type" => "message.dispatch",
+          "threadId" => thread_id,
+          "text" => long,
+          "attachments" => [],
+          "dispatchMode" => %{"type" => "queue_after_active"}
+        })
+
+      [_, queued] = runs(await_statuses(thread_id, ["running", "queued"]))
+
+      assert [file] =
+               StreamState.get(current(thread_id), "message")[queued["userMessageId"]][
+                 "attachments"
+               ]
+
+      assert File.read!(HalC2.Attachments.path(file)) == long
+    end
+
     # A resend (the client did not hear the first was taken) folds the text again; the
     # thread keeps the first, and the second file goes with the send.
     test "a long message sent twice leaves only the file its message names" do

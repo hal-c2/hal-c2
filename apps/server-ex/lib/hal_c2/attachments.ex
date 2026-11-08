@@ -307,6 +307,28 @@ defmodule HalC2.Attachments do
 
   def fold_long_text(_thread_id, text, attachments), do: {:ok, text, attachments}
 
+  @doc """
+  The file `fold_long_text/3` folded a message's `text` into, among its `attachments`:
+  the `pasted-text` file its cut mark names, as a list of none or one.
+  """
+  def folded_into(text, attachments) when is_binary(text) and is_list(attachments) do
+    case Regex.run(
+           ~r/\[\.\.\. \d+ characters cut here; the whole message is in the attached (.+?) \.\.\.\]/,
+           text
+         ) do
+      [_, name] ->
+        Enum.filter(
+          attachments,
+          &(&1["name"] == name and match?(%{"source" => %{"_tag" => "pasted-text"}}, &1))
+        )
+
+      nil ->
+        []
+    end
+  end
+
+  def folded_into(_text, _attachments), do: []
+
   # `message.txt`, or `message-2.txt` and on when the message already has one.
   defp free_name(attachments, base) do
     taken = MapSet.new(attachments, & &1["name"])

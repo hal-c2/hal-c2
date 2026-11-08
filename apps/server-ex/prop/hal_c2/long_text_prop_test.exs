@@ -6,8 +6,9 @@ defmodule HalC2.LongTextPropTest do
   exact count cut and the name of the file holding the whole of it; that file is
   added after the message's own attachments under a name none of them has, holds the
   text byte for byte, and is a `pasted-text` file; and what is sent is itself short
-  enough to pass through again untouched. Counted in characters, so the text mixes in
-  multi-byte ones.
+  enough to pass through again untouched. `folded_into/2` finds that file from the
+  folded text, and no file in text that was not folded. Counted in characters, so the
+  text mixes in multi-byte ones.
   """
 
   use ExUnit.Case, async: false
@@ -42,7 +43,10 @@ defmodule HalC2.LongTextPropTest do
 
       checks =
         if chars <= @limit do
-          [untouched: folded == text and attachments == kept]
+          [
+            untouched: folded == text and attachments == kept,
+            unfound: Attachments.folded_into(folded, attachments) == []
+          ]
         else
           [file] = attachments -- kept
           name = file["name"]
@@ -61,6 +65,7 @@ defmodule HalC2.LongTextPropTest do
               file["sizeBytes"] == byte_size(text) and
                 file["source"] == %{"_tag" => "pasted-text"} and
                 file["mimeType"] == "text/plain",
+            found: Attachments.folded_into(folded, attachments) == [file],
             settles:
               Attachments.fold_long_text("t-prop", folded, attachments) ==
                 {:ok, folded, attachments}
@@ -90,10 +95,14 @@ defmodule HalC2.LongTextPropTest do
     end
   end
 
-  # Names a message's own files may have, including the ones a fold would pick.
+  # Names a message's own files may have, including the ones a fold would pick, and
+  # sometimes a pasted text of its own.
   defp attachment do
-    let name <- oneof(["message.txt", "message-2.txt", "message-3.txt", "notes.md", "shot.png"]) do
-      %{"type" => "file", "id" => "kept-#{name}", "name" => name}
+    let {name, pasted} <-
+          {oneof(["message.txt", "message-2.txt", "message-3.txt", "notes.md", "shot.png"]),
+           boolean()} do
+      file = %{"type" => "file", "id" => "kept-#{name}", "name" => name}
+      if pasted, do: Map.put(file, "source", %{"_tag" => "pasted-text"}), else: file
     end
   end
 end
