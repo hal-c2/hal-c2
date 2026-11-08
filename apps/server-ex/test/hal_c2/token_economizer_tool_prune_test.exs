@@ -101,6 +101,13 @@ defmodule HalC2.TokenEconomizerToolPruneTest do
 
     assert state["sessions"] == 1
     assert state["streaks"]["Workflow"] == %{"sessions" => 1, "prompts" => 4}
+
+    # A segment heard only in part folds the same way (no prompts of evidence):
+    # a use in it still resets the streak, its silences grow none.
+    state = fold(state, 0, ["Workflow"], propose)
+    assert state["sessions"] == 1
+    assert state["streaks"]["Workflow"] == %{"sessions" => 0, "prompts" => 0}
+    assert "Workflow" in state["used"]
   end
 
   test "a high-risk tool needs three times the prompts" do
@@ -234,8 +241,12 @@ defmodule HalC2.TokenEconomizerToolPruneTest do
     {_state, applied} = Prune.apply_pending(busy, auto, @now + 86_401)
     assert "Workflow" in applied
 
-    # A turn under way holds it even then.
-    {_state, []} = Prune.apply_pending(busy, auto, @now + 86_401, true)
+    # A turn under way holds the quiet path, but not the day cap: applying only
+    # shapes the next conversation, so a turn whose end was never heard (or one
+    # that runs a full day) cannot stall the list for good.
+    {_state, []} = Prune.apply_pending(busy, auto, @now + 3_600, true)
+    {_state, applied} = Prune.apply_pending(busy, auto, @now + 86_401, true)
+    assert "Workflow" in applied
 
     # Turned to propose meanwhile: the held list is dropped, the proposal stays.
     propose = cfg(%{"toolPrune" => "propose"})
@@ -339,16 +350,31 @@ defmodule HalC2.TokenEconomizerToolPruneTest do
     assert Prune.proposal(state, cfg()) == []
   end
 
-  test "runs already folded are remembered, newest kept" do
-    state = Prune.note_runs(Prune.new("tool"), ["a", "b", "a", nil])
-    assert state["seededRuns"] == ["a", "b"]
+  test "each thread's last folded run is remembered as its watermark" do
+    state = Prune.new("tool")
+    assert Prune.seeded_run(state, "thread-a") == nil
 
-    state =
-      Enum.reduce(1..250, state, fn n, acc -> Prune.note_runs(acc, ["run-#{n}"]) end)
+    state = Prune.note_thread(state, "thread-a", "run-1")
+    state = Prune.note_thread(state, "thread-b", "run-9")
+    state = Prune.note_thread(state, "thread-a", "run-2")
+    state = Prune.note_thread(state, "thread-a", nil)
 
-    assert length(state["seededRuns"]) == 200
-    assert List.last(state["seededRuns"]) == "run-250"
-    refute "a" in state["seededRuns"]
+    assert Prune.seeded_run(state, "thread-a") == "run-2"
+    assert Prune.seeded_run(state, "thread-b") == "run-9"
+  end
+
+  test "restore refuses a proposed tool before it ever applies" do
+    auto = cfg(%{"toolPrune" => "auto", "toolPruneQuietMinutes" => 0})
+    state = Prune.new("tool") |> sessions([1, 1, 1, 1, 1], [], auto)
+    assert "Workflow" in Prune.proposal(state, auto)
+
+    {state, []} = Prune.restore(state, ["Workflow", "NoSuchTool"])
+    assert state["kept"] == ["Workflow"]
+    assert state["pending"] == nil or "Workflow" not in state["pending"]["items"]
+
+    {state, applied} = Prune.apply_pending(state, auto, @now + 90_000)
+    refute "Workflow" in applied
+    refute "Workflow" in Prune.proposal(state, auto)
   end
 
   test "the state is its own JSON, round-tripped" do

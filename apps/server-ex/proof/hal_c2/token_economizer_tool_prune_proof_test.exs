@@ -92,8 +92,10 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.unit_for_provider/1" =>
         "which providers have candidates at all; the model has the one candidate, and other providers get no proposals, which the plain test checks",
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.high_risk?/1" => @counts,
-      "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.note_runs/2" =>
-        "remembering runs already folded so a restart does not fold a thread's earlier turns again; a restart stands for the missed turns here",
+      "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.note_thread/3" =>
+        "remembering each thread's last folded run so a restart folds only the runs after it; a restart stands for the missed turns here",
+      "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.seeded_run/2" =>
+        "reading that watermark, which decides nothing here",
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.dump/1" =>
         "the evidence as its JSON file keeps it; that it is kept at all is the Persist switch",
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.summary/2" =>

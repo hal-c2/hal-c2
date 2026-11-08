@@ -9,8 +9,8 @@ defmodule HalC2.TokenEconomizerToolPrunePropTest do
   order: a protected or ever-used tool is never off or proposed; a restored tool
   stays back until applied by name; a fold never turns anything off by itself;
   Codex demotes at most two packages per folded session, and proposes only the
-  demoted; a use resets its tool's streak; `auto` applies nothing under `propose`
-  or while a turn is under way.
+  demoted; a use resets its tool's streak; `auto` applies nothing under `propose`,
+  nor while a turn is under way before the list has waited a day.
 
   The plugin's process and `shape_run/2` are covered by
   `features/plugins/token-economizer-tool-prune.feature`; upstream's cases are
@@ -153,7 +153,15 @@ defmodule HalC2.TokenEconomizerToolPrunePropTest do
     run = run()
     {prune, applied} = Prune.apply_pending(run.prune, run.cfg, run.now, active)
     put_run(%{run | prune: prune})
-    %{before: run.prune, after: prune, applied: applied, active: active, cfg: run.cfg}
+
+    %{
+      before: run.prune,
+      after: prune,
+      applied: applied,
+      active: active,
+      cfg: run.cfg,
+      now: run.now
+    }
   end
 
   # A use seen while a conversation is still under way, noted before its fold.
@@ -213,7 +221,8 @@ defmodule HalC2.TokenEconomizerToolPrunePropTest do
 
   def postcondition(_state, {:call, _, :pending, _}, r) do
     (r.cfg["mode"] == "auto" or r.applied == []) and
-      (not r.active or r.applied == []) and
+      (not r.active or r.applied == [] or
+         r.now - ((r.before["pending"] || %{})["since"] || r.now) >= 86_400) and
       Enum.all?(r.applied, &(&1 in r.after["off"])) and
       Enum.sort(r.after["off"]) == Enum.sort(Enum.uniq(r.before["off"] ++ r.applied)) and
       lawful?(r.after, r.cfg)

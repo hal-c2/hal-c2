@@ -169,7 +169,7 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
       "streaks" => streaks(saved["streaks"]),
       "liveStreaks" => streaks(saved["liveStreaks"]),
       "loadedSessions" => counts(saved["loadedSessions"]),
-      "seededRuns" => saved["seededRuns"] |> strings() |> Enum.take(-200),
+      "seededThreads" => seeded_threads(saved["seededThreads"]),
       "sessions" => count(saved["sessions"]),
       "prompts" => count(saved["prompts"]),
       "importedSessions" => count(saved["importedSessions"]),
@@ -368,10 +368,12 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
 
   @doc """
   Applies the pending `auto` list once the project has been quiet long enough —
-  idle `quiet_minutes`, or a day since the list formed — and no turn is under way
-  (`active`). `{state, applied}`; nothing is applied, and the wait goes on, until
-  then. A list whose tools were used, protected or given back meanwhile applies
-  only what is left of it, and is dropped when nothing is.
+  idle `quiet_minutes` with no turn under way (`active`), or a day since the list
+  formed regardless: applying only shapes the next conversation, so a turn that
+  runs on (or whose end was never heard) cannot stall it for good. `{state,
+  applied}`; nothing is applied, and the wait goes on, until then. A list whose
+  tools were used, protected or given back meanwhile applies only what is left
+  of it, and is dropped when nothing is.
   """
   def apply_pending(state, cfg, now, active \\ false) do
     case {cfg["mode"], state["pending"]} do
@@ -389,7 +391,7 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
           items == [] ->
             {put_in(state["pending"], nil), []}
 
-          active or (idle < cfg["quiet_minutes"] * 60 and waited < @pending_max_s) ->
+          waited < @pending_max_s and (active or idle < cfg["quiet_minutes"] * 60) ->
             {state, []}
 
           true ->
@@ -432,19 +434,25 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
   end
 
   @doc """
-  Gives tools back: all that are off when `tools` is nil, or the named ones that
-  are. A tool given back is kept — never proposed or applied by itself again, only
-  applied by name. `{state, restored}`.
+  Gives tools back: all that are off when `tools` is nil, or the named ones. A
+  named tool need not be off yet: refusing a proposed or pending one gives it
+  back before it ever applies. A tool given back is kept — never proposed or
+  applied by itself again, only applied by name. `{state, restored}`, where
+  `restored` is what was off and comes back.
   """
   def restore(state, tools) do
-    restored =
-      if tools, do: Enum.filter(Enum.uniq(tools), &(&1 in state["off"])), else: state["off"]
+    named =
+      if tools,
+        do: Enum.filter(Enum.uniq(tools), &(&1 in candidate_tools(state["unit"]))),
+        else: state["off"]
+
+    restored = Enum.filter(named, &(&1 in state["off"]))
 
     state =
       state
       |> update_in(["off"], &(&1 -- restored))
-      |> update_in(["kept"], &Enum.uniq(&1 ++ restored))
-      |> drop_pending(restored)
+      |> update_in(["kept"], &Enum.uniq(&1 ++ named))
+      |> drop_pending(named)
 
     {state, restored}
   end
@@ -475,15 +483,25 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
     |> drop_pending(used)
   end
 
-  @doc """
-  Remembers runs already folded, live or read back from a thread's history, so a
-  restart does not fold a thread's earlier turns again. The newest 200 are kept.
-  """
-  def note_runs(state, run_ids) do
-    update_in(state["seededRuns"], fn seen ->
-      (seen ++ Enum.filter(run_ids, &is_binary/1)) |> Enum.uniq() |> Enum.take(-200)
-    end)
+  defp seeded_threads(map) when is_map(map) do
+    Map.new(map, fn {thread, run} -> {thread, if(is_binary(run), do: run)} end)
   end
+
+  defp seeded_threads(_), do: %{}
+
+  @doc "The last run of `thread_id` already folded, live or read back, or nil."
+  def seeded_run(state, thread_id), do: state["seededThreads"][thread_id]
+
+  @doc """
+  Remembers `run_id` as the last run of `thread_id` already folded — a
+  per-thread watermark, so a restart folds only the runs after it, however many
+  turns the project ran live before it.
+  """
+  def note_thread(state, thread_id, run_id) when is_binary(run_id) do
+    put_in(state["seededThreads"][thread_id], run_id)
+  end
+
+  def note_thread(state, _thread_id, _run_id), do: state
 
   @doc "Marks when the project last did anything (a turn starting, running, or ending)."
   def activity(state, now), do: put_in(state["lastActivity"], max(state["lastActivity"], now))
