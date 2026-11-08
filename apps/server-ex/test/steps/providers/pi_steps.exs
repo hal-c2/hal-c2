@@ -4186,11 +4186,70 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
+  # The extension HAL-C2 writes for Pi, run under bun with a stand-in Pi API.
+  @extension_harness Path.expand("../../support/pi_extension_harness.ts", __DIR__)
+
+  # --- a folder Pi does not trust ---
+
+  # HAL-C2's extension, run on the project's folder, says what Pi skipped there;
+  # the fake Pi then says it as it starts, as Pi does at `session_start`.
+  step "Pi has not trusted the project's folder", context do
+    root = World.project(context).root
+    File.mkdir_p!(Path.join(root, ".pi/extensions"))
+    File.write!(Path.join(root, ".pi/settings.json"), "{}")
+    File.mkdir_p!(Path.join(root, ".agents/skills/review"))
+
+    event = JSON.encode!(%{"type" => "session_start", "reason" => "startup"})
+    ctx = %{"cwd" => root, "trusted" => false}
+    {_, notices} = extension_event("session_start", event, ctx)
+    assert [notice] = Enum.filter(notices, &(&1["message"] =~ "trust"))
+    ui = %{"method" => "notify", "message" => notice["message"], "notifyType" => notice["type"]}
+    context |> install(%{"startupUi" => [ui]}) |> FakeAcp.thread() |> Map.put(:untrusted, root)
+  end
+
+  # A first turn of a new thread and of one Pi resumes (a new access mode starts
+  # a new Pi on the thread's session), each after a turn Pi was already running.
+  step "a Pi thread runs its first turn, new or resumed", context do
+    context = context |> turn("hello Pi") |> turn("and again")
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.runtime-mode.set",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, context.thread),
+        "runtimeMode" => "approval-required"
+      })
+
+    turn(context, "hello again")
+  end
+
+  step "the thread shows one notice naming the folder and what Pi skipped", context do
+    assert [_, _] = thread_starts(context)
+    runs = context |> state() |> StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+    assert [first, _, resumed] = runs
+    notices = items(context, "system_notice")
+    assert Enum.map(notices, & &1["runId"]) == [first["id"], resumed["id"]]
+
+    for %{"message" => message} <- notices do
+      assert message =~ "Pi does not trust #{context.untrusted}"
+      assert message =~ "skipped the folder's settings, extensions and skills"
+    end
+
+    context
+  end
+
+  step "the notice says how to trust the folder with {string} in Pi's terminal app",
+       %{args: [command]} = context do
+    for %{"message" => message} <- items(context, "system_notice") do
+      assert message =~ ~s(run "#{command}" in Pi's terminal app)
+    end
+
+    context
+  end
+
   # --- OpenRouter output cap ---
 
-  # The extension HAL-C2 writes for Pi, run under bun with a stand-in Pi API; the
-  # cap is the extension's `before_provider_request` handler.
-  @extension_harness Path.expand("../../support/pi_extension_harness.ts", __DIR__)
+  # The cap is the extension's `before_provider_request` handler.
 
   step ~r/^a Pi thread uses an? (?<model>OpenRouter model|model from another provider)$/,
        %{args: [model]} = context do
@@ -4202,12 +4261,8 @@ defmodule HalC2.Steps.Providers.Pi do
        %{args: [asked]} = context do
     payload = %{"model" => "some/model", "max_tokens" => tokens(asked)}
     event = JSON.encode!(%{"type" => "before_provider_request", "payload" => payload})
-    ctx = JSON.encode!(%{"model" => context.pi_model})
-    args = [@extension_harness, HalC2.Pi.extension_path(), "before_provider_request", event, ctx]
-    env = [{"HAL_C2_MCP_URL", nil}, {"HAL_C2_MCP_BEARER_TOKEN", nil}]
-
-    {out, 0} = System.cmd("bun", args, env: env, stderr_to_stdout: true)
-    sent = out |> String.split("\n", trim: true) |> List.last() |> JSON.decode!()
+    ctx = %{"model" => context.pi_model}
+    {sent, _notices} = extension_event("before_provider_request", event, ctx)
     Map.put(context, :sent, sent || payload)
   end
 
@@ -4215,6 +4270,19 @@ defmodule HalC2.Steps.Providers.Pi do
     assert context.sent["max_tokens"] == tokens(sent)
     assert context.sent["model"] == "some/model"
     context
+  end
+
+  # Runs the extension's handlers for one event (`event` JSON, `ctx` a map) under
+  # bun: their result and the notices they showed.
+  defp extension_event(name, event, ctx) do
+    args = [@extension_harness, HalC2.Pi.extension_path(), name, event, JSON.encode!(ctx)]
+    env = [{"HAL_C2_MCP_URL", nil}, {"HAL_C2_MCP_BEARER_TOKEN", nil}]
+    {out, 0} = System.cmd("bun", args, env: env, stderr_to_stdout: true)
+
+    %{"result" => result, "notices" => notices} =
+      out |> String.split("\n", trim: true) |> List.last() |> JSON.decode!()
+
+    {result, notices}
   end
 
   defp tokens(text), do: text |> String.replace(",", "") |> String.to_integer()

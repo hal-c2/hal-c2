@@ -17,6 +17,8 @@
 #                    (a turn may also set "afterCompaction": true, to start only once a
 #                    running compaction ends, "startDelaySec": n, to start its agent late,
 #                    or "compactAfter": n, to compact for n seconds once it settled)
+#   startupUi        fire-and-forget extension UI requests (as a turn's `uiEmit`) Pi's
+#                    extensions send as an RPC Pi starts, before any command
 #   rejectWhileCompacting  as Pi 1.4: every prompt, steers included, sent while Pi
 #                    compacts is rejected (logged as `rejected`); a prompt Pi takes up
 #                    is logged as `accepted`, and compaction events as `compaction`
@@ -203,6 +205,12 @@ delayed_once = set()
 backlog = []
 ui_answers = {}
 aborted = [False]
+
+# What Pi's extensions say at `session_start` (HAL-C2's, in a folder Pi does not trust).
+for notice in [] if "--no-session" in sys.argv else cfg.get("startupUi") or []:
+    request = dict(notice, type="extension_ui_request", id="ui-%s" % uuid.uuid4().hex[:8])
+    log({"ui": request})
+    send(request)
 
 
 def models():

@@ -378,7 +378,6 @@ Feature: Pi
 
   # Upstream #27539: in a folder Pi has not trusted, Pi quietly skipped the project's own settings,
   # extensions and skills.
-  @backlog
   Scenario: A Pi session in a folder Pi does not trust says what Pi skipped
     Given Pi has not trusted the project's folder
     When a Pi thread runs its first turn, new or resumed
