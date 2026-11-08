@@ -4185,4 +4185,37 @@ defmodule HalC2.Steps.Providers.Pi do
     assert %{"status" => "behind_latest", "canUpdate" => false, "updateCommand" => nil} = advisory
     context
   end
+
+  # --- OpenRouter output cap ---
+
+  # The extension HAL-C2 writes for Pi, run under bun with a stand-in Pi API; the
+  # cap is the extension's `before_provider_request` handler.
+  @extension_harness Path.expand("../../support/pi_extension_harness.ts", __DIR__)
+
+  step ~r/^a Pi thread uses an? (?<model>OpenRouter model|model from another provider)$/,
+       %{args: [model]} = context do
+    provider = if model == "OpenRouter model", do: "openrouter", else: "anthropic"
+    Map.put(context, :pi_model, %{"provider" => provider, "id" => "some/model"})
+  end
+
+  step ~r/^Pi asks the model for up to (?<asked>[\d,]+) output tokens$/,
+       %{args: [asked]} = context do
+    payload = %{"model" => "some/model", "max_tokens" => tokens(asked)}
+    event = JSON.encode!(%{"type" => "before_provider_request", "payload" => payload})
+    ctx = JSON.encode!(%{"model" => context.pi_model})
+    args = [@extension_harness, HalC2.Pi.extension_path(), "before_provider_request", event, ctx]
+    env = [{"HAL_C2_MCP_URL", nil}, {"HAL_C2_MCP_BEARER_TOKEN", nil}]
+
+    {out, 0} = System.cmd("bun", args, env: env, stderr_to_stdout: true)
+    sent = out |> String.split("\n", trim: true) |> List.last() |> JSON.decode!()
+    Map.put(context, :sent, sent || payload)
+  end
+
+  step ~r/^the request goes out asking for (?<sent>[\d,]+)$/, %{args: [sent]} = context do
+    assert context.sent["max_tokens"] == tokens(sent)
+    assert context.sent["model"] == "some/model"
+    context
+  end
+
+  defp tokens(text), do: text |> String.replace(",", "") |> String.to_integer()
 end

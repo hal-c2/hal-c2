@@ -562,7 +562,6 @@ Feature: Pi
     Then Pi's system prompt holds both that extension's additions and HAL-C2's instructions
 
   # Works around Pi asking OpenRouter for more output than the context can hold.
-  @backlog
   Scenario Outline: Pi's output budget on OpenRouter is capped at 32,768 tokens
     Given a Pi thread uses <model>
     When Pi asks the model for up to <asked> output tokens
