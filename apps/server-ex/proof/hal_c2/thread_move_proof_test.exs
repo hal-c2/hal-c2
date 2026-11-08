@@ -68,7 +68,8 @@ defmodule HalC2.ThreadMoveProofTest do
       "HalC2.Orchestration.Handoff.transcript/3" => @handoff,
       "HalC2.Orchestration.Handoff.legacy_summary/1" => @handoff,
       "HalC2.Orchestration.Handoff.fork_boundary/3" => @handoff,
-      "HalC2.Orchestration.Handoff.fresh_start/2" => @handoff
+      "HalC2.Orchestration.Handoff.fresh_start/2" => @handoff,
+      "HalC2.Orchestration.Handoff.afresh/1" => @handoff
     },
     environment: %{
       "crash" => "an MC stops: its processes die, its store stays, its links break",
