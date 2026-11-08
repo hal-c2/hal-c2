@@ -15,10 +15,16 @@
 # allowed, "was not allowed to run CMD" otherwise. Rules a
 # permission answer adds for the session (updatedPermissions) let later matching
 # commands run without asking; "call a skill" calls the demo skill twice, with
-# and without arguments; "edit a file" writes edited.txt through a Write call.
+# and without arguments; "edit a file" writes edited.txt through a Write call. "mcp
+# confirm" is an MCP tool eliciting a yes or no (twice over when it says so), answered
+# "elicitation ACTION"; "mcp sign in", "mcp form" and "mcp undescribed" elicit a web
+# sign-in, form values, and input no schema describes. "which tools" names the MCP
+# servers the host handed over (mcp_set_servers), and "run env" runs `env` as a child
+# process, the way Claude runs a shell command, a hook or a local MCP server, and
+# answers with what it printed.
 # Each turn's message text is appended to
 # $FAKE_CLAUDE_LOG when it is set.
-import json, os, re, sys, time, uuid
+import json, os, re, sys, threading, time, uuid
 
 # With FAKE_CLAUDE_TRACE set, the argv and every message read are appended to it as JSON lines.
 TRACE = os.environ.get("FAKE_CLAUDE_TRACE")
@@ -27,9 +33,12 @@ def trace(entry):
         with open(TRACE, "a") as f:
             f.write(json.dumps(entry) + "\n")
 
+# A held MCP answer is sent from its own thread (answer_mcp_servers).
+sending = threading.Lock()
 def send(msg):
-    sys.stdout.write(json.dumps(msg) + "\n")
-    sys.stdout.flush()
+    with sending:
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
 
 session = "fake-session-1"
 # With FAKE_SESSIONS set, the fake keeps transcripts the way Claude Code does:
@@ -88,7 +97,26 @@ turn = 0
 session_rules = []  # Bash commands the session allows without asking
 asked_before_plan = False  # a "question first" turn waiting on its answer
 asking_subagent = None  # (Agent tool id, command) of a subagent waiting on its permission answer
+pending_elicit = None  # (request id, asks again after an accept) of an MCP elicitation waiting on its answer
 dialogs = []  # the dialog kinds the host said it can show (initialize)
+mcp_servers = {}  # the MCP servers the host handed over stdin (mcp_set_servers)
+
+def answer_mcp_servers(msg):
+    global mcp_servers
+    scrub = os.environ.get("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB")
+    expand = lambda v: re.sub(r"\$\{(\w+)\}", lambda m: "" if scrub else os.environ.get(m.group(1), ""), v)
+    servers = {name: {**spec, "headers": {k: expand(v) for k, v in spec.get("headers", {}).items()}}
+               for name, spec in msg["request"].get("servers", {}).items()}
+    if os.environ.get("FAKE_CLAUDE_MCP_LOG"):
+        with open(os.environ["FAKE_CLAUDE_MCP_LOG"], "a") as f:
+            f.write(json.dumps(servers) + "\n")
+    if os.environ.get("FAKE_CLAUDE_MCP_REFUSE"):
+        # The error's text can echo what it was sent, the credential too.
+        result = {"added": [], "removed": [], "errors": {name: f"Connection failed with {json.dumps(spec)}" for name, spec in servers.items()}}
+    else:
+        mcp_servers = servers
+        result = {"added": list(servers), "removed": [], "errors": {}}
+    send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": result}})
 # FAKE_CLAUDE_ORPHANED names a background task the previous process left running. A
 # resumed process queues its first message behind a turn of its own that reports the
 # task stopped: its result has origin task-notification and echoes no message's uuid.
@@ -143,6 +171,16 @@ for line in sys.stdin:
         if reply.get("interrupt"):
             send({"type": "result", "subtype": "error_during_execution", "is_error": True, "terminal_reason": "aborted_tools", "session_id": session})
             continue
+        if pending_elicit and "action" in reply:
+            elicit_id, again = pending_elicit
+            if again and reply["action"] == "accept":
+                pending_elicit = ("elicit-2", False)
+                send({"type": "control_request", "request_id": "elicit-2", "request": {"subtype": "elicitation", "mcp_server_name": "demo", "message": "Delete the file for sure?", "mode": "form", "requested_schema": {"type": "object", "properties": {}}}})
+                continue
+            pending_elicit = None
+            send({"type": "assistant", "session_id": session, "message": {"id": "m-elicit", "role": "assistant", "content": [{"type": "text", "text": "elicitation " + reply["action"]}]}})
+            send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+            continue
         if reply["behavior"] in ("completed", "cancelled"):
             send({"type": "assistant", "session_id": session, "message": {"id": "m-dialog", "role": "assistant", "content": [{"type": "text", "text": "resume " + reply.get("result", "cancelled")}]}})
             send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
@@ -190,6 +228,25 @@ for line in sys.stdin:
         if sub == "set_permission_mode" and NO_AUTO and msg["request"]["mode"] == "auto":
             send({"type": "control_response", "response": {"subtype": "error", "request_id": msg["request_id"], "error": "Cannot set permission mode to auto: auto mode unavailable for this model"}})
             continue
+        # The MCP servers the host hands over stdin. Claude expands ${VAR} in their
+        # headers from its environment, which CLAUDE_CODE_SUBPROCESS_ENV_SCRUB empties.
+        # FAKE_CLAUDE_MCP_LOG gets each set's servers, expanded, as one JSON line;
+        # FAKE_CLAUDE_MCP_REFUSE fails every one, as Claude reports a server it cannot add.
+        # FAKE_CLAUDE_MCP_HOLD=1: a set Claude never answers; naming a file instead, one
+        # it answers once that file exists, reading its input meanwhile.
+        hold = os.environ.get("FAKE_CLAUDE_MCP_HOLD")
+        if sub == "mcp_set_servers" and hold == "1":
+            continue
+        if sub == "mcp_set_servers" and hold:
+            def answer_later(msg=msg):
+                while not os.path.exists(hold):
+                    time.sleep(0.02)
+                answer_mcp_servers(msg)
+            threading.Thread(target=answer_later, daemon=True).start()
+            continue
+        if sub == "mcp_set_servers":
+            answer_mcp_servers(msg)
+            continue
         if sub == "set_permission_mode":
             mode = msg["request"]["mode"]
         if sub == "initialize":
@@ -222,6 +279,9 @@ for line in sys.stdin:
             send(stopped)
         elif sub == "interrupt" and not os.environ.get("FAKE_CLAUDE_HOLD_INTERRUPT"):
             send({"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": session})
+        # A stopped turn's elicitation is no longer waiting on its answer.
+        if sub == "interrupt":
+            pending_elicit = None
         continue
     if msg.get("type") != "user":
         continue
@@ -239,7 +299,10 @@ for line in sys.stdin:
         else:
             images = sum(1 for b in content if b.get("type") == "image")
             steer_text = "".join(b.get("text", "") for b in content) + f" (+{images} image)"
-        send({"type": "result", "subtype": "error_during_execution", "is_error": True, "terminal_reason": "aborted_streaming", "session_id": session})
+        # A steer saying "fold" is folded into the running turn instead: no result
+        # cuts that turn short, and the one result answers both.
+        if "fold" not in steer_text:
+            send({"type": "result", "subtype": "error_during_execution", "is_error": True, "terminal_reason": "aborted_streaming", "session_id": session})
         send({"type": "assistant", "session_id": session, "message": {"id": "m-steer", "role": "assistant", "content": [{"type": "text", "text": "steered: " + steer_text}]}})
         # The answer names only the steer's prompt, not the one the turn started with.
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session,
@@ -449,6 +512,35 @@ for line in sys.stdin:
     if os.environ.get("FAKE_CLAUDE_SIGNED_OUT"):
         send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "error": "authentication_failed", "message": {"id": f"m{turn}x", "role": "assistant", "content": [{"type": "text", "text": "Invalid API key · Please run /login"}]}})
         send({"type": "result", "subtype": "success", "is_error": True, "result": "Invalid API key · Please run /login", "session_id": session})
+        continue
+    # MCP elicitations: a tool asking the user mid-turn. The answer's action is
+    # what the tool is told ("elicitation ACTION"), and the turn ends on it.
+    if text.startswith("mcp "):
+        ask = text[len("mcp "):]
+        base = {"type": "control_request", "request_id": "elicit-1", "request": {"subtype": "elicitation", "mcp_server_name": "demo"}}
+        if ask.startswith("confirm"):
+            pending_elicit = ("elicit-1", "twice" in ask)
+            base["request"].update({"message": "Delete the file?", "mode": "form", "requested_schema": {"type": "object", "properties": {}}})
+        elif ask == "sign in":
+            pending_elicit = ("elicit-1", False)
+            base["request"].update({"message": "Sign in to continue", "mode": "url", "url": "https://example.com/login", "elicitation_id": "login-1"})
+        elif ask == "form":
+            pending_elicit = ("elicit-1", False)
+            base["request"].update({"message": "Name the file", "mode": "form", "requested_schema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}})
+        elif ask == "undescribed":
+            pending_elicit = ("elicit-1", False)
+            base["request"].update({"message": "The tool needs input", "mode": "form"})
+        if pending_elicit:
+            send(base)
+            continue
+    if text in ("which tools", "run env"):
+        if text == "which tools":
+            answer = "tools: " + (", ".join(sorted(mcp_servers)) or "none")
+        else:
+            import subprocess
+            answer = subprocess.run(["env"], capture_output=True, text=True).stdout
+        send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}t", "role": "assistant", "content": [{"type": "text", "text": answer}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
     if "where are we" in text:
         send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}w", "role": "assistant", "content": [{"type": "text", "text": f"resumed at {resume_at} fork {'--fork-session' in sys.argv} history {'<conversation_history>' in text}" + (f" earlier [{' | '.join(earlier)}]" if SESSIONS else "")}]}})

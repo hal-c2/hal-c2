@@ -1628,10 +1628,17 @@ defmodule HalC2.Test.Mc.World do
     dir = Mc.tmp_dir(context.mc, "remotes")
     ssh = Path.join(dir, "fake-ssh")
 
-    File.write!(
-      ssh,
-      ~s(#!/bin/sh\nfor last; do :; done\ncd "$HAL_C2_FAKE_REMOTES" && exec sh -c "$last"\n)
-    )
+    # A host with a directory `@<host>` of its own is served from it, so two hosts can
+    # hold same-named repositories; any other host from the directory itself.
+    File.write!(ssh, """
+    #!/bin/sh
+    dir="$HAL_C2_FAKE_REMOTES"
+    for arg; do
+      case "$arg" in *@*) [ -d "$HAL_C2_FAKE_REMOTES/@${arg#*@}" ] && dir="$HAL_C2_FAKE_REMOTES/@${arg#*@}" ;; esac
+      last="$arg"
+    done
+    cd "$dir" && exec sh -c "$last"
+    """)
 
     File.chmod!(ssh, 0o755)
     previous = {System.get_env("GIT_SSH_COMMAND"), System.get_env("HAL_C2_FAKE_REMOTES")}
@@ -2641,12 +2648,14 @@ defmodule HalC2.Test.Mc.World do
       log = "FAKE_CLAUDE_ARGV_LOG=" <> Path.join(context.mc.home, "claude-argv.jsonl")
       input = "FAKE_CLAUDE_INPUT_LOG=" <> Path.join(context.mc.home, "claude-inputs.jsonl")
       gate = "FAKE_CLAUDE_GATE=" <> Path.join(context.mc.home, "gate")
+      mcp = "FAKE_CLAUDE_MCP_LOG=" <> Path.join(context.mc.home, "claude-mcp.jsonl")
 
       Application.put_env(:hal_c2, :claude_command, [
         "env",
         log,
         input,
         gate,
+        mcp,
         "python3",
         "-u",
         @fake_claude
@@ -2792,6 +2801,17 @@ defmodule HalC2.Test.Mc.World do
   def provider_inputs(context) do
     case File.read(Path.join(context.mc.home, "codex-inputs.jsonl")) do
       {:ok, lines} -> lines |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
+      {:error, :enoent} -> []
+    end
+  end
+
+  @doc """
+  The MCP servers each fake Claude CLI was handed over stdin in this scenario
+  (`mcp_set_servers`, with Claude's `${VAR}` expansion done), oldest first.
+  """
+  def claude_mcp_servers(context) do
+    case File.read(Path.join(context.mc.home, "claude-mcp.jsonl")) do
+      {:ok, text} -> text |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
       {:error, :enoent} -> []
     end
   end
@@ -3529,6 +3549,7 @@ defmodule HalC2.Test.Mc.World do
 
     env = %{
       "FAKE_CLAUDE_TRACE" => logs["claude"],
+      "FAKE_CLAUDE_MCP_LOG" => Path.join(context.mc.home, "claude-mcp.jsonl"),
       "FAKE_CODEX_TRACE" => logs["codex"],
       "FAKE_ACP_TRACE" => logs["acp"],
       # OpenCode's sessions, which every fake reads (a fork reads its source's).

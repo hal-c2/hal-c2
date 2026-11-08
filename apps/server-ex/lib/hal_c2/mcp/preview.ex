@@ -79,6 +79,18 @@ defmodule HalC2.Mcp.Preview do
     end
   end
 
+  # The tab's status from its desktop, and every tab of the thread as the MC
+  # sees it: who opened it, whether it is this session's, who is using it,
+  # whether it is shown, and its browser profile.
+  def call("preview_status", args, caller) do
+    {tab, input} = Map.pop(args, "tabId")
+
+    with {:ok, result, icon} <- invoke_with_icon(caller, "status", input, tab: tab) do
+      result = if is_map(result), do: result, else: %{}
+      {:ok, with_icon(Map.put(result, "tabs", thread_tabs(caller)), icon)}
+    end
+  end
+
   def call(name, args, caller) do
     args = if name == "preview_navigate", do: navigate_input(args), else: args
     {tab, input} = Map.pop(args, "tabId")
@@ -177,6 +189,36 @@ defmodule HalC2.Mcp.Preview do
   # "[::1]:3000" is the host ::1; otherwise the host ends at the port colon.
   defp bracketed_or_host("[" <> rest), do: rest |> String.split("]", parts: 2) |> hd()
   defp bracketed_or_host(host), do: host |> String.split(":", parts: 2) |> hd()
+
+  defp thread_tabs(caller) do
+    scope = %{thread_id: caller.thread_id, instance: caller.instance}
+
+    sessions =
+      case HalC2.Preview.list(%{"threadId" => caller.thread_id}) do
+        {:ok, %{"sessions" => sessions}} -> sessions
+        _ -> []
+      end
+
+    states = HalC2.PreviewAutomation.tab_states(scope, Enum.map(sessions, & &1["tabId"]))
+
+    for session <- sessions do
+      state = states[session["tabId"]]
+      nav = session["navStatus"] || %{}
+
+      %{
+        "tabId" => session["tabId"],
+        "url" => nav["url"],
+        "title" => nav["title"],
+        "openedBy" => if(state.owner == :not_agent, do: "user", else: "agent"),
+        "mine" => state.owner == :own,
+        "inUseBy" => state.in_use,
+        "shown" => state.shown,
+        "profileId" => session["profileId"] || "default"
+      }
+    end
+  catch
+    :exit, _ -> []
+  end
 
   # --- broker ----------------------------------------------------------------------
 

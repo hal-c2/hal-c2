@@ -14,6 +14,15 @@ defmodule HalC2.PullRequests.Checkout do
   it. A worktree that already holds the branch is reused and moved onto the head
   only when that loses nothing (`refresh/3`).
 
+  A pull request URL on another host than the checkout's (a GitHub Enterprise server,
+  a Forgejo) is read there, and its head is fetched from and followed on that host
+  through a remote of its own (upstream #15000).
+
+  `local` never discards the user's work (upstream #15036): it refuses while tracked
+  files have uncommitted changes, checks out without forcing, and then moves the
+  branch onto the pull request's head only when that loses nothing, saying whether it
+  got there.
+
   A fork's branch is fetched under `hal-c2/pr-<n>/<branch>` (`hal-c2-pr-<n>/…` where a
   branch named `hal-c2` is in the way). The project's setup script is not run for the
   new worktree.
@@ -29,16 +38,18 @@ defmodule HalC2.PullRequests.Checkout do
 
   @doc "`git.resolvePullRequest`."
   def resolve(%{"cwd" => cwd, "reference" => reference}) do
-    with {:ok, pr} <- read(cwd, host(cwd), reference, "resolvePullRequest"),
+    with {:ok, pr} <- read(cwd, host(cwd, reference), reference, "resolvePullRequest"),
          do: {:ok, %{"pullRequest" => resolved(pr)}}
   end
 
   @doc "`git.preparePullRequestThread`."
   def prepare(%{"cwd" => cwd, "reference" => reference, "mode" => mode}) do
-    host = host(cwd)
+    host = host(cwd, reference)
 
     result =
-      with {:ok, pr} <- read(cwd, host, reference, "preparePullRequestThread") do
+      with {:ok, pr} <- read(cwd, host, reference, "preparePullRequestThread"),
+           :ok <- if(mode == "local", do: clean(cwd, pr), else: :ok),
+           {:ok, host} <- host_remote(cwd, host) do
         if mode == "local", do: local(cwd, host, pr), else: worktree(cwd, host, pr)
       end
 
@@ -47,6 +58,86 @@ defmodule HalC2.PullRequests.Checkout do
   end
 
   # --- reading -------------------------------------------------------------------------
+
+  # The host `reference` is on: the checkout's (`host/1`), or the one a pull request
+  # URL on another host names, reached the way the checkout's remote is. Its `remote`
+  # is added once the pull request is read (`host_remote/2`).
+  defp host(cwd, reference) do
+    host = host(cwd)
+    checkout = host.url && parse_remote(host.url)
+
+    with %URI{scheme: scheme, host: name, path: path} when scheme in ["http", "https"] <-
+           URI.parse(String.trim(reference)),
+         true <- is_binary(name) and checkout != nil,
+         name = String.downcase(name),
+         true <- name != ssh_hostname(checkout.host, host.url),
+         [_, repository, segment] <-
+           Regex.run(~r{^/(.+?)/(?:-/)?(pull|pulls|merge_requests|pull-requests)/\d+}, path || "") do
+      kind =
+        case segment do
+          "pull" -> "github"
+          "pulls" -> "forgejo"
+          "merge_requests" -> "gitlab"
+          "pull-requests" -> "bitbucket"
+        end
+
+      %{
+        remote: nil,
+        url: clone_url(name, repository, ssh?(host.url)),
+        kind: kind,
+        repository: repository,
+        hostname: name,
+        ssh: ssh?(host.url)
+      }
+    else
+      _ -> host
+    end
+  end
+
+  # The host an SSH remote really reaches: `github-work` of `git@github-work:acme/web.git`
+  # is a `Host` alias in ssh_config, and `ssh -G` prints the `hostname` git and gh end up
+  # using. The name as written when ssh does not answer in time.
+  defp ssh_hostname(name, url) do
+    with true <- ssh?(url) and not String.starts_with?(name, "-"),
+         {:ok, out, _} <- SourceControl.Cli.run("ssh", ["-G", name], timeout: 3_000),
+         [_, resolved] <- Regex.run(~r/^hostname (\S+)$/m, out) do
+      String.downcase(resolved)
+    else
+      _ -> name
+    end
+  end
+
+  defp clone_url(hostname, repository, true), do: "git@#{hostname}:#{repository}.git"
+  defp clone_url(hostname, repository, false), do: "https://#{hostname}/#{repository}.git"
+
+  # Another host's repository gets a remote of its own, named after its owner.
+  defp host_remote(cwd, %{remote: nil, hostname: _} = host) do
+    case ensure_remote(cwd, host.repository |> String.split("/") |> hd(), host.url) do
+      {:ok, remote} -> {:ok, %{host | remote: remote}}
+      {:error, {_status, detail}} -> error("preparePullRequestThread", cwd, detail)
+    end
+  end
+
+  defp host_remote(_cwd, host), do: {:ok, host}
+
+  # As `ensureNoTrackedChanges`: untracked files do not count.
+  defp clean(cwd, pr) do
+    case Git.ok(cwd, ~w(status --porcelain --untracked-files=no)) do
+      {:ok, ""} ->
+        :ok
+
+      {:ok, _} ->
+        error(
+          "preparePullRequestThread",
+          cwd,
+          "This repository has uncommitted changes. Commit or stash them before checking out " <>
+            "pull request ##{pr["number"]} here, or check it out in its own folder."
+        )
+
+      {:error, {_status, detail}} ->
+        error("preparePullRequestThread", cwd, detail)
+    end
+  end
 
   # The primary remote, its configured URL (before any `insteadOf`) and the host it is on.
   defp host(cwd) do
@@ -58,7 +149,7 @@ defmodule HalC2.PullRequests.Checkout do
         _ -> nil
       end
 
-    parsed = url && PullRequests.parse_remote(url)
+    parsed = url && parse_remote(url)
 
     kind =
       if parsed && parsed.kind in ~w(gitlab bitbucket forgejo), do: parsed.kind, else: "github"
@@ -295,16 +386,92 @@ defmodule HalC2.PullRequests.Checkout do
          "pullRequest" => resolved(pr),
          "branch" => branch,
          "worktreePath" => nil,
-         "isOnPullRequestHead" => true
+         "isOnPullRequestHead" => onto_head(cwd, pr["headSha"])
        }}
     else
       {:error, {_reason, detail}} -> error("preparePullRequestThread", cwd, detail)
     end
   end
 
-  defp checkout(cwd, %{kind: "github"}, pr) do
+  # Some hosts' checkouts only switch branches; the head is reached here, forward only,
+  # as `moveToPullRequestHead`.
+  defp onto_head(cwd, sha) do
+    with true <- is_binary(sha) and Regex.match?(~r/\A[0-9a-fA-F]{7,64}\z/, sha),
+         target when is_binary(target) <- rev(cwd, sha) do
+      refresh(cwd, target, nil)
+    else
+      _ -> false
+    end
+  end
+
+  # `gh pr checkout` without `--force` switches to an existing local branch and then
+  # fast-forwards it, failing after the switch when the branch has commits of its own
+  # and the pull request has moved on. That is refused here, before anything moves.
+  defp not_diverged(cwd, host, pr) do
+    branch = pr["headRefName"]
+    mine = rev(cwd, "refs/heads/#{branch}")
+    sha = pr["headSha"]
+
+    head =
+      if is_binary(sha) and Regex.match?(~r/\A[0-9a-fA-F]{7,64}\z/, sha) do
+        rev(cwd, sha) || fetched_head(cwd, host, pr)
+      end
+
+    if mine && head && mine != head &&
+         not ancestor?(cwd, mine, head) && not ancestor?(cwd, head, mine) do
+      {:error,
+       {:failed,
+        "The local branch #{branch} has commits that are not on pull request ##{pr["number"]}, " <>
+          "and the pull request has commits the branch lacks. Nothing was changed. " <>
+          "Merge or rebase the branch onto the pull request, or check it out in its own folder."}}
+    else
+      :ok
+    end
+  end
+
+  defp ancestor?(cwd, older, newer),
+    do: match?({:ok, _}, Git.ok(cwd, ["merge-base", "--is-ancestor", older, newer]))
+
+  # The pull request's ref from the checkout's remote when its head is not here yet
+  # (best effort: `gh` fetches it again).
+  defp fetched_head(cwd, %{remote: remote}, pr) when is_binary(remote) do
     with {:ok, _} <-
-           GitHub.gh(cwd, ["pr", "checkout", "#{pr["number"]}", "--force"], timeout: 120_000),
+           Git.ok(cwd, [
+             "fetch",
+             "--quiet",
+             "--no-tags",
+             "--",
+             remote,
+             "refs/pull/#{pr["number"]}/head"
+           ]),
+         {:ok, sha} <- Git.ok(cwd, ["rev-parse", "--verify", "FETCH_HEAD^{commit}"]) do
+      String.trim(sha)
+    else
+      _ -> nil
+    end
+  end
+
+  defp fetched_head(_cwd, _host, _pr), do: nil
+
+  # Another GitHub server's pull request ref, onto the head branch when the checkout
+  # has none, else onto the branch it has (`onto_head/2` then moves it forward).
+  defp checkout(cwd, %{kind: "github", hostname: _} = host, pr) do
+    branch = pr["headRefName"]
+
+    with {:ok, _} <-
+           Git.ok(cwd, ["fetch", "--quiet", "--no-tags", "--", host.remote, pr_ref(host, pr)]),
+         {:ok, _} <-
+           if(rev(cwd, "refs/heads/#{branch}"),
+             do: Git.ok(cwd, ["checkout", "--quiet", branch]),
+             else: Git.ok(cwd, ["checkout", "--quiet", "-b", branch, "FETCH_HEAD"])
+           ),
+         do: {:ok, branch}
+  end
+
+  defp checkout(cwd, %{kind: "github"} = host, pr) do
+    with :ok <- not_diverged(cwd, host, pr),
+         {:ok, _} <-
+           GitHub.gh(cwd, ["pr", "checkout", "#{pr["number"]}"], timeout: 120_000),
          do: {:ok, nil}
   end
 
@@ -334,8 +501,7 @@ defmodule HalC2.PullRequests.Checkout do
   defp checkout(cwd, %{kind: "forgejo"} = host, pr) do
     branch = "pulls/#{pr["number"]}"
 
-    with {:ok, urls} <- lookup(cwd, "forgejo", host.repository),
-         url = if(ssh?(host.url), do: urls["sshUrl"], else: urls["url"]),
+    with {:ok, url} <- forgejo_url(cwd, host),
          {:ok, _} <-
            Git.ok(cwd, ["fetch", "--quiet", "--", url, "refs/pull/#{pr["number"]}/head"]),
          {:ok, head} <- fetched_commit(cwd),
@@ -346,6 +512,13 @@ defmodule HalC2.PullRequests.Checkout do
            ),
          {:ok, _} <- Git.ok(cwd, ["reset", "--quiet", "--keep", head]),
          do: {:ok, branch}
+  end
+
+  defp forgejo_url(_cwd, %{hostname: _, url: url}), do: {:ok, url}
+
+  defp forgejo_url(cwd, host) do
+    with {:ok, urls} <- lookup(cwd, "forgejo", host.repository),
+         do: {:ok, if(ssh?(host.url), do: urls["sshUrl"], else: urls["url"])}
   end
 
   defp fetched_commit(cwd) do
@@ -533,18 +706,40 @@ defmodule HalC2.PullRequests.Checkout do
         {:ok, host.remote}
 
       true ->
-        with {:ok, urls} <- lookup(cwd, host.kind, repository) do
-          url = if ssh?(host.url), do: urls["sshUrl"], else: urls["url"]
+        with {:ok, url} <- fork_url(cwd, host, repository) do
           owner = pr["headOwner"] || repository |> String.split("/") |> hd()
           ensure_remote(cwd, owner, url)
         end
     end
   end
 
+  # A fork on another host than the checkout's is reached on that host.
+  defp fork_url(_cwd, %{hostname: name, ssh: ssh?}, repository),
+    do: {:ok, clone_url(name, repository, ssh?)}
+
+  defp fork_url(cwd, host, repository) do
+    with {:ok, urls} <- lookup(cwd, host.kind, repository),
+         do: {:ok, if(ssh?(host.url), do: urls["sshUrl"], else: urls["url"])}
+  end
+
   defp ssh?(nil), do: false
 
   defp ssh?(url),
-    do: String.match?(url, ~r/^ssh:\/\//i) or String.match?(url, ~r/^[^\/:@]+@[^\/:]+:/)
+    do: String.match?(url, ~r/^ssh:\/\//i) or scp_like?(url)
+
+  # `user@host:path`, or `host:path` where ssh_config names the user. Not a Windows
+  # drive (`C:\repo`, one letter) nor a path.
+  @scp_like ~r/^(?:[^\/:@]+@)?[^\/:@\\]{2,}:(?!\/\/)/
+
+  defp scp_like?(url), do: String.match?(url, @scp_like)
+
+  # `PullRequests.parse_remote/1`, which wants `user@`, also for `host:owner/name.git`.
+  defp parse_remote(url) do
+    PullRequests.parse_remote(url) ||
+      if(scp_like?(url) and not String.contains?(url, "@"),
+        do: PullRequests.parse_remote("git@" <> url)
+      )
+  end
 
   # A remote already at `url` (by `HalC2.AgentSessions.remote_key/1`), else a new one
   # named after `owner`, numbered when that name is taken. As `ensureRemote`.
