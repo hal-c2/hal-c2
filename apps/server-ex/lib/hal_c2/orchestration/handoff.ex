@@ -610,28 +610,43 @@ defmodule HalC2.Orchestration.Handoff do
       newest = Enum.reverse(indexed)
       role = fn role -> &match?({{^role, _}, _}, &1) end
 
-      first =
-        [Enum.find(newest, role.(:user)), Enum.find(newest, role.(:assistant))] ++
-          [Enum.find(indexed, role.(:user))]
+      newest_pair = [Enum.find(newest, role.(:user)), Enum.find(newest, role.(:assistant))]
+      first = newest_pair ++ [Enum.find(indexed, role.(:user))]
+      latest = for {_entry, index} <- newest_pair |> Enum.reject(&is_nil/1), do: index
 
       {kept, _left} =
         (Enum.reject(first, &is_nil/1) ++ newest)
-        |> Enum.reduce({MapSet.new(), max_chars - @omitted_note}, fn {{_role, text}, index},
-                                                                     {kept, left} ->
+        |> Enum.reduce({%{}, max_chars - @omitted_note}, fn {{_role, text}, index},
+                                                            {kept, left} ->
+          text = if index in latest, do: tail_to_fit(text, left), else: text
           cost = String.length(text) + 2
 
-          if MapSet.member?(kept, index) or cost > left,
+          if Map.has_key?(kept, index) or cost > left,
             do: {kept, left},
-            else: {MapSet.put(kept, index), left - cost}
+            else: {Map.put(kept, index, text), left - cost}
         end)
 
-      selected = for {{_role, text}, index} <- indexed, MapSet.member?(kept, index), do: text
+      selected = for {{_role, _text}, index} <- indexed, is_map_key(kept, index), do: kept[index]
       left_out = length(entries) - length(selected)
 
       note =
         "[earlier messages omitted: #{length(selected)} items kept whole, #{left_out} left out]"
 
       Enum.join([note | selected], "\n\n")
+    end
+  end
+
+  # The newest request and answer are what the next agent must see; one too long
+  # for what is left keeps its end, capped like a command's output, instead of
+  # being left out whole.
+  defp tail_to_fit(text, left) do
+    if String.length(text) + 2 <= left do
+      text
+    else
+      [label | _] = String.split(text, ": ", parts: 2)
+      body = String.slice(text, (String.length(label) + 2)..-1//1)
+      keep = min(left - String.length(label) - 8, @max_output_chars)
+      if keep > 0, do: "#{label}: ... " <> String.slice(body, -keep, keep), else: text
     end
   end
 

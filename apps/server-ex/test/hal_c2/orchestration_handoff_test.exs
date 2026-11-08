@@ -300,6 +300,20 @@ defmodule HalC2.Orchestration.HandoffTest do
     refute transcript =~ String.duplicate("a", 3_000)
   end
 
+  test "a newest message longer than the budget keeps its end instead of being dropped" do
+    answer = String.duplicate("a", 8_000) <> String.duplicate("z", 2_000)
+
+    state = state(turn(1, "first request", "ok") ++ turn(2, "second request", answer))
+
+    transcript = Handoff.transcript(state, 3, 0, 8_000)
+
+    assert String.length(transcript) <= 8_000
+    assert transcript =~ "User: first request"
+    assert transcript =~ "Assistant: ... "
+    assert transcript =~ String.duplicate("z", 2_000)
+    refute transcript =~ String.duplicate("a", 8_000)
+  end
+
   # A thread a restart left a note on, about the background work its last turn left.
   defp noted do
     state([
