@@ -26,7 +26,8 @@ defmodule HalC2.ThreadMoveProofTest do
       "HalC2.ThreadMove.arrived?/2" => ~w(answer locked got has moves),
       "HalC2.ThreadMove.settle/1" =>
         ~w(settle let-go forward stop letting freeing? again release forsake found unsure),
-      "HalC2.ThreadMove handle_cast {:watch, _, _, _}" => "mover-died",
+      "HalC2.ThreadMove handle_call {:watch, _, _, _}" => "mover-died",
+      "HalC2.ThreadMove handle_call {:mover?, _}" => "release",
       "HalC2.ThreadMove handle_cast {:done, _, _}" => "settle",
       "HalC2.ThreadMove.removed/1" => ~w(forsake found out),
       "HalC2.ThreadMove handle_cast {:removed, _}" => ~w(forsake found),

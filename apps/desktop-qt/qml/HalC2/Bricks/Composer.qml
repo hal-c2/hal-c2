@@ -54,6 +54,16 @@ Rectangle {
     readonly property color secondary: Theme.palette.color("secondaryLabel", "#a1a1aa")
     readonly property color iconMuted: Theme.palette.color("iconMuted", "#8b8b93")
     readonly property color branchColor: Theme.palette.color("branchForeground", muted)
+    // A choice as the option's list names it: the provider's default is marked.
+    function choiceLabel(choice) {
+        return choice.isDefault ? qsTr("%1 (Default)").arg(choice.label) : choice.label;
+    }
+    // A select option's chip text: its chosen value's label, else the option's own. By value, not
+    // the picker's currentIndex, which lags a model change by a binding.
+    function selectedLabel(option) {
+        const chosen = (option?.choices ?? []).find(choice => choice.id === option.value);
+        return chosen ? chosen.label : (option?.label ?? "");
+    }
     readonly property var effortOption: ready ? (model.options.find(option => option.type === "select") ?? null) : null
     // The model's other options, such as Claude's fast mode and context window.
     // By id: every read of model.options converts to fresh objects, so identity never matches.
@@ -129,10 +139,23 @@ Rectangle {
                     detail: item.displayText
                 });
                 menu.built.push(sub);
+                // Why none of its rows can be chosen, above them, as the
+                // picker's own note says it.
+                if ((item.note ?? "").length > 0) {
+                    const note = overflowItemComponent.createObject(null, {
+                        objectName: "composerOverflowNote",
+                        text: qsTr("Locked"),
+                        reason: item.note,
+                        enabled: false
+                    });
+                    menu.built.push(note);
+                    sub.addItem(note);
+                }
                 item.choices.forEach((label, index) => {
                     const row = overflowItemComponent.createObject(null, {
                         text: label,
-                        current: index === item.currentIndex
+                        current: index === item.currentIndex,
+                        enabled: !(item.disabledRows ?? []).includes(index)
                     });
                     row.triggered.connect(() => item.activated(index));
                     menu.built.push(row);
@@ -254,6 +277,8 @@ Rectangle {
                     modelPicker.forceActiveFocus();
                     modelPicker.popup.open();
                 }
+            } else if (action === "composer.modelPicker.back") {
+                modelPicker.stepBack();
             } else if (action === "composer.control.open") {
                 composer.openControl(payload.command);
             } else if (action === "composer.stash.key" && composer.ready) {
@@ -290,6 +315,19 @@ Rectangle {
             "composer.host": hostPicker,
             "composer.workspace": envModePicker
         }[command];
+        // The permissions are named in the strip or on the toolbar, else
+        // they open in the model control. That control is shut while a
+        // message is on its way to the MC (isSendBusy), and so is this key,
+        // as the model key is; it opens again once the send lands.
+        if (command === "composer.mode" && !runtimeModePicker.present) {
+            if (contextPermissions.visible && contextPermissions.enabled) {
+                contextPermissions.forceActiveFocus();
+                contextPermissions.popup.open();
+            } else {
+                modelPicker.openPermissions();
+            }
+            return;
+        }
         if (!picker || !picker.enabled) return;
         // A folded picker is reached through the overflow menu, on its row.
         if (folded.includes(picker)) {
@@ -383,6 +421,29 @@ Rectangle {
         input.insert(start, mark + selected + closing);
         input.select(start + 1, start + 1 + selected.length);
         return true;
+    }
+
+    // The permissions on offer, each with its icon and what it allows.
+    readonly property var permissionModes: ready && !imagesHost ? (model.runtimeModes ?? []).map(mode => Object.assign({
+            icon: runtimeIcon(mode.value),
+            description: runtimeDescription(mode.value)
+        }, mode)) : []
+    // A new thread's context strip names its permissions; the toolbar then
+    // names them only when a thread's differ from the default.
+    readonly property bool stripNamesPermissions: permissionModes.length > 0 && model.routeKind === "draft" && contextStrip.visible
+    readonly property bool chipNamesPermissions: permissionModes.length > 0 && !stripNamesPermissions && model.runtimeMode !== model.defaultRuntimeMode
+
+    function runtimeDescription(mode) {
+        switch (mode) {
+        case "approval-required":
+            return qsTr("Ask before commands and file changes.");
+        case "auto-accept-edits":
+            return qsTr("Auto-approve edits, ask before other actions.");
+        case "auto":
+            return qsTr("Supported providers approve routine actions; others still ask.");
+        default:
+            return qsTr("Allow commands and edits without prompts.");
+        }
     }
 
     function runtimeIcon(mode) {
@@ -1401,9 +1462,11 @@ Rectangle {
 
                             Layout.preferredWidth: Math.min(implicitWidth, Theme.control.md * 8)
                             Layout.minimumWidth: Math.min(implicitWidth, Theme.control.md * 2)
-                            enabled: composer.ready && instances.length > 0
+                            enabled: composer.ready && instances.length > 0 && composer.model.isSendBusy !== true
                             selectedInstanceId: composer.ready ? composer.model.selectedInstanceId : null
                             selectedModel: composer.ready ? composer.model.selectedModel : null
+                            runtimeModes: composer.permissionModes
+                            runtimeMode: composer.ready ? (composer.model.runtimeMode ?? "") : ""
                         }
 
                         // The room left beside the model; the chips that fit it
@@ -1429,14 +1492,20 @@ Rectangle {
 
                                     present: composer.effortOption !== null
                                     visible: present && !composer.folded.includes(effortPicker)
-                                    model: composer.effortOption ? composer.effortOption.choices.map(choice => choice.label) : []
+                                    model: composer.effortOption ? composer.effortOption.choices.map(choice => composer.choiceLabel(choice)) : []
                                     currentIndex: composer.effortOption ? composer.effortOption.choices.findIndex(choice => choice.id === composer.effortOption.value) : -1
-                                    displayText: currentIndex < 0 ? (composer.effortOption ? composer.effortOption.label : "") : currentText
+                                    displayText: composer.selectedLabel(composer.effortOption)
                                     Accessible.name: composer.effortOption ? composer.effortOption.label : ""
-                                    onActivated: index => Shell.dispatch("composer.option.set", {
+                                    // The prompt says ultrathink in its own words: the effort is its.
+                                    readonly property bool locked: (composer.effortOption?.lockedReason ?? "").length > 0
+                                    note: locked ? composer.effortOption.lockedReason : ""
+                                    disabledRows: locked ? composer.effortOption.choices.map((_, index) => index) : []
+                                    onActivated: index => {
+                                        if (!locked) Shell.dispatch("composer.option.set", {
                                             id: composer.effortOption.id,
                                             value: composer.effortOption.choices[index].id
-                                        })
+                                        });
+                                    }
                                 }
 
                                 // By count, so a value picked here updates its control rather
@@ -1454,9 +1523,9 @@ Rectangle {
 
                                         objectName: "optionPicker:" + option.id
                                         visible: !composer.folded.includes(selectChip)
-                                        model: (option.choices ?? []).map(choice => choice.label)
+                                        model: (option.choices ?? []).map(choice => composer.choiceLabel(choice))
                                         currentIndex: (option.choices ?? []).findIndex(choice => choice.id === option.value)
-                                        displayText: currentIndex < 0 ? (option.label ?? "") : currentText
+                                        displayText: composer.selectedLabel(option)
                                         Accessible.name: option.label ?? ""
                                         onActivated: index => Shell.dispatch("composer.option.set", {
                                                 id: selectChip.option.id,
@@ -1508,7 +1577,7 @@ Rectangle {
                                     id: runtimeModePicker
                                     objectName: "runtimeModePicker"
 
-                                    present: composer.ready && !composer.imagesHost
+                                    present: composer.chipNamesPermissions
                                     visible: present && !composer.folded.includes(runtimeModePicker)
                                     iconName: composer.ready ? composer.runtimeIcon(composer.model.runtimeMode) : "lock"
                                     model: composer.ready ? composer.model.runtimeModes.map(mode => mode.label) : []
@@ -2171,6 +2240,30 @@ Rectangle {
                                     }
                                 }
                             }
+                        }
+
+                        // A new thread names the permissions its first
+                        // message runs in; choosing them opens their menu.
+                        ShellComboBox {
+                            id: contextPermissions
+                            objectName: "contextPermissions"
+
+                            readonly property int current: composer.permissionModes.findIndex(mode => mode.value === composer.model.runtimeMode)
+
+                            visible: composer.stripNamesPermissions
+                            implicitHeight: Theme.control.sm
+                            iconSize: Theme.icon.sm
+                            chevronSize: Theme.icon.sm
+                            font.pixelSize: Theme.type.meta.size
+                            font.weight: Theme.type.meta.weight
+                            hoverFill: composer.chipFill
+                            iconName: current >= 0 ? composer.permissionModes[current].icon : "lock"
+                            model: composer.permissionModes.map(mode => mode.label)
+                            currentIndex: current
+                            Accessible.name: qsTr("Permissions")
+                            onActivated: index => Shell.dispatch("composer.runtimeMode.set", {
+                                    mode: composer.permissionModes[index].value
+                                })
                         }
                     }
                 }

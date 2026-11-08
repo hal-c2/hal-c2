@@ -111,7 +111,7 @@ ShellWindow {
         else if (PaletteModel.open)
             PaletteModel.dismiss();
         else if (Keybindings.modelPickerOpen)
-            Shell.dispatch("composer.modelPicker.toggle");
+            Shell.dispatch("composer.modelPicker.back");
         else if (layout === "phone" && openSection.length > 0)
             Shell.dispatch("settings.navigate", { to: "/settings" });
         else if (layout === "phone" && screen === "thread" && Terminals.open)
