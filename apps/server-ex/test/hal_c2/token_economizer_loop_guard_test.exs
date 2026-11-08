@@ -631,12 +631,37 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
     test "a thread's watermark moves when its segment folds, not when its turn ends" do
       p = project()
       {:ok, state} = TokenEconomizer.init(%{})
+      # Its earlier turns read back (no thread here has any to read).
+      state = put_in(state.seeded[{"a", {p, "claudeAgent"}}], :read)
       state = observe(state, started("a", %{"projectId" => p, "newConversation" => true}))
       state = observe(state, finished("a", "r1"))
       assert Prune.seeded_run(state.prunes[{p, "claudeAgent"}], "a") == nil
 
       state = observe(state, started("a", %{"projectId" => p, "newConversation" => true}))
       assert Prune.seeded_run(state.prunes[{p, "claudeAgent"}], "a") == "r1"
+    end
+
+    test "a thread whose earlier turns could not be read keeps its watermark, to read them later" do
+      p = project()
+      key = {"a", {p, "claudeAgent"}}
+      {:ok, state} = TokenEconomizer.init(%{})
+      # Thread "a" is no thread the MC has, so reading its turns fails.
+      state = observe(state, started("a", %{"projectId" => p, "runId" => "r1"}))
+      assert state.seeded[key] == {:unread, "r1"}
+
+      state = observe(state, finished("a", "r1"))
+
+      state =
+        observe(
+          state,
+          started("a", %{"projectId" => p, "runId" => "r2", "newConversation" => true})
+        )
+
+      # The segment folded, and the watermark stayed: the next read is still up to the
+      # first run heard since.
+      assert state.prunes[{p, "claudeAgent"}]["sessions"] == 1
+      assert Prune.seeded_run(state.prunes[{p, "claudeAgent"}], "a") == nil
+      assert state.seeded[key] == {:unread, "r1"}
     end
 
     test "apply and restore need a project and a list of names, and refusing a proposed tool is saved" do

@@ -198,8 +198,10 @@ defmodule HalC2Plugins.TokenEconomizer do
        # {thread id, project} => the loaded set the thread's conversation on the
        # project's provider was shaped with
        shaped: %{},
-       # thread ids whose earlier turns were read back this run
-       seeded: MapSet.new(),
+       # {thread id, project} => :read once its earlier turns were read back this
+       # run, or {:unread, run id} while reading them failed: the first run heard
+       # since, before which the next read stops (`seed_history/5`)
+       seeded: %{},
        # {project id, provider} => the timer that folds its idle conversations
        prune_timers: %{},
        stats: %{"turns" => 0, "nudges" => 0, "aborts" => 0, "judgeCalls" => 0, "judgeTokens" => 0},
@@ -578,14 +580,17 @@ defmodule HalC2Plugins.TokenEconomizer do
     prompts = if Map.get(conv, :partial, false), do: 0, else: conv.prompts
 
     # Saved with the evidence, the thread's watermark moves to the segment's last run
-    # (`seed_history/4`), so a restart before a segment folds reads its runs back.
+    # (`seed_history/5`), so a restart before a segment folds reads its runs back; not
+    # while its earlier runs are unread, which would leave them unread for good.
+    read? = state.seeded[{conv.thread, conv.project}] == :read
+
     prune =
       prune
       |> Prune.fold_segment(conv.loaded, conv.used, prompts, prune_cfg(state), now_s(),
         imported: imported,
         thread: conv.thread
       )
-      |> Prune.note_thread(conv.thread, Map.get(conv, :last_run))
+      |> Prune.note_thread(conv.thread, if(read?, do: Map.get(conv, :last_run)))
 
     state
     |> put_prune(conv.project, prune, true)
@@ -667,58 +672,75 @@ defmodule HalC2Plugins.TokenEconomizer do
   # restart never folds a turn twice nor loses one heard but not yet folded. Only the
   # provider's own runs count: a thread's runs on another are that provider's evidence.
   # Read as `run_id` starts, and only the runs before it.
-  defp seed_history(state, thread_id, run_id, {_, provider} = project, unit) do
-    if MapSet.member?(state.seeded, {thread_id, project}) do
+  #
+  # A read that fails is tried again at the thread's next turn, up to the run first
+  # heard since, and until it succeeds no fold moves the watermark (`fold_conv/3`):
+  # the runs it could not read are still to fold, and those heard live already did.
+  defp seed_history(state, thread_id, run_id, project, unit) do
+    key = {thread_id, project}
+
+    case state.seeded[key] do
+      :read ->
+        state
+
+      seeded ->
+        before = with {:unread, first} <- seeded, do: first, else: (_ -> run_id)
+
+        case history(thread_id, before) do
+          {:ok, history} ->
+            fold_history(put_in(state.seeded[key], :read), history, key, before, unit)
+
+          :error ->
+            put_in(state.seeded[key], seeded || {:unread, run_id})
+        end
+    end
+  end
+
+  defp fold_history(state, history, {thread_id, {_, provider} = project}, before, unit) do
+    {prune, state} = prune(state, project, unit)
+
+    {watermark, runs} =
+      Prune.unseen_runs(history, Prune.seeded_run(prune, thread_id), before, fn run ->
+        run["provider"] == provider
+      end)
+
+    state = put_in(state.prunes[project], Prune.note_thread(prune, thread_id, watermark))
+
+    if runs == [] do
       state
     else
-      state = update_in(state.seeded, &MapSet.put(&1, {thread_id, project}))
-      {prune, state} = prune(state, project, unit)
+      used =
+        runs
+        |> Enum.flat_map(& &1["items"])
+        |> Enum.flat_map(&Prune.used_in_item(&1, unit))
+        |> Enum.uniq()
 
-      {watermark, runs} =
-        thread_id
-        |> history(run_id)
-        |> Prune.unseen_runs(Prune.seeded_run(prune, thread_id), run_id, fn run ->
-          run["provider"] == provider
-        end)
-
-      state = put_in(state.prunes[project], Prune.note_thread(prune, thread_id, watermark))
-
-      if runs == [] do
-        state
-      else
-        used =
-          runs
-          |> Enum.flat_map(& &1["items"])
-          |> Enum.flat_map(&Prune.used_in_item(&1, unit))
-          |> Enum.uniq()
-
-        fold_conv(
-          state,
-          %{
-            thread: thread_id,
-            project: project,
-            loaded: Prune.candidate_tools(unit),
-            used: used,
-            prompts: length(runs)
-          },
-          true
-        )
-      end
+      fold_conv(
+        state,
+        %{
+          thread: thread_id,
+          project: project,
+          loaded: Prune.candidate_tools(unit),
+          used: used,
+          prompts: length(runs)
+        },
+        true
+      )
     end
   end
 
   # The 50 runs that ended before `run_id` started, however late the feed tells of it.
   # Each names the driver it ran on, which is what a project's evidence is kept by, even
-  # once its instance is deleted.
+  # once its instance is deleted. `:error` when they could not be read.
   defp history(thread_id, run_id) do
     case Host.history(@id, thread_id, limit: 50, before: run_id) do
-      {:ok, runs} when is_list(runs) -> runs
-      _ -> []
+      {:ok, runs} when is_list(runs) -> {:ok, runs}
+      _ -> :error
     end
   rescue
-    _ -> []
+    _ -> :error
   catch
-    _, _ -> []
+    _, _ -> :error
   end
 
   defp now_s, do: System.os_time(:second)

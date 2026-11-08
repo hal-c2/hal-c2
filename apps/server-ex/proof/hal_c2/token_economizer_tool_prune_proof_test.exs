@@ -114,7 +114,7 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
       "HalC2Plugins.TokenEconomizer state :turns" => @guard,
       "HalC2Plugins.TokenEconomizer state :trackers" => @guard,
       "HalC2Plugins.TokenEconomizer state :seeded" =>
-        "which threads' earlier turns were read back this run; their folds are imported, which differs only in the live streaks auto needs (the plain test covers it), and a restart stands for the missed turns here",
+        "which threads' earlier turns were read back this run, or could not be yet (no fold then moves the watermark, which the plain test covers); their folds are imported, which differs only in the live streaks auto needs (the plain test covers it), and a restart stands for the missed turns here",
       "HalC2Plugins.TokenEconomizer state :prune_timers" =>
         "when the tick looks again; time passing is the wait rule",
       "HalC2Plugins.TokenEconomizer state :stats" => @guard,
