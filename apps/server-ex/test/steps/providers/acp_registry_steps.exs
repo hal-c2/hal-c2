@@ -4261,4 +4261,75 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     assert Enum.any?(descriptions, &(String.length(&1) == 1024))
     context
   end
+
+  # --- older ACP session modes ----------------------------------------------------------
+
+  step "{string} offers the modes {string} and {string} and no session options",
+       %{args: [_, a, b]} = context do
+    ctx = acme(context, %{"legacyModes" => [a, b]})
+    assert Acp.check("acme")["status"] == "ready"
+    ctx
+  end
+
+  step "one option {string} offers {string} and {string}", %{args: [name, a, b]} = context do
+    assert [%{"id" => "mode", "type" => "select", "options" => choices}] =
+             Enum.filter(context.descriptors, &(&1["label"] == name))
+
+    assert Enum.map(choices, & &1["id"]) == [a, b]
+    context
+  end
+
+  step "an agent with a single mode gets no such option", context do
+    Acp.control(context, "acme", %{"legacyModes" => ["ask"]})
+    assert Acp.check("acme")["status"] == "ready"
+    refute descriptor(model_options(), "mode")
+    context
+  end
+
+  step "{string} offers the same choices as its modes and as a thinking-level session option",
+       %{args: [_]} = context do
+    with_session_options(
+      context,
+      [select_option("thinking", "Thinking", ["low", "high"], %{"category" => "thought_level"})],
+      %{"legacyModes" => ["low", "high"]}
+    )
+  end
+
+  step "the choices are offered once, under the session option", context do
+    assert [%{"id" => "thinking", "options" => choices}] =
+             Enum.filter(context.descriptors, fn d ->
+               Enum.any?(d["options"] || [], &(&1["id"] == "low"))
+             end)
+
+    assert Enum.map(choices, & &1["id"]) == ["low", "high"]
+    context
+  end
+
+  step "no separate {string} option is added", %{args: [name]} = context do
+    refute Enum.any?(context.descriptors, &(&1["label"] == name or &1["id"] == "mode"))
+    context
+  end
+
+  step "the user sends {string} a message in the mode {string}", %{args: [_, mode]} = context do
+    send_with_options(context, %{"mode" => mode})
+  end
+
+  step "{string} is asked to switch its session to the mode {string}",
+       %{args: [_, mode]} = context do
+    assert %{"status" => "completed"} = context.last_run
+
+    assert [%{"modeId" => ^mode}] =
+             for(
+               %{"params" => params} <- Acp.requests(context, "acme", "session/set_mode"),
+               do: params
+             )
+
+    assert config_sets(context, "mode") == []
+    context
+  end
+
+  step "its {string} option now holds {string}", %{args: [name, value]} = context do
+    assert %{"currentValue" => ^value} = Enum.find(model_options(), &(&1["label"] == name))
+    context
+  end
 end

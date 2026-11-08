@@ -1058,12 +1058,18 @@ Feature: ACP registry agents
     Then "Thinking" is offered with low and high
     And the agent's own model and plan-mode options are not repeated there
 
-  @backlog
   Scenario: An agent that only has modes gets one "Mode" option
     Given "acme" offers the modes "ask" and "code" and no session options
     When the user opens the options of an "acme" model
     Then one option "Mode" offers "ask" and "code"
     And an agent with a single mode gets no such option
+
+  # The way to use the option above: older ACP agents change modes through session/set_mode.
+  Scenario: A mode of an agent's older session modes is set through the agent's set-mode request
+    Given "acme" offers the modes "ask" and "code" and no session options
+    When the user sends "acme" a message in the mode "code"
+    Then "acme" is asked to switch its session to the mode "code"
+    And its "Mode" option now holds "code"
 
   Scenario: Session options are bounded
     Given "acme" offers more than 16 session options, one of them with more than 64 choices
@@ -1995,7 +2001,6 @@ Feature: ACP registry agents
     Then the request is denied
 
   # AcpSessionConfig.ts
-  @backlog
   Scenario: Modes an agent also offers as a session option are shown once
     Given "acme" offers the same choices as its modes and as a thinking-level session option
     When the user opens the options of an "acme" model

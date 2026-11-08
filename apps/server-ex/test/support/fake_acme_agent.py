@@ -105,6 +105,10 @@ MODE_FILE = os.path.join(DIR, NAME + ".mode")
 if CONTROL.get("keepMode") and os.path.exists(MODE_FILE):
     mode = open(MODE_FILE).read()
 
+# "legacyModes": older ACP session modes (`modes`, set by session/set_mode).
+legacy_modes = CONTROL.get("legacyModes", [])
+legacy_mode = legacy_modes[0] if legacy_modes else None
+
 # "sessionOptions": more configOptions, as given; a set one keeps its new value.
 extra_options = [dict(o) for o in CONTROL.get("sessionOptions", [])]
 
@@ -344,9 +348,15 @@ for line in sys.stdin:
         if CONTROL.get("legacyModels") and not (method != "session/new" and CONTROL.get("resumeWithoutModels")):
             result["models"] = {"currentModelId": model,
                                 "availableModels": [{"modelId": v, "name": n} for v, n in models]}
+        if legacy_modes:
+            result["modes"] = {"currentModeId": legacy_mode,
+                               "availableModes": [{"id": m, "name": m.capitalize()} for m in legacy_modes]}
         if method == "session/new":
             result["sessionId"] = sid
         send({"id": mid, "result": result})
+    elif method == "session/set_mode" and legacy_modes:
+        legacy_mode = params["modeId"]
+        send({"id": mid, "result": {}})
     elif method == "session/set_config_option":
         if CONTROL.get("legacyModels") and params.get("configId") == "model":
             send({"id": mid, "error": {"code": -32601, "message": "Use session/set_model"}})

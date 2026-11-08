@@ -39,7 +39,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Acp.Kimi
   alias HalC2.Acp.OpenCode
 
-  @state_version 17
+  @state_version 18
   @registry HalC2.Acp.Registry
 
   # Grok's background task notifications.
@@ -212,6 +212,8 @@ defmodule HalC2.Acp.ThreadRuntime do
        # those options held before HAL-C2's plan mode took them over.
        plan_modes: %{},
        build_modes: %{},
+       # The session's older ACP modes (`modes`) while they are its "mode" option.
+       legacy_modes: nil,
        # OpenCode's HTTP server (`HalC2.Acp.OpenCode`), and its session's newest
        # message when the turn began: `{:ok, id | nil}`, or `:unknown`.
        server: nil,
@@ -1066,6 +1068,10 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp migrate(%{v: 16} = state), do: state |> Map.merge(%{v: 17, titled: nil}) |> migrate()
 
+  # Older ACP session modes are read from the session's next options.
+  defp migrate(%{v: 17} = state),
+    do: state |> Map.merge(%{v: 18, legacy_modes: nil}) |> migrate()
+
   # --- session -------------------------------------------------------------------
 
   # A signed-out registry agent is not started for a thread: it could only refuse the
@@ -1438,7 +1444,11 @@ defmodule HalC2.Acp.ThreadRuntime do
       Enum.any?(result["configOptions"] || [], &(&1["id"] == "model")) or is_map(result["models"])
 
     if named? or new?, do: record_model_switch(state, turn, named?)
-    remember_model(if(named?, do: state, else: %{state | model: nil}), result)
+    # A session without older modes drops those of the session before it.
+    remember_model(
+      if(named?, do: state, else: %{state | model: nil}),
+      Map.put_new(result, "modes", nil)
+    )
   end
 
   defp record_model_switch(state, turn, switches?) do
@@ -1483,12 +1493,27 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
-  defp remember_config(state, %{"configOptions" => [_ | _] = options}) do
+  # The session's options, its older ACP modes among them as one "mode" option
+  # (`HalC2.Acp.session_config/1`); a result without `modes` keeps the session's.
+  defp remember_config(state, %{"modes" => _} = result), do: remember_options(state, result)
+
+  defp remember_config(state, %{"configOptions" => [_ | _]} = result),
+    do: remember_options(state, result)
+
+  defp remember_config(state, _result), do: state
+
+  defp remember_options(state, result) do
+    modes = Map.get(result, "modes", state.legacy_modes)
+
+    options =
+      HalC2.Acp.session_config(%{"configOptions" => result["configOptions"], "modes" => modes})
+
     HalC2.Acp.put_config(state.agent, options)
 
     %{
       state
-      | config: Map.new(options, &{&1["id"], &1["currentValue"]}),
+      | legacy_modes: if(Enum.any?(options, &(&1["setBy"] == "session/set_mode")), do: modes),
+        config: Map.new(options, &{&1["id"], &1["currentValue"]}),
         plan_modes:
           for(
             %{"id" => id, "category" => category} = option <- options,
@@ -1499,8 +1524,6 @@ defmodule HalC2.Acp.ThreadRuntime do
           )
     }
   end
-
-  defp remember_config(state, _result), do: state
 
   # OpenCode's agent and reasoning variant (`OpenCodeAdapterV2`): the thread's `agent`
   # option, else its plan agent in plan mode (back to build after), and `variant`.
@@ -1667,6 +1690,32 @@ defmodule HalC2.Acp.ThreadRuntime do
     |> List.wrap()
     |> Enum.flat_map(&(&1["options"] || [&1]))
     |> Enum.find_value(&(&1["value"] in ["plan", "architect"] && &1["value"]))
+  end
+
+  # A mode of the session's older ACP modes is set through `session/set_mode`.
+  defp set_config(%{legacy_modes: %{} = modes} = state, "mode", value)
+       when is_binary(value) and is_map_key(state.config, "mode") do
+    if state.config["mode"] == value do
+      state
+    else
+      case Connection.call(state.conn, "session/set_mode", %{
+             "sessionId" => state.session_id,
+             "modeId" => value
+           }) do
+        {:ok, _} ->
+          HalC2.Acp.put_option(state.agent, "mode", value)
+
+          %{
+            state
+            | legacy_modes: Map.put(modes, "currentModeId", value),
+              config: Map.put(state.config, "mode", value)
+          }
+
+        {:error, reason} ->
+          Logger.warning("could not set the mode to #{value}: #{inspect(reason)}")
+          state
+      end
+    end
   end
 
   defp set_config(state, id, value)

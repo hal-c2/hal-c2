@@ -779,7 +779,7 @@ defmodule HalC2.Acp do
                else: call_serving(conn, id, "session/new", %{"cwd" => dir, "mcpServers" => []})
              ) do
           {:ok, session} ->
-            stage(id, :config, session["configOptions"] || [])
+            stage(id, :config, session_config(session))
             stage(id, :models, models(session))
             # Antigravity skips `session/new`, so its success proves no sign-in;
             # its signed-out flag is owned by `HalC2.Acp.Antigravity` instead.
@@ -1467,6 +1467,51 @@ defmodule HalC2.Acp do
   end
 
   @doc """
+  A session's `configOptions` with its older ACP session modes (`modes`, set through
+  `session/set_mode`) as one "Mode" option. That needs two or more modes, and no
+  option that is already `mode` or offers the same choices (upstream's
+  `AcpSessionConfig.ts`). The option it adds has `"setBy" => "session/set_mode"`.
+  """
+  def session_config(session) do
+    options = session["configOptions"] |> List.wrap() |> Enum.filter(&is_map/1)
+
+    case legacy_modes(session["modes"]) do
+      nil ->
+        options
+
+      mode ->
+        values = &MapSet.new(choices(&1), fn c -> c["value"] end)
+
+        if Enum.any?(options, &(&1["id"] == "mode" or values.(&1) == values.(mode))),
+          do: options,
+          else: options ++ [mode]
+    end
+  end
+
+  defp legacy_modes(%{"availableModes" => available} = modes) when is_list(available) do
+    listed =
+      for(
+        %{"id" => id} = mode when is_binary(id) and id != "" <- available,
+        do: %{"value" => id, "name" => text(mode["name"]) || id}
+      )
+      |> Enum.uniq_by(& &1["value"])
+
+    if length(listed) >= 2 do
+      %{
+        "id" => "mode",
+        "name" => "Mode",
+        "category" => "mode",
+        "type" => "select",
+        "currentValue" => modes["currentModeId"],
+        "options" => listed,
+        "setBy" => "session/set_mode"
+      }
+    end
+  end
+
+  defp legacy_modes(_modes), do: nil
+
+  @doc """
   Keeps the `configOptions` a registry agent's session reports, as `put_models/2`
   keeps its models, so its session options follow what it last offered.
   """
@@ -1481,6 +1526,14 @@ defmodule HalC2.Acp do
   end
 
   def put_config(_id, _config_options), do: :ok
+
+  @doc "Records `value` as what the registry session option `option` now holds."
+  def put_option(id, option, value) do
+    {__MODULE__, id, :config}
+    |> :persistent_term.get([])
+    |> Enum.map(&if(&1["id"] == option, do: Map.put(&1, "currentValue", value), else: &1))
+    |> then(&put_config(id, &1))
+  end
 
   @max_options 16
   @max_choices 64
