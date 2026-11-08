@@ -131,6 +131,12 @@ defmodule HalC2Plugins.CodeReview do
       not (is_number(settings["maxChangedLines"]) and settings["maxChangedLines"] >= 0) ->
         {:error, "maxChangedLines: give a number of lines, or 0 for no limit."}
 
+      not (is_number(settings["sandboxMinutes"] || 60) and (settings["sandboxMinutes"] || 60) >= 1) ->
+        {:error, "sandboxMinutes: give a sandboxed review at least a minute."}
+
+      not (is_number(settings["sandboxTokens"] || 0) and (settings["sandboxTokens"] || 0) >= 0) ->
+        {:error, "sandboxTokens: give a number of tokens, or 0 for no limit."}
+
       String.trim(settings["prompt"] || "") == "" ->
         {:error, "prompt: the review prompt cannot be empty."}
 
@@ -192,6 +198,14 @@ defmodule HalC2Plugins.CodeReview do
         organize(review["threadId"], %{"settled" => true, "listed" => false})
       end
 
+      {:ok, server(:snapshot)}
+    end
+  end
+
+  # A running review is called off: its agent is stopped, its checkout and sandbox go.
+  def call("stop", %{"key" => key}, _context) do
+    with {:ok, review} <- server({:stop, key}) do
+      retire(review)
       {:ok, server(:snapshot)}
     end
   end
@@ -550,6 +564,23 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
+  def handle_call({:stop, key}, _from, state) do
+    case state.reviews[key] do
+      %{"status" => "running", "threadId" => thread_id} = review ->
+        review =
+          Map.merge(review, %{"status" => "failed", "error" => "Stopped.", "finishedAt" => now()})
+
+        settle(thread_id)
+        {:reply, {:ok, review}, state |> put(review) |> pump() |> changed()}
+
+      %{} ->
+        {:reply, {:error, "The review of #{key} is not running."}, state}
+
+      nil ->
+        {:reply, {:error, "There is no review #{key}."}, state}
+    end
+  end
+
   # An automatic post is answered once it is over, so the agent hears how it went.
   def handle_call({:report, thread_id, findings}, from, state) do
     case by_thread(state, thread_id) do
@@ -635,14 +666,21 @@ defmodule HalC2Plugins.CodeReview do
           {:noreply, state |> changed()}
         else
           error =
-            if status == "completed",
-              do:
-                "The agent finished without reporting its findings. If it could not reach the #{@tool} tool, check that the project lets agents use HAL-C2's tools.",
-              else: ended_early(status, failure)
+            cond do
+              why = review["sandboxed"] && Host.sandbox_ended(@id, thread_id) ->
+                why
+
+              status == "completed" ->
+                "The agent finished without reporting its findings. If it could not reach the #{@tool} tool, check that the project lets agents use HAL-C2's tools."
+
+              true ->
+                ended_early(status, failure)
+            end
 
           review =
             Map.merge(review, %{"status" => "failed", "error" => error, "finishedAt" => now()})
 
+          close_sandbox(review)
           settle(thread_id)
           {:noreply, state |> put(review) |> failed_run() |> pump() |> changed()}
         end
@@ -686,6 +724,7 @@ defmodule HalC2Plugins.CodeReview do
   def handle_cast({:start_failed, key, thread_id, message}, state) do
     case state.reviews[key] do
       %{"threadId" => ^thread_id, "status" => "running"} = review ->
+        close_sandbox(%{"threadId" => thread_id, "sandboxed" => true})
         settle(thread_id)
 
         if limited?(%{"message" => message}) do
@@ -1473,14 +1512,17 @@ defmodule HalC2Plugins.CodeReview do
                review["number"],
                review["baseBranch"]
              ),
+           sandboxed = sandboxed?(settings, review),
            :ok <-
              claim(key, thread_id, %{
                "checkout" => checkout["path"],
                "root" => clone,
                "mergeBase" => checkout["mergeBase"],
                "reviewedSha" => checkout["headSha"],
-               "headSha" => checkout["headSha"]
-             }) do
+               "headSha" => checkout["headSha"],
+               "sandboxed" => sandboxed
+             }),
+           :ok <- if(sandboxed, do: open_sandbox(review, settings, model, clone, checkout), else: :ok) do
         review = Map.merge(review, %{"reviewedSha" => checkout["headSha"]})
         review = Map.merge(review, pull_request_context(review))
 
@@ -1500,7 +1542,8 @@ defmodule HalC2Plugins.CodeReview do
               "attachments" => []
             }
           },
-          listed: listed?(settings)
+          listed: listed?(settings),
+          sandboxed: sandboxed
         )
       end
 
@@ -1519,6 +1562,52 @@ defmodule HalC2Plugins.CodeReview do
     e -> GenServer.cast(__MODULE__, {:start_failed, review["key"], review["threadId"], Exception.message(e)})
   end
 
+  @doc """
+  Whether the review of pull request `review` runs in an OpenShell sandbox: when
+  its pull request is not trusted, or the settings sandbox every review.
+  """
+  def sandboxed?(settings, review), do: settings["sandboxEveryReview"] == true or not trusted?(review)
+
+  # Until a pull request can be named trusted (#1409), none is. The test config
+  # trusts them all, for the scenarios of reviews on this machine.
+  defp trusted?(_review), do: Application.get_env(:hal_c2, :code_review_trust_all, false)
+
+  # The review's sandbox, with its checkout made from the plugin's clone at the
+  # commit checked out here.
+  defp open_sandbox(review, settings, model, clone, checkout) do
+    number = review["number"]
+    tokens = settings["sandboxTokens"] || 0
+
+    with {:ok, _} <-
+           Host.open_sandbox(@id, review["threadId"], %{
+             driver: driver(model["instanceId"]),
+             instance: model["instanceId"],
+             clone: clone,
+             head_ref: "refs/hal-c2/code-review/#{number}/head",
+             base_ref: "refs/hal-c2/code-review/#{number}/base",
+             head: checkout["headSha"],
+             merge_base: checkout["mergeBase"],
+             review: review["key"],
+             tool: @tool,
+             minutes: settings["sandboxMinutes"] || 60,
+             tokens: if(tokens > 0, do: tokens)
+           }),
+         do: :ok
+  end
+
+  defp driver(instance) do
+    {:ok, providers} = Host.providers(@id)
+    Enum.find_value(providers, &(&1["instanceId"] == instance && &1["driverKind"])) || instance
+  end
+
+  # Off the server: deleting a sandbox waits on OpenShell.
+  defp close_sandbox(%{"sandboxed" => true, "threadId" => thread_id}) when is_binary(thread_id) do
+    spawn(fn -> Host.close_sandbox(@id, thread_id) end)
+    :ok
+  end
+
+  defp close_sandbox(_review), do: :ok
+
   # Stops the agent working in the review's checkout, then removes the checkout. The
   # checkout is named for the thread it was made for (`run/2`), which may be older than
   # the review's `threadId`. An agent that does not stop in time loses its checkout
@@ -1529,6 +1618,8 @@ defmodule HalC2Plugins.CodeReview do
     catch
       :exit, _ -> :ok
     end
+
+    Host.close_sandbox(@id, Path.basename(checkout))
 
     Checkout.remove(root, checkout)
   end
@@ -2219,7 +2310,8 @@ defmodule HalC2Plugins.CodeReview do
         do: Map.merge(row, %{"key" => key, "machine" => machine, "node" => node})
   end
 
-  @thread_fields ~w(key repository number title url headBranch baseBranch status verdict error publishError)
+  @thread_fields ~w(key repository number title url headBranch baseBranch status verdict error publishError
+                     sandboxed)
 
   defp threads(state) do
     for {_, %{"threadId" => id} = review} <- state.reviews, is_binary(id), into: %{} do

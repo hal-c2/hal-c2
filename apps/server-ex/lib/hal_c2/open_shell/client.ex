@@ -2,7 +2,8 @@ defmodule HalC2.OpenShell.Client do
   @moduledoc """
   The MC's side of OpenShell's `openshell.v1.OpenShell` gRPC API, over HTTP/2 with
   mutual TLS. This is the whole surface the MC uses; it holds no API for provider
-  credentials, policy approvals or operator work, and refuses a plaintext endpoint.
+  policy approvals or operator work, never reads a provider's credentials back
+  (`create_provider/4` only writes them), and refuses a plaintext endpoint.
 
       {:ok, conn} = Client.connect()
       {:ok, %{version: "0.1.7"}} = Client.health(conn)
@@ -310,6 +311,93 @@ defmodule HalC2.OpenShell.Client do
 
       error ->
         error
+    end
+  end
+
+  @doc """
+  Creates provider `name` of `type` (`"claude"`, `"codex"`, ...) holding
+  `credentials` (`%{"ANTHROPIC_API_KEY" => key}`), with this MC's owner label. A
+  sandbox created with it in `:providers` gets the credentials as OpenShell injects
+  them, never as an environment value the MC set. Nothing here reads them back.
+  """
+  def create_provider(%__MODULE__{} = conn, name, type, credentials, opts \\ []) do
+    with {:ok, labels} <- owned_labels(Keyword.get(opts, :labels, %{})) do
+      request = %Pb.CreateProviderRequest{
+        workspace_scope: scope(),
+        provider: %HalC2.OpenShell.Proto.Openshell.Datamodel.V1.Provider{
+          metadata: %HalC2.OpenShell.Proto.Openshell.Datamodel.V1.ObjectMeta{
+            name: name,
+            labels: labels
+          },
+          type: type,
+          credentials: Map.new(credentials)
+        },
+        request_id: request_id()
+      }
+
+      with {:ok, %Pb.ProviderResponse{}} <- call(conn, :create_provider, request, opts), do: :ok
+    end
+  end
+
+  @doc "The names of this MC's providers that carry every label in `labels`."
+  def list_providers(%__MODULE__{} = conn, labels \\ %{}, opts \\ []) do
+    with {:ok, labels} <- owned_labels(labels) do
+      selector = labels |> Enum.sort() |> Enum.map_join(",", fn {k, v} -> "#{k}=#{v}" end)
+      provider_pages(conn, selector, "", [], opts)
+    end
+  end
+
+  defp provider_pages(conn, selector, token, acc, opts) do
+    request = %Pb.ListProvidersRequest{
+      workspace_scope: scope(),
+      label_selector: selector,
+      page_size: 500,
+      page_token: token
+    }
+
+    with {:ok, %Pb.ListProvidersResponse{providers: page, next_page_token: next}} <-
+           call(conn, :list_providers, request, opts) do
+      owner = OpenShell.owner()
+
+      names =
+        for %{metadata: %{name: name, labels: labels}} <- page,
+            labels[OpenShell.owner_label()] == owner,
+            do: name
+
+      acc = acc ++ names
+      if next in [nil, ""], do: {:ok, acc}, else: provider_pages(conn, selector, next, acc, opts)
+    end
+  end
+
+  @doc "Deletes provider `name`; `:ok` when it is gone, already or now."
+  def delete_provider(%__MODULE__{} = conn, name, opts \\ []) do
+    request = %Pb.DeleteProviderRequest{
+      workspace_scope: scope(),
+      name: name,
+      allow_missing: true,
+      request_id: request_id()
+    }
+
+    case call(conn, :delete_provider, request, opts) do
+      {:ok, _} -> :ok
+      {:error, %{status: :not_found}} -> :ok
+      error -> error
+    end
+  end
+
+  @doc """
+  The policy sandbox `name` runs under as the gateway composed it, a gateway-wide
+  policy included: `{:ok, %SandboxPolicy{}}` for a sandbox this MC owns.
+  """
+  def sandbox_policy(%__MODULE__{} = conn, name, opts \\ []) do
+    request = %HalC2.OpenShell.Proto.Openshell.Sandbox.V1.GetSandboxConfigRequest{
+      workspace_scope: scope(),
+      name: name
+    }
+
+    with {:ok, _} <- get_sandbox(conn, name, opts),
+         {:ok, %{policy: policy}} <- call(conn, :get_sandbox_config, request, opts) do
+      {:ok, policy}
     end
   end
 

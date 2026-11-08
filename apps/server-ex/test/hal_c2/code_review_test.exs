@@ -8,6 +8,8 @@ defmodule HalC2.CodeReviewTest do
   """
   use ExUnit.Case, async: false
 
+  alias HalC2.Test.{FakeOpenShell, FakeSandbox}
+
   @moduletag :tmp_dir
   @id "code-review"
   @server HalC2Plugins.CodeReview
@@ -990,6 +992,94 @@ defmodule HalC2.CodeReviewTest do
     assert %{"status" => "running"} = review()
   end
 
+  # Sandboxed reviews (#1412).
+  describe "an untrusted pull request" do
+    setup context, do: sandboxed!(context)
+
+    test "is reviewed by an agent in a sandbox, which reports through the broker and is then deleted",
+         %{gateway: g} do
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+
+      # Codex runs in the sandbox's checkout, with none of this machine's environment.
+      assert_receive {:sandbox_exec, ["codex", "app-server"],
+                      %{workdir: "/sandbox/review", environment: env}},
+                     15_000
+
+      refute Map.has_key?(env, "OPENAI_API_KEY")
+      refute Map.has_key?(env, "PATH")
+      assert env["HOME"] == "/sandbox/home"
+
+      assert_receive {:sandbox_reported, 200, body}, 15_000
+      refute JSON.decode!(body)["result"]["isError"]
+      assert_receive {:openshell_request, "DeleteSandbox", %{name: "review-" <> _ = name}}, 15_000
+      assert_receive {:openshell_request, "DeleteProvider", %{name: ^name}}, 15_000
+
+      settle()
+      assert %{"sandboxed" => true, "verdict" => "approve", "status" => status} = review()
+      assert status != "failed"
+      assert FakeOpenShell.sandboxes(g) == %{}
+      assert FakeOpenShell.providers(g) == %{}
+    end
+
+    test "is reviewed by Claude in a sandbox too, given the broker and no other tool of HAL-C2",
+         %{gateway: g} do
+      save_settings(%{"provider" => "claudeAgent", "model" => "claude-haiku-4-5"})
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+
+      assert_receive {:sandbox_exec, ["claude" | args],
+                      %{workdir: "/sandbox/review", environment: env}},
+                     15_000
+
+      refute Map.has_key?(env, "ANTHROPIC_API_KEY")
+      assert ["--allowedTools", "mcp__hal-c2"] in Enum.chunk_every(args, 2, 1)
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+      assert_receive {:openshell_request, "DeleteProvider", _}, 15_000
+
+      settle()
+      assert %{"sandboxed" => true, "verdict" => "approve"} = review()
+      assert FakeOpenShell.sandboxes(g) == %{}
+    end
+
+    @tag sandbox: [report: nil, tokens: 1_000]
+    test "a review past its token budget fails, saying so", _context do
+      save_settings(%{"sandboxTokens" => 500})
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+      assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+      await_review(&(&1["status"] == "failed"))
+      assert review()["error"] =~ "used up its token budget"
+    end
+
+    @tag sandbox: [hang: true]
+    test "a review stopped from its row loses its sandbox", _context do
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+      assert_receive {:sandbox_turn, _}, 15_000
+      assert {:ok, _} = call("stop", %{"key" => @key})
+      assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+      settle()
+      assert %{"status" => "failed", "error" => "Stopped."} = review()
+    end
+
+    test "a review whose agent cannot run in a sandbox fails before anything starts", %{
+      gateway: g
+    } do
+      save_settings(%{"provider" => "cursor", "model" => "auto"})
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+      await_review(&(&1["status"] == "failed"))
+      assert review()["error"] =~ "cannot run in yet"
+      assert FakeOpenShell.sandboxes(g) == %{}
+    end
+  end
+
+  test "a trusted pull request is reviewed on this machine unless every review is sandboxed",
+       _context do
+    sandboxed? = &apply(@server, :sandboxed?, [&1, %{}])
+    assert sandboxed?.(%{}) == false
+    assert sandboxed?.(%{"sandboxEveryReview" => true}) == true
+
+    FakeOpenShell.put_env(code_review_trust_all: false)
+    assert sandboxed?.(%{}) == true
+  end
+
   # --- helpers ----------------------------------------------------------------------------
 
   # Reports findings from the review's thread, starting a run first if there is none.
@@ -1257,6 +1347,46 @@ defmodule HalC2.CodeReviewTest do
       after
         5_000 -> flunk("the thread was never asked to stop")
       end
+    end
+  end
+
+  # An MC whose pull requests are untrusted, with OpenShell installed: the fake
+  # gateway, whose sandbox runs `HalC2.Test.FakeSandbox` with the test's `:sandbox` tag.
+  defp sandboxed!(context) do
+    FakeOpenShell.put_env(
+      code_review_trust_all: false,
+      openshell_broker: [host: "127.0.0.1", bind: "127.0.0.1", ips: ["127.0.0.1"]]
+    )
+
+    restore = env(~w(OPENAI_API_KEY ANTHROPIC_API_KEY))
+    on_exit(restore)
+
+    System.put_env(%{
+      "OPENAI_API_KEY" => "sk-test-openai",
+      "ANTHROPIC_API_KEY" => "sk-test-anthropic"
+    })
+
+    gateway =
+      FakeOpenShell.start(HalC2.OpenShell.pki_dir(),
+        notify: self(),
+        exec: FakeSandbox.exec(FakeSandbox.root(), self(), Map.get(context, :sandbox, []))
+      )
+
+    File.write!(HalC2.OpenShell.state_path(), JSON.encode!(%{"endpoint" => gateway.endpoint}))
+    start_supervised!(HalC2.OpenShell.Review)
+    :sys.get_state(HalC2.OpenShell.Review)
+    %{gateway: gateway}
+  end
+
+  defp await_review(done?) do
+    HalC2.Plugins.subscribe_topic(self(), @id, "reviews")
+    await_reviews(done?)
+  end
+
+  defp await_reviews(done?) do
+    unless done?.(review() || %{}) do
+      assert_receive {:hal_c2_plugin_topic, _, @id, "reviews", _}, 15_000
+      await_reviews(done?)
     end
   end
 

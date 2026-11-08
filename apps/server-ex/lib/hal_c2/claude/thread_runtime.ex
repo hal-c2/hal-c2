@@ -118,6 +118,10 @@ defmodule HalC2.Claude.ThreadRuntime do
   # The subagent tool, taken from the CLI for a session kept to HAL-C2's workers
   # (`HalC2.Mcp.workers_only?/1`). Part of the launch, so a change restarts the CLI when
   # the next turn starts.
+  # A sandboxed review's agent gets the report broker, never HAL-C2's MCP server.
+  defp mcp(_state, %{sandbox: true} = turn), do: HalC2.OpenShell.Review.mcp(turn)
+  defp mcp(state, turn), do: HalC2.Mcp.for_agent(state.thread_id, Entities.instance(turn.ids))
+
   defp disallowed_tools(mcp), do: if(HalC2.Mcp.workers_only?(mcp), do: @agent_tools, else: [])
 
   def driver, do: "claudeAgent"
@@ -379,6 +383,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   def handle_call({:start_turn, turn}, _from, state) do
+    turn = HalC2.OpenShell.Review.in_sandbox(turn)
     # The user's run holds the thread working now.
     state = release_notices(state)
     ids = Map.put(turn.ids, :provider_turn, "provider-turn:claudeAgent:#{turn.ids.run}")
@@ -390,7 +395,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       |> Provider.launch(Map.get(turn, :options, %{}), Entities.instance(ids))
       |> auto_compact(Entities.instance(ids))
       |> with_launch_args(Entities.instance(ids), Map.get(turn, :cwd))
-      |> Map.put(:mcp, HalC2.Mcp.for_agent(state.thread_id, Entities.instance(ids)))
+      |> Map.put(:mcp, mcp(state, turn))
       |> then(&Map.put(&1, :disallowed_tools, disallowed_tools(&1.mcp)))
       |> Map.put(:instance, Entities.instance(ids))
 
@@ -1688,15 +1693,32 @@ defmodule HalC2.Claude.ThreadRuntime do
       durable: state.thread_id
     ]
 
-    case Session.start_link(Keyword.put(opts, :command, command(turn))) do
-      {:ok, session} ->
-        {:ok,
-         %{state | session: session, permission_mode: permission_mode(turn), launch: turn.launch}}
-
-      {:error, reason} ->
-        {:error, reason}
+    with {:ok, opts} <- in_sandbox(opts, turn),
+         {:ok, session} <- Session.start_link(opts) do
+      {:ok,
+       %{state | session: session, permission_mode: permission_mode(turn), launch: turn.launch}}
     end
   end
+
+  # A sandboxed review's CLI runs in its sandbox (#1412) with the sandbox's environment
+  # only: no instance command, variables or home of this machine's, no attachments
+  # directory, and nothing durable, since an exec stream ends with the MC.
+  defp in_sandbox(opts, %{sandbox: true} = turn) do
+    env = %{"MCP_TOOL_TIMEOUT" => to_string(HalC2.Mcp.tool_timeout_ms())}
+
+    with {:ok, sandbox} <- HalC2.OpenShell.Review.for_turn(turn, env) do
+      {:ok,
+       opts
+       |> Keyword.drop([:env, :durable, :cd])
+       |> Keyword.merge(
+         add_dirs: [],
+         sandbox: sandbox,
+         command: HalC2.OpenShell.Review.command("claudeAgent")
+       )}
+    end
+  end
+
+  defp in_sandbox(opts, turn), do: {:ok, Keyword.put(opts, :command, command(turn))}
 
   # The environment of the turn's `claude`. Its MCP client gives up on a tool after 60 s
   # unless told otherwise, which cuts HAL-C2's waiting tools short.
@@ -2113,6 +2135,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     state =
       with nil <- message["parent_tool_use_id"],
            %{} = usage <- get_in(message, ["message", "usage"]) do
+        spent(state, id, usage)
         turn = Map.merge(state.turn, %{last_usage: usage, usage_message: id, compacted: false})
         %{state | turn: turn}
       else
@@ -3140,6 +3163,20 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
+  # What a sandboxed review's message cost counts against its budget (#1412), once per
+  # message however often its counts are reported.
+  defp spent(%{turn: %{sandbox: true}} = state, message_id, usage) when is_binary(message_id) do
+    tokens =
+      for key <- ~w(input_tokens output_tokens cache_creation_input_tokens),
+          is_integer(usage[key]),
+          reduce: 0,
+          do: (sum -> sum + usage[key])
+
+    HalC2.OpenShell.Review.spent(state.thread_id, message_id, tokens)
+  end
+
+  defp spent(_state, _message_id, _usage), do: :ok
+
   # Partial messages: text and thinking stream into their items as they arrive.
   defp stream_event(%{"type" => "message_start", "message" => %{"id" => id}}, state),
     do: %{state | message_id: id, blocks: %{}}
@@ -3176,7 +3213,9 @@ defmodule HalC2.Claude.ThreadRuntime do
       counts =
         for {key, value} <- usage, is_number(value) and value > 0, into: %{}, do: {key, value}
 
-      %{state | turn: Map.update!(turn, :last_usage, &Map.merge(&1, counts))}
+      turn = Map.update!(turn, :last_usage, &Map.merge(&1, counts))
+      spent(state, state.message_id, turn.last_usage)
+      %{state | turn: turn}
     else
       state
     end

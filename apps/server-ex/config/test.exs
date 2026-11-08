@@ -41,3 +41,7 @@ config :hal_c2, windows_editor_cache_ms: 0
 # Each scenario's MC has a fresh home; the Mermaid helper's font choice is kept in one
 # place for them all, so only the first drawing of a run scans the system's fonts.
 config :hal_c2, mermaid_font_cache: Path.join(System.tmp_dir!(), "hal-c2-test-mermaid")
+
+# Code reviews run on this machine unless a test says otherwise: until trusted PRs
+# are named (#1409) every PR is untrusted and its review is sandboxed (#1412).
+config :hal_c2, code_review_trust_all: true

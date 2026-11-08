@@ -108,6 +108,8 @@ defmodule HalC2.Application do
       HalC2.Orchestration.LimitRecovery,
       HalC2.Usage,
       HalC2.Mcp,
+      # The sandboxes untrusted code reviews run in; deletes those an earlier MC left.
+      HalC2.OpenShell.Review,
       HalC2.Plugins,
       # The Slack connection plugins borrow, made again from the stored tokens.
       HalC2.Slack,

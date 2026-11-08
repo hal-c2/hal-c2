@@ -318,6 +318,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   def handle_call({:start_turn, turn}, _from, state) do
     # A thread saved under an older model name runs on the model it names today.
     turn = %{turn | model: HalC2.Codex.Provider.current_slug(turn.model)}
+    turn = HalC2.OpenShell.Review.in_sandbox(turn)
 
     # The instance is resolved once, here: settings changing mid-turn (the
     # instance removed, say) do not re-attribute the rest of the turn.
@@ -1208,6 +1209,33 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp request_rpc_id({:legacy, id}), do: id
   defp request_rpc_id(id), do: id
 
+  # A sandboxed review's app-server runs in its sandbox (#1412) with the sandbox's
+  # environment only: no instance command, variables or home of this machine's, and
+  # nothing durable, since an exec stream ends with the MC.
+  defp connect(%{conn: nil} = state, %{sandbox: true, ids: ids} = turn) do
+    with {:ok, sandbox} <- HalC2.OpenShell.Review.for_turn(turn),
+         {:ok, conn} <-
+           Connection.start_link(
+             cmd: HalC2.OpenShell.Review.command("codex"),
+             sandbox: sandbox,
+             handler: self(),
+             log: ids.thread,
+             program: "Codex App Server",
+             stderr_tail: true,
+             eof_grace: 250
+           ),
+         {:ok, _} <- initialize(conn) do
+      Connection.notify(conn, "initialized", nil)
+
+      {:ok,
+       state
+       |> Map.put(:last_turn, nil)
+       |> Map.merge(%{conn: conn, conn_instance: Entities.instance(ids)})}
+    else
+      {:error, reason} -> {:error, reason, state}
+    end
+  end
+
   defp connect(%{conn: nil} = state, %{ids: ids} = turn) do
     instance = Entities.instance(ids)
 
@@ -1238,18 +1266,7 @@ defmodule HalC2.Codex.ThreadRuntime do
              # One that closes its output and runs on fails its calls now (upstream #24600).
              eof_grace: 250
            ),
-         {:ok, _} <-
-           Connection.call(conn, "initialize", %{
-             "clientInfo" => %{
-               "name" => "hal_c2_desktop",
-               "title" => "HAL-C2 Desktop",
-               "version" => "0.1.0"
-             },
-             "capabilities" => %{
-               "experimentalApi" => true,
-               "optOutNotificationMethods" => ["turn/diff/updated"]
-             }
-           }) do
+         {:ok, _} <- initialize(conn) do
       Connection.notify(conn, "initialized", nil)
       # A new app-server's turns are its own: an id an earlier connection used
       # is not an earlier run's turn here.
@@ -1281,6 +1298,20 @@ defmodule HalC2.Codex.ThreadRuntime do
       stop_conn(state.conn)
       connect(%{state | conn: nil, native_thread_id: nil}, turn)
     end
+  end
+
+  defp initialize(conn) do
+    Connection.call(conn, "initialize", %{
+      "clientInfo" => %{
+        "name" => "hal_c2_desktop",
+        "title" => "HAL-C2 Desktop",
+        "version" => "0.1.0"
+      },
+      "capabilities" => %{
+        "experimentalApi" => true,
+        "optOutNotificationMethods" => ["turn/diff/updated"]
+      }
+    })
   end
 
   # An app-server that has just exited (its `:EXIT` not handled yet) is already stopped.
@@ -1398,6 +1429,10 @@ defmodule HalC2.Codex.ThreadRuntime do
   # A live native thread keeps its session while its MCP credential still
   # matches the access settings; a flip resumes it with fresh config below,
   # so its tool calls never carry a rotated-away token.
+  # A sandboxed review's broker token lasts its sandbox, which its thread outlives.
+  defp ensure_native_thread(%{native_thread_id: id} = state, %{sandbox: true}) when is_binary(id),
+    do: {:ok, state}
+
   defp ensure_native_thread(%{native_thread_id: id} = state, turn) when is_binary(id) do
     if HalC2.Mcp.prepared?(state.thread_id, Entities.instance(turn.ids)) do
       {:ok, state}
@@ -1626,6 +1661,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp workers_only(state, turn),
     do: %{state | workers_only: HalC2.Mcp.workers_only?(mcp(state, turn))}
 
+  # A sandboxed review's agent gets the report broker, never HAL-C2's MCP server.
+  defp mcp(_state, %{sandbox: true} = turn), do: HalC2.OpenShell.Review.mcp(turn)
   defp mcp(state, turn), do: HalC2.Mcp.for_agent(state.thread_id, Entities.instance(turn.ids))
 
   defp start_native_turn(state, turn) do
@@ -1678,6 +1715,9 @@ defmodule HalC2.Codex.ThreadRuntime do
   # preparation: rotating here would strand the header this thread's config
   # already carries. They steer the agent to work, so a plan turn, which must
   # not do the work, gets none.
+  # A sandboxed review's agent has none of HAL-C2's tools to be told about.
+  defp context(_state, %{sandbox: true}), do: nil
+
   defp context(state, turn) do
     instance = Entities.instance(turn.ids)
 
@@ -2231,6 +2271,11 @@ defmodule HalC2.Codex.ThreadRuntime do
          state
        )
        when is_integer(used) do
+    # A sandboxed review's spend counts against its budget (#1412).
+    with %{sandbox: true} <- state.turn,
+         total when is_integer(total) <- get_in(usage, ["total", "totalTokens"]),
+         do: HalC2.OpenShell.Review.spent(state.thread_id, "total", total)
+
     counts =
       for {key, field} <- [
             {"inputTokens", "inputTokens"},

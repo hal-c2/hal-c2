@@ -168,6 +168,27 @@
       "description": "The agent works in its own checkout of the pull request, which runs the pull request's code if the agent runs commands."
     },
     {
+      "key": "sandboxEveryReview",
+      "label": "Sandbox every review",
+      "type": "boolean",
+      "default": false,
+      "description": "Run every review in an OpenShell sandbox, not only those of pull requests HAL-C2 does not trust. Until trusted pull requests can be named, every review runs in one. Needs OpenShell on this MC, and Claude or Codex with an API key."
+    },
+    {
+      "key": "sandboxMinutes",
+      "label": "Sandboxed review time limit (minutes)",
+      "type": "number",
+      "default": 60,
+      "description": "A sandboxed review still running after this is stopped and its sandbox deleted."
+    },
+    {
+      "key": "sandboxTokens",
+      "label": "Sandboxed review token budget",
+      "type": "number",
+      "default": 5000000,
+      "description": "Tokens a sandboxed review's agent may use, input and output together. 0 for no limit."
+    },
+    {
       "key": "prompt",
       "label": "Review prompt",
       "type": "longText",

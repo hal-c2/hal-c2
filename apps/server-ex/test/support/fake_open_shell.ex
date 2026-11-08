@@ -7,7 +7,7 @@ defmodule HalC2.Test.FakeOpenShell do
   certificate into `dir`, laid out like `HalC2.OpenShell.pki_dir/0`.
 
   Sandboxes live in an Agent. `ExecSandboxInteractive` runs `opts[:exec]`, a
-  `fn command, io -> ... end` given the start request's command and an `io` it
+  `fn command, io -> ... end` (or `fn command, io, start`) given the start request's command and an `io` it
   reads stdin from (`read.(io)` gives `{:data, binary}` or `:eof`) and writes
   events to (`stdout.(data)`, `exit.(code)`). The default echoes stdin to stdout
   and exits 0. Every request is also sent to `opts[:notify]` as
@@ -24,11 +24,17 @@ defmodule HalC2.Test.FakeOpenShell do
   @doc """
   Starts the fake and returns `%{port, endpoint, credentials, server, store}`.
   Options: `:version` ("0.1.7"), `:roles` (["openshell-user"]), `:exec`,
-  `:notify`.
+  `:notify`, and `:widen`, a `fn policy -> policy end` standing for a gateway-wide
+  policy that `GetSandboxConfig` answers with on top of a sandbox's own.
   """
   def start(dir, opts \\ []) do
     credentials = issue(dir)
-    {:ok, store} = Agent.start_link(fn -> %{sandboxes: %{}, workspaces: MapSet.new()} end)
+
+    {:ok, store} =
+      Agent.start_link(fn ->
+        %{sandboxes: %{}, workspaces: MapSet.new(), providers: %{}, policies: %{}}
+      end)
+
     config = Map.new(opts) |> Map.put(:store, store)
 
     {:ok, server} =
@@ -142,6 +148,9 @@ defmodule HalC2.Test.FakeOpenShell do
   end
 
   def sandboxes(%{store: store}), do: Agent.get(store, & &1.sandboxes)
+
+  @doc "The providers in the fake's store, by name: `%{type, credentials, labels}`."
+  def providers(%{store: store}), do: Agent.get(store, & &1.providers)
 
   @doc "A certificate chain from a CA of its own, for a client the gateway must not trust."
   def stranger(dir) do
@@ -291,8 +300,77 @@ defmodule HalC2.Test.FakeOpenShell do
       request = Pb.CreateSandboxRequest.decode(body)
       notify(config, "CreateSandbox", request)
       sandbox = FakeOpenShell.sandbox(request.name, request.labels)
-      Agent.update(config.store, &put_in(&1, [:sandboxes, request.name], sandbox))
+
+      Agent.update(config.store, fn store ->
+        store
+        |> put_in([:sandboxes, request.name], sandbox)
+        |> put_in([:policies, request.name], request.spec && request.spec.policy)
+      end)
+
       reply(conn, %Pb.SandboxResponse{sandbox: sandbox})
+    end
+
+    defp unary(conn, "GetSandboxConfig", body, config) do
+      alias HalC2.OpenShell.Proto.Openshell.Sandbox.V1, as: SandboxPb
+      %{name: name} = SandboxPb.GetSandboxConfigRequest.decode(body)
+      widen = Map.get(config, :widen, & &1)
+
+      case Agent.get(config.store, & &1.policies[name]) do
+        nil ->
+          error(conn, 5, "sandbox not found")
+
+        policy ->
+          reply(conn, %SandboxPb.GetSandboxConfigResponse{policy: widen.(policy), version: 1})
+      end
+    end
+
+    defp unary(conn, "CreateProvider", body, config) do
+      %{provider: provider} = request = Pb.CreateProviderRequest.decode(body)
+      notify(config, "CreateProvider", request)
+
+      entry = %{
+        type: provider.type,
+        credentials: provider.credentials,
+        labels: provider.metadata.labels
+      }
+
+      Agent.update(config.store, &put_in(&1, [:providers, provider.metadata.name], entry))
+      reply(conn, %Pb.ProviderResponse{provider: provider})
+    end
+
+    defp unary(conn, "ListProviders", body, config) do
+      request = Pb.ListProvidersRequest.decode(body)
+
+      wanted =
+        for pair <- String.split(request.label_selector, ",", trim: true), into: %{} do
+          [k, v] = String.split(pair, "=", parts: 2)
+          {k, v}
+        end
+
+      providers =
+        for {name, entry} <- Agent.get(config.store, & &1.providers),
+            Enum.all?(wanted, fn {k, v} -> entry.labels[k] == v end),
+            do: %HalC2.OpenShell.Proto.Openshell.Datamodel.V1.Provider{
+              metadata: %HalC2.OpenShell.Proto.Openshell.Datamodel.V1.ObjectMeta{
+                name: name,
+                labels: entry.labels
+              },
+              type: entry.type
+            }
+
+      reply(conn, %Pb.ListProvidersResponse{providers: providers})
+    end
+
+    defp unary(conn, "DeleteProvider", body, config) do
+      request = Pb.DeleteProviderRequest.decode(body)
+      notify(config, "DeleteProvider", request)
+
+      Agent.update(
+        config.store,
+        &Map.update!(&1, :providers, fn p -> Map.delete(p, request.name) end)
+      )
+
+      reply(conn, %Pb.DeleteProviderResponse{outcome: :DELETION_OUTCOME_COMPLETED})
     end
 
     defp unary(conn, "GetSandbox", body, config) do
@@ -331,10 +409,11 @@ defmodule HalC2.Test.FakeOpenShell do
       request = Pb.DeleteSandboxRequest.decode(body)
       notify(config, "DeleteSandbox", request)
 
-      Agent.update(
-        config.store,
-        &Map.update!(&1, :sandboxes, fn s -> Map.delete(s, request.name) end)
-      )
+      Agent.update(config.store, fn store ->
+        store
+        |> Map.update!(:sandboxes, &Map.delete(&1, request.name))
+        |> Map.update!(:policies, &Map.delete(&1, request.name))
+      end)
 
       reply(conn, %Pb.DeleteSandboxResponse{outcome: :DELETION_OUTCOME_COMPLETED})
     end
@@ -360,8 +439,13 @@ defmodule HalC2.Test.FakeOpenShell do
 
           io = %{conn: conn, buffer: buffer, pending: rest, eof: false}
           Process.put(:fake_io, io)
-          run = Map.get(config, :exec, &echo/2)
-          run.(start.command, io_funs())
+          # A handler of three arguments also gets the start request (its workdir and
+          # environment).
+          case Map.get(config, :exec, &echo/2) do
+            run when is_function(run, 3) -> run.(start.command, io_funs(), start)
+            run -> run.(start.command, io_funs())
+          end
+
           Process.get(:fake_io).conn
       end
     end

@@ -1575,6 +1575,16 @@ defmodule HalC2.Orchestration do
       refusal = Map.get(turn, :refusal) ->
         HalC2.Orchestration.TurnWriter.abandon(thread_id, turn.ids.run, "failed", refusal)
 
+      # A sandboxed thread whose driver cannot run there, or whose sandbox is gone.
+      reason =
+          Map.get(turn, :sandbox) && HalC2.OpenShell.Review.refusal(thread_id, turn.ids.driver) ->
+        HalC2.Orchestration.TurnWriter.abandon(thread_id, turn.ids.run, "failed", %{
+          "class" => "provider_error",
+          "code" => "sandbox_unavailable",
+          "message" => reason,
+          "retryable" => false
+        })
+
       true ->
         start_turn_now(thread_id, turn)
     end
@@ -5414,6 +5424,9 @@ defmodule HalC2.Orchestration do
       # cannot run, fails before the provider starts (`begin_turn_now/2`).
       refusal:
         compact_refusal(command, provider_thread, handoff) || goal_refusal(command, driver),
+      # The thread's agent runs in its review sandbox, never on this machine
+      # (`HalC2.OpenShell.Review`): what the runtimes and `begin_turn_now/2` read.
+      sandbox: get_in(thread, ["plugin", "sandboxed"]) == true,
       run_ordinal: ordinal,
       started_ms: System.system_time(:millisecond),
       text: HalC2.Orchestration.Handoff.prompt(handoff.context, provider_text),

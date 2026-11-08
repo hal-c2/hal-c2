@@ -169,11 +169,13 @@ defmodule HalC2.Plugins.Host do
   @doc """
   Starts a thread as `orchestration.launchThread` does (`input` in its shape),
   marked as a `kind` thread of the plugin. `listed: false` keeps it out of the
-  thread list. Created by the system, from the server.
+  thread list. `sandboxed: true` runs its agent in the sandbox `open_sandbox/3`
+  made for it, and never on this machine. Created by the system, from the server.
   """
   def launch_thread(id, kind, input, opts \\ []) do
     with :ok <- permit(id, "threads:create") do
       mark = %{"id" => id, "kind" => kind, "listed" => Keyword.get(opts, :listed, true)}
+      mark = if opts[:sandboxed], do: Map.put(mark, "sandboxed", true), else: mark
 
       input
       |> Map.merge(%{"createdBy" => "system", "creationSource" => "server"})
@@ -190,6 +192,39 @@ defmodule HalC2.Plugins.Host do
   def organize_thread(id, thread_id, changes) do
     with :ok <- permit(id, "threads:organize"),
          do: HalC2.Orchestration.organize_plugin_thread(thread_id, id, changes)
+  end
+
+  @doc """
+  Makes the OpenShell sandbox thread `thread_id` will review in, before the thread
+  is launched with `sandboxed: true` (`HalC2.OpenShell.Review.open/1`, whose `spec`
+  this takes without `:thread_id`). `{:ok, %{sandbox, deadline}}` or
+  `{:error, message}`.
+  """
+  def open_sandbox(id, thread_id, spec) do
+    with :ok <- permit(id, "threads:create"),
+         do: HalC2.OpenShell.Review.open(Map.put(spec, :thread_id, thread_id))
+  end
+
+  @doc """
+  Deletes the sandbox of thread `thread_id`, if it has one: its agent can run no
+  more. `reason` says why for `sandbox_ended/2`.
+  """
+  def close_sandbox(id, thread_id, reason \\ nil) do
+    with :ok <- permit(id, "threads:organize"),
+         do: HalC2.OpenShell.Review.close(thread_id, reason)
+  end
+
+  @doc """
+  Why the sandbox of thread `thread_id` went before its agent was done, as a
+  sentence (a time, output or token limit), or nil.
+  """
+  def sandbox_ended(id, thread_id) do
+    with :ok <- permit(id, "threads:create") do
+      case HalC2.OpenShell.Review.ended(thread_id) do
+        reason when reason in ~w(time output tokens) -> HalC2.OpenShell.Review.ended_text(reason)
+        _ -> nil
+      end
+    end
   end
 
   @doc """
