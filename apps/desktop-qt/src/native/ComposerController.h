@@ -414,6 +414,7 @@ private:
   // A new thread started from `from` (a thread's key or a draft's id) keeps its model and mode.
   void carryInto(const QString& draftId, const QString& from);
   QString newThreadRuntimeMode(const QString& projectId) const;
+  QString defaultRuntimeModeOf(const QString& target) const;
   // The Space page on show, when no thread or draft is.
   QString openPage() const;
   bool onPage() const { return !m_pageId.isEmpty(); }
@@ -546,6 +547,8 @@ private:
   // A send used this model: new threads start from it.
   void rememberModel(const QJsonObject& selection);
   bool setOption(const QString& target, const QString& id, const QVariant& value);
+  bool stepEffort(const QString& target, int direction);
+  static bool effortLocked(const QJsonObject& descriptor, const QString& text);
   bool selectSuggestion(const QString& target, const QString& id);
   // The suggestions for the caret, with the trigger they answer.
   QList<composer::Suggestion> suggestions(const QString& target, const std::optional<composer::Trigger>& trigger) const;
@@ -609,6 +612,9 @@ private:
     // last sent with: a new thread starts from them.
     QHash<QString, QJsonObject> lastModels;
     QString lastInstance;
+    // The options last given to each model (instanceId + '\n' + slug):
+    // picking a model again offers them back.
+    QHash<QString, QJsonArray> modelOptions;
     // In the order they were sent.
     QList<Unsent> unsent;
     // Each target's send the MC answered last, which its stream may not have

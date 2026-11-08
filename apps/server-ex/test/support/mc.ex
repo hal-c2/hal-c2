@@ -1632,10 +1632,17 @@ defmodule HalC2.Test.Mc.World do
     dir = Mc.tmp_dir(context.mc, "remotes")
     ssh = Path.join(dir, "fake-ssh")
 
-    File.write!(
-      ssh,
-      ~s(#!/bin/sh\nfor last; do :; done\ncd "$HAL_C2_FAKE_REMOTES" && exec sh -c "$last"\n)
-    )
+    # A host with a directory `@<host>` of its own is served from it, so two hosts can
+    # hold same-named repositories; any other host from the directory itself.
+    File.write!(ssh, """
+    #!/bin/sh
+    dir="$HAL_C2_FAKE_REMOTES"
+    for arg; do
+      case "$arg" in *@*) [ -d "$HAL_C2_FAKE_REMOTES/@${arg#*@}" ] && dir="$HAL_C2_FAKE_REMOTES/@${arg#*@}" ;; esac
+      last="$arg"
+    done
+    cd "$dir" && exec sh -c "$last"
+    """)
 
     File.chmod!(ssh, 0o755)
     previous = {System.get_env("GIT_SSH_COMMAND"), System.get_env("HAL_C2_FAKE_REMOTES")}

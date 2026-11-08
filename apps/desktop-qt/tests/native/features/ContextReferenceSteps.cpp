@@ -434,6 +434,8 @@ const Steps steps([] {
     choose(world, idOf(waitForOffered(world, [&](const QVariant& item) { return labelOf(item) == c[0]; }, QStringLiteral("\"%1\" to be offered").arg(c[0]))));
   });
   step(QStringLiteral("the user chooses it"), [](World& world, const Captures&, const Table&) {
+    // The model picker's provider-setup offer is chosen in the same words.
+    if (modelPickerChoosesSetup(world)) return;
     expect(!refs(world).offered.isEmpty(), QStringLiteral("nothing was offered to choose"));
     choose(world, refs(world).offered);
   });

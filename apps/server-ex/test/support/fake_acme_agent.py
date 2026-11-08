@@ -265,7 +265,10 @@ for line in sys.stdin:
         continue
 
     if method == "initialize":
-        send({"id": mid, "result": initialize_result()})
+        if CONTROL.get("initializeError"):
+            send({"id": mid, "error": {"code": -32000, "message": CONTROL["initializeError"]}})
+        else:
+            send({"id": mid, "result": initialize_result()})
     elif method == "authenticate":
         failure = CONTROL.get("authenticateError")
         if failure:
@@ -328,6 +331,12 @@ for line in sys.stdin:
                         for p in providers()])
         send({"id": mid, "result": {}})
     elif method == "logout":
+        # `logoutHold` names a pipe the sign-out waits on until a line is written to it.
+        if CONTROL.get("logoutHold"):
+            open(CONTROL["logoutHold"]).readline()
+        if CONTROL.get("logoutError"):
+            send({"id": mid, "error": {"code": -32000, "message": CONTROL["logoutError"]}})
+            continue
         if os.path.exists(AUTH_FILE):
             os.remove(AUTH_FILE)
         send({"id": mid, "result": {}})

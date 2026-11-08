@@ -53,7 +53,7 @@ Feature: Grok
 
   # Upstream #22849: every Grok refresh added back cached models the CLI no longer advertised,
   # so a model gateway's models stayed listed after Grok was disconnected from it.
-  @backlog @mc @plugin-grok @priority-low
+  @mc @plugin-grok @priority-low
   Scenario: A Grok refresh drops models Grok no longer offers
     Given Grok offered the models of a model gateway
     And Grok was disconnected from the gateway
@@ -61,7 +61,7 @@ Feature: Grok
     Then only the models Grok now offers are in the model picker
 
   # Upstream #22849
-  @backlog @mc @plugin-grok @priority-low
+  @mc @plugin-grok @priority-low
   Scenario Outline: A Grok check that finds no models keeps the last known ones with a warning
     Given Grok offered four models
     When the MC checks Grok and <result>
@@ -79,7 +79,6 @@ Feature: Grok
     Then Grok is shown as signed out with a hint to sign in
 
   # Upstream #20358: a logged-out Grok probe is checked once more before Grok is reported signed out.
-  @backlog
   Scenario: A Grok refreshing its sign-in is not reported signed out
     Given Grok's sign-in expired and Grok is refreshing it
     When the MC checks Grok and is told Grok is signed out
@@ -114,14 +113,12 @@ Feature: Grok
 
   # Grok's own installer owns the binary, so its own updater is the update command.
   # Upstream #13523: Grok is updated through `grok update`
-  @backlog
   Scenario: An outdated Grok is offered an update through Grok's own updater
     Given Grok was installed by its own installer and a newer version is released
     When the MC checks provider versions
     Then Grok is reported behind the latest version with an update command
 
   # Upstream #13523: Grok is updated through `grok update`
-  @backlog
   Scenario: Updating Grok runs its updater against the home its instance uses
     Given Grok was installed by its own installer and this Grok instance has its own Grok home
     When the user updates Grok
@@ -130,7 +127,6 @@ Feature: Grok
 
   # Upstream #24246: with npm 12 an npm-installed Grok's update succeeded but skipped the step that
   # installs the new binary, so the old Grok kept running.
-  @backlog
   Scenario: Updating an npm-installed Grok installs its new binary
     Given Grok was installed with npm 12 and a newer version is released
     When the user updates Grok
@@ -138,7 +134,6 @@ Feature: Grok
     And Grok is reported current
 
   # Upstream #18772: a Homebrew-cask Grok is compared against the cask and upgraded with brew.
-  @backlog
   Scenario: A Grok installed as a Homebrew cask is updated through that cask
     Given Grok's executable lives in the Homebrew cask that installed it
     When the user opens Grok's update details
@@ -146,7 +141,6 @@ Feature: Grok
     And the update command upgrades that cask through Homebrew and not Grok's own updater
 
   # Upstream #18772: a cask the MC cannot prove owns Grok is left to the user.
-  @backlog
   Scenario: A Grok in a Homebrew cask that cannot be proven is updated by hand
     Given Grok's executable sits in a Homebrew cask under a different prefix than the brew on the path
     When the user opens Grok's update details
@@ -154,14 +148,12 @@ Feature: Grok
 
   # A binary that cannot be resolved is never handed to an updater it does not belong to.
   # Upstream #13523: Grok is updated through `grok update`
-  @backlog
   Scenario: A Grok binary that cannot be resolved is updated by hand
     Given the Grok instance's executable cannot be resolved
     When the MC checks provider versions
     Then Grok is reported behind the latest version with no update command
 
   # Health states of GrokProvider.ts checkGrokProviderStatus.
-  @backlog
   Scenario Outline: Grok's health states are explained
     Given <situation>
     When the user opens the provider list
@@ -177,7 +169,6 @@ Feature: Grok
       | Grok cannot report its model options           | Grok CLI is installed but ACP initialize failed. Model options may be incomplete. |
 
   # Upstream #18771: Grok gets up to 20 seconds to answer initialize before it is reported failing.
-  @backlog
   Scenario: A Grok that is slow to start is not reported as failing
     Given Grok takes 15 seconds to answer when it starts
     When the MC checks Grok
@@ -185,13 +176,11 @@ Feature: Grok
 
   # Upstream #28400: "grok --version" had 4 seconds, so a healthy CLI that started slowly behind a
   # shim, a version manager or a virus scan showed as unavailable.
-  @backlog
   Scenario: A Grok whose version check takes 8 seconds is not shown as unavailable
     Given "grok --version" takes 8 seconds to answer
     When the MC checks Grok
     Then Grok is not reported as timed out
 
-  @backlog
   Scenario: Grok that cannot report its model options stays usable
     Given the grok command is installed and signed in
     And Grok cannot report its model options
@@ -215,7 +204,6 @@ Feature: Grok
       | listing a project's skills     |
 
   # Upstream #18075: sessions, text generation and updates keep the caller's environment
-  @backlog
   Scenario Outline: Grok updates itself as configured outside health checks
     Given the MC's environment lets Grok update itself
     When <use>
@@ -377,26 +365,22 @@ Feature: Grok
     Then reading fails naming the step that failed and the project folder
     And the failure is not remembered as an empty skill list
 
-  @backlog
   Scenario: Choosing Grok's default model keeps the model the session already has
     Given a Grok session that started on the model Grok picked
     When a turn runs with Grok's default model chosen
     Then Grok is not asked to switch models
 
-  @backlog
   Scenario: A reasoning level Grok could not accept is not sent
     Given a Grok thread whose saved reasoning level is not a plain word
     When the user sends a message
     Then the turn runs without that reasoning level
 
-  @backlog
   Scenario: A Grok turn finishes when Grok says so even if its prompt never answers
     Given a Grok turn is running
     When Grok reports the turn complete but never answers the prompt request
     Then the turn completes
     And a completion notice for a subagent's session or for finished background work does not complete it
 
-  @backlog
   Scenario: A background Grok subagent stays running until Grok reports its result
     When Grok starts a subagent in the background and the launching tool call returns
     Then the subagent's thread is still running
@@ -418,13 +402,11 @@ Feature: Grok
       | because the command finished      | completed |
       | saying it failed or timed out     | failed    |
 
-  @backlog
   Scenario: A Grok tool without a title is named after what it does
     When Grok runs a tool and gives it no title
     Then the tool call is named after the command, file or search it works on
 
   # Upstream #20881: a Grok question that allows several answers keeps that.
-  @backlog
   Scenario Outline: Grok's questions keep their shape
     When Grok asks a question <shape>
     Then <outcome>
@@ -436,25 +418,27 @@ Feature: Grok
       | and the user types an answer of their own | Grok receives the typed text as its "Other" answer   |
       | and the turn is stopped before an answer  | Grok is told the question was cancelled              |
 
-  @backlog
   Scenario: Grok stops after its plan is captured
     Given a Grok thread in plan mode
     When Grok presents its plan
     Then the plan is shown for the user to review
     And Grok is told to stop and wait for feedback or a request to implement it
 
-  @backlog
   Scenario: A Grok plan with nothing in it says so
     Given a Grok thread in plan mode
     When Grok leaves plan mode without writing a plan
     Then the plan reads "No plan written yet"
 
-  @backlog
   Scenario: Grok's plan file is shown as the plan while Grok writes it
     Given a Grok thread in plan mode
     When Grok writes the plan file of its own session
     Then the thread's plan follows what Grok wrote
     And a file named "plan.md" that Grok edits in the workspace is shown as an ordinary edit
+
+  Scenario: Each plan-mode turn's plan file is its own plan
+    Given a Grok thread in plan mode
+    When Grok writes its plan file in two plan-mode turns
+    Then both plans are kept, each as its own plan
 
   @backlog
   Scenario: Checking on a Grok background task shows its latest output
@@ -463,13 +447,11 @@ Feature: Grok
     Then the check shows the command's latest line of output
 
   # GrokAdapterV2.ts: what the Grok flavour changes in the shared ACP adapter.
-  @backlog
   Scenario: Images are sent to Grok although Grok says it takes none
     Given Grok reports at start-up that it does not take images
     When the user sends a Grok message with a screenshot attached
     Then Grok receives the screenshot as an image with the message
 
-  @backlog
   Scenario: Sending /compact alone to Grok compacts its conversation
     Given a Grok thread with history
     When the user sends "/compact" with no attachments and the turn completes
@@ -513,7 +495,6 @@ Feature: Grok
       | is still answering                        | Grok is asked to cancel only what it is answering |
       | has answered and waits on background work | Grok is not asked to cancel anything              |
 
-  @backlog
   Scenario: A Grok failure that is not a usage limit shows Grok's own message and code
     When Grok refuses a message with an error that is not its rate-limit error
     Then the turn fails with Grok's message and error code
@@ -552,55 +533,46 @@ Feature: Grok
     Then the instance fails with "Failed to create Grok ACP adapter."
 
   # GrokAcpSupport.ts: how HAL-C2 starts and addresses the grok command.
-  @backlog
   Scenario: Grok is told that HAL-C2 started it
     When the MC starts the grok command
     Then the command's environment carries "GROK_OAUTH2_REFERRER" set to "hal-c2"
 
-  @backlog
   Scenario: Stopping a Grok turn reaches Grok as an interrupt from the keyboard
     Given a Grok turn is running
     When the user stops the turn
     Then Grok's cancel request carries the cancel trigger "ctrl_c"
 
-  @backlog
   Scenario: A reasoning level chosen with Grok's default model applies to the model the session is on
     Given a Grok session that started on the model Grok picked
     When a turn runs with Grok's default model and a reasoning level chosen
     Then Grok is asked for that reasoning level on the model the session already has
 
-  @backlog
   Scenario: Choosing the same Grok model again without a reasoning level keeps Grok's own reasoning
     Given a Grok session running on a model at the reasoning level Grok chose
     When a turn runs on that model with no reasoning level chosen
     Then Grok is not asked to change its reasoning level
 
   # XAiAcpExtension.ts: the corners of turn completion.
-  @backlog
   Scenario: Each Grok prompt carries an id that Grok's completion notice can name
     When the user sends a message in a Grok thread
     Then the prompt sent to Grok carries a prompt id and a request id of its own
 
-  @backlog
   Scenario: A Grok completion notice that reports a rate limit stops the turn at the usage limit
     Given a Grok turn is running
     When Grok reports the turn complete with a rate limit and never answers the prompt request
     Then the turn fails with "Grok usage limit reached. Try again later."
 
-  @backlog
   Scenario: A Grok completion notice that names no prompt ends the turn only when one prompt is waiting
     Given two prompts are waiting on the same Grok session
     When Grok reports a turn complete without naming a prompt
     Then neither prompt is completed
     And the same notice completes the prompt when only one is waiting
 
-  @backlog
   Scenario: A repeated Grok completion notice does not end the next turn
     Given a Grok turn has completed
     When Grok reports that turn complete again while the next turn is running
     Then the next turn is still running
 
-  @backlog
   Scenario: A Grok completion notice with a reason HAL-C2 does not know ends the turn normally
     Given a Grok turn is running
     When Grok reports the turn complete with a stop reason HAL-C2 does not know
@@ -613,7 +585,6 @@ Feature: Grok
     Then the turn ends as cancelled
     And the grok command is not started again to do it
 
-  @backlog
   Scenario Outline: Grok's notices are understood in either spelling
     When Grok sends "<notice>"
     Then HAL-C2 treats it as <meaning>
@@ -635,7 +606,6 @@ Feature: Grok
       | _x.ai/exit_plan_mode          | a plan to review                |
 
   # XAiAcpExtension.ts: the corners of tool calls, monitors and subagents.
-  @backlog
   Scenario Outline: A Grok tool with a placeholder title is given a name that says what it is
     When Grok runs <tool> titled "Tool"
     Then the tool call is named <name>
@@ -650,21 +620,24 @@ Feature: Grok
       | a command of more than 80 characters     | the command's first 77 characters followed by "..." |
 
   # Upstream #32408: the 77-character cut could land inside an emoji and leave half of it.
-  @backlog
   Scenario: A Grok command name cut short does not end in a broken character
     When Grok runs a command titled "Tool" whose 77th character falls inside an emoji
     Then the tool call is named by the command up to just before that emoji, followed by "..."
     And the name holds no replacement character
 
-  @backlog
+  Scenario: A Grok command name is cut by UTF-16 units, as the old server counted them
+    When Grok runs a command titled "Tool" of 41 emoji, 41 characters but 82 UTF-16 units
+    Then the tool call is named by the first 38 emoji followed by "..."
+
   Scenario Outline: A Grok command's result decides whether it is finished
     When Grok reports a command result with <result>
-    Then the command is shown as <state>
+    Then the command result is shown as <state>
 
     Examples:
       | result                        | state       |
       | exit code 0 and no output yet | in progress |
       | exit code 0 and its output    | completed   |
+      | exit code 0, no output, and says it completed | completed |
       | a non-zero exit code          | failed      |
       | the text "Exit Code: -1"      | failed      |
 
@@ -692,7 +665,6 @@ Feature: Grok
     When Grok says the monitor ended and gives no summary
     Then the monitor's output ends with "Monitor ended."
 
-  @backlog
   Scenario Outline: A Grok background subagent ends the way Grok's notice says
     Given Grok left a subagent running in the background
     When Grok says the subagent <outcome>
@@ -707,13 +679,16 @@ Feature: Grok
       | was interrupted        | failed    |
       | timed out              | failed    |
 
-  @backlog
-  Scenario: A Grok subagent whose name mentions a failure is not failed by its name
-    Given Grok left a subagent named "fix failed tests" running in the background
-    When Grok says the subagent completed successfully
+  Scenario Outline: A Grok subagent whose name mentions a failure is not failed by its name
+    Given Grok left a subagent named "<name>" running in the background
+    When Grok says the subagent <outcome>
     Then the subagent is shown as completed
 
-  @backlog
+    Examples:
+      | name                    | outcome                |
+      | fix failed tests        | completed successfully |
+      | handle (cancel) errors  | completed              |
+
   Scenario: Text that only mentions a subagent does not end one
     Given Grok left a subagent running in the background
     When text passes through the thread that talks about background subagents without being Grok's notice
@@ -732,14 +707,12 @@ Feature: Grok
     Then the first subagent is finished
     And the second is still running although the answer's text mentions it
 
-  @backlog
   Scenario: A Grok kill that did not go through leaves the task running
     Given Grok left a command running in the background
     When Grok tries to kill it and the kill fails
     Then the command is still listed as background work
 
   # XAiBackgroundTasks.ts: how Grok's background tasks are listed.
-  @backlog
   Scenario Outline: A Grok background task ends the way its reported status says
     Given Grok left a command running in the background
     When Grok reports the command ended with <report>
@@ -783,18 +756,15 @@ Feature: Grok
     And the second is still listed as background work
 
   # XAiAcpExtension.ts: the corners of questions and plans.
-  @backlog
   Scenario: A Grok question that does not say whether it takes several answers takes one
     When Grok asks a question that leaves out whether several answers are allowed
     Then the user can pick one option only
 
-  @backlog
   Scenario: Answers reach Grok in the order Grok asked its questions
     Given Grok asked two questions at once
     When the user answers the second question before the first
     Then Grok receives the answers in the order it asked, each under the question's own text
 
-  @backlog
   Scenario Outline: An option's preview goes back to Grok only for a single choice
     Given Grok asked a question whose options carry previews
     When the user answers a question that allows <choices>
@@ -805,13 +775,11 @@ Feature: Grok
       | one answer      | carries the chosen option's preview |
       | several answers | carries no preview                  |
 
-  @backlog
   Scenario: Grok's plan is read from its plan file when Grok presents none
     Given a Grok thread in plan mode whose plan file has been written
     When Grok presents its plan without including the plan's text
     Then the plan shown is the plan file's content
 
-  @backlog
   Scenario Outline: Grok's plan file is recognised wherever Grok keeps its sessions
     Given a Grok thread in plan mode
     When Grok writes "plan.md" <where>
@@ -831,7 +799,6 @@ Feature: Grok
     Then its task tool is passed as disallowed
 
   # Upstream #13328: restore a compatibility policy for every harness (Grok supported at 1.0.13)
-  @backlog
   Scenario Outline: The version Grok runs decides whether this HAL-C2 release supports it
     Given Grok version "<version>" is installed
     When the MC checks Grok

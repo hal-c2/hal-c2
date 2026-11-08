@@ -71,7 +71,7 @@ defmodule HalC2.Steps.Preview.Automation do
   end
 
   step "the desktop receives the agent's browser actions from then on", context do
-    context = act(context, "click a button")
+    context = act(context, "click a button", %{"tabId" => "tab-1"})
     assert {:ok, %{"done" => "click"}} = context.result
     assert [{"desktop-1", _}] = requests(context, "click")
     context
@@ -107,7 +107,57 @@ defmodule HalC2.Steps.Preview.Automation do
   end
 
   step "an agent takes its first browser action", context do
-    act(context, "click a button")
+    act(context, "click a button", %{"tabId" => "tab-1"})
+  end
+
+  # Both desktops, the first focused, so only what the second reports about
+  # the asked-about tab can send a new session to it.
+  step "the first desktop has its window focused", context do
+    context |> connect_desktop("desktop-1") |> connect_desktop("desktop-2") |> focus("desktop-1")
+  end
+
+  step "the second desktop is showing the tab the agent is asked about", context do
+    report_tabs(context, "desktop-2", %{"visibleTabIds" => ["tab-asked"]})
+  end
+
+  step "the second desktop has a live copy of the tab the agent is asked about", context do
+    report_tabs(context, "desktop-2", %{"liveTabIds" => ["tab-asked"]})
+  end
+
+  step "the second desktop has only a snapshot of its browser", context do
+    report_tabs(context, "desktop-2", %{"snapshotOnly" => true})
+  end
+
+  step "an agent takes its first browser action on that tab", context do
+    act(context, "click a button", %{"tabId" => "tab-asked"})
+  end
+
+  step "the action goes to the first desktop", context do
+    assert [{"desktop-1", _}] = requests(context, "click")
+    context
+  end
+
+  step "the action goes to the second desktop", context do
+    assert [{"desktop-2", _}] = requests(context, "click")
+    context
+  end
+
+  # What its browser holds, reported the way focus is, keeping its focus.
+  defp report_tabs(context, name, fields) do
+    desktop = context.desktops[name]
+    focused = broker().clients[desktop.client_id].focused
+
+    payload =
+      Map.merge(fields, %{
+        "clientId" => desktop.client_id,
+        "connectionId" => desktop.connection_id,
+        "focused" => focused
+      })
+
+    {nil, client} =
+      Mc.call!(desktop.client, context.mc.environment, "previewAutomation.focusHost", payload)
+
+    put_in(context, [:desktops, name, :client], client)
   end
 
   step "the action goes to the desktop that can do the most, preferring the focused one",
@@ -190,8 +240,103 @@ defmodule HalC2.Steps.Preview.Automation do
     context
   end
 
+  # The desktop answers with its own page timeout just inside the MC's limit
+  # (its host leaves itself an answer margin), as a timed-out wait does.
+  step "an agent is waiting for a page in a desktop browser", context do
+    context
+    |> connect_desktop("desktop-1")
+    |> answer("waitFor", fn _request, _context ->
+      {:error,
+       %{
+         "_tag" => "PreviewAutomationTimeoutError",
+         "message" => "Preview automation waitFor timed out after 15000ms."
+       }}
+    end)
+  end
+
+  step "the page wait times out and the browser says so within a second of the time limit",
+       context do
+    act(context, "wait for text to appear")
+  end
+
+  step "the tool fails with the browser's timeout", context do
+    assert {:error, "PreviewAutomationTimeoutError",
+            "Preview automation waitFor timed out after 15000ms."} = context.result
+
+    context
+  end
+
+  step "the agent's next action goes to the same browser", context do
+    assert Map.has_key?(broker().clients, "desktop-1")
+    context = act(context, "click a button", %{"tabId" => "tab-1"})
+    assert {:ok, _} = context.result
+    assert [{"desktop-1", _}] = requests(context, "click")
+    context
+  end
+
+  # The browser's timeout answer says whether the click's target is on the page.
+  step ~r/^the agent clicks (?<target>.+) and the click times out$/,
+       %{args: [target]} = context do
+    {args, named, matched} =
+      case target do
+        "the selector \".definitely-no-such-target\"" ->
+          {%{"selector" => ".definitely-no-such-target"}, ".definitely-no-such-target", false}
+
+        "a locator for a button behind an open dialog" ->
+          {%{"locator" => "role=button[name='Behind the dialog']"},
+           "role=button[name='Behind the dialog']", true}
+      end
+
+    timed_out = %{
+      "_tag" => "PreviewAutomationTimeoutError",
+      "message" => "Preview automation click timed out after 15000ms.",
+      "detail" => %{"matched" => matched}
+    }
+
+    context
+    |> Map.put(:click_target, named)
+    |> answer("click", fn _request, _context -> {:error, timed_out} end)
+    |> tool("preview_click", args)
+  end
+
+  step ~r/^the tool fails naming that target and saying it (?<matches>.+)$/,
+       %{args: [matches]} = context do
+    assert {:error, "PreviewAutomationTimeoutError", message} = context.result
+    assert message =~ "timed out after 15000ms"
+    assert message =~ context.click_target
+    assert message =~ matches
+    context
+  end
+
+  step "it warns that the click may still have happened", context do
+    assert {:error, _tag, message} = context.result
+    assert message =~ "The click may still have happened."
+    context
+  end
+
+  step "the page an agent opens takes 20 seconds to answer", context do
+    answer(context, "open", fn _request, _context ->
+      {:error,
+       %{
+         "_tag" => "PreviewAutomationNavigationTimeoutError",
+         "message" => "Preview navigation did not reach load readiness in time."
+       }}
+    end)
+  end
+
+  step "the agent opens it with preview_open", context do
+    tool(context, "preview_open", %{"url" => @page})
+  end
+
+  step "the tool fails saying the navigation timed out after 15000ms", context do
+    assert {:error, "PreviewAutomationNavigationTimeoutError",
+            "Preview automation navigation timed out after 15000ms."} = context.result
+
+    context
+  end
+
   step "an agent is waiting on an action in a desktop browser", context do
-    context |> connect_desktop("desktop-1") |> hold("click a button")
+    context |> connect_desktop("desktop-1") |> hold("click a button", %{"tabId" => "tab-1"})
   end
 
   step "that desktop disconnects", context do
@@ -213,7 +358,7 @@ defmodule HalC2.Steps.Preview.Automation do
 
   # With an action waiting on the old connection, so its fate can be checked.
   step "the same desktop registers again", context do
-    context = hold(context, "click a button")
+    context = hold(context, "click a button", %{"tabId" => "tab-1"})
     {old, desktops} = Map.pop(context.desktops, "desktop-1")
 
     %{context | desktops: Map.put(desktops, "old desktop-1", old)}
@@ -223,7 +368,7 @@ defmodule HalC2.Steps.Preview.Automation do
   end
 
   step "only the new connection receives actions", context do
-    context = act(context, "scroll the page")
+    context = act(context, "scroll the page", %{"tabId" => "tab-1"})
     assert {:ok, _} = context.result
     assert [{"desktop-1", _}] = requests(context, "scroll")
     new = context.desktops["desktop-1"].connection_id
@@ -282,7 +427,8 @@ defmodule HalC2.Steps.Preview.Automation do
     {action, args, error} =
       case failure do
         "an unsupported action" ->
-          {"scroll the page", %{}, %{"_tag" => "PreviewAutomationUnsupportedClientError"}}
+          {"scroll the page", %{"tabId" => "tab-1"},
+           %{"_tag" => "PreviewAutomationUnsupportedClientError"}}
 
         "a missing named tab" ->
           {"click a button", %{"tabId" => "tab-9"},
@@ -292,7 +438,7 @@ defmodule HalC2.Steps.Preview.Automation do
           {"click a button", %{}, %{"_tag" => "PreviewAutomationTabNotFoundError"}}
 
         "a failure without any details" ->
-          {"click a button", %{}, nil}
+          {"click a button", %{"tabId" => "tab-1"}, nil}
       end
 
     {_tool, _args, operation} = @actions[action]
@@ -305,7 +451,7 @@ defmodule HalC2.Steps.Preview.Automation do
   # --- tools ---------------------------------------------------------------------------------
 
   step "an agent opens a preview without saying whether to show it", context do
-    tool(context, "preview_open", %{"url" => @page})
+    context |> current_tab(@page) |> tool("preview_open", %{"url" => @page})
   end
 
   step "whether the browser comes to the front follows the user's desktop preference",
@@ -317,7 +463,7 @@ defmodule HalC2.Steps.Preview.Automation do
   end
 
   step "an existing tab for the same page is reused", context do
-    assert [{_, %{"input" => %{"url" => @page, "reuseExistingTab" => true}}}] =
+    assert [{_, %{"tabId" => "tab-1", "input" => %{"url" => @page, "reuseExistingTab" => true}}}] =
              requests(context, "open")
 
     context
@@ -330,6 +476,205 @@ defmodule HalC2.Steps.Preview.Automation do
   step "the browser comes to the front with the page", context do
     assert [{_, %{"input" => %{"url" => @page, "open" => true}}}] = requests(context, "open")
     assert {:ok, _} = context.result
+    context
+  end
+
+  step "an agent opens a preview of port {int} in its environment",
+       %{args: [port]} = context do
+    tool(context, "preview_open", %{
+      "target" => %{"kind" => "environment-port", "port" => port}
+    })
+  end
+
+  step "an agent opens a preview of port {int} in its environment and also gives the address {string}",
+       %{args: [port, address]} = context do
+    tool(context, "preview_open", %{
+      "target" => %{"kind" => "environment-port", "port" => port},
+      "url" => address
+    })
+  end
+
+  step "the tab opens on that environment's port {int}", %{args: [port]} = context do
+    assert {:ok, %{"done" => "open"}} = context.result
+    assert [{_, %{"input" => input}}] = requests(context, "open")
+    assert input["target"] == %{"kind" => "environment-port", "port" => port}
+    refute Map.has_key?(input, "url")
+    context
+  end
+
+  step "the agent did not have to navigate the tab afterwards", context do
+    assert requests(context, "navigate") == []
+    context
+  end
+
+  step ~r/^an agent opens a preview with (?:the address "(?<address>[^"]*)"|no address)$/,
+       %{args: [address]} = context do
+    if address in [nil, ""],
+      do: tool(context, "preview_open", %{}),
+      else: tool(context, "preview_open", %{"url" => address})
+  end
+
+  step ~r/^the open fails saying the protocol "(?<protocol>[^"]*)" is unsupported$/,
+       %{args: [protocol]} = context do
+    assert {:error, "PreviewAutomationInvalidInputError", message} = context.result
+    assert message =~ "protocol \"#{protocol}\" is unsupported"
+    assert requests(context, "open") == []
+    context
+  end
+
+  step "the tab opens on {string}", %{args: [url]} = context do
+    assert {:ok, %{"done" => "open"}} = context.result
+    assert [{_, %{"input" => %{"url" => ^url}}}] = requests(context, "open")
+    context
+  end
+
+  step "a blank tab opens", context do
+    assert {:ok, %{"done" => "open"}} = context.result
+    assert [{_, %{"input" => input}}] = requests(context, "open")
+    refute Map.has_key?(input, "url")
+    refute Map.has_key?(input, "target")
+    context
+  end
+
+  step ~r/^an agent sends (?<sent>.+)$/, %{args: [sent]} = context do
+    invalid = %{
+      "_tag" => "PreviewAutomationInvalidSelectorError",
+      "message" => "Preview automation click rejected the target in tab tab-1: unexpected token"
+    }
+
+    case sent do
+      "preview_open with the address \"about:blank\"" ->
+        tool(context, "preview_open", %{"url" => "about:blank"})
+
+      "preview_click with a locator it cannot parse" ->
+        context
+        |> answer("click", fn _request, _context -> {:error, invalid} end)
+        |> tool("preview_click", %{"locator" => "role==[[", "tabId" => "tab-1"})
+
+      "preview_click with an invalid CSS selector" ->
+        context
+        |> answer("click", fn _request, _context -> {:error, invalid} end)
+        |> tool("preview_click", %{"selector" => "button[", "tabId" => "tab-1"})
+    end
+  end
+
+  step ~r/^the tool fails explaining (?<guidance>.+)$/, %{args: [guidance]} = context do
+    assert {:error, _tag, message} = context.result
+
+    case guidance do
+      "the address forms it accepts, and that a blank tab comes from preview_open with no address" ->
+        assert message =~ "absolute http(s) URL or a schemeless host"
+        assert message =~ "Omit the address to open a blank tab"
+
+      "the locator forms it accepts" ->
+        assert message =~ "Locators look like role=button[name='Send'] or text=Continue"
+
+      "how to write a CSS selector or use a locator instead" ->
+        assert message =~ "CSS selector such as button[type='submit']"
+        assert message =~ "or a locator like role=button[name='Send'] instead"
+    end
+
+    context
+  end
+
+  # The browser host knows its own tabs, and refuses an open that names one it
+  # has not got; the MC forwards that tab as explicit and never substitutes.
+  step "the thread has no browser tab {string}", %{args: [_tab]} = context do
+    answer(context, "open", fn _request, _context ->
+      {:error, %{"_tag" => "PreviewAutomationTabNotFoundError"}}
+    end)
+  end
+
+  step "an agent opens a preview naming the tab {string}", %{args: [tab]} = context do
+    tool(context, "preview_open", %{"tabId" => tab})
+  end
+
+  step "the agent is told the tab is not open", context do
+    assert {:error, "PreviewAutomationTabNotFoundError",
+            "Preview tab tab-9 was not found for open."} = context.result
+
+    context
+  end
+
+  step "no new tab is opened", context do
+    assert [{_, %{"tabId" => "tab-9", "tabIdExplicit" => true}}] = requests(context, "open")
+    context
+  end
+
+  # Both threads' agents run as the one provider instance `caller/1` names.
+  step "the threads {string} and {string} share one provider session",
+       %{args: [first, second]} = context do
+    services()
+
+    context
+    |> World.create_project("Shop")
+    |> World.create_thread(first)
+    |> World.create_thread(second)
+  end
+
+  step "{string} has the browser tab {string}", %{args: [thread, _name]} = context do
+    thread_id = World.thread_id(context, thread)
+
+    {tab, context} =
+      World.call!(context, "preview.open", %{
+        "threadId" => thread_id,
+        "url" => @page <> "checkout"
+      })
+
+    context =
+      context
+      |> Map.put(:agent_thread, thread_id)
+      |> tool("preview_navigate", %{"tabId" => tab["tabId"], "url" => @page <> "checkout"})
+
+    assert {:ok, %{"tabId" => _}} = context.result
+    Map.put(context, :checkout_tab, tab["tabId"])
+  end
+
+  # `"{string} is not listed"` is the common step over `context.listing`; the
+  # "Checkout" tab is listed by that name when this thread has it.
+  step "the agent in {string} lists its browser tabs", %{args: [thread]} = context do
+    thread_id = World.thread_id(context, thread)
+    {:ok, listed} = HalC2.Preview.list(%{"threadId" => thread_id})
+
+    listing =
+      Enum.map(listed["sessions"], fn session ->
+        if session["tabId"] == context.checkout_tab, do: "Checkout", else: session["tabId"]
+      end)
+
+    context =
+      context
+      |> Map.put(:listing, listing)
+      |> Map.put(:agent_thread, thread_id)
+      |> tool("preview_status", %{})
+
+    # Nor is it this agent's current tab: the status read names no tab.
+    assert {_, request} = List.last(requests(context, "status"))
+    refute Map.has_key?(request, "tabId")
+    context
+  end
+
+  step ~r/^(?:the user invokes a skill or written workflow that names another browser|the preview fails twice on the same step of an open tab|the preview works)$/,
+       context do
+    Map.put(context, :browser_situation, HalC2.Mcp.Instructions.browser())
+  end
+
+  step ~r/^the agent's instructions let it use another browser (?<how>.+)$/,
+       %{args: [how]} = context do
+    text = context.browser_situation
+
+    case how do
+      "and report any missing prerequisite" ->
+        assert text =~ "skill or written workflow that names another browser"
+        assert text =~ "report any missing prerequisite"
+
+      "after quoting the error, without asking" ->
+        assert text =~ "fails twice on the same step of an open tab"
+        assert text =~ "quote the error and switch without asking"
+
+      "not at all, the preview stays the default" ->
+        assert text =~ "while the preview works it stays the default"
+    end
+
     context
   end
 
@@ -392,6 +737,74 @@ defmodule HalC2.Steps.Preview.Automation do
 
   step "an agent takes a snapshot and asks for no image", context do
     tool(context, "preview_snapshot", %{"includeImage" => false})
+  end
+
+  step "the tool returns no screenshot", context do
+    assert {:ok, _metadata, content} = context.result
+    assert images(content) == []
+    context
+  end
+
+  step "the agent takes a snapshot and asks for the image", context do
+    tool(context, "preview_snapshot", %{"includeImage" => true})
+  end
+
+  step "the agent takes a snapshot and saves the screenshot", context do
+    tool(context, "preview_snapshot", %{"save" => true})
+  end
+
+  step "the agent takes a snapshot with no image and saves the screenshot", context do
+    tool(context, "preview_snapshot", %{"save" => true, "includeImage" => false})
+  end
+
+  step "the tool returns only the page's address and the saved file's path", context do
+    assert {:ok, metadata, content} = context.result
+    assert metadata |> Map.keys() |> Enum.sort() == ["screenshotPath", "url"]
+    assert metadata["url"] == @page
+    assert File.read!(metadata["screenshotPath"]) == png()
+    assert [%{"type" => "text", "text" => url}, %{"type" => "text", "text" => note}] = content
+    assert JSON.decode!(url) == %{"url" => @page}
+    assert note =~ metadata["screenshotPath"]
+    context
+  end
+
+  step "an agent takes a snapshot of a tab that is not open", context do
+    context
+    |> answer("snapshot", fn _request, _context ->
+      {:error, %{"_tag" => "PreviewAutomationTabNotFoundError"}}
+    end)
+    |> tool("preview_snapshot", %{"tabId" => "tab-9"})
+  end
+
+  step "the tool fails saying to open a preview with preview_open first", context do
+    assert {:error, "PreviewAutomationTabNotFoundError", message} = context.result
+    assert message =~ "Preview tab tab-9 was not found for snapshot."
+    assert message =~ "Open a preview with preview_open first."
+    context
+  end
+
+  step "the page's visible text has an emoji where the snapshot cuts it", context do
+    Map.put(
+      context,
+      :snapshot,
+      %{"visibleText" => String.duplicate("a", 7_999) <> "😀" <> String.duplicate("b", 20)}
+    )
+  end
+
+  step "the snapshot's text ends on a whole character", context do
+    visible = bounded(context)["visibleText"]
+    assert String.valid?(visible)
+    assert visible == String.duplicate("a", 7_999) <> "😀…"
+    context
+  end
+
+  step "Codex reads the tool result", context do
+    assert {:ok, metadata, content} = context.result
+    # A strict JSON reader: the whole result round-trips, emoji intact.
+    encoded = JSON.encode!(%{"metadata" => metadata, "content" => content})
+    assert encoded =~ "😀"
+    assert %{"content" => ^content} = JSON.decode!(encoded)
+    context
   end
 
   step "the tool returns the page's text without the screenshot", context do
@@ -542,6 +955,22 @@ defmodule HalC2.Steps.Preview.Automation do
     answer(context, "recordingStop", fn _request, _context -> {:ok, recording(nil)} end)
   end
 
+  step "the recording is larger than 50 MiB", context do
+    answer(context, "recordingStop", fn _request, _context ->
+      {:ok, recording("pending-too-big") |> Map.put("sizeBytes", 60 * 1024 * 1024)}
+    end)
+  end
+
+  step "the transfer is not finished in time", context do
+    answer(context, "recordingStop", fn _request, _context ->
+      {:error,
+       %{
+         "_tag" => "PreviewAutomationRecordingDeadlineExpiredError",
+         "message" => "transfer deadline"
+       }}
+    end)
+  end
+
   # `run "..."` and `run the same command again` are approval steps (the timeline's and
   # providers/permission-modes.feature's), not browser actions.
   step ~r/^the agent asks to (?!run ")(?!run the same command again$)(?!.* allowing \d+ seconds$)(?<action>.+)$/,
@@ -622,15 +1051,9 @@ defmodule HalC2.Steps.Preview.Automation do
     context
   end
 
-  # Opened by the desktop on the agent's behalf, as `preview.open` from its socket.
+  # The agent's open, for which the desktop makes a new tab of the thread.
   step "the thread has a browser tab the agent opened", context do
     context = agent_thread(context)
-
-    {tab, context} =
-      World.call!(context, "preview.open", %{
-        "threadId" => caller(context).thread_id,
-        "url" => @page
-      })
 
     watcher =
       context.mc
@@ -640,12 +1063,140 @@ defmodule HalC2.Steps.Preview.Automation do
     {{:ok, _}, watcher} =
       Mc.call(watcher, context.mc.environment, "preview.list", %{"threadId" => "none"})
 
+    context = context |> desktop_makes_tabs() |> tool("preview_open", %{"url" => @page})
+    assert {:ok, %{"tabId" => tab}} = context.result
+
     context
-    |> Map.put(:tab, tab["tabId"])
+    |> Map.put(:tab, tab)
     |> World.put_client("watcher", watcher)
   end
 
-  step "the agent closes that tab", context do
+  step "the desktop registers again after being dropped", context do
+    connect_desktop(context, "desktop-1")
+  end
+
+  # Reusing the user's tab, named or as the session's current tab after a read.
+  step ~r/^the agent opens a preview on that tab (?<how>by naming it|after reading it)$/,
+       %{args: [how]} = context do
+    context = desktop_makes_tabs(context)
+
+    context =
+      if how == "by naming it",
+        do: tool(context, "preview_open", %{"tabId" => context.tab}),
+        else:
+          context
+          |> tool("preview_snapshot", %{"tabId" => context.tab})
+          |> tool("preview_open", %{"url" => @page})
+
+    assert {:ok, %{"tabId" => tab}} = context.result
+    assert tab == context.tab
+    assert [{_, %{"tabId" => ^tab}}] = requests(context, "open")
+    context
+  end
+
+  step "a tab the user opened", context do
+    context = agent_thread(context)
+
+    {tab, context} =
+      World.call!(context, "preview.open", %{
+        "threadId" => caller(context).thread_id,
+        "url" => @page
+      })
+
+    Map.put(context, :tab, tab["tabId"])
+  end
+
+  step "the tab stays open and the agent is told it did not open it", context do
+    assert {:error, "preview_tab_not_opened_by_agent", message} = context.result
+    assert message =~ "You did not open that preview tab"
+    {:ok, listed} = HalC2.Preview.list(%{"threadId" => caller(context).thread_id})
+    assert Enum.map(listed["sessions"], & &1["tabId"]) == [context.tab]
+    context
+  end
+
+  # The other session is the same thread under another provider instance; its
+  # open lands on the tab, which is what makes the tab its own.
+  step "another agent session opened the browser tab {string}",
+       %{args: [name]} = context do
+    context =
+      context
+      |> agent_thread()
+      |> desktop_makes_tabs()
+      |> Map.put(:agent_instance, "claude")
+      |> tool("preview_open", %{"url" => @page})
+      |> Map.delete(:agent_instance)
+
+    assert {:ok, %{"tabId" => tab}} = context.result
+    Map.put(context, :named_tabs, %{name => tab})
+  end
+
+  step "an agent asks to close {string}", %{args: [name]} = context do
+    result =
+      HalC2.Mcp.Tools.call(
+        "hal_c2_preview_close",
+        %{"tabId" => context.named_tabs[name]},
+        caller(context)
+      )
+
+    Map.put(context, :result, result)
+  end
+
+  step "the agent is told the tab belongs to another agent session", context do
+    assert {:error, "preview_tab_other_agent", message} = context.result
+    assert message =~ "belongs to another agent session"
+    {:ok, listed} = HalC2.Preview.list(%{"threadId" => caller(context).thread_id})
+    assert Enum.map(listed["sessions"], & &1["tabId"]) == Map.values(context.named_tabs)
+    context
+  end
+
+  step "an agent opens a tab that the desktop shows", context do
+    context = agent_thread(context)
+
+    {tab, context} =
+      World.call!(context, "preview.open", %{
+        "threadId" => caller(context).thread_id,
+        "url" => @page
+      })
+
+    Map.put(context, :tab, tab["tabId"])
+  end
+
+  # The desktop reports the finished load before any automation host acts on
+  # the tab, so only the MC's own tab record can know it loaded.
+  step "the page finishes loading before the MC is attached to it", context do
+    input = %{
+      "threadId" => caller(context).thread_id,
+      "tabId" => context.tab,
+      "navStatus" => %{"_tag" => "Success", "url" => @page, "title" => "Shop"},
+      "canGoBack" => false,
+      "canGoForward" => false
+    }
+
+    {_reply, context} = World.call!(context, "preview.reportStatus", input)
+    context
+  end
+
+  step "the agent lists the thread's tabs", context do
+    Map.put(context, :result, HalC2.Mcp.Tools.call("hal_c2_preview_list", %{}, caller(context)))
+  end
+
+  step "the tab is listed with the page's title and as loaded", context do
+    assert {:ok, %{"sessions" => [session]}} = context.result
+    assert session["tabId"] == context.tab
+    assert session["navStatus"] == %{"_tag" => "Success", "url" => @page, "title" => "Shop"}
+    Map.put(context, :listed_session, session)
+  end
+
+  step "the list agrees with the tab's own status", context do
+    context = tool(context, "preview_status", %{"tabId" => context.tab})
+    assert {:ok, %{"url" => url, "title" => title}} = context.result
+    assert {url, title} == {@page, "Shop"}
+    assert context.listed_session["navStatus"]["url"] == url
+    assert context.listed_session["navStatus"]["title"] == title
+    context
+  end
+
+  step ~r/^(?:the|an) agent closes that tab$/, context do
     result =
       HalC2.Mcp.Tools.call("hal_c2_preview_close", %{"tabId" => context.tab}, caller(context))
 
@@ -667,6 +1218,454 @@ defmodule HalC2.Steps.Preview.Automation do
 
     assert listed["sessions"] == []
     context
+  end
+
+  # --- tab limits ----------------------------------------------------------------------------
+
+  step "an agent has {int} browser tabs open", %{args: [n]} = context do
+    context = context |> agent_thread() |> connect_desktop("desktop-1") |> desktop_makes_tabs()
+    Enum.reduce(1..n, context, fn _, context -> new_tab(context) end)
+  end
+
+  step "the agent opens two more tabs at the same moment", context do
+    context = hold_tool(context, "preview_open", new_tab_args(), "open")
+    scope = caller(context)
+    other = Task.async(fn -> HalC2.Mcp.Tools.call("preview_open", new_tab_args(), scope) end)
+    second = Task.await(other, 20_000)
+    context = finish(context)
+    Map.put(context, :results, [context.result, second])
+  end
+
+  step "one tab opens and the other is refused for the tab limit", context do
+    assert [{:ok, %{"tabId" => _}}, {:error, "PreviewAutomationTabLimitError", message}] =
+             context.results
+
+    assert message =~ "already has 8 preview tabs open"
+    assert length(agent_tabs(context)) == 8
+    context
+  end
+
+  step "no more than {int} agent tabs are open across the MC", %{args: [n]} = context do
+    assert map_size(broker().owners) <= n
+    context
+  end
+
+  step "an agent opens a tab and the browser fails to launch it", context do
+    context = context |> agent_thread() |> connect_desktop("desktop-1") |> desktop_makes_tabs()
+    made = context.answers["open"]
+
+    context
+    |> answer("open", fn request, context ->
+      {:ok, %{"tabId" => tab}} = made.(request, context)
+
+      # The error names the tab the open reached: PreviewAutomationHost::finish adds
+      # request->tabId to every failure of an open, a page that never registers included.
+      {:error,
+       %{
+         "_tag" => "PreviewAutomationExecutionError",
+         "message" => "The browser failed to launch the tab #{tab}.",
+         "tabId" => tab
+       }}
+    end)
+    |> tool("preview_open", new_tab_args())
+  end
+
+  step "the open fails", context do
+    assert {:error, _tag, message} = context.result
+    assert message =~ "failed to launch"
+    context
+  end
+
+  # Room for the whole limit afterwards shows the failed open took none of it.
+  step "the tab is not listed and does not count toward the tab limit", context do
+    assert agent_tabs(context) == []
+    {:ok, listed} = HalC2.Preview.list(%{"threadId" => caller(context).thread_id})
+    assert listed["sessions"] == []
+    context = context |> desktop_makes_tabs()
+    context = Enum.reduce(1..8, context, fn _, context -> new_tab(context) end)
+    assert length(agent_tabs(context)) == 8
+    context = tool(context, "preview_open", new_tab_args())
+    assert {:error, "PreviewAutomationTabLimitError", _} = context.result
+    context
+  end
+
+  step "{int} agent tabs are open across the MC and the newest agent has fewer than {int}",
+       %{args: [n, per]} = context do
+    context = context |> agent_thread() |> connect_desktop("desktop-1") |> desktop_makes_tabs()
+
+    context =
+      for session <- 1..div(n, per), _ <- 1..per, reduce: context do
+        context -> context |> Map.put(:agent_instance, "agent-#{session}") |> new_tab()
+      end
+
+    assert map_size(broker().owners) == n
+    Map.put(context, :agent_instance, "agent-new")
+  end
+
+  step ~r/^the longest idle agent tab, idle for over (?<minutes>\d+) minutes, (?<state>.+)$/,
+       %{args: [minutes, state]} = context do
+    case state do
+      "is hidden and agent-owned" ->
+        Map.put(context, :idle, idle_agent_tab(String.to_integer(minutes)))
+
+      "is shown to the user" ->
+        tab = idle_agent_tab(String.to_integer(minutes))
+        context |> report_tabs("desktop-1", %{"visibleTabIds" => [tab]}) |> Map.put(:idle, tab)
+
+      "is the user's own" ->
+        {:ok, %{"tabId" => tab}} = HalC2.Preview.open(%{"threadId" => context.agent_thread})
+        Map.put(context, :idle, tab)
+    end
+  end
+
+  step "the newest agent opens a tab", context do
+    tool(context, "preview_open", new_tab_args())
+  end
+
+  step "that tab is closed and the new tab opens", context do
+    assert {:ok, %{"tabId" => tab}} = context.result
+    tabs = all_tabs(context)
+    assert tab in tabs
+    refute context.idle in tabs
+    assert map_size(broker().owners) == 32
+    context
+  end
+
+  step "that tab stays and the open is refused for the tab limit", context do
+    assert {:error, "PreviewAutomationTabLimitError", message} = context.result
+    assert message =~ "32 agent preview tabs are open across HAL-C2"
+    assert context.idle in all_tabs(context)
+    context
+  end
+
+  # --- a failed first load -------------------------------------------------------------------
+
+  # Until it starts, the desktop makes the new tab and then answers that its
+  # load was refused, as a browser does.
+  step "the agent's dev server on port {int} is not running yet", %{args: [port]} = context do
+    context = context |> agent_thread() |> connect_desktop("desktop-1") |> desktop_makes_tabs()
+    made = context.answers["open"]
+
+    context
+    |> Map.put(:port_url, "http://localhost:#{port}")
+    |> answer("open", fn request, context ->
+      {:ok, %{"tabId" => tab}} = made.(request, context)
+
+      if request["tabId"] == nil and context[:server_up] != true,
+        do:
+          {:error,
+           %{
+             "_tag" => "PreviewAutomationNavigationError",
+             "message" => "Could not load #{context.port_url}: net::ERR_CONNECTION_REFUSED",
+             "tabId" => tab
+           }},
+        else: {:ok, %{"tabId" => tab, "done" => "open"}}
+    end)
+  end
+
+  step "the agent opens a preview of {string} and the load is refused",
+       %{args: [url]} = context do
+    tool(context, "preview_open", %{"url" => url})
+  end
+
+  step "the agent is told the load failed and no tab of that open is left", context do
+    assert {:error, _tag, message} = context.result
+    assert message =~ "net::ERR_CONNECTION_REFUSED"
+    assert [{"desktop-1", _}] = requests(context, "open")
+    {:ok, listed} = HalC2.Preview.list(%{"threadId" => caller(context).thread_id})
+    assert listed["sessions"] == []
+    context
+  end
+
+  step "the dev server starts and the agent opens the preview again, and then once more",
+       context do
+    context =
+      context |> Map.put(:server_up, true) |> tool("preview_open", %{"url" => context.port_url})
+
+    assert {:ok, %{"tabId" => first}} = context.result
+    context = tool(context, "preview_open", %{"url" => context.port_url})
+    assert {:ok, %{"tabId" => ^first}} = context.result
+    Map.put(context, :tab, first)
+  end
+
+  step "both opens reuse the one tab the agent has", context do
+    tab = context.tab
+    {:ok, listed} = HalC2.Preview.list(%{"threadId" => caller(context).thread_id})
+    assert [%{"tabId" => ^tab}] = listed["sessions"]
+    assert [_failed, {_, first}, {_, %{"tabId" => ^tab}}] = requests(context, "open")
+    refute Map.has_key?(first, "tabId")
+    assert HalC2.PreviewAutomation.tab_ownership(caller(context), tab) == :own
+    context
+  end
+
+  # --- who has a tab --------------------------------------------------------------------------
+
+  # A person using a tab is what its desktop reports in `controlledTabIds`.
+  step ~r/^a tab (?<who>the user opened and is not using|the user opened and is using|another agent session opened)$/,
+       %{args: [who]} = context do
+    case who do
+      "another agent session opened" ->
+        context |> connect_desktop("desktop-1") |> other_agent_tab()
+
+      "the user opened and is using" ->
+        context = context |> connect_desktop("desktop-1") |> user_tab(@page)
+        report_tabs(context, "desktop-1", %{"controlledTabIds" => [context.tab]})
+
+      "the user opened and is not using" ->
+        context |> connect_desktop("desktop-1") |> user_tab(@page)
+    end
+  end
+
+  step "an agent clicks on that tab by its id", context do
+    act(context, "click a button", %{"tabId" => context.tab})
+  end
+
+  step "the click happens", context do
+    tab = context.tab
+    assert {:ok, %{"done" => "click"}} = context.result
+    assert [{"desktop-1", %{"tabId" => ^tab}}] = requests(context, "click")
+    context
+  end
+
+  step "the tool fails saying a person is in control of the tab", context do
+    assert {:error, "PreviewAutomationTabInUseError", message} = context.result
+    assert message =~ "A person is in control of preview tab #{context.tab}"
+    assert requests(context, "click") == []
+    context
+  end
+
+  step "the tool fails saying the tab belongs to another agent", context do
+    assert {:error, "PreviewAutomationTabOtherAgentError", message} = context.result
+    assert message =~ "belongs to another agent session"
+    assert requests(context, "click") == []
+    context
+  end
+
+  # The desktop fills a request naming no tab with its current tab of the
+  # thread: here the other session's, which its open just made.
+  step "another agent session's tab is the browser's current tab of the thread", context do
+    context = context |> connect_desktop("desktop-1") |> other_agent_tab()
+
+    context
+    |> Map.put(:other_tab, context.tab)
+    |> answer("click", fn request, context ->
+      {:ok, %{"tabId" => request["tabId"] || context.other_tab, "done" => "click"}}
+    end)
+  end
+
+  step "an agent with no tab of its own clicks without naming a tab", context do
+    act(context, "click a button")
+  end
+
+  step "the other session's tab was not clicked", context do
+    assert requests(context, "click") == []
+    context
+  end
+
+  step "an agent with no tab of its own opens a preview without naming a tab", context do
+    tool(context, "preview_open", %{"url" => @page})
+  end
+
+  step "the agent gets a new tab of its own and the other session's tab is left alone",
+       context do
+    assert {:ok, %{"tabId" => tab}} = context.result
+    assert tab != context.other_tab
+    assert HalC2.PreviewAutomation.tab_ownership(caller(context), tab) == :own
+    assert [_theirs, {_, mine}] = requests(context, "open")
+    refute Map.has_key?(mine, "tabId")
+    assert mine["input"]["reuseExistingTab"] == false
+    assert Enum.sort(all_tabs(context)) == Enum.sort([tab, context.other_tab])
+    context
+  end
+
+  step "the user is typing in a tab the user opened", context do
+    context = context |> connect_desktop("desktop-1") |> user_tab(@page)
+    report_tabs(context, "desktop-1", %{"controlledTabIds" => [context.tab]})
+  end
+
+  step "an agent takes a snapshot of that tab by its id", context do
+    tool(context, "preview_snapshot", %{"tabId" => context.tab})
+  end
+
+  # The read went straight to the desktop: nothing waits on the person.
+  step "the tool returns the page without waiting for the user's input to finish", context do
+    tab = context.tab
+    assert {:ok, _metadata, [_url | _]} = context.result
+    assert [{"desktop-1", %{"tabId" => ^tab}}] = requests(context, "snapshot")
+    context
+  end
+
+  # The desktop answers a snapshot of the shown tab with the user's page, and
+  # anything else with no tab.
+  step "the agent has opened no tab and the user is looking at {string}",
+       %{args: [url]} = context do
+    context = context |> connect_desktop("desktop-1") |> user_tab(url)
+    tab = context.tab
+    context = report_tabs(context, "desktop-1", %{"visibleTabIds" => [tab]})
+
+    answer(context, "snapshot", fn
+      %{"tabId" => ^tab}, context ->
+        {:ok, Map.merge(page(context), %{"tabId" => tab, "url" => url})}
+
+      request, _context ->
+        {:error,
+         %{"_tag" => "PreviewAutomationTabNotFoundError", "operation" => request["operation"]}}
+    end)
+  end
+
+  step "the tool returns {string}", %{args: [url]} = context do
+    assert {:ok, _metadata, [address | _]} = context.result
+    assert JSON.decode!(address["text"]) == %{"url" => url}
+    context
+  end
+
+  # One tab each: the user's (in use), this session's (shown) and another
+  # session's.
+  step "the thread has a tab the user opened, a tab this agent opened and a tab another agent session opened",
+       context do
+    context = context |> connect_desktop("desktop-1") |> user_tab(@page)
+    user = context.tab
+
+    context =
+      context
+      |> desktop_makes_tabs()
+      |> tool("preview_open", %{"url" => @page, "reuseExistingTab" => false})
+
+    assert {:ok, %{"tabId" => mine}} = context.result
+    context = other_agent_tab(context)
+    other = context.tab
+
+    context
+    |> report_tabs("desktop-1", %{"controlledTabIds" => [user], "visibleTabIds" => [mine]})
+    |> Map.put(:tabs, %{user: user, mine: mine, other: other})
+  end
+
+  step "the agent asks for the preview status", context do
+    tool(context, "preview_status", %{})
+  end
+
+  step "every tab is listed with whether a person, an agent or nobody has it, whether it is this agent's, whether it is shown and its profile",
+       context do
+    assert {:ok, %{"tabs" => tabs}} = context.result
+
+    listed =
+      Map.new(tabs, &{&1["tabId"], Map.take(&1, ~w(openedBy mine inUseBy shown profileId))})
+
+    %{user: user, mine: mine, other: other} = context.tabs
+
+    assert listed == %{
+             user => %{
+               "openedBy" => "user",
+               "mine" => false,
+               "inUseBy" => "person",
+               "shown" => false,
+               "profileId" => "default"
+             },
+             mine => %{
+               "openedBy" => "agent",
+               "mine" => true,
+               "inUseBy" => nil,
+               "shown" => true,
+               "profileId" => "default"
+             },
+             other => %{
+               "openedBy" => "agent",
+               "mine" => false,
+               "inUseBy" => nil,
+               "shown" => false,
+               "profileId" => "default"
+             }
+           }
+
+    context
+  end
+
+  # --- browser profiles ------------------------------------------------------------------------
+
+  step "the desktop reports the profiles {string} and {string}, with {string} the default",
+       %{args: [a, b, default]} = context do
+    context |> agent_thread() |> report_profiles("desktop-1", [a, b], default)
+  end
+
+  step "the desktop reports the profiles {string} and {string}", %{args: [a, b]} = context do
+    context |> agent_thread() |> report_profiles("desktop-1", [a, b])
+  end
+
+  step "one desktop reports the profiles {string} and {string}", %{args: [a, b]} = context do
+    context |> agent_thread() |> report_profiles("desktop-1", [a, b])
+  end
+
+  # Focused, so without the profile it is where a new session would go.
+  step "another desktop connected to the same MC reports only {string}",
+       %{args: [name]} = context do
+    context |> report_profiles("desktop-2", [name]) |> focus("desktop-2")
+  end
+
+  step "an agent opens a preview without naming a profile", context do
+    context |> desktop_makes_tabs() |> tool("preview_open", %{"url" => @page})
+  end
+
+  step "an agent opens a preview in the profile {string}", %{args: [named]} = context do
+    context |> desktop_makes_tabs() |> tool("preview_open", %{"url" => @page, "profile" => named})
+  end
+
+  step "the tab opens in the profile {string}", %{args: [name]} = context do
+    id = profile_id(name)
+    assert {:ok, %{"tabId" => tab}} = context.result
+    assert [{"desktop-1", %{"input" => %{"profileId" => ^id}}}] = requests(context, "open")
+    {:ok, listed} = HalC2.Preview.list(%{"threadId" => caller(context).thread_id})
+    assert [%{"profileId" => ^id}] = Enum.filter(listed["sessions"], &(&1["tabId"] == tab))
+    context
+  end
+
+  step "the tool fails and lists {string} and {string} as the profiles to use",
+       %{args: [a, b]} = context do
+    assert {:error, "PreviewAutomationUnknownProfileError", message} = context.result
+    assert message =~ "Use one of: #{a}, #{b}."
+    assert requests(context, "open") == []
+    context
+  end
+
+  defp report_profiles(context, name, names, default \\ nil) do
+    profiles = for n <- names, do: %{"id" => profile_id(n), "name" => n, "kind" => "persistent"}
+    fields = %{"browserProfiles" => profiles}
+
+    fields =
+      if default,
+        do: Map.put(fields, "defaultBrowserProfileId", profile_id(default)),
+        else: fields
+
+    context |> connect_desktop(name) |> report_tabs(name, fields)
+  end
+
+  defp profile_id(name), do: String.downcase(name)
+
+  # A tab the user opened on the agent's thread, as `context.tab`.
+  defp user_tab(context, url) do
+    context = if context[:agent_thread], do: context, else: agent_thread(context)
+
+    {tab, context} =
+      World.call!(context, "preview.open", %{
+        "threadId" => caller(context).thread_id,
+        "url" => url
+      })
+
+    Map.put(context, :tab, tab["tabId"])
+  end
+
+  # A tab the same thread's session under another provider instance opened, as `context.tab`.
+  defp other_agent_tab(context) do
+    context = if context[:agent_thread], do: context, else: agent_thread(context)
+
+    context =
+      context
+      |> desktop_makes_tabs()
+      |> Map.put(:agent_instance, "claude")
+      |> tool("preview_open", %{"url" => @page, "reuseExistingTab" => false})
+      |> Map.delete(:agent_instance)
+
+    assert {:ok, %{"tabId" => tab}} = context.result
+    Map.put(context, :tab, tab)
   end
 
   # --- desktops --------------------------------------------------------------------------------
@@ -719,6 +1718,24 @@ defmodule HalC2.Steps.Preview.Automation do
       Mc.call!(desktop.client, context.mc.environment, "previewAutomation.focusHost", payload)
 
     put_in(context, [:desktops, name, :client], client)
+  end
+
+  # Opens as the desktop does: the tab asked for (or the session's current
+  # one), else a new tab of the thread made with `preview.open`.
+  defp desktop_makes_tabs(context) do
+    answer(context, "open", fn request, _context ->
+      open =
+        %{"threadId" => request["threadId"], "url" => @page}
+        |> Map.merge(Map.take(request["input"] || %{}, ["profileId"]))
+
+      reuse = request["tabIdExplicit"] or request["input"]["reuseExistingTab"] != false
+
+      tab =
+        (reuse && request["tabId"]) ||
+          then(HalC2.Preview.open(open), fn {:ok, snapshot} -> snapshot["tabId"] end)
+
+      {:ok, %{"tabId" => tab, "done" => "open"}}
+    end)
   end
 
   defp answer(context, operation, fun),
@@ -818,7 +1835,11 @@ defmodule HalC2.Steps.Preview.Automation do
 
   # --- the agent -------------------------------------------------------------------------------
 
-  defp caller(context), do: %{thread_id: context[:agent_thread] || "th-agent", instance: "codex"}
+  defp caller(context),
+    do: %{
+      thread_id: context[:agent_thread] || "th-agent",
+      instance: context[:agent_instance] || "codex"
+    }
 
   # The agent's thread as a real thread, for tools that read its row.
   defp agent_thread(context) do
@@ -827,8 +1848,13 @@ defmodule HalC2.Steps.Preview.Automation do
     Map.put(context, :agent_thread, World.thread_id(context, "Agent"))
   end
 
+  # The agent navigates "tab-1", which becomes its current tab.
   defp current_tab(context, url) do
-    context = context |> Map.put(:page, url) |> tool("preview_navigate", %{"url" => url})
+    context =
+      context
+      |> Map.put(:page, url)
+      |> tool("preview_navigate", %{"url" => url, "tabId" => "tab-1"})
+
     assert {:ok, %{"tabId" => "tab-1"}} = context.result
     context
   end
@@ -959,6 +1985,52 @@ defmodule HalC2.Steps.Preview.Automation do
       Mc.rpc(desktop.client, context.mc.environment, id, "previewAutomation.respond", payload)
 
     put_in(context, [:desktops, name, :client], client)
+  end
+
+  defp new_tab_args, do: %{"url" => @page, "reuseExistingTab" => false}
+
+  defp new_tab(context) do
+    context = tool(context, "preview_open", new_tab_args())
+    assert {:ok, %{"tabId" => _}} = context.result
+    context
+  end
+
+  # The thread's tabs the agent session opened.
+  defp agent_tabs(context) do
+    scope = caller(context)
+
+    for tab <- all_tabs(context),
+        HalC2.PreviewAutomation.tab_ownership(scope, tab) == :own,
+        do: tab
+  end
+
+  defp all_tabs(context) do
+    {:ok, listed} = HalC2.Preview.list(%{"threadId" => caller(context).thread_id})
+    Enum.map(listed["sessions"], & &1["tabId"])
+  end
+
+  # The agent tab used first, last used `minutes` and a bit ago.
+  defp idle_agent_tab(minutes) do
+    {tab, _} = Enum.min_by(broker().used, &elem(&1, 1))
+    ago = (minutes + 1) * 60_000
+
+    :sys.replace_state(HalC2.PreviewAutomation, fn state ->
+      update_in(state, [:used, tab], fn {at, seq} -> {at - ago, seq} end)
+    end)
+
+    tab
+  end
+
+  # Like `hold`, for any tool call.
+  defp hold_tool(context, tool, args, operation) do
+    context = default_desktop(context)
+    scope = caller(context)
+    task = Task.async(fn -> HalC2.Mcp.Tools.call(tool, args, scope) end)
+
+    case loop(Map.put(context, :task, task), &(&1["operation"] == operation)) do
+      %{held: _} = context -> context
+      context -> flunk("the call finished without waiting: #{inspect(context.result)}")
+    end
   end
 
   defp requests(context, operation),

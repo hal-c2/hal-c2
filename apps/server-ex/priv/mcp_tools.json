@@ -944,6 +944,79 @@
           ],
           "description": "Optional initial page URL. Absolute http(s) URL or a schemeless host such as t3.chat or localhost:5173. Schemeless public hosts use https; loopback hosts use http. Omit to open a blank tab."
         },
+        "target": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": ["url"],
+                      "description": "Selects direct URL navigation."
+                    },
+                    "url": {
+                      "type": "string",
+                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                      "minLength": 1,
+                      "maxLength": 2048,
+                      "description": "Direct website URL. Absolute http(s) URL or a schemeless host such as t3.chat or localhost:5173. Schemeless public hosts use https; loopback hosts use http."
+                    }
+                  },
+                  "required": ["kind", "url"],
+                  "additionalProperties": true
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": ["environment-port"],
+                      "description": "Selects a dev-server port relative to the current execution environment."
+                    },
+                    "port": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "exclusiveMaximum": 65536,
+                      "description": "Dev-server TCP port inside the current environment."
+                    },
+                    "protocol": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": ["http", "https"],
+                          "description": "Dev-server protocol. Defaults to http."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "path": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "Optional path, query, and fragment, for example /settings?tab=account."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": ["kind", "port"],
+                  "additionalProperties": true
+                }
+              ],
+              "description": "Environment-relative target. Prefer {kind:'environment-port',port:5173} for a dev server in the current environment. Wins over url when both are given."
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Environment-relative target. Prefer {kind:'environment-port',port:5173} for a dev server in the current environment. Wins over url when both are given."
+        },
         "open": {
           "anyOf": [
             {
@@ -971,6 +1044,18 @@
             {
               "type": "boolean",
               "description": "Reuse tabId when supplied, otherwise this agent session's current tab. Defaults to true; set false to create a new tab."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "profile": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "description": "Browser profile a new tab opens in, by name or id (any case). Omit to use the user's default profile."
             },
             {
               "type": "null"
@@ -1280,7 +1365,7 @@
   },
   {
     "name": "preview_snapshot",
-    "description": "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot. Set includeImage=false for text-only output with the same page metadata. Set save=true to also write the PNG to disk and get screenshotPath back; embed that path in your reply as ![alt](screenshotPath) so the user sees it. This is the only way to show the user a screenshot; the image in the tool result is not saved anywhere.",
+    "description": "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, and action history. Set includeImage=true to also get a PNG screenshot in the tool response. Set save=true to also write the PNG to disk and get screenshotPath back; embed that path in your reply as ![alt](screenshotPath) so the user sees it. This is the only way to show the user a screenshot; the image in the tool result is not saved anywhere.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1299,7 +1384,7 @@
           "anyOf": [
             {
               "type": "boolean",
-              "description": "Include the PNG image in the tool response. Defaults to true. Set false for text-only output."
+              "description": "Include the PNG image in the tool response. Defaults to false, because providers replay tool images on later requests; set true to see the page."
             },
             {
               "type": "null"

@@ -3,9 +3,9 @@ defmodule HalC2.Mcp.Preview do
   The `preview_*` MCP tools: an agent drives the browser panel of a desktop client
   through `HalC2.PreviewAutomation`.
 
-  Snapshots come back as bounded JSON text plus the screenshot as image content
-  (`{:ok, structured, content}`), and a stopped recording is claimed into the
-  thread as an attachment the agent can open.
+  Snapshots come back as bounded JSON text (`{:ok, structured, content}`), with
+  the screenshot as image content only when the agent asks for it, and a stopped
+  recording is claimed into the thread as an attachment the agent can open.
   """
 
   @tools ~w(preview_status preview_open preview_navigate preview_resize preview_set_appearance
@@ -34,8 +34,17 @@ defmodule HalC2.Mcp.Preview do
   def call("preview_snapshot", args, caller) do
     {_, input} = Map.split(args, ~w(includeImage save tabId))
 
-    with {:ok, snapshot} <- invoke(caller, "snapshot", input, tab: args["tabId"]) do
-      snapshot_content(snapshot, args)
+    case invoke(caller, "snapshot", input, tab: args["tabId"]) do
+      {:ok, snapshot} ->
+        snapshot_content(snapshot, args)
+
+      # A missing tab says what to do next, not just that it is missing.
+      {:error, "PreviewAutomationTabNotFoundError", message} ->
+        {:error, "PreviewAutomationTabNotFoundError",
+         message <> " Open a preview with preview_open first."}
+
+      error ->
+        error
     end
   end
 
@@ -60,8 +69,30 @@ defmodule HalC2.Mcp.Preview do
     end
   end
 
+  def call("preview_open", args, caller) do
+    with {:ok, args} <- open_args(args) do
+      {tab, input} = Map.pop(args, "tabId")
+
+      with {:ok, result, icon} <- invoke_with_icon(caller, "open", input, tab: tab) do
+        {:ok, with_icon(if(is_map(result), do: result, else: %{}), icon)}
+      end
+    end
+  end
+
+  # The tab's status from its desktop, and every tab of the thread as the MC
+  # sees it: who opened it, whether it is this session's, who is using it,
+  # whether it is shown, and its browser profile.
+  def call("preview_status", args, caller) do
+    {tab, input} = Map.pop(args, "tabId")
+
+    with {:ok, result, icon} <- invoke_with_icon(caller, "status", input, tab: tab) do
+      result = if is_map(result), do: result, else: %{}
+      {:ok, with_icon(Map.put(result, "tabs", thread_tabs(caller)), icon)}
+    end
+  end
+
   def call(name, args, caller) do
-    args = if name == "preview_open", do: open_input(args), else: args
+    args = if name == "preview_navigate", do: navigate_input(args), else: args
     {tab, input} = Map.pop(args, "tabId")
     timeout = if name in @timed, do: args["timeoutMs"]
 
@@ -72,11 +103,121 @@ defmodule HalC2.Mcp.Preview do
   end
 
   # `show` is `open`; a preview the agent said nothing about follows the user's
-  # desktop preference, so an unstated `open` stays unstated.
-  defp open_input(args) do
+  # desktop preference, so an unstated `open` stays unstated. A dev-server
+  # `target` knows its environment, so it wins over an address given with it;
+  # a bare address must be one a tab can show.
+  defp open_args(args) do
     open = Map.get(args, "open", args["show"])
     args = if open == nil, do: args, else: Map.merge(args, %{"open" => open, "show" => open})
-    Map.put_new(args, "reuseExistingTab", true)
+    args = Map.put_new(args, "reuseExistingTab", true)
+
+    cond do
+      is_map(args["target"]) ->
+        {:ok, Map.delete(args, "url")}
+
+      is_binary(args["url"]) ->
+        with {:ok, url} <- checked_address(args["url"]), do: {:ok, Map.put(args, "url", url)}
+
+      true ->
+        {:ok, args}
+    end
+  end
+
+  # An address a preview tab can show, schemeless hosts included, or the
+  # reason it is refused in the agent's words. Navigation keeps addresses the
+  # browser itself understands (such as about:blank); only opening a tab is
+  # limited to web pages.
+  @address_guidance "Use an absolute http(s) URL or a schemeless host such as localhost:5173 or t3.chat; loopback hosts use http and public hosts use https. Omit the address to open a blank tab."
+
+  defp checked_address(address) do
+    address = String.trim(address)
+
+    cond do
+      address == "" ->
+        {:error, "PreviewAutomationInvalidInputError",
+         "Preview address is empty. " <> @address_guidance}
+
+      # Only a leading scheme counts: a "://" in a query is part of the page.
+      match = Regex.run(~r/^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//, address) ->
+        scheme = match |> List.last() |> String.downcase()
+
+        if scheme in ["http", "https"],
+          do: {:ok, address},
+          else: unsupported_protocol(scheme)
+
+      true ->
+        case Regex.run(~r/^([a-zA-Z][a-zA-Z0-9+.-]*):(?!\d)/, address) do
+          [_, scheme] -> unsupported_protocol(String.downcase(scheme))
+          nil -> {:ok, with_scheme(address)}
+        end
+    end
+  end
+
+  defp unsupported_protocol(scheme),
+    do:
+      {:error, "PreviewAutomationInvalidInputError",
+       "Preview address protocol \"#{scheme}:\" is unsupported. " <> @address_guidance}
+
+  defp navigate_input(args) do
+    case args["url"] do
+      url when is_binary(url) ->
+        if Regex.match?(~r/^[a-zA-Z][a-zA-Z0-9+.-]*:(?!\d)/, String.trim(url)),
+          do: args,
+          else: Map.put(args, "url", with_scheme(String.trim(url)))
+
+      _ ->
+        args
+    end
+  end
+
+  defp with_scheme(address) do
+    host =
+      address
+      |> String.split(~r/[\/?#]/, parts: 2)
+      |> hd()
+      |> String.split("@")
+      |> List.last()
+      |> bracketed_or_host()
+      |> String.downcase()
+
+    if host == "localhost" or String.ends_with?(host, ".localhost") or
+         String.starts_with?(host, "127.") or host == "::1",
+       do: "http://" <> address,
+       else: "https://" <> address
+  end
+
+  # "[::1]:3000" is the host ::1; otherwise the host ends at the port colon.
+  defp bracketed_or_host("[" <> rest), do: rest |> String.split("]", parts: 2) |> hd()
+  defp bracketed_or_host(host), do: host |> String.split(":", parts: 2) |> hd()
+
+  defp thread_tabs(caller) do
+    scope = %{thread_id: caller.thread_id, instance: caller.instance}
+
+    sessions =
+      case HalC2.Preview.list(%{"threadId" => caller.thread_id}) do
+        {:ok, %{"sessions" => sessions}} -> sessions
+        _ -> []
+      end
+
+    states = HalC2.PreviewAutomation.tab_states(scope, Enum.map(sessions, & &1["tabId"]))
+
+    for session <- sessions do
+      state = states[session["tabId"]]
+      nav = session["navStatus"] || %{}
+
+      %{
+        "tabId" => session["tabId"],
+        "url" => nav["url"],
+        "title" => nav["title"],
+        "openedBy" => if(state.owner == :not_agent, do: "user", else: "agent"),
+        "mine" => state.owner == :own,
+        "inUseBy" => state.in_use,
+        "shown" => state.shown,
+        "profileId" => session["profileId"] || "default"
+      }
+    end
+  catch
+    :exit, _ -> []
   end
 
   # --- broker ----------------------------------------------------------------------
@@ -90,9 +231,62 @@ defmodule HalC2.Mcp.Preview do
 
     case HalC2.PreviewAutomation.invoke(scope, operation, input, opts) do
       {:ok, result} -> {:ok, result}
-      {:error, error} -> {:error, error["_tag"], HalC2.PreviewAutomation.message(error)}
+      {:error, error} -> {:error, error["_tag"], error_message(error, input)}
     end
   end
+
+  # A click that timed out names its target and, when the browser could say,
+  # whether it is on the page — and warns the click may still have landed.
+  defp error_message(
+         %{
+           "_tag" => "PreviewAutomationTimeoutError",
+           "operation" => "click",
+           "targetMatched" => matched
+         } = error,
+         input
+       )
+       when is_boolean(matched) do
+    target =
+      cond do
+        is_map(input) and is_binary(input["selector"]) ->
+          "the selector \"#{input["selector"]}\""
+
+        is_map(input) and is_binary(input["locator"]) ->
+          "the locator \"#{input["locator"]}\""
+
+        true ->
+          "its target"
+      end
+
+    presence =
+      if matched,
+        do: "matches an element on the page",
+        else: "matches no element on the page"
+
+    "Preview automation click timed out after #{error["timeoutMs"]}ms. " <>
+      "The click's target, #{target}, #{presence}. The click may still have happened."
+  end
+
+  # A rejected target says what the tool accepts instead, in the terms of the
+  # target the agent actually sent.
+  defp error_message(%{"_tag" => "PreviewAutomationInvalidSelectorError"} = error, input) do
+    message = HalC2.PreviewAutomation.message(error)
+
+    cond do
+      is_map(input) and is_binary(input["locator"]) ->
+        message <>
+          " Locators look like role=button[name='Send'] or text=Continue; call preview_snapshot first to see the page's locators."
+
+      is_map(input) and is_binary(input["selector"]) ->
+        message <>
+          " Use a CSS selector such as button[type='submit'], or a locator like role=button[name='Send'] instead."
+
+      true ->
+        message
+    end
+  end
+
+  defp error_message(error, _input), do: HalC2.PreviewAutomation.message(error)
 
   # Actions also report the page they left the tab on, for the tool's icon.
   defp invoke_with_icon(caller, operation, input, opts) do
@@ -117,6 +311,14 @@ defmodule HalC2.Mcp.Preview do
   defp with_icon(result, icon), do: Map.put(result, "toolIcon", icon)
 
   # --- recordings ------------------------------------------------------------------
+
+  @max_recording_bytes 50 * 1024 * 1024
+
+  defp claim_recording(_thread_id, %{"sizeBytes" => size})
+       when is_integer(size) and size > @max_recording_bytes,
+       do:
+         {:error, "PreviewAutomationRecordingTooLargeError",
+          "The recording exceeds 50 MiB. The saved copy remains on the desktop."}
 
   defp claim_recording(thread_id, %{"uploadedAttachmentId" => "pending-" <> _ = id} = artifact) do
     upload = %{
@@ -167,28 +369,40 @@ defmodule HalC2.Mcp.Preview do
     png = Base.decode64!(shot["data"])
 
     with {:ok, saved} <- maybe_save(args["save"] == true, snapshot["url"] || "", png) do
-      metadata =
-        page
-        |> Map.put("screenshot", Map.take(shot, ~w(mimeType width height)))
-        |> then(&if(saved, do: Map.put(&1, "screenshotPath", saved), else: &1))
+      url = cut(snapshot["url"] || "", @max_identifier)
 
-      {text, omitted} = bound(metadata)
+      # Providers replay a tool's images on every later request, and some
+      # refuse them, so the screenshot is sent only when asked for. A saved
+      # screenshot the agent did not also ask to see returns just where it is.
+      if saved && args["includeImage"] != true do
+        {:ok, %{"url" => url, "screenshotPath" => saved},
+         [text_block(JSON.encode!(%{"url" => url})), text_block("Screenshot saved to #{saved}")]}
+      else
+        metadata =
+          page
+          |> Map.put("screenshot", Map.take(shot, ~w(mimeType width height)))
+          |> then(&if(saved, do: Map.put(&1, "screenshotPath", saved), else: &1))
 
-      content =
-        [
-          text_block(JSON.encode!(%{"url" => cut(snapshot["url"] || "", @max_identifier)})),
-          text_block(text)
-        ] ++
-          if(omitted == [],
-            do: [],
-            else: [text_block("Snapshot text was bounded. Omitted: #{Enum.join(omitted, "; ")}.")]
-          ) ++
-          if(args["includeImage"] == false,
-            do: [],
-            else: [%{"type" => "image", "data" => shot["data"], "mimeType" => shot["mimeType"]}]
-          )
+        {text, omitted} = bound(metadata)
 
-      {:ok, metadata, content}
+        content =
+          [
+            text_block(JSON.encode!(%{"url" => url})),
+            text_block(text)
+          ] ++
+            if(omitted == [],
+              do: [],
+              else: [
+                text_block("Snapshot text was bounded. Omitted: #{Enum.join(omitted, "; ")}.")
+              ]
+            ) ++
+            if(args["includeImage"] == true,
+              do: [%{"type" => "image", "data" => shot["data"], "mimeType" => shot["mimeType"]}],
+              else: []
+            )
+
+        {:ok, metadata, content}
+      end
     end
   end
 
