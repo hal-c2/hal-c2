@@ -27,6 +27,7 @@ defmodule HalC2.PullRequests do
   @default_limit 99
   @viewer_ttl 600_000
   @viewers {__MODULE__, :viewers}
+  @ssh_hosts {__MODULE__, :ssh_hosts}
 
   @requirements %{
     missing:
@@ -189,9 +190,7 @@ defmodule HalC2.PullRequests do
 
             {:ok,
              Map.merge(result, %{
-               "entries" =>
-                 (Enum.flat_map(batches, & &1.entries) ++ plugged.entries)
-                 |> Enum.sort_by(& &1["updatedAt"], :desc),
+               "entries" => listed(Enum.flat_map(batches, & &1.entries) ++ plugged.entries),
                "errors" =>
                  Enum.map(unreadable, &unreadable(&1, identities[&1.host])) ++
                    Enum.flat_map(batches, & &1.errors) ++ plugged.errors,
@@ -216,9 +215,7 @@ defmodule HalC2.PullRequests do
 
         {:ok,
          Map.merge(result, %{
-           "entries" =>
-             (Enum.flat_map(batches, & &1.entries) ++ plugged.entries)
-             |> Enum.sort_by(& &1["updatedAt"], :desc),
+           "entries" => listed(Enum.flat_map(batches, & &1.entries) ++ plugged.entries),
            "errors" =>
              Enum.map(unreadable, &unreadable(&1, identities[&1.host])) ++
                Enum.flat_map(batches, & &1.errors) ++ plugged.errors,
@@ -591,6 +588,18 @@ defmodule HalC2.PullRequests do
     |> put_present("reviewDecision", item["reviewDecision"])
     |> put_present("checksState", item["checksState"])
     |> put_present("stack", item["stack"])
+    # Carried only until `listed/1` sorts the merged page; dropped there.
+    |> put_present("cursorAt", item["cursorAt"])
+  end
+
+  # The merged page, newest first by the instant each row is ordered and
+  # carried on by (`cursor_at/1`), so loading more never brings in a row
+  # that belongs before one already shown; the instant itself is the
+  # listing's own and is dropped before the rows go to a client.
+  defp listed(entries) do
+    entries
+    |> Enum.sort_by(&instant_key(cursor_at(&1)), :desc)
+    |> Enum.map(&Map.delete(&1, "cursorAt"))
   end
 
   # A continuation is `<instant>|<rows delivered>|<numbers already sent at it>`: the
@@ -1159,6 +1168,7 @@ defmodule HalC2.PullRequests do
   def invalidate(input) do
     if input["filesViewedOnly"] != true do
       if input["reference"] == nil, do: :persistent_term.erase(@viewers)
+      if input["reference"] == nil, do: :persistent_term.erase(@ssh_hosts)
       forget(input["reference"])
       # A reader asking for fresh host state wants the thread links it feeds to follow.
       if input["reference"], do: HalC2.PullRequests.Sync.request(input["reference"])
@@ -1413,8 +1423,45 @@ defmodule HalC2.PullRequests do
 
   defp resolve_ssh_alias(remote), do: remote
 
+  # Resolving an alias can start `ssh` (and evaluate the user's config), and
+  # `projects/0` asks once per project on unrecognised hosts on every list
+  # read, so an answer is held per alias until the configs it came from
+  # change: keyed on their newest modification time, and forgotten with
+  # the signed-in accounts on `invalidate/1`. A host that resolves to
+  # nothing is held too, so a self-hosted forge under an unrecognised name
+  # does not pay for `ssh` on every read either.
   defp ssh_hostname(alias_name) do
-    ssh_g_hostname(alias_name) || ssh_config_hostname(alias_name)
+    config = ssh_config()
+    stamp = ssh_config_stamp(config)
+    held = :persistent_term.get(@ssh_hosts, %{})
+    key = {config, stamp, String.downcase(alias_name)}
+
+    case Map.fetch(held, key) do
+      {:ok, :none} ->
+        nil
+
+      {:ok, hostname} ->
+        hostname
+
+      :error ->
+        hostname = ssh_g_hostname(alias_name, config) || ssh_config_hostname(alias_name, config)
+        :persistent_term.put(@ssh_hosts, Map.put(held, key, hostname || :none))
+        hostname
+    end
+  end
+
+  defp ssh_config,
+    do: Path.join([System.get_env("HOME") || System.user_home() || "", ".ssh", "config"])
+
+  defp ssh_config_stamp(config) do
+    [config, "/etc/ssh/ssh_config"]
+    |> Enum.map(fn path ->
+      case File.stat(path, time: :posix) do
+        {:ok, stat} -> stat.mtime
+        _ -> 0
+      end
+    end)
+    |> Enum.max()
   end
 
   # How `ssh` itself resolves the alias (`ssh -G` prints the effective
@@ -1424,13 +1471,10 @@ defmodule HalC2.PullRequests do
   # handed to `ssh`: nothing that could be read as one of its options.
   # Evaluating the config is `ssh`'s own work on the user's own config,
   # the same a `git` transport through this alias would do.
-  defp ssh_g_hostname(alias_name) do
+  defp ssh_g_hostname(alias_name, config) do
     if alias_name =~ ~r/\A[A-Za-z0-9][A-Za-z0-9._-]*\z/ do
       # `ssh` reads the config under the account's home, not `$HOME`, so
       # name the config under the MC's home when there is one there.
-      config =
-        Path.join([System.get_env("HOME") || System.user_home() || "", ".ssh", "config"])
-
       args =
         if File.regular?(config), do: ["-G", "-F", config, alias_name], else: ["-G", alias_name]
 
@@ -1454,13 +1498,11 @@ defmodule HalC2.PullRequests do
   end
 
   # The plain reading of the config file, for a machine with no `ssh` to
-  # ask: only the one config `ssh` itself reads, under the MC's own home.
+  # ask: only the one config under the MC's own home, the same file named
+  # to `ssh -G` above (under `$HOME` when it is set, else the account's
+  # home, which is where `ssh` itself looks).
   # sobelow_skip ["Traversal.FileModule"]
-  defp ssh_config_hostname(alias_name) do
-    # `ssh` reads the config under `$HOME`, which the account's home only
-    # names when the variable is unset.
-    path = Path.join([System.get_env("HOME") || System.user_home() || "", ".ssh", "config"])
-
+  defp ssh_config_hostname(alias_name, path) do
     with {:ok, text} <- File.read(path) do
       text
       |> String.split(~r/\r?\n/)

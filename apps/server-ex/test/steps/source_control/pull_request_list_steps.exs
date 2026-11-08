@@ -2569,6 +2569,41 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     )
   end
 
+  # A fake `ssh` stands in for the real one so its calls can be counted; the
+  # config file is there so the MC names it to `ssh -G` as it would in use.
+  step "the project {string} has the remote {string} and ssh resolves {string} to a GitLab server",
+       %{args: [title, remote, alias_name]} = context do
+    home = HalC2.Test.Mc.Host.home(context)
+    File.mkdir_p!(Path.join(home, ".ssh"))
+
+    File.write!(
+      Path.join(home, ".ssh/config"),
+      "Host #{alias_name}\n  HostName gitlab.example.com\n"
+    )
+
+    context
+    |> World.fake_cli(["ssh"])
+    |> World.cli_rules(%{
+      "cmd" => "ssh",
+      "args" => ["-G", alias_name],
+      "stdout" => "hostname gitlab.example.com\n"
+    })
+    |> hosted_project("GitLab", hosted_fixture(),
+      title: title,
+      repository: "acme/infra",
+      remote: remote
+    )
+  end
+
+  step "ssh was asked once how {string} resolves", %{args: [alias_name]} = context do
+    asked =
+      World.cli_calls(context, "-G")
+      |> Enum.count(&(&1["cmd"] == "ssh" and alias_name in &1["args"]))
+
+    assert asked == 1
+    context
+  end
+
   step "a larger page of up to 1000 pull requests is read", context do
     numbers = for e <- entries(context), e["repository"] == "acme/shop", do: e["number"]
     assert Enum.sort(numbers) == Enum.to_list(1..300)
@@ -2712,11 +2747,10 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     end
   end
 
-  # Pages are chosen in opening order (the order `az` serves them), newest
-  # opened first; the rows on a page are then shown by their closing date,
-  # as every host's rows are.
+  # Pages are chosen and shown in opening order (the order `az` serves
+  # them), newest opened first, though each row's date is when it closed.
   step "the first page holds the newest opened of them", context do
-    assert context.all_hosted |> Enum.take(99) |> Enum.sort() == Enum.to_list(552..650)
+    assert Enum.take(context.all_hosted, 99) == Enum.to_list(650..552//-1)
     context
   end
 
@@ -2739,7 +2773,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
   step "the first page of merged pull requests is listed without an error", context do
     assert {:ok, %{"errors" => errors}} = context.reply
     refute Enum.any?(errors, &(&1["projectId"] == context.hosted.id))
-    assert hosted_numbers(context) |> Enum.sort() == Enum.to_list(5002..5100)
+    assert hosted_numbers(context) == Enum.to_list(5100..5002//-1)
     context
   end
 

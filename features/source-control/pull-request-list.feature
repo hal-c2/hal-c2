@@ -1954,6 +1954,14 @@ Feature: Browsing pull requests
     Then the open change requests of "infra" are listed
 
   @mc
+  Scenario: An SSH alias is asked of ssh once, not on every listing
+    Given the project "infra" has the remote "git@work-gitlab:acme/infra.git" and ssh resolves "work-gitlab" to a GitLab server
+    When the user lists open pull requests
+    And the user lists open pull requests
+    Then the open change requests of "infra" are listed
+    And ssh was asked once how "work-gitlab" resolves
+
+  @mc
   Scenario: Pull requests carry the stacks they belong to
     Given pull request 42 on github.com is the second layer of a stack
     When the user lists open pull requests
