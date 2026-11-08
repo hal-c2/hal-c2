@@ -326,7 +326,16 @@ defmodule HalC2.Steps.Providers.Antigravity do
     context
   end
 
+  # With `context.nothing_downloaded` (a fun of the context), that checks it: a
+  # registry agent's install in providers/acp-registry.feature.
   step "nothing is downloaded", context do
+    case context do
+      %{nothing_downloaded: check} when is_function(check, 1) -> check.(context)
+      _ -> nothing_fetched(context)
+    end
+  end
+
+  defp nothing_fetched(context) do
     refute_received :antigravity_downloaded
     previous_unchanged(context)
   end
@@ -758,7 +767,16 @@ defmodule HalC2.Steps.Providers.Antigravity do
     Map.merge(context, %{session_tmp: tmp, stale_tmp: stale, conversations: conversations})
   end
 
+  # With `context.end_session` (a fun of the context), that ends it: a registry
+  # agent's session in providers/acp-registry.feature.
   step "the session ends", context do
+    case context do
+      %{end_session: end_session} when is_function(end_session, 1) -> end_session.(context)
+      _ -> sign_in_ends(context)
+    end
+  end
+
+  defp sign_in_ends(context) do
     assert browser(context.flow, %{"code" => "google-code"}) =~ "Sign-in succeeded"
     await_auth(context, "succeeded")
   end
