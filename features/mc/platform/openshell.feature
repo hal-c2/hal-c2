@@ -145,6 +145,7 @@ Feature: The OpenShell gateway review sandboxes run in
     Then no gateway is installed
     And the gateway's service is gone
 
+  # https://github.com/hal-c2/hal-c2/issues/1420: an RPC for the status, then each client's settings.
   @mc @shared @backlog
   Scenario: Settings shows whether review sandboxes can run, and what to fix
     Given a machine that is an Intel Mac
