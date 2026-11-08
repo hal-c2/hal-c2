@@ -279,9 +279,9 @@ defmodule HalC2.Attachments do
       true ->
         id = "#{thread_segment(thread_id)}-#{HalC2.Environment.uuid4()}"
         name = free_name(attachments, "message")
-        File.mkdir_p!(dir())
+        file = Path.join(dir(), id <> ".txt")
 
-        case File.write(Path.join(dir(), id <> ".txt"), text) do
+        case with(:ok <- File.mkdir_p(dir()), do: File.write(file, text)) do
           :ok ->
             cut = chars - @long_text_start - @long_text_end
 
@@ -301,7 +301,10 @@ defmodule HalC2.Attachments do
 
             {:ok, folded, attachments ++ [file]}
 
+          # No message names what a failed write left, so it goes here.
           {:error, reason} ->
+            File.rm(file)
+
             {:error,
              "The message is too long to send whole, and saving it as a file failed: #{:file.format_error(reason)}."}
         end

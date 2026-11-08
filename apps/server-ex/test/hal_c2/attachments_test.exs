@@ -392,6 +392,27 @@ defmodule HalC2.AttachmentsTest do
       assert List.last(attachments)["name"] == "message-3.txt"
       assert folded =~ "in the attached message-3.txt"
     end
+
+    test "a folder that cannot be made refuses the message instead of raising" do
+      parent = Path.dirname(Attachments.dir())
+      File.mkdir_p!(parent)
+      File.chmod!(parent, 0o555)
+      on_exit(fn -> File.chmod(parent, 0o755) end)
+
+      assert {:error,
+              "The message is too long to send whole, and saving it as a file failed: " <> _} =
+               Attachments.fold_long_text("t1", String.duplicate("x", 120_001), [])
+    end
+
+    test "a write that fails leaves no file behind" do
+      File.mkdir_p!(Attachments.dir())
+      File.chmod!(Attachments.dir(), 0o555)
+      on_exit(fn -> File.chmod(Attachments.dir(), 0o755) end)
+
+      assert {:error, _} = Attachments.fold_long_text("t1", String.duplicate("x", 120_001), [])
+      File.chmod!(Attachments.dir(), 0o755)
+      assert File.ls!(Attachments.dir()) == []
+    end
   end
 
   describe "copy_into/2" do
