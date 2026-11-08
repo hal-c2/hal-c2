@@ -345,6 +345,27 @@ defmodule HalC2.PluginsTest do
     assert %{"version" => "2", "reloadError" => nil} = listed("busy")
   end
 
+  # A copy the cache cannot take, as when it is briefly full or unwritable, fails that
+  # load only: once the cache takes copies again, a rescan of the unchanged package loads it.
+  test "a package whose copy failed loads on a rescan once the cache takes copies" do
+    code_package("busy", "1", [{"a.ex", busy_source("1")}])
+    copies = Path.join(HalC2.Paths.cache_dir(), "plugin-packages")
+    File.mkdir_p!(copies)
+    File.chmod!(copies, 0o500)
+
+    try do
+      Plugins.handle("rescan", %{})
+      assert %{"status" => "error"} = listed("busy")
+    after
+      File.chmod!(copies, 0o755)
+    end
+
+    Plugins.handle("rescan", %{})
+    assert %{"status" => "disabled"} = listed("busy")
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => "busy", "acceptPermissions" => []})
+    assert %{"status" => "running", "version" => "1"} = listed("busy")
+  end
+
   defp declare(manifest), do: Map.put(manifest, "threadsStay", true)
 
   # What a peer answers for a plugin: only a function the running version has, so a

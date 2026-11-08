@@ -1165,15 +1165,16 @@ defmodule HalC2.Plugins do
       {{:error, _, hash}, [%{hash: hash} | _]} ->
         previous
 
-      {{:ok, _, _, hash}, _} ->
+      {{:ok, _, _, _}, _} ->
         case stage(id, dir) do
           {:ok, copy} ->
             load_copy(id, dir, copy, previous, bundled)
 
-          # The package changed under the copy (an install replacing it): the version
-          # that ran stays, and a rescan loads it again.
+          # The package changed under the copy (an install replacing it), or the cache
+          # could not take it: the version that ran stays, and a rescan loads it again.
+          # The failure keeps no hash, so a rescan of the same package retries the copy.
           {:error, message} ->
-            failed(previous, message, fn -> %{blank(id, dir, hash) | package: dir} end)
+            failed(previous, message, fn -> %{blank(id, dir, nil) | package: dir} end)
         end
 
       {{:error, message, hash}, _} ->
