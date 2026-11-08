@@ -373,6 +373,8 @@ Feature: Codex
 
   # Upstream #27924: when a write to the app-server failed while its output stayed open, pending
   # and later requests waited forever and the session was never retired.
+  # Only an app-server the MC owns directly is fixed. A durable one (the default off Windows) still
+  # waits: a write to its input FIFO never fails (hal-c2#1379).
   @backlog @priority-high
   Scenario: Codex requests fail at once when the app-server stops taking input
     Given a Codex turn is running
@@ -383,7 +385,6 @@ Feature: Codex
 
   # Upstream #26188: after the shared app-server was killed (an OOM killer took its whole
   # scope), every later Codex turn failed until the server restarted.
-  @backlog @priority-high
   Scenario Outline: Codex starts a new app-server after its old one was killed
     Given the Codex app-server was killed by a signal
     When the user <action>
@@ -835,7 +836,6 @@ Feature: Codex
 
   # Upstream #21045: a conversation another Codex client held open was silently replaced with a
   # fresh one, leaving its native history behind.
-  @backlog @priority-high
   Scenario: A Codex conversation open in another Codex client is not replaced
     Given the Codex app has the thread's Codex conversation open on the same Codex home
     When the user sends a message
@@ -1325,12 +1325,13 @@ Feature: Codex
     Then the subagent stays completed
 
   # Upstream #25322: stopping the subagent's late turn waited on its own reply and froze every Codex thread for 10 seconds.
-  @backlog @mc @priority-high
-  Scenario: A subagent turn that starts after its parent stopped does not hold up other Codex threads
+  # Here each thread has its own app-server, shared with its subagents, so what the wait held up was the thread itself.
+  @mc
+  Scenario: A subagent turn that starts after its parent stopped does not hold up its Codex thread
     Given a Codex run was stopped while one of its subagents was still working
-    And another Codex thread shares the same app-server
+    And Codex does not answer a stop
     When the subagent starts another turn and HAL-C2 stops it
-    Then the other thread keeps receiving its events without a pause
+    Then the thread's next message runs without waiting on Codex's answer to that stop
 
   # Upstream #29168: the wake text cut the command at 200 and its output at 1,000 UTF-16 units, so an
   # emoji at a cut left a lone surrogate, Codex never answered the turn start, and the wake hung.
@@ -1416,7 +1417,7 @@ Feature: Codex
     And the 32 waiting requests are unaffected
 
   # Upstream #23234: each stop over a waiting approval held one of Codex's 32 request slots forever.
-  @backlog @mc @priority-high
+  @mc
   Scenario: Approvals still reach the user after many Codex turns were stopped while waiting
     Given 32 Codex turns on one Codex instance were stopped while an approval waited
     When a Codex turn in another thread asks for an approval
@@ -1462,13 +1463,14 @@ Feature: Codex
     Then the request fails with "Codex App Server process exited with code 1"
 
   # Upstream #23938: Codex exiting before it started showed only its exit code.
-  @backlog @priority-high
   Scenario: Codex that exits before it starts says why
     Given the Codex command exits with code 1 after printing "Error: Missing optional dependency @openai/codex-darwin-arm64"
     When the MC checks Codex or starts a turn with it
     Then the provider status and the failed turn both end with "Error: Missing optional dependency @openai/codex-darwin-arm64"
 
   # Upstream #24600: requests hung when Codex closed its output but kept running.
+  # Only a Codex the MC owns directly is fixed. A durable one (the default off Windows) writes its
+  # output to a file, whose end the MC sees only once Codex exits (hal-c2#1379).
   @backlog @priority-high
   Scenario: A request to Codex fails soon after Codex closes its output while still running
     Given the MC is waiting on Codex for an answer
@@ -1649,7 +1651,7 @@ Feature: Codex
     When the user forks the thread
     Then the MC unarchives that session and the fork starts with the thread's conversation
 
-  @backlog @mc @plugin-codex @priority-high
+  @mc @plugin-codex
   Scenario: Stop ends a Codex command after its thread was settled
     Given Codex left a command running and the thread was settled
     And Codex has since unloaded the thread
@@ -1665,7 +1667,7 @@ Feature: Codex
     And the turn stays completed
     And a late completion for that command does not bring it back
 
-  @backlog @mc @shared @plugin-codex
+  @mc @shared @plugin-codex @backlog-desktop @backlog-mobile @backlog-tui
   Scenario Outline: /goal drives Codex's own goal
     When the user sends "<input>" in a Codex thread
     Then the thread uses Codex's goal for it
@@ -1680,7 +1682,7 @@ Feature: Codex
       | /goal                |
 
   # Upstream #25426: a Codex goal that Codex does not continue within its window is paused as the run ends.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A Codex goal Codex does not continue is paused when the run ends
     Given a Codex thread is working toward a goal
     When the run ends and Codex does not continue the goal within five seconds
@@ -1688,7 +1690,7 @@ Feature: Codex
     And a turn Codex starts for it later is stopped
 
   # Upstream #25426: setting a Codex goal flashed "Goal paused", and its first turn got the bare objective.
-  @backlog @priority-low
+  @priority-low
   Scenario: Setting a Codex goal starts work on it without a paused flash
     When the user sends "/goal ship the fix" in a Codex thread
     Then the goal never shows as paused while it starts
@@ -1696,7 +1698,7 @@ Feature: Codex
 
   # Upstream #23033: an oversized objective reached Codex as a generic start failure, and retrying it
   # could clear the previous goal first.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A goal over Codex's 4,000-character limit is refused before Codex is asked
     Given a Codex thread is working toward "ship the fix"
     When the user sends "/goal" with an objective of 4,100 characters

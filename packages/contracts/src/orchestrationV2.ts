@@ -695,6 +695,22 @@ export const OrchestrationV2ProviderThreadNativeMetadata = Schema.Struct({
 export type OrchestrationV2ProviderThreadNativeMetadata =
   typeof OrchestrationV2ProviderThreadNativeMetadata.Type;
 
+export const OrchestrationV2ProviderThreadGoal = Schema.Struct({
+  objective: Schema.String,
+  status: Schema.Literals([
+    "active",
+    "paused",
+    "blocked",
+    "usage_limited",
+    "budget_limited",
+    "complete",
+  ]),
+  tokensUsed: NonNegativeInt,
+  tokenBudget: Schema.NullOr(NonNegativeInt),
+  timeUsedSeconds: NonNegativeInt,
+});
+export type OrchestrationV2ProviderThreadGoal = typeof OrchestrationV2ProviderThreadGoal.Type;
+
 export const OrchestrationV2ProviderThread = Schema.Struct({
   id: ProviderThreadId,
   driver: ProviderDriverKind,
@@ -723,6 +739,10 @@ export const OrchestrationV2ProviderThread = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   nativeMetadata: Schema.optional(Schema.NullOr(OrchestrationV2ProviderThreadNativeMetadata)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  // The provider's own goal for the thread (Codex's `/goal`); null when it has none.
+  goal: Schema.optional(Schema.NullOr(OrchestrationV2ProviderThreadGoal)).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   createdAt: Schema.DateTimeUtc,
