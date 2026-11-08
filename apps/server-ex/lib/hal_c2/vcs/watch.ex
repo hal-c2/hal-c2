@@ -155,7 +155,7 @@ defmodule HalC2.Vcs.Watch do
       if Application.get_env(:hal_c2, :auto_actions, true) and
            HalC2.BackgroundPolicy.run_scope_work?(scope) do
         remote = Vcs.remote_status(state.cwd, fetch: true, pr: true)
-        maybe_auto_pull(state, remote)
+        remote = maybe_auto_pull(state, remote)
 
         update(%{state | pr_branch: Git.current_branch(state.cwd)}, state.local, remote)
       else
@@ -191,12 +191,20 @@ defmodule HalC2.Vcs.Watch do
            remote,
          id when is_binary(id) <- HalC2.Projects.at(state.cwd),
          true <- HalC2.Settings.for_project(id)["defaultAutoPull"] == true,
-         {:error, error} <- Vcs.pull(%{"cwd" => state.cwd}) do
-      require Logger
-      Logger.warning("automatic pull of #{state.cwd} failed: #{inspect(error)}")
-    end
+         pulled <- Vcs.pull(%{"cwd" => state.cwd}) do
+      case pulled do
+        {:error, error} ->
+          require Logger
+          Logger.warning("automatic pull of #{state.cwd} failed: #{inspect(error)}")
+          remote
 
-    :ok
+        # The pre-pull status is stale (still behind): read the repository again.
+        _ ->
+          Vcs.remote_status(state.cwd, pr: true) || remote
+      end
+    else
+      _ -> remote
+    end
   end
 
   defp start_lookup(state) do

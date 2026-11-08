@@ -421,6 +421,9 @@ defmodule HalC2.GitActions do
   defp push(cwd, branch) do
     status = Vcs.remote_status(cwd) || %{}
     upstream = Git.upstream(cwd, branch)
+    # An upstream whose remote-tracking ref is gone (its branch was deleted and pruned)
+    # still has config; treat it as unset so the push publishes the branch again.
+    upstream = upstream && upstream_ref_exists?(cwd, upstream) && upstream
 
     cond do
       upstream && status["aheadCount"] == 0 && status["behindCount"] == 0 ->
@@ -444,6 +447,12 @@ defmodule HalC2.GitActions do
         fail!("Cannot push because no git remote is configured for this repository.")
     end
   end
+
+  defp upstream_ref_exists?(cwd, %{remote: nil, ref: ref}),
+    do: match?({:ok, _}, Git.ok(cwd, ["rev-parse", "--verify", "--quiet", "refs/heads/#{ref}"]))
+
+  defp upstream_ref_exists?(cwd, %{ref: ref}),
+    do: match?({:ok, _}, Git.ok(cwd, ["rev-parse", "--verify", "--quiet", "refs/remotes/#{ref}"]))
 
   # The open pull request for this branch, or a new one: on Forgejo through its API,
   # anywhere else through `gh`.

@@ -396,8 +396,11 @@ defmodule HalC2.Vcs do
   end
 
   defp default_branch(cwd) do
-    case Git.ok(cwd, ~w(symbolic-ref refs/remotes/origin/HEAD)) do
-      {:ok, "refs/remotes/origin/" <> branch} -> String.trim(branch)
+    with remote when is_binary(remote) <- Git.primary_remote(cwd),
+         prefix = "refs/remotes/#{remote}/",
+         {:ok, ^prefix <> branch} <- Git.ok(cwd, ["symbolic-ref", prefix <> "HEAD"]) do
+      String.trim(branch)
+    else
       _ -> nil
     end
   end
@@ -420,6 +423,7 @@ defmodule HalC2.Vcs do
          {:ok, root} <- Git.ok(cwd, ~w(rev-parse --show-toplevel)) do
       root = String.trim(root)
       remotes = remotes(cwd)
+      primary = Git.primary_remote(cwd)
       default = default_branch(cwd)
       worktrees = worktree_branches(cwd)
       current = Git.current_branch(cwd)
@@ -462,7 +466,7 @@ defmodule HalC2.Vcs do
             "name" => name,
             "current" => false,
             "isRemote" => true,
-            "isDefault" => remote == "origin" and branch == default,
+            "isDefault" => remote == primary and branch == default,
             "worktreePath" => nil
           }
           |> then(&if(remote, do: Map.put(&1, "remoteName", remote), else: &1))
@@ -475,8 +479,11 @@ defmodule HalC2.Vcs do
           do: remote_refs,
           else:
             Enum.reject(remote_refs, fn ref ->
-              ref["remoteName"] == "origin" and
-                MapSet.member?(local_names, String.replace_prefix(ref["name"], "origin/", ""))
+              primary != nil and ref["remoteName"] == primary and
+                MapSet.member?(
+                  local_names,
+                  String.replace_prefix(ref["name"], primary <> "/", "")
+                )
             end)
 
       query = input["query"] && String.downcase(input["query"])
@@ -508,7 +515,7 @@ defmodule HalC2.Vcs do
        %{
          "refs" => page,
          "isRepo" => true,
-         "hasPrimaryRemote" => "origin" in remotes,
+         "hasPrimaryRemote" => primary != nil,
          "nextCursor" => if(cursor + length(page) < total, do: cursor + length(page)),
          "totalCount" => total
        }}
