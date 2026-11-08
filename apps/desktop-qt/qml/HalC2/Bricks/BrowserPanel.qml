@@ -109,12 +109,14 @@ Rectangle {
         webView.url = url;
     }
 
+    // Opens what the user typed; false, with addressProblem saying what to
+    // type instead, when it is not a web address.
     function openTyped(text) {
         const source = /^\s*view-source:/i.test(text);
         const normalized = BrowserJs.normalizeAddress(source ? text.trim().slice(12) : text);
         if (normalized.error) {
             addressProblem = normalized.error;
-            return;
+            return false;
         }
         addressProblem = "";
         if (source)
@@ -122,6 +124,7 @@ Rectangle {
         else
             go(normalized.url, true);
         webView.forceActiveFocus();
+        return true;
     }
 
     function reload() {
@@ -277,10 +280,9 @@ Rectangle {
                     typing = false;
             }
             onAccepted: {
-                // Read before the page's address comes back in.
-                const typed = text;
-                typing = false;
-                root.openTyped(typed);
+                // A refused address stays, to be put right, with what to type instead.
+                if (root.openTyped(text))
+                    typing = false;
             }
             Keys.onEscapePressed: {
                 typing = false;

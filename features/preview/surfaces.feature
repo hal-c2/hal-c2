@@ -129,7 +129,7 @@ Feature: In-app preview browser
       Then the thread has a new idle tab
       And the tab fills the space it is given
 
-    @backlog @desktop @tui
+    @desktop @tui @backlog-tui
     Scenario Outline: A typed address gets the web scheme that fits the host it names
       When a client opens a browser tab for the thread at "<typed>"
       Then the thread has a new tab loading "<loaded>"
@@ -140,7 +140,7 @@ Feature: In-app preview browser
         | 127.0.0.1:8080 | http://127.0.0.1:8080 |
         | example.com    | https://example.com   |
 
-    @backlog @desktop @tui
+    @desktop @tui @backlog-tui
     Scenario: A typed address with a scheme other than web is refused
       When a client opens a browser tab for the thread at "ftp://example.com/file"
       Then no tab opens
@@ -1181,7 +1181,7 @@ Feature: In-app preview browser
       And the field no longer has focus
 
     # Upstream #23577: an address the browser could not open was silently put back.
-    @backlog @desktop
+    @desktop
     Scenario Outline: An address that is not a web page says what to type instead
       Given a browser tab showing the thread's dev server
       When the user types "<typed>" in the address field and presses Enter
@@ -1199,7 +1199,7 @@ Feature: In-app preview browser
       When the user focuses the address field
       Then the whole address is selected, ready to be replaced
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Back and forward are offered only where the tab can go
       Given a browser tab whose page <history>
       Then going back is <back>
@@ -1211,7 +1211,7 @@ Feature: In-app preview browser
         | follows an earlier page                      | available   | unavailable |
         | is the first page, reached by going back     | unavailable | available   |
 
-    @backlog @desktop
+    @desktop
     Scenario: Reloading becomes stopping while the page loads
       Given a browser tab whose page is still loading
       Then the tab offers to stop loading instead of reloading

@@ -822,10 +822,13 @@ int main(int argc, char** argv) {
   tzset();
   // Before the application, as main.cpp does: the browser scenarios' pages.
   // A fake camera and microphone, so a page asking for one is refused by the
-  // app and not for want of a device. No leading space: the engine takes an
-  // empty flag as an argument, and back from a page's source then stops.
+  // app and not for want of a device; and pages off this machine go to a proxy
+  // that is not there (the loopback goes direct), so no scenario reaches the
+  // network. No leading space: the engine takes an empty flag as an argument,
+  // and back from a page's source then stops.
   QByteArray flags = qgetenv("QTWEBENGINE_CHROMIUM_FLAGS");
-  qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags + (flags.isEmpty() ? "" : " ") + "--use-fake-device-for-media-stream");
+  qputenv("QTWEBENGINE_CHROMIUM_FLAGS",
+          flags + (flags.isEmpty() ? "" : " ") + "--use-fake-device-for-media-stream --proxy-server=127.0.0.1:9");
   QtWebEngineQuick::initialize();
   QGuiApplication app(argc, argv);
   tst_Features test;
