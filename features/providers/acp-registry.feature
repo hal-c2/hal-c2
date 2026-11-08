@@ -960,6 +960,8 @@ Feature: ACP registry agents
       | Enter WXYZ-9876 at https://acme.example/device |
       | Enter wxyz-9876 to continue                  |
       | Open github.com/login/device to continue     |
+      | Enter WDJB-MJHT to continue                  |
+      | Enter AB12C-DE34F to continue                |
 
   Scenario Outline: A reason with a hyphenated word that is no device code is shown
     Given "acme" answers its sign-in with the error "<reason>"
@@ -970,6 +972,7 @@ Feature: ACP registry agents
       | reason                |
       | HTTP-502 from upstream |
       | SHA-256 mismatch      |
+      | Model gpt4-mini unavailable |
 
   # Upstream #30295: a proxy's HTML error page would otherwise fill the sign-in panel.
   @priority-low
