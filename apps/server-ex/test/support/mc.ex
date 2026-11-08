@@ -1992,6 +1992,7 @@ defmodule HalC2.Test.Mc.World do
       |> Map.put_new("FAKE_ACP_LOG", Path.join(context.mc.home, "acp-requests.log"))
       |> Map.put_new("FAKE_CLAUDE_LOG", Path.join(context.mc.home, "claude-prompts.log"))
       |> Map.put_new("FAKE_CODEX_GATE", Path.join(context.mc.home, "gate"))
+      |> Map.put_new("FAKE_CLAUDE_GATE", Path.join(context.mc.home, "gate"))
 
     fake = &["python3", "-u", Path.join(@support, &1)]
     keys = ~w(codex_command claude_command acp_commands text_codex_command text_claude_command)a
@@ -2639,11 +2640,13 @@ defmodule HalC2.Test.Mc.World do
     if Application.get_env(:hal_c2, :claude_command) == nil do
       log = "FAKE_CLAUDE_ARGV_LOG=" <> Path.join(context.mc.home, "claude-argv.jsonl")
       input = "FAKE_CLAUDE_INPUT_LOG=" <> Path.join(context.mc.home, "claude-inputs.jsonl")
+      gate = "FAKE_CLAUDE_GATE=" <> Path.join(context.mc.home, "gate")
 
       Application.put_env(:hal_c2, :claude_command, [
         "env",
         log,
         input,
+        gate,
         "python3",
         "-u",
         @fake_claude
@@ -3663,6 +3666,8 @@ defmodule HalC2.Test.Mc.World do
           {HalC2.Claude.Provider, :models},
           {HalC2.Claude.Provider, :capabilities},
           {HalC2.Claude.Provider, :health},
+          {HalC2.ProviderUpdates, :claude_channel, "latest"},
+          {HalC2.ProviderUpdates, :claude_channel, "stable"},
           {HalC2.ProviderUpdates, "codex"},
           {HalC2.ProviderUpdates, "claudeAgent"},
           # The update a scenario was offered, and how its last update went.
@@ -3672,6 +3677,10 @@ defmodule HalC2.Test.Mc.World do
           {HalC2.ProviderUpdates, "claudeAgent", :state}
         ],
         do: :persistent_term.erase(key)
+
+    # Claude's sign-in reads live in their ETS table, emptied with the rest.
+    if :ets.whereis(:hal_c2_claude_auth) != :undefined,
+      do: :ets.delete_all_objects(:hal_c2_claude_auth)
 
     :ok
   end
@@ -3986,7 +3995,7 @@ defmodule HalC2.Test.Mc.World do
             "name" => name,
             "version" => "1.0.0",
             "description" => "",
-            "distribution" => %{"npx" => %{"package" => id}}
+            "distribution" => %{"npx" => %{"package" => "#{id}@1.0.0"}}
           }
         ]
       })

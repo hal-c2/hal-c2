@@ -410,13 +410,28 @@ defmodule HalC2.Steps.SourceControl.ReviewDiffs do
 
   step "the user expands the unchanged lines of {string}", %{args: [path]} = context do
     {reply, context} =
-      World.call(context, "review.getDiffFileContents", %{
-        "cwd" => context.cwd,
-        "sourceKind" => "working-tree",
-        "changeType" => "change",
-        "oldPath" => path,
-        "newPath" => path
-      })
+      if context[:root_commit] do
+        # A pull request's root commit (`pull-request-review.feature`): the file
+        # is new in that commit, so it has no old side to ask for.
+        World.call(
+          context,
+          "pullRequests.diffFileContents",
+          Map.merge(context.pr_ref, %{
+            "commit" => context.root_commit,
+            "changeType" => "new",
+            "oldPath" => path,
+            "newPath" => path
+          })
+        )
+      else
+        World.call(context, "review.getDiffFileContents", %{
+          "cwd" => context.cwd,
+          "sourceKind" => "working-tree",
+          "changeType" => "change",
+          "oldPath" => path,
+          "newPath" => path
+        })
+      end
 
     Map.put(context, :reply, reply)
   end

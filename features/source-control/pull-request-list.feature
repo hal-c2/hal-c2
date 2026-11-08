@@ -106,7 +106,7 @@ Feature: Browsing pull requests
 
   # Upstream #24772: Forgejo has no merged list, so merged and closed lists each held the other's
   # pull requests and came up short.
-  @backlog @mc
+  @mc
   Scenario Outline: A Forgejo list by state holds only pull requests in that state
     Given a Forgejo repository with merged pull requests and pull requests closed without merging
     When the user lists <state> pull requests
@@ -151,7 +151,7 @@ Feature: Browsing pull requests
       | GitCafe |
 
   # Upstream #23923: a filter the host could not apply left the first page with a couple of rows.
-  @backlog @mc
+  @mc
   Scenario: A filter the host cannot apply still fills the page
     Given the host of "acme/shop" cannot filter by author
     When the user lists pull requests by the author "octocat"
@@ -214,7 +214,7 @@ Feature: Browsing pull requests
 
   # Upstream #26877: only GitHub rows carried a review decision, so GitLab merge requests showed no
   # approval and the approved filter found none.
-  @backlog @mc
+  @mc
   Scenario Outline: A GitLab merge request shows its approval
     Given a merge request on GitLab <edition> that <approval>
     When the user lists merge requests
@@ -228,7 +228,7 @@ Feature: Browsing pull requests
 
   # Upstream #32395: one approving review marked a GitHub row approved while GitHub still required
   # more approvals or a code owner's review.
-  @backlog @mc
+  @mc
   Scenario Outline: A GitHub pull request shows approved only when GitHub says so
     Given pull request 42 on GitHub has an approving review
     And GitHub reports its review decision as <decision>
@@ -242,14 +242,26 @@ Feature: Browsing pull requests
       | nothing         | approved             |
 
   # Upstream #26877
-  @backlog @mc @priority-low
+  @mc
   Scenario: A GitLab list whose approvals cannot be read still loads
     Given GitLab refuses to say which merge requests are approved
     When the user lists merge requests
     Then the merge requests are listed without an approval
 
+  @mc
+  Scenario: A GitLab merge request nobody had to approve is not shown as approved
+    Given a merge request on GitLab that needs no approvals and nobody approved
+    When the user lists merge requests
+    Then its row shows no review decision
+
+  @mc
+  Scenario: A GitLab merge request short of its approval rules waits, reviewers or not
+    Given a merge request on GitLab that still needs an approval and has no reviewers
+    When the user lists merge requests
+    Then its row shows it as waiting for a review
+
   # Upstream #30433: GitLab rows carried no checks state, so the checks filter did nothing.
-  @backlog @mc @priority-low
+  @mc
   Scenario Outline: A GitLab merge request is listed by the state of its pipeline
     Given a GitLab merge request whose latest pipeline <pipeline>
     When the user lists merge requests with <filter>
@@ -478,7 +490,7 @@ Feature: Browsing pull requests
     And opening it shows the whole reason
 
   # Upstream #22029: a Bitbucket Server remote was sent to the Bitbucket Cloud API, credentials and all.
-  @backlog @mc
+  @mc
   Scenario: A Bitbucket Server repository is not read through Bitbucket Cloud
     Given the project's remote is "https://bitbucket.example.com/scm/proj/repo.git"
     And no Bitbucket API address is configured
@@ -487,6 +499,8 @@ Feature: Browsing pull requests
     And nothing about "proj/repo" is sent to bitbucket.org
 
   # Upstream #22029: a configured Bitbucket API address keeps every host readable through it.
+  # The MC does not read Bitbucket Server yet: Server serves /rest/api/1.0, not the Cloud 2.0
+  # API a configured address speaks, so this waits for a Server read of its own.
   @backlog @mc @priority-low
   Scenario: A configured Bitbucket API address reads a Bitbucket Server repository through it
     Given the project's remote is "https://bitbucket.example.com/scm/proj/repo.git"
@@ -1856,25 +1870,25 @@ Feature: Browsing pull requests
     And the stack reads from #20 at the base to #22, each layer stepped in once more
     And the base layer says the stack has three layers
 
-  @backlog @mc
+  @mc
   Scenario: Typed search words are matched as plain text
     When the user searches pull requests for "is:merged"
     Then the words "is:merged" are looked for in titles and bodies
     And the search is not narrowed to merged pull requests
 
-  @backlog @mc
+  @mc
   Scenario: The closed list leaves out merged pull requests
     Given "acme/shop" has one closed pull request and one merged pull request
     When the user lists closed pull requests
     Then only the closed pull request is listed
 
-  @backlog @mc
+  @mc
   Scenario: A repository the host's search does not index is still listed
     Given GitHub's search answers nothing at all for "acme/shop"
     When the user lists open pull requests
     Then the open pull requests of "acme/shop" are listed the long way
 
-  @backlog @mc
+  @mc
   Scenario: A list read the long way grows its page instead of carrying on
     Given GitHub's search answers nothing at all for "acme/shop"
     And "acme/shop" has 300 open pull requests
@@ -1882,39 +1896,39 @@ Feature: Browsing pull requests
     Then a larger page of up to 1000 pull requests is read
     And the list is not carried on from a cursor
 
-  @backlog @mc
+  @mc
   Scenario: A text search that finds nothing stays empty
     Given no pull request in "acme/shop" matches the words "tax"
     When the user searches pull requests for "tax"
     Then no pull requests are listed for "acme/shop"
     And the repository is not read the long way
 
-  @backlog @mc
+  @mc
   Scenario: A cursor the MC did not hand out refuses the whole list
     When a client lists pull requests carrying on from a cursor it made up
     Then the user is told "The list could not be carried on from where it left off."
     And no pull requests are listed
 
-  @backlog @mc
+  @mc
   Scenario: Carrying on reads only the repositories the cursor names
     Given the first page of the list carried on for "acme/shop" only
     When the user loads more pull requests
     Then only "acme/shop" is read
     And "acme/api" is not asked again
 
-  @backlog @mc
+  @mc
   Scenario: Worktrees of one repository are listed once
     Given "acme/shop" is open as the project and as two worktrees
     When the user lists pull requests
     Then each pull request of "acme/shop" is listed once
 
-  @backlog @mc
+  @mc
   Scenario: The same repository name on two hosts stays two repositories
     Given "acme/shop" exists on github.com and on a self-hosted GitHub
     When the user lists pull requests
     Then the pull requests of both are listed under their own host
 
-  @backlog @mc
+  @mc
   Scenario Outline: A filter the host cannot apply is applied by the MC
     Given a project on <host>
     When the user lists open pull requests with <filter>
@@ -1927,21 +1941,66 @@ Feature: Browsing pull requests
       | Azure DevOps | the author "alice" |
       | Bitbucket    | review required   |
 
-  @backlog @mc
+  @mc
   Scenario: A remote spelled as an SSH alias is identified by its host
     Given the project "infra" has the remote "git@work-gitlab:acme/infra.git" and "work-gitlab" is an SSH alias of a GitLab server
     When the user lists open pull requests
     Then the open change requests of "infra" are listed
 
-  @backlog @mc
+  @mc
+  Scenario: An SSH alias from an included file, spelled with an equals sign and a wildcard, is identified
+    Given the project "infra" has the remote "git@work-gitlab:acme/infra.git" and "work-*" is an SSH alias in an included file
+    When the user lists open pull requests
+    Then the open change requests of "infra" are listed
+
+  @mc
+  Scenario: An SSH alias is asked of ssh once, not on every listing
+    Given the project "infra" has the remote "git@work-gitlab:acme/infra.git" and ssh resolves "work-gitlab" to a GitLab server
+    When the user lists open pull requests
+    And the user lists open pull requests
+    Then the open change requests of "infra" are listed
+    And ssh was asked once how "work-gitlab" resolves
+
+  @mc
+  Scenario: An SSH alias is asked of ssh again once a file its config includes changes
+    Given the project "infra" has the remote "git@work-gitlab:acme/infra.git" and ssh resolves "work-gitlab" to a GitLab server
+    When the user lists open pull requests
+    And a file in the ssh config's include directory changes
+    And the user lists open pull requests
+    Then the open change requests of "infra" are listed
+    And ssh was asked twice how "work-gitlab" resolves
+
+  @mc
+  Scenario: An SSH alias is asked of ssh again once a file its config includes is removed
+    Given the project "infra" has the remote "git@work-gitlab:acme/infra.git" and ssh resolves "work-gitlab" to a GitLab server
+    And the ssh config's include directory holds an older and a newer file
+    When the user lists open pull requests
+    And the older file in the ssh config's include directory is removed
+    And the user lists open pull requests
+    Then the open change requests of "infra" are listed
+    And ssh was asked twice how "work-gitlab" resolves
+
+  @mc
   Scenario: Pull requests carry the stacks they belong to
     Given pull request 42 on github.com is the second layer of a stack
     When the user lists open pull requests
     Then pull request 42 is listed with its place in the stack
 
-  @backlog @mc
+  @mc
   Scenario: A failing stack lookup does not break the list
     Given GitHub cannot answer which stacks the listed pull requests belong to
+    When the user lists open pull requests
+    Then the pull requests are listed without stack membership
+
+  @mc
+  Scenario: A stack past the first page of stacks still gives its place
+    Given pull request 42 on github.com is in a stack on the second page of stacks
+    When the user lists open pull requests
+    Then pull request 42 is listed with its place in the stack
+
+  @mc
+  Scenario: A stack that names no base gives no membership
+    Given pull request 42 on github.com is in a stack that names no base
     When the user lists open pull requests
     Then the pull requests are listed without stack membership
 
@@ -1952,14 +2011,14 @@ Feature: Browsing pull requests
     Then the host is searched for at most 100 repositories per request
     And the batches are read concurrently
 
-  @backlog @mc
+  @mc
   Scenario: A batch the host cannot answer is read one repository at a time
     Given the host cannot answer one search across twelve repositories
     When the user lists open pull requests
     Then each repository is read on its own
     And a repository that fails is reported as "<repository> could not be read."
 
-  @backlog @mc
+  @mc
   Scenario Outline: A long list on another host carries on without repeating or skipping
     Given a project on <host> with 200 open change requests
     When the user loads more change requests
@@ -1972,7 +2031,13 @@ Feature: Browsing pull requests
       | Azure DevOps |
       | Bitbucket    |
 
-  @backlog @mc
+  @mc
+  Scenario: A list on another host carries on past its first five host pages
+    Given a project on GitLab with 650 open change requests
+    When the user loads more change requests until none are left
+    Then every change request is listed exactly once
+
+  @mc
   Scenario: A row that cannot be read does not end the list early
     Given the host returns one unreadable row in the middle of a page
     When the user lists open pull requests
@@ -1980,7 +2045,7 @@ Feature: Browsing pull requests
     And more can still be loaded
 
   # Upstream #18813: on Bitbucket a full page sharing one update time made Load more return the same page; the pull requests already delivered are left out of the next request.
-  @backlog @mc
+  @mc
   Scenario: Pull requests with the same update time are not lost between pages
     Given several pull requests were updated at the same instant across a page boundary
     When the user loads more pull requests
@@ -1988,7 +2053,7 @@ Feature: Browsing pull requests
 
   # Upstream #23635: Bitbucket times are finer than a millisecond, so a pull request updated later
   # in a page's last millisecond was skipped for good.
-  @backlog @mc
+  @mc
   Scenario: A Bitbucket pull request updated in the same millisecond as a page's last is not skipped
     Given two Bitbucket pull requests were updated within one millisecond
     And a page of the list ends between them
@@ -1996,7 +2061,35 @@ Feature: Browsing pull requests
     Then the other one is listed on the next page
     And no pull request is listed twice
 
-  @backlog @mc
+  @mc
+  Scenario: Update times written with shorter fractions are not skipped between pages
+    Given Bitbucket stamps its update times with fractions of different lengths
+    When the user loads more change requests until none are left
+    Then all 150 change requests are listed exactly once
+
+  @mc
+  Scenario: A continuation too deep to reach says so instead of ending the list
+    Given a Bitbucket project with 2600 open pull requests
+    When the user carries the list on from fifty pages deep
+    Then the list says the project could not be read instead of ending
+
+  # Azure pages its pull requests in the order they were opened, so its lists are ordered
+  # and carried on in that order; a row's date is still when it closed.
+  @mc
+  Scenario: An Azure pull request merged long after it was opened is not passed over
+    Given an Azure project with 650 merged pull requests, the oldest of them merged last
+    When the user lists merged pull requests
+    And the user loads more merged pull requests until none are left
+    Then the first page holds the newest opened of them
+    And every change request is listed exactly once
+
+  @mc
+  Scenario: A large Azure repository still loads its first page of merged pull requests
+    Given an Azure project with 5100 merged pull requests
+    When the user lists merged pull requests
+    Then the first page of merged pull requests is listed without an error
+
+  @mc
   Scenario Outline: A host that cannot search text lists without narrowing
     Given a project on <host>
     When the user searches pull requests for "tax"
@@ -2007,7 +2100,7 @@ Feature: Browsing pull requests
       | Azure DevOps |
       | Forgejo      |
 
-  @backlog @mc
+  @mc
   Scenario Outline: Search words cannot reshape the request
     Given a project on <host>
     When the user searches pull requests for <words>
@@ -2019,18 +2112,18 @@ Feature: Browsing pull requests
       | GitLab    | "tax&state=all"        |
       | Bitbucket | `a" OR state="MERGED`  |
 
-  @backlog @mc
+  @mc
   Scenario: A search of only spaces is no search
     When the user searches pull requests for "   "
     Then the list is not narrowed
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: A GitLab project in a nested group is addressed by its full path
     Given the project "infra" has its remote on GitLab at "acme/platform/infra"
     When the user lists open merge requests
     Then the merge requests of "acme/platform/infra" are listed
 
-  @backlog @mc @priority-low
+  @mc
   Scenario Outline: Host states are shown as open, closed or merged
     Given a change request on <host> that the host calls <host state>
     When the user lists change requests
@@ -2054,7 +2147,7 @@ Feature: Browsing pull requests
     Then the row is dated 5 July
 
   # Legacy: apps/server/src/sourceControl/azureDevOpsPullRequests.ts (azureDevOpsPullRequestWebUrl)
-  @backlog @mc @priority-low
+  @mc
   Scenario Outline: An Azure DevOps pull request is opened at the host's own link or one built from what it said
     Given pull request 7 on Azure DevOps comes with <given>
     When the user lists pull requests
@@ -2069,7 +2162,7 @@ Feature: Browsing pull requests
       | nothing but a programming address of another kind                                              | that address as it came                                         |
 
   # Legacy: apps/server/src/sourceControl/gitLabMergeRequests.ts, forgejoPullRequests.ts, azureDevOpsPullRequests.ts, bitbucketPullRequests.ts
-  @backlog @mc @priority-low
+  @mc
   Scenario Outline: Each host marks a draft in its own way
     Given a change request on <host> that <marking>
     When the user lists change requests
@@ -2086,7 +2179,7 @@ Feature: Browsing pull requests
       | Azure DevOps | is flagged as a draft                               | a draft      |
       | Bitbucket    | is flagged as a draft                               | a draft      |
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: A host that reports no line counts leaves them out
     Given an open merge request on GitLab
     When the user lists open pull requests
@@ -2105,13 +2198,13 @@ Feature: Browsing pull requests
     When the MC reads it
     Then GitHub is asked once and all three clients get the answer
 
-  @backlog @mc
+  @mc
   Scenario: Many summaries are asked for in one batch
     Given a client asks for the summaries of 30 pull requests in quick succession
     When the MC reads them
     Then GitHub is asked in batches of at most 25 pull requests
 
-  @backlog @mc
+  @mc
   Scenario: A pull request GitHub cannot find fails only its own lookup
     Given a client asks for the summaries of pull requests 41, 42 and 43
     And GitHub cannot find pull request 42
@@ -2120,7 +2213,7 @@ Feature: Browsing pull requests
     And pull request 42 is reported as not found
     And pull requests 41 and 43 are not read again
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: A malformed row in a listing is skipped
     Given GitHub answers a listing of open pull requests with one row that cannot be read
     When the user lists open pull requests
@@ -2297,7 +2390,7 @@ Feature: Browsing pull requests
     Then that host is reported as one the MC cannot read yet
     And the other hosts are listed as usual
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: A review request is flagged for the user, spelled any way, but not on their own pull request
     Given the user is "bilal" and a review of pull request 1 is requested of "Bilal"
     And pull request 2 was written by "bilal" and lists "bilal" among its requested reviewers
@@ -2325,35 +2418,35 @@ Feature: Browsing pull requests
     Then it is answered as merged without asking the host
 
   # Legacy: apps/server/src/pullRequest/GitHubPullRequestCli.ts (matchesInvolvement), gitHubPullRequestJson.ts (hasTeamReviewRequest)
-  @backlog @mc @priority-low
+  @mc
   Scenario: On GitHub a review asked of a team is listed among those awaiting the user's review
     Given pull request 1 on GitHub has a review requested of the team "acme/core" and of no person
     When the user lists pull requests where their review is requested
     Then pull request 1 is listed
 
   # Legacy: apps/server/src/pullRequest/AzureDevOpsPullRequestCli.ts (AzureDevOpsViewerUnavailableError)
-  @backlog @mc @priority-low
+  @mc
   Scenario: An Azure DevOps sign-in that names no account cannot be listed for
     Given the Azure CLI answers for the current sign-in with no account
     When the user lists their pull requests on Azure DevOps
     Then the user is told "Azure CLI returned no account for the current sign-in."
 
   # Legacy: apps/server/src/pullRequest/BitbucketPullRequestApi.ts (BitbucketViewerUnavailableError)
-  @backlog @mc @priority-low
+  @mc
   Scenario: Bitbucket credentials that name no account cannot be listed for
     Given Bitbucket answers for the configured credentials with no account name
     When the user lists their pull requests on Bitbucket
     Then the user is told "Bitbucket returned no account name for the configured credentials."
 
   # Legacy: apps/server/src/pullRequest/BitbucketPullRequestApi.ts (BitbucketRepositoryUnsupportedError)
-  @backlog @mc @priority-low
+  @mc
   Scenario: A Bitbucket repository that is not a workspace and a name is refused
     Given a project whose Bitbucket repository is not written as workspace/repository
     When the user lists its pull requests
     Then the user is told "A Bitbucket repository is addressed as workspace/repository."
 
   # Legacy: apps/server/src/pullRequest/AzureDevOpsPullRequestProvider.ts (toChangeRequest: additions 0, deletions 0, labels [])
-  @backlog @mc @priority-low
+  @mc
   Scenario: An Azure DevOps row has no labels and no line counts, since the host keeps neither on the pull request
     Given an open pull request on Azure DevOps
     When the user lists open pull requests

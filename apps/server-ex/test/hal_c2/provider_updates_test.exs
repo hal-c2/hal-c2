@@ -76,6 +76,51 @@ defmodule HalC2.ProviderUpdatesTest do
     refute HalC2.ProviderUpdates.advisory("codex", brew, "0.1.0")["canInstallVersion"]
   end
 
+  test "a WinGet Claude install is updated by hand, with the winget command shown",
+       %{tmp_dir: dir} do
+    path =
+      install(
+        dir,
+        "Microsoft/WinGet/Packages/Anthropic.ClaudeCode/claude.exe",
+        "Microsoft/WinGet/Links/claude.exe"
+      )
+
+    assert %{
+             "status" => "behind_latest",
+             "canUpdate" => false,
+             "updateCommand" => "winget upgrade Anthropic.ClaudeCode"
+           } = HalC2.ProviderUpdates.advisory("claudeAgent", path, "2.1.0")
+  end
+
+  test "a native Claude install is compared with its release channel, not npm",
+       %{tmp_dir: dir} do
+    # The channel is read from the instance's Claude settings; none here, so latest.
+    System.put_env("CLAUDE_CONFIG_DIR", Path.join(dir, "claude-config"))
+    on_exit(fn -> System.delete_env("CLAUDE_CONFIG_DIR") end)
+    path = install(dir, ".local/share/claude/versions/2.1.0/claude", ".local/bin/claude")
+
+    # npm is at 9.9.9 (setup), but the channel still offers the installed one.
+    assert %{"status" => "unknown", "latestVersion" => nil} =
+             HalC2.ProviderUpdates.advisory("claudeAgent", path, "2.1.0")
+
+    :persistent_term.put(
+      {HalC2.ProviderUpdates, :claude_channel, "latest"},
+      {"2.1.0", System.monotonic_time(:millisecond)}
+    )
+
+    on_exit(fn -> :persistent_term.erase({HalC2.ProviderUpdates, :claude_channel, "latest"}) end)
+
+    assert %{"status" => "current", "latestVersion" => "2.1.0"} =
+             HalC2.ProviderUpdates.advisory("claudeAgent", path, "2.1.0")
+  end
+
+  test "a release channel's answer is a plain version or nothing" do
+    assert HalC2.ProviderUpdates.parse_channel_version("2.1.300\n") == "2.1.300"
+    assert HalC2.ProviderUpdates.parse_channel_version("v2.1.300") == "2.1.300"
+    assert HalC2.ProviderUpdates.parse_channel_version("<html>nope</html>") == nil
+    assert HalC2.ProviderUpdates.parse_channel_version("") == nil
+  end
+
   test "a version to install must be a plain release", %{tmp_dir: dir} do
     path = install(dir, "lib/node_modules/@openai/codex/bin/codex.js", "bin/codex")
     File.chmod!(path, 0o755)
@@ -87,5 +132,51 @@ defmodule HalC2.ProviderUpdatesTest do
                "provider" => "codex",
                "targetVersion" => "1.0.0; rm -rf /"
              })
+  end
+
+  # Grok's latest is seeded like the others'.
+  setup do
+    :persistent_term.put(
+      {HalC2.ProviderUpdates, "grok"},
+      {"9.9.9", System.monotonic_time(:millisecond)}
+    )
+
+    on_exit(fn ->
+      :persistent_term.erase({HalC2.ProviderUpdates, "grok"})
+      :persistent_term.erase({HalC2.ProviderUpdates, {:cask, "grok-build"}})
+    end)
+  end
+
+  test "Grok updates through its own updater, npm installs included", %{tmp_dir: dir} do
+    own = install(dir, "home/.grok/bin/grok", "home/bin/grok")
+
+    assert HalC2.ProviderUpdates.advisory("grok", own, "1.0.0")["updateCommand"] ==
+             "#{own} update"
+
+    npm = install(dir, "lib/node_modules/@xai-official/grok/bin/grok", "bin/grok")
+
+    assert HalC2.ProviderUpdates.advisory("grok", npm, "1.0.0")["updateCommand"] ==
+             "#{npm} update"
+  end
+
+  test "a Grok binary that cannot be resolved has no update command", %{tmp_dir: dir} do
+    missing = Path.join(dir, "gone/grok")
+    advisory = HalC2.ProviderUpdates.advisory("grok", missing, "1.0.0")
+    assert advisory["status"] == "behind_latest"
+    assert advisory["updateCommand"] == nil
+    assert HalC2.ProviderUpdates.advisory("grok", nil, "1.0.0")["updateCommand"] == nil
+  end
+
+  test "a Grok in a Homebrew cask upgrades through brew only where brew owns the prefix",
+       %{tmp_dir: dir} do
+    path = install(dir, "brew/Caskroom/grok-build/1.0.0/grok", "brew/bin/grok")
+    assert HalC2.ProviderUpdates.advisory("grok", path, "1.0.0")["updateCommand"] == nil
+
+    brew = Path.join(dir, "brew/bin/brew")
+    File.write!(brew, "#!/bin/sh\necho '{\"casks\":[{\"version\":\"1.0.60\"}]}'\n")
+    File.chmod!(brew, 0o755)
+
+    assert HalC2.ProviderUpdates.advisory("grok", path, "1.0.0")["updateCommand"] ==
+             "#{brew} upgrade --cask grok-build"
   end
 end

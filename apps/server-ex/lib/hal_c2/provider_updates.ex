@@ -3,9 +3,11 @@ defmodule HalC2.ProviderUpdates do
   Whether a provider CLI is behind its latest release (`versionAdvisory` on its
   `ServerProvider` entry), and updating it (`server.updateProvider`).
 
-  The latest version is the npm registry's, read in the background at most hourly
-  unless the user turned off `enableProviderUpdateChecks`; providers are
-  re-announced when it arrives. The update runs whatever installed
+  The latest version is the npm registry's — or, for a Claude install from
+  Claude's own installer, the newest its release channel offers — read in the
+  background at most hourly unless the user turned off
+  `enableProviderUpdateChecks`; providers are re-announced when it arrives.
+  The update runs whatever installed
   the CLI, told apart by where its executable really lives: Homebrew, a global npm
   prefix, or Claude Code's own `claude update` and OpenCode's own `opencode upgrade`. Anything else is reported without
   an update command.
@@ -19,9 +21,15 @@ defmodule HalC2.ProviderUpdates do
   @packages %{
     "codex" => "@openai/codex",
     "claudeAgent" => "@anthropic-ai/claude-code",
-    "opencode" => "opencode-ai"
+    "opencode" => "opencode-ai",
+    "grok" => "@xai-official/grok"
   }
-  @names %{"codex" => "Codex", "claudeAgent" => "Claude", "opencode" => "OpenCode"}
+  @names %{
+    "codex" => "Codex",
+    "claudeAgent" => "Claude",
+    "opencode" => "OpenCode",
+    "grok" => "Grok"
+  }
   @ttl :timer.hours(1)
 
   @doc """
@@ -32,10 +40,14 @@ defmodule HalC2.ProviderUpdates do
   def advisory(driver, path, current, instance \\ nil) do
     instance = instance || driver
 
-    latest =
-      if HalC2.Settings.settings()["enableProviderUpdateChecks"] != false, do: latest(driver)
-
     update = update_command(driver, path)
+
+    latest =
+      if HalC2.Settings.settings()["enableProviderUpdateChecks"] != false,
+        do: latest_for(driver, path, update, instance)
+
+    # A command the user runs by hand (WinGet) is shown, but never run for them.
+    shown = update || manual_command(driver, path)
     # What the user was shown; an update checks the installation still matches it.
     if :persistent_term.get({__MODULE__, instance, :offered}, nil) != update,
       do: :persistent_term.put({__MODULE__, instance, :offered}, update)
@@ -49,13 +61,116 @@ defmodule HalC2.ProviderUpdates do
         end,
       "currentVersion" => if(current in [nil, "unknown"], do: nil, else: current),
       "latestVersion" => latest,
-      "updateCommand" => update && Enum.join(update, " "),
+      "updateCommand" => shown && Enum.join(shown, " "),
       "canUpdate" => update != nil,
       "canInstallVersion" => targeted(update, "0.0.0") != nil,
       "checkedAt" => checked_at(driver),
       "message" => nil
     }
   end
+
+  # Claude's own installer promotes releases on its own channel (`latest` or
+  # `stable`) behind npm's, so a native install is compared with the channel it
+  # follows, not with npm. A Homebrew-cask Grok is compared with the version
+  # that cask would install, read from its own brew. Everything else follows
+  # the npm registry (for Grok, `@xai-official/grok`, what `grok update` installs).
+  defp latest_for("claudeAgent", _path, [_executable, "update"], instance),
+    do: channel_latest(claude_channel(instance))
+
+  defp latest_for("grok", path, _update, _instance) when is_binary(path), do: grok_latest(path)
+  defp latest_for(driver, _path, _update, _instance), do: latest(driver)
+
+  # The channel a native Claude install follows, from the `autoUpdatesChannel`
+  # of the instance's Claude settings; `latest` when it does not say. Only that
+  # fixed file under the instance's config directory is read.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp claude_channel(instance) do
+    path =
+      Path.join(HalC2.Claude.Provider.config_dir(instance || "claudeAgent"), "settings.json")
+
+    with {:ok, text} <- File.read(path),
+         {:ok, %{"autoUpdatesChannel" => channel}} when channel in ["latest", "stable"] <-
+           HalC2.Claude.Skills.decode_lenient(text) do
+      channel
+    else
+      _ -> "latest"
+    end
+  end
+
+  # The newest version the channel offers, as last read; a channel that does not
+  # answer (or answers with something unreadable) leaves it unknown rather than
+  # falling back to npm's releases.
+  defp channel_latest(channel) do
+    case :persistent_term.get({__MODULE__, :claude_channel, channel}, nil) do
+      {version, read_at} ->
+        if System.monotonic_time(:millisecond) - read_at > @ttl, do: refresh_channel(channel)
+        version
+
+      nil ->
+        refresh_channel(channel)
+        nil
+    end
+  end
+
+  defp refresh_channel(channel) do
+    key = {__MODULE__, :claude_channel, channel, :reading}
+
+    if Application.get_env(:hal_c2, :provider_update_checks, true) &&
+         :persistent_term.get(key, false) == false do
+      :persistent_term.put(key, true)
+
+      Task.start(fn ->
+        try do
+          if version = channel_version(channel) do
+            :persistent_term.put(
+              {__MODULE__, :claude_channel, channel},
+              {version, System.monotonic_time(:millisecond)}
+            )
+
+            HalC2.Settings.notify_providers()
+          end
+        after
+          :persistent_term.put(key, false)
+        end
+      end)
+    end
+  end
+
+  # The channel file is the version it currently offers, as plain text.
+  defp channel_version(channel) do
+    url = ~c"https://downloads.claude.ai/claude-code-releases/#{channel}"
+
+    case :httpc.request(
+           :get,
+           {url, []},
+           [timeout: 4_000, ssl: :httpc.ssl_verify_host_options(true)],
+           body_format: :binary
+         ) do
+      {:ok, {{_, 200, _}, _, body}} -> parse_channel_version(body)
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  @doc false
+  def parse_channel_version(body) when is_binary(body) do
+    version = body |> String.trim() |> String.trim_leading("v")
+
+    case Version.parse(version) do
+      {:ok, _} -> version
+      :error -> nil
+    end
+  end
+
+  # A command the MC shows but does not run: WinGet owns its Claude installs,
+  # and updating one through `claude update` would fight it.
+  defp manual_command("claudeAgent", path) do
+    normalized = path |> String.replace("\\", "/") |> String.downcase()
+    if String.contains?(normalized, "/winget/"), do: ["winget", "upgrade", "Anthropic.ClaudeCode"]
+  end
+
+  defp manual_command(_driver, _path), do: nil
 
   @doc """
   `server.updateProvider`: runs the provider's updater, then reports providers again.
@@ -111,10 +226,22 @@ defmodule HalC2.ProviderUpdates do
     end
   end
 
-  defp lock_key(["brew" | _]), do: "homebrew"
-  defp lock_key([_npm, "install", "-g", "--prefix", prefix | _]), do: "npm-global:" <> prefix
-  defp lock_key([path | _]), do: "self:" <> path
+  defp lock_key([program | _] = command) do
+    cond do
+      program == "brew" or String.ends_with?(program, "/bin/brew") ->
+        "homebrew"
 
+      match?([_, "install", "-g", "--prefix", _ | _], command) ->
+        "npm-global:" <> Enum.at(command, 4)
+
+      true ->
+        "self:" <> program
+    end
+  end
+
+  # The program comes only from `update_command/2`: the provider's own binary,
+  # the npm beside it, or the proven `<prefix>/bin/brew`; list args, no shell.
+  # sobelow_skip ["CI.System"]
   defp run(driver, instance, target) do
     started = HalC2.Orchestration.Entities.now()
     put_state(instance, "running", started, "Updating provider.")
@@ -129,7 +256,10 @@ defmodule HalC2.ProviderUpdates do
       true ->
         [program | args] = if target, do: targeted(command, target), else: command
 
-        case System.cmd(program, args, stderr_to_stdout: true) do
+        case System.cmd(program, args,
+               stderr_to_stdout: true,
+               env: update_env(driver, instance, command)
+             ) do
           {output, 0} ->
             verify(driver, instance, started, output, target)
 
@@ -197,7 +327,47 @@ defmodule HalC2.ProviderUpdates do
          "message" => reason
        }}
 
+  # Extra environment an update runs with. Grok's own updater finds the home
+  # its instance uses in the instance's environment; an npm-installed Grok's
+  # nested install needs its postinstall allowed or npm 12 skips the step
+  # that installs the new binary.
+  defp update_env("grok", instance, [_path, "update"]) do
+    HalC2.Acp.instance_env(instance) ++
+      [{"npm_config_allow_scripts", "@xai-official/grok"}]
+  end
+
+  defp update_env(_driver, _instance, _command), do: []
+
   # The updater for an executable, as argv, or nil.
+  defp update_command(_driver, nil), do: nil
+
+  # Grok updates through `grok update`, which finds the installer that owns
+  # the binary — except a Homebrew cask, which brew upgrades so no second
+  # install appears beside it. A cask counts as brew's only under the prefix
+  # whose own `bin/brew` sits beside its Caskroom; any other cask path is
+  # left to the user. A binary that cannot be resolved is never handed to
+  # an updater.
+  defp update_command("grok", path) do
+    real = real_path(path)
+
+    cond do
+      not File.exists?(real) ->
+        nil
+
+      String.contains?(real, "/Caskroom/") ->
+        case cask(real) do
+          {brew, name} when is_binary(brew) -> [brew, "upgrade", "--cask", name]
+          _ -> nil
+        end
+
+      String.contains?(real, "/Cellar/") ->
+        ["brew", "upgrade", real |> String.split("/Cellar/") |> Enum.at(1) |> first_segment()]
+
+      true ->
+        [path, "update"]
+    end
+  end
+
   defp update_command(driver, path) do
     real = real_path(path)
     package = @packages[driver]
@@ -284,13 +454,22 @@ defmodule HalC2.ProviderUpdates do
     end
   end
 
+  # A Grok binary that cannot be resolved updates by hand: no executable.
+  def executable("grok", instance) do
+    case HalC2.Acp.binary_path(instance) do
+      nil -> nil
+      path -> System.find_executable(path)
+    end
+  end
+
   def executable(_driver, _instance), do: nil
 
   # Provider entries cache the version of each executable; an update makes the
   # updated one's stale, and only that one is read again. OpenCode's is read again from
   # a throwaway session of the CLI on disk; its running sessions keep the version they
   # started with.
-  defp forget_version("opencode", instance, _path), do: HalC2.Acp.reload(instance)
+  defp forget_version(driver, instance, _path) when driver in ["opencode", "grok"],
+    do: HalC2.Acp.reload(instance)
 
   defp forget_version(driver, _instance, path) do
     module = %{"codex" => HalC2.Codex.Provider, "claudeAgent" => HalC2.Claude.Provider}[driver]
@@ -301,6 +480,73 @@ defmodule HalC2.ProviderUpdates do
     end
 
     :ok
+  end
+
+  # The `brew` and cask name owning an executable under a Caskroom, or nil
+  # when that prefix has no brew of its own to prove it.
+  defp cask(real) do
+    [prefix, rest] = String.split(real, "/Caskroom/", parts: 2)
+    brew = Path.join(prefix, "bin/brew")
+    if File.exists?(brew), do: {brew, first_segment(rest)}
+  end
+
+  defp grok_latest(path) do
+    real = real_path(path)
+
+    if String.contains?(real, "/Caskroom/") do
+      case cask(real) do
+        {brew, name} -> cask_latest(brew, name)
+        _ -> nil
+      end
+    else
+      latest("grok")
+    end
+  end
+
+  defp cask_latest(brew, name) do
+    key = {__MODULE__, {:cask, name}}
+
+    case :persistent_term.get(key, nil) do
+      {version, read_at} ->
+        if System.monotonic_time(:millisecond) - read_at > @ttl,
+          do: refresh_cask(brew, name)
+
+        version
+
+      nil ->
+        refresh_cask(brew, name)
+        nil
+    end
+  end
+
+  # `brew` is the proven `<prefix>/bin/brew` from `cask/1`; list args, no shell.
+  # sobelow_skip ["CI.System"]
+  defp refresh_cask(brew, name) do
+    key = {__MODULE__, {:cask, name}, :reading}
+
+    if Application.get_env(:hal_c2, :provider_update_checks, true) &&
+         :persistent_term.get(key, false) == false do
+      :persistent_term.put(key, true)
+
+      Task.start(fn ->
+        try do
+          with {out, 0} <-
+                 System.cmd(brew, ["info", "--cask", "--json=v2", name], stderr_to_stdout: true),
+               {:ok, %{"casks" => [%{"version" => version} | _]}} <- JSON.decode(out) do
+            :persistent_term.put(
+              {__MODULE__, {:cask, name}},
+              {version, System.monotonic_time(:millisecond)}
+            )
+
+            HalC2.Settings.notify_providers()
+          end
+        rescue
+          _ -> nil
+        after
+          :persistent_term.put(key, false)
+        end
+      end)
+    end
   end
 
   # The latest release as last read, starting a read when it is missing or stale.

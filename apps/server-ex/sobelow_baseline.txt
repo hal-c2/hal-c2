@@ -7,7 +7,6 @@ CI.System: Command Injection via `System` function | lib/hal_c2/editors.ex | reg
 CI.System: Command Injection via `System` function | lib/hal_c2/environment/machine.ex | path
 CI.System: Command Injection via `System` function | lib/hal_c2/local_servers.ex | path
 CI.System: Command Injection via `System` function | lib/hal_c2/machine_files/helper.ex | exe
-CI.System: Command Injection via `System` function | lib/hal_c2/provider_updates.ex | program
 CI.System: Command Injection via `System` function | lib/hal_c2/service.ex | path
 CI.System: Command Injection via `System` function | lib/hal_c2/service.ex | path
 CI.System: Command Injection via `System` function | lib/hal_c2/subprocess/durable.ex | cmd
@@ -111,8 +110,6 @@ Traversal.FileModule: Directory Traversal in `File.cp_r!` | lib/hal_c2/upgrade/d
 Traversal.FileModule: Directory Traversal in `File.cp_r!` | lib/hal_c2/upgrade/dev.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.cp_r!` | lib/hal_c2/upgrade/dev.ex | source
 Traversal.FileModule: Directory Traversal in `File.cp_r!` | lib/hal_c2/upgrade/dev.ex | target
-Traversal.FileModule: Directory Traversal in `File.cp` | lib/hal_c2/acp/catalog.ex | Elixir.Path
-Traversal.FileModule: Directory Traversal in `File.cp` | lib/hal_c2/acp/catalog.ex | archive
 Traversal.FileModule: Directory Traversal in `File.cp` | lib/hal_c2/checkpoint.ex | index
 Traversal.FileModule: Directory Traversal in `File.cp` | lib/hal_c2/checkpoint.ex | path
 Traversal.FileModule: Directory Traversal in `File.cp` | lib/hal_c2/space/image_generation.ex | file

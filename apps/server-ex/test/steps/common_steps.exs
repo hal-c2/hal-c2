@@ -633,6 +633,14 @@ defmodule HalC2.Steps.Common do
     Map.put(context, :request, request)
   end
 
+  # The turn the scenario is watching was not ended by what just happened: it
+  # is still running, or it ran to its own end.
+  step "the turn goes on", context do
+    assert %{"status" => status} = World.latest_run(context, World.current_thread(context))
+    assert status in ["running", "completed"]
+    context
+  end
+
   # The default socket drops and connects again. A scenario that follows the MC
   # over the socket says how it resumes with `context.after_reconnect`.
   step "the client reconnects", context do
@@ -1249,7 +1257,7 @@ defmodule HalC2.Steps.Common do
           "name" => name,
           "version" => "1.0.0",
           "description" => "An ACP agent",
-          "distribution" => %{"npx" => %{"package" => "@acme/#{id}"}}
+          "distribution" => %{"npx" => %{"package" => "@acme/#{id}@1.0.0"}}
         },
         fields
       )
@@ -1272,13 +1280,54 @@ defmodule HalC2.Steps.Common do
         for(n <- 1..24, do: agent.("agent-#{n}", "Agent #{n}", %{"description" => "writes code"}))
 
     ctx = Acp.publish(ctx, agents)
-    {reply, ctx} = World.call(ctx, "server.searchAcpRegistry", %{"query" => query})
+
+    {reply, ctx} =
+      Acp.with_runners(ctx, fn ->
+        World.call(ctx, "server.searchAcpRegistry", %{"query" => query})
+      end)
+
     Map.merge(ctx, %{reply: reply, query: query})
   end
 
   step "the user searches the registry", context do
-    {reply, ctx} = World.call(context, "server.searchAcpRegistry", %{"query" => "acme"})
-    Map.put(ctx, :reply, reply)
+    # A scenario that set up no registry of its own searches the fake one,
+    # which lists "acme" with everything the real registry publishes for it.
+    context =
+      if Map.has_key?(context, :acp) or Map.has_key?(context, :registry) do
+        context
+      else
+        ctx = HalC2.Test.AcpFixtures.serve_registry(context)
+
+        full = %{
+          "license" => "MIT",
+          "website" => "https://acme.test",
+          "repository" => "https://github.com/acme/acme"
+        }
+
+        beta =
+          ctx
+          |> HalC2.Test.AcpFixtures.acme_agent(id: "acme-beta")
+          |> Map.merge(full)
+          |> Map.put("distribution", %{"npx" => %{"package" => "@acme/beta@1.0.0"}})
+
+        HalC2.Test.AcpFixtures.publish(ctx, [
+          Map.merge(HalC2.Test.AcpFixtures.acme_agent(ctx), full),
+          beta
+        ])
+      end
+
+    {reply, ctx} =
+      HalC2.Test.AcpFixtures.with_runners(context, fn ->
+        World.call(context, "server.searchAcpRegistry", %{"query" => "acme"})
+      end)
+
+    listing =
+      case reply do
+        {:ok, %{"agents" => agents}} -> Enum.map(agents, & &1["id"])
+        _ -> []
+      end
+
+    ctx |> Map.put(:reply, reply) |> Map.put(:listing, listing)
   end
 
   # An ACP sign-in (`context.auth_instance`, `context.flow`), cancelled from the client

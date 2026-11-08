@@ -3072,11 +3072,6 @@ Red"} <- StreamState.get(state, "message")[message],
     context
   end
 
-  step "the turn goes on", context do
-    assert %{"status" => "running"} = World.latest_run(context, @thread)
-    context
-  end
-
   step "no Codex turn is running in the thread", context do
     context = context |> World.fake_providers() |> World.launch_on(@thread, "codex", "hello")
     World.await_runs(context, @thread, ["completed"])
@@ -3156,8 +3151,8 @@ Red"} <- StreamState.get(state, "message")[message],
     end)
   end
 
-  defp await_subagent_status(context, status) do
-    World.await_value(context, @thread, fn state ->
+  defp await_subagent_status(context, status, title \\ @thread) do
+    World.await_value(context, title, fn state ->
       Enum.find(StreamState.list(state, "subagent"), &(&1["status"] == status))
     end)
   end
@@ -3183,7 +3178,14 @@ Red"} <- StreamState.get(state, "message")[message],
 
   step ~r/^the subagent is shown as (?<shown>pending|running|interrupted|completed|failed|cancelled)$/,
        %{args: [shown]} = context do
-    assert await_subagent_status(context, shown)
+    # The same words on a FakeAcp thread of another provider (Grok) name
+    # that thread, not Codex's.
+    title =
+      if Map.has_key?(context, :fakes),
+        do: context[:current_thread] || context[:thread],
+        else: @thread
+
+    assert await_subagent_status(context, shown, title)
     context
   end
 

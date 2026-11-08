@@ -83,6 +83,8 @@ defmodule HalC2.DelegationProofTest do
         "reads whether a restart ended an item, which names a task that ended as interrupted rather than completed; the model's task ends without telling the two apart",
       "HalC2.Orchestration.Recovery.deliverable?/2" =>
         "checks a continuation is still wanted when its effect runs; the model's continue decides and sends in one step, and one not wanted is skip-continue",
+      "HalC2.Orchestration.Delegation hook(:handed_over)" =>
+        "the point after hand_over_pull_requests/1 (abstracted) in a settle, before the task ends; the handover changes no task, so a settle failing here is one failing before it commits, which the model has as report-fail",
       "HalC2.Orchestration.Delegation hook(:continuations)" => @continuations,
       "HalC2.Orchestration.Delegation hook(:continued)" => @continuations
     },
