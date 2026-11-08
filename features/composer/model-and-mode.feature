@@ -745,12 +745,12 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Given the thread runs on a model set to high effort with fast mode on
     Then the summary of the model's options is marked as fast mode on
 
-  @backlog @desktop
+  @desktop
   Scenario: Each option's default is marked
     When the user opens the model's options
     Then the provider's default effort is marked "Default"
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: Choosing another effort takes Ultrathink off the prompt
     Given the thread runs on Claude
     And the user turned on Ultrathink and typed "design the cache"

@@ -34,7 +34,9 @@ struct Catalogue {
 QJsonObject effort() {
   QJsonArray choices;
   for (const char* level : {"low", "medium", "high"}) {
-    choices.append(QJsonObject{{QStringLiteral("id"), QString::fromLatin1(level)}, {QStringLiteral("label"), QString::fromLatin1(level)}});
+    choices.append(QJsonObject{{QStringLiteral("id"), QString::fromLatin1(level)},
+                               {QStringLiteral("label"), QString::fromLatin1(level)},
+                               {QStringLiteral("isDefault"), QLatin1String(level) == QLatin1String("medium")}});
   }
   return {{QStringLiteral("id"), QStringLiteral("reasoningEffort")},
           {QStringLiteral("label"), QStringLiteral("Reasoning")},
@@ -60,6 +62,14 @@ QJsonObject provider(const QString& instanceId, const QString& driver, const QSt
                     {QStringLiteral("models"), list}};
   for (auto it = fields.begin(); it != fields.end(); ++it) entry.insert(it.key(), it.value());
   return entry;
+}
+
+// The id of the thread's effort: the composer's first choice option.
+QString effortId(World& world) {
+  for (const QVariant& option : world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("options")).toList()) {
+    if (option.toMap().value(QStringLiteral("type")) == QLatin1String("select")) return option.toMap().value(QStringLiteral("id")).toString();
+  }
+  return QStringLiteral("reasoningEffort");
 }
 
 QVariantList instances(World& world) {
@@ -244,8 +254,7 @@ const Steps steps([] {
                             QVariantMap{{QStringLiteral("instanceId"), instanceOf(world, c[0])}, {QStringLiteral("model"), c[0]}});
   });
   step(QStringLiteral("the user sets the effort to (low|medium|high)"), [](World& world, const Captures& c, const Table&) {
-    world.bridge().dispatch(QStringLiteral("composer.option.set"),
-                            QVariantMap{{QStringLiteral("id"), QStringLiteral("reasoningEffort")}, {QStringLiteral("value"), c[0]}});
+    world.bridge().dispatch(QStringLiteral("composer.option.set"), QVariantMap{{QStringLiteral("id"), effortId(world)}, {QStringLiteral("value"), c[0]}});
   });
   step(QStringLiteral("the user sets the permissions to (.+)"), [](World& world, const Captures& c, const Table&) {
     for (const QVariant& mode : composer(world).value(QStringLiteral("runtimeModes")).toList()) {
@@ -324,7 +333,7 @@ const Steps steps([] {
     const QJsonObject selection = sendTurn(world).last().value(QLatin1String("modelSelection")).toObject();
     const QJsonArray options = selection.value(QLatin1String("options")).toArray();
     const bool found = std::any_of(options.begin(), options.end(), [&](const QJsonValue& option) {
-      return option.toObject().value(QLatin1String("id")) == QLatin1String("reasoningEffort") && option.toObject().value(QLatin1String("value")) == c[0];
+      return option.toObject().value(QLatin1String("id")) == effortId(world) && option.toObject().value(QLatin1String("value")) == c[0];
     });
     expect(found, QStringLiteral("the message runs with %1").arg(show(selection.toVariantMap())));
   });

@@ -591,7 +591,8 @@ QVariantList shellOptions(const QJsonArray& descriptors) {
     if (select) {
       for (const QJsonValue& choice : descriptor.value(QLatin1String("options")).toArray()) {
         choices.append(QVariantMap{{QStringLiteral("id"), str(choice.toObject(), QLatin1String("id"))},
-                                   {QStringLiteral("label"), str(choice.toObject(), QLatin1String("label"))}});
+                                   {QStringLiteral("label"), str(choice.toObject(), QLatin1String("label"))},
+                                   {QStringLiteral("isDefault"), choice.toObject().value(QLatin1String("isDefault")).toBool()}});
       }
     }
     const QJsonValue current = descriptor.value(QLatin1String("currentValue"));

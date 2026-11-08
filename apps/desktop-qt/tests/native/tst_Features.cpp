@@ -204,6 +204,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/model-and-mode.feature:The model picker waits for the provider list*"),
     QStringLiteral("composer/model-and-mode.feature:A composer with no usable provider says so*"),
     QStringLiteral("composer/model-and-mode.feature:A saved model its provider no longer lists*"),
+    QStringLiteral("composer/model-and-mode.feature:Each option's default is marked"),
+    QStringLiteral("composer/model-and-mode.feature:Choosing another effort takes Ultrathink off the prompt"),
     QStringLiteral("composer/model-and-mode.feature:Planning and building are toggled on the desktop only*"),
     QStringLiteral("composer/model-and-mode.feature:Only the permissions the provider supports are offered"),
     QStringLiteral("composer/model-and-mode.feature:A thread whose saved permissions its provider no longer offers*"),

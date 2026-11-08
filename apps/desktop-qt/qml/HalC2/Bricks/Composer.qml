@@ -54,6 +54,10 @@ Rectangle {
     readonly property color secondary: Theme.palette.color("secondaryLabel", "#a1a1aa")
     readonly property color iconMuted: Theme.palette.color("iconMuted", "#8b8b93")
     readonly property color branchColor: Theme.palette.color("branchForeground", muted)
+    // A choice as the option's list names it: the provider's default is marked.
+    function choiceLabel(choice) {
+        return choice.isDefault ? qsTr("%1 (Default)").arg(choice.label) : choice.label;
+    }
     readonly property var effortOption: ready ? (model.options.find(option => option.type === "select") ?? null) : null
     // The model's other options, such as Claude's fast mode and context window.
     // By id: every read of model.options converts to fresh objects, so identity never matches.
@@ -1429,9 +1433,9 @@ Rectangle {
 
                                     present: composer.effortOption !== null
                                     visible: present && !composer.folded.includes(effortPicker)
-                                    model: composer.effortOption ? composer.effortOption.choices.map(choice => choice.label) : []
+                                    model: composer.effortOption ? composer.effortOption.choices.map(choice => composer.choiceLabel(choice)) : []
                                     currentIndex: composer.effortOption ? composer.effortOption.choices.findIndex(choice => choice.id === composer.effortOption.value) : -1
-                                    displayText: currentIndex < 0 ? (composer.effortOption ? composer.effortOption.label : "") : currentText
+                                    displayText: currentIndex < 0 ? (composer.effortOption ? composer.effortOption.label : "") : composer.effortOption.choices[currentIndex].label
                                     Accessible.name: composer.effortOption ? composer.effortOption.label : ""
                                     onActivated: index => Shell.dispatch("composer.option.set", {
                                             id: composer.effortOption.id,
@@ -1454,9 +1458,9 @@ Rectangle {
 
                                         objectName: "optionPicker:" + option.id
                                         visible: !composer.folded.includes(selectChip)
-                                        model: (option.choices ?? []).map(choice => choice.label)
+                                        model: (option.choices ?? []).map(choice => composer.choiceLabel(choice))
                                         currentIndex: (option.choices ?? []).findIndex(choice => choice.id === option.value)
-                                        displayText: currentIndex < 0 ? (option.label ?? "") : currentText
+                                        displayText: currentIndex < 0 ? (option.label ?? "") : option.choices[currentIndex].label
                                         Accessible.name: option.label ?? ""
                                         onActivated: index => Shell.dispatch("composer.option.set", {
                                                 id: selectChip.option.id,
