@@ -259,18 +259,47 @@ Feature: Cursor
     Then Cursor shows its monthly, Auto and API usage with the billing cycle end
 
   # Upstream #29419: a Cursor sign-in from HAL-C2 or a CURSOR_API_KEY showed Cursor as signed in
-  # but no limits and no history; only a Cursor CLI login could be read.
-  @backlog
-  Scenario Outline: Cursor usage shows for an account signed in with <credential>
+  # but no limits and no history; only a Cursor CLI login could be read. The key is traded for a
+  # token at Cursor's default endpoint, as the Cursor SDK does.
+  Scenario Outline: Cursor limits show for an account signed in with <credential>
     Given the user signed in to Cursor with <credential> and has no Cursor CLI login
-    When the user opens the limits view and the usage history
+    When the user opens the limits view
     Then Cursor shows its monthly allowance
-    And Cursor's usage history lists its requests
     And the user is not asked to allow access to a Cursor CLI login
 
     Examples:
-      | credential                                  |
-      | Sign in with Cursor                         |
+      | credential                                     |
+      | Sign in with Cursor                            |
+      | a CURSOR_API_KEY in the instance's environment |
+
+  # The Cursor SDK's stored sign-in records `apiKeyExpiresAtMs` (StoredSdkCredentials in @cursor/sdk).
+  # An expired key is never traded for a token; with no Cursor CLI login either, there are no limits.
+  Scenario: Cursor limits ignore a stored sign-in whose key has expired
+    Given the user signed in to Cursor with Sign in with Cursor and has no Cursor CLI login
+    And the stored Cursor sign-in expired yesterday
+    When the user opens the limits view
+    Then Cursor shows no usage limits
+    And the expired key was not sent anywhere
+
+  # Upstream #29419: an API key is sent only to Cursor's own endpoint.
+  Scenario: Cursor limits for an API key are not read from a custom endpoint
+    Given the user signed in to Cursor with a CURSOR_API_KEY in the instance's environment and has no Cursor CLI login
+    And the Cursor instance uses a custom API endpoint
+    When the user opens the limits view
+    Then Cursor says usage for an API key needs the default Cursor endpoint
+    And the API key was not sent anywhere
+
+  # Upstream #29419: the MC reads no Cursor usage history at all yet (upstream #10409's Cursor
+  # account history reader, `DashboardService/GetFilteredUsageEvents`).
+  @backlog
+  Scenario Outline: Cursor usage history shows for an account signed in with <credential>
+    Given the user signed in to Cursor with <credential> and has no Cursor CLI login
+    When the user opens the usage history
+    Then Cursor's usage history lists its requests
+
+    Examples:
+      | credential                                     |
+      | Sign in with Cursor                            |
       | a CURSOR_API_KEY in the instance's environment |
 
   Scenario: Cursor usage is unavailable with a keychain login

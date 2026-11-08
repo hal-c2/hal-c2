@@ -5,12 +5,13 @@ defmodule HalC2.ProviderUsageLimits.Acp do
 
     * Grok: the billing period's credit use, from the grok.com sign-in in
       `$GROK_HOME/auth.json`;
-    * Cursor: the month's plan use (total, Auto, API), from a file-based Cursor
-      login or `CURSOR_AUTH_TOKEN`;
+    * Cursor: the month's plan use (total, Auto, API), from the instance's Cursor
+      sign-in or `CURSOR_API_KEY` (traded for a token, as the Cursor SDK does), a
+      file-based Cursor CLI login, or `CURSOR_AUTH_TOKEN`;
     * OpenCode: the OpenCode Go session, weekly and monthly windows, from
       OpenCode's stored `opencode-go` key or `OPENCODE_API_KEY`.
 
-  An account that cannot be read this way (an API key, a custom deployment, an
+  An account that cannot be read this way (a Grok API key, a custom deployment, an
   external OpenCode server) is `unsupported`; a failed read is `probeFailed`.
   Each instance reads with the MC's environment plus the variables set on it.
   """
@@ -163,9 +164,10 @@ defmodule HalC2.ProviderUsageLimits.Acp do
       token = present(env["CURSOR_AUTH_TOKEN"]) ->
         cursor_read(instance, env, token, checked_at)
 
-      # An API key (the MC's own Cursor sign-in) can name another account than the CLI login.
-      present(env["CURSOR_API_KEY"]) || cursor_api_key?(env) ->
-        unavailable(checked_at, "unsupported")
+      # An API key (`CURSOR_API_KEY` or the MC's own Cursor sign-in) names the account the
+      # agent runs on, which can be another than the CLI login's.
+      key = present(env["CURSOR_API_KEY"]) || cursor_api_key(instance, env) ->
+        cursor_key_read(instance, env, key, checked_at)
 
       store == "memory" or (match?({:unix, :darwin}, :os.type()) and store != "file") ->
         unavailable(
@@ -182,12 +184,48 @@ defmodule HalC2.ProviderUsageLimits.Acp do
     end
   end
 
-  defp cursor_api_key?(env) do
-    match?(
-      {:ok, %{"apiKey" => key}} when is_binary(key) and key != "",
-      JSON.decode(read(env["HAL_C2_CURSOR_CREDENTIALS"] || ""))
-    )
+  # The unexpired API key the instance's browser sign-in stored.
+  defp cursor_api_key(instance, env) do
+    path = present(env["HAL_C2_CURSOR_CREDENTIALS"]) || HalC2.Acp.cursor_credentials(instance)
+
+    with {:ok, %{"apiKey" => key} = stored} when is_binary(key) <- JSON.decode(read(path)),
+         expires = stored["apiKeyExpiresAtMs"],
+         true <- not is_number(expires) or expires > System.system_time(:millisecond) do
+      present(key)
+    else
+      _ -> nil
+    end
   end
+
+  # An API key goes only to Cursor's own endpoint, which trades it for the token its
+  # dashboard reads.
+  defp cursor_key_read(instance, env, key, checked_at) do
+    if cursor_endpoint(instance, env) != cursor_default() do
+      unavailable(
+        checked_at,
+        "unsupported",
+        "Cursor usage for an API key requires the default Cursor endpoint."
+      )
+    else
+      case http(:post, cursor_default() <> "/auth/exchange_user_api_key", key) do
+        {:ok, %{"accessToken" => token}} when is_binary(token) and token != "" ->
+          cursor_read(instance, env, token, checked_at)
+
+        _ ->
+          unavailable(checked_at, "probeFailed", "Cursor could not read usage limits.")
+      end
+    end
+  end
+
+  defp cursor_endpoint(instance, env) do
+    (HalC2.Acp.setting(instance, "apiEndpoint") || present(env["CURSOR_API_ENDPOINT"]) ||
+       cursor_default())
+    |> String.trim()
+    |> String.trim_trailing("/")
+  end
+
+  defp cursor_default,
+    do: Application.get_env(:hal_c2, :cursor_api_url, "https://api2.cursor.sh")
 
   defp cursor_login(env) do
     dir =
@@ -209,12 +247,7 @@ defmodule HalC2.ProviderUsageLimits.Acp do
   end
 
   defp cursor_read(instance, env, token, checked_at) do
-    endpoint =
-      (HalC2.Acp.setting(instance, "apiEndpoint") || present(env["CURSOR_API_ENDPOINT"]) ||
-         "https://api2.cursor.sh")
-      |> String.trim()
-      |> String.trim_trailing("/")
-
+    endpoint = cursor_endpoint(instance, env)
     headers = [{~c"connect-protocol-version", ~c"1"}, {~c"x-cursor-client-type", ~c"cli"}]
     url = endpoint <> "/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
 
