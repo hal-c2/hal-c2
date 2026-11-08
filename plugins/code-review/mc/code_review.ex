@@ -1436,8 +1436,17 @@ defmodule HalC2Plugins.CodeReview do
       review = Map.put(review, "skipped", if(settings["activation"] == "automatic", do: skipped))
 
       # A followed pull request was asked for once; a new push is that ask
-      # still standing, where the watch's own triggers may no longer hold.
-      trigger = trigger || if known && followed?(known), do: known["trigger"] || "following"
+      # still standing, where the watch's own triggers may no longer hold. The
+      # user's own ask was for the commit then: a push counts toward the limits.
+      trigger =
+        trigger ||
+          if known && followed?(known),
+            do:
+              if(known["trigger"] in ~w(user retry),
+                do: "following",
+                else: known["trigger"] || "following"
+              )
+
       reviewed = known && known["reviewedSha"]
       other = found.elsewhere[pr["key"]] || (known && away(known, pr["headSha"]))
 

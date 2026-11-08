@@ -290,6 +290,14 @@ Feature: Agent code review
       Then a review of #13 starts
 
     @mc
+    Scenario: A new push to a pull request the user asked for counts toward the limits
+      Given "code-review" watches "acme/api" selectively with at most 1 review of each author a day
+      And "code-review" reviews new pushes
+      And #12 was reviewed at an older head commit after the user asked for it
+      When "code-review" looks at "acme/api" again
+      Then #12 is held back by the review limit, saying "octocat's pull requests had 1 reviews in the last day"
+
+    @mc
     Scenario: Reviews on the user's other machines count toward the limits
       Given "code-review" watches "acme/api" automatically with at most 1 review of each author a day
       And the user's machine "laptop" in the cluster watches "acme/api" automatically too

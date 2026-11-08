@@ -228,6 +228,15 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     })
   end
 
+  step "{string} watches {string} selectively with at most {int} review of each author a day",
+       %{args: [@id, repo, count]} = context do
+    save(context, %{
+      "repositories" => [repo],
+      "activation" => "selective",
+      "reviewsPerAuthorPerDay" => count
+    })
+  end
+
   step "{string} watches {string} automatically with at most {int} review of each author a day",
        %{args: [@id, repo, count]} = context do
     save(context, %{
