@@ -29,7 +29,7 @@ defmodule HalC2.Acp.Auth do
       HalC2.Acp.with_agent(instance, System.tmp_dir!(), fn _conn, init ->
         {:ok,
          for %{"id" => id, "name" => name} = method <- Enum.take(init["authMethods"] || [], 32),
-             is_binary(id) and is_binary(name) and byte_size(id) <= 128 do
+             is_binary(id) and is_binary(name) and byte_size(id) <= 128 and known?(method) do
            %{
              "id" => id,
              "name" => String.slice(name, 0, 128),
@@ -41,7 +41,7 @@ defmodule HalC2.Acp.Auth do
                case method["type"] do
                  "terminal" -> "terminal"
                  "env_var" -> "credentials"
-                 _ -> "agent"
+                 _agent -> "agent"
                end
            }
          end}
@@ -57,6 +57,10 @@ defmodule HalC2.Acp.Auth do
     end
   end
 
+  # A method without a kind is the agent's own; one of a kind HAL-C2 does not know is
+  # not offered at all, rather than run as the agent's own.
+  defp known?(method), do: method["type"] in [nil, "agent", "terminal", "env_var"]
+
   @doc "Runs one sign-in; exits `:normal` on success (see `HalC2.ProviderAuth`)."
   def login(instance, method_id, server, flow_id) do
     cwd = System.tmp_dir!()
@@ -64,7 +68,7 @@ defmodule HalC2.Acp.Auth do
     with {:command, {:ok, command, env}} <- {:command, HalC2.Acp.command(instance)},
          {:ok, conn} <- start(command, env, cwd),
          {:ok, init} <- Connection.call(conn, "initialize", HalC2.Acp.initialize_params()) do
-      case Enum.find(init["authMethods"] || [], &(&1["id"] == method_id)) do
+      case Enum.find(init["authMethods"] || [], &(&1["id"] == method_id and known?(&1))) do
         nil ->
           fail("The agent no longer advertises this sign-in method.")
 

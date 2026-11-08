@@ -543,7 +543,7 @@ defmodule HalC2.Acp do
   # Antigravity answers it from the installed runtime on disk, launching
   # nothing, where other agents are still read from a throwaway session. A
   # manual `reload/1` reads with `:spawn`.
-  defp read(id, generation, mode \\ :spawn) do
+  defp read(id, generation, mode, kept \\ nil) do
     dir = HalC2.Scratch.dir("hal-c2-acp")
 
     Process.put(staged_key(id), [])
@@ -553,7 +553,7 @@ defmodule HalC2.Acp do
       result = read_agent(id, dir)
       # Worked out before the lock, which only `:persistent_term` work may run under.
       error = error_message(id, result)
-      locked(id, fn -> publish(id, generation, result, error) end)
+      locked(id, fn -> publish(id, generation, result, error, kept) end)
     catch
       _, _ ->
         # This read published nothing. While its generation is still current,
@@ -561,8 +561,10 @@ defmodule HalC2.Acp do
         # of leaving the instance with neither models nor an error until a
         # forget. (A superseded read leaves `:loading` to its successor.)
         locked(id, fn ->
-          if :persistent_term.get({__MODULE__, id, :generation}, nil) == generation,
-            do: :persistent_term.erase({__MODULE__, id, :loading})
+          if :persistent_term.get({__MODULE__, id, :generation}, nil) == generation do
+            :persistent_term.erase({__MODULE__, id, :loading})
+            keep_models(id, kept)
+          end
         end)
 
         :ok
@@ -583,10 +585,12 @@ defmodule HalC2.Acp do
   defp error_message(_id, {:error, reason}), do: describe(reason)
   defp error_message(_id, _result), do: nil
 
-  defp publish(id, generation, result, error) do
+  defp publish(id, generation, result, error, kept) do
     if :persistent_term.get({__MODULE__, id, :generation}, nil) == generation do
       for {key, value} <- Enum.reverse(Process.get(staged_key(id), [])),
           do: publish_staged(id, key, value)
+
+      keep_models(id, kept)
 
       case result do
         :ok ->
@@ -1400,12 +1404,30 @@ defmodule HalC2.Acp do
     enabled = enabled?(id) or HalC2.Settings.provider_on_in_a_project?(id)
 
     case locked(id, fn ->
+           kept = kept_models(id)
            forget_now(id)
-           if enabled, do: start_read(id)
+           if enabled, do: {start_read(id), kept}
          end) do
       nil -> :ok
-      generation -> read(id, generation)
+      {generation, kept} -> read(id, generation, :spawn, kept)
     end
+
+    :ok
+  end
+
+  # The models a registry instance offered before a check: a check that fails
+  # leaves them offered, where one that completes replaces them.
+  defp kept_models(id) do
+    if driver(id) == @registry, do: :persistent_term.get({__MODULE__, id, :models}, nil)
+  end
+
+  # Under the lock, once a current read is done: what it read stands, else the
+  # models kept from before it.
+  defp keep_models(_id, nil), do: :ok
+
+  defp keep_models(id, kept) do
+    if :persistent_term.get({__MODULE__, id, :models}, nil) == nil,
+      do: :persistent_term.put({__MODULE__, id, :models}, kept)
 
     :ok
   end

@@ -148,6 +148,13 @@ asked = {}           # our request id -> (kind, prompt id, session)
 answers = {}         # replies collected for a "read file" turn
 authenticating = None
 
+def mode_entry(m):
+    # `modeDescriptions` may hold null, as some agents send.
+    entry = {"id": m, "name": m.capitalize()}
+    if m in CONTROL.get("modeDescriptions", {}):
+        entry["description"] = CONTROL["modeDescriptions"][m]
+    return entry
+
 def finish(pid, sid, text, reason="end_turn"):
     if text:
         say(sid, text, "msg-%d-%s" % (os.getpid(), pid))
@@ -302,7 +309,7 @@ def initialize_result():
         caps["providers"] = {}
     if CONTROL.get("logout", True):
         caps["auth"] = {"logout": {}}
-    return {"protocolVersion": 1, "agentInfo": {"name": NAME, "version": CONTROL.get("version", "1.2.3")},
+    return {"protocolVersion": CONTROL.get("protocolVersion", 1), "agentInfo": {"name": NAME, "version": CONTROL.get("version", "1.2.3")},
             "authMethods": CONTROL.get("methods", []), "agentCapabilities": caps}
 
 for line in sys.stdin:
@@ -367,7 +374,7 @@ for line in sys.stdin:
                                 "availableModels": [{"modelId": v, "name": n} for v, n in models]}
         if legacy_modes:
             result["modes"] = {"currentModeId": legacy_mode,
-                               "availableModes": [{"id": m, "name": m.capitalize()} for m in legacy_modes]}
+                               "availableModes": [mode_entry(m) for m in legacy_modes]}
         if method == "session/new":
             result["sessionId"] = sid
         send({"id": mid, "result": result})
@@ -398,7 +405,13 @@ for line in sys.stdin:
             send({"id": held[0], "result": {"stopReason": "cancelled"}})
             held = None
     elif method == "session/list":
-        send({"id": mid, "result": {"nextCursor": None, "sessions": []}})
+        # `sessions`, `pageSize` at a time; the cursor is where the next page starts.
+        listed = CONTROL.get("sessions", [])
+        start = int(params.get("cursor") or 0)
+        size = CONTROL.get("pageSize", len(listed) or 1)
+        more = start + size < len(listed)
+        send({"id": mid, "result": {"nextCursor": str(start + size) if more else None,
+                                    "sessions": listed[start:start + size]}})
     elif method == "session/delete":
         send({"id": mid, "result": {}})
     elif method == "providers/list":

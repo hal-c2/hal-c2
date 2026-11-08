@@ -29,7 +29,7 @@ defmodule HalC2.Acp.Sessions do
            for(
              %{"sessionId" => id, "cwd" => cwd} = session <-
                Enum.take(result["sessions"] || [], 256),
-             is_binary(id) and is_binary(cwd),
+             usable?(id) and usable?(cwd),
              do: session_row(instance, session)
            ),
          "nextCursor" => text(result["nextCursor"], 2048),
@@ -39,6 +39,9 @@ defmodule HalC2.Acp.Sessions do
        }}
     end
   end
+
+  # An id or folder that is empty or padded cannot be imported as it was listed.
+  defp usable?(text), do: is_binary(text) and text != "" and String.trim(text) == text
 
   defp session_row(instance, session) do
     thread_id = thread_id(instance, session["sessionId"])
@@ -162,7 +165,7 @@ defmodule HalC2.Acp.Sessions do
                "current" =>
                  if(
                    is_map(current) and is_binary(current["apiType"]) and
-                     is_binary(current["baseUrl"]),
+                     web_address?(current["baseUrl"]),
                    do: Map.take(current, ["apiType", "baseUrl"])
                  )
              }
@@ -182,6 +185,16 @@ defmodule HalC2.Acp.Sessions do
       {:ok, %{"configured" => true}}
     end
   end
+
+  defp web_address?(url) when is_binary(url),
+    do:
+      match?(
+        %URI{scheme: scheme, host: host}
+        when scheme in ["http", "https"] and host not in [nil, ""],
+        URI.parse(url)
+      )
+
+  defp web_address?(_), do: false
 
   # Headers are a JSON object of strings (the contract's `Record<string, string>`).
   defp headers(nil), do: :ok

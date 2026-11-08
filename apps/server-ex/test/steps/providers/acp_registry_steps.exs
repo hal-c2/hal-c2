@@ -3839,6 +3839,101 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     ctx
   end
 
+  defp session(i, fields \\ %{}),
+    do: Map.merge(%{"sessionId" => "s-#{i}", "cwd" => "/work/s-#{i}", "title" => "S#{i}"}, fields)
+
+  step "{string} has more sessions than it returns in one answer", %{args: [_]} = context do
+    acme(context, %{"sessions" => for(i <- 1..300, do: session(i)), "pageSize" => 200})
+  end
+
+  step "the user lists the agent's sessions", context do
+    session_settings(context, "lists the agent's sessions")
+  end
+
+  step "at most 256 sessions arrive with a marker for the next page", context do
+    assert {:ok, %{"sessions" => sessions, "nextCursor" => cursor}} = context.reply
+    assert length(sessions) <= 256 and is_binary(cursor)
+    Map.put(context, :first_page, sessions)
+  end
+
+  step "asking with that marker returns the sessions that follow", context do
+    {:ok, %{"nextCursor" => cursor}} = context.reply
+
+    {next, ctx} =
+      World.call!(
+        ops(context),
+        "server.listAcpRegistrySessions",
+        %{"instanceId" => "acme", "projectId" => World.project(context).id, "cursor" => cursor},
+        "ops"
+      )
+
+    assert next["nextCursor"] == nil
+    ids = Enum.map(context.first_page ++ next["sessions"], & &1["sessionId"])
+    assert ids == for(i <- 1..300, do: "s-#{i}")
+    ctx
+  end
+
+  step "{string} lists a session whose id is empty and one whose folder is padded with spaces",
+       %{args: [_]} = context do
+    acme(context, %{
+      "sessions" => [
+        session(1, %{"sessionId" => ""}),
+        session(2, %{"cwd" => " /work/s-2 "}),
+        session(3, %{"title" => String.duplicate("t", 2000)}),
+        session(4)
+      ]
+    })
+  end
+
+  step "neither of them is listed", context do
+    assert {:ok, %{"sessions" => sessions}} = context.reply
+    assert Enum.map(sessions, & &1["sessionId"]) == ["s-3", "s-4"]
+    context
+  end
+
+  step "the other sessions are listed with titles cut to 1,024 characters", context do
+    {:ok, %{"sessions" => [long, short]}} = context.reply
+    assert long["title"] == String.duplicate("t", 1024)
+    assert short["title"] == "S4"
+    context
+  end
+
+  step "{string} reports a model provider whose current base address is not http or https",
+       %{args: [_]} = context do
+    acme(context, %{
+      "providers" => [
+        %{
+          "providerId" => "local",
+          "supported" => ["openai"],
+          "current" => %{"apiType" => "openai", "baseUrl" => "file:///etc/passwd"}
+        }
+      ]
+    })
+  end
+
+  step "that model provider is listed without a current setting", context do
+    assert [%{"providerId" => "local", "current" => nil}] = context.listed
+    context
+  end
+
+  step "{string} of generation 2 advertises a sign-in method of the unknown kind {string}",
+       %{args: [_, kind]} = context do
+    holo = %{"id" => "holo", "name" => "Hologram", "type" => kind}
+    ctx = acme(context, %{"protocolVersion" => 2, "methods" => [@browser, holo]})
+    {:ok, methods} = HalC2.Acp.Auth.methods("acme")
+    Map.put(ctx, :methods, methods)
+  end
+
+  step "that method is not offered", context do
+    refute Enum.any?(context.methods, &(&1["id"] == "holo"))
+    context
+  end
+
+  step "it is not offered as the agent's own sign-in either", context do
+    assert [%{"id" => "acme-login", "type" => "agent"}] = context.methods
+    context
+  end
+
   step "{string} does not offer model provider configuration", %{args: [_]} = context do
     acme(context, %{"providerConfig" => false})
   end
@@ -4400,6 +4495,94 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
              Enum.filter(context.descriptors, &(&1["label"] == name))
 
     assert Enum.map(choices, & &1["id"]) == [a, b]
+    context
+  end
+
+  step "{string} needs no sign-in and used to report {string} and {string}",
+       %{args: [_, a, b]} = context do
+    ctx = acme(context, %{"models" => [[a, a], [b, b]]})
+    assert %{"status" => "ready"} = Acp.check("acme")
+    assert offered_models() == [a, b]
+    ctx
+  end
+
+  step "the MC checks the instance and {string} reports only {string}",
+       %{args: [_, a]} = context do
+    Acp.control(context, "acme", %{"models" => [[a, a]]})
+    assert %{"status" => "ready"} = Acp.check("acme")
+    context
+  end
+
+  step "only {string} is offered", %{args: [a]} = context do
+    assert offered_models() == [a]
+    context
+  end
+
+  step "a check that fails leaves the offered models as they were", context do
+    before = offered_models()
+    Acp.control(context, "acme", %{"sessionError" => "acme is down"})
+    refute Acp.check("acme")["status"] == "ready"
+    assert offered_models() == before
+    context
+  end
+
+  defp offered_models, do: for(%{"slug" => slug} <- Acp.provider("acme")["models"], do: slug)
+
+  # --- the wire --------------------------------------------------------------------------
+
+  # An agent that answers the first request with its id as text, then says which id
+  # it was sent; the answer reaches the connection first.
+  @text_id_agent """
+  import json, sys
+  msg = json.loads(sys.stdin.readline())
+  print(json.dumps({"jsonrpc": "2.0", "id": str(msg["id"]), "result": {}}), flush=True)
+  print(json.dumps({"jsonrpc": "2.0", "method": "sent", "params": {"id": msg["id"]}}), flush=True)
+  sys.stdin.read()
+  """
+
+  step "the MC sent {string} a request with the id 1", %{args: [_]} = context do
+    script = Path.join(context.mc.home, "text_id_agent.py")
+    File.write!(script, @text_id_agent)
+
+    {:ok, conn} =
+      HalC2.JsonRpc.Connection.start_link(cmd: ["python3", script], handler: self(), dialect: :v2)
+
+    reqids = HalC2.JsonRpc.Connection.request(conn, "ping", %{}, :ping, :gen_server.reqids_new())
+    Map.merge(context, %{wire: conn, reqids: reqids})
+  end
+
+  step "{string} sends an answer with the id {string} as text", %{args: [_, "1"]} = context do
+    conn = context.wire
+    assert_receive {:json_rpc, ^conn, {:notification, "sent", %{"id" => 1}}}, 10_000
+    context
+  end
+
+  step "the request is still waiting", context do
+    # The text answer came before "sent", from the same process: had it settled the
+    # request, its reply would be here already.
+    assert :gen_server.receive_response(context.reqids, 0, true) == :timeout
+    HalC2.JsonRpc.Connection.stop(context.wire)
+    context
+  end
+
+  step "an ACP agent sends its modes with one description null", context do
+    acme(context, %{
+      "legacyModes" => ["ask", "code", "debug"],
+      "modeDescriptions" => %{"ask" => "Asks before it changes anything", "code" => nil}
+    })
+    |> tap(fn _ -> assert Acp.check("acme")["status"] == "ready" end)
+  end
+
+  step "the session starts", context do
+    ctx = run_on_acme(context, "hello")
+    Acp.await_runs(thread(ctx), 1)
+    ctx
+  end
+
+  step "all its modes are offered", context do
+    assert %{"options" => choices} = descriptor(model_options(), "mode")
+    assert Enum.map(choices, & &1["id"]) == ["ask", "code", "debug"]
+    assert Acp.assistant_text(thread(context)) =~ "Hello from acme"
     context
   end
 

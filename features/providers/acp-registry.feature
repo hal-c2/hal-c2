@@ -1021,7 +1021,6 @@ Feature: ACP registry agents
       | model provider configuration | lists its model providers       | The ACP agent does not advertise provider configuration. |
       | signing out                  | signs out from session settings | The ACP agent does not advertise logout.                 |
 
-  @backlog
   Scenario: An agent's sessions are listed a page at a time
     Given "acme" has more sessions than it returns in one answer
     When the user lists the agent's sessions
@@ -1103,7 +1102,6 @@ Feature: ACP registry agents
 
   # Upstream #18807: a completed discovery replaces the model list whatever the sign-in state;
   # a readiness or failed check keeps the last list.
-  @backlog
   Scenario: Models an agent stopped reporting are no longer offered
     Given "acme" needs no sign-in and used to report "acme-large" and "acme-small"
     When the MC checks the instance and "acme" reports only "acme-large"
@@ -2111,14 +2109,12 @@ Feature: ACP registry agents
     When the user signs out from session settings and "acme" does not answer within 60 seconds
     Then the user is told "The ACP logout request timed out."
 
-  @backlog
   Scenario: A listed session without a usable id or folder is left out
     Given "acme" lists a session whose id is empty and one whose folder is padded with spaces
     When the user lists the agent's sessions
     Then neither of them is listed
     And the other sessions are listed with titles cut to 1,024 characters
 
-  @backlog
   Scenario: A model provider's current setting is shown only when its address is a web address
     Given "acme" reports a model provider whose current base address is not http or https
     When the user lists its model providers
@@ -2521,7 +2517,6 @@ Feature: ACP registry agents
     Then "acme" is sent nothing about the abandoned request
     And an answer that arrives afterwards is ignored
 
-  @backlog
   Scenario: An answer whose id is text does not settle a request whose id is a number
     Given the MC sent "acme" a request with the id 1
     When "acme" sends an answer with the id "1" as text
@@ -2563,7 +2558,6 @@ Feature: ACP registry agents
     Then the MC's log holds one warning for it
     And the agent protocol log records each of the ten dropped updates
 
-  @backlog
   Scenario: A sign-in method of a kind HAL-C2 does not know is left out
     When "acme" of generation 2 advertises a sign-in method of the unknown kind "hologram"
     Then that method is not offered
@@ -2643,7 +2637,7 @@ Feature: ACP registry agents
     And the agent's models and reasoning options are discovered over ACP, values kept exactly
     And no registry entry is needed
 
-  @backlog @mc @plugin-acp-registry
+  @mc @plugin-acp-registry
   Scenario: An ACP mode with a null description is kept
     Given an ACP agent sends its modes with one description null
     When the session starts
