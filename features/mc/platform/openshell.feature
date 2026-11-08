@@ -152,6 +152,20 @@ Feature: The OpenShell gateway review sandboxes run in
     Then the check fails because "operator-identity"
 
   @mc
+  Scenario: A check whose probe sandbox cannot be deleted fails
+    Given a gateway that does not delete the check's sandboxes
+    When the MC checks the gateway
+    Then the check fails because "probe-cleanup-failed"
+    And the probe sandbox is left, labelled as the check's
+
+  @mc
+  Scenario: A probe sandbox an earlier check left is deleted before the next check
+    Given a gateway with a probe sandbox an earlier check left
+    When the MC checks the gateway
+    Then the check passes
+    And the probe sandbox is deleted
+
+  @mc
   Scenario: A gateway the user runs is used once it passes the checks
     Given a gateway the user runs, with its CA and a client certificate
     When the user points the MC at it

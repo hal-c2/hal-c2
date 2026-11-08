@@ -403,6 +403,28 @@ defmodule HalC2.Steps.Platform.OpenShell do
     smoke_gateway(context, exec: exec)
   end
 
+  step "a gateway that does not delete the check's sandboxes", context do
+    smoke_gateway(context, exec: fn _command, io -> io.exit.(0) end, delete: :unspecified)
+  end
+
+  step "a gateway with a probe sandbox an earlier check left", context do
+    context = smoke_gateway(context, exec: fn _command, io -> io.exit.(0) end)
+    labels = Map.merge(%{OpenShell.owner_label() => OpenShell.owner()}, Install.probe_labels())
+    FakeOpenShell.put_sandbox(context.gateway, "halc2-smoke-old", labels)
+    context
+  end
+
+  step "the check passes", context do
+    assert :ok = context.result
+    context
+  end
+
+  step "the probe sandbox is left, labelled as the check's", context do
+    assert [%{metadata: %{labels: labels}}] = Map.values(FakeOpenShell.sandboxes(context.gateway))
+    assert Map.take(labels, Map.keys(Install.probe_labels())) == Install.probe_labels()
+    context
+  end
+
   step "a gateway that gives the MC an operator's identity", context do
     smoke_gateway(context, roles: ["openshell-operator"])
   end

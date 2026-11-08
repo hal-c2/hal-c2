@@ -550,6 +550,28 @@ defmodule HalC2.OpenShell.InstallTest do
       assert Map.keys(FakeOpenShell.sandboxes(ctx.gateway)) == ["theirs"]
     end
 
+    test "the isolation check's leftover sandboxes are deleted without a drain", ctx do
+      FakeOpenShell.put_sandbox(
+        ctx.gateway,
+        "halc2-smoke-0",
+        Map.merge(owned(), Install.probe_labels())
+      )
+
+      assert {:error, "[sandboxes-running] 1 of this MC's" <> _} =
+               install(ctx, "0.1.7", service: false)
+
+      refute Map.has_key?(FakeOpenShell.sandboxes(ctx.gateway), "halc2-smoke-0")
+
+      FakeOpenShell.put_sandbox(
+        ctx.gateway,
+        "halc2-smoke-1",
+        owned() |> Map.merge(Install.probe_labels())
+      )
+
+      assert :ok = Install.uninstall(drain: true)
+      assert Map.keys(FakeOpenShell.sandboxes(ctx.gateway)) == ["theirs"]
+    end
+
     test "uninstall refuses the same way, then removes the gateway's files", ctx do
       assert {:error, "[sandboxes-running]" <> _} = Install.uninstall()
       assert File.exists?(OpenShell.root())
@@ -646,6 +668,47 @@ defmodule HalC2.OpenShell.InstallTest do
       assert FakeOpenShell.sandboxes(gateway) == %{}
     end
 
+    test "a check whose sandbox cannot be deleted fails, and says which is left" do
+      for {code, exec} <- [
+            {"[probe-cleanup-failed]", fn _command, io -> io.exit.(0) end},
+            {"[sandbox-not-isolated]", fn _command, io -> io.exit.(1) end}
+          ] do
+        File.rm_rf!(OpenShell.pki_dir())
+        {gateway, state} = smoke_gateway(exec: exec, delete: :unspecified)
+
+        assert {:error, message} = Install.smoke(state)
+        assert String.starts_with?(message, code)
+
+        assert [%{metadata: %{name: name, labels: labels}}] =
+                 Map.values(FakeOpenShell.sandboxes(gateway))
+
+        assert message =~ "[probe-cleanup-failed] The isolation check's sandbox #{name}"
+        assert labels["halc2.github.io/purpose"] == "openshell-check"
+      end
+    end
+
+    test "a check deletes what earlier checks left before it starts, or does not start" do
+      test = self()
+      exec = fn _command, io -> io.exit.(0) end
+      {gateway, state} = smoke_gateway(exec: exec, notify: test)
+      left = Map.merge(owned(), Install.probe_labels())
+      FakeOpenShell.put_sandbox(gateway, "halc2-smoke-old", left)
+      FakeOpenShell.put_sandbox(gateway, "review-1", owned())
+
+      assert :ok = Install.smoke(state)
+      assert Map.keys(FakeOpenShell.sandboxes(gateway)) == ["review-1"]
+
+      File.rm_rf!(OpenShell.pki_dir())
+      {gateway, state} = smoke_gateway(exec: exec, notify: test, delete: :unspecified)
+      FakeOpenShell.put_sandbox(gateway, "halc2-smoke-old", left)
+      flush_requests()
+
+      assert {:error, "[probe-cleanup-failed] The isolation check's sandbox halc2-smoke-old" <> _} =
+               Install.smoke(state)
+
+      refute_received {:openshell_request, "CreateSandbox", _}
+    end
+
     test "the isolation probe tries the gateway by the endpoint's own name" do
       # A gateway on IPv6 loopback only: 127.0.0.1 does not reach it, its name does.
       {:ok, socket} = :gen_tcp.listen(0, [:inet6, ip: {0, 0, 0, 0, 0, 0, 0, 1}])
@@ -701,6 +764,14 @@ defmodule HalC2.OpenShell.InstallTest do
       {gateway, _} = smoke_gateway([])
       refute Install.plaintext_answers?(gateway.endpoint)
       refute Install.plaintext_answers?("https://127.0.0.1:#{Install.free_port()}")
+    end
+  end
+
+  defp flush_requests do
+    receive do
+      {:openshell_request, _, _} -> flush_requests()
+    after
+      0 -> :ok
     end
   end
 
