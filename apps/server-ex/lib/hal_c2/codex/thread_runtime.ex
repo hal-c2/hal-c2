@@ -2813,14 +2813,18 @@ defmodule HalC2.Codex.ThreadRuntime do
     %{ids: ids} = turn = state.turn
     at = Entities.now()
 
+    # With the usage it ended with, as the run's end would leave it: the run may end
+    # before Codex starts another turn.
     commit(state, fn stream ->
+      done = %{"status" => "completed", "completedAt" => at}
+
       [
         HalC2.StreamState.get(stream, "provider-turn")[ids.provider_turn] &&
           Orchestration.upsert(
             stream,
             "provider-turn",
             ids.provider_turn,
-            &Map.merge(&1, %{"status" => "completed", "completedAt" => at})
+            &Map.merge(&1, HalC2.Orchestration.TurnWriter.with_usage(stream, ids, done))
           )
       ]
     end)

@@ -338,6 +338,32 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert Enum.any?(one["items"], &(&1["itemType"] == "file_change"))
   end
 
+  test "a plugin hears and reads the usage a Codex goal's run ended with between Codex's turns",
+       %{work: work} do
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+    # Codex does not go on with the goal, so the run ends after the goal's first turn,
+    # once the grace is over, with no turn of its own.
+    System.put_env("FAKE_CODEX_GOAL_STALL", "1")
+    Application.put_env(:hal_c2, :codex_goal_grace_ms, 0)
+
+    on_exit(fn ->
+      System.delete_env("FAKE_CODEX_GOAL_STALL")
+      Application.delete_env(:hal_c2, :codex_goal_grace_ms)
+    end)
+
+    thread_id = create_thread(work, "codex", "gpt-5.4")
+    {:ok, _} = send_message(thread_id, "m1", "/goal report usage 1500")
+
+    assert_receive {:observed, %{"type" => "turn.finished"} = finished}, 5_000
+    assert %{"usedTokens" => 1500, "updatedAt" => at} = finished["tokenUsage"]
+    assert is_binary(at)
+    await_statuses(thread_id, ["completed"])
+
+    assert {:ok, [turn]} = Host.history("listener", thread_id)
+    assert %{"usedTokens" => 1500} = turn["tokenUsage"]
+  end
+
   test "a plugin hears what a Claude edit changed and what a web call searched for" do
     edit = %{"type" => "file_change", "fileName" => "a.ex", "diffStr" => "+new", "input" => nil}
     web = %{"type" => "web_search", "patterns" => ["elixir tasks"], "output" => nil}

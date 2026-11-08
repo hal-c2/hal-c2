@@ -5,7 +5,8 @@ defmodule HalC2.CodexGoalsPropTest do
   there Codex starts turns of its own for it, changes the goal (completes it, pauses
   it, runs out of budget), or does not go on before the grace runs out; the user may
   press Stop; the app-server may exit; and once the run has ended Codex may still
-  start a turn for the goal, or a grace armed before it ended may still fire.
+  start a turn for the goal, or a grace armed before it ended may still fire. While a
+  turn runs Codex may report the context's usage on the thread.
 
   The promise: the goal's turns are one run, running until the goal stops being
   active between turns, the grace runs out, or the user stops it, and each turn
@@ -13,7 +14,9 @@ defmodule HalC2.CodexGoalsPropTest do
   still active (the grace, or Stop) pauses it, and a turn Codex starts for it after
   that is stopped; a goal Codex itself took out of active is left as it is, and so
   are its later turns. A run whose app-server exits fails, and a grace that fires
-  after leaves the thread's runtime and its run as they were.
+  after leaves the thread's runtime and its run as they were. However the run ends,
+  between turns too, the last provider turn it names keeps the usage Codex reported
+  last as that turn settled, with the time it settled.
 
   The goal runs on the fake app-server in `test/support/fake_codex.py` with
   FAKE_CODEX_GOAL_STALL set, so Codex never goes on by itself: the test plays its
@@ -164,7 +167,10 @@ defmodule HalC2.CodexGoalsPropTest do
 
   # What `start/1` should find: the model's initial state, as `observed/0` reads it.
   defp started(answered_last) do
-    answered_last |> initial() |> Map.take([:run, :goal, :turns, :late]) |> Map.put(:runs, 1)
+    answered_last
+    |> initial()
+    |> Map.take([:run, :goal, :turns, :late])
+    |> Map.merge(%{runs: 1, usage: nil})
   end
 
   # --- model ---------------------------------------------------------------------
@@ -173,13 +179,33 @@ defmodule HalC2.CodexGoalsPropTest do
   # Codex started for the goal is running), :ended (the run ended) or :exited (the
   # app-server exited, so nothing more comes from Codex). turns: the
   # run's provider turns. stops: whether a turn Codex starts after the run is stopped.
+  # reported: the usage Codex reported last; kept: the usage the run's last provider
+  # turn keeps (none while it runs).
   def initial_state, do: initial(false)
 
   defp initial(false),
-    do: %{phase: :held, run: "running", goal: "active", turns: 1, stops: false, late: nil}
+    do: %{
+      phase: :held,
+      run: "running",
+      goal: "active",
+      turns: 1,
+      stops: false,
+      late: nil,
+      reported: nil,
+      kept: nil
+    }
 
   defp initial(true),
-    do: %{phase: :ended, run: "completed", goal: "complete", turns: 3, stops: false, late: nil}
+    do: %{
+      phase: :ended,
+      run: "completed",
+      goal: "complete",
+      turns: 3,
+      stops: false,
+      late: nil,
+      reported: nil,
+      kept: nil
+    }
 
   def command(%{phase: :held}) do
     frequency([
@@ -194,6 +220,7 @@ defmodule HalC2.CodexGoalsPropTest do
   def command(%{phase: :turn}) do
     frequency([
       {4, {:call, __MODULE__, :finish_turn, []}},
+      {2, {:call, __MODULE__, :report_usage, [integer(1, 200_000)]}},
       {2, {:call, __MODULE__, :goal_update, [oneof(Map.keys(@shown))]}},
       {1, {:call, __MODULE__, :stop, []}},
       {1, {:call, __MODULE__, :exit_app_server, []}}
@@ -208,38 +235,48 @@ defmodule HalC2.CodexGoalsPropTest do
   def precondition(state, {:call, _, :continue_goal, []}), do: state.phase == :held
   def precondition(state, {:call, _, :grace, []}), do: state.phase == :held
   def precondition(state, {:call, _, :finish_turn, []}), do: state.phase == :turn
+  def precondition(state, {:call, _, :report_usage, [_]}), do: state.phase == :turn
   def precondition(state, {:call, _, _, _}), do: state.phase in [:held, :turn]
 
   def next_state(state, _result, {:call, _, :continue_goal, []}),
-    do: %{state | phase: :turn, turns: state.turns + 1, late: nil}
+    do: %{state | phase: :turn, turns: state.turns + 1, late: nil, kept: nil}
 
-  def next_state(state, _result, {:call, _, :grace, []}),
+  def next_state(state, _result, {:call, _, :report_usage, [n]}), do: %{state | reported: n}
+
+  # A running turn settles with the usage Codex reported last, however it ends.
+  def next_state(%{phase: :turn} = state, result, {:call, _, fun, _} = call)
+      when fun in [:finish_turn, :stop, :exit_app_server],
+      do: step(%{state | kept: state.reported}, result, call)
+
+  def next_state(state, result, call), do: step(state, result, call)
+
+  defp step(state, _result, {:call, _, :grace, []}),
     do: ended(state, "completed", "paused", true)
 
-  def next_state(%{phase: :held} = state, _result, {:call, _, :goal_update, [status]}),
+  defp step(%{phase: :held} = state, _result, {:call, _, :goal_update, [status]}),
     do: ended(state, "completed", @shown[status], false)
 
-  def next_state(state, _result, {:call, _, :goal_update, [status]}),
+  defp step(state, _result, {:call, _, :goal_update, [status]}),
     do: %{state | goal: @shown[status]}
 
-  def next_state(%{goal: "active"} = state, _result, {:call, _, :finish_turn, []}),
+  defp step(%{goal: "active"} = state, _result, {:call, _, :finish_turn, []}),
     do: %{state | phase: :held}
 
-  def next_state(state, _result, {:call, _, :finish_turn, []}),
+  defp step(state, _result, {:call, _, :finish_turn, []}),
     do: ended(state, "completed", state.goal, false)
 
   # Stop pauses a goal still active; between turns it ends the run at once.
-  def next_state(%{goal: "active"} = state, _result, {:call, _, :stop, []}),
+  defp step(%{goal: "active"} = state, _result, {:call, _, :stop, []}),
     do: ended(state, "interrupted", "paused", true)
 
-  def next_state(state, _result, {:call, _, :stop, []}),
+  defp step(state, _result, {:call, _, :stop, []}),
     do: ended(state, "interrupted", state.goal, false)
 
-  def next_state(state, _result, {:call, _, :exit_app_server, []}),
+  defp step(state, _result, {:call, _, :exit_app_server, []}),
     do: %{state | phase: :exited, run: "failed", late: nil}
 
-  def next_state(state, _result, {:call, _, :late_turn, []}), do: %{state | late: state.stops}
-  def next_state(state, _result, _call), do: state
+  defp step(state, _result, {:call, _, :late_turn, []}), do: %{state | late: state.stops}
+  defp step(state, _result, _call), do: state
 
   defp ended(state, run, goal, stops),
     do: %{state | phase: :ended, run: run, goal: goal, stops: stops, late: nil}
@@ -255,7 +292,8 @@ defmodule HalC2.CodexGoalsPropTest do
       run: expected.run,
       goal: expected.goal,
       turns: expected.turns,
-      late: expected.late
+      late: expected.late,
+      usage: expected.kept
     }
   end
 
@@ -288,6 +326,17 @@ defmodule HalC2.CodexGoalsPropTest do
   def goal_update(status) do
     notify("thread/goal/updated", %{
       "goal" => %{"objective" => @objective, "status" => status, "tokensUsed" => 10}
+    })
+
+    settle_runtime()
+    observed()
+  end
+
+  # Codex reports the context's usage on the thread, as it does while a turn runs.
+  def report_usage(n) do
+    notify("thread/tokenUsage/updated", %{
+      "turnId" => Process.get(:native_turn),
+      "tokenUsage" => %{"last" => %{"totalTokens" => n}}
     })
 
     settle_runtime()
@@ -397,8 +446,20 @@ defmodule HalC2.CodexGoalsPropTest do
       run: runs |> List.first() |> Map.get("status"),
       goal: get_in(thread, ["goal", "status"]),
       turns: length(StreamState.list(state, "provider-turn")),
-      late: late_stopped()
+      late: late_stopped(),
+      usage: kept(state)
     }
+  end
+
+  # The usage the run's last provider turn keeps, which a turn's usage must stamp.
+  defp kept(state) do
+    attempt = state |> StreamState.list("run-attempt") |> List.first() || %{}
+
+    case StreamState.get(state, "provider-turn")[attempt["providerTurnId"]] do
+      %{"tokenUsage" => %{"usedTokens" => n, "updatedAt" => at}} when is_binary(at) -> n
+      %{"tokenUsage" => %{} = usage} -> {:unstamped, usage}
+      _ -> nil
+    end
   end
 
   # Whether the late turn, if there was one, was stopped: the fake logs every
