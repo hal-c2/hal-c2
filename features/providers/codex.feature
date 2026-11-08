@@ -1322,12 +1322,13 @@ Feature: Codex
     Then the subagent stays completed
 
   # Upstream #25322: stopping the subagent's late turn waited on its own reply and froze every Codex thread for 10 seconds.
+  # Here each thread has its own app-server, shared with its subagents, so what the wait held up was the thread itself.
   @mc
-  Scenario: A subagent turn that starts after its parent stopped does not hold up other Codex threads
+  Scenario: A subagent turn that starts after its parent stopped does not hold up its Codex thread
     Given a Codex run was stopped while one of its subagents was still working
-    And another Codex thread shares the same app-server
+    And Codex does not answer a stop
     When the subagent starts another turn and HAL-C2 stops it
-    Then the other thread keeps receiving its events without a pause
+    Then the thread's next message runs without waiting on Codex's answer to that stop
 
   # Upstream #29168: the wake text cut the command at 200 and its output at 1,000 UTF-16 units, so an
   # emoji at a cut left a lone surrogate, Codex never answered the turn start, and the wake hung.

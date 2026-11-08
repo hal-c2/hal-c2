@@ -66,6 +66,16 @@ defmodule HalC2.Steps.Providers.CodexRuntime do
     World.await_runs(context, title, statuses, 10_000)
     {_, runtime} = World.codex_runtime(context, title)
     assert is_pid(runtime.conn) and runtime.conn != context.killed_conn
+
+    # A new thread's runtime starts its own app-server, so the check above holds for it
+    # anyway. What would show the killed one shared is a runtime still holding it:
+    # every Codex runtime, the killed thread's included, has let it go.
+    refute Process.alive?(context.killed_conn)
+
+    for {_, pid, _, _} <- DynamicSupervisor.which_children(HalC2.Codex.Supervisor),
+        is_pid(pid),
+        do: refute(:sys.get_state(pid).conn == context.killed_conn)
+
     context
   end
 
@@ -296,8 +306,8 @@ defmodule HalC2.Steps.Providers.CodexRuntime do
     context
   end
 
-  step "another Codex thread shares the same app-server", context do
-    # From here on, Codex never answers a stop.
+  step "Codex does not answer a stop", context do
+    # From here on, Codex never answers a stop (the fake reads the switch in its cwd).
     cwd = World.thread(context, @thread)["worktreePath"] || World.project(context, "shop").root
     File.write!(Path.join(cwd, "interrupt-unanswered"), "")
     context
@@ -318,7 +328,7 @@ defmodule HalC2.Steps.Providers.CodexRuntime do
   end
 
   # Waiting on the unanswered stop would hold the runtime for the call's 30 seconds.
-  step "the other thread keeps receiving its events without a pause", context do
+  step "the thread's next message runs without waiting on Codex's answer to that stop", context do
     context = World.post_message(context, @thread, "hello")
     World.await_runs(context, @thread, ["interrupted", "completed"], 5_000)
     assert [_ | _] = World.replies(context, @thread)
