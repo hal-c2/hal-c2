@@ -250,7 +250,6 @@ Feature: Pi
 
   # Upstream #23052: forking a finished turn failed while the next one ran, since the running
   # turn had no session entry captured yet.
-  @backlog
   Scenario: A finished Pi turn can be forked while the next turn runs
     Given a Pi thread whose second turn is running
     When the user forks from the first turn
@@ -424,7 +423,7 @@ Feature: Pi
       | Pi exits with code 2 before answering            | Pi RPC get_state failed: pi process exited with code 2.  |
 
     @backlog
-    Examples:
+    Examples: deadlines and closed output
       | problem                                          | message                                                  |
       | Pi does not answer a request within its deadline | Pi RPC get_state failed: timed out after 15000ms.        |
       | Pi closes its output before answering            | Pi RPC get_state failed: pi process closed stdout.       |

@@ -497,6 +497,39 @@ defmodule HalC2.Steps.Providers.Pi do
     end)
   end
 
+  step "a Pi thread whose second turn is running", context do
+    context = context |> install() |> FakeAcp.thread() |> turn("first")
+    context = FakeAcp.send_message(context, "a long task")
+    await_answers(context, 2)
+    Map.put(context, :pi_session, session_file(context))
+  end
+
+  step "the user forks from the first turn", context do
+    source = World.thread_id(context, context.thread)
+    run = state(context) |> StreamState.list("run") |> Enum.find(&(&1["ordinal"] == 1))
+    id = "th-pi-fork-#{System.unique_integer([:positive])}"
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.fork",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "sourceThreadId" => source,
+        "targetThreadId" => id,
+        "title" => "fork",
+        "sourcePoint" => %{"type" => "run", "runId" => run["id"]}
+      })
+
+    put_in(context, [:threads, "fork"], id)
+  end
+
+  step "the new thread continues Pi's conversation through the first turn only", context do
+    context = turn(context, "where are we", "completed", "fork")
+    assert List.last(replies(context, "fork")) == "Reply to where are we after [first]"
+    # The source's running turn goes on in its own session.
+    assert session_file(context, "fork") != context.pi_session
+    context
+  end
+
   step "the user forks from the second turn into a new worktree", context do
     root = World.project(context).root
     worktree = Path.join(HalC2.Test.Mc.tmp_dir(context.mc, "worktrees"), "pi-fork")

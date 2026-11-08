@@ -793,7 +793,8 @@ defmodule HalC2.Pi.ThreadRuntime do
            |> launch_error(state),
          {:ok, conn} <- connect(argv, env, turn.cwd, state) do
       try do
-        with {:ok, _} <- cut(conn, fork[:before]),
+        with {:ok, before} <- before(conn, fork),
+             {:ok, _} <- cut(conn, before),
              {:ok, %{"sessionFile" => file}} when is_binary(file) and file != source <-
                Connection.call(conn, "get_state", %{}) do
           {:ok, %{turn | native_thread_id: file}}
@@ -808,6 +809,26 @@ defmodule HalC2.Pi.ThreadRuntime do
   end
 
   defp fork_first(_state, turn), do: {:ok, turn}
+
+  # The turn after the fork point, where the copy is cut. A turn still running in the
+  # source has no recorded entry yet, so it is found in the copy: the first message
+  # the user sent after the fork point's own. A copy that cannot be read so is kept whole.
+  defp before(_conn, %{before: before}) when is_binary(before), do: {:ok, before}
+
+  defp before(conn, %{turn: point}) when is_binary(point) do
+    case Connection.call(conn, "get_entries", %{"since" => point}, @call_ms) do
+      {:ok, %{"entries" => entries}} when is_list(entries) ->
+        {:ok,
+         Enum.find_value(entries, fn entry ->
+           if get_in(entry, ["message", "role"]) == "user", do: entry["id"]
+         end)}
+
+      _ ->
+        {:ok, nil}
+    end
+  end
+
+  defp before(_conn, _fork), do: {:ok, nil}
 
   defp cut(_conn, nil), do: {:ok, nil}
   defp cut(conn, entry), do: Connection.call(conn, "fork", %{"entryId" => entry}, @call_ms)
