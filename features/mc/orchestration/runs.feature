@@ -298,7 +298,8 @@ Feature: Runs and turns
     And the new run records nothing the left-over turn reported
 
   # Upstream #22846: the failure path wrote a turn that had already completed or failed as
-  # interrupted, and wrote it even when the interrupt itself failed.
+  # interrupted, and wrote it even when the interrupt itself failed. hal-c2#1398: a Codex
+  # goal's turn that completed, its run waiting for Codex's next, read as interrupted.
   @mc @priority-high
   Scenario Outline: A run whose events cannot be recorded keeps how its provider turn ended
     Given the provider turn of "t1" <state>
@@ -306,11 +307,12 @@ Feature: Runs and turns
     Then the provider turn reads as <outcome>
 
     Examples:
-      | state                    | outcome                                         |
-      | had already completed    | completed                                       |
-      | had already failed       | failed                                          |
-      | was still running        | interrupted                                     |
-      | could not be interrupted | running, so the next message stops it first     |
+      | state                                     | outcome                                     |
+      | had already completed                     | completed                                   |
+      | had already completed toward a Codex goal | completed                                   |
+      | had already failed                        | failed                                      |
+      | was still running                         | interrupted                                 |
+      | could not be interrupted                  | running, so the next message stops it first |
 
   # hal-c2#1285: a turn that ended inside the user's stop (Muse refusing it, so the MC
   # closed its host) left the failure on the runtime for the thread's next run, which

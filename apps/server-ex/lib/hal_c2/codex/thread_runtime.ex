@@ -2957,8 +2957,16 @@ defmodule HalC2.Codex.ThreadRuntime do
     end)
 
     turn = %{turn | ids: Map.delete(ids, :provider_turn), native_turn_id: nil}
-    wait_for_goal_turn(%{state | turn: turn, items: %{}, requests: %{}})
+    state = provider_turn_completed(%{state | turn: turn, items: %{}, requests: %{}}, ids.run)
+    wait_for_goal_turn(state)
   end
+
+  # A provider turn completed for a run the store failed (`HalC2.Orchestration.Unrecorded`)
+  # reads as completed, however the run ends after.
+  defp provider_turn_completed(%{unrecorded: %{run: run, provider_turn: :pending}} = state, run),
+    do: put_in(state.unrecorded.provider_turn, "completed")
+
+  defp provider_turn_completed(state, _run), do: state
 
   defp wait_for_goal_turn(state) do
     hold = System.unique_integer([:positive])

@@ -18,7 +18,11 @@ defmodule HalC2.CodexGoalRuntimeTest do
     System.put_env("FAKE_CODEX_GOAL_STALL", "1")
 
     on_exit(fn ->
-      for key <- ~w(codex_command codex_goal_grace_ms)a, do: Application.delete_env(:hal_c2, key)
+      HalC2.Test.Machines.refuse_changes(nil)
+
+      for key <- ~w(codex_command codex_goal_grace_ms unrecorded_retry_ms)a,
+          do: Application.delete_env(:hal_c2, key)
+
       System.delete_env("FAKE_CODEX_GOAL_STALL")
     end)
 
@@ -81,6 +85,81 @@ defmodule HalC2.CodexGoalRuntimeTest do
     assert %{turn: nil} = :sys.get_state(pid)
     assert ["failed"] = statuses(thread_id)
   end
+
+  # The stop of a goal's run the store failed between its turns wrote the turn Codex had
+  # completed as interrupted.
+  test "a goal's run the store fails between turns fails, its completed turn kept",
+       %{work: work} do
+    thread_id = "thread-goal-unrecorded"
+    Application.put_env(:hal_c2, :unrecorded_retry_ms, 20)
+    pid = goal_run(thread_id, work)
+    %{conn: conn, native_thread_id: native} = await_state(pid, &(&1.goal_hold != nil))
+    assert ["completed"] = provider_turns(thread_id)
+
+    # Codex reports what the goal used so far, which the store refuses.
+    HalC2.Test.Machines.refuse_changes(thread_id)
+    goal = %{"objective" => "ship the fix", "status" => "active", "tokensUsed" => 10}
+    params = %{"threadId" => native, "goal" => goal}
+    send(pid, {:json_rpc, conn, {:notification, "thread/goal/updated", params}})
+    assert %{turn: nil, goal_hold: nil} = :sys.get_state(pid)
+    HalC2.Test.Machines.refuse_changes(nil)
+
+    assert %{"status" => "failed", "failure" => "The turn could not be saved" <> _} =
+             await_run(thread_id)
+
+    assert ["completed"] = provider_turns(thread_id)
+  end
+
+  defp goal_run(thread_id, work) do
+    :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
+    selection = %{"instanceId" => "codex", "model" => "gpt-5.4"}
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "thread.create",
+        "threadId" => thread_id,
+        "projectId" => "project-1",
+        "title" => "Goal",
+        "modelSelection" => selection,
+        "runtimeMode" => "full-access",
+        "interactionMode" => "default",
+        "worktreePath" => work
+      })
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "threadId" => thread_id,
+        "messageId" => "m1",
+        "text" => "/goal ship the fix",
+        "attachments" => [],
+        "modelSelection" => selection,
+        "dispatchMode" => %{"type" => "start_immediately"}
+      })
+
+    [{pid, _}] = await(fn -> Registry.lookup(HalC2.Codex.Registry, thread_id) end)
+    pid
+  end
+
+  # Wakes on the thread stream's commits until its one run ended.
+  defp await_run(thread_id) do
+    case runs(thread_id) do
+      [%{"status" => status} = run] when status in ~w(completed failed interrupted) ->
+        run
+
+      _ ->
+        assert_receive {:hal_c2_stream, _, _}, 5_000
+        await_run(thread_id)
+    end
+  end
+
+  defp provider_turns(thread_id),
+    do: Enum.map(list(thread_id, "provider-turn"), & &1["status"])
+
+  defp runs(thread_id), do: list(thread_id, "run")
+
+  defp list(thread_id, kind),
+    do: HalC2.Streams.ensure(thread_id) |> HalC2.Streams.Server.state() |> StreamState.list(kind)
 
   defp statuses(thread_id) do
     HalC2.Streams.ensure(thread_id)

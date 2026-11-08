@@ -726,7 +726,9 @@ defmodule HalC2.Orchestration.TurnWriter do
     do: (StreamState.get(stream, "thread")[thread_id] || %{})["archivedAt"] == nil
 
   # The changes that end the run. `provider_turn`, when given, is how the provider turn
-  # ended apart from the run (a run the store failed): `"running"` leaves it running.
+  # ended apart from the run (a run the store failed): `"running"` leaves it running. One
+  # already recorded as ended keeps how it ended, as boot recovery leaves it (a Codex
+  # goal's turn, completed while its run went on).
   defp ended(stream, ids, status, failure, checkpoint, at, provider_turn \\ nil) do
     failure =
       stream
@@ -753,6 +755,7 @@ defmodule HalC2.Orchestration.TurnWriter do
 
     [
       Map.has_key?(ids, :provider_turn) && provider_turn != "running" &&
+        provider_turn_running?(stream, ids.provider_turn) &&
         settle.("provider-turn", ids.provider_turn, %{done | "status" => provider_turn || status}),
       settle.("run-attempt", ids.attempt, done),
       settle.("run", ids.run, run_done),
@@ -768,6 +771,9 @@ defmodule HalC2.Orchestration.TurnWriter do
       is_map(failure) && status == "failed" && failure_item(stream, ids, failure, at)
     ] ++ held_queue(stream, status, failure) ++ stopped_limit(stream, ids, status, failure)
   end
+
+  defp provider_turn_running?(stream, id),
+    do: match?(%{"status" => "running"}, StreamState.get(stream, "provider-turn")[id])
 
   # A limit that ended a run the user (or a parent agent) had asked to stop is not resumed
   # on its own: the stop leaves the choice to resume at the reset with the user.

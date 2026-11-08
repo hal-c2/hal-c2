@@ -9,7 +9,9 @@ defmodule HalC2.UnrecordedTurnsProofTest do
   # One Claude or Muse answers but does not follow is ended by the runtime once its
   # time is out, closing the provider, as the provider ending it would ([own-end]). A
   # stop Muse refuses, or ACP answers at once, ends the turn inside the runtime's call
-  # instead, and the failure goes with that turn too.
+  # instead, and the failure goes with that turn too. A Codex goal's provider turn can
+  # complete while its run goes on (`goal_hold`); it keeps how it ended however the run
+  # ends after.
   #
   # What the store wrote is the truth here: no side file. An MC that restarts while
   # TurnWatch holds an end loses it, and boot recovery ends the run as interrupted at
@@ -57,11 +59,11 @@ defmodule HalC2.UnrecordedTurnsProofTest do
       "HalC2.Codex.ThreadRuntime handle_info {:interrupt_deadline, _}" => "deadline",
       "HalC2.Codex.ThreadRuntime handle_info {:leftover_deadline, _}" => "held-deadline",
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:notification, _, _}}" =>
-        ~w(finish hand-over leftover-end held-start ignored-end unrecorded),
+        ~w(finish hand-over leftover-end held-start ignored-end unrecorded goal-hold),
       # A Codex goal's grace ends its run as Codex's turn end does; a stale one changes
       # nothing.
       "HalC2.Codex.ThreadRuntime handle_info {:goal_grace, _}" =>
-        ~w(finish hand-over unrecorded ignored-end),
+        ~w(finish hand-over unrecorded ignored-end goal-end),
       # Every message, the wrapper's clause included: one it does not know is ignored.
       "HalC2.Codex.ThreadRuntime handle_info _" =>
         ~w(unrecorded hand-over ignored-end held-start held-deadline),
@@ -133,7 +135,12 @@ defmodule HalC2.UnrecordedTurnsProofTest do
   @faults ~w(fail crash restart)
 
   # init(faults, a user's stop of r1, parts of the fix switched off).
-  @inits ["init(3, false, empty)", "init(3, true, empty)", "init(4, true, empty)"]
+  @inits [
+    "init(3, false, empty)",
+    "init(3, true, empty)",
+    "init(4, true, empty)",
+    "init(3, true, goals)"
+  ]
 
   for init <- @inits do
     test "a run's end is recorded once, from #{init}", %{proof: proof} do
@@ -193,10 +200,15 @@ defmodule HalC2.UnrecordedTurnsProofTest do
         {"noInterrupt", "twoTurns", "the failed turn's provider turn being stopped"},
         {"notDriven", "lost", "a held end counting as driven, so a stop leaves it"},
         {"noActiveCheck", "twice", "abandon/5 leaving a run that already ended"},
-        {"keepMark", "misfiled", "the failure going with its turn when a call ends it"}
+        {"keepMark", "misfiled", "the failure going with its turn when a call ends it"},
+        {"goalStop goals", "overwritten", "a dry goal hold handing over its completed turn"},
+        {"reend goals", "overwritten", "the run's end leaving a provider turn that ended"}
       ] do
+    [part | with] = String.split(part)
+
     test "without #{what}, #{bad} is reachable", %{proof: proof} do
-      assert_reachable(proof, unquote("init(2, true, off(#{part}))"), unquote(bad), depth: @depth)
+      init = unquote("init(2, true, #{Enum.join(with ++ ["off(#{part})"], " ")})")
+      assert_reachable(proof, init, unquote(bad), depth: @depth)
     end
   end
 end

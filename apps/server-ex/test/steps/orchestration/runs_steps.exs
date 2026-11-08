@@ -2252,6 +2252,21 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context |> World.running_turn(thread) |> Map.put(:ending, {:turn, "completed"})
   end
 
+  # Codex completes the turn with the thread's goal still active, so the run waits for
+  # Codex's next turn toward it, which never comes.
+  step "the provider turn of {string} had already completed toward a Codex goal",
+       %{args: [thread]} = context do
+    goal = %{"objective" => "Ship the fix", "status" => "active"}
+    World.put_env("FAKE_CODEX_GOAL", JSON.encode!(goal))
+    World.put_env("FAKE_CODEX_GOAL_STALL", "1")
+    context = World.running_turn(context, thread)
+    {pid, runtime} = World.codex_runtime(context, thread)
+    params = %{"threadId" => runtime.native_thread_id, "goal" => goal}
+    World.codex_notify(context, thread, "thread/goal/updated", params)
+    assert %{goal: %{"status" => "active"}} = :sys.get_state(pid)
+    Map.put(context, :ending, {:turn, "completed"})
+  end
+
   step "the provider turn of {string} had already failed", %{args: [thread]} = context do
     context |> World.running_turn(thread) |> Map.put(:ending, {:turn, "failed"})
   end

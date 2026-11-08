@@ -15,7 +15,9 @@ sload model-checker
 --- Codex stands for every runtime: it is the one whose stop can time out and leave
 --- its provider turn running; the others stop theirs, or the process running it. A
 --- stop the provider refuses (Muse) or answers at once (ACP) ends the turn inside the
---- runtime's call rather than in a message of the provider's: [interrupt-dry].
+--- runtime's call rather than in a message of the provider's: [interrupt-dry]. With
+--- `goals`, Codex pursues a goal: a provider turn that completes can leave its run
+--- active, held between the goal's turns until its grace ends it.
 
 mod UNRECORDED-TURNS is
   protecting BOOL .
@@ -47,20 +49,26 @@ mod UNRECORDED-TURNS is
   op over : St Nat -> Rs [ctor] .
 
   --- The provider runtime: no process, idle, holding a run's turn until the left-over
-  --- one ends (`leftover.hold`), driving a run's turn, or driving it without
+  --- one ends (`leftover.hold`), driving a run's turn, holding a run whose provider
+  --- turn completed toward a goal (`goal_hold`), or driving a turn without
   --- writing (`state.unrecorded`) since the store failed it at a time.
   ops down idle : -> Slot [ctor] .
-  ops hold drive : Rid -> Slot [ctor] .
+  ops hold drive goal : Rid -> Slot [ctor] .
   op dry : Rid Nat -> Slot [ctor] .
 
   --- Parts of the fix switched off, one at a time, so a proof shows each is needed:
   --- TurnWatch's retry, the original time, the provider's own ending, the follow-up's
   --- stop of a left-over turn and its wait for that turn's end, the stop of a turn the
   --- store failed, the run TurnWatch holds counting as driven, abandon/5's check that
-  --- the run is still active, and the failure going with its turn however it ended.
+  --- the run is still active, the failure going with its turn however it ended, a dry
+  --- goal hold handing its completed turn over as completed, and the run's end leaving
+  --- a provider turn recorded as ended as it is (TurnWriter.ended/7).
   ops noRetry nowTime overwrite noLeftoverStop noLeftoverWait noInterrupt notDriven noActiveCheck
-    keepMark : -> Sw [ctor] .
+    keepMark goalStop reend : -> Sw [ctor] .
   op off : Sw -> Item [ctor] .
+
+  --- Codex pursues a goal.
+  op goals : -> Item [ctor] .
 
   op store : Bool -> Item [ctor] .
   op clock : Nat -> Item [ctor] .
@@ -74,13 +82,14 @@ mod UNRECORDED-TURNS is
 
   --- Ghosts: when the run first failed, that the store failed its turn, that TurnWatch
   --- recorded its end, that an MC restart lost what TurnWatch held of it or boot
-  --- recovery ended it, and how its provider turn ended as the runtime heard it before
-  --- the run's end was recorded.
+  --- recovery ended it, how its provider turn ended as the runtime heard it before
+  --- the run's end was recorded, and that its goal hold crashed.
   op noticed : Rid Nat -> Item [ctor] .
   op unrec : Rid -> Item [ctor] .
   op watched : Rid -> Item [ctor] .
   op forgot : Rid -> Item [ctor] .
   op heard : Rid St -> Item [ctor] .
+  op crashed : Rid -> Item [ctor] .
 
   --- The provider: its turn, a stop on its way to it, a stop it ignored (the runtime's
   --- deadline is out), and the end of its turn on its way to the runtime.
@@ -165,17 +174,21 @@ mod UNRECORDED-TURNS is
   eq holding(rt(hold(R)) C) = true .
   eq holding(C) = false [owise] .
 
-  --- How TurnWatch records the provider turn (TurnWriter.ended/7).
-  op written : Bool Pv Rpt -> Rpt .
-  eq written(true, P, X) = failed .
-  eq written(false, running, X) = X .
-  eq written(false, asrun, X) = failed .
-  eq written(false, S, X) = S .
+  --- How TurnWatch records the provider turn (TurnWriter.ended/7), with overwrite and
+  --- reend: one recorded as ended, or never written, is left as it is.
+  op written : Bool Bool Pv Rpt -> Rpt .
+  eq written(true, B, P, X) = failed .
+  eq written(false, B, P, X) = (if X =/= running and not B then X else settles(P, X) fi) .
+  op settles : Pv Rpt -> Rpt .
+  eq settles(running, X) = X .
+  eq settles(asrun, X) = failed .
+  eq settles(S, X) = S .
 
   --- What drives a run, for TurnWatch.driven?/1 (`pending`: whether a held end counts).
   op driven : Conf Rid Bool -> Bool .
   eq driven(rt(drive(R)) C, R, B) = true .
   eq driven(rt(hold(R)) C, R, B) = true .
+  eq driven(rt(goal(R)) C, R, B) = true .
   eq driven(rt(dry(R, T)) C, R, B) = true .
   eq driven(pend(R, T, P, B') C, R, true) = true .
   eq driven(C, R, B) = false [owise] .
@@ -216,6 +229,7 @@ mod UNRECORDED-TURNS is
   rl [crash] : { faults(s F) rt(drive(R)) C } => { faults(F) rt(down) downed(R) killed(C) } .
   rl [crash] : { faults(s F) rt(dry(R, T)) C } => { faults(F) rt(down) downed(R) killed(C) } .
   rl [crash] : { faults(s F) rt(hold(R)) C } => { faults(F) rt(down) downed(R) killed(C) } .
+  rl [crash] : { faults(s F) rt(goal(R)) C } => { faults(F) rt(down) downed(R) crashed(R) killed(C) } .
   rl [restart] : { faults(s F) clock(N) C } => { faults(F) clock(s N) settling wiped(C) } .
 
   --- Unrecorded.handle_info/4: what the runtime writes for its turn the store refuses.
@@ -236,6 +250,18 @@ mod UNRECORDED-TURNS is
   rl [unrecorded] : { store(false) clock(N) rt(drive(R)) late(R) C }
     => { store(false) clock(N) rt(idle) lo(R) pend(R, N, running, false) unrec(R) stamp(C, R, N) } .
 
+  --- A goal's turn completing the store refuses goes over as completed as above; with
+  --- goalStop, the dry goal hold stops the run and hands it over as interrupted.
+  crl [unrecorded] : { goals store(false) clock(N) rt(drive(R)) endmsg(R, completed) C }
+    => { goals store(false) clock(N) rt(idle) heard(R, completed) pend(R, N, interrupted, false)
+         unrec(R) stamp(C, R, N) }
+    if has(C, goalStop) .
+
+  --- A write of the goal hold the store refuses: the hold stops the run (pause_goal/1),
+  --- and its end goes to TurnWatch as interrupted.
+  rl [unrecorded] : { store(false) clock(N) rt(goal(R)) C }
+    => { store(false) clock(N) rt(idle) pend(R, N, interrupted, false) unrec(R) stamp(C, R, N) } .
+
   --- TurnWriter.finish/3: the turn's end, written with the run's.
   rl [finish] : { store(true) clock(N) rt(drive(R)) endmsg(R, S) run(R, active) ends(R, K) rpt(R, X) C }
     => { store(true) clock(N) rt(idle) heard(R, S) run(R, over(S, N)) ends(R, s K) rpt(R, S) C } .
@@ -245,6 +271,13 @@ mod UNRECORDED-TURNS is
   crl [finish] : { rt(drive(R)) endmsg(R, S) mark(R', M) C }
     => { rt(idle) heard(R, S) pend(R, M, S, false) C }
     if R =/= R' .
+
+  --- hold_for_goal/1: a goal's provider turn that completes is written as completed,
+  --- and its run waits for the goal's next turn; the goal's grace ends it as completed.
+  rl [goal-hold] : { goals store(true) rt(drive(R)) endmsg(R, completed) rpt(R, X) C }
+    => { goals store(true) rt(goal(R)) heard(R, completed) rpt(R, completed) C } .
+  rl [goal-end] : { store(true) clock(N) rt(goal(R)) run(R, active) ends(R, K) C }
+    => { store(true) clock(N) rt(idle) run(R, over(completed, N)) ends(R, s K) C } .
 
   --- TurnWriter.finish/3 of a dry runtime: the turn's end goes to TurnWatch.
   rl [hand-over] : { rt(dry(R, T)) endmsg(R, S) pend(R, M, pending, B) C }
@@ -293,7 +326,7 @@ mod UNRECORDED-TURNS is
   --- provider turn as it ended. A run already ended is left as it is.
   crl [record] : { store(true) clock(N) pend(R, T, P, B) run(R, active) ends(R, K) rpt(R, X) C }
     => { store(true) clock(N) run(R, over(failed, (if has(C, nowTime) then N else T fi)))
-         ends(R, s K) rpt(R, written(has(C, overwrite), P, X)) watched(R) C }
+         ends(R, s K) rpt(R, written(has(C, overwrite), has(C, reend), P, X)) watched(R) C }
     if P =/= pending .
   crl [record] : { store(true) pend(R, T, P, B) run(R, over(S, M)) ends(R, K) C }
     => { store(true) run(R, over(failed, T)) ends(R, s K) watched(R) C }
@@ -351,6 +384,8 @@ mod UNRECORDED-TURNS is
   --- a run nothing drives is ended as interrupted (interrupt_undriven/2); a run that
   --- ended has nothing to stop.
   rl [interrupt-driven] : { ustop(R) rt(drive(R)) C } => { rt(drive(R)) asked(R) C } .
+  rl [interrupt-driven] : { ustop(R) store(true) clock(N) rt(goal(R)) run(R, active) ends(R, K) C }
+    => { store(true) clock(N) rt(idle) run(R, over(interrupted, N)) ends(R, s K) C } .
   crl [interrupt-driven] : { ustop(R) rt(Y) C } => { rt(Y) C }
     if Y =/= drive(R) /\ driven(rt(Y) C, R, not has(C, notDriven)) .
   crl [interrupt-undriven] : { ustop(R) store(true) clock(N) run(R, active) ends(R, K) rpt(R, X) C }
@@ -392,6 +427,7 @@ mod UNRECORDED-TURNS is
   --- The store failed the run's turn, or the runtime under it crashed.
   op failedTurn : Conf Rid -> Bool .
   eq failedTurn(unrec(R) C, R) = true .
+  eq failedTurn(crashed(R) C, R) = true .
   eq failedTurn(C, R) = forgotten(C, R) [owise] .
 
   op forgotten : Conf Rid -> Bool .
@@ -403,6 +439,7 @@ mod UNRECORDED-TURNS is
   eq keeps(rt(drive(R)) C, R) = true .
   eq keeps(rt(dry(R, T)) C, R) = true .
   eq keeps(rt(hold(R)) C, R) = true .
+  eq keeps(rt(goal(R)) C, R) = true .
   eq keeps(pend(R, T, P, B) C, R) = true .
   eq keeps(downed(R) C, R) = true .
   eq keeps(settling C, R) = true .
