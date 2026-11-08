@@ -2851,7 +2851,7 @@
   },
   {
     "name": "hal_c2_thread_interrupt",
-    "description": "Request interruption of a running turn in a HAL-C2 thread in the calling project. Without runId, the newest interruptible run is selected. Terminal runs and threads without an active turn return without another side effect. clientRequestId makes retries idempotent.",
+    "description": "Request interruption of a running turn in a HAL-C2 thread in the calling project. Without runId, the newest interruptible run is selected. Terminal runs and threads without an active turn return without another side effect. Like the user's Stop, it holds the thread's queued messages until the user resumes the queue or sends a message; pass holdQueue: false to let the next queued message start instead. clientRequestId makes retries idempotent.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2878,6 +2878,10 @@
               "type": "null"
             }
           ]
+        },
+        "holdQueue": {
+          "type": "boolean",
+          "description": "Whether the thread's queued messages wait for the user after the interrupt. Defaults to true, as a user's Stop; false lets the next one start."
         },
         "clientRequestId": {
           "anyOf": [

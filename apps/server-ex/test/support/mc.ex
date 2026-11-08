@@ -1992,6 +1992,7 @@ defmodule HalC2.Test.Mc.World do
       |> Map.put_new("FAKE_ACP_LOG", Path.join(context.mc.home, "acp-requests.log"))
       |> Map.put_new("FAKE_CLAUDE_LOG", Path.join(context.mc.home, "claude-prompts.log"))
       |> Map.put_new("FAKE_CODEX_GATE", Path.join(context.mc.home, "gate"))
+      |> Map.put_new("FAKE_CLAUDE_GATE", Path.join(context.mc.home, "gate"))
 
     fake = &["python3", "-u", Path.join(@support, &1)]
     keys = ~w(codex_command claude_command acp_commands text_codex_command text_claude_command)a
@@ -2616,6 +2617,9 @@ defmodule HalC2.Test.Mc.World do
       ignore =
         "FAKE_CODEX_IGNORE_INTERRUPT_FILE=" <> Path.join(context.mc.home, "ignore-interrupt")
 
+      # Turns stay running while this file exists.
+      held = "FAKE_CODEX_HOLD_TURN_FILE=" <> Path.join(context.mc.home, "hold-turn")
+
       Application.put_env(:hal_c2, :codex_command, [
         "env",
         log,
@@ -2624,6 +2628,7 @@ defmodule HalC2.Test.Mc.World do
         full,
         hold,
         ignore,
+        held,
         "python3",
         "-u",
         @fake_codex
@@ -2635,11 +2640,13 @@ defmodule HalC2.Test.Mc.World do
     if Application.get_env(:hal_c2, :claude_command) == nil do
       log = "FAKE_CLAUDE_ARGV_LOG=" <> Path.join(context.mc.home, "claude-argv.jsonl")
       input = "FAKE_CLAUDE_INPUT_LOG=" <> Path.join(context.mc.home, "claude-inputs.jsonl")
+      gate = "FAKE_CLAUDE_GATE=" <> Path.join(context.mc.home, "gate")
 
       Application.put_env(:hal_c2, :claude_command, [
         "env",
         log,
         input,
+        gate,
         "python3",
         "-u",
         @fake_claude
@@ -3420,6 +3427,18 @@ defmodule HalC2.Test.Mc.World do
   end
 
   @doc """
+  Ends the thread's running Codex turn as completed, as the (fake) app-server does
+  when the agent finishes on its own; returns the context. A Stop would hold the queue.
+  """
+  def complete_codex_turn(context, title) do
+    {_pid, runtime} = codex_runtime(context, title)
+
+    codex_notify(context, title, "turn/completed", %{
+      "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "completed"}
+    })
+  end
+
+  @doc """
   Makes the fake Claude (`test/support/fake_claude.py`) log the text of every user
   message it receives from now on, for `claude_prompts/1`; returns the context.
   """
@@ -3500,7 +3519,7 @@ defmodule HalC2.Test.Mc.World do
       )
 
     codex =
-      fake_cli(dir, "codex", opts[:codex_layout], opts[:codex_version] || "0.50.0",
+      fake_cli(dir, "codex", opts[:codex_layout], opts[:codex_version] || "0.160.0",
         version_line: "echo \"codex-cli $(cat #{Path.join(dir, "codex.version")})\"",
         exec: "python3 -u #{@fakes}/fake_codex.py \"$@\""
       )
@@ -3970,7 +3989,7 @@ defmodule HalC2.Test.Mc.World do
             "name" => name,
             "version" => "1.0.0",
             "description" => "",
-            "distribution" => %{"npx" => %{"package" => id}}
+            "distribution" => %{"npx" => %{"package" => "#{id}@1.0.0"}}
           }
         ]
       })

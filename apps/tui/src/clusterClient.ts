@@ -297,6 +297,7 @@ export function makeClusterClient(
       return client.createThread({ ...input, projectId: projectId as ProjectId });
     },
     interrupt: (threadId) => clientForThread(threadId).interrupt(threadId),
+    resumeQueue: (threadId) => clientForThread(threadId).resumeQueue(threadId),
     approve: (threadId, ...rest) => clientForThread(threadId).approve(threadId, ...rest),
     respondUserInput: (threadId, ...rest) =>
       clientForThread(threadId).respondUserInput(threadId, ...rest),

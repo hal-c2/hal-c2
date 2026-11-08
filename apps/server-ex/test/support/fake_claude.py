@@ -16,7 +16,7 @@
 # permission answer adds for the session (updatedPermissions) let later matching
 # commands run without asking. Each turn's message text is appended to
 # $FAKE_CLAUDE_LOG when it is set.
-import json, os, re, sys, uuid
+import json, os, re, sys, time, uuid
 
 # With FAKE_CLAUDE_TRACE set, the argv and every message read are appended to it as JSON lines.
 TRACE = os.environ.get("FAKE_CLAUDE_TRACE")
@@ -302,7 +302,9 @@ for line in sys.stdin:
         send({"type": "result", "subtype": "success", "is_error": False, "result": "It grew", "session_id": session})
         continue
     # "start a monitor": the Monitor tool watches a command (task task-mon-N) and the
-    # turn ends while it runs.
+    # turn ends while it runs. "start a monitor and hold the turn" holds the turn's
+    # answer until the test has marked the monitor as awaited (the gate file
+    # "monitor-awaited" in FAKE_CLAUDE_GATE), as `hal_c2_background_wait` does in a turn.
     if "start a monitor" in text:
         mon = f"mon-{turn}"
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}g", "role": "assistant", "content": [{"type": "tool_use", "id": mon, "name": "Monitor", "input": {
@@ -311,6 +313,12 @@ for line in sys.stdin:
               "description": "Watch the dev log", "task_type": "monitor"})
         send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": mon,
               "content": f"Monitor started (task task-{mon})", "is_error": False}]}})
+        if "and hold the turn" in text:
+            gate = os.path.join(os.environ["FAKE_CLAUDE_GATE"], "monitor-awaited")
+            for _ in range(3000):  # bounded: 30 s at most
+                if os.path.exists(gate):
+                    break
+                time.sleep(0.01)
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}i", "role": "assistant", "content": [{"type": "text", "text": "Watching the log"}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "Watching the log", "session_id": session})
         continue

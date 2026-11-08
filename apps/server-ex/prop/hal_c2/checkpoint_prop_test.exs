@@ -21,6 +21,98 @@ defmodule HalC2.CheckpointPropTest do
     end
   end
 
+  # The same law for a workspace that is a folder inside a repository: the
+  # folder itself stays (even restored empty) and files outside it are left
+  # as they were.
+  property "restoring a checkpoint in a subfolder keeps the folder and the rest of the repository",
+    numtests: HalC2.Prop.numtests(25) do
+    forall {first, second} <- {sub_snapshot(), sub_snapshot()} do
+      sub_round_trip(first, second)
+    end
+  end
+
+  # The same law with an untracked nested repository in the workspace:
+  # `git clean` skips it on every pass, so it must neither fail the restore
+  # as left behind nor be removed by it.
+  property "restoring a checkpoint leaves an untracked nested repository alone",
+    numtests: HalC2.Prop.numtests(25) do
+    forall {first, second} <- {snapshot(), snapshot()} do
+      nested_round_trip(first, second)
+    end
+  end
+
+  defp nested_round_trip(first, second) do
+    dir =
+      Path.join(
+        System.tmp_dir!(),
+        "hal-c2-checkpoint-prop-#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(dir)
+
+    try do
+      git!(dir, ~w(init -q -b main))
+      write_snapshot(dir, %{"README.md" => "readme\n"})
+      git!(dir, ~w(add README.md))
+      git!(dir, ~w(-c user.name=t -c user.email=t@t commit -q -m init))
+
+      nested = Path.join(dir, "vendor/lib")
+      File.mkdir_p!(nested)
+      git!(nested, ~w(init -q -b main))
+      File.write!(Path.join(nested, "lib.txt"), "lib\n")
+
+      write_snapshot(dir, first)
+      :ok = Checkpoint.capture(dir, "refs/hal-c2/test/nested-first")
+      write_snapshot(dir, second)
+      :ok = Checkpoint.capture(dir, "refs/hal-c2/test/nested-second")
+
+      :ok = Checkpoint.restore(dir, "refs/hal-c2/test/nested-first")
+      first_back = read_snapshot(dir) == first
+      :ok = Checkpoint.restore(dir, "refs/hal-c2/test/nested-second")
+      second_back = read_snapshot(dir) == second
+      nested_kept = File.read!(Path.join(nested, "lib.txt")) == "lib\n"
+
+      first_back and second_back and nested_kept
+    after
+      File.rm_rf!(dir)
+    end
+  end
+
+  defp sub_snapshot, do: oneof([exactly(%{}), snapshot()])
+
+  defp sub_round_trip(first, second) do
+    dir =
+      Path.join(
+        System.tmp_dir!(),
+        "hal-c2-checkpoint-prop-#{System.unique_integer([:positive])}"
+      )
+
+    sub = Path.join(dir, "packages/app")
+    File.mkdir_p!(sub)
+
+    try do
+      git!(dir, ~w(init -q -b main))
+      File.write!(Path.join(dir, "root.txt"), "root\n")
+      git!(dir, ~w(add root.txt))
+      git!(dir, ~w(-c user.name=t -c user.email=t@t commit -q -m init))
+
+      write_snapshot(sub, first)
+      :ok = Checkpoint.capture(sub, "refs/hal-c2/test/sub-first")
+      write_snapshot(sub, second)
+      :ok = Checkpoint.capture(sub, "refs/hal-c2/test/sub-second")
+
+      :ok = Checkpoint.restore(sub, "refs/hal-c2/test/sub-first")
+      first_back = File.dir?(sub) and read_snapshot(sub) == first
+      :ok = Checkpoint.restore(sub, "refs/hal-c2/test/sub-second")
+      second_back = File.dir?(sub) and read_snapshot(sub) == second
+      root_kept = File.read!(Path.join(dir, "root.txt")) == "root\n"
+
+      first_back and second_back and root_kept
+    after
+      File.rm_rf!(dir)
+    end
+  end
+
   # A workspace: each pooled path is absent or holds one of a few contents.
   defp snapshot do
     let contents <- vector(length(@paths), content()) do
@@ -95,6 +187,8 @@ defmodule HalC2.CheckpointPropTest do
     |> Enum.filter(&File.regular?/1)
     |> Map.new(fn full -> {Path.relative_to(full, dir), File.read!(full)} end)
     |> Map.delete("staged.txt")
+    # The nested repository's files are no part of any snapshot.
+    |> Map.reject(fn {path, _content} -> String.starts_with?(path, "vendor/") end)
   end
 
   defp git!(dir, args) do

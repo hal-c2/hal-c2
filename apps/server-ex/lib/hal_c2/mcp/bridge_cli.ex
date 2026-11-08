@@ -53,10 +53,17 @@ defmodule HalC2.Mcp.BridgeCli do
   defp call(_args, _endpoint, _authorization),
     do: {:error, 2, "acp-mcp-call requires <tool> and <arguments-json>."}
 
-  @doc "Runs the stdio bridge until `input` (an enumerable of lines) ends."
-  def run_bridge(endpoint, authorization, input, out \\ &IO.write/1) do
-    {:ok, bridge} =
-      HalC2.Mcp.Bridge.start_link(endpoint: endpoint, authorization: authorization, out: out)
+  @doc """
+  Runs the stdio bridge until `input` (an enumerable of lines) ends, writing
+  each answer with `out`. `opts` may carry `:post`, the bridge's transport,
+  which tests stand in for the HTTP one.
+  """
+  def run_bridge(endpoint, authorization, input, out \\ &IO.write/1, opts \\ []) do
+    bridge_opts =
+      [endpoint: endpoint, authorization: authorization, out: out] ++
+        Keyword.take(opts, [:post])
+
+    {:ok, bridge} = HalC2.Mcp.Bridge.start_link(bridge_opts)
 
     Enum.each(input, &HalC2.Mcp.Bridge.line(bridge, &1))
     HalC2.Mcp.Bridge.flush(bridge)
