@@ -547,6 +547,8 @@ private:
   // A send used this model: new threads start from it.
   void rememberModel(const QJsonObject& selection);
   bool setOption(const QString& target, const QString& id, const QVariant& value);
+  bool stepEffort(const QString& target, int direction);
+  static bool effortLocked(const QJsonObject& descriptor, const QString& text);
   bool selectSuggestion(const QString& target, const QString& id);
   // The suggestions for the caret, with the trigger they answer.
   QList<composer::Suggestion> suggestions(const QString& target, const std::optional<composer::Trigger>& trigger) const;

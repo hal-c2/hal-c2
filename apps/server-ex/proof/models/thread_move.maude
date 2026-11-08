@@ -298,8 +298,19 @@ mod THREAD-MOVE is
   rl [again] :
     msg(D, S, arrivedAns(arriving)) mc(S, true, R, asked(D, M)) => mc(S, true, R, idle) .
 
-  rl [release] :
-    msg(D, S, arrivedAns(no)) mc(S, true, R, asked(D, M)) => mc(S, true, seen(M, R), idle) .
+  --- Not while the move's mover lives (mover?/1): that move is not cut off, and the
+  --- destination may still be staging it.
+  crl [release] :
+    { msg(D, S, arrivedAns(no)) mc(S, true, R, asked(D, M)) C }
+    => { mc(S, true, seen(M, R), idle) C }
+    if not alive(S, M, C) .
+  crl [release] :
+    { msg(D, S, arrivedAns(no)) mc(S, true, R, asked(D, M)) C }
+    => { mc(S, true, R, idle) C }
+    if alive(S, M, C) .
+  op alive : Mc Moving Conf -> Bool .
+  eq alive(S, mv(N, D, T), mover(N, S, D, W) C) = true .
+  eq alive(S, M, C) = false [owise] .
 
   --- The destination was removed from the cluster and will not say whether the move
   --- arrived, but the thread may have gone on from it: settle/1 asks the other members,

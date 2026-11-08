@@ -13,6 +13,7 @@
 #   sessionErrorOnce   the same, for the next session/new only (then removed)
 #   configOptions      session/new's configOptions (default: one model "fake/one")
 #   modes              session/new's modes
+#   sessionModels      session/new's `models` (currentModelId, availableModels), as Grok reports them
 #   rejectUnknownModels  session/set_config_option refuses a model configOptions lacks
 #   turns              [{"match": substring, "steps": [...]}], first match wins
 #   sessionId          session/new's sessionId (default: a fake one)
@@ -20,6 +21,9 @@
 #   initError          initialize fails with this error object
 #   waitForFileOn      {method: file name}: that method is answered only once
 #                      the file appears in FAKE_DIR
+#   settleOptions      configOptions sent as a `config_option_update` just before
+#                      session/new answers (a catalog still settling)
+#   availableCommands  sent as an `available_commands_update` when a session opens
 #   googleAuth         Antigravity's Google sign-in (see fake_google_auth.py)
 #   versionDelayMs / versionHang / versionExit
 #                      how a `--version` invocation answers (Grok's health probe)
@@ -189,10 +193,13 @@ def run_turn(mid, sid, text):
         elif "update" in step:
             update(step.get("sessionId", sid), step["update"])
         elif "request" in step:
-            request(step["request"]["method"], dict(step["request"].get("params") or {}, sessionId=sid))
+            params = dict(step["request"].get("params") or {})
+            params.setdefault("sessionId", sid)
+            request(step["request"]["method"], params)
         elif "permission" in step:
+            call = dict(step["permission"])
             request("session/request_permission", {
-                "sessionId": sid, "toolCall": step["permission"],
+                "sessionId": call.pop("sessionId", sid), "toolCall": call,
                 "options": [{"optionId": "once", "name": "Allow once", "kind": "allow_once"},
                             {"optionId": "always", "name": "Always allow", "kind": "allow_always"},
                             {"optionId": "reject", "name": "Reject", "kind": "reject_once"}]})
@@ -294,9 +301,18 @@ while True:
         result = {"configOptions": cfg.get("configOptions", default_options())}
         if cfg.get("modes") is not None:
             result["modes"] = cfg["modes"]
+        if cfg.get("sessionModels") is not None:
+            result["models"] = cfg["sessionModels"]
         if method == "session/new":
             result["sessionId"] = cfg.get("sessionId") or "fake-session-%d-%d" % (os.getpid(), sessions)
+        sid = result.get("sessionId") or params.get("sessionId")
+        if cfg.get("settleOptions") is not None:
+            update(sid, {"sessionUpdate": "config_option_update",
+                         "configOptions": cfg["settleOptions"]})
         send({"id": mid, "result": result})
+        if cfg.get("availableCommands") is not None:
+            update(sid, {"sessionUpdate": "available_commands_update",
+                         "availableCommands": cfg["availableCommands"]})
     elif (method == "session/set_config_option" and cfg.get("rejectUnknownModels")
           and params.get("configId") == "model"
           and params.get("value") not in [o["value"] for o in next(

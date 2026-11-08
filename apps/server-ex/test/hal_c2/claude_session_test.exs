@@ -62,8 +62,6 @@ end
 defmodule HalC2.Claude.SessionLaunchTest do
   use ExUnit.Case, async: false
 
-  import Bitwise, only: [band: 2]
-
   alias HalC2.Claude.{McpConfig, Session}
   alias HalC2.Orchestration.Recovery
 
@@ -82,78 +80,193 @@ defmodule HalC2.Claude.SessionLaunchTest do
       Recovery.leaving(false)
     end)
 
-    {:ok, home: home, argv_log: Path.join(home, "claude-argv.jsonl")}
+    logs = Path.join(home, "logs")
+    File.mkdir_p!(logs)
+
+    {:ok,
+     home: home,
+     argv_log: Path.join(logs, "claude-argv.jsonl"),
+     mcp_log: Path.join(logs, "claude-mcp.jsonl")}
   end
 
-  test "an ordinary launch keeps its bearer in a private file until the process stops", %{
+  test "Claude is handed HAL-C2's server over stdin, never on its command line or on disk", %{
     home: home,
-    argv_log: log
+    argv_log: log,
+    mcp_log: mcp_log
   } do
     mcp = server("ordinary-secret")
-    session = start_session(home, log, mcp: mcp)
+    session = start_session(home, log, mcp: mcp, env: [{"FAKE_CLAUDE_MCP_LOG", mcp_log}])
     await_initialized(session)
+    Session.send_message(session, "which tools")
+    assert_receive {:claude, ^session, {:message, %{"type" => "assistant"} = said}}, 5_000
+    assert said["message"]["content"] == [%{"type" => "text", "text" => "tools: hal-c2"}]
 
-    argv = read_argv(log)
-    path = config_path(argv)
-    config_dir = Path.dirname(path)
-
-    refute Enum.any?(argv, &String.contains?(&1, mcp.authorization))
-    refute Enum.any?(argv, &String.contains?(&1, "ordinary-secret"))
-    assert band(File.stat!(path).mode, 0o777) == 0o600
-    assert band(File.stat!(config_dir).mode, 0o777) == 0o700
-
-    assert JSON.decode!(File.read!(path)) == %{
-             "mcpServers" => %{
+    assert read_lines(mcp_log) == [
+             %{
                "hal-c2" => %{
                  "type" => "http",
                  "url" => mcp.url,
                  "headers" => %{"Authorization" => mcp.authorization}
                }
              }
-           }
+           ]
 
-    GenServer.stop(session)
-    refute File.exists?(config_dir)
+    [argv] = read_lines(log)
+    refute Enum.any?(argv, &String.contains?(&1, "ordinary-secret"))
+    refute "--mcp-config" in argv
+
+    # The fakes' logs aside, nothing the MC keeps holds the credential.
+    on_disk =
+      for path <- Path.wildcard(Path.join(home, "**"), match_dot: true),
+          not String.starts_with?(path, Path.dirname(log)),
+          File.regular?(path),
+          File.read!(path) =~ "ordinary-secret",
+          do: path
+
+    assert on_disk == []
   end
 
-  test "a durable launch keeps its config through adoption and removes it on final stop", %{
+  test "a server Claude refuses leaves the session running without HAL-C2's tools", %{
     home: home,
     argv_log: log
   } do
-    Application.put_env(:hal_c2, :durable_programs, true)
-    session = start_session(home, log, mcp: server("durable-secret"), durable: "thread-config")
-    await_initialized(session)
+    session =
+      start_session(home, log,
+        mcp: server("refused-secret"),
+        env: [{"FAKE_CLAUDE_MCP_REFUSE", "1"}]
+      )
 
-    path = log |> read_argv() |> config_path()
+    Session.send_message(session, "which tools")
+    assert_receive {:claude, ^session, {:message, %{"type" => "assistant"} = said}}, 5_000
+    assert said["message"]["content"] == [%{"type" => "text", "text" => "tools: none"}]
+  end
+
+  test "a message waits for Claude's answer to its servers, and no answer ends the session", %{
+    home: home,
+    argv_log: log
+  } do
+    prompts = Path.join(Path.dirname(log), "prompts.log")
+
+    session =
+      start_session(home, log,
+        mcp: server("held-secret"),
+        mcp_deadline: 200,
+        env: [{"FAKE_CLAUDE_MCP_HOLD", "1"}, {"FAKE_CLAUDE_PROMPT_LOG", prompts}]
+      )
+
+    ref = Process.monitor(session)
+    Session.send_message(session, "hello")
+    assert_receive {:DOWN, ^ref, :process, ^session, :mcp_servers_unanswered}, 5_000
+    refute File.exists?(prompts)
+  end
+
+  test "an adopted durable Claude keeps the servers it was handed", %{
+    home: home,
+    argv_log: log,
+    mcp_log: mcp_log
+  } do
+    Application.put_env(:hal_c2, :durable_programs, true)
+
+    session =
+      start_session(home, log,
+        mcp: server("durable-secret"),
+        durable: "thread-config",
+        env: [{"FAKE_CLAUDE_MCP_LOG", mcp_log}]
+      )
+
+    await_initialized(session)
     durable_dir = :sys.get_state(session).sub.durable.dir
-    assert Path.dirname(path) == Path.join(durable_dir, "mcp")
 
     Recovery.leaving(true)
     GenServer.stop(session)
     Recovery.leaving(false)
-    assert File.exists?(path)
 
     adopted =
       start_session(home, log,
         adopt: %{dir: durable_dir, offset: 0, channel: %{next_id: 1, permissions: %{}}}
       )
 
-    assert File.exists?(path)
+    Session.send_message(adopted, "which tools")
+    assert_receive {:claude, ^adopted, {:message, %{"type" => "assistant"} = said}}, 5_000
+    assert said["message"]["content"] == [%{"type" => "text", "text" => "tools: hal-c2"}]
+    assert length(read_lines(mcp_log)) == 1
     GenServer.stop(adopted)
-    refute File.exists?(path)
-    refute File.exists?(durable_dir)
   end
 
-  test "startup sweeps abandoned ordinary configs but preserves durable ones", %{home: home} do
-    ordinary_dir = McpConfig.new_dir()
-    McpConfig.write!(server("stale-secret"), ordinary_dir)
+  test "a message held for Claude's servers survives the MC, and reaches Claude once they answer",
+       %{home: home, argv_log: log} do
+    Application.put_env(:hal_c2, :durable_programs, true)
+    release = Path.join(home, "release")
+    prompts = Path.join(Path.dirname(log), "prompts.log")
 
-    durable_path =
-      McpConfig.write!(server("durable-secret"), Path.join([home, "durable", "saved", "mcp"]))
+    session =
+      start_session(home, log,
+        mcp: server("held-secret"),
+        durable: "thread-held",
+        env: [{"FAKE_CLAUDE_MCP_HOLD", release}, {"FAKE_CLAUDE_PROMPT_LOG", prompts}]
+      )
+
+    await_initialized(session)
+    Session.send_message(session, "hello")
+    checkpoint = await_held(session)
+
+    Recovery.leaving(true)
+    GenServer.stop(session)
+    Recovery.leaving(false)
+
+    adopted =
+      start_session(home, log,
+        adopt: %{dir: checkpoint.dir, offset: checkpoint.offset, channel: checkpoint.channel}
+      )
+
+    # Questions about the session are not held behind the message.
+    assert {:ok, _} = Session.control(adopted, "mcp_status")
+    refute File.exists?(prompts)
+
+    File.write!(release, "")
+    assert %{"subtype" => "success", "result" => "Hello from claude"} = await_result(adopted)
+    assert read_lines(prompts) == ["hello"]
+    GenServer.stop(adopted)
+  end
+
+  test "an interrupt sent while a message is held reaches Claude after it", %{
+    home: home,
+    argv_log: log
+  } do
+    release = Path.join(home, "release")
+
+    session =
+      start_session(home, log,
+        mcp: server("held-secret"),
+        env: [{"FAKE_CLAUDE_MCP_HOLD", release}]
+      )
+
+    await_initialized(session)
+    # "answer halfway" writes half an answer and stays open until it is interrupted.
+    Session.send_message(session, "answer halfway")
+    assert :held = Session.control(session, "interrupt")
+
+    File.write!(release, "")
+
+    assert [
+             %{"type" => "assistant"} = half,
+             %{"type" => "result", "subtype" => "error_during_execution"}
+           ] = said_until_result(session)
+
+    assert half["message"]["content"] == [%{"type" => "text", "text" => "Half an answer"}]
+  end
+
+  test "startup sweeps the MCP configs earlier MCs left behind", %{home: home} do
+    stale = Path.join([McpConfig.root(), "abandoned", "mcp.json"])
+    File.mkdir_p!(Path.dirname(stale))
+    File.write!(stale, "{}")
+    durable = Path.join([home, "durable", "saved", "mcp", "mcp.json"])
+    File.mkdir_p!(Path.dirname(durable))
+    File.write!(durable, "{}")
 
     assert :ok = HalC2.Application.prepare_files()
-    refute File.exists?(ordinary_dir)
-    assert File.exists?(durable_path)
+    refute File.exists?(stale)
+    assert File.exists?(durable)
   end
 
   defp start_session(home, log, opts) do
@@ -163,10 +276,14 @@ defmodule HalC2.Claude.SessionLaunchTest do
           handler: self(),
           cd: home,
           command: ["python3", "-u", @fake_claude],
-          env: [{"FAKE_CLAUDE_ARGV_LOG", log}],
           persist_session: false
         ],
         opts
+      )
+      |> Keyword.update(
+        :env,
+        [{"FAKE_CLAUDE_ARGV_LOG", log}],
+        &[{"FAKE_CLAUDE_ARGV_LOG", log} | &1]
       )
 
     start_supervised!(
@@ -177,22 +294,47 @@ defmodule HalC2.Claude.SessionLaunchTest do
     )
   end
 
+  # The session's checkpoint once it holds a message.
+  defp await_held(session) do
+    receive do
+      {:claude, ^session, {:checkpoint, %{channel: %{held: [_ | _]}} = checkpoint}} -> checkpoint
+      {:claude, ^session, _other} -> await_held(session)
+    after
+      5_000 -> flunk("the message was never held")
+    end
+  end
+
+  defp await_result(session) do
+    receive do
+      {:claude, ^session, {:message, %{"type" => "result"} = result}} -> result
+      {:claude, ^session, _other} -> await_result(session)
+    after
+      5_000 -> flunk("no result")
+    end
+  end
+
+  # The assistant messages and result Claude says, up to its result.
+  defp said_until_result(session, said \\ []) do
+    receive do
+      {:claude, ^session, {:message, %{"type" => "result"} = result}} ->
+        Enum.reverse([result | said])
+
+      {:claude, ^session, {:message, %{"type" => "assistant"} = message}} ->
+        said_until_result(session, [message | said])
+
+      {:claude, ^session, _other} ->
+        said_until_result(session, said)
+    after
+      5_000 -> flunk("no result")
+    end
+  end
+
   defp await_initialized(session) do
     assert_receive {:claude, ^session, {:initialized, _reply}}, 5_000
   end
 
-  defp read_argv(log) do
-    [argv] = log |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
-    argv
-  end
-
-  defp config_path(argv) do
-    index = Enum.find_index(argv, &(&1 == "--mcp-config"))
-    assert index
-    path = Enum.at(argv, index + 1)
-    assert Path.absname(path) == path
-    path
-  end
+  defp read_lines(log),
+    do: log |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
 
   defp server(token),
     do: %{url: "http://127.0.0.1:3780/mcp", authorization: "Bearer " <> token}

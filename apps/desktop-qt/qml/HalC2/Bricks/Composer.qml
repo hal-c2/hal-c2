@@ -139,10 +139,23 @@ Rectangle {
                     detail: item.displayText
                 });
                 menu.built.push(sub);
+                // Why none of its rows can be chosen, above them, as the
+                // picker's own note says it.
+                if ((item.note ?? "").length > 0) {
+                    const note = overflowItemComponent.createObject(null, {
+                        objectName: "composerOverflowNote",
+                        text: qsTr("Locked"),
+                        reason: item.note,
+                        enabled: false
+                    });
+                    menu.built.push(note);
+                    sub.addItem(note);
+                }
                 item.choices.forEach((label, index) => {
                     const row = overflowItemComponent.createObject(null, {
                         text: label,
-                        current: index === item.currentIndex
+                        current: index === item.currentIndex,
+                        enabled: !(item.disabledRows ?? []).includes(index)
                     });
                     row.triggered.connect(() => item.activated(index));
                     menu.built.push(row);
@@ -1483,10 +1496,16 @@ Rectangle {
                                     currentIndex: composer.effortOption ? composer.effortOption.choices.findIndex(choice => choice.id === composer.effortOption.value) : -1
                                     displayText: composer.selectedLabel(composer.effortOption)
                                     Accessible.name: composer.effortOption ? composer.effortOption.label : ""
-                                    onActivated: index => Shell.dispatch("composer.option.set", {
+                                    // The prompt says ultrathink in its own words: the effort is its.
+                                    readonly property bool locked: (composer.effortOption?.lockedReason ?? "").length > 0
+                                    note: locked ? composer.effortOption.lockedReason : ""
+                                    disabledRows: locked ? composer.effortOption.choices.map((_, index) => index) : []
+                                    onActivated: index => {
+                                        if (!locked) Shell.dispatch("composer.option.set", {
                                             id: composer.effortOption.id,
                                             value: composer.effortOption.choices[index].id
-                                        })
+                                        });
+                                    }
                                 }
 
                                 // By count, so a value picked here updates its control rather
