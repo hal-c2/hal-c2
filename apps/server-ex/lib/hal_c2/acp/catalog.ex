@@ -649,14 +649,15 @@ defmodule HalC2.Acp.Catalog do
     end
   end
 
-  # Resolve every segment of both paths, each link's target against its own
-  # link's folder: a relative target is not relative to the MC's cwd, a first
-  # link that lands inside says nothing about where the next one goes, and a
-  # linked folder on the command's path can take it outside just as a linked
-  # command can.
+  # Resolve every segment of both paths in the order the OS would: a link's
+  # target segments are walked next (against the link's own folder when
+  # relative), and a ".." climbs from the already-resolved path. Folding
+  # ".." by string first would misjudge a target like `evil/../bin/sh`,
+  # where `evil` is itself a link outside, and a linked folder on the
+  # command's path can take it outside just as a linked command can.
   defp resolved_inside?(exe, root) do
-    with {:ok, resolved} <- canonical(Path.expand(exe)),
-         {:ok, canonical_root} <- canonical(Path.expand(root)) do
+    with {:ok, resolved} <- canonical(Path.absname(exe)),
+         {:ok, canonical_root} <- canonical(Path.absname(root)) do
       (resolved == canonical_root or String.starts_with?(resolved, canonical_root <> "/")) and
         File.regular?(resolved)
     else
@@ -668,23 +669,39 @@ defmodule HalC2.Acp.Catalog do
   defp canonical(_path, hops) when hops < 0, do: :error
 
   defp canonical(path, hops) do
-    Enum.reduce_while(Path.split(path), {:ok, "/"}, fn segment, {:ok, current} ->
+    [first | rest] = Path.split(path)
+    walk_segments(rest, first, hops)
+  end
+
+  defp walk_segments([], current, _hops), do: {:ok, current}
+  defp walk_segments(_segments, _current, hops) when hops < 0, do: :error
+  defp walk_segments(["/" | rest], _current, hops), do: walk_segments(rest, "/", hops)
+  defp walk_segments(["." | rest], current, hops), do: walk_segments(rest, current, hops)
+
+  defp walk_segments([".." | rest], current, hops),
+    do: walk_segments(rest, Path.dirname(current), hops)
+
+  defp walk_segments([segment | rest], current, hops) do
+    if Regex.match?(~r/^[a-zA-Z]:\/$/, segment) do
+      walk_segments(rest, segment, hops)
+    else
       candidate = Path.join(current, segment)
 
       case File.lstat(candidate) do
         {:ok, %File.Stat{type: :symlink}} ->
-          with {:ok, target} <- File.read_link(candidate),
-               {:ok, resolved} <-
-                 canonical(Path.expand(target, Path.dirname(candidate)), hops - 1) do
-            {:cont, {:ok, resolved}}
-          else
-            _ -> {:halt, :error}
+          case File.read_link(candidate) do
+            {:ok, target} ->
+              base = if Path.type(target) == :absolute, do: "/", else: current
+              walk_segments(Path.split(target) ++ rest, base, hops - 1)
+
+            _ ->
+              :error
           end
 
         _ ->
-          {:cont, {:ok, candidate}}
+          walk_segments(rest, candidate, hops)
       end
-    end)
+    end
   end
 
   defp archive_error(message), do: error("archive_invalid", message)

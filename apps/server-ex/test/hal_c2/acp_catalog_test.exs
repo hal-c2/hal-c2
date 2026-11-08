@@ -220,6 +220,32 @@ defmodule HalC2.Acp.CatalogTest do
     assert message =~ "resolves outside its installation directory"
   end
 
+  test "a link target that climbs through another link does not escape the check",
+       %{served: served, base: base, sha: sha, tmp_dir: dir} do
+    publish(served, [fake(base, sha)])
+    assert {:ok, _} = HalC2.Acp.Catalog.prepare(%{"agentId" => "fake-agent"})
+    assert {:ok, [exe | _], _env} = HalC2.Acp.Catalog.command(%{"agentId" => "fake-agent"})
+    bin = Path.dirname(exe)
+
+    # bin/evil -> a folder outside; bin/fake -> evil/../bin/sh. Folding the
+    # ".." by string lands on the decoy at bin/bin/sh inside, while the OS
+    # resolves evil first and lands outside.
+    outside_lib = Path.join(dir, "outside-lib")
+    File.mkdir_p!(outside_lib)
+    File.mkdir_p!(Path.join([dir, "bin"]))
+    File.write!(Path.join([dir, "bin", "sh"]), "#!/bin/sh\nexit 0\n")
+    File.mkdir_p!(Path.join([bin, "bin"]))
+    File.write!(Path.join([bin, "bin", "sh"]), "#!/bin/sh\nexit 0\n")
+    File.ln_s!(outside_lib, Path.join(bin, "evil"))
+    File.rm!(exe)
+    File.ln_s!("evil/../bin/sh", exe)
+
+    assert {:error, %{"reason" => "archive_invalid", "message" => message}} =
+             HalC2.Acp.Catalog.command(%{"agentId" => "fake-agent"})
+
+    assert message =~ "resolves outside its installation directory"
+  end
+
   test "a package spec that only ends in a version is not pinned", %{
     served: served,
     base: base,
