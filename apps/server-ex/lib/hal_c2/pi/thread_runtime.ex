@@ -26,7 +26,10 @@ defmodule HalC2.Pi.ThreadRuntime do
   alias HalC2.Orchestration
   alias HalC2.Orchestration.Entities
 
-  @state_version 3
+  @state_version 10
+  # Extension failures queued between turns: only the newest are kept, so an
+  # extension failing on a timer while idle cannot grow state without bound.
+  @queued_extension_errors 20
   @registry HalC2.Pi.Registry
 
   # How long a call to Pi waits on its answer; the session's stats, read as a turn
@@ -38,6 +41,24 @@ defmodule HalC2.Pi.ThreadRuntime do
   # steer, so one Pi is merely slow to answer is not cut off sooner than another
   # provider's would be.
   @steer_answer_ms 33_000
+  # How long a turn may show no Pi activity at all before the runtime asks Pi
+  # whether it is working (`turn_watchdog/2`): a prompt an extension command
+  # handled without the agent never settles, and a Pi gone silent never does
+  # either. Three failed checks in a row stop the session.
+  @turn_watchdog_ms 4_000
+  @turn_watchdog_failures 3
+  # Idle checks in a row that settle a turn. A command of an extension's,
+  # which Pi may handle without its agent, settles after two; anything else
+  # only after about a minute, since Pi also reads idle while its extensions'
+  # `input` and `before_agent_start` hooks (or a provider's auth refresh) run
+  # before its agent starts, and a prompt template or `/skill:` expands into
+  # an agent prompt that runs those hooks too.
+  @turn_idle_command 2
+  @turn_idle_message 15
+  # The grace a stopped compaction gets to end on the abort before Pi is
+  # restarted: `abort` does not stop a compaction, so a turn stopped while
+  # Pi compacts would otherwise never end (`compact_restart/1`).
+  @compact_restart_ms 2_000
 
   @spec start_turn(String.t(), map) :: :ok
   def start_turn(thread_id, turn),
@@ -81,10 +102,16 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   defp steer_answer_ms, do: Application.get_env(:hal_c2, :pi_steer_answer_ms, @steer_answer_ms)
 
+  defp turn_watchdog_ms,
+    do: Application.get_env(:hal_c2, :pi_turn_watchdog_ms, @turn_watchdog_ms)
+
+  defp compact_restart_ms,
+    do: Application.get_env(:hal_c2, :pi_compact_restart_ms, @compact_restart_ms)
+
   @spec respond(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def respond(thread_id, request_id, response) do
     case lookup(thread_id) do
-      nil -> {:error, "no pending request"}
+      nil -> {:error, "No pending Pi extension request #{request_id}"}
       pid -> GenServer.call(pid, {:respond, request_id, response})
     end
   end
@@ -138,20 +165,54 @@ defmodule HalC2.Pi.ThreadRuntime do
        session: nil,
        model: nil,
        thinking: nil,
+       # The model and thinking Pi itself starts the session with: what choosing
+       # "Pi default" again restores.
+       baseline_model: nil,
+       baseline_thinking: nil,
+       restore_thinking: false,
+       # A thinking level the user chose for the thread, kept across a model
+       # change Pi would otherwise answer with the new model's own level.
+       user_thinking: nil,
+       # The thread title last sent to Pi as its session name.
+       session_name: nil,
        context_window: nil,
        # The session's last entry when the turn started: `get_entries` since it.
        leaf: nil,
        skills: [],
+       # The names of the session's extension commands (from `get_commands`;
+       # `nil` while unknown): only these settle quickly (`idle_checks/2`).
+       extension_commands: nil,
        turn: nil,
-       # A `/compact` runs as a call rather than a prompt.
+       # A `/compact` runs as a call rather than a prompt. One steered into a
+       # running turn also holds its caller until the compaction answers.
        compact: nil,
+       compact_steer: nil,
+       # The task refs of compactions Pi is still finishing after their turn
+       # ended (`abort` does not stop one): while any is out, its late
+       # `compaction_start`/`compaction_end` events are dropped. Only the
+       # task's own reply or `:DOWN` forgets a ref — a dropped
+       # `compaction_end` cannot say which compaction ended, and a compaction
+       # can end without one (it fails, or sends no events), where the reply
+       # is the only end it gets. Pi sends `compaction_end` before answering,
+       # so by the reply nothing is left to drop.
+       abandoned_compacts: MapSet.new(),
        items: %{},
        buffer: %{},
        flush_timer: nil,
        interrupted: false,
+       # Whether Pi has shown any work for this turn yet; until it does, the
+       # turn watchdog asks whether it is working at all (`turn_watchdog/2`).
+       turn_active: false,
+       # Whether Pi is compacting right now, between its compaction events:
+       # a stop then restarts Pi once the grace runs out (`compact_restart/2`).
+       compacting: false,
        failure: nil,
        message: 0,
        compactions: 0,
+       # Extension failures Pi reported while no turn was running, shown on the next
+       # turn (`event/3`), and how many this turn has shown so far.
+       extension_errors: [],
+       ext_errors: 0,
        retry: nil,
        live_tokens: nil,
        # Open dialogs: request id -> {:confirm, ui id, key} | {:question, ui id, native}.
@@ -180,7 +241,8 @@ defmodule HalC2.Pi.ThreadRuntime do
              adopt: %{dir: dir, offset: snapshot.offset, channel: snapshot.channel},
              handler: self(),
              dialect: :pi,
-             log: snapshot.state.thread_id
+             log: snapshot.state.thread_id,
+             program: "pi"
            ),
          {:ok, restored} <- code_change(nil, snapshot.state, nil) do
       {:reply, :ok,
@@ -200,9 +262,11 @@ defmodule HalC2.Pi.ThreadRuntime do
       | turn: turn,
         items: %{},
         interrupted: false,
+        turn_active: false,
         failure: nil,
         message: 0,
         compactions: 0,
+        ext_errors: 0,
         retry: nil,
         live_tokens: nil
     }
@@ -212,14 +276,19 @@ defmodule HalC2.Pi.ThreadRuntime do
          {:ok, state} <- select_thinking(state, option(turn, "thinking")) do
       # A run that ended while the session opened never reaches Pi.
       case started(state) do
-        :ok -> {:reply, :ok, send_prompt(state, turn)}
-        :ended -> {:reply, :ok, %{state | turn: nil}}
+        :ok ->
+          {:reply, :ok,
+           state |> sync_session_name() |> send_prompt(turn) |> show_extension_errors()}
+
+        :ended ->
+          {:reply, :ok, %{state | turn: nil}}
       end
     else
       {:error, reason, state} ->
         Logger.warning("pi turn failed to start: #{inspect(reason)}")
         finish(state, "failed", "Pi could not start: #{format(reason)}")
-        {:reply, :ok, %{state | turn: nil}}
+        # A Pi that could not finish setting up its session is not left running.
+        {:reply, :ok, stop_session(%{state | turn: nil})}
     end
   end
 
@@ -246,6 +315,15 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   def handle_call(:interrupt, _from, %{turn: turn} = state) when turn != nil do
     Connection.notify(state.conn, "abort", %{})
+
+    # `abort` does not stop a compaction: a turn that IS the compaction, one
+    # Pi is compacting through, or one waiting behind an abandoned compaction
+    # only ends once it ends. Give it the grace to stop, then restart Pi
+    # (`handle_info` for `:compact_restart`).
+    if compaction_out?(state) do
+      Process.send_after(self(), {:compact_restart, turn.ids.run}, compact_restart_ms())
+    end
+
     {:reply, :ok, %{cancel_requests(state) | interrupted: true}}
   end
 
@@ -255,15 +333,24 @@ defmodule HalC2.Pi.ThreadRuntime do
   # Its caller hears once Pi answered (`steered/3`).
   def handle_call({:steer, run_id, steer}, from, %{turn: turn, compact: nil} = state)
       when turn != nil and not state.interrupted and turn.ids.run == run_id do
-    message =
-      steer.text
-      |> HalC2.Pi.expand_skills(state.skills)
-      |> HalC2.Attachments.prompt_text(steer.attachments)
+    case compact_command(steer.text) do
+      {:ok, params} ->
+        # Steering with `/compact` compacts instead of prompting: it is not sent
+        # to the model as a message. It runs as a task like a turn-level
+        # `/compact`, so a long compaction neither blocks this runtime (Pi's
+        # events, respond and interrupt keep moving) nor hits the call budget;
+        # the caller hears when the task answers (`handle_info` for `compact`).
+        conn = state.conn
+        task = Task.async(fn -> Connection.call(conn, "compact", params, :infinity) end)
+        {:noreply, %{state | compact: task.ref, compact_steer: from}}
 
-    params = %{"message" => message, "streamingBehavior" => "steer"}
-    label = {from, Process.send_after(self(), {:steer_timeout, from}, steer_answer_ms())}
-    steers = Connection.request(state.conn, "prompt", params, label, state.steers)
-    {:noreply, %{state | steers: steers}}
+      :error ->
+        {state, payload} = prompt_payload(state, steer.text, steer.attachments)
+        params = Map.put(payload, "streamingBehavior", "steer")
+        label = {from, Process.send_after(self(), {:steer_timeout, from}, steer_answer_ms())}
+        steers = Connection.request(state.conn, "prompt", params, label, state.steers)
+        {:noreply, %{state | steers: steers}}
+    end
   end
 
   def handle_call({:steer, _run_id, _message}, _from, state),
@@ -286,7 +373,12 @@ defmodule HalC2.Pi.ThreadRuntime do
 
     with true <- is_binary(entry) || {:error, "Pi has no native turn to rewind to.", state},
          {:ok, state} <- open(state, session),
-         {:ok, _} <- call(state, "fork", %{"entryId" => entry}),
+         {:ok, forked} <- call(state, "fork", %{"entryId" => entry}),
+         :ok <-
+           if(is_map(forked) and forked["cancelled"] == true,
+             do: {:error, "A Pi extension cancelled the session fork"},
+             else: :ok
+           ),
          {:ok, pi} <- call(state, "get_state", %{}),
          {:ok, entries} <- call(state, "get_entries", %{}) do
       file = pi["sessionFile"]
@@ -308,7 +400,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   def handle_call({:respond, request_id, response}, _from, state) do
     case Map.pop(state.requests, request_id) do
       {nil, _} ->
-        {:reply, {:error, "no pending request #{request_id}"}, state}
+        {:reply, {:error, "No pending Pi extension request #{request_id}"}, state}
 
       {{:confirm, ui_id, key}, requests} ->
         decision = response["decision"] || "decline"
@@ -362,21 +454,67 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   @impl true
   def handle_info({:json_rpc, conn, {:notification, type, event}}, %{conn: conn} = state) do
-    if state.turn, do: {:noreply, event(type, event, state)}, else: {:noreply, state}
+    cond do
+      # A compaction abandoned when its turn ended: Pi finishes it anyway,
+      # and its events land in whatever turn runs then (or between turns).
+      # They are that stopped turn's, so they are dropped while its task is
+      # still out; only its reply or `:DOWN` forgets it (`forget_abandoned/2`).
+      MapSet.size(state.abandoned_compacts) > 0 and
+          type in ["compaction_start", "compaction_end"] ->
+        {:noreply, state}
+
+      state.turn ->
+        # Anything but the prompt's own acknowledgement is Pi at work on the
+        # turn; the watchdog only watches a turn that has shown none.
+        state = if type == "response", do: state, else: %{state | turn_active: true}
+        {:noreply, event(type, event, state)}
+
+      # An extension that fails between turns is shown on the next turn.
+      type == "extension_error" ->
+        queued = Enum.take(state.extension_errors ++ [event], -@queued_extension_errors)
+        {:noreply, %{state | extension_errors: queued}}
+
+      true ->
+        {:noreply, state}
+    end
   end
 
-  # A `/compact` came back.
+  # A `/compact` came back. One steered into a running turn only answers its
+  # caller; the turn runs on and settles as it would have (a settle Pi sent
+  # meanwhile is owed, in `settled`). A turn-level one is the turn, so it settles.
   def handle_info({ref, result}, %{compact: ref} = state) do
     Process.demonitor(ref, [:flush])
     state = %{state | compact: nil}
 
-    state =
-      case result do
-        {:error, reason} when not state.interrupted -> %{state | failure: format(reason)}
-        _ -> state
-      end
+    case state.compact_steer do
+      nil ->
+        state =
+          case result do
+            {:error, reason} when not state.interrupted ->
+              %{state | failure: compact_failure(reason)}
 
-    {:noreply, settle(state)}
+            _ ->
+              state
+          end
+
+        {:noreply, settle(state)}
+
+      from ->
+        case result do
+          {:ok, _} -> GenServer.reply(from, :ok)
+          {:error, reason} -> GenServer.reply(from, {:error, compact_failure(reason)})
+          _ -> GenServer.reply(from, {:error, "Pi compact failed."})
+        end
+
+        {:noreply, settle_held(%{state | compact_steer: nil})}
+    end
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{compact: ref} = state) do
+    # The compaction task went away without its result (its result is flushed
+    # in the clause above): treat as a failed compact so no caller waits.
+    send(self(), {ref, {:error, "Pi compact failed."}})
+    {:noreply, state}
   end
 
   def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
@@ -386,10 +524,28 @@ defmodule HalC2.Pi.ThreadRuntime do
     # (`HalC2.Orchestration.Recovery.stopping?/0`).
     state =
       if state.turn && not HalC2.Orchestration.Recovery.stopping?(),
-        do: end_turn(state, "failed", "Pi exited unexpectedly"),
+        do:
+          end_turn(
+            state,
+            "failed",
+            if(state.interrupted,
+              do: "Pi process was stopped.",
+              else: "Pi process exited unexpectedly."
+            )
+          ),
         else: %{state | steers: unanswered(state.steers, "failed")}
 
-    {:noreply, %{state | conn: nil, compact: nil}}
+    if state.compact_steer, do: GenServer.reply(state.compact_steer, {:error, "Pi exited"})
+
+    {:noreply,
+     %{
+       state
+       | conn: nil,
+         compact: nil,
+         compact_steer: nil,
+         abandoned_compacts: MapSet.new(),
+         compacting: false
+     }}
   end
 
   def handle_info(:flush, state),
@@ -397,7 +553,37 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   def handle_info({:steer_timeout, from}, state), do: {:noreply, steer_timeout(state, from)}
 
+  # A turn that has shown no work since its prompt: ask Pi whether it is
+  # working. Idle checks in a row (`idle_checks/1`; at least two, so work Pi
+  # sent while a check was out is read in between and counts as activity)
+  # mean an extension handled the prompt without the agent, so the turn
+  # settles; busy means work is on its way, so ask again later; three checks
+  # Pi does not answer stop the session and fail it.
+  def handle_info({:turn_watchdog, run, failures, idle}, state) when is_boolean(idle),
+    do: handle_info({:turn_watchdog, run, failures, if(idle, do: 1, else: 0)}, state)
+
+  def handle_info({:turn_watchdog, run, failures, idle}, state) do
+    if state.turn && state.turn.ids.run == run && !state.turn_active && state.conn do
+      {:noreply, turn_watchdog(state, run, failures, idle)}
+    else
+      {:noreply, state}
+    end
+  end
+
+  # The grace after a stop while Pi compacted: if the stopped turn is still
+  # open behind a compaction (Pi's abort does not stop one), end it and
+  # restart Pi, so the thread takes its next message on a fresh process. A
+  # turn that ended in the grace leaves Pi alone, and an abandoned
+  # compaction with it, to finish in the background.
+  def handle_info({:compact_restart, run}, state) do
+    if state.turn && state.turn.ids.run == run && state.conn && compaction_out?(state),
+      do: {:noreply, state |> end_turn("interrupted", nil) |> stop_session()},
+      else: {:noreply, state}
+  end
+
   def handle_info(message, state) do
+    state = forget_abandoned(state, message)
+
     case :gen_server.check_response(message, state.steers, true) do
       {reply, {from, timer}, steers} ->
         Process.cancel_timer(timer)
@@ -407,6 +593,82 @@ defmodule HalC2.Pi.ThreadRuntime do
         {:noreply, state}
     end
   end
+
+  # An abandoned compaction's task answered, or died without answering: Pi
+  # sends `compaction_end` before it answers the call and the Connection
+  # delivers that notification before the task can forward the reply, so by
+  # now its events have been dropped and nothing of it is still out. This is
+  # also the only end a compaction that fails (or sends no events) ever gets.
+  defp forget_abandoned(state, {ref, _result}) when is_reference(ref) do
+    if MapSet.member?(state.abandoned_compacts, ref) do
+      Process.demonitor(ref, [:flush])
+      %{state | abandoned_compacts: MapSet.delete(state.abandoned_compacts, ref)}
+    else
+      state
+    end
+  end
+
+  defp forget_abandoned(state, {:DOWN, ref, :process, _pid, _reason}),
+    do: %{state | abandoned_compacts: MapSet.delete(state.abandoned_compacts, ref)}
+
+  defp forget_abandoned(state, _message), do: state
+
+  defp turn_watchdog(state, run, failures, idle) do
+    case pi_working(state) do
+      {:ok, true} ->
+        Process.send_after(self(), {:turn_watchdog, run, 0, 0}, turn_watchdog_ms())
+        state
+
+      {:ok, false} ->
+        if idle + 1 >= idle_checks(state.turn, state.extension_commands) do
+          settle(state)
+        else
+          Process.send_after(self(), {:turn_watchdog, run, 0, idle + 1}, turn_watchdog_ms())
+          state
+        end
+
+      :error when failures + 1 >= @turn_watchdog_failures ->
+        state |> end_turn("failed", "Pi stopped answering.") |> stop_session()
+
+      :error ->
+        Process.send_after(self(), {:turn_watchdog, run, failures + 1, 0}, turn_watchdog_ms())
+        state
+    end
+  end
+
+  defp idle_checks(%{text: "/" <> command}, extension_commands)
+       when is_list(extension_commands) do
+    [name | _] = String.split(command, [" ", "\n"], parts: 2)
+    if name in extension_commands, do: @turn_idle_command, else: @turn_idle_message
+  end
+
+  defp idle_checks(_turn, _extension_commands), do: @turn_idle_message
+
+  # Whether Pi is busy right now: streaming or compacting by its own
+  # account, or finishing a compaction this runtime knows is still out. Pi
+  # reports `isStreaming: false` while a prompt waits behind a compaction,
+  # so that is work the turn queues behind, not idleness. A check Pi does
+  # not answer (an error, a timeout, a dead connection) is a failed check.
+  defp pi_working(state) do
+    case Connection.call(state.conn, "get_state", %{}, @stats_ms) do
+      {:ok, pi} when is_map(pi) ->
+        {:ok, pi["isStreaming"] == true or pi["isCompacting"] == true or compaction_out?(state)}
+
+      {:ok, _} ->
+        {:ok, compaction_out?(state)}
+
+      _ ->
+        :error
+    end
+  catch
+    :exit, _ -> :error
+  end
+
+  # Whether a compaction is still running in Pi as far as this runtime
+  # knows: a `/compact` task out (the turn's or a steer's), one Pi started
+  # in this turn and has not ended, or one a stopped turn abandoned.
+  defp compaction_out?(state),
+    do: state.compact != nil or state.compacting or MapSet.size(state.abandoned_compacts) > 0
 
   # A turn the store fails to record fails, and stops (`HalC2.Orchestration.Unrecorded`).
   defoverridable handle_info: 2, handle_call: 3
@@ -441,6 +703,41 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp migrate(%{v: 1} = state),
     do: state |> Map.merge(%{v: 2, steers: :gen_server.reqids_new(), settled: false}) |> migrate()
 
+  defp migrate(%{v: 9} = state),
+    do: state |> Map.merge(%{v: 10, extension_commands: nil}) |> migrate()
+
+  defp migrate(%{v: 8} = state),
+    do: state |> Map.merge(%{v: 9, compacting: false}) |> migrate()
+
+  defp migrate(%{v: 7} = state),
+    do: state |> Map.merge(%{v: 8, turn_active: false}) |> migrate()
+
+  # A count of abandoned compactions becomes the set of their task refs; a
+  # restored state's tasks went with the runtime that held them, so it starts empty.
+  defp migrate(%{v: 6} = state),
+    do: state |> Map.merge(%{v: 7, abandoned_compacts: MapSet.new()}) |> migrate()
+
+  defp migrate(%{v: 5} = state),
+    do: state |> Map.merge(%{v: 6, abandoned_compacts: 0}) |> migrate()
+
+  defp migrate(%{v: 4} = state),
+    do: state |> Map.merge(%{v: 5, compact_steer: nil}) |> migrate()
+
+  defp migrate(%{v: 3} = state) do
+    state
+    |> Map.merge(%{
+      v: 4,
+      baseline_model: nil,
+      baseline_thinking: nil,
+      restore_thinking: false,
+      user_thinking: nil,
+      session_name: nil,
+      extension_errors: [],
+      ext_errors: 0
+    })
+    |> migrate()
+  end
+
   # Steers out at the upgrade get their answer budget from now.
   defp migrate(%{v: 2} = state) do
     steers =
@@ -451,7 +748,46 @@ defmodule HalC2.Pi.ThreadRuntime do
           :gen_server.reqids_add(request, {from, timer}, steers)
       end
 
-    Map.merge(state, %{v: 3, steers: steers, refused: []})
+    state |> Map.merge(%{v: 3, steers: steers, refused: []}) |> migrate()
+  end
+
+  # Stops the session's Pi process, leaving the runtime to open a fresh one.
+  defp stop_session(state) do
+    if state.conn, do: Connection.stop(state.conn)
+
+    %{
+      state
+      | conn: nil,
+        session: nil,
+        model: nil,
+        thinking: nil,
+        baseline_model: nil,
+        baseline_thinking: nil,
+        session_name: nil,
+        compact: nil,
+        compact_steer: nil,
+        abandoned_compacts: MapSet.new(),
+        compacting: false
+    }
+  end
+
+  # The thread's title becomes the Pi session's name, so Pi's own session list
+  # shows it under that name. Best effort: naming never blocks a turn.
+  defp sync_session_name(state) do
+    title =
+      HalC2.Streams.read(
+        state.thread_id,
+        &get_in(HalC2.StreamState.get(&1, "thread"), [state.thread_id, "title"])
+      )
+
+    if is_binary(title) and String.trim(title) != "" and title != state.session_name do
+      case call(state, "set_session_name", %{"name" => title}) do
+        {:ok, _} -> %{state | session_name: title}
+        {:error, _} -> state
+      end
+    else
+      state
+    end
   end
 
   # --- session -------------------------------------------------------------------
@@ -474,7 +810,8 @@ defmodule HalC2.Pi.ThreadRuntime do
            |> launch_error(state),
          {:ok, conn} <- connect(argv, env, turn.cwd, state) do
       try do
-        with {:ok, _} <- cut(conn, fork[:before]),
+        with {:ok, before} <- before(conn, fork),
+             {:ok, _} <- cut(conn, before),
              {:ok, %{"sessionFile" => file}} when is_binary(file) and file != source <-
                Connection.call(conn, "get_state", %{}) do
           {:ok, %{turn | native_thread_id: file}}
@@ -490,6 +827,30 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   defp fork_first(_state, turn), do: {:ok, turn}
 
+  # The turn after the fork point, where the copy is cut. A turn still running in the
+  # source has no recorded entry yet, so it is found in the copy: the first message the
+  # user sent after the session's last entry when the fork point settled. Messages
+  # inside the fork point's own turn, steers among them, stay. A fork point recorded
+  # before heads were looks after its own message instead. A copy that cannot be read
+  # so is kept whole.
+  defp before(_conn, %{before: before}) when is_binary(before), do: {:ok, before}
+  defp before(conn, %{head: head}) when is_binary(head), do: first_user_since(conn, head)
+  defp before(conn, %{turn: point}) when is_binary(point), do: first_user_since(conn, point)
+  defp before(_conn, _fork), do: {:ok, nil}
+
+  defp first_user_since(conn, entry) do
+    case Connection.call(conn, "get_entries", %{"since" => entry}, @call_ms) do
+      {:ok, %{"entries" => entries}} when is_list(entries) ->
+        {:ok,
+         Enum.find_value(entries, fn entry ->
+           if get_in(entry, ["message", "role"]) == "user", do: entry["id"]
+         end)}
+
+      _ ->
+        {:ok, nil}
+    end
+  end
+
   defp cut(_conn, nil), do: {:ok, nil}
   defp cut(conn, entry), do: Connection.call(conn, "fork", %{"entryId" => entry}, @call_ms)
 
@@ -501,7 +862,18 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   defp open(state, turn) do
     if state.conn, do: Connection.stop(state.conn)
-    state = %{state | conn: nil, session: nil, model: nil, thinking: nil}
+
+    state = %{
+      state
+      | conn: nil,
+        session: nil,
+        model: nil,
+        thinking: nil,
+        baseline_model: nil,
+        baseline_thinking: nil,
+        session_name: nil
+    }
+
     mcp = HalC2.Mcp.for_agent(turn.thread_id, turn.instance)
 
     with {:ok, argv, env} <-
@@ -511,13 +883,17 @@ defmodule HalC2.Pi.ThreadRuntime do
          {:ok, conn} <- connect(argv, env, turn.cwd, state) do
       state = %{state | conn: conn, instance: turn.instance, mode: turn.runtime_mode}
 
-      skills =
-        case Connection.call(conn, "get_commands", %{}) do
-          {:ok, data} -> data |> HalC2.Pi.parse_commands() |> elem(1) |> Enum.map(& &1["name"])
-          {:error, _} -> []
+      # The session's skills are given a few seconds: a Pi that cannot list them
+      # in time does not hold up the thread, and the lookup is retried the first
+      # time a message mentions a skill (`prompt_skills/2`). Unknown is `nil`.
+      {skills, extension_commands} =
+        case pi_call_within(conn, "get_commands", %{}, skills_ms()) do
+          {:ok, data} -> {skill_names(data), HalC2.Pi.extension_commands(data)}
+          _ -> {nil, nil}
         end
 
-      switch(%{state | skills: skills}, turn.native_thread_id)
+      state = %{state | skills: skills, extension_commands: extension_commands}
+      switch(state, turn.native_thread_id)
     end
   end
 
@@ -531,7 +907,9 @@ defmodule HalC2.Pi.ThreadRuntime do
            cd: cwd,
            env: env,
            dialect: :pi,
-           durable: state.thread_id
+           durable: state.thread_id,
+           # A request open when Pi exits fails with Pi's exit code.
+           program: "pi"
          ) do
       {:ok, conn} -> {:ok, conn}
       {:error, reason} -> {:error, reason, state}
@@ -542,27 +920,46 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp switch(%{session: file} = state, file) when is_binary(file), do: {:ok, state}
 
   defp switch(state, file) do
-    with {:ok, _} <-
+    with {:ok, switched} <-
            if(is_binary(file),
-             do: call(state, "switch_session", %{"sessionPath" => file}),
+             do: open_call(state, "switch_session", %{"sessionPath" => file}),
              else: {:ok, nil}
            ),
-         {:ok, pi} <- call(state, "get_state", %{}),
-         {:ok, entries} <- call(state, "get_entries", %{}) do
+         :ok <- session_switch(switched),
+         {:ok, pi} <- open_call(state, "get_state", %{}),
+         :ok <- persisted(pi),
+         {:ok, entries} <- open_call(state, "get_entries", %{}) do
+      state =
+        remember_model(
+          %{
+            state
+            | session: pi["sessionFile"],
+              leaf: entries["leafId"],
+              thinking: pi["thinkingLevel"]
+          },
+          pi["model"]
+        )
+
+      # The first model and thinking Pi reports for this process are its own:
+      # what "Pi default" means for the session.
       {:ok,
-       remember_model(
-         %{
-           state
-           | session: pi["sessionFile"],
-             leaf: entries["leafId"],
-             thinking: pi["thinkingLevel"]
-         },
-         pi["model"]
+       if(state.baseline_model,
+         do: state,
+         else: %{state | baseline_model: state.model, baseline_thinking: state.thinking}
        )}
     else
       {:error, reason} -> {:error, reason, state}
     end
   end
+
+  defp session_switch(%{"cancelled" => true}),
+    do: {:error, "A Pi extension cancelled the session switch"}
+
+  defp session_switch(_switched), do: :ok
+
+  # A session Pi does not keep in a file cannot be resumed, forked or rewound.
+  defp persisted(%{"sessionFile" => file}) when is_binary(file) and file != "", do: :ok
+  defp persisted(_pi), do: {:error, "get_state returned no persisted sessionFile"}
 
   defp remember_model(state, %{"provider" => provider, "id" => id} = model),
     do: %{state | model: "#{provider}/#{id}", context_window: positive(model["contextWindow"])}
@@ -571,29 +968,102 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   defp call(state, type, params), do: Connection.call(state.conn, type, params, @call_ms)
 
-  # "Pi default" leaves the model to the user's own Pi settings.
-  defp select_model(state, model)
-       when is_binary(model) and model not in ["", "default"] and model != state.model do
-    with [provider, id] <- String.split(model, "/", parts: 2),
-         {:ok, _} <- call(state, "set_model", %{"provider" => provider, "modelId" => id}),
-         {:ok, pi} <- call(state, "get_state", %{}) do
-      {:ok, remember_model(%{state | model: model}, pi["model"])}
-    else
-      {:error, reason} -> {:error, "could not select #{model}: #{format(reason)}", state}
-      _ -> {:error, "unknown Pi model #{model}", state}
+  # A call that opens a session, bounded by the minute a reopening gets: Pi
+  # not answering it in time means the session could not be opened (and the
+  # failed start then stops that Pi, in `handle_call` for `:start_turn`).
+  defp open_call(state, type, params) do
+    case Connection.call(state.conn, type, params, open_ms()) do
+      {:error, reason} ->
+        {:error, "Pi RPC #{type} failed: #{reason |> format() |> String.trim_trailing(".")}."}
+
+      reply ->
+        reply
     end
+  catch
+    :exit, _ -> {:error, "Pi session could not be opened"}
+  end
+
+  defp open_ms, do: Application.get_env(:hal_c2, :pi_open_ms, @call_ms)
+
+  # "Pi default" leaves the model to the user's own Pi settings: the model and
+  # thinking this Pi process started the session with (the baseline).
+  defp select_model(state, "default") do
+    # Going back to Pi's own model drops a level chosen for another model.
+    state = %{state | user_thinking: nil}
+
+    cond do
+      state.baseline_model == nil or state.model == state.baseline_model ->
+        {:ok, %{state | restore_thinking: true}}
+
+      true ->
+        case set_model(state, state.baseline_model) do
+          {:ok, state} -> {:ok, %{state | restore_thinking: true}}
+          error -> error
+        end
+    end
+  end
+
+  defp select_model(state, model)
+       when is_binary(model) and model != "" and model != state.model do
+    set_model(state, model)
   end
 
   defp select_model(state, _model), do: {:ok, state}
 
+  defp set_model(state, model) do
+    with [provider, id] when provider != "" and id != "" <-
+           String.split(model, "/", parts: 2),
+         {:ok, _} <- call(state, "set_model", %{"provider" => provider, "modelId" => id}),
+         {:ok, pi} <- call(state, "get_state", %{}) do
+      # Pi applies the new model's own thinking level when the model changes;
+      # remember what it now reports so a level the user chose is re-applied.
+      {:ok, remember_model(%{state | model: model, thinking: pi["thinkingLevel"]}, pi["model"])}
+    else
+      {:error, reason} -> {:error, "could not select #{model}: #{format(reason)}", state}
+      _ -> {:error, "Pi model '#{model}' must use provider/model format", state}
+    end
+  end
+
   defp select_thinking(state, level) when is_binary(level) and level != state.thinking do
     case call(state, "set_thinking_level", %{"level" => level}) do
-      {:ok, _} -> {:ok, %{state | thinking: level}}
+      {:ok, _} -> {:ok, %{state | thinking: level, user_thinking: level, restore_thinking: false}}
       {:error, reason} -> {:error, "could not set thinking to #{level}: #{format(reason)}", state}
     end
   end
 
-  defp select_thinking(state, _level), do: {:ok, state}
+  # A level the user chose is remembered even when Pi already reports it.
+  defp select_thinking(state, level) when is_binary(level) do
+    {:ok, %{state | user_thinking: level, restore_thinking: false}}
+  end
+
+  # After a model change Pi reports the new model's own level; a level the user
+  # chose for the thread is applied again over it.
+  defp select_thinking(%{user_thinking: chosen} = state, level)
+       when not is_binary(level) and is_binary(chosen) and chosen != state.thinking and
+              not state.restore_thinking do
+    case call(state, "set_thinking_level", %{"level" => chosen}) do
+      {:ok, _} ->
+        {:ok, %{state | thinking: chosen}}
+
+      {:error, reason} ->
+        {:error, "could not set thinking to #{chosen}: #{format(reason)}", state}
+    end
+  end
+
+  # Choosing "Pi default" again with no level of the user's own restores Pi's
+  # configured level instead of keeping the one a previous pick applied.
+  defp select_thinking(%{restore_thinking: true, baseline_thinking: baseline} = state, level)
+       when not is_binary(level) and is_binary(baseline) and baseline != state.thinking do
+    case call(state, "set_thinking_level", %{"level" => baseline}) do
+      {:ok, _} ->
+        {:ok, %{state | thinking: baseline, restore_thinking: false}}
+
+      {:error, reason} ->
+        {:error, "could not set thinking to #{baseline}: #{format(reason)}", state}
+    end
+  end
+
+  defp select_thinking(state, _level), do: {:ok, %{state | restore_thinking: false}}
 
   # The composer's options arrive as option id -> value (`Orchestration` turn fields).
   defp option(turn, id) do
@@ -604,26 +1074,132 @@ defmodule HalC2.Pi.ThreadRuntime do
   end
 
   defp send_prompt(state, turn) do
-    case Regex.run(~r/^\/compact(?:\s+(.*))?$/s, String.trim(turn.text)) do
-      [_ | instructions] ->
-        params =
-          case instructions do
-            [text] when text != "" -> %{"customInstructions" => text}
-            _ -> %{}
-          end
-
+    case compact_command(turn.text) do
+      {:ok, params} ->
         conn = state.conn
         task = Task.async(fn -> Connection.call(conn, "compact", params, :infinity) end)
         %{state | compact: task.ref}
 
-      nil ->
-        message =
-          turn.text
-          |> HalC2.Pi.expand_skills(state.skills)
-          |> HalC2.Attachments.prompt_text(Map.get(turn, :attachments, []))
-
-        Connection.notify(state.conn, "prompt", %{"message" => message})
+      :error ->
+        {state, payload} = prompt_payload(state, turn.text, Map.get(turn, :attachments, []))
+        Connection.notify(state.conn, "prompt", payload)
+        Process.send_after(self(), {:turn_watchdog, turn.ids.run, 0, 0}, turn_watchdog_ms())
         state
+    end
+  end
+
+  # A `/compact` message (a message that only starts with it is an ordinary one),
+  # as the params of Pi's `compact` command.
+  defp compact_command(text) do
+    case Regex.run(~r/^\/compact(?:\s+(.*))?$/s, String.trim(text || "")) do
+      [_ | instructions] ->
+        case instructions do
+          [text] when text != "" -> {:ok, %{"customInstructions" => text}}
+          _ -> {:ok, %{}}
+        end
+
+      nil ->
+        :error
+    end
+  end
+
+  defp compact_failure(reason) do
+    case format(reason) do
+      "" -> "Pi compact failed."
+      "Pi request failed" -> "Pi compact failed."
+      message -> message
+    end
+  end
+
+  # The Pi `prompt` params for a message: HAL-C2's `$skill`s as Pi's own commands,
+  # images Pi takes natively inline (still named by their saved path, so Pi can
+  # read, copy or edit the file), every other file as the path it is saved at,
+  # and a file whose saved copy cannot be found named as unavailable. An attachment's
+  # `path` is the MC's own saved copy (`HalC2.Attachments`), never a client's path.
+  defp prompt_payload(state, text, attachments) do
+    {state, skills} = state |> prompt_commands(text) |> prompt_skills(text)
+    expanded = HalC2.Pi.expand_skills(text || "", skills)
+    attachments = attachments || []
+
+    images =
+      for {mime, data} <- HalC2.Attachments.native_images(attachments),
+          do: %{"type" => "image", "data" => data, "mimeType" => mime}
+
+    lines =
+      Enum.flat_map(attachments, fn attachment ->
+        cond do
+          is_binary(Map.get(attachment, :path)) ->
+            ["[Attachment saved at #{attachment.path}]"]
+
+          is_binary(Map.get(attachment, :name)) ->
+            [~s([Attachment "#{attachment.name}" is unavailable])]
+
+          true ->
+            []
+        end
+      end)
+
+    message = if lines == [], do: expanded, else: expanded <> "\n\n" <> Enum.join(lines, "\n")
+
+    payload =
+      if images == [],
+        do: %{"message" => message},
+        else: %{"message" => message, "images" => images}
+
+    {state, payload}
+  end
+
+  # The session's skills, looked up again the first time a message mentions one
+  # when the lookup at session start could not finish (`open/2`).
+  defp prompt_skills(%{skills: nil} = state, text) do
+    if is_binary(text) and String.contains?(text, "$") do
+      case pi_call_within(state.conn, "get_commands", %{}, skills_ms()) do
+        {:ok, data} ->
+          skills = skill_names(data)
+          commands = HalC2.Pi.extension_commands(data)
+          {%{state | skills: skills, extension_commands: commands}, skills}
+
+        _ ->
+          {%{state | skills: []}, []}
+      end
+    else
+      {state, []}
+    end
+  end
+
+  defp prompt_skills(state, _text), do: {state, state.skills || []}
+
+  # A session whose command lookup timed out at start knows no extension commands, so a
+  # `/command` would wait out an ordinary message's idle checks: it looks them up again.
+  defp prompt_commands(%{extension_commands: nil} = state, "/" <> _command) do
+    case pi_call_within(state.conn, "get_commands", %{}, skills_ms()) do
+      {:ok, data} ->
+        %{
+          state
+          | skills: skill_names(data),
+            extension_commands: HalC2.Pi.extension_commands(data)
+        }
+
+      _ ->
+        %{state | extension_commands: []}
+    end
+  end
+
+  defp prompt_commands(state, _text), do: state
+
+  defp skill_names(data),
+    do: data |> HalC2.Pi.parse_commands() |> elem(1) |> Enum.map(& &1["name"])
+
+  defp skills_ms, do: Application.get_env(:hal_c2, :pi_skills_ms, 4_000)
+
+  # A call to Pi given `ms` to answer, from a task so abandoning it does not take
+  # the runtime with it. An answer that comes later is dropped by the connection.
+  defp pi_call_within(conn, type, params, ms) do
+    task = Task.async(fn -> Connection.call(conn, type, params, :infinity) end)
+
+    case Task.yield(task, ms) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> result
+      _ -> {:error, :timeout}
     end
   end
 
@@ -646,7 +1222,7 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   # The prompt's acknowledgement: a refused prompt ends the turn.
   defp event("response", %{"command" => "prompt", "success" => false} = event, state),
-    do: end_turn(state, "failed", event["error"] || "Pi refused the prompt")
+    do: end_turn(state, "failed", detail(nonblank(event["error"]) || "Pi rejected the prompt."))
 
   defp event("message_start", %{"message" => %{"role" => "assistant"}}, state),
     do: %{state | message: state.message + 1}
@@ -668,8 +1244,16 @@ defmodule HalC2.Pi.ThreadRuntime do
     end
   end
 
-  defp event("message_end", %{"message" => %{"stopReason" => "error"} = message}, state),
-    do: %{state | failure: message["errorMessage"] || "Pi request failed"}
+  defp event("message_end", %{"message" => %{"stopReason" => "error"} = message}, state) do
+    if state.failure,
+      do: state,
+      else: %{state | failure: model_failure(message["errorMessage"])}
+  end
+
+  # Pi aborted the turn itself (for an extension, a compaction or a session
+  # replacement), not at the user's stop: the turn still reads as interrupted.
+  defp event("message_end", %{"message" => %{"stopReason" => "aborted"}}, state),
+    do: %{state | interrupted: true}
 
   defp event("tool_execution_start", %{"toolCallId" => id} = event, state) do
     {kind, fields} = tool_shape(event["toolName"], event["args"] || %{})
@@ -686,12 +1270,23 @@ defmodule HalC2.Pi.ThreadRuntime do
 
     %{kind: kind} = state.items[native]
     output = result_text(event["result"])
-    status = if event["isError"] == true, do: "failed", else: "completed"
+
+    # A Stop aborts in-flight tools, and Pi reports those as error ends: they
+    # read as interrupted, matching the run, rather than failed.
+    status =
+      cond do
+        event["isError"] == true and state.interrupted -> "interrupted"
+        event["isError"] == true -> "failed"
+        true -> "completed"
+      end
 
     finish_item(state, native, status, fn entity ->
       case kind do
         :command ->
-          exit_code = get_in(event, ["result", "details", "exitCode"])
+          exit_code =
+            get_in(event, ["result", "details", "exitCode"]) ||
+              get_in(event, ["result", "exitCode"]) ||
+              get_in(event, ["result", "structuredContent", "exitCode"])
 
           entity
           |> Map.put("output", output)
@@ -713,32 +1308,50 @@ defmodule HalC2.Pi.ThreadRuntime do
     state
     |> flush()
     |> Map.put(:compactions, n)
+    |> Map.put(:compacting, true)
     |> ensure_item(native, :compaction, %{"driver" => "pi", "title" => "Compacting context..."})
   end
 
   defp event("compaction_end", event, state) do
+    state = %{state | compacting: false}
+
+    # An overflow can surface as a model error before Pi compacts and tries
+    # again: that failure clears only when Pi says the compaction will retry.
+    state = if event["willRetry"] == true, do: %{state | failure: nil}, else: state
+
+    state =
+      if Map.has_key?(
+           state.items,
+           "compaction:#{state.turn.ids.provider_turn}:#{state.compactions}"
+         ),
+         do: state,
+         else: event("compaction_start", event, state)
+
     native = "compaction:#{state.turn.ids.provider_turn}:#{state.compactions}"
+    result = if is_map(event["result"]), do: event["result"], else: %{}
 
-    if Map.has_key?(state.items, native) do
-      result = event["result"] || %{}
+    {status, title, summary} =
+      cond do
+        event["aborted"] == true ->
+          {"cancelled", "Context compaction stopped", result["summary"]}
 
-      {status, title} =
-        cond do
-          event["aborted"] == true -> {"cancelled", "Context compaction stopped"}
-          is_binary(event["errorMessage"]) -> {"failed", "Context compaction failed"}
-          true -> {"completed", "Context compacted"}
-        end
+        # No result is a failed compaction; its reason, cut to 1,000 characters,
+        # or a plain one when Pi gave none.
+        is_binary(event["errorMessage"]) or not is_map(event["result"]) ->
+          reason = nonblank(event["errorMessage"]) || "Pi context compaction failed."
+          {"failed", "Context compaction failed", String.slice(reason, 0, 1_000)}
 
-      finish_item(state, native, status, fn entity ->
-        entity
-        |> Map.put("title", title)
-        |> put_present("summary", result["summary"])
-        |> put_present("beforeTokenCount", result["tokensBefore"])
-        |> put_present("afterTokenCount", result["estimatedTokensAfter"])
-      end)
-    else
-      state
-    end
+        true ->
+          {"completed", "Context compacted", result["summary"]}
+      end
+
+    finish_item(state, native, status, fn entity ->
+      entity
+      |> Map.put("title", title)
+      |> put_present("summary", summary)
+      |> put_present("beforeTokenCount", result["tokensBefore"])
+      |> put_present("afterTokenCount", result["estimatedTokensAfter"])
+    end)
   end
 
   defp event("auto_retry_start", event, state) do
@@ -782,9 +1395,15 @@ defmodule HalC2.Pi.ThreadRuntime do
     %{state | failure: message}
   end
 
+  defp event("extension_error", event, state), do: extension_error(state, event)
+
   defp event("extension_ui_request", %{"id" => ui_id, "method" => method} = request, state) do
     dialog(method, ui_id, request, state)
   end
+
+  # A settle while a steered compaction runs is owed until it answers.
+  defp event("agent_settled", _event, %{compact_steer: from} = state) when from != nil,
+    do: if(state.interrupted, do: settle(state), else: %{state | settled: true})
 
   # A steer Pi has not answered may have reached it after this settle, and start new
   # work: the turn waits for the answer (`steered/3`). An interrupted turn ends here.
@@ -796,9 +1415,60 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   defp event(_type, _event, state), do: state
 
+  # Extension failures queued between turns, shown at the head of this turn.
+  defp show_extension_errors(state) do
+    Enum.reduce(state.extension_errors, %{state | extension_errors: []}, &extension_error(&2, &1))
+  end
+
+  # A failing extension is named in the work log: a failed entry titled after
+  # the extension, saying during which step it failed and why.
+  defp extension_error(state, event) do
+    n = state.ext_errors + 1
+    native = "extension-error:#{state.turn.ids.run}:#{n}"
+    name = extension_name(event["extensionPath"])
+    step = nonblank(event["event"])
+    detail = nonblank(event["error"])
+
+    message =
+      [
+        "#{name} failed#{if step, do: " during #{step}"}.",
+        detail && String.slice(detail, 0, 2_000)
+      ]
+      |> Enum.filter(&is_binary/1)
+      |> Enum.join("\n\n")
+
+    fields = %{"title" => name, "failure" => provider_failure(message, false)}
+
+    state
+    |> flush()
+    |> Map.put(:ext_errors, n)
+    |> ensure_item(native, :error, fields)
+    |> finish_item(native, "failed", &Map.merge(&1, fields))
+  end
+
+  # An extension is named by its file, or by its folder when the file is the
+  # folder's entry point (`index`).
+  defp extension_name(path) when is_binary(path) do
+    parts =
+      path
+      |> String.replace("\\", "/")
+      |> String.trim_trailing("/")
+      |> String.split("/", trim: true)
+
+    file = parts |> List.last() |> to_string() |> String.replace(~r/\.[^.]+$/, "")
+
+    cond do
+      file in ["", "index"] and length(parts) > 1 -> Enum.at(parts, -2)
+      file == "" -> "Pi extension"
+      true -> file
+    end
+  end
+
+  defp extension_name(_path), do: "Pi extension"
+
   defp tool_native(state, id), do: "#{state.turn.ids.run}:tool:#{id}"
 
-  defp tool_shape("bash", args),
+  defp tool_shape(name, args) when name in ["bash", "powershell"],
     do: {:command, %{"input" => args["command"] || "", "output" => ""}}
 
   defp tool_shape(name, args) when name in ["edit", "write"] do
@@ -894,14 +1564,20 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   # --- extension dialogs ---------------------------------------------------------
 
+  # A notice from an extension shows as a notice in the thread, not folded
+  # into the tool calls.
   defp dialog("notify", ui_id, request, state) do
     native = "#{state.turn.ids.run}:ui:#{ui_id}"
     message = request["message"] || request["title"] || ""
 
     state
     |> flush()
-    |> ensure_item(native, :tool, %{"toolName" => "notify", "input" => %{"message" => message}})
-    |> finish_item(native, "completed", &Map.put(&1, "output", message))
+    |> ensure_item(native, :notice, %{"title" => message, "message" => message})
+    |> finish_item(
+      native,
+      "completed",
+      &Map.merge(&1, %{"title" => message, "message" => message})
+    )
   end
 
   # HAL-C2's extension asks before a tool the access mode does not allow.
@@ -915,43 +1591,61 @@ defmodule HalC2.Pi.ThreadRuntime do
       state
     else
       kind = if title =~ ~r/^Allow (edit|write)\?$/, do: "file-change", else: "command"
-      prompt = if message in [nil, ""], do: title, else: message
+      prompt = String.slice(if(message in [nil, ""], do: title, else: message), 0, 4_000)
       native = "#{state.turn.ids.run}:ui:#{ui_id}"
-      {state, request_id} = open_request(flush(state), native, kind, prompt)
+
+      {state, request_id} =
+        open_request(flush(state), native, kind, prompt, nil, %{"title" => title})
+
       %{state | requests: Map.put(state.requests, request_id, {:confirm, ui_id, key})}
     end
   end
 
   defp dialog(method, ui_id, request, state) when method in ["select", "input", "editor"] do
     native = "#{state.turn.ids.run}:ui:#{ui_id}"
-    title = request["title"] || "Pi"
+    title = nonblank(request["title"]) || "Pi"
 
     options =
       case method do
         "select" ->
-          for option <- request["options"] || [],
-              do: %{
-                "label" => if(option in [nil, ""], do: "Empty value", else: option),
-                "description" => option,
-                "value" => option
-              }
+          for option <- request["options"] || [] do
+            label = if option in [nil, ""], do: "Empty value", else: option
+            %{"label" => label, "description" => nonblank(option) || label, "value" => option}
+          end
 
         _ ->
           [
             %{
               "label" => "Submit empty value",
-              "description" => "Submit empty value",
+              "description" => "Send an empty string to the extension.",
               "value" => ""
             }
           ]
       end
 
-    question = %{
-      "id" => native,
-      "header" => title,
-      "question" => request["message"] || request["placeholder"] || title,
-      "options" => options
-    }
+    # What the question reads, and its header: a message or a placeholder is
+    # the question under the title; with only a title to say, the title is the
+    # question, once, under a plain "Question" header.
+    message = nonblank(request["message"])
+    placeholder = nonblank(request["placeholder"])
+
+    {header, text} =
+      cond do
+        message -> {title, message}
+        placeholder -> {title, placeholder}
+        true -> {"Question", title}
+      end
+
+    # An editor dialog's current text is surfaced with the question, cut to
+    # 2,000 characters, so the user edits what is there rather than blind.
+    prefill = if method == "editor", do: nonblank(request["prefill"])
+
+    text =
+      if prefill,
+        do: text <> "\n\nCurrent value:\n" <> String.slice(prefill, 0, 2_000),
+        else: text
+
+    question = %{"id" => native, "header" => header, "question" => text, "options" => options}
 
     {state, request_id} = open_question(flush(state), native, [question])
     %{state | requests: Map.put(state.requests, request_id, {:question, ui_id, native})}
@@ -988,6 +1682,7 @@ defmodule HalC2.Pi.ThreadRuntime do
       case reply do
         {:reply, {:ok, _}} -> {:ok, false}
         {:reply, {:error, :closed}} -> {{:error, "Pi exited"}, true}
+        {:reply, {:error, %{"exitCode" => _}}} -> {{:error, "Pi exited"}, true}
         {:reply, {:error, reason}} -> {{:error, format(reason)}, false}
         # The connection itself is gone.
         {:error, _down} -> {{:error, "Pi exited"}, true}
@@ -1080,14 +1775,23 @@ defmodule HalC2.Pi.ThreadRuntime do
 
           head = data["leafId"]
 
+          # The head is where the next turn's messages start: a fork from this turn
+          # is cut at the first user message after it.
+          turn_refs =
+            %{
+              "nativeTurnRef" => user && Entities.provider_ref(user["id"], driver),
+              "nativeHeadRef" => head && Entities.provider_ref(head, driver)
+            }
+            |> Map.reject(fn {_key, ref} -> is_nil(ref) end)
+
           commit(state, fn stream ->
             [
-              user &&
+              turn_refs != %{} &&
                 Orchestration.upsert(
                   stream,
                   "provider-turn",
                   ids.provider_turn,
-                  &Map.put(&1, "nativeTurnRef", Entities.provider_ref(user["id"], driver))
+                  &Map.merge(&1, turn_refs)
                 ),
               head &&
                 Orchestration.upsert(
@@ -1129,14 +1833,62 @@ defmodule HalC2.Pi.ThreadRuntime do
       true -> end_turn(state, "completed", nil)
     end
   catch
-    :exit, _ -> end_turn(state, "failed", "Pi exited unexpectedly")
+    :exit, _ ->
+      end_turn(
+        state,
+        "failed",
+        if(state.interrupted,
+          do: "Pi process was stopped.",
+          else: "Pi process exited unexpectedly."
+        )
+      )
   end
 
   defp end_turn(state, status, failure) do
     state = state |> flush() |> close_open_items(status) |> cancel_requests()
     finish(state, status, failure)
     state = refusals(state)
-    %{state | turn: nil, items: %{}, steers: unanswered(state.steers, status), settled: false}
+    state = answer_compact_steer(state, status)
+
+    %{
+      state
+      | turn: nil,
+        items: %{},
+        steers: unanswered(state.steers, status),
+        settled: false,
+        compact: nil,
+        compact_steer: nil,
+        # A compaction this turn saw start is over or abandoned with it: its
+        # late end lands between turns or is dropped, and must not keep
+        # the next turn's checks thinking Pi still compacts.
+        compacting: false,
+        # A compaction still out when its turn ends is abandoned: Pi
+        # finishes it anyway, and its late events are dropped on arrival
+        # (`handle_info` for notifications) while its task is out, so they
+        # show in no later turn.
+        abandoned_compacts:
+          if(state.compact,
+            do: MapSet.put(state.abandoned_compacts, state.compact),
+            else: state.abandoned_compacts
+          )
+    }
+  end
+
+  # A steered compaction still running when its turn ends (Pi's `abort` does
+  # not stop a compaction): its caller hears what an unanswered steer hears,
+  # and the task's late result falls into the catch-all. Pi still finishes
+  # the compaction and emits its events; `end_turn/3` keeps its task ref as
+  # abandoned so those are dropped while it is out, and its reply (or
+  # `:DOWN`) forgets it. Nothing of it leaks into the next turn.
+  defp answer_compact_steer(%{compact_steer: nil} = state, _status), do: state
+
+  defp answer_compact_steer(state, status) do
+    GenServer.reply(
+      state.compact_steer,
+      if(status == "interrupted", do: :ok, else: {:error, "the turn ended"})
+    )
+
+    state
   end
 
   # Steers whose turn ended before Pi answered them: their callers hear the turn is
@@ -1162,7 +1914,36 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp positive(n) when is_integer(n) and n > 0, do: n
   defp positive(_n), do: nil
 
-  defp format(reason) when is_binary(reason), do: reason
-  defp format(%{"message" => message}), do: message
-  defp format(reason), do: inspect(reason)
+  defp format(reason) when is_binary(reason), do: detail(reason)
+  defp format(%{"message" => message}) when is_binary(message), do: detail(message)
+  defp format(reason), do: detail(inspect(reason))
+
+  @detail_chars 200
+
+  # A failure Pi explains at length, cut to what a banner can show.
+  defp detail(text) do
+    if String.length(text) > @detail_chars,
+      do: String.slice(text, 0, @detail_chars) <> "…",
+      else: text
+  end
+
+  # A model error with no reason of its own, and a model at capacity, in the
+  # words the thread's error banner reads.
+  defp model_failure(message) do
+    case nonblank(message) do
+      nil ->
+        "Pi reported a model error."
+
+      message ->
+        if String.contains?(String.downcase(message), "at capacity"),
+          do: "Provider overloaded: #{message}",
+          else: message
+    end
+  end
+
+  defp nonblank(value) when is_binary(value) do
+    if String.trim(value) == "", do: nil, else: value
+  end
+
+  defp nonblank(_value), do: nil
 end

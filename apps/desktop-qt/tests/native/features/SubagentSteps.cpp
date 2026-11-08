@@ -392,6 +392,20 @@ const Steps steps([] {
     expect(role(timeline(world), rowOf(world, QStringLiteral("subagent")), TimelineModel::StatusLabelRole) == QLatin1String("Working"), describe(timeline(world)));
   });
   step(QStringLiteral("the user answers it"), [approvals](World& world, const Captures&, const Table&) {
+    // A question the agent asked takes its first option.
+    const QVariantList questions = world.state(QStringLiteral("turn")).toMap().value(QStringLiteral("questions")).toList();
+    if (approvals(world).isEmpty() && !questions.isEmpty()) {
+      const QVariantMap request = questions.constFirst().toMap();
+      QVariantMap answers;
+      for (const QVariant& value : request.value(QStringLiteral("questions")).toList()) {
+        const QVariantMap asked = value.toMap();
+        answers.insert(asked.value(QStringLiteral("id")).toString(), asked.value(QStringLiteral("options")).toList().value(0).toMap().value(QStringLiteral("label")));
+      }
+      world.bridge().dispatch(QStringLiteral("composer.question.answer"),
+                              QVariantMap{{QStringLiteral("requestId"), request.value(QStringLiteral("requestId"))}, {QStringLiteral("answers"), answers}});
+      world.sync();
+      return;
+    }
     world.bridge().dispatch(QStringLiteral("composer.approval.respond"),
                             QVariantMap{{QStringLiteral("requestId"), approvals(world).first().toMap().value(QStringLiteral("requestId"))}, {QStringLiteral("decision"), QStringLiteral("accept")}});
     world.sync();
