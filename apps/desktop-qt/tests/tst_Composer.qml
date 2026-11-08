@@ -9,11 +9,11 @@ Item {
     width: 900
     height: 700
 
-    // The keymap arrives as window shortcuts (ShellWindow), mod+Enter
-    // and mod+alt+Enter among them.
+    // The keymap arrives as window shortcuts (ShellWindow), mod+Enter,
+    // mod+alt+Enter and mod+Shift+Enter among them.
     property int stolenChords: 0
     Shortcut {
-        sequences: ["Ctrl+Alt+Return", "Ctrl+Return", "Meta+Return"]
+        sequences: ["Ctrl+Alt+Return", "Ctrl+Return", "Meta+Return", "Ctrl+Shift+Return", "Meta+Shift+Return"]
         context: Qt.WindowShortcut
         onActivated: root.stolenChords++
     }
@@ -24,6 +24,8 @@ Item {
         Composer {
             width: 800
             height: 650
+            // The chips; the model control's own tests set it.
+            optionsInModelControl: false
         }
     }
 
@@ -343,14 +345,14 @@ Item {
 
             Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), { canSend: true, text: "hi" }), workspace: null };
             tryVerify(() => send.enabled && send.sendable);
-            compare(send.Accessible.name, "Send");
+            compare(send.Accessible.name, "Submit message");
             verify(Qt.colorEqual(send.background.color, accent));
 
             Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), { canSend: false, text: "", isRunning: true }), workspace: null };
             tryVerify(() => send.stopMode);
             const input = findChild(composer, "input");
             input.text = "";
-            compare(send.Accessible.name, "Stop");
+            compare(send.Accessible.name, "Stop generation");
             verify(send.enabled);
             verify(findChild(send, "stopGlyph").visible);
             verify(!Qt.colorEqual(send.background.color, accent), "Stop is not the accent");
@@ -475,14 +477,14 @@ Item {
             Shell.state = Object.assign({}, Shell.state, {
                 composer: Object.assign({}, Shell.state.composer, { isRunning: true, followUpBehavior: "queue" })
             });
-            compare(primary.Accessible.name, "Stop");
+            compare(primary.Accessible.name, "Stop generation");
 
             input.text = "Also check the tests";
-            compare(primary.Accessible.name, "Queue");
+            compare(primary.Accessible.name, "Queue message");
             Shell.state = Object.assign({}, Shell.state, {
                 composer: Object.assign({}, Shell.state.composer, { followUpBehavior: "steer" })
             });
-            compare(primary.Accessible.name, "Steer");
+            compare(primary.Accessible.name, "Steer message");
 
             mouseClick(primary);
             const sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
@@ -549,6 +551,36 @@ Item {
             compare(sent.action, "composer.submit");
             compare(sent.payload.intent, "alternate");
             compare(root.stolenChords, 0);
+
+            // mod+Shift+Enter sends the other way with words typed; with none
+            // it is the window's (send the first queued message).
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, {
+                    enterIntents: { singleLine: { "": "foreground", "ctrl+shift": "alternate" } },
+                    canSend: false
+                })
+            });
+            input.text = "tweak";
+            keyClick(Qt.Key_Return, ctrl | Qt.ShiftModifier);
+            sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
+            compare(sent.action, "composer.submit");
+            compare(sent.payload.intent, "alternate");
+            input.text = "";
+            const empty = Shell.dispatchCount;
+            const stolen = root.stolenChords;
+            keyClick(Qt.Key_Return, ctrl | Qt.ShiftModifier);
+            verify(Shell.dispatchedActions.slice(empty).every(entry => entry.action !== "composer.submit"));
+            compare(root.stolenChords, stolen + 1);
+            // A message of chips alone (a terminal excerpt, say) is the
+            // controller's to count: it is sent, not left to the window.
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, { canSend: true })
+            });
+            keyClick(Qt.Key_Return, ctrl | Qt.ShiftModifier);
+            sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
+            compare(sent.action, "composer.submit");
+            compare(sent.payload.intent, "alternate");
+            compare(root.stolenChords, stolen + 1);
         }
 
         function test_terminalExcerptChipNamesItsLinesAndRemovesIt() {

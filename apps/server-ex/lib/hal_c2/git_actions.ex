@@ -426,15 +426,18 @@ defmodule HalC2.GitActions do
 
   defp push(cwd, branch) do
     status = Vcs.remote_status(cwd) || %{}
-    upstream = upstream(cwd)
+    upstream = Git.upstream(cwd, branch)
+    # An upstream whose remote-tracking ref is gone (its branch was deleted and pruned)
+    # still has config; treat it as unset so the push publishes the branch again.
+    upstream = upstream && upstream_ref_exists?(cwd, upstream) && upstream
 
     cond do
       upstream && status["aheadCount"] == 0 && status["behindCount"] == 0 ->
-        %{"status" => "skipped_up_to_date", "branch" => branch, "upstreamBranch" => upstream}
+        %{"status" => "skipped_up_to_date", "branch" => branch, "upstreamBranch" => upstream.ref}
 
-      upstream ->
-        push!(cwd, ["push"], upstream |> String.split("/", parts: 2) |> hd())
-        %{"status" => "pushed", "branch" => branch, "upstreamBranch" => upstream}
+      upstream && upstream.remote ->
+        push!(cwd, ["push"], upstream.remote)
+        %{"status" => "pushed", "branch" => branch, "upstreamBranch" => upstream.ref}
 
       remote = Git.primary_remote(cwd) ->
         push!(cwd, ["push", "-u", remote, "HEAD:refs/heads/#{branch}"], remote)
@@ -451,12 +454,11 @@ defmodule HalC2.GitActions do
     end
   end
 
-  defp upstream(cwd) do
-    case Git.ok(cwd, ~w(rev-parse --abbrev-ref --symbolic-full-name @{upstream})) do
-      {:ok, ref} -> String.trim(ref)
-      _ -> nil
-    end
-  end
+  defp upstream_ref_exists?(cwd, %{remote: nil, ref: ref}),
+    do: match?({:ok, _}, Git.ok(cwd, ["rev-parse", "--verify", "--quiet", "refs/heads/#{ref}"]))
+
+  defp upstream_ref_exists?(cwd, %{ref: ref}),
+    do: match?({:ok, _}, Git.ok(cwd, ["rev-parse", "--verify", "--quiet", "refs/remotes/#{ref}"]))
 
   # The open pull request for this branch, or a new one: on Forgejo through its API,
   # anywhere else through `gh`.

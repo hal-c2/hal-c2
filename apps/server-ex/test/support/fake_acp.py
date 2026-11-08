@@ -512,6 +512,8 @@ for line in sys.stdin:
         if method == "logout" and AUTH_FILE and os.path.exists(AUTH_FILE):
             os.remove(AUTH_FILE)
         send({"id": mid, "result": {}})
+    elif method == "session/load" and os.environ.get("FAKE_ACP_HANG_LOAD"):
+        pass  # FAKE_ACP_HANG_LOAD: a load that is never answered.
     elif method == "session/cancel" and waiting:
         end_prompt(waiting[0], waiting[1], "cancelled")
         waiting = None

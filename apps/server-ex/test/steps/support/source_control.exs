@@ -275,7 +275,9 @@ defmodule HalC2.Steps.SourceControl.Shared do
       permissions_rule(
         context.permission,
         fields
-        |> Map.take(["viewerDidAuthor", "mergeStateStatus"])
+        |> Map.take(
+          ~w(viewerDidAuthor mergeStateStatus isCrossRepository state maintainerCanModify)
+        )
         |> Map.put("viewerCanUpdate", can_update),
         context[:pr_repository_fields] || %{}
       )

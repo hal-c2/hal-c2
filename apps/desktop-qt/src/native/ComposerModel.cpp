@@ -466,6 +466,8 @@ QVariantList pickerInstances(const QList<Instance>& list, const ModelPrefs& pref
           {QStringLiteral("isNew"), str(model, QLatin1String("badge")) == QLatin1String("new")},
           {QStringLiteral("isLegacy"), model.value(QLatin1String("isLegacy")).toBool()},
           {QStringLiteral("isUnavailable"), model.value(QLatin1String("isUnavailable")).toBool()},
+          // Whether choosing it leaves an effort to pick in the model control.
+          {QStringLiteral("hasEffort"), effortIndex(model.value(QLatin1String("capabilities")).toObject().value(QLatin1String("optionDescriptors")).toArray()) >= 0},
           {QStringLiteral("disabledReason"), disabledReason.isValid() ? disabledReason : QVariant::fromValue(nullptr)},
       });
     }
@@ -592,7 +594,8 @@ QVariantList shellOptions(const QJsonArray& descriptors) {
       for (const QJsonValue& choice : descriptor.value(QLatin1String("options")).toArray()) {
         choices.append(QVariantMap{{QStringLiteral("id"), str(choice.toObject(), QLatin1String("id"))},
                                    {QStringLiteral("label"), str(choice.toObject(), QLatin1String("label"))},
-                                   {QStringLiteral("isDefault"), choice.toObject().value(QLatin1String("isDefault")).toBool()}});
+                                   {QStringLiteral("isDefault"), choice.toObject().value(QLatin1String("isDefault")).toBool()},
+                                   {QStringLiteral("description"), str(choice.toObject(), QLatin1String("description"))}});
       }
     }
     const QJsonValue current = descriptor.value(QLatin1String("currentValue"));
@@ -652,6 +655,70 @@ std::optional<QString> steppedChoice(const QJsonObject& descriptor, int directio
   if (at < 0) at = choices.indexOf(fallback);
   if (at < 0) return direction > 0 ? choices.first() : choices.last();
   return choices.at(((at + (direction > 0 ? 1 : -1)) % count + count) % count);
+}
+
+namespace {
+// A select that is the reasoning effort by its id, or that its agent marked
+// as reasoning (an ACP agent's `thought_level`).
+bool isReasoning(const QJsonObject& descriptor) {
+  static const QStringList reasoningIds{QStringLiteral("effort"), QStringLiteral("reasoningEffort"), QStringLiteral("reasoning")};
+  return str(descriptor, QLatin1String("type")) == QLatin1String("select") &&
+         (reasoningIds.contains(str(descriptor, QLatin1String("id"))) || str(descriptor, QLatin1String("role")) == QLatin1String("reasoning"));
+}
+}  // namespace
+
+qsizetype effortIndex(const QJsonArray& descriptors) {
+  qsizetype first = -1;
+  for (qsizetype i = 0; i < descriptors.size(); ++i) {
+    const QJsonObject descriptor = descriptors.at(i).toObject();
+    if (str(descriptor, QLatin1String("type")) != QLatin1String("select")) continue;
+    if (isReasoning(descriptor)) return i;
+    if (first < 0) first = i;
+  }
+  return first;
+}
+
+QVariantMap effortBars(const QJsonObject& descriptor, const QString& current) {
+  // Ultracode changes the workflow and Max tops the scale: both keep their names.
+  static const QStringList named{QStringLiteral("ultracode"), QStringLiteral("max")};
+  static const QStringList off{QStringLiteral("off"), QStringLiteral("none")};
+  // More bars than this no longer fit the glyph's height in whole pixels.
+  constexpr qsizetype maxBars = 7;
+  if (!isReasoning(descriptor) || current.isEmpty()) return {};
+  QStringList special = named;
+  for (const QJsonValue& value : descriptor.value(QLatin1String("promptInjectedValues")).toArray()) special.append(value.toString());
+  QStringList levels;
+  QString label = current;
+  for (const QJsonValue& value : descriptor.value(QLatin1String("options")).toArray()) {
+    const QString id = str(value.toObject(), QLatin1String("id"));
+    if (id == current && !str(value.toObject(), QLatin1String("label")).isEmpty()) label = str(value.toObject(), QLatin1String("label"));
+    if (!special.contains(id)) levels.append(id);
+  }
+  if (levels.size() < 2 || levels.size() > maxBars) return {};
+  const bool startsAtOff = off.contains(levels.first());
+  const qsizetype count = startsAtOff ? levels.size() - 1 : levels.size();
+  if (special.contains(current)) {
+    return {{QStringLiteral("count"), count}, {QStringLiteral("filled"), count}, {QStringLiteral("special"), label}};
+  }
+  const qsizetype at = levels.indexOf(current);
+  if (at < 0) return {};
+  return {{QStringLiteral("count"), count}, {QStringLiteral("filled"), startsAtOff ? at : at + 1}, {QStringLiteral("special"), QString()}};
+}
+
+bool pickMatchesThread(const QJsonObject& pick, const QJsonObject& thread) {
+  const auto options = [](const QJsonObject& selection) {
+    QMap<QString, QJsonValue> byId;
+    for (const QJsonValue& entry : selection.value(QLatin1String("options")).toArray()) {
+      const QString id = entry.toObject().value(QLatin1String("id")).toString();
+      const QJsonValue value = entry.toObject().value(QLatin1String("value"));
+      if (id == QLatin1String("fastMode") && value == QJsonValue(false)) continue;
+      byId.insert(id, value);
+    }
+    return byId;
+  };
+  return !pick.value(QLatin1String("model")).toString().isEmpty() &&
+         pick.value(QLatin1String("instanceId")) == thread.value(QLatin1String("instanceId")) &&
+         pick.value(QLatin1String("model")) == thread.value(QLatin1String("model")) && options(pick) == options(thread);
 }
 
 bool ultrathinkInWords(const QString& text) {
@@ -724,7 +791,15 @@ QVariantMap enterIntents(const QList<keybindings::Binding>& bindings, bool mac, 
       if (meta) held.append(QStringLiteral("meta"));
       if (alt) held.append(QStringLiteral("alt"));
       if (shift) held.append(QStringLiteral("shift"));
-      const QString command = commandFor(bindings, mac, context, QStringLiteral("enter"), ctrl, meta, alt, shift);
+      QString command = commandFor(bindings, mac, context, QStringLiteral("enter"), ctrl, meta, alt, shift);
+      if (needsModifier && (ctrl || meta) && !alt) {
+        // When sending takes the modifier, mod+Enter sends the way the
+        // follow-up setting says and mod+Shift+Enter the other, over any
+        // window binding of it (the composer gives that back while empty).
+        const QString plain = commandFor(bindings, mac, context, QStringLiteral("enter"), ctrl, meta, alt, false);
+        if (plain == QLatin1String("composer.sendAlternate") && (!shift || !command.startsWith(QLatin1String("composer."))))
+          command = shift ? plain : QString();
+      }
       QString intent;
       if (command == QLatin1String("composer.sendAlternate") && running) {
         intent = QStringLiteral("alternate");

@@ -33,3 +33,5 @@ QStringList systemNotifications(World& world);
 // The user clicks the system notification about the thread `key`; whether it
 // opened anything.
 bool clickSystemNotification(World& world, const QString& key);
+// A turn of the thread `title` finishes while the user is elsewhere in the app.
+void finishTurnInBackground(World& world, const QString& title);

@@ -298,8 +298,8 @@ jobs:
     needs: [changes, mc_check]
     if: needs.changes.outputs.scenarios != '[]'
     runs-on: ubuntu-24.04
-    # The mc/orchestration shard runs its thousand scenarios in about 16 minutes.
-    timeout-minutes: 25
+    # The mc/orchestration shard runs about 1,650 scenarios in about 23 minutes; split it in .github/scripts/ci-changes.sh before this limit is reached.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
