@@ -2930,6 +2930,98 @@ defmodule HalC2.Steps.Providers.Pi do
     Map.put(context, :title_result, result)
   end
 
+  # The fake answers a prompt regenerating a thread's title like a first title.
+  defp regenerated_title,
+    do: [%{"match" => "Thread contents:", "steps" => hd(title_turns())["steps"]}]
+
+  # A thread's linked pull request, as GitHub answers for it.
+  @pull_request %{
+    "title" => "Stop the login redirect loop",
+    "body" => "Sessions now survive the redirect."
+  }
+
+  step "a Pi thread is linked to a pull request", context do
+    context =
+      context
+      |> install(%{"turns" => title_turns(regenerated_title()) ++ FakeAcp.pi_turns()})
+      |> FakeAcp.thread()
+      |> turn("Look at the login page")
+
+    log = HalC2.Test.Mc.tmp_dir(context.mc, "gh") |> Path.join("calls.jsonl")
+    rules = Path.join(Path.dirname(log), "rules.json")
+    File.write!(log, "")
+
+    File.write!(
+      rules,
+      JSON.encode!([%{"args" => ["repos/acme/shop/issues/42"], "stdout" => @pull_request}])
+    )
+
+    System.put_env("FAKE_GH_LOG", log)
+    System.put_env("FAKE_GH_RULES", rules)
+    World.put_app_env(:gh_command, Path.expand("../../support/fake_gh.py", __DIR__))
+
+    ExUnit.Callbacks.on_exit(fn ->
+      System.delete_env("FAKE_GH_LOG")
+      System.delete_env("FAKE_GH_RULES")
+    end)
+
+    id = World.thread_id(context, context.thread)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.pull-request.link",
+        "threadId" => id,
+        "host" => "github.com",
+        "repository" => "acme/shop",
+        "number" => 42,
+        "url" => "https://github.com/acme/shop/pull/42",
+        "source" => "manual"
+      })
+
+    World.await_row(id, &(&1["pullRequests"] not in [nil, []]))
+    context
+  end
+
+  step "Pi writes the thread's title", context do
+    FakeAcp.settings(
+      &Map.put(&1, "textGenerationModelSelection", %{"instanceId" => "pi", "model" => "default"})
+    )
+
+    id = World.thread_id(context, context.thread)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.metadata.update",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => id,
+        "regenerateTitle" => true
+      })
+
+    World.await_stream(
+      id,
+      fn state ->
+        StreamState.get(state, "thread")[id]["title"] == "Login form fix"
+      end,
+      @turn_ms
+    )
+
+    context
+  end
+
+  step "the pull request's context is part of what Pi is asked", context do
+    asked =
+      for %{"message" => message} <- FakeAcp.received_type(context, "prompt"),
+          message =~ "Thread contents:",
+          do: message
+
+    assert [prompt] = asked
+    assert prompt =~ "https://github.com/acme/shop/pull/42\n"
+    assert prompt =~ JSON.encode!(@pull_request["title"])
+    assert prompt =~ JSON.encode!(@pull_request["body"])
+
+    context
+  end
+
   step "Pi's launch arguments name an extension and a tool list", context do
     context = install(context, %{"turns" => title_turns() ++ FakeAcp.pi_turns()})
 

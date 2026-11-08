@@ -1042,7 +1042,7 @@ Feature: Pi
     And another message to "pi-work" stays in that process
 
   # Upstream #16210: Pi thread titles use the linked pull request's context
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: A Pi thread title takes the linked pull request into account
     Given a Pi thread is linked to a pull request
     When Pi writes the thread's title

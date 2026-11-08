@@ -118,15 +118,16 @@ defmodule HalC2.TextGeneration do
   @doc """
   A thread title: `%{"title", "needsRefinement"}`. From the first message, or,
   with `:previous_title`, from the thread's contents (`Prompts.thread_context/1`).
-  Options: `:previous_title`, `:attachments`. GitHub pull requests and issues
-  linked in the message are looked up for the model.
+  Options: `:previous_title`, `:attachments`, `:pull_requests` (the thread's pull
+  request links). The thread's GitHub pull requests, then the GitHub pull requests
+  and issues linked in the message, are looked up for the model.
   """
   def thread_title(cwd, message, opts \\ []) do
     attachments = opts[:attachments] || []
     schema = %{"title" => :string, "needsRefinement" => :boolean}
 
     with {:ok, selection} <- usable_selection(cwd, :text),
-         linked = linked_context(cwd, message),
+         linked = linked_context(cwd, message, opts[:pull_requests] || []),
          prompt = Prompts.thread_title(message, opts[:previous_title], linked, attachments),
          # Titles need only the prompt, not the checkout's configuration.
          {:ok, out} <-
@@ -982,10 +983,30 @@ defmodule HalC2.TextGeneration do
 
   # --- linked pull requests and issues -----------------------------------------------
 
-  # What the first two GitHub pull request or issue links in a message are about:
-  # each link with its title and body, or marked unavailable.
-  defp linked_context(cwd, message) do
-    links =
+  # What the first two of the thread's pull requests and the GitHub pull request or
+  # issue links in its message are about: each with its title and body, or marked
+  # unavailable. A pull request on another host gives the title it was last synced with.
+  defp linked_context(cwd, message, pull_requests) do
+    linked =
+      Enum.flat_map(pull_requests, fn
+        %{"host" => "github.com", "repository" => repository, "number" => number}
+        when is_binary(repository) and is_integer(number) and number > 0 ->
+          if Regex.match?(~r{^[\w.-]+/[\w.-]+$}, repository),
+            do: [
+              {"https://github.com/#{repository}/pull/#{number}",
+               "repos/#{repository}/issues/#{number}"}
+            ],
+            else: []
+
+        %{"url" => url, "snapshot" => %{"title" => title}}
+        when is_binary(url) and is_binary(title) ->
+          [{url, {:synced, title}}]
+
+        _ ->
+          []
+      end)
+
+    mentioned =
       Regex.scan(~r{https://[^\s<>"')\]`]+}, message)
       |> Enum.map(fn [url] -> URI.parse(String.replace(url, ~r/[.,;!?]+$/, "")) end)
       |> Enum.flat_map(fn uri ->
@@ -1000,11 +1021,11 @@ defmodule HalC2.TextGeneration do
           _ -> []
         end
       end)
-      |> Enum.uniq_by(&elem(&1, 0))
-      |> Enum.take(2)
 
     subjects =
-      links
+      (linked ++ mentioned)
+      |> Enum.uniq_by(&elem(&1, 0))
+      |> Enum.take(2)
       |> Task.async_stream(fn {url, endpoint} -> subject(cwd, url, endpoint) end,
         timeout: 3_000,
         on_timeout: :kill_task,
@@ -1017,6 +1038,9 @@ defmodule HalC2.TextGeneration do
 
     if subjects != [], do: Enum.join(subjects, "\n\n")
   end
+
+  defp subject(_cwd, url, {:synced, title}),
+    do: "#{url}\n" <> ~s({"title":#{JSON.encode!(String.slice(title, 0, 300))}})
 
   # Only github.com: ambient `gh` credentials never go to a host named in message text.
   defp subject(cwd, url, endpoint) do
