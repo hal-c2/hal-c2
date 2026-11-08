@@ -1,0 +1,159 @@
+# The plugin's MC modules are compiled when the plugin starts, not with the MC: compiled
+# here to beams of their own, which keep the docs and source the coverage reads.
+beams = Path.join(Mix.Project.build_path(), "plugins/token-economizer")
+File.rm_rf!(beams)
+File.mkdir_p!(beams)
+docs = Code.get_compiler_option(:docs)
+Code.put_compiler_option(:docs, true)
+
+{:ok, _, _} =
+  "../../../../plugins/token-economizer/mc/*.ex"
+  |> Path.expand(__DIR__)
+  |> Path.wildcard()
+  |> Kernel.ParallelCompiler.compile_to_path(beams, return_diagnostics: true)
+
+Code.put_compiler_option(:docs, docs)
+Code.prepend_path(beams)
+
+defmodule HalC2.TokenEconomizerLoopGuardProofTest do
+  # TokenEconomizer's loop guard: one thread's turns, heard by the plugin through a feed
+  # that may miss an event, with judge verdicts that come back late or never, judge jobs
+  # going stale, and redirects and notices delivered by a task of their own, so they may
+  # land after their turn ended or the next began. prop/hal_c2/token_economizer_prop_test.exs
+  # runs one turn's guard itself.
+  #
+  # Each part of the design is a switch in the model, and turning one off finds the
+  # flaw it closes (each search takes well under a second):
+  #
+  #   - Taking whichever verdict comes back while a job is out, not the job out's own:
+  #     a job put out before a redirect answers after the next segment's job went out,
+  #     and the new segment is redirected or offered a stop on what the agent did
+  #     before the redirect. Verdicts are keyed to their job.
+  #   - A redirect that keeps the job out, or the verdict already back: either is read
+  #     in the new segment, with the same result. A redirect starts its segment clean.
+  #   - A guard that goes on deciding after its stop offer offers the turn a stop again
+  #     at its next stuck call.
+  #   - A job that never answers blocks the judge for the rest of the turn, and a turn
+  #     stuck for good is never redirected nor offered a stop. A job out longer than the
+  #     stale time stops blocking.
+  #   - A redirect that does not name its run steers the thread's next turn when it is
+  #     delivered after its own ended, or runs as a turn of its own when none is under
+  #     way. The MC refuses a plugin's redirect once its run is over.
+  #   - Delivering the redirect before its notice lets the agent act on it before the
+  #     thread says why.
+  #   - A turn under way when the feed missed an event (a failing check, say) teaches
+  #     the envelope a turn that did not end green. It is partial, and teaches nothing.
+  #   - Teaching every turn that closes teaches the ones that ended failing or that the
+  #     person stopped.
+  @model "the turn the plugin hears; the MC's side of it is the model's environment"
+  @judge "what the judge is told and how its verdict is read, below the model's stuck or productive"
+  @text "the words of a redirect or a notice; the model delivers them, whatever they say"
+  @calls "how the guard counts a call, below the model's sign of trouble or none: prop/hal_c2/token_economizer_prop_test.exs and test/hal_c2/token_economizer_loop_guard_test.exs"
+
+  use HalC2.Proof,
+    model: "token_economizer_loop_guard.maude",
+    module: "TOKEN-ECONOMIZER-LOOP-GUARD",
+    check: "TOKEN-ECONOMIZER-LOOP-GUARD-PROPS",
+    timeout: 600_000,
+    code: [
+      {:exports, HalC2Plugins.TokenEconomizer},
+      {:messages, HalC2Plugins.TokenEconomizer},
+      {:state, HalC2Plugins.TokenEconomizer},
+      {:exports, HalC2Plugins.TokenEconomizer.LoopGuard.Turn}
+    ],
+    covers: %{
+      "HalC2Plugins.TokenEconomizer handle_call {:observe, _}" =>
+        ~w(hear-start hear-finish hear-other calm backstop judge mark close),
+      "HalC2Plugins.TokenEconomizer handle_info {:verdict, _, _, _, _}" => ~w(verdict arrive),
+      "HalC2Plugins.TokenEconomizer state :turns" => ~w(watching turn),
+      "HalC2Plugins.TokenEconomizer state :trackers" => ~w(taught close),
+      "HalC2Plugins.TokenEconomizer state :settings" => ~w(cfg budget),
+      "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.new/1" => "fresh",
+      "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.fold/6" => ~w(calm backstop judge see act ask),
+      "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.verdict/3" => ~w(verdict arrive),
+      "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.after_nudge/1" => "act",
+      "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.resolved_proxy/2" => ~w(close see),
+      "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.judge_stale_s/0" => "stale"
+    },
+    abstracts: %{
+      "HalC2Plugins.TokenEconomizer handle_call {:settings, _}" =>
+        "the settings are fixed for a run of the model; a change reads the trackers afresh and, turned off, drops the turns",
+      "HalC2Plugins.TokenEconomizer handle_call :status" => "reads the counts, changes nothing",
+      "HalC2Plugins.TokenEconomizer handle_info _" => "any other message is ignored",
+      "HalC2Plugins.TokenEconomizer state :stats" => "counts for the topic, which decide nothing",
+      "HalC2Plugins.TokenEconomizer state :recent" =>
+        "the latest actions for the topic, which decide nothing",
+      "HalC2Plugins.TokenEconomizer.status/1" => "what the topic carries, which decides nothing",
+      "HalC2Plugins.TokenEconomizer.envelope_path/1" =>
+        "where a project's envelope is kept; the model keeps what it taught",
+      "HalC2Plugins.TokenEconomizer.call_of/1" => @calls,
+      "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.judge_base_gap/0" =>
+        "the judge's rate limit only spaces jobs out by calls, which a stuck turn keeps making",
+      "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.live_digest/2" => @judge,
+      "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.verification_state/1" => @judge,
+      "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.runner_verdict/1" => @calls,
+      "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.status_of_tests/1" => @calls,
+      "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.exit_status_covers/1" => @calls,
+      "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.summary/2" => "what the log says of a turn",
+      "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.nudge_body/1" => @text
+    },
+    environment: %{
+      "start" => @model <> ": the MC starts the thread's next turn",
+      "call" => @model <> ": the agent makes a call, a check that fails or anything else",
+      "finish" => @model <> ": the agent ends its turn",
+      "interrupt" => @model <> ": the person stops the turn from the stop offer",
+      "drop" => "the feed misses an event, and says so with the next it delivers",
+      "answer" => "the judge, the user's text model, answers its job",
+      "lose" => "a judge job that never answers",
+      "deliver" =>
+        "the plugin's delivery task, Host.notice/5 and Host.steer/4 through the MC; a notice lands in a run that ended, a plugin's steer only in its run while it is under way"
+    },
+    scenarios: %{
+      "plugins/token-economizer-loop-guard.feature" => [
+        "A stuck turn is redirected once and the thread says so",
+        "With no redirects allowed, a stuck turn is offered a stop and goes on until the person stops it",
+        "Only a turn that ended green teaches the project's envelope"
+      ]
+    }
+
+  # Keyed, Reset, Once, Stale, Aimed, First, Whole, Green.
+  @design "true, true, true, true, true, true, true, true"
+  # After the switches: the budget, the calls each turn makes, the turns, the events the
+  # feed may miss, the judge jobs that may never answer, whether one that answers may go
+  # stale first, whether the judge may find a turn productive, and whether every call
+  # goes to the judge.
+  @two_turns "2, 2, 1, 1, true, true, false"
+  @faults ~w(drop lose)
+
+  test "over two turns, with an event missed and a judge job lost, a verdict is read only in its own segment, a redirect lands only in its turn and after its notice, a turn is offered a stop at most once, and only a green turn heard whole teaches",
+       %{proof: proof} do
+    refute_reachable(proof, "start(#{@design}, 1, #{@two_turns})", "unsafe", [])
+  end
+
+  test "with no redirects allowed the same holds", %{proof: proof} do
+    refute_reachable(proof, "start(#{@design}, 0, #{@two_turns})", "unsafe", [])
+  end
+
+  # A verdict from before a redirect needs a job out, the redirect, then a call to read
+  # it in: four calls in one turn.
+  test "in one long turn, no verdict from before a redirect is read after it", %{proof: proof} do
+    refute_reachable(proof, "start(#{@design}, 1, 4, 1, 1, 1, true, true, false)", "unsafe", [])
+  end
+
+  test "turns never get stuck, with an event missed and a judge job lost", %{proof: proof} do
+    refute_deadlock(proof, "start(#{@design}, 1, #{@two_turns})", "over", besides: @faults)
+  end
+
+  test "every turn closes when the feed misses nothing", %{proof: proof} do
+    assert_ltl(proof, "start(#{@design}, 1, 2, 2, 0, 1, true, true, false)", "<> finished", [])
+  end
+
+  # A turn that calls for good is an infinite state space unless a job that answers
+  # answers before it goes stale; the searches above cover the late answers.
+  test "a turn stuck for good is redirected, then offered a stop the person takes, even when a judge job never answers",
+       %{proof: proof} do
+    assert_ltl(proof, "start(#{@design}, 1, loop, 1, 0, 1, false, false, true)", "<> finished",
+      fair: ~w(start call hear-start hear-finish judge answer stale verdict deliver interrupt)
+    )
+  end
+end

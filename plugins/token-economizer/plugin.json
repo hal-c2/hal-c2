@@ -1,0 +1,72 @@
+{
+  "id": "token-economizer",
+  "name": "TokenEconomizer",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "Spends fewer tokens on the same work. Its loop guard watches every turn's tool calls and, when an agent keeps repeating the same failing edit and test, redirects it once and offers you a button to stop the turn if it still does not recover. What counts as stuck is learned per project from turns that ended well. A port of Microsoft's TokenEconomizer.",
+  "author": {
+    "name": "HAL-C2, porting microsoft/TokenEconomizer",
+    "url": "https://github.com/microsoft/TokenEconomizer"
+  },
+  "homepage": "https://github.com/hal-c2/hal-c2/tree/main/plugins/token-economizer",
+  "license": "Apache-2.0",
+  "icon": "assets/icon.svg",
+  "permissions": [
+    {
+      "id": "turns:observe",
+      "reason": "The loop guard reads each tool call as it ends: the command, the files it changed, and the tail of its output. Only counts and short signatures are kept, per turn, and they are dropped when the turn ends."
+    },
+    {
+      "id": "threads:steer",
+      "reason": "To send a stuck agent one redirect: a summary of what it repeated, and a nudge to try something different."
+    },
+    {
+      "id": "threads:notice",
+      "reason": "To tell you in the thread when it redirected an agent, and to offer to stop a turn that still looks stuck."
+    },
+    {
+      "id": "textGeneration",
+      "reason": "When a turn shows signs of a loop, your text generation model judges whether it is really stuck and writes the redirect. It sees commands, file names and error signatures, never file contents."
+    }
+  ],
+  "settings": [
+    {
+      "key": "loopGuard",
+      "label": "Loop guard",
+      "type": "choice",
+      "options": [
+        { "value": "nudge", "label": "Redirect stuck agents" },
+        { "value": "watch", "label": "Only watch" },
+        { "value": "off", "label": "Off" }
+      ],
+      "default": "nudge",
+      "description": "Only watch decides as it would, and changes nothing in your threads."
+    },
+    {
+      "key": "loopGuardLevel",
+      "label": "Sensitivity",
+      "type": "choice",
+      "options": [
+        { "value": "conservative", "label": "Conservative" },
+        { "value": "default", "label": "Default" },
+        { "value": "aggressive", "label": "Aggressive" }
+      ],
+      "default": "default",
+      "description": "Conservative spares churny but productive projects longer; aggressive steps in sooner."
+    },
+    {
+      "key": "loopGuardNudges",
+      "label": "Redirects per turn",
+      "type": "number",
+      "default": 1,
+      "description": "How many times a turn is redirected before you are offered to stop it."
+    },
+    {
+      "key": "loopGuardThresholds",
+      "label": "Thresholds",
+      "type": "object",
+      "default": {},
+      "description": "Pinned detector thresholds, such as {\"min_turns\": 30}, over the sensitivity's and what was learned."
+    }
+  ]
+}

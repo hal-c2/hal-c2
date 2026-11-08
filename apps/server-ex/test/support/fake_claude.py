@@ -360,6 +360,24 @@ for line in sys.stdin:
         send({"type": "control_request", "request_id": f"dialog-{turn}", "request": {"subtype": "request_user_dialog", "dialog_kind": "resume_return",
               "payload": {"sessionAgeMinutes": 135, "estimatedTokens": 182400}}})
         continue
+    # "loop N": Claude is stuck, N times over editing a.py and running the same failing
+    # test, then ends the turn; "loop N and wait" stays open after them until a steer or
+    # an interrupt, as a turn that goes on.
+    looping = re.search(r"\bloop (\d+)", text.split("</conversation_history>")[-1])
+    if looping:
+        for i in range(int(looping.group(1))):
+            edit, test = f"edit-{turn}-{i}", f"test-{turn}-{i}"
+            send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}e{i}", "role": "assistant", "content": [{"type": "tool_use", "id": edit, "name": "Edit", "input": {
+                "file_path": "a.py", "old_string": "x", "new_string": "y"}}]}})
+            send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": edit, "content": "The file a.py has been updated.", "is_error": False}]}})
+            send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}t{i}", "role": "assistant", "content": [{"type": "tool_use", "id": test, "name": "Bash", "input": {"command": "pytest -q test_a.py"}}]}})
+            send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": test,
+                  "content": "FAILED test_a.py::test_a - AssertionError: assert 1 == 2\n1 failed in 0.02s", "is_error": True}]}})
+        if "and wait" in text:
+            continue
+        send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}l", "role": "assistant", "content": [{"type": "text", "text": "Still failing"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "Still failing", "session_id": session})
+        continue
     # "answer halfway": Claude writes part of its answer (message half-uuid-N) and stays open,
     # as a turn the user stops mid-answer.
     if "answer halfway" in text.split("</conversation_history>")[-1]:

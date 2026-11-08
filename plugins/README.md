@@ -4,12 +4,13 @@ Each folder here is an MC plugin package: an ordinary plugin that needs nothing
 from this repository but the plugin API. Copy a folder into an MC's `plugins`
 folder to install it, or start your own from one of them.
 
-| Plugin                          | What it does                                                                                          | Uses                                                          |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| [code-review](code-review/)     | An agent reviews pull requests; you decide what reaches GitHub.                                       | pull requests, threads, agent tools                           |
-| [planner](planner/)             | A plan of tasks and milestones as a Gantt chart, board or list; agents propose changes to it.         | issues and boards, pull requests, threads, Slack, agent tools |
-| [issue-tracker](issue-tracker/) | A triage queue over GitHub issues; agents prioritise, ask for follow-up and summarise, and you apply. | issues, threads, agent tools                                  |
-| [maintenance](maintenance/)     | Scheduled maintenance by the maintain skill; you decide whether its branch becomes a pull request.    | pull requests, threads, agent tools                           |
+| Plugin                                | What it does                                                                                          | Uses                                                          |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| [code-review](code-review/)           | An agent reviews pull requests; you decide what reaches GitHub.                                       | pull requests, threads, agent tools                           |
+| [planner](planner/)                   | A plan of tasks and milestones as a Gantt chart, board or list; agents propose changes to it.         | issues and boards, pull requests, threads, Slack, agent tools |
+| [issue-tracker](issue-tracker/)       | A triage queue over GitHub issues; agents prioritise, ask for follow-up and summarise, and you apply. | issues, threads, agent tools                                  |
+| [maintenance](maintenance/)           | Scheduled maintenance by the maintain skill; you decide whether its branch becomes a pull request.    | pull requests, threads, agent tools                           |
+| [token-economizer](token-economizer/) | Spots an agent stuck in a loop of failing edits and checks, redirects it once and offers you a stop.  | turns, threads, text generation                               |
 
 ## Writing one
 
