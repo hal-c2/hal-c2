@@ -313,7 +313,7 @@ defmodule HalC2.Orchestration.Handoff do
 
         fork =
           if kind in ~w(pi opencode),
-            do: Map.put(fork, :before, next_turn(transfer, turn_ref)),
+            do: Map.merge(fork, next_turn(transfer, turn_ref)),
             else: fork
 
         {fork, nil, [settled]}
@@ -417,8 +417,10 @@ defmodule HalC2.Orchestration.Handoff do
     end
   end
 
-  # Pi and OpenCode fork a session before an entry: the user message of the source's
-  # turn after the fork point, or nothing when the fork point is the source's latest turn.
+  # Pi and OpenCode fork a session before an entry: `before` is the user message of the
+  # source's turn after the fork point, nil when the fork point is the source's latest
+  # turn. `head` is the session's last entry when the fork point settled, so a runtime
+  # can find a next turn the source has not recorded yet.
   defp next_turn(transfer, turn_ref) do
     turns =
       HalC2.Streams.state(transfer["sourceThreadId"])
@@ -426,16 +428,19 @@ defmodule HalC2.Orchestration.Handoff do
 
     case Enum.find(turns, &(get_in(&1, ["nativeTurnRef", "nativeId"]) == turn_ref["nativeId"])) do
       nil ->
-        nil
+        %{before: nil}
 
       point ->
-        turns
-        |> Enum.filter(
-          &(&1["providerThreadId"] == point["providerThreadId"] and
-              &1["ordinal"] > point["ordinal"] and &1["nativeTurnRef"] != nil)
-        )
-        |> Enum.min_by(& &1["ordinal"], fn -> nil end)
-        |> then(&(&1 && get_in(&1, ["nativeTurnRef", "nativeId"])))
+        before =
+          turns
+          |> Enum.filter(
+            &(&1["providerThreadId"] == point["providerThreadId"] and
+                &1["ordinal"] > point["ordinal"] and &1["nativeTurnRef"] != nil)
+          )
+          |> Enum.min_by(& &1["ordinal"], fn -> nil end)
+          |> then(&(&1 && get_in(&1, ["nativeTurnRef", "nativeId"])))
+
+        %{before: before, head: get_in(point, ["nativeHeadRef", "nativeId"])}
     end
   end
 

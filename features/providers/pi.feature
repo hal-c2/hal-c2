@@ -122,7 +122,7 @@ Feature: Pi
   # Upstream #28400: "pi --version" had 4 seconds, so a healthy CLI that started slowly showed as
   # unavailable. The sign-in check keeps its 4 seconds.
   Scenario: A Pi whose version check takes 8 seconds is not shown as unavailable
-    Given "pi --version" takes 8 seconds to answer
+    Given Pi takes 8 seconds to print its version
     When the user refreshes provider status
     Then Pi is not reported as timed out
 
@@ -231,7 +231,6 @@ Feature: Pi
 
   # Upstream #20521: a turn stopped before HAL-C2 saw its place in Pi's session made reverts and
   # forks past it fail, though Pi had kept the prompt.
-  @backlog
   Scenario Outline: A Pi turn stopped before it was recorded can still be gone past
     Given a Pi thread whose second turn was stopped before Pi reported its place in the session
     And a third turn finished after it
@@ -254,6 +253,19 @@ Feature: Pi
     Given a Pi thread whose second turn is running
     When the user forks from the first turn
     Then the new thread continues Pi's conversation through the first turn only
+
+  # A steer is a user message inside the running turn in Pi's session, so cutting a fork at
+  # the first user message after the fork point's own dropped the steer and its answer.
+  Scenario Outline: A forked Pi turn keeps the steer it took
+    Given a Pi thread whose first turn took the steer "and the tests"
+    And the Pi thread's next turn <next>
+    When the user forks from the first turn
+    Then the new thread continues Pi's conversation through the steer
+
+    Examples:
+      | next            |
+      | has not started |
+      | is running      |
 
   Scenario: Pi skills appear in the skill menu
     Given Pi loads the project skill "deploy"
@@ -307,6 +319,7 @@ Feature: Pi
     Then "/compact" is offered
 
   Scenario: Sending /compact compacts the Pi conversation
+    Given a Pi thread that has answered a message
     When the user sends "/compact" to a Pi thread
     Then Pi compacts its conversation
     And the work log shows the compaction
@@ -573,6 +586,12 @@ Feature: Pi
     When the user sends "/stats" to a Pi thread
     Then the turn finishes once Pi is idle
     And the Pi turn is not left running
+
+  Scenario: An extension command settles quickly though Pi was slow to list its commands
+    Given a Pi extension handles "/stats" without starting agent work
+    And Pi lists its commands only after the session's first lookup gave up
+    When the user sends "/stats" to a Pi thread
+    Then the turn finishes as a command does, once Pi is briefly idle
 
   Scenario: A message Pi's extensions take a while to start on is not ended as idle
     Given Pi's extensions work for a few seconds before Pi's agent starts on "slow start"

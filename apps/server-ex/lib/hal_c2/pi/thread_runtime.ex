@@ -811,12 +811,18 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp fork_first(_state, turn), do: {:ok, turn}
 
   # The turn after the fork point, where the copy is cut. A turn still running in the
-  # source has no recorded entry yet, so it is found in the copy: the first message
-  # the user sent after the fork point's own. A copy that cannot be read so is kept whole.
+  # source has no recorded entry yet, so it is found in the copy: the first message the
+  # user sent after the session's last entry when the fork point settled. Messages
+  # inside the fork point's own turn, steers among them, stay. A fork point recorded
+  # before heads were looks after its own message instead. A copy that cannot be read
+  # so is kept whole.
   defp before(_conn, %{before: before}) when is_binary(before), do: {:ok, before}
+  defp before(conn, %{head: head}) when is_binary(head), do: first_user_since(conn, head)
+  defp before(conn, %{turn: point}) when is_binary(point), do: first_user_since(conn, point)
+  defp before(_conn, _fork), do: {:ok, nil}
 
-  defp before(conn, %{turn: point}) when is_binary(point) do
-    case Connection.call(conn, "get_entries", %{"since" => point}, @call_ms) do
+  defp first_user_since(conn, entry) do
+    case Connection.call(conn, "get_entries", %{"since" => entry}, @call_ms) do
       {:ok, %{"entries" => entries}} when is_list(entries) ->
         {:ok,
          Enum.find_value(entries, fn entry ->
@@ -827,8 +833,6 @@ defmodule HalC2.Pi.ThreadRuntime do
         {:ok, nil}
     end
   end
-
-  defp before(_conn, _fork), do: {:ok, nil}
 
   defp cut(_conn, nil), do: {:ok, nil}
   defp cut(conn, entry), do: Connection.call(conn, "fork", %{"entryId" => entry}, @call_ms)
@@ -1096,7 +1100,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   # and a file whose saved copy cannot be found named as unavailable. An attachment's
   # `path` is the MC's own saved copy (`HalC2.Attachments`), never a client's path.
   defp prompt_payload(state, text, attachments) do
-    {state, skills} = prompt_skills(state, text)
+    {state, skills} = state |> prompt_commands(text) |> prompt_skills(text)
     expanded = HalC2.Pi.expand_skills(text || "", skills)
     attachments = attachments || []
 
@@ -1147,6 +1151,24 @@ defmodule HalC2.Pi.ThreadRuntime do
   end
 
   defp prompt_skills(state, _text), do: {state, state.skills || []}
+
+  # A session whose command lookup timed out at start knows no extension commands, so a
+  # `/command` would wait out an ordinary message's idle checks: it looks them up again.
+  defp prompt_commands(%{extension_commands: nil} = state, "/" <> _command) do
+    case pi_call_within(state.conn, "get_commands", %{}, skills_ms()) do
+      {:ok, data} ->
+        %{
+          state
+          | skills: skill_names(data),
+            extension_commands: HalC2.Pi.extension_commands(data)
+        }
+
+      _ ->
+        %{state | extension_commands: []}
+    end
+  end
+
+  defp prompt_commands(state, _text), do: state
 
   defp skill_names(data),
     do: data |> HalC2.Pi.parse_commands() |> elem(1) |> Enum.map(& &1["name"])
@@ -1736,14 +1758,23 @@ defmodule HalC2.Pi.ThreadRuntime do
 
           head = data["leafId"]
 
+          # The head is where the next turn's messages start: a fork from this turn
+          # is cut at the first user message after it.
+          turn_refs =
+            %{
+              "nativeTurnRef" => user && Entities.provider_ref(user["id"], driver),
+              "nativeHeadRef" => head && Entities.provider_ref(head, driver)
+            }
+            |> Map.reject(fn {_key, ref} -> is_nil(ref) end)
+
           commit(state, fn stream ->
             [
-              user &&
+              turn_refs != %{} &&
                 Orchestration.upsert(
                   stream,
                   "provider-turn",
                   ids.provider_turn,
-                  &Map.put(&1, "nativeTurnRef", Entities.provider_ref(user["id"], driver))
+                  &Map.merge(&1, turn_refs)
                 ),
               head &&
                 Orchestration.upsert(

@@ -461,6 +461,61 @@ defmodule HalC2.Steps.Providers.Pi do
     Map.merge(context, %{current_thread: context.thread, pi_session: session_file(context)})
   end
 
+  # Turn two is stopped, and the session's entries cannot be read as it ends: the
+  # thread never learns where Pi put its message, though Pi kept it.
+  step "a Pi thread whose second turn was stopped before Pi reported its place in the session",
+       context do
+    context = context |> install() |> FakeAcp.thread() |> turn("first")
+    context = FakeAcp.send_message(context, "a long task")
+    await_answers(context, 2)
+    context = FakeAcp.configure(context, &Map.put(&1, "failCommands", ["get_entries"]))
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, context.thread)
+      })
+
+    FakeAcp.await_run(context, "interrupted")
+    context = FakeAcp.configure(context, &Map.delete(&1, "failCommands"))
+
+    refs =
+      state(context)
+      |> StreamState.list("provider-turn")
+      |> Enum.sort_by(& &1["ordinal"])
+      |> Enum.map(&get_in(&1, ["nativeTurnRef", "nativeId"]))
+
+    assert [first, nil] = refs
+    assert is_binary(first)
+    context
+  end
+
+  step "a third turn finished after it", context do
+    context = turn(context, "third")
+    Map.merge(context, %{current_thread: context.thread, pi_session: session_file(context)})
+  end
+
+  step "the user reverts to the end of the third turn", context do
+    World.rollback(context, context.thread, 3, %{"restoreFiles" => false})
+  end
+
+  step "the user forks from the end of the third turn", context do
+    context = World.fork(context, context.thread, 3, "past the stop")
+    Map.put(context, :pi_went_past, "past the stop")
+  end
+
+  step "Pi continues from the third turn", context do
+    assert {:ok, _} = context.reply
+    title = context[:pi_went_past]
+    context = turn(context, "where are we", "completed", title)
+
+    assert List.last(replies(context, title)) ==
+             "Reply to where are we after [first | a long task | third]"
+
+    context
+  end
+
   step "the user reverts to before the stopped turn", context do
     World.rollback(context, context.thread, 1, %{"restoreFiles" => false})
   end
@@ -527,6 +582,49 @@ defmodule HalC2.Steps.Providers.Pi do
     assert List.last(replies(context, "fork")) == "Reply to where are we after [first]"
     # The source's running turn goes on in its own session.
     assert session_file(context, "fork") != context.pi_session
+    context
+  end
+
+  # The first turn takes a steer and finishes, so Pi's session holds two user messages
+  # for it: the prompt and the steer.
+  step "a Pi thread whose first turn took the steer {string}", %{args: [text]} = context do
+    turns = [
+      %{
+        "match" => "a steered task",
+        "steps" => [%{"text" => "Working on it."}, %{"waitAbort" => true}]
+      }
+    ]
+
+    context =
+      context
+      |> with_turns(turns)
+      |> FakeAcp.thread()
+      |> FakeAcp.send_message("please do a steered task")
+
+    await_answers(context, 1)
+    {:ok, _} = steer(context, text)
+    FakeAcp.await_run(context, "completed")
+    Map.merge(context, %{pi_session: session_file(context), steered: text})
+  end
+
+  step ~r/^the Pi thread's next turn (?<next>has not started|is running)$/,
+       %{args: [next]} = context do
+    if next == "is running" do
+      answered = length(items(context, "assistant_message"))
+      context = FakeAcp.send_message(context, "a long task")
+      await_answers(context, answered + 1)
+      context
+    else
+      context
+    end
+  end
+
+  step "the new thread continues Pi's conversation through the steer", context do
+    context = turn(context, "where are we", "completed", "fork")
+
+    assert List.last(replies(context, "fork")) ==
+             "Reply to where are we after [please do a steered task | #{context.steered}]"
+
     context
   end
 
@@ -1364,7 +1462,7 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
-  step "{string} takes 8 seconds to answer", %{args: [_what]} = context do
+  step "Pi takes 8 seconds to print its version", context do
     install(context, %{"versionDelaySec" => 8})
   end
 
@@ -1549,6 +1647,11 @@ defmodule HalC2.Steps.Providers.Pi do
 
   step "Pi has the skill {string}", %{args: [name]} = context do
     with_skills(context, [name])
+  end
+
+  # A thread with a conversation to compact: a bare `/compact` as the first message is refused.
+  step "a Pi thread that has answered a message", context do
+    context |> install() |> FakeAcp.thread() |> turn("first")
   end
 
   step "the user sends {string} to a Pi thread", %{args: [text]} = context do
@@ -3054,6 +3157,34 @@ defmodule HalC2.Steps.Providers.Pi do
     |> install(%{"handledCommands" => [command], "commands" => [listed]})
   end
 
+  # The session's first command lookup outlasts its deadline; the next one answers.
+  step "Pi lists its commands only after the session's first lookup gave up", context do
+    Application.put_env(:hal_c2, :pi_skills_ms, 300)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :pi_skills_ms) end)
+
+    FakeAcp.configure(
+      context,
+      &Map.merge(&1, %{
+        "commandDelays" => %{"get_commands" => 1.0},
+        "delayOnce" => ["get_commands"]
+      })
+    )
+  end
+
+  # An extension command settles after two idle checks, a message after fifteen.
+  step "the turn finishes as a command does, once Pi is briefly idle", context do
+    assert Enum.any?(StreamState.list(state(context), "run"), &(&1["status"] == "completed"))
+
+    checks =
+      context
+      |> FakeAcp.log()
+      |> Enum.drop_while(&(get_in(&1, ["recv", "type"]) != "prompt"))
+      |> Enum.count(&(get_in(&1, ["recv", "type"]) == "get_state"))
+
+    assert checks < 15
+    context
+  end
+
   step "the turn finishes once Pi is idle", context do
     runs = StreamState.list(state(context), "run")
     assert Enum.any?(runs, &(&1["status"] == "completed"))
@@ -3212,6 +3343,7 @@ defmodule HalC2.Steps.Providers.Pi do
       context
       |> install(%{"compactDelaySec" => 30})
       |> FakeAcp.thread()
+      |> turn("first")
       |> FakeAcp.send_message("/compact")
 
     await_compact_sent(context)

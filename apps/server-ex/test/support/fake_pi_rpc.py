@@ -422,8 +422,10 @@ def run_turn(text):
             if not aborted[0]:
                 msg = wait_for(lambda m: m.get("type") == "abort" or steer(m))
                 if steer(msg):
-                    # Pi hands the steer to the model's next call, which answers it.
+                    # Pi hands the steer to the model's next call, which answers it. Its
+                    # session keeps what was said before, then the steer as a user message.
                     respond(msg)
+                    session.append("assistant", "".join(said))
                     session.append("user", msg["message"])
                     send({"type": "message_end", "message": assistant("".join(said))})
                     send({"type": "message_start", "message": {"role": "assistant"}})
