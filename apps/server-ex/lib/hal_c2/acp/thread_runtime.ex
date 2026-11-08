@@ -3435,6 +3435,8 @@ defmodule HalC2.Acp.ThreadRuntime do
   @skill_mention ~r/(^|\s)\p{Sc}[a-zA-Z0-9]/u
 
   # The message, with where its files are; images inline when the agent takes them.
+  # Reads only this turn's own attachment files, already stored by the MC.
+  # sobelow_skip ["Traversal.FileModule"]
   defp acp_prompt(turn, capabilities, instructions) do
     attachments = Map.get(turn, :attachments, [])
     message = HalC2.Attachments.prompt_text(turn.text, attachments)

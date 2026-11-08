@@ -883,6 +883,8 @@ defmodule HalC2.Acp do
     if started?, do: reason, else: diagnose_start(id, reason)
   end
 
+  # Runs only the agent's own configured binary, found on PATH, with a fixed argument.
+  # sobelow_skip ["CI.System"]
   defp diagnose_start(id, reason) do
     output =
       with {:ok, [executable | _], _env} <- command(id),
