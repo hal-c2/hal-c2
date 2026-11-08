@@ -312,6 +312,8 @@ defmodule HalC2.LocalServers do
 
   # Whether `url` answers with a page: HTML, or any redirect. `:timeout` when it said
   # nothing within the probe's second.
+  # Reviewed: only loopback URLs reach here, probing the user's own dev servers, which often use self-signed certificates; nothing is sent or trusted beyond whether a page answers.
+  # sobelow_skip ["Config.TLSVerify"]
   defp request(url) do
     case :httpc.request(
            :get,
