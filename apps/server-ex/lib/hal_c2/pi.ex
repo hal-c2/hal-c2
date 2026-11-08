@@ -379,7 +379,7 @@ defmodule HalC2.Pi do
   def message(text, nil, skills), do: expand_skills(text, skills)
 
   def message(text, history, skills) do
-    said = text |> String.replace_prefix(history <> "\n\n", "") |> expand_skills(skills)
+    said = text |> said(history) |> expand_skills(skills)
 
     case Regex.run(~r{\A((?:/skill:\S+\s+)*/skill:\S+)\s*(.*)\z}s, said) do
       [_, commands, ""] -> commands <> " " <> history
@@ -387,6 +387,12 @@ defmodule HalC2.Pi do
       nil -> history <> "\n\n" <> said
     end
   end
+
+  @doc """
+  The user's own words in a turn's `text`, without the handoff (`history`) it starts with.
+  """
+  def said(text, nil), do: text
+  def said(text, history), do: String.replace_prefix(text || "", history <> "\n\n", "")
 
   @doc """
   Pi expands skills only from leading `/skill:name` commands; HAL-C2 writes skills as

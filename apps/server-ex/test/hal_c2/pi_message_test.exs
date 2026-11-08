@@ -21,4 +21,11 @@ defmodule HalC2.PiMessageTest do
     assert HalC2.Pi.message(@history <> "\n\n/skill:deploy", @history, []) ==
              "/skill:deploy " <> @history
   end
+
+  # The runtime looks skills and commands up from these words only, so a `$` in the
+  # history never waits on Pi's command list.
+  test "the user's words are the text without the history ahead of them" do
+    assert HalC2.Pi.said(@history <> "\n\nWhere were we?", @history) == "Where were we?"
+    assert HalC2.Pi.said("please $review this", nil) == "please $review this"
+  end
 end

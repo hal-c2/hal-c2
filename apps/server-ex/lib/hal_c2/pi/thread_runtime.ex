@@ -1107,8 +1107,10 @@ defmodule HalC2.Pi.ThreadRuntime do
   # and a file whose saved copy cannot be found named as unavailable. An attachment's
   # `path` is the MC's own saved copy (`HalC2.Attachments`), never a client's path.
   # A turn's handoff (`history`) goes after its `/skill:` commands (`HalC2.Pi.message/3`).
+  # Only the user's words are read for commands and `$skill` mentions, not the handoff.
   defp prompt_payload(state, text, attachments, history \\ nil) do
-    {state, skills} = state |> prompt_commands(text) |> prompt_skills(text)
+    said = HalC2.Pi.said(text, history)
+    {state, skills} = state |> prompt_commands(said) |> prompt_skills(said)
     expanded = HalC2.Pi.message(text || "", history, skills)
     attachments = attachments || []
 
