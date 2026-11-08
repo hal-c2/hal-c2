@@ -756,6 +756,30 @@ const Steps steps([] {
     });
     openPicker(world);
   });
+  step(QStringLiteral("the user chooses the (\\w+) model %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString instanceId = driverOf(c[0]);
+    QString slug = c[1].toLower();
+    slug.replace(QRegularExpression(QStringLiteral("[^a-z0-9]+")), QStringLiteral("-"));
+    bool offered = false;
+    for (const QJsonValue& entry : providers(world)) offered = offered || entry.toObject().value(QLatin1String("instanceId")) == instanceId;
+    if (offered) {
+      changeProvider(world, instanceId, [&](QJsonObject& entry) { entry.insert(QStringLiteral("models"), QJsonArray{model(slug, c[1])}); });
+    } else {
+      QJsonArray list = providers(world);
+      list.append(provider(instanceId, c[0], {model(slug, c[1])}));
+      offer(world, list);
+    }
+    world.bridge().dispatch(QStringLiteral("composer.model.select"), QVariantMap{{QStringLiteral("instanceId"), instanceId}, {QStringLiteral("model"), slug}});
+    world.waitFor([&] { return composer(world).value(QStringLiteral("selectedModel")) == slug; },
+                  [&] { return QStringLiteral("the composer on %1; it shows %2").arg(slug, show(composer(world))); });
+    composerBrick(world);
+  });
+  step(QStringLiteral("the full name %1 is shown in its tooltip and in the model picker").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(picker(world)->property("triggerFullTitle") == c[0],
+           QStringLiteral("the tooltip names \"%1\"").arg(picker(world)->property("triggerFullTitle").toString()));
+    openPicker(world);
+    expect(listed(world).contains(c[0]), QStringLiteral("the picker lists %1").arg(listed(world).join(u", ")));
+  });
   step(QStringLiteral("the model button reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return picker(world)->property("triggerTitle") == c[0]; },
                   [&] { return QStringLiteral("the button to read \"%1\"; it reads \"%2\"").arg(c[0], picker(world)->property("triggerTitle").toString()); });

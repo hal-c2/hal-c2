@@ -185,6 +185,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/model-and-mode.feature:Favourite models are listed first*"),
     QStringLiteral("composer/model-and-mode.feature:A started thread can move*"),
     QStringLiteral("composer/model-and-mode.feature:A second instance with no draft model of its own*"),
+    QStringLiteral("composer/model-and-mode.feature:The model button shows the name the user would say*"),
     QStringLiteral("composer/model-and-mode.feature:A short name the model manifest gives*"),
     QStringLiteral("composer/model-and-mode.feature:Each model keeps the options the user last gave it"),
     QStringLiteral("composer/model-and-mode.feature:A composer that falls back to another account*"),

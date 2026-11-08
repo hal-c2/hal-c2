@@ -45,8 +45,10 @@ AbstractButton {
     // Short names are for chat models; where favorites is off (a Space's
     // image models) the trigger keeps the model's own name.
     readonly property string triggerTitle: multiple !== null ? qsTr("%1 models").arg(multiple.length) : noProviderText.length > 0 ? noProviderText : activeModel ? Picker.displayName(activeModel, favorites, activeInstance) : (selectedModel ? selectedModel : qsTr("Choose model"))
-    // The full name, for the tooltip the short title stands in for.
-    readonly property string triggerFullTitle: activeModel ? Picker.displayName(activeModel, false, activeInstance) : triggerTitle
+    // The full name, for the tooltip the short title stands in for. Where
+    // the button shows a stand-in instead (no provider, or several models),
+    // the tooltip follows the button.
+    readonly property string triggerFullTitle: multiple === null && noProviderText.length === 0 && activeModel ? Picker.displayName(activeModel, false, activeInstance) + (activeModel.isUnavailable ? qsTr(" (Unavailable)") : "") : triggerTitle
 
     function inMultiple(instanceId, model) {
         return multiple !== null && multiple.some(entry => entry.instanceId === instanceId && entry.model === model);

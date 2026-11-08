@@ -93,7 +93,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #24205: the model button repeated what the provider icon says ("Claude Opus 5.5" beside
   # the Claude icon), and aggregator catalogs added a vendor ("NVIDIA: Nemotron 3 Super").
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario Outline: The model button shows the name the user would say
     When the user chooses the <provider> model "<full>"
     Then the model button reads "<short>"
@@ -102,8 +102,12 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Examples:
       | provider | full                     | short            |
       | Claude   | Claude Opus 5.5          | Opus 5.5         |
-      | Codex    | GPT-5.5                  | 5.5              |
+      | Codex    | GPT-5.5                  | GPT-5.5          |
       | OpenCode | NVIDIA: Nemotron 3 Super | Nemotron 3 Super |
+
+  # A bare version keeps its family prefix ("GPT-5.5" above): "5.5" alone would not say which
+  # family it belongs to. Upstream #24205's own modelShortName test pins this; an earlier row
+  # here said "5.5", which upstream never did.
 
   # Upstream #24205
   @shared @backlog-mobile @backlog-tui @priority-low

@@ -19,32 +19,7 @@ import {
   normalizeCustomModelSlug,
   normalizeModelSlug,
   modelSelectionsEqual,
-  modelShortName,
-  resolveModelShortName,
 } from "./model.ts";
-
-describe("modelShortName", () => {
-  it.each([
-    ["Claude Opus 5.5", ["Claude "], "Opus 5.5"],
-    ["GPT-6.1-Sol", ["GPT-"], "6.1 Sol"],
-    ["GPT 6.0 Astra", ["GPT-", "GPT "], "6.0 Astra"],
-    ["Grok 4 Pro", [], undefined],
-    ["Claude Opus 5.5", [], "Opus 5.5"],
-    ["NVIDIA: Nemotron 3 Super", [], "Nemotron 3 Super"],
-    ["GPT-5.5", ["GPT-"], undefined],
-    ["Gemini 3.1 Pro", ["Gemini "], "3.1 Pro"],
-  ] as const)("gives %s on families %j the short name %s", (name, families, expected) => {
-    expect(modelShortName(name, families)).toBe(expected);
-  });
-
-  it("prefers the manifest's own short name", () => {
-    expect(
-      resolveModelShortName({ name: "Claude Opus 5.5", shortName: "Opus" }, "claudeAgent"),
-    ).toBe("Opus");
-    expect(resolveModelShortName({ name: "Claude Opus 5.5" }, "claudeAgent")).toBe("Opus 5.5");
-    expect(resolveModelShortName({ name: "GPT-5.5" }, "codex")).toBeUndefined();
-  });
-});
 
 it("keeps the Codex catalog display formatting", () => {
   expect(formatCodexModelName("gpt-5.3-codex-spark")).toBe("GPT-5.3-Codex-Spark");

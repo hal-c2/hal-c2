@@ -176,6 +176,7 @@ Item {
                 noProvider: "open-provider-settings"
             });
             compare(settings.triggerTitle, "Open provider settings");
+            compare(settings.triggerFullTitle, "Open provider settings");
             mouseClick(settings);
             const navigations = Shell.dispatchedActions.filter(entry => entry.action === "settings.navigate");
             compare(navigations.length, 1);
@@ -185,6 +186,21 @@ Item {
                 noProvider: "no-provider-available"
             });
             compare(none.triggerTitle, "No provider available");
+            compare(none.triggerFullTitle, "No provider available");
+            const several = createPicker([codex()], true, {
+                multiple: [{
+                    instanceId: "codex",
+                    model: "gpt-5-codex"
+                }, {
+                    instanceId: "codex",
+                    model: "gpt-5-codex"
+                }]
+            });
+            compare(several.triggerFullTitle, several.triggerTitle);
+            const dropped = createPicker([codex([model("gpt-5-codex", "gpt-5-codex", {
+                isUnavailable: true
+            })])]);
+            compare(dropped.triggerFullTitle, "gpt-5-codex (Unavailable)");
         }
 
         function test_the_chosen_model_is_shown_with_its_provider() {
