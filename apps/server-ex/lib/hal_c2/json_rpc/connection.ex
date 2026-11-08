@@ -5,7 +5,8 @@ defmodule HalC2.JsonRpc.Connection do
   Callers use `call/4`, `request/5` and `notify/3`. Incoming notifications and server-to-client
   requests go to the `:handler` pid as `{:json_rpc, conn, message}`; the handler
   answers requests with `respond/3`. If the subprocess exits, pending calls fail with
-  `{:error, :closed}` and the connection stops; with `:program` (the subprocess's
+  `{:error, :closed}` and the connection stops (so does a call written once the
+  subprocess has closed its stdin, and `stop/1` of a stopped one is a no-op); with `:program` (the subprocess's
   name, as its user knows it) they fail with the exit instead, in the words that
   program's own client used (`"Codex App Server process exited with code 1"`, its code as
   `"exitCode"`). With `:log` (a thread id), every
@@ -48,6 +49,10 @@ defmodule HalC2.JsonRpc.Connection do
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, hibernate_after: 15_000)
 
   @spec call(GenServer.server(), String.t(), term, timeout) :: {:ok, term} | {:error, term}
+  # A tail call, so a caller waiting on a reply (for minutes, in a turn) runs no
+  # `Connection` code meanwhile: a `try` here kept every caller on the old version
+  # across an upgrade, and the next one killed them. A call that reaches a
+  # connection already stopped exits (`:noproc`); `HalC2.Acp` treats that as closed.
   def call(conn, method, params, timeout \\ 30_000),
     do: GenServer.call(conn, {:call, method, params}, timeout)
 
@@ -149,6 +154,11 @@ defmodule HalC2.JsonRpc.Connection do
              pending: Map.put(state.pending, id, from),
              methods: Map.put(state.methods, id, method)
          })}
+
+      # The agent closed its stdin, dying or about to, before this call reached it:
+      # the call has met a closed connection, as one sent after the close does.
+      {:error, reason} when reason in [:epipe, :closed] ->
+        {:reply, {:error, :closed}, state}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}

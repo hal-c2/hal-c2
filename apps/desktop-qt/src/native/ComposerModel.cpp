@@ -632,6 +632,36 @@ std::optional<QJsonArray> applyOption(const QJsonArray& descriptors, const QStri
   return selectionsOf(next);
 }
 
+std::optional<QString> steppedChoice(const QJsonObject& descriptor, int direction) {
+  if (str(descriptor, QLatin1String("type")) != QLatin1String("select") || direction == 0) return std::nullopt;
+  const QJsonArray injected = descriptor.value(QLatin1String("promptInjectedValues")).toArray();
+  QStringList choices;
+  QString fallback;
+  for (const QJsonValue& value : descriptor.value(QLatin1String("options")).toArray()) {
+    const QString id = str(value.toObject(), QLatin1String("id"));
+    if (id.isEmpty() || injected.contains(QJsonValue(id))) continue;
+    if (value.toObject().value(QLatin1String("isDefault")).toBool() && fallback.isEmpty()) fallback = id;
+    choices.append(id);
+  }
+  const qsizetype count = choices.size();
+  if (count < 2) return std::nullopt;
+  qsizetype at = choices.indexOf(descriptor.value(QLatin1String("currentValue")).toString());
+  // From the prompt's own effort (Ultrathink), which sits above the top
+  // level: up wraps to the lowest, down comes to the highest.
+  if (at < 0 && injected.contains(descriptor.value(QLatin1String("currentValue")))) return direction > 0 ? choices.first() : choices.last();
+  if (at < 0) at = choices.indexOf(fallback);
+  if (at < 0) return direction > 0 ? choices.first() : choices.last();
+  return choices.at(((at + (direction > 0 ? 1 : -1)) % count + count) % count);
+}
+
+bool ultrathinkInWords(const QString& text) {
+  // The picker writes the prefix with a capital; typed any other way it is
+  // the user's own word.
+  static const QRegularExpression prefix(QStringLiteral("^\\s*Ultrathink:\\s*"));
+  static const QRegularExpression word(QStringLiteral("\\bultrathink\\b"), QRegularExpression::CaseInsensitiveOption);
+  return word.match(QString(text).remove(prefix)).hasMatch();
+}
+
 QVariantList runtimeModes(const Instance* instance) {
   struct Mode {
     const char* value;

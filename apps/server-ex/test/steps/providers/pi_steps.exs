@@ -1852,7 +1852,7 @@ defmodule HalC2.Steps.Providers.Pi do
     Map.merge(context, %{approval_command: command, approval: await_approval(context)})
   end
 
-  step "the approval is titled {string}", %{args: [title]} = context do
+  step "Pi's approval is titled {string}", %{args: [title]} = context do
     {_request, item} = context.approval
     assert item["title"] == title
     context
