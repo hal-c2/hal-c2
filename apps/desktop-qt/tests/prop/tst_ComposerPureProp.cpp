@@ -163,6 +163,50 @@ private slots:
     }));
   }
 
+  void shownPermissionsStayOffered() {
+    QVERIFY(rc::check("the shown permissions are always one the provider offers", [] {
+      const std::vector<QString> modes{QStringLiteral("approval-required"), QStringLiteral("auto-accept-edits"),
+                                       QStringLiteral("auto"), QStringLiteral("full-access")};
+      const auto supported = *rc::gen::container<std::vector<QString>>(rc::gen::elementOf(modes));
+      const QString saved = *rc::gen::elementOf(modes);
+      composer::Instance instance;
+      for (const QString& mode : supported) {
+        if (!instance.runtimeModes.contains(mode)) instance.runtimeModes.append(mode);
+      }
+      const QString shown = composer::shownRuntimeMode(&instance, saved);
+      // Every mode is offered when the provider names none.
+      const bool offered = instance.runtimeModes.isEmpty() || instance.runtimeModes.contains(shown);
+      RC_ASSERT(offered);
+      if (instance.runtimeModes.isEmpty() || instance.runtimeModes.contains(saved)) {
+        RC_ASSERT(shown == saved);
+      } else if (instance.runtimeModes.contains(QStringLiteral("approval-required"))) {
+        RC_ASSERT(shown == QLatin1String("approval-required"));
+      }
+    }));
+    QVERIFY(rc::check("with no ready provider, its stand-in names setup only when one can be set up", [] {
+      const int count = *rc::gen::inRange(0, 5);
+      QList<composer::Instance> list;
+      bool ready = false;
+      bool setUp = false;
+      for (int i = 0; i < count; ++i) {
+        composer::Instance instance;
+        instance.enabled = *rc::gen::arbitrary<bool>();
+        instance.available = *rc::gen::arbitrary<bool>();
+        instance.status = *rc::gen::arbitrary<bool>() ? QStringLiteral("ready") : QStringLiteral("error");
+        instance.canSetUp = *rc::gen::arbitrary<bool>();
+        ready = ready || instance.ready();
+        setUp = setUp || instance.canSetUp;
+        list.append(instance);
+      }
+      const QString label = composer::noProviderLabel(list);
+      if (ready || list.isEmpty()) {
+        RC_ASSERT(label.isEmpty());
+      } else {
+        RC_ASSERT(label == (setUp ? QLatin1String("Open provider settings") : QLatin1String("No provider available")));
+      }
+    }));
+  }
+
   void highlightingKeepsTheText() {
     QVERIFY(rc::check("rich text draws the draft without changing it, inside each line", [] {
       const QString text = *composerText();

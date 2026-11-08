@@ -1401,7 +1401,7 @@ Rectangle {
 
                             Layout.preferredWidth: Math.min(implicitWidth, Theme.control.md * 8)
                             Layout.minimumWidth: Math.min(implicitWidth, Theme.control.md * 2)
-                            enabled: composer.ready && instances.length > 0
+                            enabled: composer.ready && instances.length > 0 && composer.model.isSendBusy !== true
                             selectedInstanceId: composer.ready ? composer.model.selectedInstanceId : null
                             selectedModel: composer.ready ? composer.model.selectedModel : null
                         }

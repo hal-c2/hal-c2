@@ -34,6 +34,7 @@ struct Instance {
   bool available = false;
   bool requiresNewThreadForModelChange = false;
   bool showInteractionModeToggle = true;
+  bool canSetUp = false;  // setup.canInstall or setup.canAuthenticate
   QStringList runtimeModes;  // supportedRuntimeModes; empty: all
   QJsonArray models;
   QJsonArray slashCommands;
@@ -91,6 +92,14 @@ std::optional<QJsonArray> applyOption(const QJsonArray& descriptors, const QStri
 
 // `composer.runtimeModes`: [{value, label, description}].
 QVariantList runtimeModes(const Instance* instance);
+// What the composer shows as the permissions: `saved` when this instance
+// offers it, else Supervised (or the first mode it offers). The saved value
+// itself stays until the user chooses.
+QString shownRuntimeMode(const Instance* instance, const QString& saved);
+// What stands where the model would be when no provider can run a turn:
+// an invitation to set one up when the MC says one can be, else the plain
+// fact. Empty when some provider is ready.
+QString noProviderLabel(const QList<Instance>& list);
 
 // `composer.enterIntents`: {singleLine, multiline}, each held-modifier set
 // ("ctrl+meta+alt+shift" order, "" for none) to what Enter sends.

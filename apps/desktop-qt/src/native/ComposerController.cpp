@@ -4316,7 +4316,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       {QStringLiteral("selectedInstanceId"), orNull(selectedInstance)},
       {QStringLiteral("selectedModel"), orNull(selectedModel)},
       {QStringLiteral("options"), shownOptions},
-      {QStringLiteral("runtimeMode"), runtimeModeOf(target)},
+      {QStringLiteral("runtimeMode"), composer::shownRuntimeMode(instance, runtimeModeOf(target))},
       {QStringLiteral("runtimeModes"), composer::runtimeModes(instance)},
       {QStringLiteral("interactionMode"), interactionModeOf(target)},
       {QStringLiteral("showInteractionModeToggle"), planOn},
@@ -4356,6 +4356,14 @@ QVariantMap ComposerController::pickerState() const {
                                               chosen.value(QLatin1String("model")).toString(), thread && thread->runtime,
                                               current.value(QLatin1String("instanceId")).toString(),
                                               current.value(QLatin1String("model")).toString())},
+      {QStringLiteral("locked"), !onImages() && thread && bool(thread->runtime)},
+      // What stands where the model would be when no provider can run a turn.
+      {QStringLiteral("noProviderLabel"),
+       onImages() ? QVariant::fromValue(nullptr)
+                  : [&]() -> QVariant {
+                      const QString label = composer::noProviderLabel(m_catalogue);
+                      return label.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(label);
+                    }()},
       // Image models are not starred.
       {QStringLiteral("favorites"), !onImages()},
       // A new thread may go to several models: [{instanceId, model}] once

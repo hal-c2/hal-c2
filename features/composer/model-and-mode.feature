@@ -125,7 +125,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | claude | sonnet      | gpt-5-codex |
       | codex  | gpt-5-codex | opus        |
 
-  @desktop @backlog @priority-low
+  @desktop @priority-low
   Scenario: Search results keep the provider's newest-first order
     Given Claude lists "Opus 5.5", "Opus 5", "Opus 4.8" and "Opus 4.5" in that order
     When the user searches the models for "opus"
@@ -439,7 +439,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | "server" is updating                       | Updating 1 machine                |
       | the update of "server" failed              | Could not update 1 machine        |
 
-  @backlog @desktop
+  @desktop
   Scenario: The model picker opens on the favourites when there are any
     Given the user has marked "claude-opus" as a favourite
     When the user opens the model picker
@@ -458,7 +458,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the section is already open when the thread runs on one of them
 
   # Upstream #11933: a favourited legacy model was hidden in the folded "Legacy models" section.
-  @backlog @desktop
+  @desktop
   Scenario: A favourite older model is listed outside the folded section
     Given Codex lists the legacy model "gpt-4.1" and the user marked it as a favourite
     When the user looks through Codex's models
@@ -466,13 +466,13 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user removes it from the favourites
     Then "gpt-4.1" is back among the older models behind "Show more"
 
-  @backlog @desktop
+  @desktop
   Scenario: Searching the models finds a provider's older models too
     Given Codex lists the legacy model "gpt-4.1"
     When the user searches the models for "4.1"
     Then "gpt-4.1" is listed without choosing "Show more"
 
-  @backlog @desktop
+  @desktop
   Scenario: A search that matches no model says so
     When the user searches the models for "zzz"
     Then the user is told "No models found"
@@ -485,7 +485,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the picker stays open with the search text as the input method left it
     But Enter outside composition still chooses the highlighted model, and Escape closes the picker
 
-  @backlog @desktop
+  @desktop
   Scenario: A model the provider has just added is marked as new
     Given Codex reports "gpt-6" as a new model
     When the user looks through Codex's models
@@ -503,7 +503,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | six days ago      | is marked as new      |
       | eight days ago    | is not marked as new  |
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: A provider that cannot be used says why in the model picker
     Given the provider instance "Codex Work" <state>
     When the user rests on "Codex Work" in the model picker
@@ -516,7 +516,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | reports the warning "Signed out"              | Codex Work — Limited. Signed out         |
       | has not finished its check                    | Codex Work — Not ready.                  |
 
-  @backlog @desktop
+  @desktop
   Scenario: A provider that needs setting up offers its setup from the model picker
     Given Cursor is not installed and HAL-C2 can install it
     When the user looks through Cursor's models
@@ -533,20 +533,20 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user rests on Claude in the model picker
     Then the user reads "Claude is unavailable in this thread. Start a new thread to switch providers."
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: The model cannot be changed while a message is on its way
     Given the user has sent a message the MC has not taken yet
     Then the model picker cannot be opened
     And it can be opened again once the MC takes the message
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: The model picker waits for the provider list before it can be used
     Given the environment has not yet reported its providers
     Then the composer shows the thread's model and the model picker cannot be opened
     When the providers arrive
     Then the model picker can be opened
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: A composer with no usable provider says so in place of the model
     Given no provider can run a turn
     And <setup>
@@ -559,7 +559,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | one of the providers can be set up      | Open provider settings |
       | none of the providers can be set up     | No provider available  |
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: A saved model its provider no longer lists is kept and marked unavailable
     Given the thread runs on OpenCode with the model "kimi-k2"
     And OpenCode no longer lists "kimi-k2"
@@ -596,7 +596,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then that model replaces the thread's model
     And no second model is chosen
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: Planning and building are toggled on the desktop only when plan mode is on
     Given the plan mode setting is on
     Then the composer offers to switch between "Build" and "Plan"
@@ -604,13 +604,13 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the composer offers no such switch
     And the next turn builds
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: Only the permissions the provider supports are offered
     Given the thread's provider supports only Supervised and Full access
     When the user opens the permissions
     Then only Supervised and Full access are offered, each with a line saying what it allows
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: A thread whose saved permissions its provider no longer offers is shown as Supervised
     Given the thread was saved with Auto-accept edits
     And its provider now supports only Supervised and Full access

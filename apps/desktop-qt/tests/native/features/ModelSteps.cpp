@@ -342,6 +342,218 @@ const Steps steps([] {
     expect(!mode.isEmpty() && runs == mode, QStringLiteral("the turn runs in %1, not %2").arg(runs, mode));
   });
 
+  // Why a provider instance cannot be used, in its rail tooltip.
+  step(QStringLiteral("the provider instance %1 (.+)").arg(q), [](World& world, const Captures& c, const Table&) {
+    QJsonObject fields;
+    if (c[1] == QLatin1String("is turned off in settings")) {
+      fields = {{QStringLiteral("status"), QStringLiteral("disabled")}};
+    } else if (c[1].startsWith(QLatin1String("failed its check with"))) {
+      fields = {{QStringLiteral("status"), QStringLiteral("error")},
+                {QStringLiteral("message"), c[1].mid(QStringLiteral("failed its check with \"").size()).chopped(1)}};
+    } else if (c[1].startsWith(QLatin1String("reports the warning"))) {
+      fields = {{QStringLiteral("status"), QStringLiteral("warning")},
+                {QStringLiteral("message"), c[1].mid(QStringLiteral("reports the warning \"").size()).chopped(1)}};
+    } else if (c[1] == QLatin1String("has not finished its check")) {
+      fields = {{QStringLiteral("status"), QStringLiteral("checking")}};
+    } else {
+      fail(QStringLiteral("the steps do not know the state %1").arg(c[1]));
+    }
+    add(world, provider(QStringLiteral("codex_work"), QStringLiteral("codex"), c[0], {QStringLiteral("gpt-5-work")}, fields));
+  });
+  step(QStringLiteral("the user rests on %1 in the model picker").arg(q), [](World& world, const Captures&, const Table&) { world.sync(); });
+  step(QStringLiteral("the user reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString reason = instance(world, QStringLiteral("codex_work")).value(QStringLiteral("unavailableReason")).toString();
+    expect(reason == c[0], QStringLiteral("the picker says \"%1\", not \"%2\"").arg(reason, c[0]));
+  });
+
+  // Only the permissions the provider supports.
+  const auto onlySupervisedAndFull = [](World& world) {
+    add(world, provider(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"),
+                        {QStringLiteral("gpt-5"), QStringLiteral("gpt-5-codex")},
+                        {{QStringLiteral("supportedRuntimeModes"), QJsonArray{QStringLiteral("approval-required"), QStringLiteral("full-access")}}}));
+  };
+  step(QStringLiteral("the thread's provider supports only Supervised and Full access"), [onlySupervisedAndFull](World& world, const Captures&, const Table&) {
+    onlySupervisedAndFull(world);
+  });
+  step(QStringLiteral("its provider now supports only Supervised and Full access"), [onlySupervisedAndFull](World& world, const Captures&, const Table&) {
+    onlySupervisedAndFull(world);
+  });
+  step(QStringLiteral("the user opens the permissions"), [](World& world, const Captures&, const Table&) { world.sync(); });
+  step(QStringLiteral("only Supervised and Full access are offered, each with a line saying what it allows"), [](World& world, const Captures&, const Table&) {
+    QStringList labels;
+    bool described = true;
+    for (const QVariant& mode : composer(world).value(QStringLiteral("runtimeModes")).toList()) {
+      labels.append(mode.toMap().value(QStringLiteral("label")).toString());
+      described = described && !mode.toMap().value(QStringLiteral("description")).toString().isEmpty();
+    }
+    expect(labels == QStringList{QStringLiteral("Supervised"), QStringLiteral("Full access")} && described,
+           QStringLiteral("the composer offers %1").arg(show(composer(world).value(QStringLiteral("runtimeModes")))));
+  });
+  step(QStringLiteral("the thread was saved with Auto-accept edits"), [](World& world, const Captures&, const Table&) {
+    updateThread(world, {{QStringLiteral("runtimeMode"), QStringLiteral("auto-accept-edits")}});
+  });
+  step(QStringLiteral("the user looks at the composer"), [](World& world, const Captures&, const Table&) { world.sync(); });
+  step(QStringLiteral("the permissions read %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString shown = composer(world).value(QStringLiteral("runtimeMode")).toString();
+    QString label;
+    for (const QVariant& mode : composer(world).value(QStringLiteral("runtimeModes")).toList()) {
+      if (mode.toMap().value(QStringLiteral("value")) == shown) label = mode.toMap().value(QStringLiteral("label")).toString();
+    }
+    expect(label == c[0], QStringLiteral("the permissions read \"%1\" (%2)").arg(label, shown));
+  });
+  step(QStringLiteral("the thread's saved permissions are unchanged until the user chooses"), [](World& world, const Captures&, const Table&) {
+    expect(world.mc.threads.value(kThread).value(QLatin1String("runtimeMode")) == QLatin1String("auto-accept-edits") &&
+               std::none_of(world.mc.commands.cbegin(), world.mc.commands.cend(), [](const QJsonObject& command) {
+                 return command.value(QLatin1String("type")) == QLatin1String("thread.runtime-mode.set");
+               }),
+           QStringLiteral("the MC has %1").arg(world.describeCommands()));
+  });
+
+  // Build and Plan only while the plan mode setting is on.
+  step(QStringLiteral("the plan mode setting is on"), [](World& world, const Captures&, const Table&) {
+    expect(world.native().controller<SettingsController>()->writeDevice(QStringLiteral("planModeEnabled"), true),
+           world.native().controller<SettingsController>()->deviceError());
+    world.sync();
+  });
+  step(QStringLiteral("the composer offers to switch between \"Build\" and \"Plan\""), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return composer(world).value(QStringLiteral("showInteractionModeToggle")).toBool(); },
+                  [&] { return QStringLiteral("the Build/Plan switch; the composer shows %1").arg(show(composer(world))); });
+  });
+  step(QStringLiteral("the user turns the plan mode setting off"), [](World& world, const Captures&, const Table&) {
+    expect(world.native().controller<SettingsController>()->writeDevice(QStringLiteral("planModeEnabled"), false),
+           world.native().controller<SettingsController>()->deviceError());
+    world.sync();
+  });
+  step(QStringLiteral("the composer offers no such switch"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !composer(world).value(QStringLiteral("showInteractionModeToggle")).toBool(); },
+                  [&] { return QStringLiteral("no Build/Plan switch; the composer shows %1").arg(show(composer(world))); });
+  });
+  step(QStringLiteral("the next turn builds"), [](World& world, const Captures&, const Table&) {
+    expect(composer(world).value(QStringLiteral("interactionMode")) == QLatin1String("default"),
+           QStringLiteral("the composer is in %1").arg(composer(world).value(QStringLiteral("interactionMode")).toString()));
+    for (const QJsonObject& command : sendTurn(world)) {
+      expect(command.value(QLatin1String("interactionMode")) != QLatin1String("plan"), QStringLiteral("the send made %1").arg(show(command.toVariantMap())));
+    }
+  });
+
+  // A saved model its provider no longer lists.
+  step(QStringLiteral("the thread runs on OpenCode with the model %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    add(world, provider(QStringLiteral("opencode"), QStringLiteral("opencode"), QStringLiteral("OpenCode"), {c[0], QStringLiteral("big-pickle")}));
+    updateThread(world, {{QStringLiteral("modelSelection"),
+                          QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("opencode")}, {QStringLiteral("model"), c[0]}}}});
+    world.waitFor([&] { return composer(world).value(QStringLiteral("selectedModel")) == c[0]; },
+                  [&] { return QStringLiteral("the composer on %1; it shows %2").arg(c[0], show(composer(world))); });
+  });
+  step(QStringLiteral("OpenCode no longer lists %1").arg(q), [](World& world, const Captures&, const Table&) {
+    add(world, provider(QStringLiteral("opencode"), QStringLiteral("opencode"), QStringLiteral("OpenCode"), {QStringLiteral("big-pickle")}));
+  });
+  step(QStringLiteral("the model reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The trigger reads "<model> (Unavailable)" from the kept model's flag.
+    const QString slug = c[0].chopped(QStringLiteral(" (Unavailable)").size());
+    bool kept = false;
+    for (const QVariant& model : instance(world, QStringLiteral("opencode")).value(QStringLiteral("models")).toList()) {
+      if (model.toMap().value(QStringLiteral("slug")) == slug) kept = model.toMap().value(QStringLiteral("isUnavailable")).toBool();
+    }
+    expect(kept && composer(world).value(QStringLiteral("selectedModel")) == slug,
+           QStringLiteral("the picker lists %1").arg(show(instances(world))));
+  });
+  step(QStringLiteral("the thread's model is not changed to another one"), [](World& world, const Captures&, const Table&) {
+    expect(world.mc.threads.value(kThread).value(QLatin1String("modelSelection")).toObject().value(QLatin1String("model")) ==
+               composer(world).value(QStringLiteral("selectedModel")).toString(),
+           QStringLiteral("the thread is on %1").arg(show(world.mc.threads.value(kThread).toVariantMap())));
+  });
+
+  // A composer with no usable provider.
+  step(QStringLiteral("no provider can run a turn"), [](World& world, const Captures&, const Table&) {
+    offer(world, {provider(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"), {QStringLiteral("gpt-5")},
+                           {{QStringLiteral("installed"), false},
+                            {QStringLiteral("status"), QStringLiteral("error")},
+                            {QStringLiteral("message"), QStringLiteral("codex not found")}}),
+                  provider(QStringLiteral("claudeAgent"), QStringLiteral("claudeAgent"), QStringLiteral("Claude"), {QStringLiteral("claude-opus")},
+                           {{QStringLiteral("installed"), false}, {QStringLiteral("status"), QStringLiteral("error")}})});
+  });
+  step(QStringLiteral("one of the providers can be set up"), [](World& world, const Captures&, const Table&) {
+    add(world, provider(QStringLiteral("cursor"), QStringLiteral("cursor"), QStringLiteral("Cursor"), {QStringLiteral("cursor-auto")},
+                        {{QStringLiteral("installed"), false},
+                         {QStringLiteral("status"), QStringLiteral("error")},
+                         {QStringLiteral("setup"), QJsonObject{{QStringLiteral("canInstall"), true}, {QStringLiteral("canAuthenticate"), false}}}}));
+  });
+  step(QStringLiteral("none of the providers can be set up"), [](World& world, const Captures&, const Table&) { world.sync(); });
+  step(QStringLiteral("the composer shows %1 where the model would be").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString label = world.state(QStringLiteral("modelPicker")).toMap().value(QStringLiteral("noProviderLabel")).toString();
+    expect(label == c[0], QStringLiteral("the composer shows \"%1\", not \"%2\"").arg(label, c[0]));
+  });
+  step(QStringLiteral("no message can be sent"), [](World& world, const Captures&, const Table&) {
+    expect(!composer(world).value(QStringLiteral("canSend")).toBool() &&
+               composer(world).value(QStringLiteral("sendDisabledReason")) == QLatin1String("No provider available"),
+           QStringLiteral("the composer shows %1").arg(show(composer(world))));
+  });
+
+  // The model cannot change while a message is on its way.
+  step(QStringLiteral("the user has sent a message the MC has not taken yet"), [](World& world, const Captures&, const Table&) {
+    composerBrick(world);
+    world.mc.hold(QStringLiteral("answers"));
+    world.bridge().dispatch(QStringLiteral("composer.submit"),
+                            QVariantMap{{QStringLiteral("text"), QStringLiteral("next turn")}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
+    world.waitFor([&] { return composer(world).value(QStringLiteral("isSendBusy")).toBool(); }, QStringLiteral("the send to be on its way"));
+  });
+  step(QStringLiteral("the model picker cannot be opened"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* picker = composerPart(world, QStringLiteral("modelPicker"));
+    expect(picker != nullptr, QStringLiteral("the composer has no model picker"));
+    expect(!picker->property("enabled").toBool(), QStringLiteral("the model picker can be opened while a message is on its way"));
+    QMetaObject::invokeMethod(picker, "open");
+    world.sync();
+    expect(!picker->property("popup").value<QObject*>()->property("opened").toBool(), QStringLiteral("the model picker opened"));
+  });
+  step(QStringLiteral("it can be opened again once the MC takes the message"), [](World& world, const Captures&, const Table&) {
+    world.mc.answerHeld();
+    QQuickItem* picker = composerPart(world, QStringLiteral("modelPicker"));
+    world.waitFor([&] { return !composer(world).value(QStringLiteral("isSendBusy")).toBool() && picker->property("enabled").toBool(); },
+                  QStringLiteral("the model picker to open again"));
+    QMetaObject::invokeMethod(picker, "open");
+    world.waitFor([&] { return picker->property("popup").value<QObject*>()->property("opened").toBool(); }, QStringLiteral("the model picker to open"));
+  });
+
+  // The picker waits for the provider list.
+  step(QStringLiteral("the environment has not yet reported its providers"), [](World& world, const Captures&, const Table&) {
+    composerBrick(world);
+    offer(world, {});
+  });
+  step(QStringLiteral("the composer shows the thread's model and the model picker cannot be opened"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* picker = composerPart(world, QStringLiteral("modelPicker"));
+    expect(picker != nullptr, QStringLiteral("the composer has no model picker"));
+    world.waitFor([&] { return !picker->property("enabled").toBool(); }, QStringLiteral("the model picker to wait"));
+    expect(picker->property("triggerTitle") == composer(world).value(QStringLiteral("selectedModel")),
+           QStringLiteral("the picker reads \"%1\"").arg(picker->property("triggerTitle").toString()));
+    QMetaObject::invokeMethod(picker, "open");
+    world.sync();
+    expect(!picker->property("popup").value<QObject*>()->property("opened").toBool(), QStringLiteral("the model picker opened"));
+  });
+  step(QStringLiteral("the providers arrive"), [](World& world, const Captures&, const Table&) { offer(world, codexAndClaude()); });
+  step(QStringLiteral("the model picker can be opened"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* picker = composerPart(world, QStringLiteral("modelPicker"));
+    world.waitFor([&] { return picker->property("enabled").toBool(); }, QStringLiteral("the model picker to open"));
+    QMetaObject::invokeMethod(picker, "open");
+    world.waitFor([&] { return picker->property("popup").value<QObject*>()->property("opened").toBool(); }, QStringLiteral("the model picker to open"));
+  });
+
+  // A favourite older model, kept for the removal step above.
+  step(QStringLiteral("Codex lists the legacy model %1 and the user marked it as a favourite").arg(q), [](World& world, const Captures& c, const Table&) {
+    QJsonObject legacy{{QStringLiteral("slug"), c[0]},
+                       {QStringLiteral("name"), c[0]},
+                       {QStringLiteral("isLegacy"), true},
+                       {QStringLiteral("capabilities"), QJsonObject{{QStringLiteral("optionDescriptors"), QJsonArray{effort()}}}}};
+    QJsonObject codex = provider(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"), {QStringLiteral("gpt-5"), QStringLiteral("gpt-5-codex")});
+    QJsonArray models = codex.value(QLatin1String("models")).toArray();
+    models.append(legacy);
+    codex.insert(QStringLiteral("models"), models);
+    add(world, codex);
+    world.mc.part<Catalogue>().favourite = c[0];
+    world.bridge().dispatch(QStringLiteral("composer.model.favorite.toggle"),
+                            QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), c[0]}});
+    world.waitFor([&] { return favourite(world, c[0]); }, QStringLiteral("the favourite to be marked"));
+  });
+
   // Plan mode, a beta setting, on a provider that offers it.
   step(QStringLiteral("plan mode is turned on"), [](World& world, const Captures&, const Table&) {
     expect(world.native().controller<SettingsController>()->writeDevice(QStringLiteral("planModeEnabled"), true),

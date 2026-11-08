@@ -29,10 +29,16 @@ AbstractButton {
         return onlyInstances === null ? all : all.filter(instance => onlyInstances.includes(instance.instanceId));
     }
     readonly property var activeInstance: Picker.findInstance(instances, selectedInstanceId)
+    // The instance the rail is looking at, when it cannot be used but the MC
+    // can set it up: its panel offers the setup instead of models.
+    readonly property var setupInstance: {
+        const looked = Picker.findInstance(instances, view);
+        return looked && !looked.isAvailable && looked.canSetUp === true ? looked : null;
+    }
     readonly property var activeModel: Picker.findModel(activeInstance, selectedModel)
     // The models a new thread's prompt goes to, once more than one is chosen.
     readonly property var multiple: onlyInstances === null ? (catalogue?.multiple ?? null) : null
-    readonly property string triggerTitle: multiple !== null ? qsTr("%1 models").arg(multiple.length) : activeModel ? Picker.displayName(activeModel, true) : (selectedModel ? selectedModel : qsTr("Choose model"))
+    readonly property string triggerTitle: multiple !== null ? qsTr("%1 models").arg(multiple.length) : activeModel ? Picker.displayName(activeModel, true) : (catalogue?.noProviderLabel ? catalogue.noProviderLabel : (selectedModel ? selectedModel : qsTr("Choose model")))
 
     function inMultiple(instanceId, model) {
         return multiple !== null && multiple.some(entry => entry.instanceId === instanceId && entry.model === model);
@@ -298,7 +304,7 @@ AbstractButton {
             control.expandedLegacy = control.activeModel && control.activeModel.isLegacy ? {
                 [control.selectedInstanceId]: true
             } : {};
-            control.view = Picker.initialView(control.instances, control.selectedInstanceId);
+            control.view = Picker.initialView(control.instances, control.selectedInstanceId, control.catalogue?.locked === true);
         }
         // The keymap's modelPickerOpen.
         onVisibleChanged: Keybindings.modelPickerOpen = visible
@@ -419,6 +425,7 @@ AbstractButton {
                                 objectName: "modelPickerProvider:" + modelData.instanceId
                                 railId: modelData.instanceId
                                 available: modelData.isAvailable
+                                canSetUp: modelData.canSetUp === true
                                 tooltip: modelData.unavailableReason ?? modelData.displayName
 
                                 ProviderIcon {
@@ -569,12 +576,44 @@ AbstractButton {
                         }
 
                         Text {
+                            objectName: "modelPickerEmpty"
                             anchors.centerIn: parent
-                            visible: list.count === 0
+                            visible: list.count === 0 && control.setupInstance === null
                             text: qsTr("No models found")
                             color: control.muted
                             font.family: control.fontFamily
                             font.pixelSize: Theme.type.body.size
+                        }
+
+                        Column {
+                            anchors.centerIn: parent
+                            width: parent.width - Theme.space.lg * 2
+                            visible: control.setupInstance !== null
+                            spacing: Theme.space.sm
+
+                            Text {
+                                objectName: "modelPickerSetupReason"
+                                width: parent.width
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.WordWrap
+                                text: control.setupInstance ? (control.setupInstance.unavailableReason ?? "") : ""
+                                color: control.muted
+                                font.family: control.fontFamily
+                                font.pixelSize: Theme.type.body.size
+                            }
+
+                            ShellButton {
+                                objectName: "modelPickerSetup"
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                text: qsTr("Open provider setup")
+                                Accessible.name: qsTr("Open provider setup")
+                                onClicked: {
+                                    popup.close();
+                                    Shell.dispatch("settings.navigate", {
+                                        to: "/settings/providers"
+                                    });
+                                }
+                            }
                         }
                     }
                 }
@@ -896,6 +935,10 @@ AbstractButton {
         property string railId: ""
         property string tooltip: ""
         property bool available: true
+        // An unavailable provider the MC can set up can still be opened:
+        // its panel says why and offers the setup.
+        property bool canSetUp: false
+        readonly property bool selectable: available || canSetUp
         readonly property bool selected: control.view === railId
         default property alias content: face.data
 
@@ -927,7 +970,7 @@ AbstractButton {
         }
 
         TapHandler {
-            enabled: railButton.available
+            enabled: railButton.selectable
             onTapped: control.selectView(railButton.railId)
         }
 
@@ -954,7 +997,7 @@ AbstractButton {
             case Qt.Key_Return:
             case Qt.Key_Enter:
             case Qt.Key_Space:
-                if (railButton.available)
+                if (railButton.selectable)
                     control.selectView(railButton.railId);
                 break;
             case Qt.Key_Escape:

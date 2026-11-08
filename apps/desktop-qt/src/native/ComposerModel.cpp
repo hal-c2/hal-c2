@@ -318,6 +318,8 @@ QList<Instance> instances(const QJsonArray& providers) {
     instance.available = str(provider, QLatin1String("availability")) != QLatin1String("unavailable");
     instance.requiresNewThreadForModelChange = provider.value(QLatin1String("requiresNewThreadForModelChange")).toBool();
     instance.showInteractionModeToggle = provider.value(QLatin1String("showInteractionModeToggle")) != QJsonValue(false);
+    const QJsonObject setup = provider.value(QLatin1String("setup")).toObject();
+    instance.canSetUp = setup.value(QLatin1String("canInstall")).toBool() || setup.value(QLatin1String("canAuthenticate")).toBool();
     for (const QJsonValue& mode : provider.value(QLatin1String("supportedRuntimeModes")).toArray()) {
       instance.runtimeModes.append(mode.toString());
     }
@@ -460,6 +462,7 @@ QVariantList pickerInstances(const QList<Instance>& list, const ModelPrefs& pref
         {QStringLiteral("initials"), initialsOf(instance.displayName)},
         {QStringLiteral("showBadge"), showBadge(instance, visible)},
         {QStringLiteral("status"), instance.status},
+        {QStringLiteral("canSetUp"), instance.canSetUp},
         {QStringLiteral("isAvailable"), instance.ready() || !shown.isEmpty()},
         {QStringLiteral("unavailableReason"), reason},
         {QStringLiteral("models"), shown},
@@ -631,6 +634,27 @@ QVariantList runtimeModes(const Instance* instance) {
                               {QStringLiteral("description"), QString::fromLatin1(mode.description)}});
   }
   return result;
+}
+
+QString shownRuntimeMode(const Instance* instance, const QString& saved) {
+  const QVariantList offered = runtimeModes(instance);
+  QStringList values;
+  for (const QVariant& entry : offered) values.append(entry.toMap().value(QStringLiteral("value")).toString());
+  if (values.contains(saved)) return saved;
+  if (values.contains(QStringLiteral("approval-required"))) return QStringLiteral("approval-required");
+  return values.isEmpty() ? saved : values.first();
+}
+
+QString noProviderLabel(const QList<Instance>& list) {
+  // No providers reported yet is not "none can run a turn": the composer
+  // still shows the thread's model while it waits.
+  if (list.isEmpty()) return {};
+  bool setUp = false;
+  for (const Instance& instance : list) {
+    if (instance.ready()) return {};
+    if (instance.canSetUp) setUp = true;
+  }
+  return setUp ? QStringLiteral("Open provider settings") : QStringLiteral("No provider available");
 }
 
 // What Enter and its modified forms send.

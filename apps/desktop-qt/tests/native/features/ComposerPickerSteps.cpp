@@ -575,6 +575,127 @@ const Steps steps([] {
     QQuickItem* action = primary(world);
     world.waitFor([&] { return !action->property("stopMode").toBool() && action->property("sendable").toBool(); }, QStringLiteral("the composer to offer Send again"));
   });
+
+  // Search order, older models, new marks and the setup offer.
+  const auto quotedList = [](const QString& text) {
+    QStringList names;
+    const QRegularExpression quoted(QStringLiteral("\"([^\"]*)\""));
+    for (auto match = quoted.globalMatch(text); match.hasNext();) names.append(match.next().captured(1));
+    return names;
+  };
+  step(QStringLiteral("Claude lists (.+) in that order"), [quotedList](World& world, const Captures& c, const Table&) {
+    QJsonArray models;
+    for (const QString& name : quotedList(c[0])) models.append(model(name.toLower().replace(u' ', u'-'), name));
+    changeProvider(world, QStringLiteral("claudeAgent"), [&models](QJsonObject& entry) { entry.insert(QStringLiteral("models"), models); });
+  });
+  step(QStringLiteral("the models are listed as (.+)"), [quotedList](World& world, const Captures& c, const Table&) {
+    const QStringList expected = quotedList(c[0]);
+    world.waitFor([&] { return listed(world) == expected; }, [&] { return QStringLiteral("%1; the picker lists %2").arg(expected.join(u", "), listed(world).join(u", ")); });
+  });
+  step(QStringLiteral("a shorter name is not listed ahead of a newer model"), [](World& world, const Captures&, const Table&) {
+    const QStringList names = listed(world);
+    expect(names.indexOf(QStringLiteral("Opus 5")) > names.indexOf(QStringLiteral("Opus 5.5")) && names.indexOf(QStringLiteral("Opus 5.5")) >= 0,
+           QStringLiteral("the picker lists %1").arg(names.join(u", ")));
+  });
+  step(QStringLiteral("the user looks through (\\w+)'s models"), [](World& world, const Captures& c, const Table&) {
+    openPicker(world);
+    click(world, part(world, QStringLiteral("modelPickerProvider:") + driverOf(c[0])));
+  });
+  step(QStringLiteral("Codex lists the legacy model %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    changeProvider(world, QStringLiteral("codex"), [&c](QJsonObject& entry) {
+      QJsonArray models = entry.value(QLatin1String("models")).toArray();
+      QJsonObject legacy = model(c[0], c[0]);
+      legacy.insert(QStringLiteral("isLegacy"), true);
+      models.append(legacy);
+      entry.insert(QStringLiteral("models"), models);
+    });
+  });
+  step(QStringLiteral("%1 is listed without choosing %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return listed(world).contains(c[0]); }, [&] { return QStringLiteral("%1 to be listed; the picker lists %2").arg(c[0], listed(world).join(u", ")); });
+  });
+  step(QStringLiteral("%1 is listed above Codex's current models without choosing %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QStringList names = listed(world);
+    expect(names.value(0) == c[0], QStringLiteral("the picker lists %1").arg(names.join(u", ")));
+  });
+  step(QStringLiteral("%1 is back among the older models behind %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      bool folded = false;
+      for (const QVariant& row : rows(world)) folded = folded || row.toMap().value(QStringLiteral("kind")) == QLatin1String("legacy");
+      return folded && !listed(world).contains(c[0]);
+    }, [&] { return QStringLiteral("%1 behind the older models; the picker lists %2").arg(c[0], listed(world).join(u", ")); });
+  });
+  step(QStringLiteral("Codex reports %1 as a new model").arg(q), [](World& world, const Captures& c, const Table&) {
+    changeProvider(world, QStringLiteral("codex"), [&c](QJsonObject& entry) {
+      QJsonArray models = entry.value(QLatin1String("models")).toArray();
+      QJsonObject fresh = model(c[0], c[0]);
+      fresh.insert(QStringLiteral("badge"), QStringLiteral("new"));
+      models.append(fresh);
+      entry.insert(QStringLiteral("models"), models);
+    });
+  });
+  step(QStringLiteral("%1 is marked as new").arg(q), [](World& world, const Captures& c, const Table&) {
+    bool marked = false;
+    for (const QVariant& row : rows(world)) {
+      const QVariantMap listedModel = row.toMap().value(QStringLiteral("model")).toMap();
+      if (listedModel.value(QStringLiteral("slug")) == c[0]) marked = listedModel.value(QStringLiteral("isNew")).toBool();
+    }
+    expect(marked && part(world, QStringLiteral("modelPickerRow:codex:") + c[0])->isVisible(), QStringLiteral("%1 is not marked as new").arg(c[0]));
+  });
+
+  // The picker opens on the favourites, or on a started thread's provider.
+  step(QStringLiteral("the user has marked %1 as a favourite").arg(q), [](World& world, const Captures& c, const Table&) {
+    QString instanceId;
+    for (const QVariant& entry : instances(world)) {
+      for (const QVariant& listed : entry.toMap().value(QStringLiteral("models")).toList()) {
+        if (listed.toMap().value(QStringLiteral("slug")) == c[0]) instanceId = entry.toMap().value(QStringLiteral("instanceId")).toString();
+      }
+    }
+    expect(!instanceId.isEmpty(), QStringLiteral("no provider lists %1").arg(c[0]));
+    world.bridge().dispatch(QStringLiteral("composer.model.favorite.toggle"), QVariantMap{{QStringLiteral("instanceId"), instanceId}, {QStringLiteral("model"), c[0]}});
+    world.sync();
+  });
+  step(QStringLiteral("the favourites are listed first, each under its own provider's name"), [](World& world, const Captures&, const Table&) {
+    expect(picker(world)->property("view") == QLatin1String("favorites"), QStringLiteral("the picker opens on %1").arg(picker(world)->property("view").toString()));
+    const QVariantList shown = rows(world);
+    expect(!shown.isEmpty() && std::all_of(shown.cbegin(), shown.cend(), [](const QVariant& row) {
+             return row.toMap().value(QStringLiteral("model")).toMap().value(QStringLiteral("isFavorite")).toBool() &&
+                    !row.toMap().value(QStringLiteral("instance")).toMap().value(QStringLiteral("displayName")).toString().isEmpty();
+           }),
+           QStringLiteral("the favourites list %1").arg(listed(world).join(u", ")));
+  });
+  step(QStringLiteral("in a thread that has already run a turn the picker opens on the thread's provider"), [](World& world, const Captures&, const Table&) {
+    QMetaObject::invokeMethod(picker(world), "close");
+    updateThread(world, {{QStringLiteral("latestRunId"), QStringLiteral("run-0")},
+                         {QStringLiteral("runtime"), QJsonObject{{QStringLiteral("status"), QStringLiteral("ready")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:30:00Z")}}}});
+    openPicker(world);
+    expect(picker(world)->property("view") == composer(world).value(QStringLiteral("selectedInstanceId")),
+           QStringLiteral("the picker opens on %1").arg(picker(world)->property("view").toString()));
+  });
+
+  // A provider that needs setting up.
+  step(QStringLiteral("Cursor is not installed and HAL-C2 can install it"), [](World& world, const Captures&, const Table&) {
+    QJsonArray list = providers(world);
+    QJsonObject cursor = provider(QStringLiteral("cursor"), QStringLiteral("Cursor"), {model(QStringLiteral("cursor-auto"), QStringLiteral("Auto"))});
+    cursor.insert(QStringLiteral("installed"), false);
+    cursor.insert(QStringLiteral("status"), QStringLiteral("error"));
+    cursor.insert(QStringLiteral("message"), QStringLiteral("Cursor CLI is not installed."));
+    cursor.insert(QStringLiteral("setup"), QJsonObject{{QStringLiteral("canInstall"), true}, {QStringLiteral("canAuthenticate"), false}});
+    list.append(cursor);
+    offer(world, list);
+  });
+  step(QStringLiteral("the picker says why Cursor cannot be used and offers %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* reason = part(world, QStringLiteral("modelPickerSetupReason"));
+    QQuickItem* setup = part(world, QStringLiteral("modelPickerSetup"));
+    world.waitFor([&] { return reason->isVisible() && setup->isVisible() && setup->property("text") == c[0]; },
+                  [&] { return QStringLiteral("the setup offer; the picker says \"%1\"").arg(reason->property("text").toString()); });
+    expect(reason->property("text").toString().contains(QLatin1String("Cursor CLI is not installed.")), QStringLiteral("the picker says \"%1\"").arg(reason->property("text").toString()));
+  });
+  step(QStringLiteral("the picker closes and the setup for Cursor opens"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !popupOf(picker(world))->property("visible").toBool(); }, QStringLiteral("the picker to close"));
+    auto* navigation = world.native().controller<NavigationController>();
+    world.waitFor([&] { return navigation->route() == NavigationController::Route::settings(NavigationController::kProvidersSection); },
+                  [&] { return QStringLiteral("the Providers settings to open; the window shows %1").arg(show(world.state(QStringLiteral("route")))); });
+  });
 });
 
 }  // namespace
@@ -599,6 +720,14 @@ bool modelPickerShows(World& world, const QString& name, const QString& reason) 
 bool modelPickerChooses(World& world, const QString& name) {
   if (!composerBrickShown(world) || !pickerOpen(world)) return false;
   click(world, rowOf(world, name));
+  return true;
+}
+
+bool modelPickerChoosesSetup(World& world) {
+  if (!composerBrickShown(world)) return false;
+  QQuickItem* setup = composerPart(world, QStringLiteral("modelPickerSetup"));
+  if (!setup || !setup->isVisible()) return false;
+  click(world, setup);
   return true;
 }
 
