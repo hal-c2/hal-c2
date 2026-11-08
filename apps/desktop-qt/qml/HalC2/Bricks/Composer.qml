@@ -264,6 +264,8 @@ Rectangle {
                     modelPicker.forceActiveFocus();
                     modelPicker.popup.open();
                 }
+            } else if (action === "composer.modelPicker.back") {
+                modelPicker.stepBack();
             } else if (action === "composer.control.open") {
                 composer.openControl(payload.command);
             } else if (action === "composer.stash.key" && composer.ready) {
@@ -301,7 +303,9 @@ Rectangle {
             "composer.workspace": envModePicker
         }[command];
         // The permissions are named in the strip or on the toolbar, else
-        // they open in the model control.
+        // they open in the model control. That control is shut while a
+        // message is on its way to the MC (isSendBusy), and so is this key,
+        // as the model key is; it opens again once the send lands.
         if (command === "composer.mode" && !runtimeModePicker.present) {
             if (contextPermissions.visible && contextPermissions.enabled) {
                 contextPermissions.forceActiveFocus();

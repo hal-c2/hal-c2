@@ -114,6 +114,15 @@ AbstractButton {
         popup.close();
     }
 
+    // One step back (the phone's system back): out of the permissions menu
+    // when it is open, else out of the popup.
+    function stepBack() {
+        if (permissionsPicker.popup.visible)
+            permissionsPicker.popup.close();
+        else
+            popup.close();
+    }
+
     function selectView(next) {
         view = next;
         highlightedIndex = firstSelectableRow(0, 1);

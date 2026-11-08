@@ -664,6 +664,17 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user sets the thread's permissions to Full access from the effort menu
     Then the composer names "Full access" beside the model
 
+  # The phone's system back steps out of the model control's permissions menu
+  # before it leaves the control (MobileShell.stepBack). The steps are in
+  # apps/mobile-qt/tests/features/ComposerPermissionsSteps.cpp, not yet run.
+  @backlog @mobile
+  Scenario: The phone's back leaves the permissions menu before the model control
+    When the user opens the permissions in the model control
+    And the user presses the system's back
+    Then the permissions menu closes and the model control stays open
+    When the user presses the system's back
+    Then the model control closes
+
   # Upstream #25869: a new thread always says which permissions its first message will use,
   # and choosing them there opens the permissions as the permissions key does.
   # Upstream #30275: choosing them opens the permissions menu directly, not the model list first.
