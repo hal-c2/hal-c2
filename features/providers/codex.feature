@@ -1661,7 +1661,7 @@ Feature: Codex
     And the turn stays completed
     And a late completion for that command does not bring it back
 
-  @backlog @mc @shared @plugin-codex
+  @mc @shared @plugin-codex @backlog-desktop @backlog-mobile @backlog-tui
   Scenario Outline: /goal drives Codex's own goal
     When the user sends "<input>" in a Codex thread
     Then the thread uses Codex's goal for it
@@ -1676,7 +1676,7 @@ Feature: Codex
       | /goal                |
 
   # Upstream #25426: a Codex goal that Codex does not continue within its window is paused as the run ends.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A Codex goal Codex does not continue is paused when the run ends
     Given a Codex thread is working toward a goal
     When the run ends and Codex does not continue the goal within five seconds
@@ -1684,7 +1684,7 @@ Feature: Codex
     And a turn Codex starts for it later is stopped
 
   # Upstream #25426: setting a Codex goal flashed "Goal paused", and its first turn got the bare objective.
-  @backlog @priority-low
+  @priority-low
   Scenario: Setting a Codex goal starts work on it without a paused flash
     When the user sends "/goal ship the fix" in a Codex thread
     Then the goal never shows as paused while it starts
@@ -1692,7 +1692,7 @@ Feature: Codex
 
   # Upstream #23033: an oversized objective reached Codex as a generic start failure, and retrying it
   # could clear the previous goal first.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A goal over Codex's 4,000-character limit is refused before Codex is asked
     Given a Codex thread is working toward "ship the fix"
     When the user sends "/goal" with an objective of 4,100 characters
