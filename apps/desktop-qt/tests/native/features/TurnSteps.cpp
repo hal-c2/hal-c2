@@ -1386,6 +1386,18 @@ void queueTurnMessage(World& world, const QString& text) {
   queueMessage(world, text);
 }
 
+void awaitTurnApproval(World& world) {
+  startWorking(world);
+  approval(world, QStringLiteral("command"), QStringLiteral("Run the tests?"));
+  world.waitFor([&] { return !listed(world, QStringLiteral("approvals")).isEmpty(); }, QStringLiteral("the approval to reach the composer"));
+}
+
+void awaitTurnQuestion(World& world) {
+  startWorking(world);
+  question(world, QStringLiteral("Which database?"), {QStringLiteral("Postgres"), QStringLiteral("SQLite")});
+  world.waitFor([&] { return !listed(world, QStringLiteral("questions")).isEmpty(); }, QStringLiteral("the question to reach the composer"));
+}
+
 void proposeTurnPlan(World& world, const QString& markdown) {
   proposePlan(world, true, markdown);
 }

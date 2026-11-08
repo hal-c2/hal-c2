@@ -12,6 +12,7 @@ import HalC2.Shell
 // current value unmarked.
 // `disabledRows` greys out the rows at those indexes in the popup; keys can still
 // reach them, so `onActivated` should refuse them too.
+// `note` is a line above the rows, such as why none of them can be chosen.
 // `rowAction` is a control at the end of each popup row, which reads its row as
 // `parent.row`; pressing it neither chooses the row nor closes the popup.
 ComboBox {
@@ -19,6 +20,7 @@ ComboBox {
 
     property bool outline: false
     property var disabledRows: []
+    property string note: ""
     property bool markCurrent: true
     property Component rowAction: null
     property string iconName: ""
@@ -145,10 +147,10 @@ ComboBox {
         property bool upward: false
         y: upward ? -implicitHeight * scale - Theme.space.xs : control.height + Theme.space.xs
         onAboutToShow: upward = control.mapToItem(null, 0, control.height).y + implicitHeight * scale + Theme.space.xs > control.Window.height
-        width: Math.max(control.width, 160)
+        width: Math.max(control.width, control.note.length > 0 ? 280 : 160)
         // Whole rows, up to 320: a long list ends on a full row, with the
         // edge hint saying there is more.
-        implicitHeight: Math.min(control.count, Math.floor((320 - 2 * padding) / Theme.control.md)) * Theme.control.md + 2 * padding
+        implicitHeight: Math.min(control.count, Math.floor((320 - 2 * padding) / Theme.control.md)) * Theme.control.md + 2 * padding + (rows.headerItem ? rows.headerItem.height : 0)
         padding: Theme.space.xs
 
         enter: Transition {
@@ -171,10 +173,11 @@ ComboBox {
             clip: true
             // Counted, not measured: the rows exist only once the popup shows,
             // after `onAboutToShow` has chosen which way it opens.
-            implicitHeight: control.count * Theme.control.md
+            implicitHeight: control.count * Theme.control.md + (headerItem ? headerItem.height : 0)
             model: control.popup.visible ? control.delegateModel : null
             currentIndex: control.highlightedIndex
             boundsBehavior: Flickable.StopAtBounds
+            header: control.note.length > 0 ? noteLine : null
 
             ShellScrollEdge {
                 target: rows
@@ -182,5 +185,19 @@ ComboBox {
         }
 
         background: ShellPopoverSurface {}
+    }
+
+    Component {
+        id: noteLine
+
+        Text {
+            objectName: "comboNote"
+            width: ListView.view ? ListView.view.width : implicitWidth
+            padding: Theme.space.sm
+            text: control.note
+            wrapMode: Text.Wrap
+            font.pixelSize: Theme.type.caption.size
+            color: Theme.palette.color("secondaryLabel", "#a1a1aa")
+        }
     }
 }
