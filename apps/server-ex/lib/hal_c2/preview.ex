@@ -36,13 +36,22 @@ defmodule HalC2.Preview do
 
   def refresh(input), do: GenServer.call(__MODULE__, {:refresh, input})
   def close(input), do: GenServer.call(__MODULE__, {:close, input})
+
+  @doc "Closes the tabs of a deleted thread; nothing when the service is not running."
+  def close_thread(thread_id) do
+    if Process.whereis(__MODULE__), do: close(%{"threadId" => thread_id})
+    :ok
+  end
+
   def list(input), do: GenServer.call(__MODULE__, {:list, input})
   def subscribe(pid, ref \\ nil), do: GenServer.call(__MODULE__, {:subscribe, pid, ref})
   def unsubscribe(pid, ref \\ nil), do: GenServer.cast(__MODULE__, {:unsubscribe, pid, ref})
 
   @impl true
   def init(nil),
-    do: {:ok, %{epoch: HalC2.Environment.uuid4(), revision: 0, sessions: %{}, watchers: %{}}}
+    do:
+      {:ok,
+       %{epoch: HalC2.Environment.uuid4(), revision: 0, sessions: %{}, watchers: %{}, left: %{}}}
 
   @impl true
   def handle_call({:open, input}, _from, state) do
@@ -88,23 +97,34 @@ defmodule HalC2.Preview do
     end)
   end
 
+  # A report for the page a failed navigation left is late: it must not turn the
+  # failure back into a success (upstream #27537).
   def handle_call({:report_status, input}, _from, state) do
+    key = {input["threadId"], input["tabId"]}
+
     with_session(state, input, fn snapshot ->
-      next =
-        snapshot
-        |> Map.merge(Map.take(input, ~w(navStatus canGoBack canGoForward)))
-        |> Map.put("updatedAt", now())
+      current = snapshot["navStatus"]
+      incoming = input["navStatus"]
 
-      event =
-        case input["navStatus"] do
-          %{"_tag" => "LoadFailed"} = failed ->
-            {"failed", Map.take(failed, ~w(url title code description))}
+      if late?(current, incoming, state.left[key]) do
+        {snapshot, nil, nil}
+      else
+        next =
+          snapshot
+          |> Map.merge(Map.take(input, ~w(navStatus canGoBack canGoForward)))
+          |> Map.put("updatedAt", now())
 
-          _ ->
-            {"navigated", %{"snapshot" => next}}
-        end
+        event =
+          case incoming do
+            %{"_tag" => "LoadFailed"} = failed ->
+              {"failed", Map.take(failed, ~w(url title code description))}
 
-      {next, event, nil}
+            _ ->
+              {"navigated", %{"snapshot" => next}}
+          end
+
+        {next, event, nil, left(current, incoming)}
+      end
     end)
   end
 
@@ -127,7 +147,11 @@ defmodule HalC2.Preview do
 
     state =
       Enum.reduce(closing, state, fn snapshot, state ->
-        %{state | sessions: Map.delete(state.sessions, {thread, snapshot["tabId"]})}
+        %{
+          state
+          | sessions: Map.delete(state.sessions, {thread, snapshot["tabId"]}),
+            left: Map.delete(state.left, {thread, snapshot["tabId"]})
+        }
         |> emit(snapshot, "closed", %{})
       end)
 
@@ -242,8 +266,20 @@ defmodule HalC2.Preview do
          state}
 
       snapshot ->
-        {next, event, reply} = fun.(snapshot)
+        {next, event, reply, left} =
+          case fun.(snapshot) do
+            {next, event, reply} -> {next, event, reply, :keep}
+            {_, _, _, _} = result -> result
+          end
+
         state = put(state, next)
+
+        state =
+          case left do
+            :keep -> state
+            nil -> %{state | left: Map.delete(state.left, {thread, tab})}
+            url -> %{state | left: Map.put(state.left, {thread, tab}, url)}
+          end
 
         state =
           case event do
@@ -254,6 +290,14 @@ defmodule HalC2.Preview do
         {:reply, {:ok, reply}, state}
     end
   end
+
+  defp late?(%{"_tag" => "LoadFailed"}, %{"_tag" => "Success", "url" => url}, url), do: true
+  defp late?(_, _, _), do: false
+
+  # The page a navigation left, once a report names another: a late report for it
+  # must not undo a failure. Unchanged while reports stay on the same page.
+  defp left(%{"url" => from}, %{"url" => to}) when from != to, do: from
+  defp left(_, _), do: :keep
 
   defp put(state, snapshot),
     do: %{

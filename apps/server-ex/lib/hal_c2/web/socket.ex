@@ -1813,6 +1813,9 @@ defmodule HalC2.Web.Socket do
       {{:provider_install, instance}, mc, HalC2.Acp.Antigravity.Installation, :subscribe,
        :unsubscribe, [instance, self()]}
 
+  defp watch_spec({:local_servers, mc, urls}),
+    do: {{:local_servers, mc}, mc, HalC2.LocalServers, :subscribe, :unsubscribe, [self(), urls]}
+
   defp watch_spec({kind, mc} = shape) when is_map_key(@services, kind),
     do: {shape, mc, Map.fetch!(@services, kind), :subscribe, :unsubscribe, [self()]}
 
@@ -1855,7 +1858,9 @@ defmodule HalC2.Web.Socket do
   defp snapshot({:resource_telemetry, mc}, {:ok, value}),
     do: {:hal_c2_resource_telemetry, mc, value}
 
-  defp snapshot({:local_servers, mc}, {:ok, value}), do: {:hal_c2_local_servers, mc, value}
+  defp snapshot({:local_servers, mc, _urls}, {:ok, value}),
+    do: {:hal_c2_local_servers, mc, value}
+
   defp snapshot({:devices, mc}, {:ok, value}), do: {:hal_c2_devices, mc, value}
   defp snapshot({:slack, mc}, {:ok, value}), do: {:hal_c2_slack, mc, value}
   defp snapshot({:project_clones, mc}, {:ok, value}), do: {:hal_c2_project_clones, mc, value}
