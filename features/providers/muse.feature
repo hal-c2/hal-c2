@@ -473,7 +473,6 @@ Feature: Muse Code
     Then Muse Code asks first, as in supervised
 
   # Upstream #18266: Muse turns stopped by the subscription quota are Limited with their reset time.
-  @backlog
   Scenario: A Muse Code turn stopped by its subscription quota is Limited
     Given Muse Code reported a usage window that resets at 10:45
     When a turn is refused because the subscription quota is used up
