@@ -124,7 +124,7 @@ defmodule HalC2.Preview do
               {"navigated", %{"snapshot" => next}}
           end
 
-        {next, event, nil, left(current, incoming)}
+        {next, event, nil, left(current, incoming, state.left[key])}
       end
     end)
   end
@@ -279,7 +279,7 @@ defmodule HalC2.Preview do
           case left do
             :keep -> state
             nil -> %{state | left: Map.delete(state.left, {thread, tab})}
-            url -> %{state | left: Map.put(state.left, {thread, tab}, url)}
+            left -> %{state | left: Map.put(state.left, {thread, tab}, left)}
           end
 
         state =
@@ -292,24 +292,32 @@ defmodule HalC2.Preview do
     end
   end
 
-  # Late while the failure stands, or while its page is retried (`Loading`).
-  defp late?(%{"_tag" => tag}, %{"_tag" => "Success", "url" => url}, url)
-       when tag in ["LoadFailed", "Loading"],
-       do: true
+  # Late while the failure stands, or while its page is retried (`Loading`). Plain
+  # `Loading` only counts when a failure armed the guard: a page that redirects back
+  # to the one it left (`/logout` to `/`) reports that page for real.
+  defp late?(%{"_tag" => "LoadFailed"}, %{"_tag" => "Success", "url" => url}, {url, _}),
+    do: true
+
+  defp late?(%{"_tag" => "Loading"}, %{"_tag" => "Success", "url" => url}, {url, true}),
+    do: true
 
   defp late?(_, _, _), do: false
 
-  # The page a navigation left, once a report names another: a late report for it
-  # must not undo a failure. Unchanged while reports stay on the same page.
+  # The page a navigation left, with whether a failure armed the guard: a late report
+  # for it must not undo that failure. Unchanged while reports stay on the same page.
   # A new navigation starting after a failure ends the lateness: going back to the page
   # it left reports that page as new.
   # A retry of the failed page itself keeps the guard.
-  defp left(%{"_tag" => "LoadFailed", "url" => failed}, %{"_tag" => "Loading", "url" => to})
+  defp left(%{"_tag" => "LoadFailed", "url" => failed}, %{"_tag" => "Loading", "url" => to}, _)
        when failed != to,
        do: nil
 
-  defp left(%{"url" => from}, %{"url" => to}) when from != to, do: from
-  defp left(_, _), do: :keep
+  defp left(%{"url" => from}, %{"_tag" => "LoadFailed", "url" => to}, _) when from != to,
+    do: {from, true}
+
+  defp left(_, %{"_tag" => "LoadFailed"}, {from, _}), do: {from, true}
+  defp left(%{"url" => from}, %{"url" => to}, _) when from != to, do: {from, false}
+  defp left(_, _, _), do: :keep
 
   defp put(state, snapshot),
     do: %{

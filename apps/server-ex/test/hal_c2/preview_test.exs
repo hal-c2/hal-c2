@@ -88,6 +88,21 @@ defmodule HalC2.PreviewTest do
              HalC2.Preview.list(%{"threadId" => "t1"})
   end
 
+  test "a page that redirects back is not dropped as a late report" do
+    {:ok, %{"tabId" => tab}} = HalC2.Preview.open(%{"threadId" => "t1", "url" => "http://a/"})
+    report = &HalC2.Preview.report_status(Map.merge(%{"threadId" => "t1", "tabId" => tab}, &1))
+    status = fn tag, url -> %{"navStatus" => %{"_tag" => tag, "url" => url, "title" => ""}} end
+
+    {:ok, nil} = report.(status.("Success", "http://a/"))
+    {:ok, nil} = report.(status.("Loading", "http://b/"))
+    # B redirected back to A (/logout to /): no failure, so A's success is real.
+    {:ok, nil} = report.(status.("Success", "http://a/"))
+
+    assert {:ok,
+            %{"sessions" => [%{"navStatus" => %{"_tag" => "Success", "url" => "http://a/"}}]}} =
+             HalC2.Preview.list(%{"threadId" => "t1"})
+  end
+
   test "an unknown tab is a lookup error" do
     assert {:error, %{"_tag" => "PreviewSessionLookupError"}} =
              HalC2.Preview.refresh(%{"threadId" => "t1", "tabId" => "nope"})

@@ -5,6 +5,7 @@ defmodule HalC2.PreviewTabsPropTest do
   no one else's, and a late success report for the page a failed navigation
   left never turns the failure back into a success, unless a new navigation has
   started since (a `Loading` report for another page than the failed one, or the MC's own navigate).
+  Without a failure in between, a page that redirects back to the one it left is accepted.
 
   Commands open tabs, report navigation outcomes (`Loading`, `Success` or
   `LoadFailed` at one of two pages), navigate from the MC, close one tab, close a whole thread, and restart the
@@ -42,7 +43,7 @@ defmodule HalC2.PreviewTabsPropTest do
 
   # --- model ------------------------------------------------------------------
 
-  # tabs: slot => %{thread, status: {:loading | :ok | :failed, url}, left: url | nil}.
+  # tabs: slot => %{thread, status: {:loading | :ok | :failed, url}, left: url | nil, armed: a failure armed the guard}.
   # A slot numbers a tab so a command names it without its real id.
   def initial_state, do: %{next: 0, tabs: %{}}
 
@@ -73,33 +74,38 @@ defmodule HalC2.PreviewTabsPropTest do
   def precondition(_, _), do: true
 
   def next_state(state, _, {:call, _, :open_tab, [slot, thread, page]}) do
-    tab = %{thread: thread, status: {:loading, page}, left: nil}
+    tab = %{thread: thread, status: {:loading, page}, left: nil, armed: false}
     %{state | next: state.next + 1, tabs: Map.put(state.tabs, slot, tab)}
   end
 
   def next_state(state, _, {:call, _, :report, [slot, kind, page]}) do
     tab = state.tabs[slot]
-    {_, current} = tab.status
+    {status, current} = tab.status
 
     cond do
-      # The failure's own page reporting in again.
-      kind == :ok and elem(tab.status, 0) in [:failed, :loading] and tab.left == page ->
+      # The page a failure left reporting in late. Plain `Loading` only counts when
+      # a failure armed the guard: a redirect back to the page it left is real.
+      kind == :ok and tab.left == page and
+          (status == :failed or (status == :loading and tab.armed)) ->
         state
 
       true ->
-        left =
+        {left, armed} =
           cond do
-            kind == :loading and elem(tab.status, 0) == :failed and current != page -> nil
-            current != page -> current
-            true -> tab.left
+            kind == :loading and status == :failed and current != page -> {nil, false}
+            kind == :failed and current != page -> {current, true}
+            kind == :failed and tab.left != nil -> {tab.left, true}
+            current != page -> {current, false}
+            true -> {tab.left, tab.armed}
           end
 
-        put_in(state.tabs[slot], %{tab | status: {kind, page}, left: left})
+        put_in(state.tabs[slot], %{tab | status: {kind, page}, left: left, armed: armed})
     end
   end
 
   def next_state(state, _, {:call, _, :navigate, [slot, page]}),
-    do: put_in(state.tabs[slot], %{state.tabs[slot] | status: {:ok, page}, left: nil})
+    do:
+      put_in(state.tabs[slot], %{state.tabs[slot] | status: {:ok, page}, left: nil, armed: false})
 
   def next_state(state, _, {:call, _, :close_tab, [slot]}),
     do: %{state | tabs: Map.delete(state.tabs, slot)}
