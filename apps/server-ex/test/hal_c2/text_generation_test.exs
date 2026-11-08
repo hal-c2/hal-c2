@@ -153,6 +153,15 @@ defmodule HalC2.TextGenerationTest do
 
       install([])
 
+      # A CLI the user chose, missing, with nothing to fall back to, is named.
+      assert {:error, "Codex CLI " <> _ = message} =
+               TextGeneration.commit_message(repo, "main", "M a.txt", "diff")
+
+      assert message =~ "is required but not available on PATH"
+
+      # With no model chosen there is only the general message.
+      settings!(%{"textGenerationModelSelection" => nil})
+
       assert {:error, "No text generation provider is available" <> _} =
                TextGeneration.commit_message(repo, "main", "M a.txt", "diff")
     end
@@ -427,6 +436,31 @@ defmodule HalC2.TextGenerationTest do
     refute TextGeneration.antigravity_available?(profile)
     write.("hooks.json", ~s({"hooks": {}, "pad": "#{String.duplicate("x", 64_000)}"}))
     refute TextGeneration.antigravity_available?(profile)
+  end
+
+  test "Codex resolves a model against the list of the instance that writes", %{
+    repo: repo,
+    log: log
+  } do
+    install([:codex])
+    list = fn slugs -> for slug <- slugs, do: %{"slug" => slug, "isDefault" => false} end
+    :ok = HalC2.Codex.Provider.record_models("codex", list.(["gpt-6-luna"]))
+    :ok = HalC2.Codex.Provider.record_models("codex-work", list.(["gpt-7-work-mini"]))
+
+    on_exit(fn ->
+      HalC2.Codex.Provider.record_models("codex", nil)
+      HalC2.Codex.Provider.record_models("codex-work", nil)
+    end)
+
+    settings!(%{
+      "textGenerationModelSelection" => %{"instanceId" => "codex-work", "model" => "gpt-7"},
+      "providerInstances" => %{"codex-work" => %{"driver" => "codex"}}
+    })
+
+    assert {:ok, _} = TextGeneration.thread_title(repo, "Fix the login redirect loop")
+    # The family resolves against the work account's list, not the default account's.
+    assert [%{"argv" => argv}] = calls(log)
+    assert after_flag(argv, "--model") == "gpt-7-work-mini"
   end
 
   test "Claude writes with the config folder of the instance chosen for text generation", %{

@@ -72,7 +72,10 @@ defmodule HalC2.TextGeneration do
 
     keys = if include_branch, do: ~w(subject body branch), else: ~w(subject body)
 
-    with {:ok, out} <- generate(cwd, :writer, prompt, Map.new(keys, &{&1, :string})) do
+    with {:ok, out} <-
+           generate(cwd, :writer, prompt, Map.new(keys, &{&1, :string}),
+             operation: "a commit message"
+           ) do
       result = %{"subject" => commit_subject(out["subject"]), "body" => String.trim(out["body"])}
 
       {:ok,
@@ -99,7 +102,10 @@ defmodule HalC2.TextGeneration do
         opts[:policy] || %{}
       )
 
-    with {:ok, out} <- generate(cwd, :writer, prompt, %{"title" => :string, "body" => :string}) do
+    with {:ok, out} <-
+           generate(cwd, :writer, prompt, %{"title" => :string, "body" => :string},
+             operation: "pull request content"
+           ) do
       title =
         case out["title"] |> String.trim() |> String.split(~r/\r?\n/) |> hd() |> String.trim() do
           "" -> "Update project changes"
@@ -134,7 +140,11 @@ defmodule HalC2.TextGeneration do
          prompt = Prompts.thread_title(message, opts[:previous_title], linked, attachments),
          # Titles need only the prompt, not the checkout's configuration.
          {:ok, out} <-
-           run(selection, cwd, prompt, schema, isolate: true, images: images(attachments)) do
+           run(selection, cwd, prompt, schema,
+             isolate: true,
+             images: images(attachments),
+             operation: "a thread title"
+           ) do
       {:ok,
        %{"title" => title(out["title"]), "needsRefinement" => out["needsRefinement"] == true}}
     end
@@ -306,17 +316,44 @@ defmodule HalC2.TextGeneration do
 
   defp usable_selection(cwd, kind) do
     selection = model_selection(cwd, kind)
+    settings = settings(cwd)
 
-    if usable?(settings(cwd), selection),
-      do: {:ok, selection},
-      else:
+    cond do
+      usable?(settings, selection) ->
+        {:ok, selection}
+
+      message = missing_cli(settings, selection) ->
+        {:error, message}
+
+      true ->
         {:error,
          "No text generation provider is available. Install Claude Code or Codex, or enable another provider."}
+    end
+  end
+
+  # A CLI the user chose for text that is not on PATH, with nothing else to fall back to.
+  defp missing_cli(settings, %{"instanceId" => id}) do
+    chosen = settings["textGenerationModelSelection"]
+
+    if match?(%{"instanceId" => ^id}, chosen) and enabled?(settings, id) do
+      case driver(id) do
+        "codex" -> missing_cli_message("Codex", codex_command(id))
+        "claudeAgent" -> missing_cli_message("Claude", claude_command(id))
+        _ -> nil
+      end
+    end
+  end
+
+  defp missing_cli(_settings, _selection), do: nil
+
+  defp missing_cli_message(label, command) do
+    unless executable?(command),
+      do: "#{label} CLI (`#{command}`) is required but not available on PATH."
   end
 
   # --- running ----------------------------------------------------------------------
 
-  defp generate(cwd, kind, prompt, schema, opts \\ []) do
+  defp generate(cwd, kind, prompt, schema, opts) do
     with {:ok, selection} <- usable_selection(cwd, kind),
          do: run(selection, cwd, prompt, schema, opts)
   end
@@ -332,10 +369,10 @@ defmodule HalC2.TextGeneration do
     {label, result} =
       case driver(selection) do
         "claudeAgent" ->
-          {"Claude", claude(cwd, prompt, json_schema, selection, opts[:isolate])}
+          {"Claude", claude(cwd, prompt, json_schema, selection, opts)}
 
         "codex" ->
-          {"Codex", codex(cwd, prompt, json_schema, selection, opts[:images] || [])}
+          {"Codex", codex(cwd, prompt, json_schema, selection, opts)}
 
         "pi" ->
           {"Pi", pi(selection, if(opts[:isolate], do: nil, else: cwd), prompt)}
@@ -371,7 +408,8 @@ defmodule HalC2.TextGeneration do
     end)
   end
 
-  defp claude(cwd, prompt, schema, selection, isolate) do
+  defp claude(cwd, prompt, schema, selection, opts) do
+    isolate = opts[:isolate]
     thinking = option(selection, "thinking")
 
     settings =
@@ -410,13 +448,22 @@ defmodule HalC2.TextGeneration do
       )
 
     in_dir(if(isolate, do: nil, else: cwd), fn dir ->
-      with {:ok, out} <- run_cli(command, dir, prompt, env: env),
-           {:ok, decoded} <- JSON.decode(out),
-           %{} = result <- structured(decoded) do
-        {:ok, result}
-      else
-        {:error, reason} when is_binary(reason) -> {:error, reason}
-        _ -> {:error, "Claude returned invalid structured output."}
+      cli = [label: "Claude", unexpected: unexpected(opts), env: env]
+
+      case exec_cli(command, dir, prompt, cli) do
+        {:ok, out} ->
+          with {:ok, decoded} <- JSON.decode(out),
+               %{} = result <- structured(decoded) do
+            {:ok, result}
+          else
+            _ -> {:error, claude_reported(out) || "Claude returned invalid structured output."}
+          end
+
+        {:failed, out, message} ->
+          {:error, claude_reported(out) || message}
+
+        {:error, reason} ->
+          {:error, reason}
       end
     end)
   end
@@ -424,13 +471,57 @@ defmodule HalC2.TextGeneration do
   # `--output-format json` is one result object, or a list of messages ending in one.
   defp structured(%{"structured_output" => %{} = out}), do: out
 
-  defp structured(list) when is_list(list),
-    do: list |> Enum.reverse() |> Enum.find_value(&structured/1)
+  # Only the final result counts: an earlier one that had an answer does not stand in.
+  defp structured(list) when is_list(list) do
+    case list |> Enum.reverse() |> Enum.find(&match?(%{"type" => "result"}, &1)) do
+      nil -> nil
+      result -> structured(result)
+    end
+  end
 
   defp structured(_), do: nil
 
-  defp codex(cwd, prompt, schema, selection, images) do
-    {model, fallback?} = codex_model(selection["model"] || @default_models["codex"])
+  # What Claude itself reported when its final result is an error: the result text,
+  # or the strings of its error list (upstream #30331), never the JSON or the
+  # diagnostic entries. A wrapper's notice on stderr is not it.
+  defp claude_reported(out) do
+    with {:ok, decoded} <- JSON.decode(out),
+         %{"is_error" => true} = result <- final_result(decoded) do
+      case result do
+        %{"result" => text} when is_binary(text) and text != "" ->
+          String.trim(text)
+
+        %{"errors" => [_ | _] = errors} ->
+          case for(error <- errors, is_binary(error) and error != "", do: String.trim(error)) do
+            [] -> nil
+            lines -> Enum.join(lines, "\n")
+          end
+
+        _ ->
+          nil
+      end
+    else
+      _ -> nil
+    end
+  end
+
+  defp final_result(list) when is_list(list),
+    do: list |> Enum.reverse() |> Enum.find(&match?(%{"type" => "result"}, &1))
+
+  defp final_result(%{} = result), do: result
+  defp final_result(_), do: nil
+
+  # What a failure that is not the CLI's own output says: the operation, no details.
+  defp unexpected(opts), do: "Failed to generate #{opts[:operation] || "text"}"
+
+  defp codex(cwd, prompt, schema, selection, opts) do
+    images = opts[:images] || []
+
+    {model, fallback?} =
+      codex_model(
+        selection["instanceId"] || "codex",
+        selection["model"] || @default_models["codex"]
+      )
 
     # A model swapped in because the account did not list the default runs with
     # that model's own defaults, not options chosen for another one.
@@ -469,7 +560,9 @@ defmodule HalC2.TextGeneration do
           ["--output-schema", schema_path, "--output-last-message", output_path] ++
           Enum.flat_map(images, &["--image", &1]) ++ ["-"]
 
-      with {:ok, _} <- run_cli([codex_command(selection["instanceId"]) | args], cwd, prompt),
+      cli = [label: "Codex", unexpected: unexpected(opts)]
+
+      with {:ok, _} <- run_cli([codex_command(selection["instanceId"]) | args], cwd, prompt, cli),
            {:ok, text} <- File.read(output_path),
            {:ok, %{} = result} <- JSON.decode(text) do
         {:ok, result}
@@ -486,10 +579,10 @@ defmodule HalC2.TextGeneration do
   # does not list takes the account's default, or else its first model, and says
   # so (`true`) so the caller drops options chosen for the default. Any other
   # name is a model the user typed and goes as written.
-  defp codex_model(model) do
+  defp codex_model(instance, model) do
     model = HalC2.Codex.Provider.current_slug(model)
 
-    case HalC2.Codex.Provider.listed_models() do
+    case HalC2.Codex.Provider.listed_models(instance) do
       [_ | _] = listed ->
         slugs = Enum.map(listed, & &1["slug"])
 
@@ -921,39 +1014,65 @@ defmodule HalC2.TextGeneration do
 
   @doc """
   Runs a provider CLI in `cwd` with `input` on stdin: `{:ok, stdout}` or `{:error,
-  message}`. Options: `:timeout` (default `timeout/0`), `:env`.
+  message}`. Options: `:timeout` (default `timeout/0`), `:env`, `:label` (the CLI's
+  name in a failure: "Claude CLI command failed: …") and `:unexpected` (what a
+  failure that is not the CLI's own output says, instead of its details).
   """
-  def run_cli([command | args], cwd, input, opts \\ []) do
+  def run_cli(argv, cwd, input, opts \\ []) do
+    case exec_cli(argv, cwd, input, opts) do
+      {:failed, _out, message} -> {:error, message}
+      other -> other
+    end
+  end
+
+  # As `run_cli/4`, but a CLI that exited with a failure gives its stdout too:
+  # `{:failed, stdout, message}`.
+  defp exec_cli([command | args], cwd, input, opts) do
     task =
       Task.async(fn ->
-        [command | args]
-        |> Exile.stream(
-          cd: cwd,
-          input: if(input == "", do: [], else: [input]),
-          stderr: :consume,
-          ignore_epipe: true,
-          env: opts[:env] || []
-        )
-        |> Enum.reduce({[], [], nil}, fn
-          {:stdout, data}, {out, err, status} -> {[out, data], err, status}
-          {:stderr, data}, {out, err, status} -> {out, [err, data], status}
-          {:exit, status}, {out, err, _} -> {out, err, status}
-        end)
+        try do
+          [command | args]
+          |> Exile.stream(
+            cd: cwd,
+            input: if(input == "", do: [], else: [input]),
+            stderr: :consume,
+            ignore_epipe: true,
+            env: opts[:env] || []
+          )
+          |> Enum.reduce({[], [], nil}, fn
+            {:stdout, data}, {out, err, status} -> {[out, data], err, status}
+            {:stderr, data}, {out, err, status} -> {out, [err, data], status}
+            {:exit, status}, {out, err, _} -> {out, err, status}
+          end)
+        rescue
+          error -> {:raised, error}
+        end
       end)
 
     case Task.yield(task, opts[:timeout] || timeout()) || Task.shutdown(task, :brutal_kill) do
       {:ok, {out, _err, {:status, 0}}} ->
         {:ok, IO.iodata_to_binary(out)}
 
-      {:ok, {_out, err, status}} ->
-        {:error, "#{Path.basename(command)} failed (#{inspect(status)}): #{failure(err)}"}
+      {:ok, {out, err, status}} ->
+        out = IO.iodata_to_binary(out)
+        {:failed, out, failure_message(command, opts[:label], failure(err), status)}
+
+      {:ok, {:raised, error}} ->
+        {:error, opts[:unexpected] || Exception.message(error)}
 
       nil ->
-        {:error, "#{Path.basename(command)} timed out"}
+        {:error, "#{opts[:label] || Path.basename(command)} timed out"}
     end
-  rescue
-    error -> {:error, Exception.message(error)}
   end
+
+  defp failure_message(command, nil, detail, status),
+    do: "#{Path.basename(command)} failed (#{inspect(status)}): #{detail}"
+
+  defp failure_message(_command, label, "", {:status, code}),
+    do: "#{label} CLI command failed with code #{code}."
+
+  defp failure_message(_command, label, detail, _status),
+    do: "#{label} CLI command failed: #{detail}"
 
   # CLIs print a banner first and the reason last; keep the error lines when there are any.
   defp failure(err) do

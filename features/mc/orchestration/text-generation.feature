@@ -182,7 +182,7 @@ Feature: Generated titles, branch names and source control text
     When a title is generated
     Then it fails with "No text generation provider is available. Install Claude Code or Codex, or enable another provider."
 
-  @backlog @mc
+  @mc
   Scenario: A writing CLI missing from PATH is named in the failure
     Given the text model is "codex" and the codex CLI is not on PATH
     When a title is generated
@@ -246,10 +246,10 @@ Feature: Generated titles, branch names and source control text
     Then Claude is run with the alias exactly as configured
 
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.test.ts (verbose output rejection cases)
-  @backlog @mc
+  @mc
   Scenario Outline: Claude output without a final structured result gives no title
     When "claudeAgent" writes a title and its output is <output>
-    Then text generation fails
+    Then no title is written
 
     Examples:
       | output                                                                   |
@@ -259,7 +259,7 @@ Feature: Generated titles, branch names and source control text
       | a final result with no answer after an earlier result that had one       |
 
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.test.ts (verbose output with init, assistant and rate-limit messages)
-  @backlog @mc
+  @mc
   Scenario: A title is read from Claude's final result among other messages
     When "claudeAgent" writes a title and its output holds start-up, assistant and rate-limit messages before the result
     Then the title is taken from the final result
@@ -346,7 +346,7 @@ Feature: Generated titles, branch names and source control text
       | the user typed themselves | "my-proxy-model"  | the Codex account does not list it         |
 
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.ts, CodexTextGeneration.ts (exit code failure text)
-  @backlog @mc
+  @mc
   Scenario Outline: A writing CLI that fails says what it printed
     When "<provider>" writes a title and its CLI exits with code 1 <printing>
     Then it fails naming the operation and saying "<message>"
@@ -358,7 +358,7 @@ Feature: Generated titles, branch names and source control text
       | codex         | after printing "x" | Codex CLI command failed: x            |
       | codex         | with no output     | Codex CLI command failed with code 1.  |
 
-  @backlog @mc @plugin-claude @priority-low
+  @mc @plugin-claude @priority-low
   Scenario: A failed Claude writer shows the error Claude reported, not a wrapper's notice
     Given the claude command runs through a wrapper that prints a notice on its error output
     When a title is generated and Claude's result reports "API Error: 400 Model blocked by guardrail"
@@ -367,14 +367,14 @@ Feature: Generated titles, branch names and source control text
 
   # Upstream #30331: an error result carrying a list of errors and no result text fell through
   # to the whole result JSON.
-  @backlog @mc @plugin-claude @priority-low
+  @mc @plugin-claude @priority-low
   Scenario: A failed Claude writer shows the errors Claude listed
     When a pull request description is generated and Claude's result ends in an error listing "Failed to provide valid structured output after 5 attempts"
     Then it fails saying "Failed to provide valid structured output after 5 attempts"
     And neither the result JSON nor Claude's diagnostic entries are shown
 
   # Legacy: apps/server/src/textGeneration/TextGenerationUtils.ts (normalizeCliError), TextGenerationPrompts.test.ts
-  @backlog @mc
+  @mc
   Scenario: A failure that is not the CLI's own output does not show its details
     When a commit message is generated and the writer's process fails with an error that holds an access token
     Then the failure says "Failed to generate a commit message"

@@ -1058,6 +1058,208 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     end)
   end
 
+  # --- CLI failures and Claude's results ---------------------------------------------------
+
+  step "{string} writes a title and its CLI exits with code 1 after printing {string}",
+       %{args: [provider, printed]} = context do
+    failing_title(context, provider, printed)
+  end
+
+  step "{string} writes a title and its CLI exits with code 1 with no output",
+       %{args: [provider]} = context do
+    failing_title(context, provider, nil)
+  end
+
+  defp failing_title(context, provider, printed) do
+    context = install(context)
+    World.put_env("FAKE_TEXT_EXIT", "1")
+    if printed, do: World.put_env("FAKE_TEXT_FAIL", printed)
+
+    context
+    |> World.update_settings(%{"textGenerationModelSelection" => selection(provider)})
+    |> title("Fix the login redirect loop")
+  end
+
+  step "it fails naming the operation and saying {string}", %{args: [message]} = context do
+    assert {:error, error, _} = context.reply
+    assert error == message
+    context
+  end
+
+  step "the claude command runs through a wrapper that prints a notice on its error output",
+       context do
+    context = claude_text_model(context)
+    World.put_env("FAKE_TEXT_FAIL", "wrapper: using the corporate proxy")
+    Map.put(context, :notice, "wrapper: using the corporate proxy")
+  end
+
+  step "a title is generated and Claude's result reports {string}",
+       %{args: [message]} = context do
+    claude_result(context, %{"is_error" => true, "result" => message}, &title(&1, "Fix a bug"))
+  end
+
+  step "a pull request description is generated and Claude's result ends in an error listing {string}",
+       %{args: [message]} = context do
+    result = %{
+      "is_error" => true,
+      "subtype" => "error_max_structured_output_retries",
+      "errors" => [message],
+      "diagnostics" => [%{"message" => "retry 5 of 5"}]
+    }
+
+    claude_result(context, result, &pull_request/1)
+  end
+
+  step "it fails saying {string}", %{args: [message]} = context do
+    assert {:error, error, _} = context.reply
+    assert error == message
+    context
+  end
+
+  step "the wrapper's notice is not the failure shown", context do
+    assert {:error, error, _} = context.reply
+    refute error =~ context.notice
+    context
+  end
+
+  step "neither the result JSON nor Claude's diagnostic entries are shown", context do
+    assert {:error, error, _} = context.reply
+    refute error =~ "{"
+    refute error =~ "retry 5 of 5"
+    context
+  end
+
+  step "a commit message is generated and the writer's process fails with an error that holds an access token",
+       context do
+    context = install(context)
+    # A working folder that does not exist: the process cannot start, and the error
+    # names the folder, which carries the token.
+    cwd = Path.join(context.mc.home, "ghp_secrettoken123/missing")
+    commit(context, cwd)
+  end
+
+  step "the failure says {string}", %{args: [message]} = context do
+    assert {:error, error, _} = context.reply
+    assert error == message
+    context
+  end
+
+  step "the token is not in the failure", context do
+    assert {:error, error, _} = context.reply
+    refute error =~ "ghp_secrettoken123"
+    context
+  end
+
+  step "the text model is {string} and the codex CLI is not on PATH",
+       %{args: [model]} = context do
+    context
+    |> install([])
+    |> World.update_settings(%{"textGenerationModelSelection" => selection(model)})
+  end
+
+  step "it fails saying the codex CLI is required but not available on PATH", context do
+    assert {:error, error, _} = context.reply
+    assert error =~ "Codex CLI"
+    assert error =~ "is required but not available on PATH"
+    context
+  end
+
+  step "{string} writes a title and its output is an empty list of messages",
+       %{args: [provider]} = context do
+    claude_output(context, provider, "[]")
+  end
+
+  step "{string} writes a title and its output is messages with no final result",
+       %{args: [provider]} = context do
+    claude_output(
+      context,
+      provider,
+      JSON.encode!([%{"type" => "system"}, %{"type" => "assistant"}])
+    )
+  end
+
+  step "{string} writes a title and its output is a final result whose title is not text",
+       %{args: [provider]} = context do
+    claude_output(
+      context,
+      provider,
+      JSON.encode!([%{"type" => "result", "structured_output" => %{"title" => 12}}])
+    )
+  end
+
+  step "{string} writes a title and its output is a final result with no answer after an earlier result that had one",
+       %{args: [provider]} = context do
+    claude_output(
+      context,
+      provider,
+      JSON.encode!([
+        %{
+          "type" => "result",
+          "structured_output" => %{"title" => "Early", "needsRefinement" => false}
+        },
+        %{"type" => "result", "subtype" => "success"}
+      ])
+    )
+  end
+
+  step "no title is written", context do
+    assert {:error, _, _} = context.reply
+    context
+  end
+
+  step "{string} writes a title and its output holds start-up, assistant and rate-limit messages before the result",
+       %{args: [provider]} = context do
+    claude_output(
+      context,
+      provider,
+      JSON.encode!([
+        %{"type" => "system", "subtype" => "init", "model" => "claude-haiku-5-5"},
+        %{
+          "type" => "assistant",
+          "message" => %{"content" => [%{"type" => "text", "text" => "Thinking"}]}
+        },
+        %{"type" => "rate_limit_event", "rate_limit_info" => %{"status" => "allowed"}},
+        %{
+          "type" => "result",
+          "structured_output" => %{"title" => "From the final result", "needsRefinement" => false}
+        }
+      ])
+    )
+  end
+
+  step "the title is taken from the final result", context do
+    assert {:ok, %{"title" => "From the final result"}} = context.reply
+    context
+  end
+
+  defp claude_output(context, provider, stdout) do
+    context = install(context)
+    World.put_env("FAKE_TEXT_STDOUT", stdout)
+
+    context
+    |> World.update_settings(%{"textGenerationModelSelection" => selection(provider)})
+    |> title("Fix the login redirect loop")
+  end
+
+  defp claude_text_model(context) do
+    context
+    |> install()
+    |> World.update_settings(%{"textGenerationModelSelection" => selection("claudeAgent")})
+  end
+
+  # Claude exits with a failure and prints `result` as its final message.
+  defp claude_result(context, result, generate) do
+    context = claude_text_model(context)
+    World.put_env("FAKE_TEXT_EXIT", "1")
+
+    World.put_env(
+      "FAKE_TEXT_STDOUT",
+      JSON.encode!([%{"type" => "system"}, Map.put(result, "type", "result")])
+    )
+
+    generate.(context)
+  end
+
   # --- slash commands, aliases and wrapped titles ----------------------------------------
 
   step "a first message {string}", %{args: [message]} = context do
