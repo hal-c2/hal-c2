@@ -672,6 +672,22 @@ const Steps steps([] {
            QStringLiteral("the picker opens on %1").arg(picker(world)->property("view").toString()));
   });
 
+  // The name the model button says.
+  step(QStringLiteral("the model manifest names %1 %1 for short").arg(q), [](World& world, const Captures& c, const Table&) {
+    changeProvider(world, QStringLiteral("claudeAgent"), [&c](QJsonObject& entry) {
+      QJsonObject named = model(QStringLiteral("claude-opus-5.5"), c[0]);
+      named.insert(QStringLiteral("shortName"), c[1]);
+      entry.insert(QStringLiteral("models"), QJsonArray{named});
+    });
+    openPicker(world);
+  });
+  step(QStringLiteral("the model button reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return picker(world)->property("triggerTitle") == c[0]; },
+                  [&] { return QStringLiteral("the button to read \"%1\"; it reads \"%2\"").arg(c[0], picker(world)->property("triggerTitle").toString()); });
+    expect(part(world, QStringLiteral("modelPickerTitle"))->property("text") == c[0],
+           QStringLiteral("the button reads \"%1\"").arg(part(world, QStringLiteral("modelPickerTitle"))->property("text").toString()));
+  });
+
   // A provider that needs setting up.
   step(QStringLiteral("Cursor is not installed and HAL-C2 can install it"), [](World& world, const Captures&, const Table&) {
     QJsonArray list = providers(world);

@@ -184,6 +184,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/model-and-mode.feature:Unavailable providers stay listed*"),
     QStringLiteral("composer/model-and-mode.feature:Favourite models are listed first*"),
     QStringLiteral("composer/model-and-mode.feature:A started thread can move*"),
+    QStringLiteral("composer/model-and-mode.feature:A short name the model manifest gives*"),
     QStringLiteral("composer/model-and-mode.feature:Search results keep the provider's newest-first order"),
     QStringLiteral("composer/model-and-mode.feature:The model picker opens on the favourites*"),
     QStringLiteral("composer/model-and-mode.feature:A favourite older model is listed outside*"),

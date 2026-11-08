@@ -106,7 +106,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | OpenCode | NVIDIA: Nemotron 3 Super | Nemotron 3 Super |
 
   # Upstream #24205
-  @backlog @shared @priority-low
+  @shared @backlog-mobile @backlog-tui @priority-low
   Scenario: A short name the model manifest gives wins over the worked-out one
     Given the model manifest names "Claude Opus 5.5" "Opus" for short
     When the user chooses "Claude Opus 5.5"

@@ -482,7 +482,10 @@ Item {
 
         function test_given_claude_opus_is_chosen_then_the_picker_names_it_and_its_provider() {
             const picker = createPicker(codexAndClaude(), "claudeAgent", "opus");
-            compare(picker.triggerTitle, "Claude Opus");
+            // The trigger says the name the user would say; the full name is
+            // in its tooltip.
+            compare(picker.triggerTitle, "Opus");
+            compare(picker.triggerFullTitle, "Claude Opus");
             compare(picker.activeInstance.displayName, "Claude");
             const icon = findChild(picker, "modelPickerIcon");
             verify(!!icon, "Object exists");

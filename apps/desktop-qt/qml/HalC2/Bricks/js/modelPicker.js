@@ -121,9 +121,66 @@ function stripLeadingQualifier(value, qualifier) {
     return value.replace(pattern, "").trim() || value;
 }
 
-function displayName(model, preferShortName) {
-    var name = preferShortName && model.shortName ? model.shortName : model.name;
-    return stripLeadingQualifier(name, model.subProvider);
+// The name the user would say, worked out when the manifest gives no short
+// name (upstream modelShortName): a vendor prefix goes, then the family
+// prefix the provider's icon already says — on its native provider when the
+// rest names more than a version, elsewhere only when the rest still names
+// a model rather than a variant.
+var FAMILY_PREFIXES = ["Claude ", "GPT-", "GPT ", "Gemini ", "Muse ", "Grok "];
+var NATIVE_FAMILIES = {
+    "codex": ["GPT-", "GPT "],
+    "claudeAgent": ["Claude "],
+    "claude": ["Claude "],
+    "antigravity": ["Gemini "],
+    "cursor": ["Grok "],
+    "grok": ["Grok "],
+    "muse": ["Muse "]
+};
+var VARIANT_WORDS = ["pro", "flash", "mini", "max", "lite", "nano", "ultra", "plus", "fast", "turbo", "preview", "latest", "thinking", "reasoning", "build", "code", "image", "vision", "audio", "live", "custom", "tools", "exp", "experimental", "chat", "tts", "stt", "non", "transcribe"];
+
+function nonVersionWords(text) {
+    return text.replace(/\(.*?\)/g, " ").split(/[\s-]+/).filter(function (word) {
+        return word.length > 0 && !/^v?\d+(\.\d+)*[a-z]?$/i.test(word);
+    });
+}
+
+function namesModel(text) {
+    return nonVersionWords(text).some(function (word) {
+        return VARIANT_WORDS.indexOf(word.toLowerCase()) === -1;
+    });
+}
+
+function modelShortName(name, driverKind) {
+    var unprefixed = name.replace(/^[A-Z][\w.&\-\x20]{0,24}: (?=\S)/, "");
+    var prefix = null;
+    for (var i = 0; i < FAMILY_PREFIXES.length; i += 1) {
+        if (unprefixed.indexOf(FAMILY_PREFIXES[i]) === 0) {
+            prefix = FAMILY_PREFIXES[i];
+            break;
+        }
+    }
+    var short = null;
+    if (prefix !== null) {
+        var rest = unprefixed.slice(prefix.length).trim();
+        var native = (NATIVE_FAMILIES[driverKind] || []).indexOf(prefix) !== -1;
+        var keep = native ? nonVersionWords(rest).length > 0 : namesModel(rest);
+        if (keep)
+            short = /\s/.test(rest) ? rest : rest.replace(/-/g, " ");
+    }
+    if (short === null)
+        short = namesModel(unprefixed) ? unprefixed : name;
+    return short === name ? null : short;
+}
+
+function displayName(model, preferShortName, instance) {
+    if (preferShortName && model.shortName)
+        return stripLeadingQualifier(model.shortName, model.subProvider);
+    if (preferShortName) {
+        var worked = modelShortName(model.name, instance ? instance.driverKind : null);
+        if (worked !== null)
+            return stripLeadingQualifier(worked, model.subProvider);
+    }
+    return stripLeadingQualifier(model.name, model.subProvider);
 }
 
 function providerLabel(model, instance) {

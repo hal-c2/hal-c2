@@ -42,7 +42,11 @@ AbstractButton {
     // (catalogue.noProvider, keyed in C++): it wins over the model name,
     // which a keep-unlisted provider can still resolve while unready.
     readonly property string noProviderText: catalogue?.noProvider === "open-provider-settings" ? qsTr("Open provider settings") : catalogue?.noProvider === "no-provider-available" ? qsTr("No provider available") : ""
-    readonly property string triggerTitle: multiple !== null ? qsTr("%1 models").arg(multiple.length) : noProviderText.length > 0 ? noProviderText : activeModel ? Picker.displayName(activeModel, true) : (selectedModel ? selectedModel : qsTr("Choose model"))
+    // Short names are for chat models; where favorites is off (a Space's
+    // image models) the trigger keeps the model's own name.
+    readonly property string triggerTitle: multiple !== null ? qsTr("%1 models").arg(multiple.length) : noProviderText.length > 0 ? noProviderText : activeModel ? Picker.displayName(activeModel, favorites, activeInstance) : (selectedModel ? selectedModel : qsTr("Choose model"))
+    // The full name, for the tooltip the short title stands in for.
+    readonly property string triggerFullTitle: activeModel ? Picker.displayName(activeModel, false, activeInstance) : triggerTitle
 
     function inMultiple(instanceId, model) {
         return multiple !== null && multiple.some(entry => entry.instanceId === instanceId && entry.model === model);
@@ -220,7 +224,7 @@ AbstractButton {
 
     ToolTip.visible: hovered && !popup.visible
     ToolTip.delay: 500
-    ToolTip.text: catalogue && catalogue.shortcut ? triggerLabel + " · " + catalogue.shortcut : triggerLabel
+    ToolTip.text: catalogue && catalogue.shortcut ? triggerFullTitle + " · " + catalogue.shortcut : triggerFullTitle
 
     onClicked: {
         // The stand-in that names provider settings goes there, as it says.
@@ -670,7 +674,7 @@ AbstractButton {
             opacity: disabledReason.length > 0 ? 0.64 : 1
             color: highlighted || (rowHover.hovered && disabledReason.length === 0) ? control.highlight : isSelected ? control.fade(control.foreground, 0.08) : "transparent"
             Accessible.role: Accessible.ListItem
-            Accessible.name: model ? Picker.displayName(model, true) : ""
+            Accessible.name: model ? Picker.displayName(model, false, instance) : ""
             // The search field's arrows and Enter reach it from the keyboard.
             Accessible.onPressAction: if (row.model)
                 control.choose(row.instance.instanceId, row.model.slug)
@@ -717,7 +721,7 @@ AbstractButton {
                             Layout.fillWidth: implicitWidth > width
                             Layout.maximumWidth: implicitWidth
                             Layout.fillHeight: false
-                            text: row.model ? Picker.displayName(row.model, true) : ""
+                            text: row.model ? Picker.displayName(row.model, false, row.instance) : ""
                             color: control.foreground
                             font.family: control.fontFamily
                             font.pixelSize: Theme.type.meta.size
