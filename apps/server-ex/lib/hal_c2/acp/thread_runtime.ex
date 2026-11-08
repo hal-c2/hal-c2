@@ -62,7 +62,6 @@ defmodule HalC2.Acp.ThreadRuntime do
   # Grok's own requests (`x.ai/...`), bare or wrapped in `{method, params}`.
   @xai_questions ["x.ai/ask_user_question", "_x.ai/ask_user_question"]
   @xai_plan ["x.ai/exit_plan_mode", "_x.ai/exit_plan_mode"]
-  @plan_file "plan:grok-file"
   @empty_plan "# No plan written yet\n\n(The agent exited plan mode without writing a plan.)"
   @plan_captured "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn."
 
@@ -702,12 +701,14 @@ defmodule HalC2.Acp.ThreadRuntime do
       when method in @xai_plan and turn != nil do
     params = xai_params(params)
     # The plan Grok wrote to its plan file is the one it presents, unless it sends text.
+    file = plan_file_native(state)
+
     native =
-      if Map.has_key?(state.items, @plan_file),
-        do: @plan_file,
+      if Map.has_key?(state.items, file),
+        do: file,
         else: "plan:#{params["toolCallId"] || id}"
 
-    written = get_in(state.items, [@plan_file, :markdown])
+    written = get_in(state.items, [file, :markdown])
 
     markdown =
       case String.trim(params["planContent"] || "") do
@@ -1888,7 +1889,7 @@ defmodule HalC2.Acp.ThreadRuntime do
     provided = options["reasoningEffort"]
     effort = if is_binary(provided) and provided =~ @grok_effort, do: provided
     model_changed = requested != nil and requested != state.model
-    effort_changed = provided != nil and effort != Map.get(state, :reasoning)
+    effort_changed = effort != nil and effort != Map.get(state, :reasoning)
     target = requested || state.model
 
     cond do
@@ -2517,7 +2518,7 @@ defmodule HalC2.Acp.ThreadRuntime do
             variant
 
           is_binary(command) ->
-            if String.length(command) > 80, do: cut_utf16(command, 77) <> "...", else: command
+            if utf16_length(command) > 80, do: cut_utf16(command, 77) <> "...", else: command
 
           true ->
             nil
@@ -2531,17 +2532,21 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp grok_title(call), do: call
 
-  # The first `units` UTF-16 code units of `text`, never half a character.
+  defp utf16_length(text),
+    do: text |> String.to_charlist() |> Enum.reduce(0, &(&2 + if(&1 > 0xFFFF, do: 2, else: 1)))
+
+  # The first `units` UTF-16 code units of `text`, never half a character or half an
+  # emoji sequence.
   defp cut_utf16(text, units) do
     {kept, _} =
       text
-      |> String.codepoints()
-      |> Enum.reduce_while({[], 0}, fn char, {kept, used} ->
-        width = if byte_size(char) >= 4, do: 2, else: 1
+      |> String.graphemes()
+      |> Enum.reduce_while({[], 0}, fn grapheme, {kept, used} ->
+        width = utf16_length(grapheme)
 
         if used + width > units,
           do: {:halt, {kept, used}},
-          else: {:cont, {[char | kept], used + width}}
+          else: {:cont, {[grapheme | kept], used + width}}
       end)
 
     kept |> Enum.reverse() |> Enum.join()
@@ -2558,10 +2563,17 @@ defmodule HalC2.Acp.ThreadRuntime do
     text = String.trim(content_text(call["content"]) || raw_output(output) || "")
 
     cond do
-      code == nil -> call
-      code != 0 -> Map.put(call, "status", "failed")
-      text == "" -> Map.put(call, "status", "in_progress")
-      true -> Map.put(call, "status", "completed")
+      code == nil ->
+        call
+
+      code != 0 ->
+        Map.put(call, "status", "failed")
+
+      text == "" and call["status"] not in ["completed", "failed"] ->
+        Map.put(call, "status", "in_progress")
+
+      true ->
+        Map.put(call, "status", "completed")
     end
   end
 
@@ -2585,14 +2597,17 @@ defmodule HalC2.Acp.ThreadRuntime do
     if markdown in [nil, ""] do
       state
     else
-      state =
-        state |> flush() |> ensure_item(@plan_file, :plan) |> finish_plan(@plan_file, markdown)
+      file = plan_file_native(state)
+      state = state |> flush() |> ensure_item(file, :plan) |> finish_plan(file, markdown)
 
-      %{state | items: Map.update!(state.items, @plan_file, &Map.put(&1, :markdown, markdown))}
+      %{state | items: Map.update!(state.items, file, &Map.put(&1, :markdown, markdown))}
     end
   end
 
   defp plan_file(state, _call), do: state
+
+  # One plan item per run: a later plan-mode turn must not rewrite the earlier plan.
+  defp plan_file_native(state), do: "plan:grok-file:#{state.turn.ids.run}"
 
   # The subagent's own session streams under another session id: its answer goes to
   # its child thread. Updates for a session no subagent has named yet wait for it.

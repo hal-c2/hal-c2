@@ -90,6 +90,8 @@ defmodule HalC2.Steps.Providers.GrokCorners do
     for %{"params" => params} <- model_calls(context),
         do: refute(get_in(params, ["_meta", "reasoningEffort"]))
 
+    # The session is already on that model and level: nothing about it is sent again.
+    assert model_calls(context) == []
     context
   end
 
@@ -405,6 +407,31 @@ defmodule HalC2.Steps.Providers.GrokCorners do
     plan_turn(context, [write_file("w1", path, @draft)])
   end
 
+  step "Grok writes its plan file in two plan-mode turns", context do
+    context = with_home(context)
+    context = plan_turn(context, [write_file("w1", plan_path(context), "# First plan")])
+    plan_turn(context, [write_file("w2", plan_path(context), "# Revised plan")])
+  end
+
+  step "both plans are kept, each as its own plan", context do
+    thread = World.thread_id(context, context.thread)
+
+    plans =
+      World.await_stream(thread, fn state ->
+        case Enum.filter(HalC2.StreamState.list(state, "plan"), &(&1["kind"] == "proposed_plan")) do
+          [_, _ | _] = plans -> plans
+          _ -> nil
+        end
+      end)
+
+    assert plans |> Enum.map(& &1["markdown"]) |> Enum.sort() == [
+             "# First plan",
+             "# Revised plan"
+           ]
+
+    context
+  end
+
   step "the plan is shown for the user to review", context do
     assert [%{"markdown" => @draft}] = plans(context)
     context
@@ -571,22 +598,37 @@ defmodule HalC2.Steps.Providers.GrokCorners do
     named(context, String.duplicate("a", 76) <> "...")
   end
 
+  step "Grok runs a command titled \"Tool\" of 41 emoji, 41 characters but 82 UTF-16 units",
+       context do
+    run_call(context, %{"rawInput" => %{"command" => String.duplicate("😀", 41)}})
+  end
+
+  step "the tool call is named by the first 38 emoji followed by \"...\"", context do
+    named(context, String.duplicate("😀", 38) <> "...")
+  end
+
   step "the name holds no replacement character", context do
     item = tool_item(context)
     refute (item["toolName"] || item["input"] || "") =~ "\uFFFD"
     context
   end
 
-  defp bash(code, output) do
+  defp bash(code, output, status \\ "completed") do
     %{
       "kind" => "execute",
       "rawInput" => %{"command" => "make"},
+      "status" => status,
       "rawOutput" => %{"type" => "Bash", "exit_code" => code, "output" => output}
     }
   end
 
   step "Grok reports a command result with exit code 0 and no output yet", context do
-    run_call(context, bash(0, ""), hang: true)
+    run_call(context, bash(0, "", "in_progress"), hang: true)
+  end
+
+  step "Grok reports a command result with exit code 0, no output, and says it completed",
+       context do
+    run_call(context, bash(0, ""))
   end
 
   step "Grok reports a command result with exit code 0 and its output", context do

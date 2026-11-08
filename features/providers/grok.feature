@@ -435,6 +435,11 @@ Feature: Grok
     Then the thread's plan follows what Grok wrote
     And a file named "plan.md" that Grok edits in the workspace is shown as an ordinary edit
 
+  Scenario: Each plan-mode turn's plan file is its own plan
+    Given a Grok thread in plan mode
+    When Grok writes its plan file in two plan-mode turns
+    Then both plans are kept, each as its own plan
+
   @backlog
   Scenario: Checking on a Grok background task shows its latest output
     Given Grok left a command running in the background
@@ -620,6 +625,10 @@ Feature: Grok
     Then the tool call is named by the command up to just before that emoji, followed by "..."
     And the name holds no replacement character
 
+  Scenario: A Grok command name is cut by UTF-16 units, as the old server counted them
+    When Grok runs a command titled "Tool" of 41 emoji, 41 characters but 82 UTF-16 units
+    Then the tool call is named by the first 38 emoji followed by "..."
+
   Scenario Outline: A Grok command's result decides whether it is finished
     When Grok reports a command result with <result>
     Then the command result is shown as <state>
@@ -628,6 +637,7 @@ Feature: Grok
       | result                        | state       |
       | exit code 0 and no output yet | in progress |
       | exit code 0 and its output    | completed   |
+      | exit code 0, no output, and says it completed | completed |
       | a non-zero exit code          | failed      |
       | the text "Exit Code: -1"      | failed      |
 
