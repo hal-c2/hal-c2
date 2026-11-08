@@ -288,6 +288,63 @@ defmodule HalC2.PluginsTest do
     refute Plugins.threads_stay?("busy")
   end
 
+  # A release upgrade updates the host in place: `init/1` does not run again, so a host
+  # from before `threadsStay` has no table of declarations. `code_change/3` makes it and
+  # fills it from the versions loaded, and the scans after it keep working.
+  test "a host updated in place by a release upgrade reads and keeps the declarations" do
+    code_package("busy", "1", [{"a.ex", busy_source("1")}])
+    manifest = Path.join(plugins_dir(), "busy/plugin.json")
+
+    File.write!(
+      manifest,
+      manifest |> File.read!() |> JSON.decode!() |> declare() |> JSON.encode!()
+    )
+
+    Plugins.handle("rescan", %{})
+    pid = Process.whereis(Plugins)
+
+    # The host as a release from before the table left it.
+    :sys.replace_state(Plugins, fn state ->
+      :ets.delete(HalC2.Plugins.Stays)
+      state
+    end)
+
+    :ok = :sys.suspend(Plugins)
+    :ok = :sys.change_code(Plugins, Plugins, "before", [])
+    :ok = :sys.resume(Plugins)
+
+    assert :ets.member(HalC2.Plugins.Stays, "busy")
+    Plugins.handle("rescan", %{})
+    assert Process.whereis(Plugins) == pid
+    assert Plugins.threads_stay?("busy")
+  end
+
+  # A file of a package that cannot be read, as one an install removes under a scan, is
+  # a package that does not load this time, not a host that crashes: the version that
+  # ran keeps running, and a rescan once the file is back loads the new one.
+  test "a package file that cannot be read fails the load and leaves the host running" do
+    code_package("busy", "1", [{"a.ex", busy_source("1")}])
+    Plugins.handle("rescan", %{})
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => "busy", "acceptPermissions" => []})
+    pid = Process.whereis(Plugins)
+
+    code_package("busy", "2", [{"a.ex", busy_source("2")}])
+    source = Path.join(plugins_dir(), "busy/mc/a.ex")
+    File.chmod!(source, 0o000)
+
+    try do
+      Plugins.handle("rescan", %{})
+      assert Process.whereis(Plugins) == pid
+      assert %{"version" => "1", "reloadError" => error} = listed("busy")
+      assert error =~ "a.ex"
+    after
+      File.chmod!(source, 0o644)
+    end
+
+    Plugins.handle("rescan", %{})
+    assert %{"version" => "2", "reloadError" => nil} = listed("busy")
+  end
+
   defp declare(manifest), do: Map.put(manifest, "threadsStay", true)
 
   # What a peer answers for a plugin: only a function the running version has, so a

@@ -119,6 +119,7 @@ Feature: Plugin packages
       | which                                  | reason                       |
       | whose second MC file does not compile  | undefined function           |
       | whose MC files hold two plugin modules | more than one plugin module  |
+      | whose MC file the MC cannot read       | could not be copied          |
 
   @mc
   Scenario: A disabled package does not serve its UI parts
@@ -358,6 +359,18 @@ Feature: Plugin packages
       Then the thread is marked as staying on its machine
       When "code-review" is disabled
       Then the thread can be neither moved nor exported
+
+    # A release upgrade updates the plugin host in place, without starting it again, so what the
+    # host keeps beside its state (which plugins keep their threads) is made as the code changes.
+    @mc
+    Scenario: A plugin host updated in place by a release upgrade still keeps a plugin's threads
+      Given "code-review" declares that its threads stay on their machine
+      And the package "code-review" is enabled
+      When the MC is updated in place from a release that did not know plugins keep their threads
+      And the MC rescans its plugins
+      Then the plugin host has run on through the update and the rescan
+      When "code-review" starts a "review" thread
+      Then the thread is marked as staying on its machine
 
     @mc
     Scenario: A plugin can keep its threads out of the thread list

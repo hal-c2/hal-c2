@@ -166,6 +166,8 @@ defmodule HalC2.PluginsPropTest do
         {1, {:call, __MODULE__, :kill_client, [client()]}},
         {1, {:call, __MODULE__, :kill_plugins, []}},
         {1, {:call, __MODULE__, :stale_worker, [held]}},
+        {1, {:call, __MODULE__, :update_in_place, []}},
+        {1, {:call, __MODULE__, :unreadable_scan, [held]}},
         {2, {:call, __MODULE__, :listen, [id(), oneof(["1", "2"])]}},
         {if(state.broken, do: 3, else: 1),
          {:call, __MODULE__, if(state.broken, do: :mend_settings, else: :break_settings), []}},
@@ -300,6 +302,12 @@ defmodule HalC2.PluginsPropTest do
   # The next event the plugin is to hear is the first of its queue.
   def precondition(state, {:call, _, :release, [id, n]}),
     do: match?([{_, ^n} | _], state.queue[id])
+
+  # Of a version the host holds as it is on disk, so the scan has nothing else to load.
+  def precondition(state, {:call, _, :unreadable_scan, [id]}),
+    do:
+      is_map_key(state.disk, id) and state.held[id] != nil and
+        state.held[id].desc == state.disk[id] and not MapSet.member?(state.unrevoked, id)
 
   def precondition(state, {:call, _, :break_settings, []}), do: not state.broken
   def precondition(state, {:call, _, :mend_settings, []}), do: state.broken
@@ -568,6 +576,19 @@ defmodule HalC2.PluginsPropTest do
 
   # Its supervisor is not known, so it is no one's, whatever runs now.
   defp act(s, {:call, _, :stale_worker, [_id]}), do: {s, :ok}
+
+  # A release upgrade changes nothing the host holds.
+  defp act(s, {:call, _, :update_in_place, []}), do: {s, :ok}
+
+  # A scan that cannot read `id`'s manifest refuses the package as one whose manifest is
+  # broken, though it is the version held: the next scan reads it again. The version
+  # refused is no version on disk, so that scan loads the package anew.
+  defp act(s, {:call, _, :unreadable_scan, [id]}) do
+    {_, version, permissions} = s.disk[id]
+    unreadable = entry({:unreadable, version, permissions}, :error_manifest)
+    s = scan(s)
+    {reconcile(put_in(s.held[id], keep(s.held[id], unreadable))), :ok}
+  end
 
   # Killed until its supervisor gives up: how many kills that took is not known.
   defp act(s, {:call, _, :crash_hard, [id]}) do
@@ -1076,6 +1097,38 @@ defmodule HalC2.PluginsPropTest do
 
     receive do
       {:DOWN, ^ref, _, _, _} -> :ok
+    end
+
+    {:ok, observe()}
+  end
+
+  # The host updated in place by a release upgrade from a version without the table of
+  # `threadsStay` declarations: `init/1` does not run again, so the table is not there
+  # until `code_change/3` makes it. Every later step then needs the host to have kept
+  # working; the reply says whether the table is there.
+  def update_in_place do
+    :sys.replace_state(Plugins, fn state ->
+      :ets.delete(HalC2.Plugins.Stays)
+      state
+    end)
+
+    :ok = :sys.suspend(Plugins)
+    :ok = :sys.change_code(Plugins, Plugins, "before", [])
+    :ok = :sys.resume(Plugins)
+    reply = if :ets.whereis(HalC2.Plugins.Stays) == :undefined, do: :no_table, else: :ok
+    {reply, observe()}
+  end
+
+  # A scan while `id`'s manifest cannot be read, as when an install replaces the package
+  # under it; readable again afterwards.
+  def unreadable_scan(id) do
+    manifest = Path.join([plugins_dir(), id, "plugin.json"])
+    File.chmod!(manifest, 0o000)
+
+    try do
+      Plugins.handle("rescan", %{})
+    after
+      File.chmod!(manifest, 0o644)
     end
 
     {:ok, observe()}

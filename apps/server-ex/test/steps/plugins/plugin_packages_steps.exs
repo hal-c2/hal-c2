@@ -544,6 +544,26 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     context |> Fixtures.rescan() |> Map.put(:plugin, id)
   end
 
+  step "a new version of {string} whose MC file the MC cannot read is placed in the plugins directory",
+       %{args: [id]} = context do
+    dir = Packages.dir(context, id)
+    context = new_page(context, dir)
+    [source] = Path.wildcard(Path.join(dir, "mc/*.ex"))
+
+    File.write!(
+      source,
+      String.replace(File.read!(source), ~s("number" => 12), ~s("number" => 13))
+    )
+
+    File.chmod!(source, 0o000)
+
+    try do
+      context |> Fixtures.rescan() |> Map.put(:plugin, id)
+    after
+      File.chmod!(source, 0o644)
+    end
+  end
+
   step "clients still get the UI parts of its old version", context do
     revision = Fixtures.entry(context.plugin)["revision"]
 
@@ -1122,6 +1142,29 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     file = Path.join(Mc.tmp_dir(context.mc, "export"), "review.hal-c2-thread")
     assert HalC2.ThreadArchive.export_file(context.plugin_thread, file) == {:error, kept}
     refute File.exists?(file)
+    context
+  end
+
+  # The host as a release from before the table of `threadsStay` declarations left it,
+  # updated in place as the release handler does (`HalC2.Upgrade.Appup`).
+  step "the MC is updated in place from a release that did not know plugins keep their threads",
+       context do
+    host = Process.whereis(HalC2.Plugins)
+
+    :sys.replace_state(HalC2.Plugins, fn state ->
+      :ets.delete(HalC2.Plugins.Stays)
+      state
+    end)
+
+    :ok = :sys.suspend(HalC2.Plugins)
+    :ok = :sys.change_code(HalC2.Plugins, HalC2.Plugins, "before", [])
+    :ok = :sys.resume(HalC2.Plugins)
+    Map.put(context, :plugin_host, host)
+  end
+
+  step "the plugin host has run on through the update and the rescan", context do
+    assert Process.whereis(HalC2.Plugins) == context.plugin_host
+    assert %{"status" => "running"} = Fixtures.entry("code-review")
     context
   end
 

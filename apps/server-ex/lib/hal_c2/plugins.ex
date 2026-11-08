@@ -1017,9 +1017,14 @@ defmodule HalC2.Plugins do
   def handle_info(_other, state), do: {:noreply, state}
 
   # A host updated in place by a release upgrade from before crashes were charged to the
-  # supervisor that reported them: its workers are the running supervisors'.
+  # supervisor that reported them: its workers are the running supervisors'. One from
+  # before `threadsStay` has no table of declarations (`init/1` does not run again), and
+  # `sync/1` would crash on it: it is made and filled from the versions loaded.
   @impl true
   def code_change(_old, state, _extra) do
+    if :ets.whereis(@stays) == :undefined,
+      do: :ets.new(@stays, [:named_table, :protected, :set, read_concurrency: true])
+
     plugins =
       Map.new(state.plugins, fn {id, plugin} ->
         {id, plugin |> Map.put_new(:gave_up, nil) |> Map.put_new(:compile_check, nil)}
@@ -1031,7 +1036,7 @@ defmodule HalC2.Plugins do
         entry -> entry
       end)
 
-    {:ok, %{state | plugins: plugins, refs: refs}}
+    {:ok, sync(%{state | plugins: plugins, refs: refs})}
   end
 
   # One `HalC2.Watchers` entry per watched list or topic, so dropping one leaves the others.
@@ -1160,29 +1165,39 @@ defmodule HalC2.Plugins do
       {{:error, _, hash}, [%{hash: hash} | _]} ->
         previous
 
-      {{:ok, _, _, _}, _} ->
-        copy = stage(id, dir)
+      {{:ok, _, _, hash}, _} ->
+        case stage(id, dir) do
+          {:ok, copy} ->
+            load_copy(id, dir, copy, previous, bundled)
 
-        case Package.read(copy) do
-          {:ok, manifest, sources, hash} ->
-            plugin = %{
-              blank(id, dir, hash)
-              | manifest: manifest,
-                sources: sources,
-                package: dir,
-                files: copy,
-                bundled: MapSet.member?(bundled, id),
-                problem: api_problem(manifest.api_version)
-            }
-
-            if runnable?(plugin), do: compile_package(plugin, previous), else: [plugin]
-
-          {:error, message, hash} ->
-            File.rm_rf(Path.dirname(copy))
+          # The package changed under the copy (an install replacing it): the version
+          # that ran stays, and a rescan loads it again.
+          {:error, message} ->
             failed(previous, message, fn -> %{blank(id, dir, hash) | package: dir} end)
         end
 
       {{:error, message, hash}, _} ->
+        failed(previous, message, fn -> %{blank(id, dir, hash) | package: dir} end)
+    end
+  end
+
+  defp load_copy(id, dir, copy, previous, bundled) do
+    case Package.read(copy) do
+      {:ok, manifest, sources, hash} ->
+        plugin = %{
+          blank(id, dir, hash)
+          | manifest: manifest,
+            sources: sources,
+            package: dir,
+            files: copy,
+            bundled: MapSet.member?(bundled, id),
+            problem: api_problem(manifest.api_version)
+        }
+
+        if runnable?(plugin), do: compile_package(plugin, previous), else: [plugin]
+
+      {:error, message, hash} ->
+        File.rm_rf(Path.dirname(copy))
         failed(previous, message, fn -> %{blank(id, dir, hash) | package: dir} end)
     end
   end
@@ -1202,8 +1217,15 @@ defmodule HalC2.Plugins do
   # Each copy sits in a directory named for the package, as the manifest's id must be.
   defp stage(id, dir) do
     copy = Path.join([copies_dir(), id, "#{System.unique_integer([:positive])}", id])
-    :ok = Package.copy(dir, copy)
-    copy
+
+    case Package.copy(dir, copy) do
+      :ok ->
+        {:ok, copy}
+
+      {:error, _} = error ->
+        File.rm_rf(Path.dirname(copy))
+        error
+    end
   end
 
   defp copies_dir, do: Path.join(HalC2.Paths.cache_dir(), "plugin-packages")

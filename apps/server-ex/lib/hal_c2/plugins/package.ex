@@ -209,16 +209,22 @@ defmodule HalC2.Plugins.Package do
 
   @doc """
   Copies the package at `dir` to `to`: the files it can serve, without its `.git`
-  checkout or what a link in it leads to outside it.
+  checkout or what a link in it leads to outside it. A file it cannot copy (one an
+  install removed meanwhile, or one it cannot read) is `{:error, message}`.
   """
   def copy(dir, to) do
-    for file <- files(dir) do
-      target = Path.join(to, Path.relative_to(file, dir))
-      File.mkdir_p!(Path.dirname(target))
-      File.cp!(file, target)
-    end
+    Enum.reduce_while(files(dir), :ok, fn file, :ok ->
+      path = Path.relative_to(file, dir)
+      target = Path.join(to, path)
 
-    :ok
+      with :ok <- File.mkdir_p(Path.dirname(target)),
+           :ok <- File.cp(file, target) do
+        {:cont, :ok}
+      else
+        {:error, reason} ->
+          {:halt, {:error, "#{path} could not be copied: #{:file.format_error(reason)}"}}
+      end
+    end)
   end
 
   # The files the package can serve. Hidden files count; a `.git` checkout of the
@@ -238,9 +244,19 @@ defmodule HalC2.Plugins.Package do
     |> Enum.reduce(:crypto.hash_init(:sha256), fn file, acc ->
       acc
       |> :crypto.hash_update(Path.relative_to(file, dir))
-      |> :crypto.hash_update(File.read!(file))
+      |> :crypto.hash_update(contents(file))
     end)
     |> :crypto.hash_final()
+  end
+
+  # A file that cannot be read (gone since the listing, as when an install replaces the
+  # package under a scan) hashes as its error, so the next scan reads it again. A file
+  # that can hashes as it always did: an upgrade leaves the packages' hashes as they were.
+  defp contents(file) do
+    case File.read(file) do
+      {:ok, bytes} -> bytes
+      {:error, reason} -> "\0could not be read: #{reason}"
+    end
   end
 
   defp decode(text) do
