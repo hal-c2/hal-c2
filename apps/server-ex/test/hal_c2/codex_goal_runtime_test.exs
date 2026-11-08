@@ -58,12 +58,14 @@ defmodule HalC2.CodexGoalRuntimeTest do
     assert ["failed"] = statuses(thread_id)
   end
 
-  # Codex works on and finishes the goal while the MC still waits for its answer to
-  # the goal being set active, so its completion is already queued behind that answer.
-  # Keeping the goal active would hold the run until the grace paused it.
+  # Codex finishes the goal while the MC still waits for its answer to the goal being
+  # set active (the fake reports the completion ahead of that answer), so the report
+  # is already queued when the answer is read. Keeping the goal active would hold the
+  # run until the grace paused it.
   test "a goal Codex finished before the MC heard the activation answer is complete, not active",
        %{work: work} do
-    System.delete_env("FAKE_CODEX_GOAL_STALL")
+    System.put_env("FAKE_CODEX_GOAL_FINISH_FIRST", "1")
+    on_exit(fn -> System.delete_env("FAKE_CODEX_GOAL_FINISH_FIRST") end)
     thread_id = "thread-goal-done"
     start_goal_run(thread_id, work)
 

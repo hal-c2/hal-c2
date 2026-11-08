@@ -4,6 +4,8 @@
 # its own: one starts when the goal becomes active with no turn running, and another
 # each time a turn completes, FAKE_CODEX_GOAL_TURNS (default 2) of them in all, the
 # last marking the goal complete. FAKE_CODEX_GOAL_STALL: Codex never starts one.
+# FAKE_CODEX_GOAL_FINISH_FIRST: setting the goal active reports it complete before the
+# answer, which still shows it active, as a Codex that finished the goal first would.
 import json, os, time
 
 MAX_OBJECTIVE = 4000
@@ -52,6 +54,12 @@ def request(mid, method, params):
             return
         elif params.get("status"):
             goal = {**goal, "status": params["status"], "updatedAt": int(time.time())}
+        if os.environ.get("FAKE_CODEX_GOAL_FINISH_FIRST") and goal["status"] == "active":
+            answer = {**goal, "threadId": thread}
+            goal = {**goal, "status": "complete", "updatedAt": int(time.time())}
+            _updated(thread)
+            _send({"id": mid, "result": {"goal": answer}})
+            return
         _send({"id": mid, "result": {"goal": {**goal, "threadId": thread}}})
         _updated(thread)
         if goal["status"] == "active" and not running:
