@@ -602,6 +602,7 @@ defmodule HalC2.Acp.ThreadRuntime do
     cond do
       state.replaying -> {:noreply, state}
       child_session?(params["sessionId"], state) -> {:noreply, child_update(params, state)}
+      foreign_session?(params["sessionId"], state) -> {:noreply, state}
       subagent_ended?(update) -> {:noreply, subagent_ended(state, update)}
       commands = available_commands(update) -> {:noreply, offer(state, commands)}
       state.turn == nil -> {:noreply, state}
@@ -2112,6 +2113,22 @@ defmodule HalC2.Acp.ThreadRuntime do
         do: %{"usedTokens" => used, "maxTokens" => u["size"]},
         else: %{"usedTokens" => used}
 
+    # A cost is shown only with the currency it is in.
+    usage =
+      case u["cost"] do
+        %{"amount" => amount, "currency" => currency} when is_number(amount) ->
+          case meta(currency, nil) do
+            code when is_binary(code) and byte_size(code) <= 32 ->
+              Map.put(usage, "cost", %{"amount" => amount, "currency" => code})
+
+            _ ->
+              usage
+          end
+
+        _ ->
+          usage
+      end
+
     ids = state.turn.ids
 
     commit(state, fn stream ->
@@ -2220,7 +2237,9 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp tool(state, id, call) do
     {kind, fields} = tool_shape(call, state)
-    state = state |> flush() |> ensure_item(id, kind, fields) |> note_kill(id, call)
+
+    state =
+      state |> next_segment(id) |> flush() |> ensure_item(id, kind, fields) |> note_kill(id, call)
 
     cond do
       batch?(state, id) ->
@@ -2237,12 +2256,19 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # A new tool ends the message before it.
+  defp next_segment(state, id) do
+    if Map.has_key?(state.items, id),
+      do: state,
+      else: %{state | turn: Map.update(state.turn, :segment, 1, &(&1 + 1))}
+  end
+
   defp tool_update(state, id, call) do
     state =
       if Map.has_key?(state.items, id),
         do: state,
         else:
-          (fn {kind, fields} -> ensure_item(flush(state), id, kind, fields) end).(
+          (fn {kind, fields} -> ensure_item(flush(next_segment(state, id)), id, kind, fields) end).(
             tool_shape(call, state)
           )
 
@@ -2425,6 +2451,11 @@ defmodule HalC2.Acp.ThreadRuntime do
     do:
       is_binary(session) and state.subagents != %{} and state.session_id != nil and
         session != state.session_id
+
+  # An update for a session of the agent's that is not the thread's, such as one it
+  # started by itself, is not the thread's to show.
+  defp foreign_session?(session, state),
+    do: is_binary(session) and is_binary(state.session_id) and session != state.session_id
 
   defp child_update(%{"sessionId" => session, "update" => update}, state) do
     case Enum.find(state.subagents, fn {_id, entry} -> entry.session == session end) do
@@ -2899,12 +2930,17 @@ defmodule HalC2.Acp.ThreadRuntime do
     text = String.slice(text, 0, @max_chunk)
     # Message ids are optional and need only be unique within a turn, so each turn
     # gets its own messages rather than overwriting an earlier turn's.
-    key = "#{kind}:#{state.turn.ids.run}:#{u["messageId"] || "current"}"
+    # What the agent writes after a tool starts a new message, so the text, the tool
+    # and the later text keep their order.
+    segment = Map.get(state.turn, :segment, 0)
+    key = "#{kind}:#{state.turn.ids.run}:#{segment}:#{u["messageId"] || "current"}"
 
     state =
       if kind == :assistant, do: %{state | turn: Antigravity.reply(state.turn, text)}, else: state
 
-    state |> ensure_item(key, kind) |> buffer(key, "text", text)
+    if Map.has_key?(state.items, key) or String.trim(text) != "",
+      do: state |> ensure_item(key, kind) |> buffer(key, "text", text),
+      else: state
   end
 
   # Content the client cannot render is shown as a placeholder, never its data.
@@ -3136,9 +3172,23 @@ defmodule HalC2.Acp.ThreadRuntime do
     )
   end
 
+  # The command a tool ran, wherever the agent put it: as text, as a list, as a
+  # program and its arguments, or only between backticks in the tool's title.
+  defp command_text(%{"command" => command, "args" => [_ | _] = args}, _title)
+       when is_binary(command),
+       do: Enum.join([command | Enum.filter(args, &is_binary/1)], " ")
+
   defp command_text(%{"command" => command}, _title) when is_binary(command), do: command
   defp command_text(%{"command" => [_ | _] = argv}, _title), do: Enum.join(argv, " ")
-  defp command_text(_input, title), do: title || ""
+
+  defp command_text(_input, title) when is_binary(title) do
+    case Regex.run(~r/`([^`]+)`/, title) do
+      [_, command] -> command
+      nil -> title
+    end
+  end
+
+  defp command_text(_input, _title), do: ""
 
   defp finish_tool(state, id, call) do
     %{kind: kind} = state.items[id]
@@ -3250,11 +3300,19 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp reported_exit(%{"metadata" => %{"exit" => code}}) when is_integer(code), do: code
   defp reported_exit(_), do: nil
 
-  defp raw_output(%{"output" => output}) when is_binary(output), do: output
+  defp raw_output(%{"output" => output}) when is_binary(output) or is_list(output),
+    do: raw_output(output)
 
   defp raw_output(%{"combinedOutput" => output}) when is_binary(output), do: output
   defp raw_output(%{"combined_output" => output}) when is_binary(output), do: output
   defp raw_output(output) when is_binary(output), do: output
+
+  # Output sent as the list of its bytes is the text they spell.
+  defp raw_output([_ | _] = bytes) do
+    if Enum.all?(bytes, &(is_integer(&1) and &1 in 0..255)),
+      do: bytes |> :erlang.list_to_binary() |> String.replace_invalid()
+  end
+
   defp raw_output(_), do: nil
 
   # The commands and skills a session offers reach the composer as the agent

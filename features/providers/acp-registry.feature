@@ -1893,7 +1893,6 @@ Feature: ACP registry agents
     Then the turn ends as cancelled
     And a turn the user stopped ends as interrupted instead
 
-  @backlog
   Scenario: Tool output an agent sends as a list of byte values is shown as text
     When "acme" reports a tool's output as a list of whole numbers instead of text
     Then the output is shown as the text those bytes spell
@@ -2334,20 +2333,17 @@ Feature: ACP registry agents
       | the on/off option "web"                  | the text "yes" | Invalid value \"yes\" for session config option \"web\": expected boolean      |
       | the option "thinking" with named choices | on             | Invalid value true for session config option \"thinking\": expected string   |
 
-  @backlog
   Scenario: An agent's thinking is shown apart from its answer
     When "acme" streams its thoughts and then its answer in one turn
     Then the thoughts are shown as the turn's thinking
     And they are not part of the answer
 
-  @backlog
   Scenario: What an agent writes after using a tool starts a new message
     Given "acme" wrote some text and then ran a tool
     When "acme" writes more text
     Then the thread shows the first text, the tool and the later text as three items in that order
     And text that is only spaces does not start a new message
 
-  @backlog
   Scenario Outline: The command a tool ran is read from wherever the agent names it
     When "acme" reports a tool that <names>
     Then the tool is shown with the command "<command>"
@@ -2372,14 +2368,12 @@ Feature: ACP registry agents
       | searching or fetching       | a web search  |
       | anything else, or nothing   | a tool call   |
 
-  @backlog
   Scenario: A linked resource in an agent's answer is shown by its name and address
     When "acme" links a resource in its answer
     Then the answer shows the resource's title, or its name, or "resource" when it has neither
     And its description follows the name when it has one
     And its address is shown on the next line, unless the address carries the data itself
 
-  @backlog
   Scenario Outline: Context usage is shown from what the agent reports and no more
     When "acme" reports <report>
     Then the context meter shows <shown>
@@ -2406,7 +2400,6 @@ Feature: ACP registry agents
     When a character of more than one byte arrives half in one piece of output and half in the next
     Then the output shows that character once and unbroken
 
-  @backlog
   Scenario: Updates an agent sends for another of its sessions are not mixed into the thread
     Given a thread runs on one session of "acme"
     When "acme" sends updates for a session it started by itself

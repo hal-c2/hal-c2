@@ -1553,6 +1553,256 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     context
   end
 
+  defp turn_items(context) do
+    Acp.stream(thread(context))
+    |> HalC2.StreamState.list("turn-item")
+    |> Enum.filter(&(&1["type"] in ["assistant_message", "reasoning", "command_execution"]))
+    |> Enum.sort_by(& &1["ordinal"])
+  end
+
+  defp tool_call(id, fields),
+    do: Map.merge(%{"sessionUpdate" => "tool_call", "toolCallId" => id}, fields)
+
+  step "{string} streams its thoughts and then its answer in one turn", context do
+    send_updates(context, [
+      %{
+        "sessionUpdate" => "agent_thought_chunk",
+        "content" => %{"type" => "text", "text" => "Weighing the options."}
+      },
+      message_chunk(%{"type" => "text", "text" => "The answer is 42."})
+    ])
+  end
+
+  step "the thoughts are shown as the turn's thinking", context do
+    assert [%{"text" => "Weighing the options."}] =
+             Enum.filter(turn_items(context), &(&1["type"] == "reasoning"))
+
+    context
+  end
+
+  step "they are not part of the answer", context do
+    assert Acp.assistant_text(thread(context)) == "The answer is 42."
+    context
+  end
+
+  step "{string} wrote some text and then ran a tool", context do
+    Map.put(context, :updates, [
+      message_chunk(%{"type" => "text", "text" => "First I look."}),
+      tool_call("t1", %{
+        "title" => "ls",
+        "kind" => "execute",
+        "status" => "completed",
+        "rawInput" => %{"command" => "ls"}
+      })
+    ])
+  end
+
+  step "{string} writes more text", context do
+    send_updates(
+      context,
+      context.updates ++
+        [
+          message_chunk(%{"type" => "text", "text" => "   "}),
+          message_chunk(%{"type" => "text", "text" => "Then I answer."})
+        ]
+    )
+  end
+
+  step "the thread shows the first text, the tool and the later text as three items in that order",
+       context do
+    assert [
+             %{"type" => "assistant_message", "text" => "First I look."},
+             %{"type" => "command_execution", "input" => "ls"},
+             %{"type" => "assistant_message", "text" => later}
+           ] = turn_items(context)
+
+    Map.put(context, :later, later)
+  end
+
+  step "text that is only spaces does not start a new message", context do
+    assert String.trim_leading(context.later) == "Then I answer."
+    context
+  end
+
+  defp run_command(context, input, title \\ "Run") do
+    call = %{"title" => title, "kind" => "execute", "status" => "completed"}
+    call = if input, do: Map.put(call, "rawInput", input), else: call
+    send_updates(context, [tool_call("t1", call)])
+  end
+
+  step(
+    "{string} reports a tool that carries the command {string} as text",
+    %{args: [_, command]} = context,
+    do: run_command(context, %{"command" => command})
+  )
+
+  step(
+    "{string} reports a tool that carries the command as the list {string} and {string}",
+    %{args: [_ | argv]} = context,
+    do: run_command(context, %{"command" => argv})
+  )
+
+  step(
+    "{string} reports a tool that carries the program {string} and the arguments {string} and {string}",
+    %{args: [_, program | args]} = context,
+    do: run_command(context, %{"command" => program, "args" => args})
+  )
+
+  step(
+    "{string} reports a tool that carries only the program {string}",
+    %{args: [_, program]} = context,
+    do: run_command(context, %{"command" => program})
+  )
+
+  step(
+    "{string} reports a tool that names the command only between backticks in its title",
+    context,
+    do: run_command(context, nil, "Run `npm test`")
+  )
+
+  step "the tool is shown with the command {string}", %{args: [command]} = context do
+    assert [%{"input" => ^command}] = items(context)
+    context
+  end
+
+  step "{string} links a resource in its answer", context do
+    send_updates(context, [
+      message_chunk(%{
+        "type" => "resource_link",
+        "title" => "Spec",
+        "name" => "spec.md",
+        "description" => "the design",
+        "uri" => "https://example.com/spec.md"
+      }),
+      message_chunk(%{"type" => "text", "text" => "\n"}),
+      message_chunk(%{
+        "type" => "resource_link",
+        "name" => "notes.md",
+        "uri" => "data:text/plain;base64,aGk="
+      }),
+      message_chunk(%{"type" => "text", "text" => "\n"}),
+      message_chunk(%{"type" => "resource_link"})
+    ])
+  end
+
+  step "the answer shows the resource's title, or its name, or \"resource\" when it has neither",
+       context do
+    text = Acp.assistant_text(thread(context))
+    assert text =~ "Spec"
+    assert text =~ "notes.md"
+    assert text |> String.split("\n") |> List.last() == "resource"
+    refute text =~ "spec.md:"
+    context
+  end
+
+  step "its description follows the name when it has one", context do
+    assert Acp.assistant_text(thread(context)) =~ "Spec: the design"
+    context
+  end
+
+  step "its address is shown on the next line, unless the address carries the data itself",
+       context do
+    text = Acp.assistant_text(thread(context))
+    assert text =~ "Spec: the design\nhttps://example.com/spec.md"
+    refute text =~ "data:"
+    context
+  end
+
+  step("a thread runs on one session of {string}", %{args: [_]} = context, do: context)
+
+  step "{string} sends updates for a session it started by itself", context do
+    send_updates(context, [
+      Map.put(
+        message_chunk(%{"type" => "text", "text" => "not for this thread"}),
+        "_session",
+        "sess-other"
+      ),
+      message_chunk(%{"type" => "text", "text" => "for this thread"})
+    ])
+  end
+
+  step "the thread does not show them", context do
+    assert Acp.assistant_text(thread(context)) == "for this thread"
+    context
+  end
+
+  step "{string} reports a tool's output as a list of whole numbers instead of text", context do
+    bytes = :binary.bin_to_list("  héllo  ")
+
+    send_updates(context, [
+      tool_call("t1", %{
+        "title" => "Run",
+        "kind" => "execute",
+        "status" => "completed",
+        "rawInput" => %{"command" => "echo"},
+        "rawOutput" => %{"output" => bytes}
+      })
+    ])
+  end
+
+  step "the output is shown as the text those bytes spell", context do
+    assert [%{"output" => output}] = items(context)
+    assert String.trim(output) == "héllo"
+    Map.put(context, :output, output)
+  end
+
+  step "its leading and trailing spaces are kept", context do
+    assert context.output == "  héllo  "
+    context
+  end
+
+  defp report_usage(context, usage) do
+    send_updates(context, [
+      Map.merge(%{"sessionUpdate" => "usage_update", "used" => 1_200}, usage)
+    ])
+  end
+
+  defp context_meter(context) do
+    Acp.stream(thread(context))
+    |> HalC2.StreamState.list("provider-thread")
+    |> hd()
+    |> Map.fetch!("contextUsage")
+  end
+
+  step("{string} reports tokens used and a window size of 0", context,
+    do: report_usage(context, %{"size" => 0})
+  )
+
+  step("{string} reports tokens used, a window size and a cost in a currency", context,
+    do:
+      report_usage(context, %{
+        "size" => 200_000,
+        "cost" => %{"amount" => 0.42, "currency" => "USD"}
+      })
+  )
+
+  step("{string} reports a cost without a currency", context,
+    do: report_usage(context, %{"size" => 200_000, "cost" => %{"amount" => 0.42}})
+  )
+
+  step "the context meter shows the tokens used, with no window size", context do
+    assert context_meter(context) == %{"usedTokens" => 1_200}
+    context
+  end
+
+  step "the context meter shows the cost with its currency as well", context do
+    assert %{
+             "usedTokens" => 1_200,
+             "maxTokens" => 200_000,
+             "cost" => %{"amount" => 0.42, "currency" => "USD"}
+           } =
+             context_meter(context)
+
+    context
+  end
+
+  step "the context meter shows no cost", context do
+    usage = context_meter(context)
+    assert usage["usedTokens"] == 1_200
+    refute Map.has_key?(usage, "cost")
+    context
+  end
+
   step "the request is refused rather than left waiting", context do
     text = Acp.assistant_text(thread(context))
     assert text =~ "fs: -32002"

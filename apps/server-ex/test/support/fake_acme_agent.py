@@ -239,7 +239,8 @@ def prompt(pid, sid, text):
     m = re.search(r"updates (\[.*\])", text)
     if m and "<conversation_history>" not in text:
         for u in json.loads(m.group(1)):
-            update(sid, u)
+            # "_session" sends the update for another session of the agent's.
+            update(u.pop("_session", sid), u)
         return finish(pid, sid, "")
     m = re.search(r"ask (\S+) (\{.*\})", text)
     if m:
