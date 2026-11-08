@@ -33,6 +33,7 @@ defmodule HalC2.ClaudeAuthCachePropTest do
                oneof([
                  {:claim, elements(@keys)},
                  {:land, elements(@keys), elements(@results), oneof([:current, :stale])},
+                 {:release, elements(@keys), oneof([:current, :stale])},
                  {:forget, elements(@instances)},
                  {:lookup, elements(@keys)}
                ])
@@ -90,6 +91,20 @@ defmodule HalC2.ClaudeAuthCachePropTest do
           else: model
 
       {:ok, %{model | next: at + 1}}
+    else
+      :error
+    end
+  end
+
+  # A read that could not be made (its spawn raised) gives its claim back:
+  # the landed answer stands and the key can be claimed again.
+  defp step(model, {:release, key, which}) do
+    row = model.rows[key]
+    token = if which == :current, do: row.token, else: -1
+    expected = token != nil and token == row.token
+
+    if Provider.auth_release(key, token || -1) == expected do
+      {:ok, if(expected, do: put_in(model, [:rows, key, :token], nil), else: model)}
     else
       :error
     end

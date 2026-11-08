@@ -291,6 +291,53 @@ defmodule HalC2.ClaudeProviderTest do
     assert Provider.auth_claim(key, 3)
   end
 
+  # Waits (to a deadline) for the auth row of `path` to have no read in flight.
+  defp await_auth_settled(path, deadline) do
+    rows =
+      for {key, _result, _at, token} <- :ets.tab2list(Provider.auth_table()),
+          elem(key, 1) == path,
+          do: {key, token}
+
+    cond do
+      rows != [] and Enum.all?(rows, fn {_key, token} -> token == nil end) ->
+        rows
+
+      System.monotonic_time(:millisecond) > deadline ->
+        rows
+
+      true ->
+        Process.sleep(10)
+        await_auth_settled(path, deadline)
+    end
+  end
+
+  test "a claude that vanishes before its sign-in read does not strand it", %{tmp_dir: dir} do
+    path = Path.join(dir, "claude-vanish")
+
+    # Answers --version twice (the entry's own check, then the health probe),
+    # deleting itself on the second, so the sign-in read's spawn cannot run.
+    File.write!(path, """
+    #!/bin/sh
+    c=$(cat "$0.count" 2>/dev/null || echo 0); c=$((c+1)); echo $c > "$0.count"
+    if [ "$c" -ge 2 ]; then rm -- "$0"; fi
+    case "$1" in
+      --version) echo '2.1.0 (Claude Code)' ;;
+      *) echo '{"loggedIn":true}' ;;
+    esac
+    """)
+
+    File.chmod!(path, 0o755)
+    Application.put_env(:hal_c2, :claude_command, [path])
+    assert Provider.entry()
+
+    assert [{key, nil}] =
+             await_auth_settled(path, System.monotonic_time(:millisecond) + 5_000)
+
+    assert {:unreadable, _at} = Provider.auth_lookup(key)
+    assert Provider.auth_claim(key, 999)
+    assert Provider.auth_release(key, 999)
+  end
+
   test "a relative --add-dir without a session folder offers no skills", %{tmp_dir: dir} do
     skill = Path.join([dir, "tools", ".claude", "skills", "leaked"])
     File.mkdir_p!(skill)

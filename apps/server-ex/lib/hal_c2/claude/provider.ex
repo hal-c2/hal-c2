@@ -491,24 +491,42 @@ defmodule HalC2.Claude.Provider do
     ArgumentError -> false
   end
 
+  @doc false
+  # Gives back the claim under `token` without landing a read (the read could
+  # not be made), keeping the last landed answer; false when the claim is no
+  # longer this read's.
+  def auth_release(key, token) do
+    :ets.select_replace(auth_table(), [
+      {{:"$1", :"$2", :"$3", token}, auth_key_guard(key), [{{:"$1", :"$2", :"$3", nil}}]}
+    ]) == 1
+  rescue
+    ArgumentError -> false
+  end
+
   # One read per key at a time, whoever asked first.
   defp refresh_auth(key, id, path) do
     token = System.unique_integer([:positive, :monotonic])
 
     if auth_claim(key, token) do
       Task.start(fn ->
-        result = run_auth_status(id, path)
-        previous = auth_lookup(key)
-        landed? = auth_land(key, token, result, System.monotonic_time(:millisecond))
+        try do
+          result = run_auth_status(id, path)
+          previous = auth_lookup(key)
+          landed? = auth_land(key, token, result, System.monotonic_time(:millisecond))
 
-        # Announce only a landing that changes what the entry shows: a first
-        # signed-in read confirms the authenticated entry already served
-        # (unless it was shown unverified), and re-announcing it would make
-        # every provider check echo itself.
-        if landed? and elem(previous || {:unreadable, 0}, 0) != result and
-             not (result == :signed_in and previous == nil and
-                    not auth_unverified?(id, path)),
-           do: HalC2.Settings.notify_providers()
+          # Announce only a landing that changes what the entry shows: a first
+          # signed-in read confirms the authenticated entry already served
+          # (unless it was shown unverified), and re-announcing it would make
+          # every provider check echo itself.
+          if landed? and elem(previous || {:unreadable, 0}, 0) != result and
+               not (result == :signed_in and previous == nil and
+                      not auth_unverified?(id, path)),
+             do: HalC2.Settings.notify_providers()
+        after
+          # A read that raised before landing gives its claim back, so the key
+          # is not stranded showing whatever it last read (or unknown).
+          auth_release(key, token)
+        end
       end)
     end
 
@@ -540,13 +558,25 @@ defmodule HalC2.Claude.Provider do
 
     env = Enum.to_list(HalC2.Settings.instance_env(id)) ++ home
 
+    # A spawn that cannot run at all (the binary went away in an update since
+    # `path` was resolved) raises in the task; caught there, because as a
+    # linked exit it would kill the caller before it lands its read — and
+    # strand the key's in-flight token for good.
     task =
-      Task.async(fn -> System.cmd(path, ["auth", "status"], env: env, stderr_to_stdout: true) end)
+      Task.async(fn ->
+        try do
+          {:ok, System.cmd(path, ["auth", "status"], env: env, stderr_to_stdout: true)}
+        rescue
+          _ -> :error
+        catch
+          _, _ -> :error
+        end
+      end)
 
     timeout = Application.get_env(:hal_c2, :claude_health_timeout_ms, @health_timeout)
 
     case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
-      {:ok, {output, _status}} ->
+      {:ok, {:ok, {output, _status}}} ->
         case JSON.decode(String.trim(output)) do
           {:ok, %{"loggedIn" => true}} -> :signed_in
           {:ok, %{"loggedIn" => false}} -> :signed_out
