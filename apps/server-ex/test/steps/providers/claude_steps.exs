@@ -727,6 +727,31 @@ defmodule HalC2.Steps.Providers.Claude do
     Map.merge(context, %{argv: argv, model: model["slug"]})
   end
 
+  step "a Claude thread uses a model that is not in HAL-C2's model list", context do
+    context |> World.fake_providers() |> Map.put(:model, "claude-unlisted-9")
+  end
+
+  step "the user chooses {string} effort and sends a message", %{args: [effort]} = context do
+    selection = %{
+      "instanceId" => "claudeAgent",
+      "model" => context.model,
+      "options" => [%{"id" => "effort", "value" => effort}]
+    }
+
+    context =
+      World.launch_on(context, @thread, "claudeAgent", "hello", %{"modelSelection" => selection})
+
+    World.await_runs(context, @thread, ["completed"])
+    assert [argv] = for(%{"argv" => argv} <- World.provider_log(context, "claude"), do: argv)
+    Map.put(context, :argv, argv)
+  end
+
+  step "Claude runs the turn with {string} effort", %{args: [effort]} = context do
+    assert ["--model", context.model] in pairs(context.argv)
+    assert ["--effort", effort] in pairs(context.argv)
+    context
+  end
+
   step "Claude is started with the effort {string}", %{args: [effort]} = context do
     assert ["--effort", effort] in pairs(context.argv)
     context
@@ -1372,6 +1397,123 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- a foreground fork --------------------------------------------------------------
+
+  # Claude Code's frames for `Agent` with subagent_type "fork" in the foreground: the
+  # fork's own stream opens with a placeholder result for its launch call.
+  step "Claude starts a fork of itself in the foreground", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "wait while you fork")
+
+    World.await_running(context, @thread)
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-fork",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "fork-1",
+            "name" => "Agent",
+            "input" => %{
+              "description" => "Fork to check the tests",
+              "prompt" => "Check the tests",
+              "subagent_type" => "fork",
+              "run_in_background" => false
+            }
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_started",
+      "task_id" => "task-fork-1",
+      "tool_use_id" => "fork-1",
+      "description" => "Fork to check the tests",
+      "subagent_type" => "fork",
+      "task_type" => "local_agent",
+      "is_backgrounded" => false
+    })
+
+    claude_says(context, %{
+      "type" => "user",
+      "parent_tool_use_id" => "fork-1",
+      "message" => %{
+        "role" => "user",
+        "content" => [
+          %{
+            "type" => "tool_result",
+            "tool_use_id" => "fork-1",
+            "content" => "Fork started — that fork is you."
+          }
+        ]
+      }
+    })
+
+    flush_runtime(context)
+  end
+
+  step "the fork shows as working until it ends", context do
+    assert [%{"status" => "running", "result" => nil}] =
+             World.entities(context, @thread, "subagent")
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "parent_tool_use_id" => "fork-1",
+      "message" => %{
+        "id" => "m-fork-says",
+        "content" => [%{"type" => "text", "text" => "FORK-DONE"}]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-fork-1",
+      "tool_use_id" => "fork-1",
+      "status" => "completed",
+      "summary" => "FORK-DONE"
+    })
+
+    claude_says(context, %{
+      "type" => "user",
+      "message" => %{
+        "role" => "user",
+        "content" => [
+          %{
+            "type" => "tool_result",
+            "tool_use_id" => "fork-1",
+            "content" => "[Subagent hand-back] FORK-DONE"
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "its result is what the fork answers, not the note that it started", context do
+    assert [%{"status" => "completed", "result" => result} = subagent] =
+             World.entities(context, @thread, "subagent")
+
+    assert result =~ "FORK-DONE"
+    child = HalC2.Streams.Server.state(HalC2.Streams.ensure(subagent["childThreadId"]))
+
+    refute Enum.any?(
+             StreamState.list(child, "turn-item"),
+             &(inspect(&1, limit: :infinity) =~ "Fork started")
+           )
+
+    context
+  end
+
   # --- a resumed subagent ----------------------------------------------------------------
 
   # The subagent of the fake's "in the background" turn finished; then the runtime that
@@ -1459,6 +1601,90 @@ defmodule HalC2.Steps.Providers.Claude do
 
     claude_says(context, %{"type" => "result", "subtype" => "success"})
     World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  # A turn the MC never saw start a subagent (Claude's own session started it, say,
+  # before the thread came to the MC); the next turn sends that subagent a message.
+  step "the MC missed the launch of a Claude subagent", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "hello")
+
+    World.await_runs(context, @thread, ["completed"])
+    assert [] = World.entities(context, @thread, "subagent")
+    context
+  end
+
+  step "Claude resumes that subagent", context do
+    context = World.post_message(context, @thread, "wait and resume it")
+    World.await_running(context, @thread)
+
+    World.await_provider_log(
+      context,
+      "claude",
+      &(inspect(get_in(&1, ["in", "message", "content"])) =~ "wait and resume it")
+    )
+
+    send_to_subagent(context, "send-1", "Also check the tests", "Check the tests")
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  step "the subagent gets its own child thread", context do
+    state = World.stream(context, @thread)
+    assert [subagent] = StreamState.list(state, "subagent")
+    assert %{"status" => "completed", "result" => "The tests pass"} = subagent
+    assert subagent["nativeTaskId"] == "task-agent-7"
+    child = HalC2.Streams.Server.state(HalC2.Streams.ensure(subagent["childThreadId"]))
+    assert %{"title" => title} = StreamState.get(child, "thread")[subagent["childThreadId"]]
+    assert title =~ "Check the tests"
+
+    assert [{"user_message", "Also check the tests"}, {"assistant_message", "The tests pass"}] =
+             child
+             |> StreamState.list("turn-item")
+             |> Enum.sort_by(& &1["ordinal"])
+             |> Enum.filter(&(&1["type"] in ["user_message", "assistant_message"]))
+             |> Enum.map(&{&1["type"], &1["text"]})
+
+    # The message is the subagent's, not a tool call of the parent's.
+    refute Enum.any?(StreamState.list(state, "turn-item"), &(&1["toolName"] == "SendMessage"))
+    Map.put(context, :subagent, subagent)
+  end
+
+  # Resumed again, under another description: the child thread it has is kept as it is.
+  step "an existing child thread keeps its title and model", context do
+    child_id = context.subagent["childThreadId"]
+
+    read = fn ->
+      HalC2.Streams.Server.state(HalC2.Streams.ensure(child_id))
+      |> StreamState.get("thread")
+      |> Map.get(child_id)
+    end
+
+    before = read.()
+    context = World.post_message(context, @thread, "wait and resume it again")
+    World.await_running(context, @thread)
+
+    World.await_provider_log(
+      context,
+      "claude",
+      &(inspect(get_in(&1, ["in", "message", "content"])) =~ "wait and resume it again")
+    )
+
+    send_to_subagent(context, "send-2", "And the docs", "Something else entirely")
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed", "completed", "completed"])
+
+    assert [subagent] = World.entities(context, @thread, "subagent")
+    assert subagent["childThreadId"] == child_id
+    assert subagent["title"] == context.subagent["title"]
+    assert subagent["model"] == context.subagent["model"]
+    after_resume = read.()
+    assert after_resume["title"] == before["title"]
+    assert after_resume["modelSelection"] == before["modelSelection"]
     context
   end
 
@@ -1870,6 +2096,90 @@ defmodule HalC2.Steps.Providers.Claude do
     do: Enum.filter(World.entities(context, @thread, "turn-item"), &(&1["type"] == "compaction"))
 
   # The newest usage any of the thread's provider turns reported: what the meter shows.
+  step "the user added the custom Claude model {string}, which is not in the catalog",
+       %{args: [model]} = context do
+    context =
+      context
+      |> World.fake_providers()
+      |> write_settings(fn settings ->
+        put_in(
+          settings,
+          [Access.key("providerInstances", %{}), Access.key("claudeAgent", %{})],
+          %{"driver" => "claudeAgent", "config" => %{"customModels" => [model]}}
+        )
+      end)
+
+    refute HalC2.Claude.Provider.known?(model)
+    Map.put(context, :model, model)
+  end
+
+  step ~r/^a Claude turn runs on it and Claude reports a context window of (?<size>[\d,]+) tokens$/,
+       %{args: [size]} = context do
+    World.put_os_env("FAKE_CLAUDE_CONTEXT_WINDOW", String.replace(size, ",", ""))
+
+    context
+    |> World.launch_on(@thread, "claudeAgent", "report your usage", %{
+      "modelSelection" => %{"instanceId" => "claudeAgent", "model" => context.model}
+    })
+    |> tap(&World.await_runs(&1, @thread, ["completed"]))
+  end
+
+  step ~r/^the context meter is out of (?<size>[\d,]+) tokens before the turn settles$/,
+       %{args: [size]} = context do
+    # The usage is written with Claude's result, before the run completes.
+    assert context_usage(context)["maxTokens"] ==
+             size |> String.replace(",", "") |> String.to_integer()
+
+    context
+  end
+
+  step "a model in the catalog keeps the catalog's window", context do
+    assert HalC2.Claude.Provider.known?("sonnet")
+
+    context =
+      context
+      |> World.launch_on("Catalog", "claudeAgent", "report your usage", %{
+        "modelSelection" => %{"instanceId" => "claudeAgent", "model" => "sonnet"}
+      })
+      |> tap(&World.await_runs(&1, "Catalog", ["completed"]))
+
+    assert [%{"tokenUsage" => %{"maxTokens" => window}}] =
+             World.entities(context, "Catalog", "provider-turn")
+
+    assert window == HalC2.Claude.Provider.launch("sonnet", %{}).context_window
+    assert window != 204_800
+    context
+  end
+
+  step "Claude runs through a gateway that reports zero tokens when a message starts", context do
+    World.put_os_env("FAKE_CLAUDE_GATEWAY_USAGE", "1")
+    World.fake_providers(context)
+  end
+
+  step "the gateway reports the real counts as the message ends", context do
+    context = World.launch_on(context, @thread, "claudeAgent", "hello")
+    World.await_runs(context, @thread, ["completed"])
+    Map.put(context, :usage, context_usage(context))
+  end
+
+  step "the context meter shows those counts", context do
+    assert %{
+             "usedTokens" => 41_580,
+             "inputTokens" => 41_500,
+             "cachedInputTokens" => 40_000,
+             "outputTokens" => 80
+           } = context.usage
+
+    context
+  end
+
+  step "a compaction is not undone by usage from before it", context do
+    context = World.post_message(context, @thread, "compact, then")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    assert %{"usedTokens" => 5000} = context_usage(context)
+    context
+  end
+
   defp context_usage(context) do
     World.entities(context, @thread, "provider-turn")
     |> Enum.filter(& &1["tokenUsage"])
@@ -4162,6 +4472,63 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # Claude sends the subagent it knows as task-agent-7 `message` with tool call `tool`,
+  # registers the task under `description`, and the subagent answers.
+  defp send_to_subagent(context, tool, message, description) do
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-#{tool}",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => tool,
+            "name" => "SendMessage",
+            "input" => %{"to" => "task-agent-7", "message" => message}
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_started",
+      "task_id" => "task-agent-7",
+      "tool_use_id" => tool,
+      "description" => description,
+      "task_type" => "local_agent",
+      "is_backgrounded" => true
+    })
+
+    claude_says(context, %{
+      "type" => "user",
+      "message" => %{
+        "role" => "user",
+        "content" => [
+          %{"type" => "tool_result", "tool_use_id" => tool, "content" => "Message delivered"}
+        ]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "parent_tool_use_id" => tool,
+      "message" => %{
+        "id" => "m-sub-#{tool}",
+        "content" => [%{"type" => "text", "text" => "The tests pass"}]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-agent-7",
+      "tool_use_id" => tool,
+      "status" => "completed",
+      "summary" => "The tests pass"
+    })
+  end
+
   defp flush_runtime(context) do
     [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
     :sys.get_state(pid)
@@ -6395,7 +6762,7 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
-  step ~r/^a Claude turn runs on (?<model>.+)$/, %{args: [model]} = context do
+  step ~r/^a Claude turn runs on (?<model>(?!it ).+)$/, %{args: [model]} = context do
     {slug, options} =
       case model do
         "Opus 4.6" ->
@@ -7570,6 +7937,52 @@ defmodule HalC2.Steps.Providers.Claude do
       end
 
     write_skill_file(base, name, "---\ndescription: #{description}\n---\nReview it.\n")
+    context
+  end
+
+  # Claude's plugin registry and `enabledPlugins`, as `/plugin install` leaves them:
+  # `acme` is on, `tidy` is installed but switched off.
+  step "the Claude plugin {string} is installed and enabled and has the skill {string}",
+       %{args: [plugin, skill]} = context do
+    {context, home} = skills_home(context)
+
+    install = fn name ->
+      path = Path.join([home, "plugins", "cache", "market", name, "1.0.0"])
+
+      write_skill_file(Path.join(path, "skills"), if(name == plugin, do: skill, else: "fmt"), """
+      ---
+      description: From #{name}
+      ---
+      Do it.
+      """)
+
+      {"#{name}@market", [%{"scope" => "user", "installPath" => path, "version" => "1.0.0"}]}
+    end
+
+    plugins = Map.new([install.(plugin), install.("tidy")])
+
+    File.write!(
+      Path.join([home, "plugins", "installed_plugins.json"]),
+      JSON.encode!(%{"version" => 2, "plugins" => plugins})
+    )
+
+    settings = Path.join(home, "settings.json")
+
+    File.write!(
+      settings,
+      JSON.encode!(%{"enabledPlugins" => %{"#{plugin}@market" => true, "tidy@market" => false}})
+    )
+
+    context
+  end
+
+  step ~r/^"(?<name>[a-z0-9_-]+:[a-z0-9_-]+)" is offered$/, %{args: [name]} = context do
+    assert %{"scope" => "plugin", "enabled" => true} = offered(context, name)
+    context
+  end
+
+  step "the skills of a disabled plugin are not", context do
+    refute Enum.any?(context.skills, &(&1["name"] in ["tidy:fmt", "fmt"]))
     context
   end
 

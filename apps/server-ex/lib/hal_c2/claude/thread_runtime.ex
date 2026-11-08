@@ -2098,8 +2098,8 @@ defmodule HalC2.Claude.ThreadRuntime do
     state =
       with nil <- message["parent_tool_use_id"],
            %{} = usage <- get_in(message, ["message", "usage"]) do
-        state = put_in(state.turn[:last_usage], usage)
-        put_in(state.turn[:compacted], false)
+        turn = Map.merge(state.turn, %{last_usage: usage, usage_message: id, compacted: false})
+        %{state | turn: turn}
       else
         _ -> state
       end
@@ -2184,7 +2184,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
 
     # The usage above stands until a post-compaction request reports its own.
-    state = put_in(state.turn[:last_usage], nil)
+    state = update_in(state.turn, &Map.merge(&1, %{last_usage: nil, usage_message: nil}))
 
     # The boundary is where this turn leaves the conversation: a turn Claude
     # only compacted in has no assistant message to resume at, so without this
@@ -2732,10 +2732,26 @@ defmodule HalC2.Claude.ThreadRuntime do
       state.turn[:last_usage] ||
         if state.turn[:compacted], do: nil, else: result["usage"]
 
-    if is_map(usage), do: write_usage(state, usage), else: state
+    if is_map(usage), do: write_usage(state, usage, reported_window(state, result)), else: state
   end
 
-  defp write_usage(state, usage) do
+  # A model neither Claude Code listed nor the manifest knows has no window of its
+  # own in `launch`; the result's `modelUsage` reports the one Claude compacts
+  # against (Upstream #30051).
+  defp reported_window(%{turn: %{launch: launch} = turn}, %{"modelUsage" => %{} = models}) do
+    entry = models[launch.model] || with([only] <- Map.values(models), do: only, else: (_ -> nil))
+
+    with %{"contextWindow" => window} when is_integer(window) and window > 0 <- entry,
+         false <- Provider.known?(Map.get(turn, :model), Entities.instance(turn.ids)) do
+      window
+    else
+      _ -> nil
+    end
+  end
+
+  defp reported_window(_state, _result), do: nil
+
+  defp write_usage(state, usage, window) do
     count = fn key -> trunc(usage[key] || 0) end
 
     input =
@@ -2744,7 +2760,7 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     token_usage = %{
       "usedTokens" => input + count.("output_tokens"),
-      "maxTokens" => state.turn.launch.context_window,
+      "maxTokens" => window || state.turn.launch.context_window,
       "inputTokens" => input,
       "cachedInputTokens" => count.("cache_read_input_tokens"),
       "outputTokens" => count.("output_tokens"),
@@ -3129,6 +3145,20 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
+  # A gateway may report a message's counts only as it ends (Upstream #19416). They
+  # land on that message's usage, never on usage a compaction has since replaced.
+  defp stream_event(%{"type" => "message_delta", "usage" => %{} = usage}, %{turn: turn} = state)
+       when is_map(turn) do
+    if turn[:last_usage] != nil and turn[:usage_message] == state.message_id do
+      counts =
+        for {key, value} <- usage, is_number(value) and value > 0, into: %{}, do: {key, value}
+
+      %{state | turn: Map.update!(turn, :last_usage, &Map.merge(&1, counts))}
+    else
+      state
+    end
+  end
+
   defp stream_event(_event, state), do: state
 
   # A complete assistant message: finishes streamed blocks with their final text,
@@ -3223,6 +3253,12 @@ defmodule HalC2.Claude.ThreadRuntime do
         sub = NativeSubagent.resume(work_ids(state), entity, input["message"])
         put_in(state.work[tool_id], %{sub: sub, item: nil, background: true})
 
+      # An agent this thread has no record of, as when the MC missed its launch: the
+      # call waits for its task (`task_started/2`), which makes it a subagent, or for
+      # its result, which shows it as a tool call.
+      is_binary(input["to"]) and is_map(state.turn) ->
+        put_in(state.turn[:sends], Map.put(state.turn[:sends] || %{}, tool_id, block))
+
       true ->
         tool_block(block, state)
     end
@@ -3237,6 +3273,13 @@ defmodule HalC2.Claude.ThreadRuntime do
     do: tool_block(block, state)
 
   defp assistant_block(_block, _id, _index, state), do: state
+
+  # The SendMessage call to an agent this thread had no record of, if it waits on `tool`.
+  defp pending_send(%{turn: %{sends: %{} = sends} = turn} = state, tool)
+       when is_map_key(sends, tool),
+       do: {sends[tool], %{state | turn: %{turn | sends: Map.delete(sends, tool)}}}
+
+  defp pending_send(state, _tool), do: {nil, state}
 
   # The subagent of this thread that Claude knows as the agent `to` (its task id).
   defp resumable(state, to) when is_binary(to) do
@@ -3277,8 +3320,14 @@ defmodule HalC2.Claude.ThreadRuntime do
     end)
   end
 
+  # A result for the subagent's own launch call, in its own stream, is the note a
+  # foreground fork opens with ("Fork started — that fork is you."): the launch's real
+  # result arrives in the stream that made the call, so it is no result at all.
   defp sidechain(%{"type" => "user", "message" => %{"content" => content}}, parent, state)
        when is_list(content) do
+    content =
+      Enum.reject(content, &match?(%{"type" => "tool_result", "tool_use_id" => ^parent}, &1))
+
     {own, theirs} =
       Enum.split_with(content, fn
         %{"type" => "tool_result", "tool_use_id" => tool_id} ->
@@ -3597,6 +3646,12 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp result_status(_result), do: "completed"
 
   defp tool_result(state, tool_id, result) do
+    state =
+      case pending_send(state, tool_id) do
+        {nil, state} -> state
+        {block, state} -> tool_block(block, state)
+      end
+
     case state.work[tool_id] do
       nil ->
         item_result(state, tool_id, result)
@@ -3845,7 +3900,16 @@ defmodule HalC2.Claude.ThreadRuntime do
         %{state | tasks: Map.put(state.tasks, task_id, nil)}
 
       true ->
-        subagent_task(with_ids(state), tool, task)
+        # A subagent the MC missed launching, resumed by a SendMessage: what it was sent
+        # opens its thread.
+        {send, state} = pending_send(state, tool)
+        prompt = get_in(send || %{}, ["input", "message"])
+
+        subagent_task(
+          with_ids(state),
+          tool,
+          if(prompt, do: Map.put(task, "prompt", prompt), else: task)
+        )
     end
   end
 

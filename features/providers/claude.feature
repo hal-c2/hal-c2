@@ -313,7 +313,6 @@ Feature: Claude
     And the conversation continues in the same Claude session
 
   # Upstream #20849: an explicit effort is kept for a Claude model the catalog does not know.
-  @backlog
   Scenario: A chosen effort is kept for a Claude model HAL-C2 does not know yet
     Given a Claude thread uses a model that is not in HAL-C2's model list
     When the user chooses "high" effort and sends a message
@@ -773,7 +772,7 @@ Feature: Claude
 
   # Upstream #26459: a fork Claude started in the foreground showed as finished a second after it
   # started, with "Fork started — that fork is you." as its result.
-  @backlog @mc
+  @mc
   Scenario: A Claude fork in the foreground keeps working until it ends
     When Claude starts a fork of itself in the foreground
     Then the fork shows as working until it ends
@@ -999,7 +998,6 @@ Feature: Claude
 
   # Upstream #30051: a custom model outside the catalog had a meter with no limit, though Claude
   # reports the window it compacts against.
-  @backlog
   Scenario: The Claude context meter of a custom model uses the window Claude reports
     Given the user added the custom Claude model "MiniMax-M78", which is not in the catalog
     When a Claude turn runs on it and Claude reports a context window of 204,800 tokens
@@ -1045,7 +1043,6 @@ Feature: Claude
 
   # Upstream #19416: context usage follows the usage Claude streams for the latest request,
   # including counts that arrive only at the end of a message; a compaction resets it.
-  @backlog
   Scenario: The Claude context meter counts usage reported at the end of a message
     Given Claude runs through a gateway that reports zero tokens when a message starts
     When the gateway reports the real counts as the message ends
@@ -2432,7 +2429,7 @@ Feature: Claude
     And it can be resumed when the limit resets
 
   # Upstream #18362: a subagent resumed after its launch was missed showed "Thread unavailable".
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: A Claude subagent the MC missed launching still gets its thread
     Given the MC missed the launch of a Claude subagent
     When Claude resumes that subagent
@@ -2666,7 +2663,7 @@ Feature: Claude
     Then the turn fails saying "notes/missing.md" could not be read
 
   # Upstream #15662: skills from enabled installed Claude plugins were missing from the picker.
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: Skills from enabled Claude plugins are offered by their plugin's name
     Given the Claude plugin "acme" is installed and enabled and has the skill "lint"
     When the user opens the skill list in a Claude thread

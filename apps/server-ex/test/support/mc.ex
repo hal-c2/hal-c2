@@ -1034,20 +1034,24 @@ defmodule HalC2.Test.Mc.World do
   @doc "Waits until a stream's sidebar row satisfies `fun`; the test process must be subscribed to the shell."
   def await_row(id, fun, timeout \\ 10_000) do
     case HalC2.Shell.row(node(), id) do
-      {_kind, row} -> if fun.(row), do: row, else: await_next_row(id, fun, timeout)
-      nil -> await_next_row(id, fun, timeout)
+      {_kind, row} -> if fun.(row), do: row, else: await_next_row(id, fun, timeout, row)
+      nil -> await_next_row(id, fun, timeout, nil)
     end
   end
 
-  defp await_next_row(id, fun, timeout) do
+  # `last` is the row as last seen, which a failure shows.
+  defp await_next_row(id, fun, timeout, last) do
     receive do
       {:hal_c2_shell, {:rows, _, rows}} ->
         case List.keyfind(rows, id, 0) do
-          {^id, {_kind, row}} -> if fun.(row), do: row, else: await_next_row(id, fun, timeout)
-          nil -> await_next_row(id, fun, timeout)
+          {^id, {_kind, row}} ->
+            if fun.(row), do: row, else: await_next_row(id, fun, timeout, row)
+
+          nil ->
+            await_next_row(id, fun, timeout, last)
         end
     after
-      timeout -> flunk("#{id}'s row never changed as expected")
+      timeout -> flunk("#{id}'s row never changed as expected; last seen: #{inspect(last)}")
     end
   end
 

@@ -766,6 +766,21 @@ for line in sys.stdin:
         send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"tool-{turn}", "content": "done", "is_error": False}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
+    # FAKE_CLAUDE_GATEWAY_USAGE: a gateway reports zero tokens as a message starts and its
+    # counts only as it ends (message_delta). "compact" compacts between the two, so the
+    # ending counts are from before the compaction.
+    if os.environ.get("FAKE_CLAUDE_GATEWAY_USAGE"):
+        zero = {"input_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 0}
+        send({"type": "stream_event", "session_id": session, "event": {"type": "message_start", "message": {"id": f"m{turn}g", "usage": zero}}})
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}g", "role": "assistant", "usage": zero, "content": [{"type": "text", "text": "Hello from claude"}]}})
+        if "compact" in text:
+            send({"type": "system", "subtype": "compact_boundary", "session_id": session, "uuid": f"compact-{turn}",
+                  "compact_metadata": {"trigger": "auto", "pre_tokens": 150000, "post_tokens": 5000}})
+        send({"type": "stream_event", "session_id": session, "event": {"type": "message_delta", "delta": {"stop_reason": "end_turn"},
+              "usage": {"input_tokens": 1200, "cache_creation_input_tokens": 300, "cache_read_input_tokens": 40000, "output_tokens": 80}}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "Hello from claude", "session_id": session,
+              "usage": {"input_tokens": 9999, "output_tokens": 999}})
+        continue
     if "rate limit" in text:
         send({"type": "rate_limit_event", "session_id": session, "rate_limit_info": {"status": "allowed_warning", "rateLimitType": "five_hour", "utilization": 0.91, "resetsAt": 1790000000}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
@@ -783,6 +798,9 @@ for line in sys.stdin:
     send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}c", "role": "assistant", "content": [{"type": "text", "text": "Hello from claude"}]}})
     # "report your usage": the result carries the turn's token usage.
     usage = {"usage": {"input_tokens": 1000, "output_tokens": 50}} if "report your usage" in text else {}
+    # FAKE_CLAUDE_CONTEXT_WINDOW: the result's modelUsage reports that window for the model.
+    if os.environ.get("FAKE_CLAUDE_CONTEXT_WINDOW") and "--model" in sys.argv:
+        usage["modelUsage"] = {sys.argv[sys.argv.index("--model") + 1]: {"inputTokens": 1000, "outputTokens": 50, "contextWindow": int(os.environ["FAKE_CLAUDE_CONTEXT_WINDOW"])}}
     send({"type": "result", "subtype": "success", "is_error": False, "result": "Hello from claude", "session_id": session, **usage})
     lifecycle("completed")
 # Its stdin closed, the process says so in its trace and, with FAKE_CLAUDE_EXIT_DELAY

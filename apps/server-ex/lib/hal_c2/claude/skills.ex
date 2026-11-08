@@ -44,6 +44,7 @@ defmodule HalC2.Claude.Skills do
 
     roots
     |> Enum.flat_map(fn {root, scope} -> read_root(root, scope, overrides) end)
+    |> Kernel.++(plugin_skills(config_dir, cwd, overrides))
     |> Enum.uniq_by(& &1["name"])
     |> Enum.sort_by(& &1["name"])
   end
@@ -125,23 +126,63 @@ defmodule HalC2.Claude.Skills do
     end
   end
 
-  defp read_root(root, scope, overrides) do
+  # The skills of each installed plugin that the layered settings' `enabledPlugins`
+  # turn on, from its install's `skills` folder, named `<plugin>:<skill>` as Claude
+  # offers them (Upstream #15662). An install for another project is not this one's.
+  defp plugin_skills(config_dir, cwd, overrides) do
+    enabled =
+      Enum.reduce(settings_paths(config_dir, cwd), %{}, &Map.merge(&2, read_enabled(&1)))
+
+    with {:ok, text} <- File.read(Path.join([config_dir, "plugins", "installed_plugins.json"])),
+         {:ok, %{"plugins" => plugins}} when is_map(plugins) <- JSON.decode(text) do
+      for {id, installs} <- plugins,
+          enabled[id] == true,
+          install = Enum.find(List.wrap(installs), &install_here?(&1, cwd)),
+          install != nil,
+          skill <-
+            read_root(
+              Path.join(install["installPath"], "skills"),
+              "plugin",
+              overrides,
+              hd(String.split(id, "@")) <> ":"
+            ),
+          do: skill
+    else
+      _ -> []
+    end
+  end
+
+  defp install_here?(%{"installPath" => path} = install, cwd) when is_binary(path),
+    do: install["projectPath"] in [nil, cwd]
+
+  defp install_here?(_install, _cwd), do: false
+
+  defp read_enabled(path) do
+    with {:ok, text} <- File.read(path),
+         {:ok, %{"enabledPlugins" => enabled}} when is_map(enabled) <- decode_lenient(text) do
+      enabled
+    else
+      _ -> %{}
+    end
+  end
+
+  defp read_root(root, scope, overrides, prefix \\ "") do
     case File.ls(root) do
       {:ok, entries} ->
         entries
         |> Enum.sort()
-        |> Enum.flat_map(&read_skill(Path.join(root, &1), &1, scope, overrides))
+        |> Enum.flat_map(&read_skill(Path.join(root, &1), &1, scope, overrides, prefix))
 
       _ ->
         []
     end
   end
 
-  defp read_skill(dir, entry, scope, overrides) do
-    name = String.trim(entry)
+  defp read_skill(dir, entry, scope, overrides, prefix) do
+    name = prefix <> String.trim(entry)
     path = Path.join(dir, "SKILL.md")
 
-    with true <- name != "",
+    with true <- String.trim(entry) != "",
          {:ok, content} <- File.read(path),
          {:ok, frontmatter} <- frontmatter(content) do
       override = overrides[name]
