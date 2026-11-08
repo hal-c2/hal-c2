@@ -50,10 +50,13 @@ defmodule HalC2.AcpTest do
   test "agent commands follow the runtime mode and the configured binary" do
     assert {:ok, ["opencode", "acp"], []} = HalC2.Acp.command("opencode", "full-access")
 
-    assert {:ok, ["grok", "agent", "--always-approve", "stdio"], []} =
+    # Grok is told HAL-C2 started it.
+    referrer = [{"GROK_OAUTH2_REFERRER", "hal-c2"}]
+
+    assert {:ok, ["grok", "agent", "--always-approve", "stdio"], ^referrer} =
              HalC2.Acp.command("grok", "full-access")
 
-    assert {:ok, ["grok", "--permission-mode", "default", "agent", "stdio"], []} =
+    assert {:ok, ["grok", "--permission-mode", "default", "agent", "stdio"], ^referrer} =
              HalC2.Acp.command("grok", "approval-required")
 
     {:ok, _} =
@@ -221,6 +224,10 @@ defmodule HalC2.AcpTest do
 
     File.write!(grok, """
     #!/usr/bin/env python3
+    import sys
+    if sys.argv[1:] == ["--version"]:
+        print("grok 9.9.9")
+        sys.exit(0)
     import json, sys
     def answer(request, result):
         print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
@@ -264,6 +271,10 @@ defmodule HalC2.AcpTest do
     # The first launch answers `session/new` with what no read can take.
     File.write!(grok, """
     #!/usr/bin/env python3
+    import sys
+    if sys.argv[1:] == ["--version"]:
+        print("grok 9.9.9")
+        sys.exit(0)
     import json, os, sys
     def answer(request, result):
         print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
@@ -352,6 +363,10 @@ defmodule HalC2.AcpTest do
     # let the first read overwrite the second.
     File.write!(grok, """
     #!/usr/bin/env python3
+    import sys
+    if sys.argv[1:] == ["--version"]:
+        print("grok 9.9.9")
+        sys.exit(0)
     import json, os, sys
     request = json.loads(sys.stdin.readline())
     def answer(request, result):
@@ -417,6 +432,10 @@ defmodule HalC2.AcpTest do
     # never answers, so a read started beside the reload cannot stand in for it.
     File.write!(grok, """
     #!/usr/bin/env python3
+    import sys
+    if sys.argv[1:] == ["--version"]:
+        print("grok 9.9.9")
+        sys.exit(0)
     import json, os, sys
     request = json.loads(sys.stdin.readline())
     first = not os.path.exists("#{probes}")
@@ -476,6 +495,10 @@ defmodule HalC2.AcpTest do
 
     File.write!(grok, """
     #!/usr/bin/env python3
+    import sys
+    if sys.argv[1:] == ["--version"]:
+        print("grok 9.9.9")
+        sys.exit(0)
     import json, os, sys
     request = json.loads(sys.stdin.readline())
     open("#{started}", "w").write(os.getcwd() + "\\n")

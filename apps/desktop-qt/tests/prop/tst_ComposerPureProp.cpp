@@ -163,6 +163,71 @@ private slots:
     }));
   }
 
+  void shownPermissionsStayOffered() {
+    QVERIFY(rc::check("the shown permissions are always one the provider offers", [] {
+      const std::vector<QString> modes{QStringLiteral("approval-required"), QStringLiteral("auto-accept-edits"),
+                                       QStringLiteral("auto"), QStringLiteral("full-access")};
+      const auto supported = *rc::gen::container<std::vector<QString>>(rc::gen::elementOf(modes));
+      const QString saved = *rc::gen::elementOf(modes);
+      composer::Instance instance;
+      for (const QString& mode : supported) {
+        if (!instance.runtimeModes.contains(mode)) instance.runtimeModes.append(mode);
+      }
+      const QString shown = composer::shownRuntimeMode(&instance, saved);
+      // Every mode is offered when the provider names none.
+      const bool offered = instance.runtimeModes.isEmpty() || instance.runtimeModes.contains(shown);
+      RC_ASSERT(offered);
+      if (instance.runtimeModes.isEmpty() || instance.runtimeModes.contains(saved)) {
+        RC_ASSERT(shown == saved);
+      } else if (instance.runtimeModes.contains(QStringLiteral("approval-required"))) {
+        RC_ASSERT(shown == QLatin1String("approval-required"));
+      }
+    }));
+    QVERIFY(rc::check("with no ready provider, its stand-in names setup only when one can be set up", [] {
+      const int count = *rc::gen::inRange(0, 5);
+      QList<composer::Instance> list;
+      bool ready = false;
+      bool setUp = false;
+      for (int i = 0; i < count; ++i) {
+        composer::Instance instance;
+        instance.enabled = *rc::gen::arbitrary<bool>();
+        instance.available = *rc::gen::arbitrary<bool>();
+        instance.status = *rc::gen::arbitrary<bool>() ? QStringLiteral("ready") : QStringLiteral("error");
+        instance.canSetUp = *rc::gen::arbitrary<bool>();
+        ready = ready || instance.ready();
+        setUp = setUp || instance.canSetUp;
+        list.append(instance);
+      }
+      const QString label = composer::noProviderStandIn(list);
+      if (ready || list.isEmpty()) {
+        RC_ASSERT(label.isEmpty());
+      } else {
+        RC_ASSERT(label == (setUp ? QLatin1String("open-provider-settings") : QLatin1String("no-provider-available")));
+      }
+    }));
+  }
+
+  void fallbackSlugsStayExactForCustomModels() {
+    QVERIFY(rc::check("a fallback account's slug is exact, or a built-in's alias, never a custom model's alias", [] {
+      const bool custom = *rc::gen::arbitrary<bool>();
+      const bool exact = *rc::gen::arbitrary<bool>();
+      composer::Instance instance;
+      QJsonObject candidate{{QStringLiteral("slug"), QStringLiteral("gpt-5.4")},
+                            {QStringLiteral("name"), QStringLiteral("GPT-5.4")},
+                            {QStringLiteral("isCustom"), custom},
+                            {QStringLiteral("aliases"), QJsonArray{QStringLiteral("5.4")}}};
+      instance.models = QJsonArray{candidate};
+      const QString asked = exact ? QStringLiteral("gpt-5.4") : QStringLiteral("5.4");
+      const QString slug = composer::fallbackModelSlug(instance, asked);
+      if (exact) {
+        RC_ASSERT(slug == QLatin1String("gpt-5.4"));
+      } else {
+        RC_ASSERT(slug == (custom ? QString() : QStringLiteral("gpt-5.4")));
+      }
+      RC_ASSERT(composer::fallbackModelSlug(instance, QStringLiteral("other")).isEmpty());
+    }));
+  }
+
   void highlightingKeepsTheText() {
     QVERIFY(rc::check("rich text draws the draft without changing it, inside each line", [] {
       const QString text = *composerText();
