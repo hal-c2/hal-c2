@@ -79,6 +79,10 @@ environment a gateway of its own with `install`, or run a second gateway for it.
   packages, so a review uses the tools its image already has.
 - Claude in a sandbox needs an Anthropic API key. A Claude subscription sign-in does
   not work there.
+- A review sandbox is deleted once its time limit has passed, even while the MC is
+  not running: `install` adds a timer beside the gateway's service that runs
+  `hal-c2-service openshell reap` every minute. When the MC starts, it deletes the
+  review sandboxes it left behind.
 
 ## When status reports a problem
 

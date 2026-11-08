@@ -349,6 +349,21 @@ Feature: Agent code review
       Then the review of #12 is failed saying "Stopped."
       And its sandbox and the sandbox's provider are deleted
 
+    @mc
+    Scenario: Review sandboxes past their time are deleted while the MC is down
+      Given pull requests are not trusted and OpenShell is installed
+      And a review sandbox past its time and one within it are left on the gateway
+      And a review sandbox's provider past its time is left without its sandbox
+      When the reaper's timer runs without the MC
+      Then only the review sandbox within its time remains, with its provider
+
+    @mc
+    Scenario: An MC starting deletes the review sandboxes left from before
+      Given pull requests are not trusted and OpenShell is installed
+      And a review sandbox within its time is left on the gateway from before
+      When the MC starts again
+      Then that sandbox and its provider are deleted
+
     @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
     Scenario: A sandboxed review says so, and offers to stop it
       Given a review of #12 is running in a sandbox

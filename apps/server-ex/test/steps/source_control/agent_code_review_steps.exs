@@ -630,6 +630,47 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "a review sandbox past its time and one within it are left on the gateway", context do
+    now = System.os_time(:second)
+    left(context, "review-old", OpenShell.Review.labels("old", now - 1))
+    left(context, "review-new", OpenShell.Review.labels("new", now + 600))
+    context
+  end
+
+  step "a review sandbox's provider past its time is left without its sandbox", context do
+    labels = owned(OpenShell.Review.labels("orphan", System.os_time(:second) - 1))
+    FakeOpenShell.put_provider(context.gateway, "review-orphan", labels)
+    context
+  end
+
+  step "a review sandbox within its time is left on the gateway from before", context do
+    left(context, "review-left", OpenShell.Review.labels("left", System.os_time(:second) + 600))
+    context
+  end
+
+  step "the reaper's timer runs without the MC", context do
+    ExUnit.Callbacks.stop_supervised!(OpenShell.Review)
+
+    assert {:ok, "Deleted review sandboxes past their time: review-old"} =
+             OpenShell.Command.command(["reap"])
+
+    context
+  end
+
+  step "only the review sandbox within its time remains, with its provider", context do
+    assert Map.keys(FakeOpenShell.sandboxes(context.gateway)) == ["review-new"]
+    assert Map.keys(FakeOpenShell.providers(context.gateway)) == ["review-new"]
+    context
+  end
+
+  step "that sandbox and its provider are deleted", context do
+    assert_receive {:openshell_request, "DeleteSandbox", %{name: "review-left"}}, 15_000
+    assert_receive {:openshell_request, "DeleteProvider", %{name: "review-left"}}, 15_000
+    assert FakeOpenShell.sandboxes(context.gateway) == %{}
+    assert FakeOpenShell.providers(context.gateway) == %{}
+    context
+  end
+
   # --- findings --------------------------------------------------------------------------------
 
   step "a review of \#{int} is running", %{args: [number]} = context do
@@ -1923,6 +1964,14 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     File.write!(OpenShell.state_path(), JSON.encode!(%{"endpoint" => gateway.endpoint}))
     Map.merge(context, %{gateway: gateway, sandbox_root: root, sandbox_options: options})
   end
+
+  # A review sandbox of this MC's, with its provider, on the gateway with no binding.
+  defp left(context, name, labels) do
+    FakeOpenShell.put_sandbox(context.gateway, name, owned(labels))
+    FakeOpenShell.put_provider(context.gateway, name, owned(labels))
+  end
+
+  defp owned(labels), do: Map.put(labels, OpenShell.owner_label(), OpenShell.owner())
 
   defp sandbox(context, options) do
     Agent.update(context.sandbox_options, &Keyword.merge(&1, options))
