@@ -57,6 +57,14 @@ AbstractButton {
     readonly property bool mac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
     readonly property alias popup: popup
 
+    // The permissions the popup's footer offers ({value, label, icon}) and
+    // the thread's; with none the popup has no footer.
+    property var runtimeModes: []
+    property string runtimeMode: ""
+    readonly property bool showFooter: onlyInstances === null && runtimeModes.length > 0
+    // The part the popup opens on: "models" (the search) or "permissions".
+    property string openOn: "models"
+
     signal chosen(string instanceId, string model)
 
     // The popup's state: the rail entry ("favorites" or an instance id), the
@@ -87,6 +95,19 @@ AbstractButton {
     function open() {
         if (enabled && !popup.visible)
             popup.open();
+    }
+
+    // Opens the popup with its permissions menu open, or moves there.
+    function openPermissions() {
+        if (!enabled || !showFooter)
+            return;
+        if (popup.opened) {
+            permissionsPicker.forceActiveFocus();
+            permissionsPicker.popup.open();
+            return;
+        }
+        openOn = "permissions";
+        popup.open();
     }
 
     function close() {
@@ -310,7 +331,7 @@ AbstractButton {
         width: 360
         // The search row, then six whole rows (46 tall, 2 apart) between the
         // list's margins: the list never stops on a sliced row.
-        height: 40 + 2 * Theme.space.sm + 6 * 46 + 5 * 2
+        height: 40 + 2 * Theme.space.sm + 6 * 46 + 5 * 2 + (control.showFooter ? footer.height : 0)
         padding: 0
         margins: 8
         focus: true
@@ -332,8 +353,15 @@ AbstractButton {
         onOpened: {
             const selected = control.rows.findIndex(row => row.kind === "model" && row.instance.instanceId === control.selectedInstanceId && row.model.slug === control.selectedModel);
             control.highlightedIndex = selected >= 0 ? selected : control.firstSelectableRow(0, 1);
-            search.forceActiveFocus();
+            if (control.openOn === "permissions" && control.showFooter) {
+                permissionsPicker.forceActiveFocus();
+                permissionsPicker.popup.open();
+            } else {
+                search.forceActiveFocus();
+            }
+            control.openOn = "models";
         }
+        onClosed: permissionsPicker.popup.close()
 
         enter: Transition {
             NumberAnimation {
@@ -395,7 +423,7 @@ AbstractButton {
                 objectName: "modelPickerRail"
                 visible: control.showRail
                 width: 44
-                height: parent.height
+                height: parent.height - (control.showFooter ? footer.height : 0)
                 color: control.fade(control.mutedSurface, 0.3)
                 radius: Theme.radiusLg
 
@@ -471,7 +499,7 @@ AbstractButton {
                 anchors.left: rail.visible ? rail.right : parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
-                anchors.bottom: parent.bottom
+                anchors.bottom: control.showFooter ? footer.top : parent.bottom
                 color: control.fade(control.mutedSurface, 0.4)
                 radius: rail.visible ? 0 : Theme.radiusLg
 
@@ -637,6 +665,49 @@ AbstractButton {
                             }
                         }
                     }
+                }
+            }
+
+            // Below the models: the thread's permissions, which open their
+            // own menu.
+            Rectangle {
+                id: footer
+
+                objectName: "modelPickerFooter"
+                visible: control.showFooter
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: Theme.control.md + 2 * Theme.space.xs + 1
+                color: control.fade(control.mutedSurface, 0.4)
+                radius: Theme.radiusLg
+
+                Rectangle {
+                    width: parent.width
+                    height: 1
+                    color: control.divider
+                }
+
+                ShellComboBox {
+                    id: permissionsPicker
+
+                    readonly property int current: control.runtimeModes.findIndex(mode => mode.value === control.runtimeMode)
+
+                    objectName: "modelPickerPermissions"
+                    // At the footer's end, where the speed controls do not reach.
+                    width: Math.min(implicitWidth, parent.width - 2 * Theme.space.xs)
+                    x: parent.width - width - Theme.space.xs
+                    y: 1 + Theme.space.xs
+                    iconName: current >= 0 ? (control.runtimeModes[current].icon ?? "") : ""
+                    model: control.runtimeModes.map(mode => mode.label)
+                    currentIndex: current
+                    Accessible.name: qsTr("Permissions")
+                    ToolTip.visible: hovered && !popup.visible && current >= 0
+                    ToolTip.delay: 500
+                    ToolTip.text: current >= 0 ? (control.runtimeModes[current].description ?? "") : ""
+                    onActivated: index => Shell.dispatch("composer.runtimeMode.set", {
+                            mode: control.runtimeModes[index].value
+                        })
                 }
             }
         }

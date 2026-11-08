@@ -461,7 +461,8 @@ const Steps steps([] {
   // The toolbar shortcuts (composer.effort, .mode, .host, .workspace, .branch).
   const QHash<QString, std::pair<QString, QString>> controls{
       {QStringLiteral("effort picker"), {QStringLiteral("composer.effort"), QStringLiteral("effortPicker")}},
-      {QStringLiteral("access mode picker"), {QStringLiteral("composer.mode"), QStringLiteral("runtimeModePicker")}},
+      // A new thread names its permissions in the context strip.
+      {QStringLiteral("access mode picker"), {QStringLiteral("composer.mode"), QStringLiteral("contextPermissions")}},
       {QStringLiteral("host picker"), {QStringLiteral("composer.host"), QStringLiteral("hostPicker")}},
       {QStringLiteral("workspace picker"), {QStringLiteral("composer.workspace"), QStringLiteral("envModePicker")}},
       {QStringLiteral("branch picker"), {QStringLiteral("composer.branch"), QStringLiteral("branchPicker")}}};
@@ -505,7 +506,9 @@ const Steps steps([] {
   step(QStringLiteral("the composer offers its reasoning effort, plan and access controls"), [](World& world, const Captures&, const Table&) {
     openTurnThread(world);
     publishProviders(world.mc, {provider(QStringLiteral("codex"), QStringLiteral("Codex"), {model(QStringLiteral("gpt-5.4"), QStringLiteral("GPT-5.4"))})});
-    updateThread(world, {{QStringLiteral("modelSelection"), QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5.4")}}}});
+    // Permissions other than the default, which the toolbar names.
+    updateThread(world, {{QStringLiteral("modelSelection"), QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5.4")}}},
+                         {QStringLiteral("runtimeMode"), QStringLiteral("approval-required")}});
     expect(world.native().controller<SettingsController>()->writeDevice(QStringLiteral("planModeEnabled"), true), QStringLiteral("plan mode could not be turned on"));
     composerBrick(world);
     world.waitFor([&] {

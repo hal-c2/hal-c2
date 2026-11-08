@@ -655,10 +655,10 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #25869: the composer names the permissions only when they are not the user's
   # default; they change from the effort menu or the permissions key.
-  @backlog @shared @priority-high
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: The composer names the permissions only when they differ from the default
     Given the default permissions are Supervised
-    And the thread runs in Supervised
+    And the open thread runs in Supervised
     When the user looks at the composer
     Then the composer does not name the permissions
     When the user sets the thread's permissions to Full access from the effort menu
@@ -667,7 +667,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
   # Upstream #25869: a new thread always says which permissions its first message will use,
   # and choosing them there opens the permissions as the permissions key does.
   # Upstream #30275: choosing them opens the permissions menu directly, not the model list first.
-  @backlog @shared @priority-high
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: A new thread says which permissions its first message uses
     Given the default permissions are Full access
     When the user starts a new thread

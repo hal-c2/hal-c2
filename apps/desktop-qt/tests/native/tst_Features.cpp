@@ -209,6 +209,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/model-and-mode.feature:Planning and building are toggled on the desktop only*"),
     QStringLiteral("composer/model-and-mode.feature:Only the permissions the provider supports are offered"),
     QStringLiteral("composer/model-and-mode.feature:A thread whose saved permissions its provider no longer offers*"),
+    QStringLiteral("composer/model-and-mode.feature:The composer names the permissions only when they differ*"),
+    QStringLiteral("composer/model-and-mode.feature:A new thread says which permissions*"),
     QStringLiteral("navigation/toasts.feature"),
     QStringLiteral("preview/devices.feature"),
     QStringLiteral("preview/remote.feature"),

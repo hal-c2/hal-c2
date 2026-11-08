@@ -153,7 +153,7 @@ const Steps steps([] {
   });
 
   // Default permissions (Settings → Project defaults; the MC keeps them).
-  step(QStringLiteral("the default permissions for new threads are (.+)"), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the default permissions (?:for new threads )?are (.+)"), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return world.native().controller<SettingsController>()->ready(); }, QStringLiteral("the shell to read the settings"));
     const QString mode = modeOf(world, c[0]);
     saveElsewhere(world.mc, QStringLiteral("defaultRuntimeMode"), mode);

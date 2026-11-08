@@ -4166,6 +4166,17 @@ QString ComposerController::runtimeModeOf(const QString& target) const {
   return QStringLiteral("full-access");
 }
 
+// The permissions a new thread of the target's project starts in: the
+// composer names a thread's own only when they differ from these.
+QString ComposerController::defaultRuntimeModeOf(const QString& target) const {
+  if (onPage() && target == pageKey(m_pageId)) return newThreadRuntimeMode(pageProject());
+  if (const auto thread = m_store->thread(target)) return newThreadRuntimeMode(thread->projectId);
+  if (const auto kept = NativeShell::of(this)->controller<DraftController>()->draft(target)) {
+    return newThreadRuntimeMode(kept->projectId);
+  }
+  return newThreadRuntimeMode(QString());
+}
+
 QString ComposerController::newThreadRuntimeMode(const QString& projectId) const {
   if (const auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
     for (const QString& path : {QStringLiteral("projectSettingsOverrides.%1.defaultRuntimeMode").arg(projectId),
@@ -4388,6 +4399,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       {QStringLiteral("selectedModel"), orNull(selectedModel)},
       {QStringLiteral("options"), shownOptions},
       {QStringLiteral("runtimeMode"), composer::shownRuntimeMode(instance, runtimeModeOf(target))},
+      {QStringLiteral("defaultRuntimeMode"), composer::shownRuntimeMode(instance, defaultRuntimeModeOf(target))},
       {QStringLiteral("runtimeModes"), composer::runtimeModes(instance)},
       {QStringLiteral("interactionMode"), interactionModeOf(target)},
       {QStringLiteral("showInteractionModeToggle"), planOn},
@@ -4514,6 +4526,7 @@ QVariantMap ComposerController::imagesComposerState() const {
       {QStringLiteral("selectedModel"), orNull(chosen.value(QLatin1String("model")).toString())},
       {QStringLiteral("options"), QVariantList()},
       {QStringLiteral("runtimeMode"), QString()},
+      {QStringLiteral("defaultRuntimeMode"), QString()},
       {QStringLiteral("runtimeModes"), QVariantList()},
       {QStringLiteral("interactionMode"), QStringLiteral("default")},
       {QStringLiteral("showInteractionModeToggle"), false},

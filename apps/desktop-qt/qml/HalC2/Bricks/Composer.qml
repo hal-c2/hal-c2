@@ -300,6 +300,17 @@ Rectangle {
             "composer.host": hostPicker,
             "composer.workspace": envModePicker
         }[command];
+        // The permissions are named in the strip or on the toolbar, else
+        // they open in the model control.
+        if (command === "composer.mode" && !runtimeModePicker.present) {
+            if (contextPermissions.visible && contextPermissions.enabled) {
+                contextPermissions.forceActiveFocus();
+                contextPermissions.popup.open();
+            } else {
+                modelPicker.openPermissions();
+            }
+            return;
+        }
         if (!picker || !picker.enabled) return;
         // A folded picker is reached through the overflow menu, on its row.
         if (folded.includes(picker)) {
@@ -393,6 +404,29 @@ Rectangle {
         input.insert(start, mark + selected + closing);
         input.select(start + 1, start + 1 + selected.length);
         return true;
+    }
+
+    // The permissions on offer, each with its icon and what it allows.
+    readonly property var permissionModes: ready && !imagesHost ? (model.runtimeModes ?? []).map(mode => Object.assign({
+            icon: runtimeIcon(mode.value),
+            description: runtimeDescription(mode.value)
+        }, mode)) : []
+    // A new thread's context strip names its permissions; the toolbar then
+    // names them only when a thread's differ from the default.
+    readonly property bool stripNamesPermissions: permissionModes.length > 0 && model.routeKind === "draft" && contextStrip.visible
+    readonly property bool chipNamesPermissions: permissionModes.length > 0 && !stripNamesPermissions && model.runtimeMode !== model.defaultRuntimeMode
+
+    function runtimeDescription(mode) {
+        switch (mode) {
+        case "approval-required":
+            return qsTr("Ask before commands and file changes.");
+        case "auto-accept-edits":
+            return qsTr("Auto-approve edits, ask before other actions.");
+        case "auto":
+            return qsTr("Supported providers approve routine actions; others still ask.");
+        default:
+            return qsTr("Allow commands and edits without prompts.");
+        }
     }
 
     function runtimeIcon(mode) {
@@ -1414,6 +1448,8 @@ Rectangle {
                             enabled: composer.ready && instances.length > 0 && composer.model.isSendBusy !== true
                             selectedInstanceId: composer.ready ? composer.model.selectedInstanceId : null
                             selectedModel: composer.ready ? composer.model.selectedModel : null
+                            runtimeModes: composer.permissionModes
+                            runtimeMode: composer.ready ? (composer.model.runtimeMode ?? "") : ""
                         }
 
                         // The room left beside the model; the chips that fit it
@@ -1518,7 +1554,7 @@ Rectangle {
                                     id: runtimeModePicker
                                     objectName: "runtimeModePicker"
 
-                                    present: composer.ready && !composer.imagesHost
+                                    present: composer.chipNamesPermissions
                                     visible: present && !composer.folded.includes(runtimeModePicker)
                                     iconName: composer.ready ? composer.runtimeIcon(composer.model.runtimeMode) : "lock"
                                     model: composer.ready ? composer.model.runtimeModes.map(mode => mode.label) : []
@@ -2181,6 +2217,30 @@ Rectangle {
                                     }
                                 }
                             }
+                        }
+
+                        // A new thread names the permissions its first
+                        // message runs in; choosing them opens their menu.
+                        ShellComboBox {
+                            id: contextPermissions
+                            objectName: "contextPermissions"
+
+                            readonly property int current: composer.permissionModes.findIndex(mode => mode.value === composer.model.runtimeMode)
+
+                            visible: composer.stripNamesPermissions
+                            implicitHeight: Theme.control.sm
+                            iconSize: Theme.icon.sm
+                            chevronSize: Theme.icon.sm
+                            font.pixelSize: Theme.type.meta.size
+                            font.weight: Theme.type.meta.weight
+                            hoverFill: composer.chipFill
+                            iconName: current >= 0 ? composer.permissionModes[current].icon : "lock"
+                            model: composer.permissionModes.map(mode => mode.label)
+                            currentIndex: current
+                            Accessible.name: qsTr("Permissions")
+                            onActivated: index => Shell.dispatch("composer.runtimeMode.set", {
+                                    mode: composer.permissionModes[index].value
+                                })
                         }
                     }
                 }

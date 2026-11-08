@@ -414,6 +414,7 @@ private:
   // A new thread started from `from` (a thread's key or a draft's id) keeps its model and mode.
   void carryInto(const QString& draftId, const QString& from);
   QString newThreadRuntimeMode(const QString& projectId) const;
+  QString defaultRuntimeModeOf(const QString& target) const;
   // The Space page on show, when no thread or draft is.
   QString openPage() const;
   bool onPage() const { return !m_pageId.isEmpty(); }
