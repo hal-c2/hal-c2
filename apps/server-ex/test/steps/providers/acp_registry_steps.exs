@@ -4271,4 +4271,9 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     refute context.log =~ secret
     context
   end
+
+  step "the MC's log holds the reason {string}", %{args: [reason]} = context do
+    assert context.log =~ reason
+    context
+  end
 end
