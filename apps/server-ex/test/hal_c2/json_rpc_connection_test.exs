@@ -95,4 +95,17 @@ defmodule HalC2.JsonRpc.ConnectionTest do
     assert Connection.call(conn, "initialize", %{}) == {:error, :closed}
     assert Connection.stop(conn) == :ok
   end
+
+  # One that is still dying has closed its stdin, so the call's write fails with
+  # `:epipe`; that read showed ":epipe" as OpenCode's message.
+  test "a call written after the subprocess closed its stdin fails as closed" do
+    conn =
+      start_supervised!(
+        {Connection, cmd: ["sh", "-c", "exec 0<&-; echo ready; exec sleep 30"], handler: self()},
+        id: :closed_stdin
+      )
+
+    assert_receive {:json_rpc, ^conn, {:invalid, "ready"}}, 5_000
+    assert Connection.call(conn, "initialize", %{}) == {:error, :closed}
+  end
 end

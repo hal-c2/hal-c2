@@ -6,7 +6,8 @@ defmodule HalC2.JsonRpc.Connection do
   requests go to the `:handler` pid as `{:json_rpc, conn, message}`; the handler
   answers requests with `respond/3`. If the subprocess exits, pending calls fail with
   `{:error, :closed}` and the connection stops (so does a call that reaches it once
-  it has stopped, and `stop/1` of it is then a no-op); with `:program` (the subprocess's
+  it has stopped or once the subprocess has closed its stdin, and `stop/1` of a stopped
+  one is a no-op); with `:program` (the subprocess's
   name, as its user knows it) they fail with the exit instead, in the words that
   program's own client used (`"Codex App Server process exited with code 1"`). With `:log` (a thread id), every
   line the subprocess sends also goes to `HalC2.ProviderLog`. With `:stderr_prefix`,
@@ -142,6 +143,11 @@ defmodule HalC2.JsonRpc.Connection do
              pending: Map.put(state.pending, id, from),
              methods: Map.put(state.methods, id, method)
          })}
+
+      # The agent closed its stdin, dying or about to, before this call reached it:
+      # the call has met a closed connection, as one sent after the close does.
+      {:error, reason} when reason in [:epipe, :closed] ->
+        {:reply, {:error, :closed}, state}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
