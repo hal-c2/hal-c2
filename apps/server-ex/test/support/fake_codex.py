@@ -12,8 +12,10 @@
 # "answer" and replies with its contents, or with no message when it is empty; a steer
 # with "hold ..." writes "steer.held" and waits for the gate file "steer" before it answers.
 import glob, json, os, re, signal, string, sys, threading, time, uuid
+sys.dont_write_bytecode = True  # its own modules leave no __pycache__ in the tree
 import fake_codex_goals as goals  # thread/goal/*: Codex's own goal
 import fake_codex_chatgpt  # the ChatGPT sign-in, while FAKE_CODEX_CHATGPT is set
+import fake_codex_images  # images and partial answers, which it describes
 
 # A "will-not-exit" file in the working directory has the process ignore SIGTERM and a
 # closed stdin, as a wedged app-server does: only SIGKILL ends it.
@@ -44,7 +46,7 @@ interrupted_turns = set()
 
 def send(msg):
     with send_lock:
-        write(msg)
+        write(fake_codex_images.outgoing(msg))
     goals.sent(msg)
 
 goals.setup(send)
@@ -196,6 +198,8 @@ def rollout_history():
     return [r["payload"]["content"][0]["text"] for r in records
             if r.get("type") == "response_item" and r["payload"].get("role") == "user"]
 
+fake_codex_images.setup(rollout_find=rollout_find if SESSIONS else None, rollout_append=rollout_append, gate=gate)
+
 # With FAKE_CODEX_INSTANCE set, the fake is that provider instance's Codex: its thread and
 # turn ids start with the instance, and it cannot resume another instance's thread, which
 # lives in another home.
@@ -211,6 +215,7 @@ closing = False  # "closing": the turn takes a steer, answers it and ends before
 for line in sys.stdin:
     msg = json.loads(line)
     trace({"in": msg})
+    fake_codex_images.incoming(msg)
     method, params, mid = msg.get("method"), msg.get("params") or {}, msg.get("id")
     # Wire test hooks: "test/hang" is a request that is never answered,
     # "test/exit" leaves with code 1, and "test/garbage" writes a line that is
@@ -375,6 +380,8 @@ for line in sys.stdin:
         send({"id": mid, "result": {"turn": {"id": turn_id, "status": "inProgress"}}})
         ctx = {"threadId": thread_id, "turnId": turn_id}
         send({"method": "turn/started", "params": {**ctx, "turn": {"id": turn_id, "status": "inProgress"}}})
+        if fake_codex_images.turn(ctx, text, send):
+            continue
         if "stream paragraphs" in text or "stream a reply" in text:
             stream_reply(ctx, text)
             continue

@@ -275,9 +275,13 @@ defmodule HalC2.Codex.Provider do
          %{"message" => "Codex App Server process exited" <> _, "stderr" => "[spawner]" <> _}} ->
           {:spawn, nil}
 
+        # What the process said, unless it is the spawner's own report of a command
+        # it could not exec, which only sometimes arrives before the exit is read.
         {:error, %{"message" => "Codex App Server process exited" <> _ = exit, "stderr" => said}}
         when said != "" ->
-          {:exited, "#{exit}. It said:\n#{said}"}
+          if exit =~ "code 125" and said =~ "execvp(): failed",
+            do: {:spawn, nil},
+            else: {:exited, "#{exit}. It said:\n#{said}"}
 
         {:error, %{"message" => "Codex App Server process exited" <> _}} ->
           {:spawn, nil}
