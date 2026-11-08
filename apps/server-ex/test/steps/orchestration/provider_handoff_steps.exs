@@ -1104,7 +1104,8 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     prompt = prompt(context)
     assert transcript(prompt) =~ "User: Please $review the diff\n"
     assert String.ends_with?(prompt, @history_end <> "\n\nWhere were we?")
-    refute prompt =~ "/review"
+    # No `/review` command, as Claude runs one; the skill's own path may be in the history.
+    refute prompt =~ ~r{(^|\s)/review\b}
     context
   end
 
