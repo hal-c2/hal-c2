@@ -251,6 +251,31 @@ defmodule HalC2.Steps.Providers.Muse do
       "steps" => [%{"text" => "Working on it."}, %{"waitInterrupt" => true}]
     },
     %{
+      "match" => "use the quota",
+      "steps" => [
+        %{
+          "fail" => %{
+            "kind" => "modelError",
+            "message" => "API error 429: Subscription quota exhausted. (rate_limit_error)",
+            "quota" => %{"limitKind" => "tierLimit", "resetsAtMs" => :quota_reset_ms},
+            "retryable" => false
+          }
+        }
+      ]
+    },
+    %{
+      "match" => "hit a rate limit",
+      "steps" => [
+        %{
+          "fail" => %{
+            "kind" => "modelError",
+            "message" => "API error 429: Too many requests. (rate_limit_error)",
+            "retryable" => false
+          }
+        }
+      ]
+    },
+    %{
       "match" => "pick a color",
       "steps" => [
         %{
@@ -263,6 +288,14 @@ defmodule HalC2.Steps.Providers.Muse do
       ]
     }
   ]
+
+  # The next 10:45 (UTC): a reset already past is no limit, so it is never today's if gone.
+  defp quota_reset_ms do
+    now = DateTime.utc_now()
+    today = DateTime.new!(DateTime.to_date(now), ~T[10:45:00], "Etc/UTC")
+    at = if DateTime.compare(today, now) == :gt, do: today, else: DateTime.add(today, 1, :day)
+    DateTime.to_unix(at, :millisecond)
+  end
 
   # HAL-C2's MCP server is up, so a thread's session is offered its tools.
   defp install(context, config \\ %{}, opts \\ []) do
@@ -1020,6 +1053,49 @@ defmodule HalC2.Steps.Providers.Muse do
 
     assert [_, second] = turns
     refute get_in(second, ["tokenUsage", "usedTokens"])
+    context
+  end
+
+  step "Muse Code reported a usage window that resets at 10:45", context do
+    reset = quota_reset_ms()
+
+    turns =
+      for turn <- @turns do
+        if turn["match"] == "use the quota",
+          do: put_in(turn, ["steps", Access.at(0), "fail", "quota", "resetsAtMs"], reset),
+          else: turn
+      end
+
+    context |> install(%{}, turns: turns) |> Map.put(:quota_reset_ms, reset) |> FakeAcp.thread()
+  end
+
+  step "a turn is refused because the subscription quota is used up", context do
+    turn(context, "use the quota", "failed")
+  end
+
+  step "the thread is Limited until 10:45, not failed", context do
+    row =
+      World.await_row(
+        World.thread_id(context, context.thread),
+        &(&1["lastErrorClass"] == "usage_limit" and &1["usageLimitResetAt"] != nil)
+      )
+
+    reset = DateTime.from_unix!(context.quota_reset_ms, :millisecond)
+    assert row["usageLimitResetAt"] == DateTime.to_iso8601(reset)
+    assert Calendar.strftime(reset, "%H:%M") == "10:45"
+
+    context
+  end
+
+  step "a plain rate limit still fails the turn", context do
+    context =
+      context
+      |> FakeAcp.thread("Plain")
+      |> turn("hit a rate limit", "failed", "Plain")
+
+    row = World.await_row(World.thread_id(context, "Plain"), &(&1["lastErrorClass"] != nil))
+    assert row["lastErrorClass"] == "provider_error"
+    assert row["usageLimitResetAt"] == nil
     context
   end
 

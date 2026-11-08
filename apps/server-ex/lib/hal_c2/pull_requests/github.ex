@@ -453,16 +453,85 @@ defmodule HalC2.PullRequests.GitHub do
   is the usual one.
   """
   def list(ctx, opts) do
-    case list_read(ctx, opts, true) do
-      {:ok, %{items: []}} = empty ->
-        if opts.cursor == nil and String.trim(opts.query || "") == "",
-          do: unindexed(ctx, opts, empty),
-          else: empty
+    read =
+      case list_read(ctx, opts, true) do
+        {:ok, %{items: []}} = empty ->
+          if opts.cursor == nil and String.trim(opts.query || "") == "",
+            do: unindexed(ctx, opts, empty),
+            else: empty
+
+        other ->
+          other
+      end
+
+    # Rows carry the stack they belong to, where GitHub can say; a stack read
+    # that fails leaves the rows as they are rather than failing the list.
+    case read do
+      {:ok, %{items: [_ | _]} = page} ->
+        memberships = stack_memberships(ctx)
+
+        items =
+          Enum.map(page.items, fn item ->
+            case memberships[item["number"]] do
+              nil -> item
+              stack -> Map.put(item, "stack", stack)
+            end
+          end)
+
+        {:ok, %{page | items: items}}
 
       other ->
         other
     end
   end
+
+  # Every stack of the repository as `{pull request number => membership}`: its
+  # stack's number, its one-based place in it, its size and its base, read a
+  # hundred stacks at a time until a short page ends them. Any failure (a
+  # host without stacks, a read refused) keeps the memberships already read;
+  # a stack that names no base is skipped, since a membership must name one.
+  defp stack_memberships(ctx), do: stack_memberships(ctx, 1, %{})
+
+  defp stack_memberships(ctx, page, acc) do
+    case rest(ctx, "stacks?per_page=100&page=#{page}") do
+      {:ok, stacks} when is_list(stacks) ->
+        acc =
+          Enum.reduce(stacks, acc, fn stack, acc ->
+            case stack_membership(stack) do
+              nil -> acc
+              entries -> Map.merge(acc, Map.new(entries))
+            end
+          end)
+
+        if length(stacks) >= 100 and page < 100,
+          do: stack_memberships(ctx, page + 1, acc),
+          else: acc
+
+      _ ->
+        acc
+    end
+  end
+
+  defp stack_membership(%{"number" => number} = stack)
+       when is_integer(number) do
+    base = trimmed(if is_map(stack["base"]), do: stack["base"]["ref"], else: stack["base"])
+    layers = stack["pull_requests"] || []
+
+    if base do
+      for {layer, index} <- Enum.with_index(layers),
+          is_integer(layer["number"]) do
+        {layer["number"],
+         %{
+           "number" => number,
+           "position" => index + 1,
+           "size" => length(layers),
+           "base" => base
+         }}
+      end
+    end
+  end
+
+  defp stack_membership(_stack), do: nil
 
   defp unindexed(ctx, opts, empty) do
     q = "repo:#{ctx.repository} is:pr"
@@ -479,10 +548,28 @@ defmodule HalC2.PullRequests.GitHub do
   defp list_read(ctx, opts, true) do
     variables = %{"q" => Enum.join(search_terms(ctx, opts), " ")}
 
-    with {:ok, raw, _more, page} <-
-           list_pages(ctx, opts, @list_search_query, variables, ["search"], opts.limit + 1) do
-      items = Enum.flat_map(raw, &list_node/1)
-      truncated = length(raw) > opts.limit
+    # A continuation asks for the boundary instant inclusively, so the rows
+    # already sent at it come back first: read past them, or a page that shares
+    # one update time would hand back only what was already listed.
+    seen = if opts.cursor, do: opts.cursor.seen || [], else: []
+
+    with {:ok, raw, more, page} <-
+           list_pages(
+             ctx,
+             opts,
+             @list_search_query,
+             variables,
+             ["search"],
+             opts.limit + 1 + length(seen)
+           ) do
+      items =
+        raw
+        |> Enum.flat_map(&list_node/1)
+        |> Enum.reject(
+          &(opts.cursor && &1["updatedAt"] == opts.cursor.boundary && &1["number"] in seen)
+        )
+
+      truncated = length(items) > opts.limit or more
 
       {:ok,
        %{items: Enum.take(items, opts.limit), truncated: truncated, sorted: true, page: page}}
@@ -2388,8 +2475,10 @@ defmodule HalC2.PullRequests.GitHub do
     end
   end
 
-  # GitHub's own decision counts only reviews that satisfy branch rules; when it has
-  # none, the latest review per reviewer decides, changes requested first.
+  # GitHub's own decision counts only reviews that satisfy branch rules, so where
+  # it has one it wins: an approving review does not approve a pull request GitHub
+  # still marks review-required. When it has none, the latest review per reviewer
+  # decides, changes requested first.
   defp review_decision(value, latest) do
     summarized =
       case up(value) do
@@ -2403,10 +2492,10 @@ defmodule HalC2.PullRequests.GitHub do
     states = MapSet.new(reviews, &up(&1 && &1["state"]))
 
     cond do
-      summarized in ["approved", "changes-requested"] -> summarized
+      summarized != nil -> summarized
       "CHANGES_REQUESTED" in states -> "changes-requested"
       "APPROVED" in states -> "approved"
-      true -> summarized
+      true -> nil
     end
   end
 

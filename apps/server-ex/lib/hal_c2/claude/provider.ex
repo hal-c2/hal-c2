@@ -18,6 +18,15 @@ defmodule HalC2.Claude.Provider do
   @health {__MODULE__, :health}
   @workspaces {__MODULE__, :workspaces}
   @probe_timeout 20_000
+  # Claude gets up to 20 seconds to report its version before it is called broken.
+  @health_timeout 20_000
+  # `claude auth status` arrived with Claude Code 2.0; an older CLI cannot
+  # report its sign-in, so its word is not held against it.
+  @auth_status_floor "2.0.0"
+  @auth_env_keys ~w(
+    ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
+    CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CONFIG_DIR
+  )
   # How long an `initialize` read (account, commands, models) stands before the
   # next check reads it again; a refresh by hand always reads afresh.
   @capabilities_ttl_ms 300_000
@@ -208,19 +217,382 @@ defmodule HalC2.Claude.Provider do
           "message" => message
         })
 
-      {:ok, _version} ->
-        if auth_unverified?(id, path) do
-          entry
-          |> Map.merge(%{
-            "status" => "warning",
-            "auth" => %{"status" => "unknown"},
-            "message" =>
-              "Could not verify Claude authentication status from initialization result."
-          })
-        else
-          entry
+      {:ok, version} ->
+        case auth_report(id, path, version) do
+          {:unauthenticated, hint} ->
+            # The sign-in hint joins whatever the entry already says (a model the
+            # CLI is too old for), so neither hides the other.
+            entry
+            |> Map.put("status", "error")
+            |> Map.put("auth", %{"status" => "unauthenticated"})
+            |> Map.put("message", join_message(entry["message"], hint))
+
+          {:authenticated, fields} ->
+            Map.put(entry, "auth", Map.merge(%{"status" => "authenticated"}, fields))
+
+          :unknown ->
+            if auth_unverified?(id, path) do
+              entry
+              |> Map.merge(%{
+                "status" => "warning",
+                "auth" => %{"status" => "unknown"},
+                "message" =>
+                  "Could not verify Claude authentication status from initialization result."
+              })
+            else
+              entry
+            end
         end
     end
+  end
+
+  defp join_message(nil, hint), do: hint
+  defp join_message(message, hint), do: message <> " " <> hint
+
+  @doc """
+  The environment instance `instance`'s sign-in is decided by, widest first:
+  the MC's own environment, the `env` of Claude's settings file in the
+  instance's config directory, and the instance's variables in HAL-C2 settings.
+  Only the keys that decide how Claude authenticates are read.
+  """
+  @spec effective_env(String.t()) :: %{optional(String.t()) => String.t()}
+  def effective_env(instance \\ "claudeAgent") do
+    system = Map.take(System.get_env(), @auth_env_keys)
+
+    system
+    |> Map.merge(settings_env(instance))
+    |> Map.merge(Map.take(HalC2.Settings.instance_env(instance), @auth_env_keys))
+  end
+
+  # The `env` object of the instance's Claude settings file, keyed as written.
+  # Only that fixed file under the instance's config directory is read.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp settings_env(instance, keys \\ @auth_env_keys) do
+    path = Path.join(config_dir(instance), "settings.json")
+
+    with {:ok, text} <- File.read(path),
+         {:ok, %{"env" => env}} when is_map(env) <- HalC2.Claude.Skills.decode_lenient(text) do
+      # Only the keys asked for, and only values an environment can carry: a
+      # nested value in the file is Claude's business, not a reason to raise.
+      env
+      |> Map.take(keys)
+      |> Enum.flat_map(fn
+        {key, value} when is_binary(value) -> [{key, value}]
+        {key, value} when is_number(value) or is_boolean(value) -> [{key, to_string(value)}]
+        _ -> []
+      end)
+      |> Map.new()
+    else
+      _ -> %{}
+    end
+  end
+
+  # The variables that say a process runs inside someone else's Claude Code
+  # session. An MC started from inside one inherits them; a Claude the MC
+  # starts must not act as part of that session.
+  @session_env_keys ~w(CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_TOOL_USE_ID CLAUDE_CODE_CHILD_SESSION)
+
+  @doc """
+  The program a Claude the MC starts names as the one that started it
+  (`CLAUDE_CODE_ENTRYPOINT`): Claude's settings file wins, then the instance's
+  variables, else HAL-C2 itself — never the entrypoint of a Claude session
+  the MC happened to be started from.
+  """
+  @spec entrypoint(String.t()) :: String.t()
+  def entrypoint(instance \\ "claudeAgent") do
+    trim(settings_env(instance, ["CLAUDE_CODE_ENTRYPOINT"])["CLAUDE_CODE_ENTRYPOINT"]) ||
+      trim(HalC2.Settings.instance_env(instance)["CLAUDE_CODE_ENTRYPOINT"]) ||
+      "hal-c2"
+  end
+
+  @doc """
+  `pairs` with the session's entrypoint naming (`entrypoint/1`) applied, for
+  every `claude` the MC spawns. Session-identity variables the MC inherited
+  are a command problem, not an env one: see `scrubbed_command/2`.
+  """
+  @spec spawn_env(String.t(), [{String.t(), String.t()}]) :: [{String.t(), String.t()}]
+  def spawn_env(instance, pairs) do
+    pairs
+    |> Enum.reject(fn {key, _} -> key == "CLAUDE_CODE_ENTRYPOINT" end)
+    |> Kernel.++([{"CLAUDE_CODE_ENTRYPOINT", entrypoint(instance)}])
+  end
+
+  @doc """
+  `command` wrapped so the Claude Code session variables the MC inherited do
+  not reach the Claude it starts (`env -u`, as other adapters remove an
+  inherited key). A variable the instance itself sets is kept. Unchanged on
+  Windows, whose launchers `resolve_command/1` already unwrapped.
+  """
+  @spec scrubbed_command([String.t()], String.t()) :: [String.t()]
+  def scrubbed_command(command, instance \\ "claudeAgent") do
+    own = HalC2.Settings.instance_env(instance)
+
+    unset =
+      for key <- @session_env_keys,
+          System.get_env(key) != nil,
+          not Map.has_key?(own, key),
+          do: key
+
+    # A command that is not there stays unwrapped, so the spawn itself reports
+    # it missing instead of `env` exiting 127 in its name.
+    if unset == [] or elem(Application.get_env(:hal_c2, :os_type, :os.type()), 0) == :win32 or
+         System.find_executable(List.first(command) || "") == nil do
+      command
+    else
+      ["env"] ++ Enum.flat_map(unset, &["-u", &1]) ++ command
+    end
+  end
+
+  @doc """
+  The folders launch `args` add with `--add-dir`, in every spelling Claude
+  takes: `--add-dir a b` (variadic, until the next flag), repeated
+  `--add-dir`, and `--add-dir=a`.
+  """
+  @spec add_dirs([String.t()]) :: [String.t()]
+  def add_dirs(args), do: add_dirs(args, [])
+
+  defp add_dirs([], dirs), do: Enum.reverse(dirs)
+  defp add_dirs(["--add-dir=" <> dir | rest], dirs), do: add_dirs(rest, [dir | dirs])
+
+  defp add_dirs(["--add-dir" | rest], dirs) do
+    {taken, rest} = Enum.split_while(rest, &(not String.starts_with?(&1, "--")))
+    add_dirs(rest, Enum.reverse(taken, dirs))
+  end
+
+  defp add_dirs([_arg | rest], dirs), do: add_dirs(rest, dirs)
+
+  # How instance `id` is signed in, before any turn runs: a key, token or cloud
+  # backend in its environment signs it in without the CLI's word; else
+  # `claude auth status` decides. A CLI too old for that command, or one whose
+  # answer cannot be read, is `:unknown` and falls back to what `initialize`
+  # reported — except a CLI older than the command itself, which cannot report
+  # its account at all and keeps the benefit of the doubt.
+  defp auth_report(id, path, version) do
+    env = effective_env(id)
+
+    cond do
+      truthy?(env["CLAUDE_CODE_USE_BEDROCK"]) ->
+        {:authenticated, %{"type" => "bedrock", "label" => "Amazon Bedrock"}}
+
+      truthy?(env["CLAUDE_CODE_USE_VERTEX"]) ->
+        {:authenticated, %{"type" => "vertex", "label" => "Google Vertex AI"}}
+
+      present?(env["ANTHROPIC_API_KEY"]) or present?(env["ANTHROPIC_AUTH_TOKEN"]) ->
+        label =
+          if present?(env["ANTHROPIC_BASE_URL"]),
+            do: "Custom API endpoint",
+            else: "Claude API Key"
+
+        {:authenticated, %{"type" => "apiKey", "label" => label}}
+
+      true ->
+        case auth_status(id, path, env) do
+          :signed_in ->
+            {:authenticated, %{}}
+
+          :signed_out ->
+            {:unauthenticated, sign_in_hint()}
+
+          :unreadable ->
+            if older?(version, @auth_status_floor), do: {:authenticated, %{}}, else: :unknown
+        end
+    end
+  end
+
+  defp sign_in_hint,
+    do: "Claude is not signed in. Run `claude auth login` on this machine to sign in."
+
+  defp truthy?(value),
+    do: is_binary(value) and String.downcase(String.trim(value)) in ["1", "true", "yes"]
+
+  defp present?(value), do: is_binary(value) and String.trim(value) != ""
+
+  defp older?(version, floor) do
+    case Version.parse(version || "") do
+      {:ok, parsed} -> Version.compare(parsed, floor) == :lt
+      :error -> false
+    end
+  end
+
+  # `claude auth status` for `id`, as last read (at most once in five minutes
+  # per executable and environment): `:signed_in`, `:signed_out`, or
+  # `:unreadable` when the CLI has no such command or its answer is not the
+  # JSON it prints. The read runs in the background — a provider check never
+  # waits on spawning Claude — so until the first read lands the sign-in is
+  # `:unreadable` (unknown), and providers are re-announced when it does.
+  defp auth_status(id, path, env) do
+    key = {id, path, :erlang.phash2(Enum.sort(Map.take(env, @auth_env_keys)))}
+
+    case auth_lookup(key) do
+      {result, at} ->
+        if System.monotonic_time(:millisecond) - at >= @capabilities_ttl_ms,
+          do: refresh_auth(key, id, path)
+
+        result
+
+      nil ->
+        refresh_auth(key, id, path)
+        :unreadable
+    end
+  end
+
+  # The sign-in reads, one ETS row per key: `{key, result, read_at, token}`,
+  # where `result`/`read_at` are the last landed read (or nil/0) and `token`
+  # is the read in flight allowed to land (or nil). Every update is a single
+  # atomic ETS operation on that key's row — a claim (`insert_new`, or
+  # `select_replace` on a tokenless row), a landing (`select_replace` on the
+  # read's own token), a forget (`match_delete` by instance) — so concurrent
+  # reads, landings and forgets on other keys can never undo one another, and
+  # forgetting a key revokes its in-flight read: its landing matches nothing.
+  # The table is a cache only: made on first use, and made again empty if its
+  # owner went away. The three operations are exercised directly by the
+  # property in `prop/hal_c2/claude_auth_cache_prop_test.exs`.
+
+  @doc false
+  def auth_table, do: HalC2.Claude.AuthCache.table()
+
+  @doc false
+  # The last landed read for `key`, as `{result, read_at}`, or nil.
+  def auth_lookup(key) do
+    case :ets.lookup(auth_table(), key) do
+      [{^key, result, at, _token}] when result != nil -> {result, at}
+      _ -> nil
+    end
+  rescue
+    ArgumentError -> nil
+  end
+
+  # The match-spec guard that `$1` is `key` (a tuple literal in a head is not
+  # one `select_replace` can prove keeps the key; a variable guarded equal is).
+  defp auth_key_guard({id, path, hash}), do: [{:==, :"$1", {{id, path, hash}}}]
+
+  @doc false
+  # Claims the in-flight read for `key` under `token`; false when one is
+  # already claimed.
+  def auth_claim(key, token) do
+    table = auth_table()
+
+    :ets.insert_new(table, {key, nil, 0, token}) or
+      :ets.select_replace(table, [
+        {{:"$1", :"$2", :"$3", nil}, auth_key_guard(key), [{{:"$1", :"$2", :"$3", token}}]}
+      ]) == 1
+  rescue
+    ArgumentError -> false
+  end
+
+  @doc false
+  # Lands `result` read at `at` for the read claimed under `token`; false when
+  # that claim is gone (forgotten or superseded), leaving no token behind.
+  def auth_land(key, token, result, at) do
+    :ets.select_replace(auth_table(), [
+      {{:"$1", :_, :_, token}, auth_key_guard(key), [{{:"$1", result, at, nil}}]}
+    ]) == 1
+  rescue
+    ArgumentError -> false
+  end
+
+  @doc false
+  # Gives back the claim under `token` without landing a read (the read could
+  # not be made), keeping the last landed answer; false when the claim is no
+  # longer this read's.
+  def auth_release(key, token) do
+    :ets.select_replace(auth_table(), [
+      {{:"$1", :"$2", :"$3", token}, auth_key_guard(key), [{{:"$1", :"$2", :"$3", nil}}]}
+    ]) == 1
+  rescue
+    ArgumentError -> false
+  end
+
+  # One read per key at a time, whoever asked first.
+  defp refresh_auth(key, id, path) do
+    token = System.unique_integer([:positive, :monotonic])
+
+    if auth_claim(key, token),
+      do: Task.start(fn -> land_auth_read(key, id, path, token) end)
+
+    :ok
+  end
+
+  @doc false
+  # Reads the sign-in for a claimed key and lands it (or gives the claim
+  # back). Synchronous, so a test can drive a whole read without waiting on
+  # the background task `refresh_auth/3` starts.
+  def land_auth_read(key, id, path, token) do
+    try do
+      result = run_auth_status(id, path)
+      previous = auth_lookup(key)
+      landed? = auth_land(key, token, result, System.monotonic_time(:millisecond))
+
+      # Announce only a landing that changes what the entry shows: a first
+      # signed-in read confirms the authenticated entry already served
+      # (unless it was shown unverified), and re-announcing it would make
+      # every provider check echo itself.
+      if landed? and elem(previous || {:unreadable, 0}, 0) != result and
+           not (result == :signed_in and previous == nil and
+                  not auth_unverified?(id, path)),
+         do: HalC2.Settings.notify_providers()
+    after
+      # A read that raised before landing gives its claim back, so the key
+      # is not stranded showing whatever it last read (or unknown).
+      auth_release(key, token)
+    end
+  end
+
+  @doc """
+  Forgets the sign-in read for instances `ids`, so their next entry reads it
+  again: a refresh by hand after `claude auth login` must not keep serving
+  the signed-out answer for the rest of its five minutes.
+  """
+  @spec forget_auth([String.t()]) :: :ok
+  def forget_auth(ids) do
+    table = auth_table()
+    for id <- ids, do: :ets.match_delete(table, {{id, :_, :_}, :_, :_, :_})
+    :ok
+  rescue
+    ArgumentError -> :ok
+  end
+
+  # `path` is the instance's resolved claude executable, as every spawn runs it.
+  # sobelow_skip ["CI.System"]
+  defp run_auth_status(id, path) do
+    home =
+      case home_path(id) do
+        nil -> []
+        dir -> [{"CLAUDE_CONFIG_DIR", expand_home(dir)}]
+      end
+
+    env = Enum.to_list(HalC2.Settings.instance_env(id)) ++ home
+
+    # A spawn that cannot run at all (the binary went away in an update since
+    # `path` was resolved) raises in the task; caught there, because as a
+    # linked exit it would kill the caller before it lands its read — and
+    # strand the key's in-flight token for good.
+    task =
+      Task.async(fn ->
+        try do
+          {:ok, System.cmd(path, ["auth", "status"], env: env, stderr_to_stdout: true)}
+        rescue
+          _ -> :error
+        catch
+          _, _ -> :error
+        end
+      end)
+
+    timeout = Application.get_env(:hal_c2, :claude_health_timeout_ms, @health_timeout)
+
+    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+      {:ok, {:ok, {output, _status}}} ->
+        case JSON.decode(String.trim(output)) do
+          {:ok, %{"loggedIn" => true}} -> :signed_in
+          {:ok, %{"loggedIn" => false}} -> :signed_out
+          _ -> :unreadable
+        end
+
+      _ ->
+        :unreadable
+    end
+  rescue
+    _ -> :unreadable
   end
 
   # Signed-in-ness as the last `initialize` read left it: a read that reported no
@@ -304,7 +676,7 @@ defmodule HalC2.Claude.Provider do
 
   defp probe_version(path) do
     task = Task.async(fn -> run_version(path) end)
-    timeout = Application.get_env(:hal_c2, :claude_health_timeout_ms, 5_000)
+    timeout = Application.get_env(:hal_c2, :claude_health_timeout_ms, @health_timeout)
 
     case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
       {:ok, {:ok, version}} ->
@@ -465,16 +837,23 @@ defmodule HalC2.Claude.Provider do
 
     opts = [
       handler: self(),
-      command: command(id) ++ ["--settings", ~s({"disableAllHooks":true}), "--strict-mcp-config"],
+      command:
+        scrubbed_command(
+          command(id) ++ ["--settings", ~s({"disableAllHooks":true}), "--strict-mcp-config"],
+          id
+        ),
       persist_session: false,
       env:
-        Enum.to_list(HalC2.Settings.instance_env(id)) ++
-          home ++
-          [
-            {"ENABLE_CLAUDEAI_MCP_SERVERS", "false"},
-            {"CLAUDE_CODE_AUTO_CONNECT_IDE", "0"},
-            {"CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL", "1"}
-          ]
+        spawn_env(
+          id,
+          Enum.to_list(HalC2.Settings.instance_env(id)) ++
+            home ++
+            [
+              {"ENABLE_CLAUDEAI_MCP_SERVERS", "false"},
+              {"CLAUDE_CODE_AUTO_CONNECT_IDE", "0"},
+              {"CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL", "1"}
+            ]
+        )
     ]
 
     case Session.start_link(opts) do

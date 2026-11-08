@@ -393,16 +393,24 @@ defmodule HalC2.TextGeneration do
         ["--disable-slash-commands", "--strict-mcp-config", "--permission-mode", "dontAsk"]
 
     # The instance's own env and config folder, as its sessions get them.
+    instance = selection["instanceId"] || "claudeAgent"
+
     env =
-      Enum.to_list(HalC2.Settings.instance_env(selection["instanceId"])) ++
-        case HalC2.Claude.Provider.home_path(selection["instanceId"]) do
-          nil -> []
-          home -> [{"CLAUDE_CONFIG_DIR", HalC2.Claude.Provider.expand_home(home)}]
-        end
+      (Enum.to_list(HalC2.Settings.instance_env(instance)) ++
+         case HalC2.Claude.Provider.home_path(instance) do
+           nil -> []
+           home -> [{"CLAUDE_CONFIG_DIR", HalC2.Claude.Provider.expand_home(home)}]
+         end)
+      |> then(&HalC2.Claude.Provider.spawn_env(instance, &1))
+
+    command =
+      HalC2.Claude.Provider.scrubbed_command(
+        [claude_command(selection["instanceId"]) | args],
+        instance
+      )
 
     in_dir(if(isolate, do: nil, else: cwd), fn dir ->
-      with {:ok, out} <-
-             run_cli([claude_command(selection["instanceId"]) | args], dir, prompt, env: env),
+      with {:ok, out} <- run_cli(command, dir, prompt, env: env),
            {:ok, decoded} <- JSON.decode(out),
            %{} = result <- structured(decoded) do
         {:ok, result}

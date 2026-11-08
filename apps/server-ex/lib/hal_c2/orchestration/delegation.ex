@@ -249,13 +249,22 @@ defmodule HalC2.Orchestration.Delegation do
       Orchestration.cancel_queued(task["childThreadId"])
       hook(:cancelling, task_id)
 
-      _ =
-        Orchestration.dispatch(%{
-          "type" => "run.interrupt",
-          "threadId" => task["childThreadId"],
-          "holdQueue" => false,
-          "stopDelegated" => Keyword.get(opts, :stop_delegated, true)
-        })
+      # A cancel an agent asked for (`task_cancel`, `requested_by: "agent"`) names
+      # the agent in the child's interrupt outcome; the user's stops name the user.
+      interrupt = %{
+        "type" => "run.interrupt",
+        "threadId" => task["childThreadId"],
+        "holdQueue" => false,
+        "stopDelegated" => Keyword.get(opts, :stop_delegated, true)
+      }
+
+      interrupt =
+        case Keyword.get(opts, :requested_by) do
+          nil -> interrupt
+          by -> Map.put(interrupt, "requestedBy", by)
+        end
+
+      _ = Orchestration.dispatch(interrupt)
 
       {:ok, status(thread_id, task_id)}
     else
@@ -1720,7 +1729,23 @@ defmodule HalC2.Orchestration.Delegation do
   # answer it gave before failing (upstream `subagentResultForRun`).
   defp failure_text(_child, run, status) when status != "failed" or run == nil, do: nil
 
-  defp failure_text(child, %{"id" => run_id}, "failed") do
+  defp failure_text(child, %{"id" => run_id} = run, "failed") do
+    error_item_text(child, run_id) || run_failure(child, run)
+  end
+
+  defp failure_text(_child, _run, _status), do: nil
+
+  # What the run recorded when it ended without an error item: an adapter that ends a
+  # run with a plain-text failure leaves it on the run (`TurnWriter`), not on the provider
+  # session, whose `lastError` outlives the run and may be an earlier run's.
+  defp run_failure(child, %{"id" => run_id}) do
+    case (StreamState.get(child, "run")[run_id] || %{})["failure"] do
+      message when is_binary(message) and message != "" -> message
+      _ -> nil
+    end
+  end
+
+  defp error_item_text(child, run_id) do
     child
     |> StreamState.run_rows([run_id])
     |> Enum.flat_map(fn
@@ -1736,8 +1761,6 @@ defmodule HalC2.Orchestration.Delegation do
       _ -> nil
     end
   end
-
-  defp failure_text(_child, _run, _status), do: nil
 
   # What the result says when the child left no answer and no failure of its own.
   # A failed or cancelled child keeps no result: its wake says "(no answer)".

@@ -81,7 +81,9 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
       {~s(label:"bug"), &labelled?(&1, "bug")},
       {~s(author:"octocat"), &author?(&1, "octocat")},
       {~s(author:"#{@me}"), &author?(&1, @me)},
-      {"tax label:bug", &(&1["title"] =~ ~r/tax/i)}
+      {"tax label:bug", &(&1["title"] =~ ~r/tax/i)},
+      {~s("tax"), &(&1["title"] =~ ~r/tax/i)},
+      {~s("is:merged"), fn _ -> false end}
     ]
   end
 
@@ -212,6 +214,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
       "failing checks" => {%{"checks" => "failing"}, &checks?(&1, "FAILURE")},
       "passing checks" => {%{"checks" => "passing"}, &checks?(&1, "SUCCESS")},
       ~s(the label "bug") => {%{"labels" => [["bug"]]}, &labelled?(&1, "bug")},
+      ~s(the author "alice") => {%{"author" => "alice"}, &author?(&1, "alice")},
       ~s(the author "octocat") => {%{"author" => "octocat"}, &author?(&1, "octocat")},
       "the author being the user" => {%{"author" => "@me"}, &author?(&1, "monalisa")}
     }
@@ -261,36 +264,85 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
         Shared.gh_pr(repository, number, %{"updatedAt" => at})
       end
 
-    context
-    |> World.cli_rules(%{
-      "args" => ["api graphql"],
-      "repository" => repository,
-      "stdin" => ["is:open "],
-      "pulls" => prs
-    })
-    |> Map.merge(%{many: {repository, prs}})
+    context =
+      context
+      |> World.cli_rules(%{
+        "args" => ["api graphql"],
+        "repository" => repository,
+        "stdin" => ["is:open "],
+        "pulls" => prs
+      })
+      |> Map.merge(%{many: {repository, prs}})
+
+    # A repository GitHub's search does not index stays unindexed however many
+    # pull requests it has: search still answers nothing for it.
+    if context[:unindexed] == repository do
+      World.cli_rules(context, [
+        %{
+          "args" => ["api graphql"],
+          "repository" => repository,
+          "stdin" => ["PullRequestListSearch"],
+          "pulls" => []
+        },
+        %{
+          "args" => ["api graphql"],
+          "repository" => repository,
+          "stdin" => ["PullRequestListIndexed"],
+          "pulls" => []
+        },
+        %{
+          "args" => ["api graphql"],
+          "repository" => repository,
+          "stdin" => ["PullRequestListRepository"],
+          "pulls" => prs
+        }
+      ])
+    else
+      context
+    end
   end
 
   step "the user loads more pull requests", context do
-    {repository, prs} = context.many
-    context = list(context)
-    first = entries(context)
-    assert {:ok, %{"nextCursors" => cursors}} = context.reply
-    assert [{_, cursor}] = Map.to_list(cursors)
-    [boundary | _] = String.split(cursor, "|")
+    if context[:hosted] do
+      # A driven host answers a continuation from the same fake that answered
+      # the first page; there is no second answer to script.
+      context = list(context)
+      first = entries(context)
+      assert {:ok, %{"nextCursors" => cursors}} = context.reply
 
-    # GitHub answers the carried-on search with what is no newer than the boundary.
-    older = Enum.filter(prs, &(&1["updatedAt"] <= boundary))
+      context
+      |> list(%{"cursors" => cursors})
+      |> Map.put(:first_page, first)
+    else
+      {repository, prs} = context.many
+      context = list(context)
+      first = entries(context)
+      assert {:ok, %{"nextCursors" => cursors}} = context.reply
 
-    context
-    |> World.cli_rules(%{
-      "args" => ["api graphql"],
-      "repository" => repository,
-      "stdin" => ["updated:<=#{boundary}"],
-      "pulls" => older
-    })
-    |> list(%{"cursors" => cursors})
-    |> Map.put(:first_page, first)
+      if cursors == %{} do
+        # A list that cannot be carried on (read the long way) loads more by
+        # asking for a larger page from the top.
+        context
+        |> list(%{"limit" => 500})
+        |> Map.put(:first_page, first)
+      else
+        assert [{_, cursor}] = Map.to_list(cursors)
+        [boundary | _] = String.split(cursor, "|")
+
+        # GitHub answers the carried-on search with what is no newer than the boundary.
+        older = Enum.filter(prs, &(&1["updatedAt"] <= boundary))
+
+        context
+        |> World.cli_rules(%{
+          "args" => ["api graphql"],
+          "repository" => repository,
+          "stdin" => ["updated:<=#{boundary}"],
+          "pulls" => older
+        })
+        |> list(%{"cursors" => cursors})
+        |> Map.put(:first_page, first)
+      end
+    end
   end
 
   step "the next pull requests follow without repeating any", context do
@@ -1127,5 +1179,1811 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
        context do
     assert paused_until(context) == at(context.until)
     still_paused(context, context.until)
+  end
+
+  # --- GitHub's own review decision, search text and continuations ----------------
+
+  defp shop_rule(context, pulls, extra \\ %{}) do
+    World.cli_rules(
+      context,
+      Map.merge(
+        %{"args" => ["api graphql"], "repository" => "acme/shop", "pulls" => pulls},
+        extra
+      )
+    )
+  end
+
+  step "pull request 42 on GitHub has an approving review", context do
+    Map.put(context, :approving, [%{"state" => "APPROVED", "author" => %{"login" => "hubot"}}])
+  end
+
+  step ~r/^GitHub reports its review decision as (?<decision>review required|approved|nothing)$/,
+       %{args: [decision]} = context do
+    reported =
+      %{"review required" => "REVIEW_REQUIRED", "approved" => "APPROVED", "nothing" => nil}[
+        decision
+      ]
+
+    pr =
+      Shared.gh_pr("acme/shop", 42, %{
+        "reviewDecision" => reported,
+        "latestReviews" => context.approving
+      })
+
+    shop_rule(context, [pr], %{"stdin" => ["PullRequestListSearch", "is:open "]})
+  end
+
+  step ~r/^its row shows it as (?<shown>waiting for a review|approved)$/,
+       %{args: [shown]} = context do
+    row =
+      if context[:hosted],
+        do: List.first(hosted_entries(context)),
+        else: Enum.find(entries(context), &(&1["number"] == 42))
+
+    assert row, "the pull request is not listed: #{inspect(context.reply)}"
+
+    assert row["reviewDecision"] ==
+             if(shown == "approved", do: "approved", else: "review-required")
+
+    context
+  end
+
+  step "the words {string} are looked for in titles and bodies", %{args: [words]} = context do
+    searches =
+      Enum.filter(World.pull_listings(context), &(&1["query"] =~ "PullRequestListSearch"))
+
+    assert searches != []
+    assert Enum.all?(searches, &(&1["variables"]["q"] =~ ~s("#{words}")))
+    Map.put(context, :searches, searches)
+  end
+
+  step "the search is not narrowed to merged pull requests", context do
+    for search <- context.searches do
+      q = search["variables"]["q"]
+      assert q =~ "is:open"
+      refute q =~ ~r/(^| )is:merged( |$)/
+    end
+
+    context
+  end
+
+  step "{string} has one closed pull request and one merged pull request", context do
+    # The fixture's acme/shop: #3 closed, #4 merged.
+    context
+  end
+
+  step "only the closed pull request is listed", context do
+    assert listed(context) == MapSet.new([{"acme/shop", 3}])
+    context
+  end
+
+  step "GitHub's search answers nothing at all for {string}", %{args: [repository]} = context do
+    context
+    |> World.cli_rules([
+      %{
+        "args" => ["api graphql"],
+        "repository" => repository,
+        "stdin" => ["PullRequestListSearch"],
+        "pulls" => []
+      },
+      %{
+        "args" => ["api graphql"],
+        "repository" => repository,
+        "stdin" => ["PullRequestListIndexed"],
+        "pulls" => []
+      }
+    ])
+    |> Map.put(:unindexed, repository)
+  end
+
+  step "the open pull requests of {string} are listed the long way",
+       %{args: [repository]} = context do
+    numbers = for e <- entries(context), e["repository"] == repository, do: e["number"]
+    assert Enum.sort(numbers) == [1, 2]
+
+    assert Enum.any?(
+             World.pull_listings(context),
+             &(&1["query"] =~ "PullRequestListRepository")
+           ),
+           "the repository's own list was not read"
+
+    context
+  end
+
+  step "no pull request in {string} matches the words {string}",
+       %{args: [repository, _words]} = context do
+    World.cli_rules(context, %{
+      "args" => ["api graphql"],
+      "repository" => repository,
+      "stdin" => ["PullRequestListSearch"],
+      "pulls" => []
+    })
+  end
+
+  step "no pull requests are listed for {string}", %{args: [repository]} = context do
+    assert {:ok, _} = context.reply
+    refute Enum.any?(entries(context), &(&1["repository"] == repository))
+    context
+  end
+
+  step "the repository is not read the long way", context do
+    refute Enum.any?(
+             World.pull_listings(context),
+             &(&1["query"] =~ "PullRequestListRepository")
+           )
+
+    context
+  end
+
+  step "a client lists pull requests carrying on from a cursor it made up", context do
+    list(context, %{"cursors" => %{"github.com acme/shop" => "made-up"}})
+  end
+
+  step "no pull requests are listed", context do
+    assert {:error, _, _} = context.reply
+    context
+  end
+
+  step "the first page of the list carried on for {string} only",
+       %{args: [repository]} = context do
+    prs =
+      for number <- 200..1//-1 do
+        at = DateTime.add(~U[2026-09-01 00:00:00Z], number * 60) |> DateTime.to_iso8601()
+        Shared.gh_pr(repository, number, %{"updatedAt" => at})
+      end
+
+    context
+    |> World.cli_rules(%{
+      "args" => ["api graphql"],
+      "repository" => repository,
+      "stdin" => ["is:open "],
+      "pulls" => prs
+    })
+    |> Map.merge(%{many: {repository, prs}})
+  end
+
+  step "only {string} is read", %{args: [repository]} = context do
+    assert Enum.map(entries(context), & &1["repository"]) |> Enum.uniq() == [repository]
+    context
+  end
+
+  step "{string} is not asked again", %{args: [repository]} = context do
+    # Asked once, for the first page the load-more step read before carrying on.
+    assert length(listings_of(context, repository)) == 1
+    context
+  end
+
+  step "{string} is open as the project and as two worktrees",
+       %{args: [repository]} = context do
+    Enum.reduce(["shop worktree one", "shop worktree two"], context, fn title, context ->
+      context = World.create_project(context, title)
+      World.github_remote(context, World.project(context, title).root, repository)
+      context
+    end)
+  end
+
+  step "each pull request of {string} is listed once", %{args: [repository]} = context do
+    numbers = for e <- entries(context), e["repository"] == repository, do: e["number"]
+    assert Enum.sort(numbers) == [1, 2]
+    context
+  end
+
+  step "{string} exists on github.com and on a self-hosted GitHub",
+       %{args: [repository]} = context do
+    context = World.create_project(context, "shop enterprise")
+    root = World.project(context, "shop enterprise").root
+    World.git!(root, ["remote", "add", "origin", "git@github.example.com:#{repository}.git"])
+    context
+  end
+
+  step "the pull requests of both are listed under their own host", context do
+    for host <- ["github.com", "github.example.com"] do
+      numbers =
+        for e <- entries(context),
+            e["host"] == host and e["repository"] == "acme/shop",
+            do: e["number"]
+
+      assert Enum.sort(numbers) == [1, 2], "nothing listed under #{host}"
+    end
+
+    context
+  end
+
+  step "the host returns one unreadable row in the middle of a page", context do
+    prs =
+      for number <- 150..1//-1 do
+        at = DateTime.add(~U[2026-09-01 00:00:00Z], number * 60) |> DateTime.to_iso8601()
+        Shared.gh_pr("acme/shop", number, %{"updatedAt" => at})
+      end
+
+    shop_rule(context, List.insert_at(prs, 50, %{"number" => "unreadable"}), %{
+      "stdin" => ["is:open "]
+    })
+  end
+
+  step "the readable rows are listed", context do
+    numbers = for e <- entries(context), e["repository"] == "acme/shop", do: e["number"]
+    assert length(numbers) == 99
+    assert numbers == Enum.to_list(150..52//-1)
+    context
+  end
+
+  step "more can still be loaded", context do
+    assert {:ok, %{"nextCursors" => cursors, "truncated" => true}} = context.reply
+    assert Map.has_key?(cursors, "github.com acme/shop")
+    context
+  end
+
+  # Upstream #18813 is a Bitbucket bug, so the page boundary is crossed on
+  # Bitbucket through its fake API, not on GitHub.
+  step "several pull requests were updated at the same instant across a page boundary",
+       context do
+    items =
+      for number <- 150..1//-1, do: h(number, %{"updated" => "2026-09-20T00:00:00Z"})
+
+    hosted_project(context, "Bitbucket", items)
+  end
+
+  step "every one of them is listed exactly once", context do
+    numbers = &for(e <- &1, e["projectId"] == context.hosted.id, do: e["number"])
+    all = numbers.(context.first_page) ++ numbers.(entries(context))
+    assert Enum.sort(all) == Enum.to_list(1..150)
+    context
+  end
+
+  step "the list is not narrowed", context do
+    assert listed(context) == expected(fn _ -> true end)
+    context
+  end
+
+  step "GitHub answers a listing of open pull requests with one row that cannot be read",
+       context do
+    pulls =
+      fixture()["acme/shop"]
+      |> Enum.filter(&(&1["state"] == "OPEN"))
+      |> List.insert_at(1, %{"number" => "unreadable", "title" => 7})
+
+    shop_rule(context, pulls, %{"stdin" => ["is:open "]})
+  end
+
+  step "the other pull requests are listed", context do
+    numbers = for e <- entries(context), e["repository"] == "acme/shop", do: e["number"]
+    assert Enum.sort(numbers) == [1, 2]
+    context
+  end
+
+  step "the listing does not fail", context do
+    assert {:ok, %{"errors" => []}} = context.reply
+    context
+  end
+
+  step "the user is {string} and a review of pull request 1 is requested of {string}",
+       %{args: [viewer, requested]} = context do
+    pulls = [
+      Shared.gh_pr("acme/shop", 1, %{"reviewRequests" => [%{"login" => requested}]}),
+      Shared.gh_pr("acme/shop", 2, %{
+        "author" => %{"login" => viewer},
+        "reviewRequests" => [%{"login" => viewer}]
+      })
+    ]
+
+    context =
+      context
+      |> World.cli_rules(%{
+        "args" => ["api user"],
+        "stdout" => %{"id" => 9, "login" => viewer}
+      })
+      |> shop_rule(pulls, %{"stdin" => ["PullRequestListSearch", "is:open "]})
+
+    HalC2.PullRequests.invalidate(%{})
+    context
+  end
+
+  step "pull request 2 was written by {string} and lists {string} among its requested reviewers",
+       context do
+    context
+  end
+
+  step "pull request 1 is flagged as awaiting the user's review", context do
+    assert %{"viewerReviewRequested" => true} = Enum.find(entries(context), &(&1["number"] == 1))
+    context
+  end
+
+  step "pull request 2 is not", context do
+    assert %{"viewerReviewRequested" => false} = Enum.find(entries(context), &(&1["number"] == 2))
+    context
+  end
+
+  step "pull request 1 on GitHub has a review requested of the team {string} and of no person",
+       %{args: [_team]} = context do
+    pr =
+      Shared.gh_pr("acme/shop", 1, %{
+        "reviewRequests" => [%{"slug" => "core", "name" => "Core"}]
+      })
+
+    shop_rule(context, [pr], %{"stdin" => ["review-requested:#{@me}"]})
+  end
+
+  step "the user lists pull requests where their review is requested", context do
+    list(context, %{"involvement" => "reviewing"})
+  end
+
+  step "pull request 1 is listed", context do
+    assert Enum.any?(entries(context), &(&1["number"] == 1))
+    context
+  end
+
+  # --- the other hosts (`HalC2.PullRequests.Hosts`) ---------------------------------
+  #
+  # One fixture item (title, state, draft, author, reviewers, labels, pipeline)
+  # is answered by each host in its own shape: GitLab, Forgejo and Azure from
+  # the fake CLI under their own names, Bitbucket from a local API server.
+
+  defmodule HostedBitbucket do
+    @moduledoc false
+    @behaviour Plug
+
+    def init(opts), do: opts
+
+    def call(conn, %{test: test, token: token, user: user, items: items}) do
+      conn = Plug.Conn.fetch_query_params(conn)
+      send(test, {:hosted_bitbucket, conn.request_path, conn.query_params})
+
+      cond do
+        Plug.Conn.get_req_header(conn, "authorization") != ["Bearer " <> token] ->
+          Plug.Conn.send_resp(conn, 401, "")
+
+        conn.request_path == "/2.0/user" ->
+          json(conn, user)
+
+        String.ends_with?(conn.request_path, "/pullrequests") ->
+          params = conn.query_params
+          rows = Enum.filter(items, &(&1["state"] == params["state"]))
+          rows = filter_title(rows, params["q"])
+          pagelen = String.to_integer(params["pagelen"] || "50")
+          page = String.to_integer(params["page"] || "1")
+          json(conn, %{"values" => rows |> Enum.drop((page - 1) * pagelen) |> Enum.take(pagelen)})
+
+        true ->
+          Plug.Conn.send_resp(conn, 404, "")
+      end
+    end
+
+    defp filter_title(rows, nil), do: rows
+
+    defp filter_title(rows, q) do
+      case Regex.run(~r/title ~ "((?:\\.|[^"])*)"/, q) do
+        [_, words] ->
+          words = words |> String.replace("\\\"", "\"") |> String.replace("\\\\", "\\")
+
+          Enum.filter(
+            rows,
+            &String.contains?(String.downcase(&1["title"]), String.downcase(words))
+          )
+
+        _ ->
+          rows
+      end
+    end
+
+    defp json(conn, body),
+      do:
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, JSON.encode!(body))
+  end
+
+  @hosted_token "bitbucket-list-token"
+
+  defp h(number, fields \\ %{}) do
+    Map.merge(
+      %{
+        "number" => number,
+        "title" => "Change #{number}",
+        "state" => "open",
+        "draft" => false,
+        "author" => "alice",
+        "reviewers" => [],
+        "labels" => [],
+        "created" => "2026-09-01T00:00:00Z",
+        "updated" => "2026-09-20T00:00:00Z",
+        "pipeline" => nil,
+        "raw_state" => nil,
+        "wip" => false,
+        "omit_draft" => false,
+        "merged_at" => nil,
+        "participants" => nil,
+        "azure" => %{}
+      },
+      fields
+    )
+  end
+
+  defp hosted_fixture do
+    [
+      h(1, %{"labels" => ["bug"], "reviewers" => [@me], "pipeline" => "success"}),
+      h(2, %{
+        "draft" => true,
+        "author" => "bob",
+        "updated" => "2026-09-19T00:00:00Z",
+        "pipeline" => "failed"
+      }),
+      h(3, %{"updated" => "2026-09-18T00:00:00Z"}),
+      h(4, %{"state" => "closed", "updated" => "2026-09-17T00:00:00Z"}),
+      h(5, %{"state" => "merged", "author" => "bob", "updated" => "2026-09-16T00:00:00Z"})
+    ]
+  end
+
+  defp gitlab_raw(it, repo) do
+    %{
+      "iid" => it["number"],
+      "title" => it["title"],
+      "web_url" => "https://gitlab.com/#{repo}/-/merge_requests/#{it["number"]}",
+      "source_branch" => "feature/#{it["number"]}",
+      "target_branch" => "main",
+      "state" =>
+        it["raw_state"] ||
+          %{"open" => "opened", "closed" => "closed", "merged" => "merged"}[it["state"]],
+      "draft" => it["draft"],
+      "work_in_progress" => it["wip"],
+      "merged_at" => it["merged_at"] || if(it["state"] == "merged", do: it["updated"]),
+      "author" => %{"username" => it["author"], "name" => it["author"]},
+      "reviewers" => for(r <- it["reviewers"], do: %{"username" => r}),
+      "labels" => it["labels"],
+      "created_at" => it["created"],
+      "updated_at" => it["updated"],
+      "sha" => "abc#{it["number"]}",
+      "head_pipeline" => it["pipeline"] && %{"status" => it["pipeline"]}
+    }
+  end
+
+  # Forgejo stamps its times with the server's own offset, so the fake sends
+  # the fixture's instants at +02:00 and a Forgejo listing only lines up with
+  # the other hosts' rows if the MC writes them back in UTC.
+  defp plus_two(text) do
+    {:ok, at, _offset} = DateTime.from_iso8601(text)
+
+    at
+    |> DateTime.add(2 * 3600, :second)
+    |> DateTime.to_naive()
+    |> NaiveDateTime.to_iso8601()
+    |> Kernel.<>("+02:00")
+  end
+
+  defp forgejo_raw(it, repo) do
+    raw = %{
+      "number" => it["number"],
+      "title" => it["title"],
+      "html_url" => "https://codeberg.org/#{repo}/pulls/#{it["number"]}",
+      "state" => if(it["state"] == "open", do: "open", else: "closed"),
+      "merged" => it["state"] == "merged",
+      "user" => %{"login" => it["author"]},
+      "head" => %{"ref" => "feature/#{it["number"]}", "sha" => "abc#{it["number"]}"},
+      "base" => %{"ref" => "main"},
+      "labels" => for(name <- it["labels"], do: %{"name" => name, "color" => "d73a4a"}),
+      "requested_reviewers" => for(r <- it["reviewers"], do: %{"login" => r}),
+      "created_at" => plus_two(it["created"]),
+      "updated_at" => plus_two(it["updated"])
+    }
+
+    if it["omit_draft"], do: raw, else: Map.put(raw, "draft", it["draft"])
+  end
+
+  defp azure_raw(it, _repo) do
+    base = %{
+      "pullRequestId" => it["number"],
+      "title" => it["title"],
+      "status" =>
+        it["raw_state"] ||
+          %{"open" => "active", "closed" => "abandoned", "merged" => "completed"}[it["state"]],
+      "isDraft" => it["draft"],
+      "sourceRefName" => "refs/heads/feature/#{it["number"]}",
+      "targetRefName" => "refs/heads/main",
+      "creationDate" => it["created"],
+      "closedDate" => if(it["state"] == "open", do: nil, else: it["updated"]),
+      "createdBy" => %{"uniqueName" => it["author"], "displayName" => it["author"]},
+      "reviewers" => for(r <- it["reviewers"], do: %{"uniqueName" => r}),
+      "repository" => %{
+        "name" => "shop",
+        "webUrl" => "https://dev.azure.com/acme/shop/_git/shop",
+        "project" => %{"name" => "shop"}
+      },
+      "_links" => %{
+        "web" => %{
+          "href" => "https://dev.azure.com/acme/shop/_git/shop/pullrequest/#{it["number"]}"
+        }
+      }
+    }
+
+    Map.merge(base, it["azure"])
+  end
+
+  defp bitbucket_raw(it, repo) do
+    %{
+      "id" => it["number"],
+      "title" => it["title"],
+      "state" =>
+        it["raw_state"] ||
+          %{"open" => "OPEN", "closed" => "DECLINED", "merged" => "MERGED"}[it["state"]],
+      "draft" => it["draft"],
+      "author" => %{
+        "username" => it["author"],
+        "nickname" => it["author"],
+        "display_name" => it["author"]
+      },
+      "source" => %{"branch" => %{"name" => "feature/#{it["number"]}"}},
+      "destination" => %{"branch" => %{"name" => "main"}},
+      "links" => %{
+        "html" => %{"href" => "https://bitbucket.org/#{repo}/pull-requests/#{it["number"]}"}
+      },
+      "reviewers" => for(r <- it["reviewers"], do: %{"username" => r, "nickname" => r}),
+      "participants" =>
+        it["participants"] ||
+          for(r <- it["reviewers"], do: %{"user" => %{"username" => r}, "approved" => false}),
+      "created_on" => it["created"],
+      "updated_on" => it["updated"]
+    }
+  end
+
+  defp hosted_rules(context, "GitLab", items, repo, _opts) do
+    by_param = [
+      {"opened", Enum.filter(items, &(&1["state"] == "open"))},
+      {"closed", Enum.filter(items, &(&1["state"] == "closed"))},
+      {"merged", Enum.filter(items, &(&1["state"] == "merged"))},
+      {"all", items}
+    ]
+
+    rules =
+      for {param, rows} <- by_param,
+          {chunk, index} <- Enum.with_index(Enum.chunk_every(rows, 100)) do
+        %{
+          "cmd" => "glab",
+          # "&page=" so page=1 does not also match inside per_page=100.
+          "args" => ["api", "state=#{param}", "&page=#{index + 1}"],
+          "stdout" => Enum.map(chunk, &gitlab_raw(&1, repo))
+        }
+      end
+
+    World.cli_rules(
+      context,
+      [%{"cmd" => "glab", "args" => ["api user"], "stdout" => %{"username" => @me}}] ++
+        rules ++
+        [%{"cmd" => "glab", "args" => ["api", "merge_requests"], "stdout" => []}]
+    )
+  end
+
+  defp hosted_rules(context, "Forgejo", items, repo, _opts) do
+    by_param = [
+      {"open", Enum.filter(items, &(&1["state"] == "open"))},
+      {"closed", Enum.filter(items, &(&1["state"] != "open"))},
+      {"all", items}
+    ]
+
+    rules =
+      for {param, rows} <- by_param,
+          {chunk, index} <- Enum.with_index(Enum.chunk_every(rows, 50)) do
+        %{
+          "cmd" => "tea",
+          "args" => ["api", "state=#{param}", "&page=#{index + 1}"],
+          "stderr" => "HTTP/2.0 200 OK\n",
+          "stdout" => Enum.map(chunk, &forgejo_raw(&1, repo))
+        }
+      end
+
+    World.cli_rules(
+      context,
+      [
+        %{
+          "cmd" => "tea",
+          "args" => ["login list"],
+          "stdout" => [
+            %{
+              "name" => "codeberg",
+              "url" => "https://codeberg.org",
+              "user" => @me,
+              "default" => "true",
+              "valid" => "true"
+            }
+          ]
+        },
+        %{
+          "cmd" => "tea",
+          "args" => ["api", "/api/v1/user"],
+          "stderr" => "HTTP/2.0 200 OK\n",
+          "stdout" => %{"login" => @me}
+        }
+      ] ++
+        rules ++
+        [
+          %{
+            "cmd" => "tea",
+            "args" => ["api", "/pulls?"],
+            "stderr" => "HTTP/2.0 200 OK\n",
+            "stdout" => []
+          }
+        ]
+    )
+  end
+
+  defp hosted_rules(context, "Azure DevOps", items, repo, opts) do
+    by_param = [
+      {"active", Enum.filter(items, &(&1["state"] == "open"))},
+      {"abandoned", Enum.filter(items, &(&1["state"] == "closed"))},
+      {"completed", Enum.filter(items, &(&1["state"] == "merged"))},
+      {"all", items}
+    ]
+
+    # Skip rules first: a later page's call also carries the first page's words.
+    rules =
+      for {param, rows} <- by_param,
+          {chunk, index} <- Enum.with_index(Enum.chunk_every(rows, 100)),
+          index > 0 do
+        %{
+          "cmd" => "az",
+          "args" => ["pr list", "--status #{param}", "--skip #{index * 100}"],
+          "stdout" => Enum.map(chunk, &azure_raw(&1, repo))
+        }
+      end ++
+        for {param, rows} <- by_param do
+          %{
+            "cmd" => "az",
+            "args" => ["pr list", "--status #{param}"],
+            "stdout" => rows |> Enum.take(100) |> Enum.map(&azure_raw(&1, repo))
+          }
+        end
+
+    viewer = %{
+      "cmd" => "az",
+      "args" => ["account show"],
+      "stdout" => opts[:azure_viewer] || %{"name" => @me}
+    }
+
+    World.cli_rules(
+      context,
+      [viewer] ++ rules ++ [%{"cmd" => "az", "args" => ["pr list"], "stdout" => []}]
+    )
+  end
+
+  defp hosted_rules(context, "Bitbucket", items, repo, opts) do
+    server =
+      Mc.ensure(
+        {Bandit,
+         plug:
+           {HostedBitbucket,
+            %{
+              test: self(),
+              token: @hosted_token,
+              user: opts[:bitbucket_user] || %{"username" => @me},
+              items: Enum.map(items, &bitbucket_raw(&1, repo))
+            }},
+         port: 0,
+         ip: :loopback}
+      )
+
+    {:ok, {_, port}} = ThousandIsland.listener_info(server)
+    Shared.put_env("HAL_C2_BITBUCKET_API_BASE_URL", "http://127.0.0.1:#{port}/2.0")
+    Shared.put_env("HAL_C2_BITBUCKET_ACCESS_TOKEN", @hosted_token)
+    context
+  end
+
+  defp hosted_remote("GitLab", repo), do: "git@gitlab.com:#{repo}.git"
+  defp hosted_remote("Forgejo", repo), do: "https://codeberg.org/#{repo}.git"
+  defp hosted_remote("Bitbucket", repo), do: "git@bitbucket.org:#{repo}.git"
+
+  defp hosted_project(context, host, items, opts \\ []) do
+    opts = Map.new(opts)
+    title = opts[:title] || "hosted"
+    repo = opts[:repository] || "acme/shop"
+
+    remote =
+      opts[:remote] ||
+        if host == "Azure DevOps" do
+          [owner, name] = String.split(repo, "/") |> Enum.take(-2)
+          "https://dev.azure.com/#{owner}/#{name}/_git/#{name}"
+        else
+          hosted_remote(host, repo)
+        end
+
+    context = World.create_project(context, title)
+    project = World.project(context, title)
+    World.git!(project.root, ["remote", "add", "origin", remote])
+
+    context
+    |> World.fake_cli(["glab", "az", "tea"])
+    |> hosted_rules(host, items, repo, opts)
+    |> Map.put(:hosted, %{
+      host: host,
+      items: items,
+      id: project.id,
+      repository: repo,
+      title: title
+    })
+  end
+
+  defp hosted_entries(context),
+    do: Enum.filter(entries(context), &(&1["projectId"] == context.hosted.id))
+
+  defp hosted_numbers(context), do: Enum.map(hosted_entries(context), & &1["number"])
+
+  step "a project on {word}", %{args: [host]} = context do
+    hosted_project(context, host, hosted_fixture())
+  end
+
+  step "a project on Azure DevOps", context do
+    hosted_project(context, "Azure DevOps", hosted_fixture())
+  end
+
+  step "a project on {word} with 200 open change requests", %{args: [host]} = context do
+    items =
+      for number <- 200..1//-1 do
+        at = DateTime.add(~U[2026-09-01 00:00:00Z], number * 60) |> DateTime.to_iso8601()
+        h(number, %{"updated" => at})
+      end
+
+    hosted_project(context, host, items)
+  end
+
+  step "a project on Azure DevOps with 200 open change requests", context do
+    items =
+      for number <- 200..1//-1 do
+        at = DateTime.add(~U[2026-09-01 00:00:00Z], number * 60) |> DateTime.to_iso8601()
+        h(number, %{"updated" => at})
+      end
+
+    hosted_project(context, "Azure DevOps", items)
+  end
+
+  step "the user lists change requests", context do
+    list(context, %{"state" => "all"})
+  end
+
+  step "the user lists open merge requests", context do
+    list(context, %{"state" => "open"})
+  end
+
+  step "the user lists merge requests", context do
+    list(context, %{"state" => "open"})
+  end
+
+  step ~r/^the user lists merge requests with (?<filter>passing checks|failing checks|pending checks)$/,
+       %{args: [filter]} = context do
+    checks =
+      %{
+        "passing checks" => "passing",
+        "failing checks" => "failing",
+        "pending checks" => "pending"
+      }[filter]
+
+    list(context, %{"filters" => %{"checks" => checks}})
+  end
+
+  step ~r/^the user searches pull requests for `(?<words>.+)`$/, %{args: [words]} = context do
+    context |> list(%{"query" => words}) |> Map.put(:query, words)
+  end
+
+  step "the user loads more change requests", context do
+    context = list(context)
+    assert {:ok, %{"nextCursors" => cursors}} = context.reply
+    first = hosted_numbers(context)
+
+    context
+    |> list(%{"cursors" => cursors})
+    |> Map.put(:first_hosted, first)
+  end
+
+  step "a project on GitLab with 650 open change requests", context do
+    items =
+      for number <- 650..1//-1 do
+        at = DateTime.add(~U[2026-09-01 00:00:00Z], number * 60) |> DateTime.to_iso8601()
+        h(number, %{"updated" => at})
+      end
+
+    hosted_project(context, "GitLab", items)
+  end
+
+  step "the user loads more change requests until none are left", context do
+    context = list(context)
+    load_hosted_until_done(context, hosted_numbers(context), 20)
+  end
+
+  defp load_hosted_until_done(_context, _seen, 0),
+    do: flunk("the list never stopped offering more change requests")
+
+  defp load_hosted_until_done(context, seen, left) do
+    assert {:ok, %{"nextCursors" => cursors, "truncated" => truncated}} = context.reply
+
+    if cursors == %{} do
+      assert truncated == false
+      Map.put(context, :all_hosted, seen)
+    else
+      context = list(context, %{"cursors" => cursors})
+      load_hosted_until_done(context, seen ++ hosted_numbers(context), left - 1)
+    end
+  end
+
+  step "every change request is listed exactly once", context do
+    assert Enum.sort(context.all_hosted) == Enum.to_list(1..650)
+    assert length(context.all_hosted) == 650
+    context
+  end
+
+  step ~r/^only change requests matching (?<filter>.+) are listed$/,
+       %{args: [filter]} = context do
+    keep =
+      %{
+        "drafts hidden" => &(not &1["draft"]),
+        ~s(the label "bug") => &("bug" in &1["labels"]),
+        ~s(the author "alice") => &(&1["author"] == "alice"),
+        "review required" => &(&1["number"] == 1)
+      }[filter] || flunk("no hosted filter #{inspect(filter)}")
+
+    wanted =
+      for it <- context.hosted.items, it["state"] == "open", keep.(it), do: it["number"]
+
+    assert wanted != []
+    assert Enum.sort(hosted_numbers(context)) == Enum.sort(wanted)
+    context
+  end
+
+  step "the next change requests follow without repeating or skipping any", context do
+    assert context.first_hosted == Enum.to_list(200..102//-1)
+    assert hosted_numbers(context) == Enum.to_list(101..3//-1)
+    context
+  end
+
+  step "the open change requests are listed unnarrowed", context do
+    wanted = for it <- context.hosted.items, it["state"] == "open", do: it["number"]
+    assert Enum.sort(hosted_numbers(context)) == Enum.sort(wanted)
+    context
+  end
+
+  step "the words are searched for as plain text", context do
+    case context.hosted.host do
+      "GitLab" ->
+        calls = World.cli_calls(context, "merge_requests")
+        assert Enum.any?(calls, &(Enum.join(&1["args"], " ") =~ "search=tax%26state%3Dall"))
+
+      "Bitbucket" ->
+        assert_received {:hosted_bitbucket, _path, %{"q" => q, "state" => "OPEN"}}
+        assert q == ~s(title ~ "a\\" OR state=\\"MERGED")
+    end
+
+    assert Enum.all?(hosted_entries(context), &(&1["state"] == "open"))
+    context
+  end
+
+  step "no other filter is added", context do
+    case context.hosted.host do
+      "GitLab" ->
+        calls = World.cli_calls(context, "merge_requests")
+
+        assert Enum.all?(
+                 calls,
+                 &(Enum.join(&1["args"], " ") =~ "state=opened" and
+                     not (Enum.join(&1["args"], " ") =~ "&state=all"))
+               )
+
+      "Bitbucket" ->
+        :ok
+    end
+
+    context
+  end
+
+  step "a GitLab merge request whose latest pipeline {word}",
+       %{args: [pipeline]} = context do
+    status =
+      %{"passed" => "success", "failed" => "failed", "was" => "canceled", "is" => "running"}[
+        pipeline
+      ]
+
+    hosted_project(context, "GitLab", [h(1, %{"pipeline" => status}), h(2)])
+  end
+
+  step ~r/^a GitLab merge request whose latest pipeline (?<pipeline>was canceled|is running)$/,
+       %{args: [pipeline]} = context do
+    status = if pipeline == "was canceled", do: "canceled", else: "running"
+    hosted_project(context, "GitLab", [h(1, %{"pipeline" => status}), h(2)])
+  end
+
+  step "it is listed", context do
+    assert hosted_numbers(context) == [1]
+    context
+  end
+
+  step ~r/^a change request on (?<host>Azure DevOps|Bitbucket|GitLab) that the host calls (?<state>.+)$/,
+       %{args: [host, state]} = context do
+    item =
+      case {host, state} do
+        {"GitLab", "closed with a merge time"} ->
+          h(1, %{
+            "state" => "merged",
+            "raw_state" => "closed",
+            "merged_at" => "2026-09-20T00:00:00Z"
+          })
+
+        {"GitLab", raw} ->
+          h(1, %{"raw_state" => raw})
+
+        {"Azure DevOps", "a state not known"} ->
+          h(1, %{"raw_state" => "somethingElse"})
+
+        {"Azure DevOps", raw} ->
+          state_name =
+            %{"active" => "open", "completed" => "merged", "abandoned" => "closed"}[raw]
+
+          h(1, %{"state" => state_name, "raw_state" => raw})
+
+        {"Bitbucket", raw} ->
+          h(1, %{"state" => "closed", "raw_state" => String.upcase(raw)})
+      end
+
+    hosted_project(context, host, [item])
+  end
+
+  step ~r/^a change request on (?<host>GitLab|Forgejo|Azure DevOps|Bitbucket) that (?<marking>is flagged as a draft|is flagged as work in progress, the older name|has no flag and .*)$/,
+       %{args: [host, marking]} = context do
+    item =
+      case marking do
+        "is flagged as a draft" ->
+          h(1, %{"draft" => true})
+
+        "is flagged as work in progress, the older name" ->
+          h(1, %{"wip" => true})
+
+        ~s(has no flag and a title starting "[WIP]") ->
+          h(1, %{"omit_draft" => true, "title" => "[WIP] Change 1"})
+
+        ~s(has no flag and a title starting "WIP:" in any case) ->
+          h(1, %{"omit_draft" => true, "title" => "wip: Change 1"})
+
+        ~s(has no flag and "WIP:" only in the middle of its title) ->
+          h(1, %{"omit_draft" => true, "title" => "A WIP: Change 1"})
+      end
+
+    hosted_project(context, host, [item])
+  end
+
+  step ~r/^it is shown as (?<shown>open|closed|merged|a draft|not a draft)$/,
+       %{args: [shown]} = context do
+    assert [entry] = hosted_entries(context)
+
+    if shown in ["a draft", "not a draft"],
+      do: assert(entry["isDraft"] == (shown == "a draft")),
+      else: assert(entry["state"] == shown)
+
+    context
+  end
+
+  step "the project {string} has its remote on GitLab at {string}",
+       %{args: [title, repo]} = context do
+    hosted_project(context, "GitLab", hosted_fixture(), title: title, repository: repo)
+  end
+
+  step "the merge requests of {string} are listed", %{args: [repo]} = context do
+    assert hosted_numbers(context) != []
+    assert Enum.all?(hosted_entries(context), &(&1["repository"] == repo))
+
+    calls = World.cli_calls(context, "merge_requests")
+    encoded = URI.encode(repo, &URI.char_unreserved?/1)
+    assert Enum.any?(calls, &(Enum.join(&1["args"], " ") =~ "projects/#{encoded}/"))
+    context
+  end
+
+  step "an open merge request on GitLab", context do
+    hosted_project(context, "GitLab", [h(1)])
+  end
+
+  step "the row shows no added or removed line counts", context do
+    assert [%{"additions" => 0, "deletions" => 0}] = hosted_entries(context)
+    context
+  end
+
+  step "a Forgejo repository with merged pull requests and pull requests closed without merging",
+       context do
+    items =
+      Enum.flat_map(1..120, fn n ->
+        at = fn m -> DateTime.add(~U[2026-09-01 00:00:00Z], m * 60) |> DateTime.to_iso8601() end
+
+        [
+          h(1000 + n, %{"state" => "merged", "updated" => at.(2 * n)}),
+          h(2000 + n, %{"state" => "closed", "updated" => at.(2 * n - 1)})
+        ]
+      end)
+      |> Enum.sort_by(& &1["updated"], :desc)
+
+    hosted_project(context, "Forgejo", items)
+  end
+
+  step "the list is filled to its page size when there are enough", context do
+    assert length(hosted_entries(context)) == 99
+    # The fake Forgejo stamps its rows at +02:00; the listing writes them in UTC.
+    assert Enum.all?(hosted_entries(context), &String.ends_with?(&1["updatedAt"], "Z"))
+    context
+  end
+
+  # --- Azure and Bitbucket specifics ------------------------------------------------
+
+  step ~r/^pull request 7 on Azure DevOps comes with (?<given>.+)$/,
+       %{args: [given]} = context do
+    web = "https://dev.azure.com/acme/shop/_git/shop/pullrequest/7"
+
+    {azure, expected} =
+      case given do
+        "a web link" ->
+          {%{}, web}
+
+        "no web link but the repository's web address" ->
+          {%{"_links" => %{}}, web}
+
+        ~s|only a programming address under "dev.azure.com/org", project "My App" and repository "web"| ->
+          {%{
+             "_links" => %{},
+             "url" =>
+               "https://dev.azure.com/org/My%20App/_apis/git/repositories/1/pullRequests/7",
+             "repository" => %{"name" => "web", "project" => %{"name" => "My App"}}
+           }, "https://dev.azure.com/org/My%20App/_git/web/pullrequest/7"}
+
+        ~s|only a programming address under "org.visualstudio.com", project "app" and repository "web"| ->
+          {%{
+             "_links" => %{},
+             "url" => "https://org.visualstudio.com/app/_apis/git/repositories/1/pullRequests/7",
+             "repository" => %{"name" => "web", "project" => %{"name" => "app"}}
+           }, "https://org.visualstudio.com/app/_git/web/pullrequest/7"}
+
+        "nothing but a programming address of another kind" ->
+          {%{
+             "_links" => %{},
+             "url" => "https://example.test/api/pullRequests/7",
+             "repository" => %{"name" => "web", "project" => %{"name" => "app"}}
+           }, "https://example.test/api/pullRequests/7"}
+      end
+
+    context
+    |> hosted_project("Azure DevOps", [h(7, %{"azure" => azure})])
+    |> Map.put(:azure_link, expected)
+  end
+
+  step ~r/^its link is (?<link>.+)$/, %{args: [_link]} = context do
+    assert [%{"url" => url}] = hosted_entries(context)
+    assert url == context.azure_link
+    context
+  end
+
+  step "an open pull request on Azure DevOps", context do
+    hosted_project(context, "Azure DevOps", [h(1)])
+  end
+
+  step "its row shows no labels", context do
+    assert [%{"labels" => []}] = hosted_entries(context)
+    context
+  end
+
+  step "the row claims no added or removed lines", context do
+    assert [%{"additions" => 0, "deletions" => 0}] = hosted_entries(context)
+    context
+  end
+
+  defp without_env(name) do
+    previous = System.get_env(name)
+    System.delete_env(name)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if previous, do: System.put_env(name, previous), else: System.delete_env(name)
+    end)
+  end
+
+  step "the project's remote is {string}", %{args: [remote]} = context do
+    context = World.create_project(context, "server repo")
+    project = World.project(context, "server repo")
+    World.git!(project.root, ["remote", "add", "origin", remote])
+    Map.put(context, :server_project, project)
+  end
+
+  step "no Bitbucket API address is configured", context do
+    without_env("HAL_C2_BITBUCKET_API_BASE_URL")
+    Shared.put_env("HAL_C2_BITBUCKET_ACCESS_TOKEN", @hosted_token)
+    context
+  end
+
+  step "{string} reports that its host cannot be browsed here yet",
+       %{args: [_repository]} = context do
+    assert {:ok, %{"providers" => providers}} = context.reply
+
+    assert %{"configured" => false, "detail" => "This host cannot be browsed here yet."} =
+             Enum.find(providers, &(&1["host"] == "bitbucket.example.com"))
+
+    refute Enum.any?(entries(context), &(&1["projectId"] == context.server_project.id))
+    context
+  end
+
+  step "nothing about {string} is sent to bitbucket.org", context do
+    # With credentials set but no API address, a read sent to Bitbucket Cloud
+    # would have answered (or failed) as a read of the repository; the listing
+    # instead left the host unconfigured, which only happens before any request.
+    assert {:ok, %{"errors" => errors}} = context.reply
+    refute Enum.any?(errors, &(&1["projectId"] == context.server_project.id))
+    context
+  end
+
+  step "the Azure CLI answers for the current sign-in with no account", context do
+    hosted_project(context, "Azure DevOps", [h(1)], azure_viewer: %{})
+  end
+
+  step "the user lists their pull requests on Azure DevOps", context do
+    list(context, %{"state" => "open"})
+  end
+
+  step "the user lists their pull requests on Bitbucket", context do
+    list(context, %{"state" => "open"})
+  end
+
+  step "Bitbucket answers for the configured credentials with no account name", context do
+    hosted_project(context, "Bitbucket", [h(1)], bitbucket_user: %{"display_name" => "Octo"})
+  end
+
+  step ~r/^a project whose Bitbucket repository is not written as workspace\/repository$/,
+       context do
+    hosted_project(context, "Bitbucket", [h(1)], repository: "acme/team/shop")
+  end
+
+  step "the user lists its pull requests", context do
+    list(context, %{"state" => "open"})
+  end
+
+  step "the host of {string} cannot filter by author", %{args: [_repository]} = context do
+    items =
+      for number <- 600..1//-1 do
+        at = DateTime.add(~U[2026-09-01 00:00:00Z], number * 60) |> DateTime.to_iso8601()
+        author = if rem(number, 100) == 0, do: "octocat", else: "bob"
+        h(number, %{"author" => author, "updated" => at})
+      end
+
+    hosted_project(context, "GitLab", items)
+  end
+
+  step "the user lists pull requests by the author {string}", %{args: [author]} = context do
+    list(context, %{"filters" => %{"author" => author}})
+  end
+
+  step "the MC reads further pages of {string} until the page is full", context do
+    pages =
+      World.cli_calls(context, "merge_requests")
+      |> Enum.map(fn call ->
+        case Regex.run(~r/&page=(\d+)/, Enum.join(call["args"], " ")) do
+          [_, page] -> String.to_integer(page)
+          _ -> nil
+        end
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    assert Enum.max(pages) > 1
+    Map.put(context, :hosted_pages, pages)
+  end
+
+  step "it stops after five reads when the filter matches little", context do
+    assert Enum.max(context.hosted_pages) == 5
+    # Only the octocat rows of the first five hundred survived the filter.
+    assert Enum.sort(hosted_numbers(context)) == [200, 300, 400, 500, 600]
+    context
+  end
+
+  step "the list offers more when more is left", context do
+    assert {:ok, %{"truncated" => true, "nextCursors" => cursors}} = context.reply
+    assert cursors != %{}
+    context
+  end
+
+  # --- approvals, stacks, aliases, summaries and the long way ----------------------
+
+  step ~r/^a merge request on GitLab (?<edition>Community Edition|Enterprise Edition) that (?<approval>someone approved|meets the project's approval rules|still needs approvals by the rules)$/,
+       %{args: [_edition, approval]} = context do
+    approved = approval != "still needs approvals by the rules"
+
+    node = %{
+      "iid" => "1",
+      "approved" => approved,
+      "approvalsRequired" => if(approval == "someone approved", do: 0, else: 1),
+      "approvalsLeft" => if(approved, do: 0, else: 1),
+      "approvedBy" => %{
+        "nodes" => if(approved, do: [%{"username" => "hubot"}], else: [])
+      }
+    }
+
+    context
+    |> hosted_project("GitLab", [h(1, %{"reviewers" => ["hubot"]})])
+    |> gitlab_approval_answer(node)
+  end
+
+  defp gitlab_approval_answer(context, node) do
+    World.cli_rules(context, %{
+      "cmd" => "glab",
+      "args" => ["api graphql"],
+      "stdout" => %{
+        "data" => %{"project" => %{"mergeRequests" => %{"nodes" => [node]}}}
+      }
+    })
+  end
+
+  step "a merge request on GitLab that needs no approvals and nobody approved", context do
+    context
+    |> hosted_project("GitLab", [h(1, %{"reviewers" => ["hubot"]})])
+    |> gitlab_approval_answer(%{
+      "iid" => "1",
+      "approved" => true,
+      "approvalsRequired" => 0,
+      "approvalsLeft" => 0,
+      "approvedBy" => %{"nodes" => []}
+    })
+  end
+
+  step "a merge request on GitLab that still needs an approval and has no reviewers",
+       context do
+    context
+    |> hosted_project("GitLab", [h(1)])
+    |> gitlab_approval_answer(%{
+      "iid" => "1",
+      "approved" => false,
+      "approvalsRequired" => 1,
+      "approvalsLeft" => 1,
+      "approvedBy" => %{"nodes" => []}
+    })
+  end
+
+  step "its row shows no review decision", context do
+    assert [row] = hosted_entries(context)
+    refute Map.has_key?(row, "reviewDecision")
+    context
+  end
+
+  step "GitLab refuses to say which merge requests are approved", context do
+    context
+    |> hosted_project("GitLab", hosted_fixture())
+    |> World.cli_rules(%{
+      "cmd" => "glab",
+      "args" => ["api graphql"],
+      "stderr" => "403 Forbidden\n",
+      "exit" => 1
+    })
+  end
+
+  step "the merge requests are listed without an approval", context do
+    assert hosted_numbers(context) != []
+    assert Enum.all?(hosted_entries(context), &(not Map.has_key?(&1, "reviewDecision")))
+    context
+  end
+
+  step "pull request 42 on github.com is the second layer of a stack", context do
+    pr = Shared.gh_pr("acme/shop", 42)
+
+    context
+    |> shop_rule([pr], %{"stdin" => ["PullRequestListSearch", "is:open "]})
+    |> World.cli_rules(%{
+      "args" => ["api", "repos/acme/shop/stacks"],
+      "stdout" => [
+        %{
+          "number" => 9,
+          "base" => %{"ref" => "main"},
+          "pull_requests" => [%{"number" => 41}, %{"number" => 42}, %{"number" => 43}]
+        }
+      ]
+    })
+  end
+
+  step "pull request 42 is listed with its place in the stack", context do
+    row = Enum.find(entries(context), &(&1["number"] == 42))
+    assert %{"stack" => %{"number" => 9, "position" => 2, "size" => 3, "base" => "main"}} = row
+    context
+  end
+
+  step "pull request 42 on github.com is in a stack on the second page of stacks",
+       context do
+    pr = Shared.gh_pr("acme/shop", 42)
+
+    others =
+      for n <- 1..100 do
+        %{
+          "number" => 1000 + n,
+          "base" => %{"ref" => "main"},
+          "pull_requests" => [%{"number" => 5000 + n}]
+        }
+      end
+
+    context
+    |> shop_rule([pr], %{"stdin" => ["PullRequestListSearch", "is:open "]})
+    |> World.cli_rules([
+      %{"args" => ["api", "stacks?per_page=100&page=1"], "stdout" => others},
+      %{
+        "args" => ["api", "stacks?per_page=100&page=2"],
+        "stdout" => [
+          %{
+            "number" => 9,
+            "base" => %{"ref" => "main"},
+            "pull_requests" => [%{"number" => 41}, %{"number" => 42}, %{"number" => 43}]
+          }
+        ]
+      }
+    ])
+  end
+
+  step "pull request 42 on github.com is in a stack that names no base", context do
+    pr = Shared.gh_pr("acme/shop", 42)
+
+    context
+    |> shop_rule([pr], %{"stdin" => ["PullRequestListSearch", "is:open "]})
+    |> World.cli_rules(%{
+      "args" => ["api", "repos/acme/shop/stacks"],
+      "stdout" => [
+        %{
+          "number" => 9,
+          "pull_requests" => [%{"number" => 41}, %{"number" => 42}, %{"number" => 43}]
+        }
+      ]
+    })
+  end
+
+  step "GitHub cannot answer which stacks the listed pull requests belong to", context do
+    World.cli_rules(context, %{
+      "args" => ["api", "stacks"],
+      "stderr" => "HTTP 404: Not Found\n",
+      "exit" => 1
+    })
+  end
+
+  step "the pull requests are listed without stack membership", context do
+    assert entries(context) != []
+    assert Enum.all?(entries(context), &(not Map.has_key?(&1, "stack")))
+    assert {:ok, %{"errors" => []}} = context.reply
+    context
+  end
+
+  step "the project {string} has the remote {string} and {string} is an SSH alias of a GitLab server",
+       %{args: [title, remote, alias_name]} = context do
+    home = HalC2.Test.Mc.Host.home(context)
+    File.mkdir_p!(Path.join(home, ".ssh"))
+
+    File.write!(
+      Path.join(home, ".ssh/config"),
+      "Host #{alias_name}\n  HostName gitlab.example.com\n"
+    )
+
+    hosted_project(context, "GitLab", hosted_fixture(),
+      title: title,
+      repository: "acme/infra",
+      remote: remote
+    )
+  end
+
+  step "the project {string} has the remote {string} and {string} is an SSH alias in an included file",
+       %{args: [title, remote, pattern]} = context do
+    home = HalC2.Test.Mc.Host.home(context)
+    File.mkdir_p!(Path.join(home, ".ssh"))
+    included = Path.join(home, ".ssh/work")
+    File.write!(Path.join(home, ".ssh/config"), "Include #{included}\n")
+    File.write!(included, "Host=#{pattern}\n  HostName=gitlab.example.com\n")
+
+    hosted_project(context, "GitLab", hosted_fixture(),
+      title: title,
+      repository: "acme/infra",
+      remote: remote
+    )
+  end
+
+  # A fake `ssh` stands in for the real one so its calls can be counted; the
+  # config file is there so the MC names it to `ssh -G` as it would in use.
+  step "the project {string} has the remote {string} and ssh resolves {string} to a GitLab server",
+       %{args: [title, remote, alias_name]} = context do
+    home = HalC2.Test.Mc.Host.home(context)
+    File.mkdir_p!(Path.join(home, ".ssh"))
+
+    File.write!(
+      Path.join(home, ".ssh/config"),
+      "Host #{alias_name}\n  HostName gitlab.example.com\n"
+    )
+
+    context
+    |> World.fake_cli(["ssh"])
+    |> World.cli_rules(%{
+      "cmd" => "ssh",
+      "args" => ["-G", alias_name],
+      "stdout" => "hostname gitlab.example.com\n"
+    })
+    |> hosted_project("GitLab", hosted_fixture(),
+      title: title,
+      repository: "acme/infra",
+      remote: remote
+    )
+  end
+
+  step ~r/^ssh was asked (?<times>once|twice) how "(?<alias>[^"]+)" resolves$/,
+       %{args: [times, alias_name]} = context do
+    asked =
+      World.cli_calls(context, "-G")
+      |> Enum.count(&(&1["cmd"] == "ssh" and alias_name in &1["args"]))
+
+    assert asked == if(times == "once", do: 1, else: 2)
+    context
+  end
+
+  # Both dated in the past, so only the removal itself can move the stamp.
+  step "the ssh config's include directory holds an older and a newer file", context do
+    dir = Path.join(HalC2.Test.Mc.Host.home(context), ".ssh/config.d")
+    File.mkdir_p!(dir)
+    now = System.os_time(:second)
+
+    for {name, age} <- [{"old-work", 7200}, {"new-work", 3600}] do
+      path = Path.join(dir, name)
+      File.write!(path, "# #{name}\n")
+      File.touch!(path, now - age)
+    end
+
+    File.touch!(dir, now - 3600)
+    context
+  end
+
+  # The directory's time moves with the removal; dated ahead so it is seen
+  # within the same second.
+  step "the older file in the ssh config's include directory is removed", context do
+    dir = Path.join(HalC2.Test.Mc.Host.home(context), ".ssh/config.d")
+    File.rm!(Path.join(dir, "old-work"))
+    File.touch!(dir, System.os_time(:second) + 60)
+    context
+  end
+
+  # Dated a minute ahead, so the change is seen within the same second.
+  step "a file in the ssh config's include directory changes", context do
+    dir = Path.join(HalC2.Test.Mc.Host.home(context), ".ssh/config.d")
+    File.mkdir_p!(dir)
+    path = Path.join(dir, "work")
+    File.write!(path, "# work hosts\n")
+    File.touch!(path, System.os_time(:second) + 60)
+    context
+  end
+
+  step "a larger page of up to 1000 pull requests is read", context do
+    numbers = for e <- entries(context), e["repository"] == "acme/shop", do: e["number"]
+    assert Enum.sort(numbers) == Enum.to_list(1..300)
+
+    assert Enum.count(
+             World.pull_listings(context),
+             &(&1["query"] =~ "PullRequestListRepository")
+           ) >= 2
+
+    context
+  end
+
+  step "the list is not carried on from a cursor", context do
+    assert {:ok, %{"nextCursors" => %{}}} = context.reply
+
+    refute Enum.any?(
+             World.pull_listings(context),
+             &((get_in(&1, ["variables", "q"]) || "") =~ "updated:<=")
+           )
+
+    context
+  end
+
+  step "two Bitbucket pull requests were updated within one millisecond", context do
+    items =
+      for number <- 150..1//-1 do
+        micros = number |> Integer.to_string() |> String.pad_leading(3, "0")
+        h(number, %{"updated" => "2026-09-20T00:00:00.000#{micros}Z"})
+      end
+
+    hosted_project(context, "Bitbucket", items)
+  end
+
+  step "a page of the list ends between them", context do
+    # The first page holds 99 of the 150 (down to #52, at .000052); #51, in
+    # the same millisecond, is on the next page.
+    context
+  end
+
+  step "the other one is listed on the next page", context do
+    assert 51 in hosted_numbers(context)
+    context
+  end
+
+  step "no pull request is listed twice", context do
+    all =
+      for(e <- context.first_page, e["projectId"] == context.hosted.id, do: e["number"]) ++
+        hosted_numbers(context)
+
+    assert Enum.sort(all) == Enum.to_list(1..150)
+    context
+  end
+
+  # Times in one second, written the way hosts that drop trailing zeros
+  # write them: #51 is at `.7`, the page's last row #52 at `.701`, so text
+  # order disagrees with time order at the boundary.
+  step "Bitbucket stamps its update times with fractions of different lengths", context do
+    items =
+      for number <- 150..1//-1 do
+        fraction =
+          (700_000 + (number - 51) * 1_000)
+          |> Integer.to_string()
+          |> String.pad_leading(6, "0")
+          |> String.trim_trailing("0")
+
+        h(number, %{"updated" => "2026-09-20T00:00:00.#{fraction}Z"})
+      end
+
+    hosted_project(context, "Bitbucket", items)
+  end
+
+  step "all 150 change requests are listed exactly once", context do
+    assert Enum.sort(context.all_hosted) == Enum.to_list(1..150)
+    assert length(context.all_hosted) == 150
+    context
+  end
+
+  step "a Bitbucket project with 2600 open pull requests", context do
+    items =
+      for number <- 2600..1//-1 do
+        at = DateTime.add(~U[2026-09-01 00:00:00Z], number * 60) |> DateTime.to_iso8601()
+        h(number, %{"updated" => at})
+      end
+
+    hosted_project(context, "Bitbucket", items)
+  end
+
+  step "the user carries the list on from fifty pages deep", context do
+    boundary = DateTime.add(~U[2026-09-01 00:00:00Z], 90 * 60) |> DateTime.to_iso8601()
+    key = "bitbucket.org #{context.hosted.repository}"
+    list(context, %{"cursors" => %{key => "#{boundary}|2510|90"}})
+  end
+
+  step "the list says the project could not be read instead of ending", context do
+    assert {:ok, %{"errors" => errors}} = context.reply
+    assert hosted_entries(context) == []
+
+    assert Enum.any?(
+             errors,
+             &(&1["projectId"] == context.hosted.id and &1["message"] =~ "could not be read")
+           )
+
+    context
+  end
+
+  # Served newest-created first, as `az` pages them, while their closing
+  # times run the other way: #1, on the last host page, was merged last.
+  step "an Azure project with 650 merged pull requests, the oldest of them merged last",
+       context do
+    items =
+      for number <- 650..1//-1 do
+        created =
+          DateTime.add(~U[2026-01-01 00:00:00Z], number * 3600) |> DateTime.to_iso8601()
+
+        closed =
+          DateTime.add(~U[2026-06-01 00:00:00Z], (651 - number) * 3600)
+          |> DateTime.to_iso8601()
+
+        h(number, %{"state" => "merged", "created" => created, "updated" => closed})
+      end
+
+    hosted_project(context, "Azure DevOps", items)
+  end
+
+  step "the user loads more merged pull requests until none are left", context do
+    load_merged_until_done(context, hosted_numbers(context), 20)
+  end
+
+  defp load_merged_until_done(_context, _seen, 0),
+    do: flunk("the list never stopped offering more merged pull requests")
+
+  defp load_merged_until_done(context, seen, left) do
+    assert {:ok, %{"nextCursors" => cursors, "truncated" => truncated}} = context.reply
+
+    if cursors == %{} do
+      assert truncated == false
+      Map.put(context, :all_hosted, seen)
+    else
+      context = list(context, %{"state" => "merged", "cursors" => cursors})
+      load_merged_until_done(context, seen ++ hosted_numbers(context), left - 1)
+    end
+  end
+
+  # Pages are chosen and shown in opening order (the order `az` serves
+  # them), newest opened first, though each row's date is when it closed.
+  step "the first page holds the newest opened of them", context do
+    assert Enum.take(context.all_hosted, 99) == Enum.to_list(650..552//-1)
+    context
+  end
+
+  step "an Azure project with 5100 merged pull requests", context do
+    items =
+      for number <- 5100..1//-1 do
+        created =
+          DateTime.add(~U[2026-01-01 00:00:00Z], number * 3600) |> DateTime.to_iso8601()
+
+        closed =
+          DateTime.add(~U[2027-01-01 00:00:00Z], (5101 - number) * 3600)
+          |> DateTime.to_iso8601()
+
+        h(number, %{"state" => "merged", "created" => created, "updated" => closed})
+      end
+
+    hosted_project(context, "Azure DevOps", items)
+  end
+
+  step "the first page of merged pull requests is listed without an error", context do
+    assert {:ok, %{"errors" => errors}} = context.reply
+    refute Enum.any?(errors, &(&1["projectId"] == context.hosted.id))
+    assert hosted_numbers(context) == Enum.to_list(5100..5002//-1)
+    context
+  end
+
+  defp summary_node(number) do
+    %{
+      "number" => number,
+      "title" => "Pull request #{number}",
+      "url" => "https://github.com/acme/shop/pull/#{number}",
+      "state" => "OPEN",
+      "isDraft" => false,
+      "headRefName" => "feature/#{number}",
+      "baseRefName" => "main",
+      "updatedAt" => "2026-09-20T00:00:00Z",
+      "author" => %{"login" => "octocat"},
+      "latestReviews" => %{"nodes" => []},
+      "commits" => %{"nodes" => []},
+      "comments" => %{"nodes" => []},
+      "reviews" => %{"nodes" => []}
+    }
+  end
+
+  defp summary_refs(numbers),
+    do:
+      for(n <- numbers, do: %{"host" => "github.com", "repository" => "acme/shop", "number" => n})
+
+  step "a client asks for the summaries of 30 pull requests in quick succession", context do
+    summaries =
+      Map.new(1..30, fn n -> {"acme/shop##{n}", summary_node(n)} end)
+
+    context
+    |> World.cli_rules(%{
+      "args" => ["api graphql"],
+      "stdin" => ["PullRequestSummaries"],
+      "summaries" => summaries,
+      "viewer" => @me
+    })
+    |> Map.put(:summary_numbers, Enum.to_list(1..30))
+  end
+
+  step "a client asks for the summaries of pull requests 41, 42 and 43", context do
+    context
+    |> World.cli_rules(%{
+      "args" => ["api graphql"],
+      "stdin" => ["PullRequestSummaries"],
+      "summaries" => %{
+        "acme/shop#41" => summary_node(41),
+        "acme/shop#43" => summary_node(43)
+      },
+      "viewer" => @me
+    })
+    |> Map.put(:summary_numbers, [41, 42, 43])
+  end
+
+  step "GitHub cannot find pull request 42", context do
+    context
+  end
+
+  step "the MC reads them", context do
+    refs = summary_refs(context.summary_numbers)
+    found = HalC2.PullRequests.summaries(refs)
+
+    context
+    |> Map.put(:summaries_found, found)
+    |> Map.put(:summary_calls_at_read, summary_calls(context))
+  end
+
+  defp summary_calls(context) do
+    for call <- World.cli_calls(context, "api graphql"),
+        call["stdin"] =~ "PullRequestSummaries",
+        do: call
+  end
+
+  step "GitHub is asked in batches of at most 25 pull requests", context do
+    calls = summary_calls(context)
+    assert length(calls) == 2
+
+    for call <- calls do
+      aliases = call["stdin"] |> String.split("pullRequest(number:") |> length() |> Kernel.-(1)
+      assert aliases <= 25
+    end
+
+    assert map_size(context.summaries_found) == 30
+    context
+  end
+
+  step "pull requests 41 and 43 are answered from the same request", context do
+    assert length(summary_calls(context)) == 1
+
+    assert Map.has_key?(context.summaries_found, %{
+             "host" => "github.com",
+             "repository" => "acme/shop",
+             "number" => 41
+           })
+
+    assert Map.has_key?(context.summaries_found, %{
+             "host" => "github.com",
+             "repository" => "acme/shop",
+             "number" => 43
+           })
+
+    context
+  end
+
+  step "pull request 42 is reported as not found", context do
+    refute Map.has_key?(context.summaries_found, %{
+             "host" => "github.com",
+             "repository" => "acme/shop",
+             "number" => 42
+           })
+
+    context
+  end
+
+  step "pull requests 41 and 43 are not read again", context do
+    assert length(summary_calls(context)) == context.summary_calls_at_read |> length()
+    context
+  end
+
+  step "the host cannot answer one search across twelve repositories", context do
+    context =
+      Enum.reduce(1..12, context, fn n, context ->
+        title = "batch #{n}"
+        context = World.create_project(context, title)
+        root = World.project(context, title).root
+        World.git!(root, ["remote", "add", "origin", "git@github.com:acme/batch#{n}.git"])
+        context
+      end)
+
+    context
+    |> World.cli_rules([
+      %{
+        "args" => ["api graphql"],
+        "repository" => "acme/batch12",
+        "stdin" => ["PullRequestListSearch"],
+        "stderr" => "HTTP 502: Bad Gateway\n",
+        "exit" => 1
+      },
+      %{"args" => ["api graphql"], "stdin" => ["PullRequestListSearch"], "pulls" => []},
+      %{"args" => ["api graphql"], "stdin" => ["PullRequestListIndexed"], "pulls" => []},
+      %{"args" => ["api graphql"], "stdin" => ["PullRequestListRepository"], "pulls" => []}
+    ])
+    |> Map.put(:batch_repos, for(n <- 1..12, do: "acme/batch#{n}"))
+  end
+
+  step "each repository is read on its own", context do
+    searches =
+      World.pull_listings(context)
+      |> Enum.filter(&(&1["query"] =~ "PullRequestListSearch"))
+      |> Enum.map(& &1["variables"]["q"])
+      |> Enum.filter(&(&1 =~ "batch"))
+
+    assert searches != []
+
+    assert Enum.all?(searches, fn q ->
+             q |> String.split("repo:") |> length() |> Kernel.==(2)
+           end)
+
+    for repo <- context.batch_repos do
+      assert Enum.any?(searches, &(&1 =~ "repo:#{repo} ")), "no search of #{repo}"
+    end
+
+    context
+  end
+
+  step "a repository that fails is reported as {string}", %{args: [message]} = context do
+    assert {:ok, %{"errors" => errors}} = context.reply
+
+    # The message names the repository as unreadable and goes on to say why.
+    wanted =
+      message
+      |> String.replace("<repository>", "acme/batch12")
+      |> String.trim_trailing(".")
+
+    assert Enum.any?(errors, &String.starts_with?(&1["message"], wanted))
+    context
   end
 end
