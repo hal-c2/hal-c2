@@ -114,7 +114,8 @@ defmodule HalC2.Environment do
     case input do
       # Antigravity's and Claude's skills come from the workspace's folders
       # (`HalC2.Acp.Antigravity.skills/2`, `HalC2.Claude.Skills`), Codex's from
-      # its app-server for that folder (`HalC2.Codex.Provider.refresh_workspace/2`).
+      # its app-server for that folder (`HalC2.Codex.Provider.refresh_workspace/2`),
+      # Pi's from a Pi session there (`HalC2.Pi.refresh_workspace/2`).
       %{"cwd" => cwd, "instanceId" => id} when is_binary(cwd) and is_binary(id) ->
         cond do
           HalC2.Acp.driver(id) == "cursor" ->
@@ -152,6 +153,22 @@ defmodule HalC2.Environment do
 
           id in HalC2.Claude.Provider.instances() ->
             HalC2.Claude.Provider.refresh_workspace(id, cwd)
+
+          HalC2.Acp.driver(id) == "pi" ->
+            case HalC2.Pi.refresh_workspace(id, cwd) do
+              :ok ->
+                :ok
+
+              {:error, detail} ->
+                {:error,
+                 %{
+                   "_tag" => "ProviderSetupError",
+                   "instanceId" => id,
+                   "operation" => "refresh",
+                   "detail" => detail,
+                   "message" => detail
+                 }}
+            end
 
           HalC2.Settings.known_instance?(id, "codex") ->
             case HalC2.Codex.Provider.refresh_workspace(id, cwd) do

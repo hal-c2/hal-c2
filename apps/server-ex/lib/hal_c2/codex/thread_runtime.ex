@@ -27,6 +27,7 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   alias HalC2.Orchestration
   alias HalC2.Orchestration.{Entities, TurnWatch}
+  alias HalC2.Codex.Goals
   alias HalC2.JsonRpc.Connection
   alias HalC2.Subprocess.Durable
 
@@ -271,7 +272,15 @@ defmodule HalC2.Codex.ThreadRuntime do
        stopped: false,
        # A usage-limit failure whose reset Codex had not named when the turn
        # stopped: `%{item: failure item id}` while its reset is still unknown.
-       usage_failure: nil
+       usage_failure: nil,
+       # Codex's goal for the native thread (`HalC2.Codex.Goals.from_codex/1`), the
+       # provider thread it is shown on, the follow-up turn a goal's run waits for
+       # (`hold_for_goal/1`), and whether a turn Codex starts for the goal now is
+       # stopped (its run ended or was stopped while the goal was active).
+       goal: nil,
+       goal_thread: nil,
+       goal_hold: nil,
+       goal_stop: false
      }}
   end
 
@@ -294,6 +303,10 @@ defmodule HalC2.Codex.ThreadRuntime do
         deadline = Application.get_env(:hal_c2, :codex_interrupt_deadline_ms, 10_000)
         Process.send_after(self(), {:interrupt_deadline, restored.interrupting}, deadline)
       end
+
+      # As a goal's run waiting on Codex's next turn does its grace.
+      if restored.goal_hold,
+        do: Process.send_after(self(), {:goal_grace, restored.goal_hold}, goal_grace_ms())
 
       {:reply, :ok, Durable.restored(restored, :conn, conn, snapshot)}
     else
@@ -341,7 +354,9 @@ defmodule HalC2.Codex.ThreadRuntime do
         commentary: %{},
         interrupting: nil,
         stopped: false,
-        usage_failure: nil
+        usage_failure: nil,
+        goal_hold: nil,
+        goal_stop: false
       })
 
     case begin_turn(state, turn) do
@@ -354,6 +369,11 @@ defmodule HalC2.Codex.ThreadRuntime do
         {:reply, :ok, %{state | turn: nil}}
 
       {:error, {:broken_version, message}, state} ->
+        finish(state, "failed", message)
+        {:reply, :ok, %{state | turn: nil}}
+
+      # A goal Codex would refuse is refused before Codex is asked.
+      {:error, {:goal_refused, message}, state} ->
         finish(state, "failed", message)
         {:reply, :ok, %{state | turn: nil}}
 
@@ -416,8 +436,18 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
+  # A goal's run between Codex's turns stops at once, its goal paused first so
+  # Codex does not go on with it.
+  def handle_call(:interrupt, _from, %{turn: %{}, goal_hold: hold} = state) when hold != nil do
+    state = state |> pause_goal() |> Map.merge(%{goal_hold: nil, goal_stop: true, stopped: true})
+    {:reply, :ok, end_turn(state, "interrupted", nil)}
+  end
+
   def handle_call(:interrupt, _from, %{turn: %{native_turn_id: turn_id}} = state)
       when is_binary(turn_id) do
+    # Stopping a goal's turn pauses the goal first: Codex would start the next one.
+    state = pause_goal(state)
+
     Connection.call(state.conn, "turn/interrupt", %{
       "threadId" => state.native_thread_id,
       "turnId" => turn_id
@@ -726,8 +756,15 @@ defmodule HalC2.Codex.ThreadRuntime do
     {:noreply, state}
   end
 
-  def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
+  def handle_info({:EXIT, conn, reason}, %{conn: conn} = state) do
     state = %{state | conn: nil}
+
+    # A connection that could no longer write to the app-server says why.
+    message =
+      case reason do
+        {:shutdown, {:write_failed, %{"message" => message}}} -> message
+        _ -> "Codex exited unexpectedly"
+      end
 
     # A stream the MC itself ends while shutting down is not the provider failing the
     # turn: the run stays as it is for the next boot's recovery to settle. With no
@@ -739,7 +776,7 @@ defmodule HalC2.Codex.ThreadRuntime do
           state
 
         state.turn ->
-          end_turn(state, "failed", "Codex exited unexpectedly", :ended)
+          end_turn(state, "failed", message, :ended)
 
         true ->
           finish_subagents(state, "failed")
@@ -760,6 +797,13 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   def handle_info({:interrupt_deadline, _turn_id}, state), do: {:noreply, state}
+
+  # A grace whose run already ended (Stop, or the app-server exited) has nothing
+  # left to end.
+  def handle_info({:goal_grace, hold}, %{turn: %{}, goal_hold: hold} = state) when hold != nil,
+    do: {:noreply, goal_grace_over(state)}
+
+  def handle_info({:goal_grace, _hold}, state), do: {:noreply, state}
 
   # Output that is not a protocol message at all ends the session: the turn fails
   # rather than waits on a connection HAL-C2 can no longer read. A message that
@@ -833,6 +877,10 @@ defmodule HalC2.Codex.ThreadRuntime do
      |> Map.put_new(:interrupting, nil)
      |> Map.put_new(:stopped, false)
      |> Map.put_new(:usage_failure, nil)
+     |> Map.put_new(:goal, nil)
+     |> Map.put_new(:goal_thread, nil)
+     |> Map.put_new(:goal_hold, nil)
+     |> Map.put_new(:goal_stop, false)
      |> Map.put(:instance, instance)
      |> Map.put_new(:conn_instance, :unknown)
      |> Map.put(:v, @state_version)}
@@ -916,76 +964,90 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp begin_turn(state, turn) do
+    state = goal_thread(state, turn)
+
+    case Goals.command(turn) do
+      nil -> begin_native_turn(state, turn)
+      command -> begin_goal_turn(state, turn, command)
+    end
+  end
+
+  defp begin_native_turn(state, turn) do
     with {:ok, state} <- version_gate(state, turn),
          {:ok, state} <- connect(state, turn),
          {:ok, state, turn} <- open_thread(state, turn),
          {:ok, native_turn, state} <- start_native_turn(state, turn) do
-      at = Entities.now()
-      ids = Map.put(turn.ids, :provider_turn, "provider-turn:codex:#{native_turn}")
-      turn = %{turn | ids: ids} |> Map.put(:native_turn_id, native_turn)
-      # As `started/1` does, with Codex's native turn and thread.
-      TurnWatch.claim(state.thread_id, ids.run)
+      native_turn_started(state, turn, native_turn)
+    end
+  end
 
-      commit_active(state, ids.run, fn stream ->
-        [
-          Orchestration.create(
-            "provider-turn",
-            ids.provider_turn,
-            Entities.provider_turn(ids, native_turn, turn.run_ordinal, at)
-          ),
-          Orchestration.upsert(
-            stream,
-            "run-attempt",
-            ids.attempt,
-            &Map.merge(&1, %{
-              "status" => "running",
-              "providerTurnId" => ids.provider_turn,
-              "startedAt" => at
-            })
-          ),
-          Orchestration.upsert(
-            stream,
-            "run",
-            ids.run,
-            &Map.merge(&1, %{"status" => "running", "startedAt" => at})
-          ),
-          Orchestration.upsert(
-            stream,
-            "node",
-            ids.root_node,
-            &Map.merge(&1, %{"status" => "running", "providerTurnId" => ids.provider_turn})
-          ),
-          Orchestration.upsert(
-            stream,
-            "provider-thread",
-            ids.provider_thread,
-            &Map.merge(&1, %{
-              "status" => "active",
-              "nativeThreadRef" => Entities.provider_ref(state.native_thread_id),
-              "updatedAt" => at
-            })
-          ),
-          Orchestration.upsert(
-            stream,
-            "thread",
-            ids.thread,
-            &Map.put(&1, "activeProviderThreadId", ids.provider_thread)
-          )
-        ]
-      end)
-      |> case do
-        :ok ->
-          {:ok, state |> Map.put(:last_turn, native_turn) |> Map.put(:turn, turn)}
+  # The run is Codex's turn `native_turn` from here.
+  defp native_turn_started(state, turn, native_turn) do
+    at = Entities.now()
+    ids = Map.put(turn.ids, :provider_turn, "provider-turn:codex:#{native_turn}")
+    turn = %{turn | ids: ids} |> Map.put(:native_turn_id, native_turn)
+    # As `started/1` does, with Codex's native turn and thread.
+    TurnWatch.claim(state.thread_id, ids.run)
 
-        # The run ended while Codex started its turn: nothing wants the turn now.
-        :ended ->
-          Connection.call(state.conn, "turn/interrupt", %{
-            "threadId" => state.native_thread_id,
-            "turnId" => native_turn
+    commit_active(state, ids.run, fn stream ->
+      [
+        Orchestration.create(
+          "provider-turn",
+          ids.provider_turn,
+          Entities.provider_turn(ids, native_turn, turn.run_ordinal, at)
+        ),
+        Orchestration.upsert(
+          stream,
+          "run-attempt",
+          ids.attempt,
+          &Map.merge(&1, %{
+            "status" => "running",
+            "providerTurnId" => ids.provider_turn,
+            "startedAt" => at
           })
+        ),
+        Orchestration.upsert(
+          stream,
+          "run",
+          ids.run,
+          &Map.merge(&1, %{"status" => "running", "startedAt" => at})
+        ),
+        Orchestration.upsert(
+          stream,
+          "node",
+          ids.root_node,
+          &Map.merge(&1, %{"status" => "running", "providerTurnId" => ids.provider_turn})
+        ),
+        Orchestration.upsert(
+          stream,
+          "provider-thread",
+          ids.provider_thread,
+          &Map.merge(&1, %{
+            "status" => "active",
+            "nativeThreadRef" => Entities.provider_ref(state.native_thread_id),
+            "updatedAt" => at
+          })
+        ),
+        Orchestration.upsert(
+          stream,
+          "thread",
+          ids.thread,
+          &Map.put(&1, "activeProviderThreadId", ids.provider_thread)
+        )
+      ]
+    end)
+    |> case do
+      :ok ->
+        {:ok, state |> Map.put(:last_turn, native_turn) |> Map.put(:turn, turn)}
 
-          {:ok, %{state | turn: nil}}
-      end
+      # The run ended while Codex started its turn: nothing wants the turn now.
+      :ended ->
+        Connection.call(state.conn, "turn/interrupt", %{
+          "threadId" => state.native_thread_id,
+          "turnId" => native_turn
+        })
+
+        {:ok, %{state | turn: nil}}
     end
   end
 
@@ -1172,7 +1234,9 @@ defmodule HalC2.Codex.ThreadRuntime do
              log: turn.ids.thread,
              durable: turn.ids.thread,
              program: "Codex App Server",
-             stderr_tail: true
+             stderr_tail: true,
+             # One that closes its output and runs on fails its calls now (upstream #24600).
+             eof_grace: 250
            ),
          {:ok, _} <-
            Connection.call(conn, "initialize", %{
@@ -1403,25 +1467,45 @@ defmodule HalC2.Codex.ThreadRuntime do
       {:ok, %{"thread" => %{"id" => id}}} ->
         {:ok, %{state | native_thread_id: id}}
 
-      # A conversation Codex can no longer find (its rollout was cleaned up, say)
-      # starts fresh: HAL-C2 keeps the thread's history, Codex a new conversation.
       {:error, reason} when turn.native_thread_id != nil ->
-        if recoverable_resume?(reason) do
-          case Connection.call(state.conn, "thread/start", params) do
-            {:ok, %{"thread" => %{"id" => id}}} ->
-              {:ok, Map.put(%{state | native_thread_id: id}, :fresh_start, true)}
-
-            {:error, reason} ->
-              {:error, reason, state}
-          end
-        else
-          {:error, reason, state}
-        end
+        resume_failed(state, params, reason)
 
       {:error, reason} ->
         {:error, reason, state}
     end
   end
+
+  @thread_in_use "This conversation is open in another Codex client, such as the Codex app, " <>
+                   "the Codex CLI, or an IDE extension. Codex lets one client write to a " <>
+                   "conversation at a time. Quit that client, then send your message again."
+
+  # A conversation Codex can no longer find (its rollout was cleaned up, say)
+  # starts fresh: HAL-C2 keeps the thread's history, Codex a new conversation. One
+  # another client (the Codex app, the CLI, an IDE) holds open does not: Codex lets
+  # one client write to it at a time, and a fresh one would split it (Upstream #21045).
+  defp resume_failed(state, params, reason) do
+    cond do
+      active_writer?(reason) ->
+        {:error, @thread_in_use, state}
+
+      recoverable_resume?(reason) ->
+        case Connection.call(state.conn, "thread/start", params) do
+          {:ok, %{"thread" => %{"id" => id}}} ->
+            {:ok, Map.put(%{state | native_thread_id: id}, :fresh_start, true)}
+
+          {:error, reason} ->
+            {:error, reason, state}
+        end
+
+      true ->
+        {:error, reason, state}
+    end
+  end
+
+  defp active_writer?(%{"code" => -32600, "message" => message}) when is_binary(message),
+    do: String.contains?(message, "already has an active writer")
+
+  defp active_writer?(_reason), do: false
 
   # Paginated history cuts before a turn (`thread/revert`, as `rewind/2` cuts
   # it); legacy history only takes a count (`thread/rollback`). Neither
@@ -1772,7 +1856,7 @@ defmodule HalC2.Codex.ThreadRuntime do
          %{turn: nil, stopped: true, subagents: subagents} = state
        )
        when is_map_key(subagents, thread) do
-    Connection.call(state.conn, "turn/interrupt", %{"threadId" => thread, "turnId" => turn_id})
+    interrupt_unwaited(state, thread, turn_id)
     entry = subagents[thread]
 
     sub = HalC2.Orchestration.NativeSubagent.finish(entry.sub, "interrupted", entry[:final])
@@ -1914,6 +1998,45 @@ defmodule HalC2.Codex.ThreadRuntime do
       do: state |> flush() |> spawned(item) |> subagent_states(item),
       else: subagent_states(state, item)
   end
+
+  # Codex's goal for this thread, and the turns Codex starts for it (see "Codex
+  # goals" below).
+  defp notification(
+         "thread/goal/updated",
+         %{"threadId" => thread, "goal" => goal},
+         %{native_thread_id: thread} = state
+       ),
+       do: goal_changed(state, Goals.from_codex(goal))
+
+  defp notification(
+         "thread/goal/cleared",
+         %{"threadId" => thread},
+         %{native_thread_id: thread} = state
+       ),
+       do: goal_changed(state, nil)
+
+  defp notification(
+         "turn/started",
+         %{"threadId" => thread, "turn" => %{"id" => native}},
+         %{native_thread_id: thread, turn: %{native_turn_id: nil}, goal_hold: hold} = state
+       )
+       when hold != nil,
+       do: adopt_goal_turn(state, native)
+
+  defp notification(
+         "turn/started",
+         %{"threadId" => thread, "turn" => %{"id" => native}},
+         %{native_thread_id: thread, turn: nil} = state
+       ) do
+    if (Goals.active?(state.goal) or state.goal_stop) and native != Map.get(state, :last_turn),
+      do: stop_goal_turn(state, native),
+      else: state
+  end
+
+  # Between a goal's turns, Codex's reports of the turn that ended are not the next one's.
+  defp notification(_method, _params, %{turn: %{native_turn_id: nil}, goal_hold: hold} = state)
+       when hold != nil,
+       do: state
 
   # Between turns, everything above (background commands, memory threads,
   # subagents) still lands; a turn's own notifications need its turn.
@@ -2207,7 +2330,7 @@ defmodule HalC2.Codex.ThreadRuntime do
           {state, nil}
       end
 
-    end_turn(state, status, failure)
+    turn_ended(state, status, failure)
   end
 
   defp notification(_method, _params, state), do: state
@@ -2378,8 +2501,380 @@ defmodule HalC2.Codex.ThreadRuntime do
     finish(state, status, failure)
 
     state
-    |> Map.merge(%{turn: nil, items: %{}, requests: %{}, interrupting: nil})
+    |> Map.merge(%{turn: nil, items: %{}, requests: %{}, interrupting: nil, goal_hold: nil})
     |> Map.put(:last_turn_status, status)
+  end
+
+  # --- Codex goals ------------------------------------------------------------------
+  #
+  # `/goal` drives Codex's own goal (`HalC2.Codex.Goals`; upstream CodexAdapterV2's
+  # runGoalCommand). While a goal is active Codex starts a turn of its own for it a
+  # moment after each one ends: those turns are the same run, which stays Working
+  # until the goal stops being active, or Codex does not go on within the grace.
+
+  # How long a goal's run waits for Codex's next turn (upstream's
+  # CODEX_GOAL_CONTINUATION_GRACE).
+  defp goal_grace_ms, do: Application.get_env(:hal_c2, :codex_goal_grace_ms, 5_000)
+
+  # The provider thread the goal shows on. A runtime new to it (started since a
+  # restart or a release) carries on from the goal it last showed.
+  defp goal_thread(%{goal_thread: id} = state, %{ids: %{provider_thread: id}}), do: state
+
+  defp goal_thread(state, %{ids: %{provider_thread: id}}) do
+    shown =
+      state.thread_id
+      |> HalC2.Streams.state()
+      |> HalC2.StreamState.get("provider-thread")
+      |> Map.get(id, %{})
+
+    %{state | goal_thread: id, goal: shown["goal"]}
+  end
+
+  defp goal_thread(state, _turn), do: state
+
+  # A `/goal` command. Only setting a goal and resuming one start Codex working; the
+  # others end their run once Codex has answered, with a reply when there is one.
+  defp begin_goal_turn(state, turn, command) do
+    with {:ok, state} <- goal_allowed(state, command),
+         {:ok, state} <- version_gate(state, turn),
+         {:ok, state} <- connect(state, turn),
+         {:ok, state, turn} <- open_thread(state, turn),
+         {:ok, got} <- goal_call(state, "thread/goal/get", %{}) do
+      run_goal(state, turn, command, Goals.from_codex(got["goal"]))
+    end
+  end
+
+  defp goal_allowed(state, {:set, objective}) do
+    case Goals.check(objective) do
+      :ok -> {:ok, state}
+      {:error, message} -> {:error, {:goal_refused, message}, state}
+    end
+  end
+
+  defp goal_allowed(state, _command), do: {:ok, state}
+
+  defp run_goal(state, turn, :show, goal),
+    do: goal_command_done(state, turn, Goals.describe(goal))
+
+  defp run_goal(state, turn, command, nil) when command in [:clear, :pause, :resume],
+    do: goal_command_done(state, turn, Goals.describe(nil))
+
+  defp run_goal(state, turn, :clear, _goal) do
+    with {:ok, _} <- goal_call(state, "thread/goal/clear", %{}) do
+      state |> drain_goal_updates() |> put_goal(nil) |> goal_command_done(turn, nil)
+    end
+  end
+
+  defp run_goal(state, turn, :pause, _goal) do
+    with {:ok, got} <- goal_call(state, "thread/goal/set", %{"status" => "paused"}) do
+      state
+      |> drain_goal_updates()
+      |> put_goal(Goals.from_codex(got["goal"]))
+      |> goal_command_done(turn, nil)
+    end
+  end
+
+  # Codex starts the resumed goal's turn itself: the run waits for it as it does
+  # between a goal's turns.
+  defp run_goal(state, turn, :resume, _goal) do
+    case goal_run_started(state, turn) do
+      {:ok, state} ->
+        with {:ok, got} <- goal_call(state, "thread/goal/set", %{"status" => "active"}) do
+          state = put_goal(state, Goals.from_codex(got["goal"]))
+
+          if Goals.active?(state.goal),
+            do: {:ok, wait_for_goal_turn(state)},
+            else: {:ok, end_turn(state, "completed", nil)}
+        end
+
+      {:ended, state} ->
+        {:ok, state}
+    end
+  end
+
+  # A new goal replaces the one there is, and starts paused until its first turn is
+  # under way, so the turn is the one asked to work toward it. The thread shows only
+  # the goal that results, never the cleared or paused ones on the way.
+  defp run_goal(state, turn, {:set, objective}, goal) do
+    turn = %{turn | text: Goals.first_prompt(objective)}
+    paused = %{"objective" => objective, "status" => "paused"}
+
+    with {:ok, _} <- if(goal, do: goal_call(state, "thread/goal/clear", %{}), else: {:ok, %{}}),
+         {:ok, _} <- goal_call(state, "thread/goal/set", paused),
+         {:ok, native_turn, state} <- start_native_turn(state, turn),
+         {:ok, %{turn: %{}} = state} <- native_turn_started(state, turn, native_turn) do
+      case goal_call(state, "thread/goal/set", %{"status" => "active"}) do
+        {:ok, got} ->
+          {:ok, state |> drain_goal_updates() |> put_goal(Goals.from_codex(got["goal"]))}
+
+        {:error, reason, state} ->
+          Logger.warning("codex goal not activated: #{inspect(reason)}")
+          {:ok, state}
+      end
+    end
+  end
+
+  defp goal_call(state, method, params) do
+    case Connection.call(state.conn, method, Map.put(params, "threadId", state.native_thread_id)) do
+      {:ok, result} when is_map(result) -> {:ok, result}
+      {:ok, _result} -> {:ok, %{}}
+      {:error, :closed} -> {:error, :closed, state}
+      {:error, reason} -> {:error, rpc_message(reason), state}
+    end
+  end
+
+  # A goal command's run, which no Codex turn of its own carries: it has no provider
+  # turn until Codex starts one for the goal (`adopt_goal_turn/2`).
+  defp goal_run_started(state, %{ids: ids} = turn) do
+    at = Entities.now()
+    turn = Map.merge(turn, %{ids: Map.delete(ids, :provider_turn), native_turn_id: nil})
+    TurnWatch.claim(state.thread_id, ids.run)
+
+    commit_active(state, ids.run, fn stream ->
+      [
+        Orchestration.upsert(
+          stream,
+          "run-attempt",
+          ids.attempt,
+          &Map.merge(&1, %{"status" => "running", "startedAt" => at})
+        ),
+        Orchestration.upsert(
+          stream,
+          "run",
+          ids.run,
+          &Map.merge(&1, %{"status" => "running", "startedAt" => at})
+        ),
+        Orchestration.upsert(
+          stream,
+          "node",
+          ids.root_node,
+          &Map.put(&1, "status", "running")
+        ),
+        Orchestration.upsert(
+          stream,
+          "provider-thread",
+          ids.provider_thread,
+          &Map.merge(&1, %{
+            "status" => "active",
+            "nativeThreadRef" => Entities.provider_ref(state.native_thread_id),
+            "updatedAt" => at
+          })
+        ),
+        Orchestration.upsert(
+          stream,
+          "thread",
+          ids.thread,
+          &Map.put(&1, "activeProviderThreadId", ids.provider_thread)
+        )
+      ]
+    end)
+    |> case do
+      :ok -> {:ok, %{state | turn: turn}}
+      :ended -> {:ended, %{state | turn: nil}}
+    end
+  end
+
+  defp goal_command_done(state, turn, reply) do
+    case goal_run_started(state, turn) do
+      {:ok, state} ->
+        state = if reply, do: goal_reply(state, reply), else: state
+        {:ok, end_turn(state, "completed", nil)}
+
+      {:ended, state} ->
+        {:ok, state}
+    end
+  end
+
+  defp goal_reply(state, reply) do
+    native = "goal-command:#{state.turn.ids.run}"
+
+    state
+    |> ensure_item(native, :assistant)
+    |> finish_item(native, "completed", &Map.merge(&1, %{"text" => reply, "streaming" => false}))
+  end
+
+  # Setting a goal passes through cleared and paused ones on its way: Codex's reports
+  # of those, already here behind its answer, are stale once the answer is in.
+  defp drain_goal_updates(%{conn: conn} = state) do
+    receive do
+      {:json_rpc, ^conn, {:notification, "thread/goal/" <> _, _params}} ->
+        drain_goal_updates(state)
+    after
+      0 -> state
+    end
+  end
+
+  defp put_goal(%{goal: goal} = state, goal), do: state
+
+  defp put_goal(state, goal) do
+    if id = state.goal_thread do
+      at = Entities.now()
+
+      commit(state, fn stream ->
+        [
+          HalC2.StreamState.get(stream, "provider-thread")[id] &&
+            Orchestration.upsert(
+              stream,
+              "provider-thread",
+              id,
+              &Map.merge(&1, %{"goal" => goal, "updatedAt" => at})
+            )
+        ]
+      end)
+    end
+
+    %{state | goal: goal}
+  end
+
+  # A goal that stops being active (Codex finished it, or it was paused, cleared,
+  # or ran out of budget) ends the run that waits on its next turn.
+  defp goal_changed(state, goal) do
+    state = put_goal(state, goal)
+
+    if state.goal_hold != nil and not Goals.active?(goal),
+      do: end_turn(%{state | goal_hold: nil}, "completed", nil),
+      else: state
+  end
+
+  # A turn that completes with its goal still active is not the end of the run:
+  # Codex goes on with the goal in a turn of its own.
+  defp turn_ended(state, status, failure) do
+    if status == "completed" and failure == nil and Goals.active?(state.goal) and
+         not state.stopped,
+       do: hold_for_goal(state),
+       else: end_turn(state, status, failure)
+  end
+
+  # Settles the turn as `end_turn/3` would a completed one, but leaves its run
+  # running for the next (`adopt_goal_turn/2`).
+  defp hold_for_goal(state) do
+    state = flush(state)
+
+    state =
+      Enum.reduce(Map.keys(state.requests), state, &resolve_request(&2, &1, nil, "cancelled"))
+
+    state = state |> to_background() |> to_persistent() |> close_open_items("completed")
+    %{ids: ids} = turn = state.turn
+    at = Entities.now()
+
+    commit(state, fn stream ->
+      [
+        HalC2.StreamState.get(stream, "provider-turn")[ids.provider_turn] &&
+          Orchestration.upsert(
+            stream,
+            "provider-turn",
+            ids.provider_turn,
+            &Map.merge(&1, %{"status" => "completed", "completedAt" => at})
+          )
+      ]
+    end)
+
+    turn = %{turn | ids: Map.delete(ids, :provider_turn), native_turn_id: nil}
+    wait_for_goal_turn(%{state | turn: turn, items: %{}, requests: %{}})
+  end
+
+  defp wait_for_goal_turn(state) do
+    hold = System.unique_integer([:positive])
+    Process.send_after(self(), {:goal_grace, hold}, goal_grace_ms())
+    %{state | goal_hold: hold}
+  end
+
+  # Codex's next turn for the goal: the run's next provider turn.
+  defp adopt_goal_turn(state, native) do
+    %{ids: ids} = turn = state.turn
+    ids = Map.put(ids, :provider_turn, "provider-turn:codex:#{native}")
+    at = Entities.now()
+
+    commit_active(state, ids.run, fn stream ->
+      [
+        Orchestration.create(
+          "provider-turn",
+          ids.provider_turn,
+          Entities.provider_turn(ids, native, turn.run_ordinal, at)
+        ),
+        Orchestration.upsert(
+          stream,
+          "run-attempt",
+          ids.attempt,
+          &Map.put(&1, "providerTurnId", ids.provider_turn)
+        ),
+        Orchestration.upsert(
+          stream,
+          "node",
+          ids.root_node,
+          &Map.put(&1, "providerTurnId", ids.provider_turn)
+        )
+      ]
+    end)
+    |> case do
+      :ok ->
+        Map.merge(state, %{
+          turn: %{turn | ids: ids, native_turn_id: native},
+          goal_hold: nil,
+          last_turn: native,
+          failure: nil,
+          running: %{},
+          file_changes: %{},
+          final_first: nil,
+          finals: %{},
+          final_texts: %{},
+          suppressed: %{},
+          commentary: %{}
+        })
+
+      # The run ended meanwhile (its thread was deleted): nothing watches the turn.
+      :ended ->
+        stop_goal_turn(%{state | turn: nil, goal_hold: nil}, native)
+    end
+  end
+
+  # Codex did not go on with the goal within the grace: the run ends, and the goal
+  # is paused so Codex does not go on later with nothing watching.
+  defp goal_grace_over(state) do
+    state = state |> pause_goal() |> Map.merge(%{goal_hold: nil, goal_stop: true})
+    end_turn(state, "completed", nil)
+  end
+
+  # A turn Codex starts for a goal no run waits on is stopped, the goal paused.
+  defp stop_goal_turn(state, native) do
+    state = pause_goal(state)
+    interrupt_unwaited(state, state.native_thread_id, native)
+    state
+  end
+
+  # Stops a turn no run waits on without waiting for Codex's answer, which may come late
+  # or never: waiting would hold up every other report of this app-server (Upstream
+  # #25322). The answer reaches this process and is dropped (`handle_info/2`'s last clause).
+  defp interrupt_unwaited(%{conn: conn}, thread, turn_id) when conn != nil do
+    params = %{"threadId" => thread, "turnId" => turn_id}
+    Connection.request(conn, "turn/interrupt", params, :unwaited, :gen_server.reqids_new())
+    :ok
+  end
+
+  defp interrupt_unwaited(_state, _thread, _turn_id), do: :ok
+
+  # Pauses an active goal, so Codex starts no more turns for it; one it starts
+  # before it hears of the pause is stopped (`goal_stop`).
+  defp pause_goal(%{goal: %{"status" => "active"}, conn: conn} = state) when conn != nil do
+    state = %{state | goal_stop: true}
+    params = %{"threadId" => state.native_thread_id, "status" => "paused"}
+
+    case safe_call(conn, "thread/goal/set", params) do
+      {:ok, %{"goal" => goal}} ->
+        put_goal(state, Goals.from_codex(goal))
+
+      other ->
+        Logger.warning("codex goal not paused: #{inspect(other)}")
+        state
+    end
+  end
+
+  defp pause_goal(state), do: state
+
+  defp safe_call(conn, method, params) do
+    Connection.call(conn, method, params, 10_000)
+  catch
+    :exit, reason -> {:error, reason}
   end
 
   # Ends every subagent still running, each in its own thread; ones that had

@@ -2154,13 +2154,21 @@ defmodule HalC2.Orchestration do
   defp title_effect(%{"threadId" => thread_id, "args" => args}, will_retry) do
     previous = args["previous"]
 
-    root =
+    {root, pull_requests} =
       case HalC2.Shell.row(node(), thread_id) do
-        {"thread", row} -> row["worktreePath"] || project_root(row["projectId"])
-        _ -> nil
+        {"thread", row} ->
+          {row["worktreePath"] || project_root(row["projectId"]),
+           PullRequests.visible(row["pullRequests"] || [])}
+
+        _ ->
+          {nil, []}
       end
 
-    opts = [attachments: args["attachments"] || [], previous_title: previous]
+    opts = [
+      attachments: args["attachments"] || [],
+      previous_title: previous,
+      pull_requests: pull_requests
+    ]
 
     case HalC2.TextGeneration.thread_title(root || System.tmp_dir!(), args["text"] || "", opts) do
       {:ok, %{"title" => title}} when title != "New thread" ->
@@ -5409,6 +5417,9 @@ defmodule HalC2.Orchestration do
       run_ordinal: ordinal,
       started_ms: System.system_time(:millisecond),
       text: HalC2.Orchestration.Handoff.prompt(handoff.context, provider_text),
+      # The message as the user wrote it: what a provider's own command (Codex's
+      # `/goal`, `HalC2.Codex.Goals`) is read from.
+      user_text: text,
       # What a new provider conversation gets when the one to resume is gone
       # (`HalC2.Orchestration.Handoff.opened/2`).
       fresh: handoff.fallback && Map.put(handoff.fallback, :text, provider_text),

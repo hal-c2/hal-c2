@@ -1646,6 +1646,22 @@ defmodule HalC2.Acp do
         "skills" => :persistent_term.get({__MODULE__, id, :skills}, [])
       })
 
+    entry =
+      case HalC2.Pi.workspaces(id) do
+        [] -> entry
+        snapshots -> Map.put(entry, "workspaceSnapshots", snapshots)
+      end
+
+    entry =
+      case HalC2.ProviderUpdates.executable("pi", id) do
+        nil ->
+          entry
+
+        path ->
+          advisory = HalC2.ProviderUpdates.advisory("pi", path, entry["version"], id)
+          Map.put(entry, "versionAdvisory", advisory)
+      end
+
     cond do
       entry["status"] == "ready" and
           :persistent_term.get({__MODULE__, id, :pi_signed_out}, false) ->
@@ -2224,6 +2240,7 @@ defmodule HalC2.Acp do
           :config,
           :commands,
           :skills,
+          :workspaces,
           :pi_signed_out,
           :muse_signed_out
         ],
