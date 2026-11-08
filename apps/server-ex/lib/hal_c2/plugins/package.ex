@@ -146,15 +146,22 @@ defmodule HalC2.Plugins.Package do
   defp stays?(:unreadable), do: true
 
   # The manifest of the package at `dir`: `:absent` when there is no such package, and
-  # `:unreadable` when there is one whose manifest says nothing.
+  # `:unreadable` when there is one whose manifest says nothing, or when the disk cannot
+  # say whether there is one (the plugins directory cannot be read, say).
   defp manifest_at(dir) do
-    if File.exists?(dir) do
+    with :present <- presence(dir) do
       with {:ok, text} <- File.read(Path.join(dir, "plugin.json")),
            {:ok, %{} = json} <- JSON.decode(text),
            do: {:ok, json},
-           else: (_ -> if File.exists?(dir), do: :unreadable, else: :absent)
-    else
-      :absent
+           else: (_ -> with(:present <- presence(dir), do: :unreadable))
+    end
+  end
+
+  defp presence(dir) do
+    case File.lstat(dir) do
+      {:ok, _} -> :present
+      {:error, reason} when reason in [:enoent, :enotdir] -> :absent
+      {:error, _} -> :unreadable
     end
   end
 

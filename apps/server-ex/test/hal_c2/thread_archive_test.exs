@@ -183,6 +183,19 @@ defmodule HalC2.ThreadArchiveTest do
     File.rm_rf!(aside)
     assert ThreadArchive.stays(review) == :ok
 
+    # A plugins directory the MC cannot look into cannot say the package is gone.
+    File.mkdir_p!(package)
+    File.chmod!(plugins, 0o000)
+
+    try do
+      assert ThreadArchive.stays(review) == kept
+    after
+      File.chmod!(plugins, 0o700)
+    end
+
+    File.rm_rf!(package)
+    assert ThreadArchive.stays(review) == :ok
+
     # A name that is no package id reads nothing, however it is spelled.
     for id <- ["", ".", "..", "a/b"] do
       assert HalC2.Plugins.Package.threads_stay?(id) == false
