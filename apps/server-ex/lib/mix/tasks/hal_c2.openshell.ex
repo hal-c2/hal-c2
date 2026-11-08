@@ -1,8 +1,8 @@
 defmodule Mix.Tasks.HalC2.Openshell do
   @shortdoc "Installs, checks, rotates or removes the OpenShell gateway"
   @moduledoc """
-  Manages the NVIDIA OpenShell gateway review sandboxes run in
-  (`HalC2.OpenShell.Command`):
+  Manages the NVIDIA OpenShell gateway that code review sandboxes run in, through
+  `HalC2.OpenShell.Command`:
 
       mix hal_c2.openshell install [--archive FILE] [--drain]
       mix hal_c2.openshell status

@@ -135,7 +135,7 @@ defmodule HalC2.OpenShell.Exec do
       )
 
     me = self()
-    reader = spawn_link(fn -> read(stream, owner, me) end)
+    reader = spawn_link(fn -> read(stream, me) end)
 
     {:ok,
      %{
@@ -149,13 +149,15 @@ defmodule HalC2.OpenShell.Exec do
      }}
   end
 
-  # Forwards the gateway's output to the owner as it comes, and tells the server how
-  # the stream ended; the server passes that on unless a cancel settled it first.
-  defp read(stream, owner, exec) do
+  # Passes the gateway's output to the server as it comes, then how the stream
+  # ended. Everything the owner gets comes from the server, which passes it on only
+  # until the stream is settled: a cancel's ending is the last message even when the
+  # reader, killed asynchronously, still sends after it.
+  defp read(stream, exec) do
     ending =
       case GRPC.Stub.recv(stream, timeout: :infinity) do
         {:ok, events} ->
-          Enum.reduce_while(events, {:error, :closed}, &forward(&1, &2, owner, exec))
+          Enum.reduce_while(events, {:error, :closed}, &forward(&1, &2, exec))
 
         {:error, error} ->
           {:error, reason(error)}
@@ -164,22 +166,22 @@ defmodule HalC2.OpenShell.Exec do
     send(exec, {:ended, ending})
   end
 
-  defp forward({:ok, %Pb.ExecSandboxEvent{payload: {:stdout, %{data: data}}}}, acc, owner, exec) do
-    send(owner, {:openshell_exec, exec, {:stdout, data}})
+  defp forward({:ok, %Pb.ExecSandboxEvent{payload: {:stdout, %{data: data}}}}, acc, exec) do
+    send(exec, {:output, {:stdout, data}})
     {:cont, acc}
   end
 
-  defp forward({:ok, %Pb.ExecSandboxEvent{payload: {:stderr, %{data: data}}}}, acc, owner, exec) do
-    send(owner, {:openshell_exec, exec, {:stderr, data}})
+  defp forward({:ok, %Pb.ExecSandboxEvent{payload: {:stderr, %{data: data}}}}, acc, exec) do
+    send(exec, {:output, {:stderr, data}})
     {:cont, acc}
   end
 
-  defp forward({:ok, %Pb.ExecSandboxEvent{payload: {:exit, %{exit_code: code}}}}, _acc, _, _),
+  defp forward({:ok, %Pb.ExecSandboxEvent{payload: {:exit, %{exit_code: code}}}}, _acc, _),
     do: {:halt, {:exit, code}}
 
-  defp forward({:ok, _other}, acc, _owner, _exec), do: {:cont, acc}
-  defp forward({:error, error}, _acc, _owner, _exec), do: {:halt, {:error, reason(error)}}
-  defp forward(_trailers_or_headers, acc, _owner, _exec), do: {:cont, acc}
+  defp forward({:ok, _other}, acc, _exec), do: {:cont, acc}
+  defp forward({:error, error}, _acc, _exec), do: {:halt, {:error, reason(error)}}
+  defp forward(_trailers_or_headers, acc, _exec), do: {:cont, acc}
 
   defp reason(%GRPC.RPCError{status: 1}), do: :cancelled
   defp reason(%GRPC.RPCError{} = error), do: HalC2.OpenShell.Client.rpc_error(error)
@@ -206,6 +208,13 @@ defmodule HalC2.OpenShell.Exec do
   def handle_call(:cancel, _from, state), do: {:stop, :normal, :ok, stop_stream(state)}
 
   @impl true
+  def handle_info({:output, _output}, %{done: true} = state), do: {:noreply, state}
+
+  def handle_info({:output, output}, state) do
+    send(state.owner, {:openshell_exec, self(), output})
+    {:noreply, state}
+  end
+
   def handle_info({:ended, _ending}, %{done: true} = state), do: {:stop, :normal, state}
 
   def handle_info({:ended, ending}, state) do
@@ -247,8 +256,8 @@ defmodule HalC2.OpenShell.Exec do
     :exit, _ -> :ok
   end
 
-  # Settles the owner once, before `terminate/2` closes the connection: the reader
-  # is stopped before it can report anything after this.
+  # Settles the owner once, before `terminate/2` closes the connection. The reader
+  # may still send before the kill reaches it; `done` drops what it sends.
   defp stop_stream(%{done: true} = state), do: state
 
   defp stop_stream(state) do

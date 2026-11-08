@@ -1,10 +1,16 @@
 # Sandboxes for code reviews (OpenShell)
 
-HAL-C2 can run the agents of a code review inside sandboxes, so a review of
-untrusted code cannot reach your files, your credentials or the rest of your
-machine. The sandboxes come from [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell):
-the MC installs OpenShell's gateway at a version HAL-C2 has checked, runs it as a
-service of your own user, and talks to it only over mutual TLS.
+HAL-C2 runs the agent of a code review of an untrusted pull request inside a
+sandbox, so that the code under review cannot reach your files, your credentials or
+the rest of your machine. For now no pull request is trusted, so every review runs
+in one. The sandboxes come from [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).
+This page sets up its gateway: the MC installs it at a version HAL-C2 has checked,
+runs it as a service of your own user, and talks to it only over mutual TLS.
+
+> **A review needs the gateway.** On an MC without it, a review of an untrusted
+> pull request fails and says to install it; it never runs on your machine instead.
+> [Code review](code-review.md#reviews-in-a-sandbox) covers what a sandboxed review
+> can reach and how it ends.
 
 ## What your machine needs
 

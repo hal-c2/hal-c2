@@ -93,46 +93,92 @@ defmodule HalC2.OpenShell.Service do
       File.mkdir_p!(Path.dirname(OpenShell.log_path()))
       File.write!(path, render(manager, state))
       for {path, unit} <- reaper(manager), do: File.write!(path, unit)
-      Service.run_all(activate(manager, path))
+      activate(manager, path)
     end
   end
 
-  @doc "Stops the gateway, leaving the unit in place to start again."
-  def stop do
-    case manager() do
-      :systemd -> Service.run_all([{"systemctl", ["--user", "stop", @unit]}])
-      :launchd -> Service.run_all([{"launchctl", ["bootout", target()], :ignore}])
-      nil -> {:error, unsupported()}
-    end
-  end
+  @doc """
+  Stops the gateway, leaving the unit in place to start again. `:ok` once it is
+  stopped, or the service manager has no such unit or agent; any other failure is
+  an error, and the gateway may still run.
+  """
+  def stop, do: with({:ok, manager} <- fetch_manager(), do: shutdown(manager))
 
   @doc "Starts the installed unit again."
   def start do
     case manager() do
       nil -> {:error, unsupported()}
-      manager -> Service.run_all(activate(manager, unit_path(manager)))
+      manager -> activate(manager, unit_path(manager))
     end
   end
 
-  @doc "Stops the gateway and removes its unit. Its files stay until the install is removed."
+  @doc """
+  Stops the gateway and removes its unit. Its files stay until the install is
+  removed. The service is stopped whether or not its unit file is still there, and
+  nothing is removed unless it stopped.
+  """
   # Only the gateway's unit in the user's own service directory.
   # sobelow_skip ["Traversal.FileModule"]
   def uninstall do
-    with {:ok, manager} <- fetch_manager() do
+    with {:ok, manager} <- fetch_manager(),
+         :ok <- shutdown(manager) do
       path = unit_path(manager)
 
-      if File.exists?(path) do
-        with :ok <- Service.run_all(deactivate(manager)) do
-          File.rm!(path)
-          for {path, _} <- reaper(manager), do: File.rm(path)
+      # The reaper goes first: it has nothing to reap without the gateway.
+      Service.run_all(stop_reaper(manager))
+      for {path, _} <- reaper(manager), do: File.rm(path)
 
-          if manager == :systemd,
-            do: Service.run_all([{"systemctl", ["--user", "daemon-reload"]}]),
-            else: :ok
-        end
-      else
-        :ok
+      cond do
+        not File.exists?(path) ->
+          :ok
+
+        manager == :systemd ->
+          with :ok <- Service.run_all([{"systemctl", ["--user", "disable", @unit]}]) do
+            File.rm!(path)
+            Service.run_all([{"systemctl", ["--user", "daemon-reload"]}])
+          end
+
+        true ->
+          File.rm!(path)
       end
+    end
+  end
+
+  # What stop, start, install and uninstall all wait on before they change a file.
+  # Only a unit or agent the service manager does not have counts as stopped
+  # without stopping it; the exit status says which failure it was.
+  defp shutdown(:systemd) do
+    args = ["--user", "stop", @unit]
+
+    case Service.command("systemctl", args) do
+      {:exit, 0, _} -> :ok
+      # `systemctl stop` exits 5 ("Unit … not loaded.") for a unit it has no file
+      # for and does not run: it was asked for a unit it does not have.
+      {:exit, 5, _} -> :ok
+      {:exit, _, out} -> {:error, Service.failure("systemctl", args, out)}
+      error -> error
+    end
+  end
+
+  defp shutdown(:launchd) do
+    args = ["bootout", target()]
+
+    case Service.command("launchctl", args) do
+      {:exit, 0, _} ->
+        :ok
+
+      # launchctl exits with the errno it failed on: ESRCH (3, "No such process") for
+      # an agent the domain does not have; some releases answer 113 ("Could not find
+      # service"). Any other status (EIO, EINPROGRESS for one still exiting, a domain
+      # it cannot reach) is a gateway that may still run. `print` has to agree.
+      {:exit, code, out} when code in [3, 113] ->
+        if running?(:launchd), do: {:error, Service.failure("launchctl", args, out)}, else: :ok
+
+      {:exit, _, out} ->
+        {:error, Service.failure("launchctl", args, out)}
+
+      error ->
+        error
     end
   end
 
@@ -163,36 +209,30 @@ defmodule HalC2.OpenShell.Service do
   defp target, do: "gui/#{Service.uid()}/#{@label}"
 
   defp activate(:systemd, _path) do
-    [
+    Service.run_all([
       {"systemctl", ["--user", "daemon-reload"]},
       {"systemctl", ["--user", "enable", @unit]},
       {"systemctl", ["--user", "restart", @unit]},
       {"systemctl", ["--user", "enable", "--now", @reap_timer]}
-    ]
+    ])
   end
 
   defp activate(:launchd, path) do
     [{reap_path, _}] = reaper(:launchd)
 
-    [
-      {"launchctl", ["bootout", target()], :ignore},
-      {"launchctl", ["bootstrap", "gui/#{Service.uid()}", path]},
-      {"launchctl", ["bootout", reap_target()], :ignore},
-      {"launchctl", ["bootstrap", "gui/#{Service.uid()}", reap_path]}
-    ]
+    with :ok <- shutdown(:launchd) do
+      Service.run_all([
+        {"launchctl", ["bootstrap", "gui/#{Service.uid()}", path]},
+        {"launchctl", ["bootout", reap_target()], :ignore},
+        {"launchctl", ["bootstrap", "gui/#{Service.uid()}", reap_path]}
+      ])
+    end
   end
 
-  defp deactivate(:systemd),
-    do: [
-      {"systemctl", ["--user", "disable", "--now", @reap_timer], :ignore},
-      {"systemctl", ["--user", "disable", "--now", @unit]}
-    ]
+  defp stop_reaper(:systemd),
+    do: [{"systemctl", ["--user", "disable", "--now", @reap_timer], :ignore}]
 
-  defp deactivate(:launchd),
-    do: [
-      {"launchctl", ["bootout", reap_target()], :ignore},
-      {"launchctl", ["bootout", target()], :ignore}
-    ]
+  defp stop_reaper(:launchd), do: [{"launchctl", ["bootout", reap_target()], :ignore}]
 
   defp reap_target, do: "gui/#{Service.uid()}/#{@reap_label}"
 

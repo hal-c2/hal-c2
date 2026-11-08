@@ -271,6 +271,42 @@ defmodule HalC2.OpenShell.InstallTest do
       assert File.read!(Path.join(backup, "openshell.db")) == "old database"
     end
 
+    for platform <- [{:unix, :linux}, {:unix, :darwin}] do
+      test "nothing is changed or removed while the gateway will not stop (#{elem(platform, 1)})",
+           ctx do
+        assert {:ok, old} = install(ctx, "0.1.6")
+        # The gateway runs under whichever service manager this is.
+        Application.put_env(:hal_c2, :service_platform, unquote(platform))
+        assert :ok = HalC2.OpenShell.Service.install(old)
+        File.mkdir_p!(Path.dirname(OpenShell.db_path()))
+        File.write!(OpenShell.db_path(), "old database")
+        old_ca = File.read!(Path.join(OpenShell.pki_dir(), "ca.crt"))
+        File.write!(Path.join(ctx.bin, "stop-fails"), "")
+
+        assert {:error, "[gateway-stop-failed]" <> _} = install(ctx, "0.1.7")
+        FakeOpenShell.queue_certificates(ctx.control)
+        assert {:error, "[gateway-stop-failed]" <> _} = Install.rotate(smoke: fn _ -> :ok end)
+        assert {:error, "[gateway-stop-failed]" <> _} = Install.uninstall()
+
+        assert OpenShell.state() == old
+        assert File.read!(Path.join(OpenShell.pki_dir(), "ca.crt")) == old_ca
+        assert File.read!(OpenShell.db_path()) == "old database"
+        assert File.exists?(OpenShell.gateway_bin("0.1.6"))
+        assert File.exists?(Service.unit_path(Service.manager()))
+      end
+    end
+
+    test "uninstall stops a gateway whose unit file is gone before removing its files", ctx do
+      assert {:ok, _} = install(ctx, "0.1.7")
+      File.rm!(Service.unit_path(:systemd))
+      File.write!(ctx.log, "")
+
+      assert :ok = Install.uninstall()
+      assert "systemctl --user stop hal-c2-openshell.service" in Storage.service_calls(ctx.log)
+      refute File.exists?(Path.join(ctx.bin, "active"))
+      refute File.exists?(OpenShell.root())
+    end
+
     test "the gateway a failed update puts back is checked for its own version", ctx do
       assert {:ok, old} = install(ctx, "0.1.6")
 
@@ -306,9 +342,7 @@ defmodule HalC2.OpenShell.InstallTest do
       assert {:ok, %{"mode" => "foreground"}} = install(ctx, "0.1.7", service: false)
       refute File.exists?(Service.unit_path(:systemd))
 
-      assert "systemctl --user disable --now hal-c2-openshell.service" in Storage.service_calls(
-               ctx.log
-             )
+      assert "systemctl --user disable hal-c2-openshell.service" in Storage.service_calls(ctx.log)
     end
 
     test "status names what needs attention", ctx do

@@ -575,15 +575,27 @@ defmodule HalC2.Service do
     do: System.find_executable(Application.get_env(:hal_c2, :"#{exe}_command", exe))
 
   defp run(exe, args) do
+    case command(exe, args) do
+      {:exit, 0, _} -> :ok
+      {:exit, _, out} -> {:error, failure(exe, args, out)}
+      error -> error
+    end
+  end
+
+  # `{:exit, status, output}` of one call to a service manager tool, for a caller
+  # that tells its failures apart; `{:error, message}` when the tool is not installed.
+  @doc false
+  def command(exe, args) do
     case executable(exe) do
       nil ->
         {:error, "#{exe} is not available on this machine."}
 
       path ->
-        case System.cmd(path, args, stderr_to_stdout: true) do
-          {_, 0} -> :ok
-          {out, _} -> {:error, "`#{exe} #{Enum.join(args, " ")}` failed: #{String.trim(out)}"}
-        end
+        {out, status} = System.cmd(path, args, stderr_to_stdout: true)
+        {:exit, status, out}
     end
   end
+
+  @doc false
+  def failure(exe, args, out), do: "`#{exe} #{Enum.join(args, " ")}` failed: #{String.trim(out)}"
 end

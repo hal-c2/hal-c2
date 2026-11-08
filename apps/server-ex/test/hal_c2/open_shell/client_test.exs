@@ -349,6 +349,30 @@ defmodule HalC2.OpenShell.ClientTest do
       refute_received {:openshell_exec, ^exec, _}
     end
 
+    # Found by prop/hal_c2/openshell_exec_prop_test.exs: the reader, killed
+    # asynchronously, could still send output after the cancel's ending. That takes a
+    # cancel while the reader is busy with a backlog, here of two commands' output at
+    # once, and only some cancels land there, so this cancels several times.
+    @tag exec: :spews
+    test "nothing follows a cancel's ending while output pours in", %{conn: conn} do
+      for _ <- 1..30 do
+        execs =
+          for _ <- 1..2 do
+            {:ok, exec} = Client.exec(conn, "box", ["spew"])
+            assert_receive {:openshell_exec, ^exec, {:stdout, _}}
+            {exec, Process.monitor(exec)}
+          end
+
+        for {exec, ref} <- Enum.reverse(execs) do
+          assert :ok = Exec.cancel(exec)
+          assert {_, {:error, :cancelled}} = collect(exec)
+          assert_receive {:DOWN, ^ref, :process, ^exec, :normal}
+        end
+
+        for {exec, _} <- execs, do: refute_received({:openshell_exec, ^exec, _})
+      end
+    end
+
     @tag exec: :waits
     test "the stream stops when its owner exits", %{conn: conn} do
       test = self()
@@ -478,6 +502,17 @@ defmodule HalC2.OpenShell.ClientTest do
   end
 
   defp handler(:waits, _test), do: fn _command, io -> io.read.() end
+
+  # Small chunks as fast as the stream takes them, until it is gone.
+  defp handler(:spews, _test) do
+    fn _command, io ->
+      Enum.reduce_while(1..2_000, :ok, fn _, :ok ->
+        if io.stdout.("spew\n") == :ok, do: {:cont, :ok}, else: {:halt, :closed}
+      end)
+
+      io.read.()
+    end
+  end
 
   defp handler(:untar, test) do
     fn command, io ->

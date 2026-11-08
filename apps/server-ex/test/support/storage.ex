@@ -395,8 +395,10 @@ defmodule HalC2.Test.Storage do
   manager's environment, linger, is-enabled, is-active) are answered from state
   files beside them and not logged: `enabled`, `active` and `linger` follow what
   the service manager was asked to do, and `service_state/3` can set or clear
-  them, or `no-user-manager` and `no-logind` to make those questions fail, and
-  `stop-fails` makes a stop fail.
+  them, or `no-user-manager` and `no-logind` to make those questions fail.
+  `stop-fails` makes a stop (or a loaded agent's bootout) fail, and `not-loaded` makes
+  systemd answer a stop as a unit it does not have. launchctl's agent is `loaded`
+  between a bootstrap and a bootout.
   """
   def fake_service_manager(bin) do
     log = Path.join(bin, "calls.log")
@@ -413,7 +415,10 @@ defmodule HalC2.Test.Storage do
     case "$2" in
       enable) touch "$state/enabled" ;;
       restart) touch "$state/active" ;;
-      stop) [ -f "$state/stop-fails" ] && exit 1; rm -f "$state/active" ;;
+      stop)
+        [ -f "$state/stop-fails" ] && exit 1
+        [ -f "$state/not-loaded" ] && [ ! -f "$state/active" ] && { echo "Unit $3 not loaded."; exit 5; }
+        rm -f "$state/active" ;;
       disable) rm -f "$state/enabled" "$state/active" ;;
     esac
     exit 0
@@ -435,9 +440,22 @@ defmodule HalC2.Test.Storage do
     exit 0
     """)
 
+    # launchctl exits with the errno it failed on: ESRCH (3) boots out an agent it
+    # does not have, and `print` exits 113 for one.
     File.write!(Path.join(bin, "launchctl"), """
     #!/bin/sh
+    state="#{bin}"
+    case "$1" in
+      print) [ -f "$state/loaded" ] && exit 0; echo "Could not find service"; exit 113 ;;
+    esac
     echo "launchctl $*" >> "#{log}"
+    case "$1" in
+      bootout)
+        [ -f "$state/loaded" ] || { echo "Boot-out failed: 3: No such process"; exit 3; }
+        [ -f "$state/stop-fails" ] && { echo "Boot-out failed: 5: Input/output error"; exit 5; }
+        rm -f "$state/loaded" ;;
+      bootstrap) touch "$state/loaded" ;;
+    esac
     exit 0
     """)
 
