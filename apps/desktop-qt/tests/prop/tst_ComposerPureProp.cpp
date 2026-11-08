@@ -362,6 +362,9 @@ private slots:
       RC_ASSERT(stepped.has_value());
       RC_ASSERT(levels.contains(*stepped));
       const qsizetype n = levels.size();
+      // Ultrathink, the prompt's, sits above the top: up wraps to the
+      // lowest, down comes to the highest.
+      if (injects && current == QLatin1String("ultrathink")) RC_ASSERT(*stepped == (direction > 0 ? levels.first() : levels.last()));
       if (const qsizetype at = levels.indexOf(current); at >= 0) {
         RC_ASSERT(levels.indexOf(*stepped) == ((at + direction) % n + n) % n);
         // From a listed level, the other way comes back.

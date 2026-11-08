@@ -794,6 +794,21 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | medium | down      | low  |
       | low    | down      | high |
 
+  # Ultrathink, put on the prompt, sits above the model's top level: a step
+  # leaves it from there, not from the level saved underneath.
+  @desktop @tui @backlog-tui
+  Scenario Outline: Stepping the effort leaves Ultrathink from above the top level
+    Given the thread runs on Claude
+    And the user turned on Ultrathink and typed "design the cache"
+    When the user steps the effort <direction>
+    Then the effort is <to>
+    And the draft reads "design the cache" without "Ultrathink:"
+
+    Examples:
+      | direction | to     |
+      | up        | medium |
+      | down      | high   |
+
   # Upstream #19928: stepping into Ultrathink follows the same rules as choosing it.
   # Upstream #28044: stepping no longer reaches Ultrathink, which is only typed.
   @dropped @desktop @tui

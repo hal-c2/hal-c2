@@ -3895,7 +3895,7 @@ bool ComposerController::setOption(const QString& target, const QString& id, con
                             chosen.value(QLatin1String("options")).toArray(), planModeOn(instance));
   // A choice the provider takes from the prompt (Claude's ultrathink) is put
   // there instead; any other choice takes it out.
-  static const QRegularExpression prefix(QStringLiteral("^Ultrathink:\\s*"), QRegularExpression::CaseInsensitiveOption);
+  static const QRegularExpression prefix(QStringLiteral("^Ultrathink:\\s*"));
   static const QRegularExpression slashCommand(QStringLiteral("^/[^\\s/]+(?:\\s|$)"));
   for (const QJsonValue& entry : descriptors) {
     const QJsonObject descriptor = entry.toObject();
@@ -3948,8 +3948,13 @@ bool ComposerController::stepEffort(const QString& target, int direction) {
     return str(entry.toObject(), QLatin1String("type")) == QLatin1String("select");
   });
   if (effort == descriptors.end()) return false;
-  const QJsonObject descriptor = effort->toObject();
-  if (effortLocked(descriptor, draft(target))) return false;
+  QJsonObject descriptor = effort->toObject();
+  const QString text = draft(target);
+  if (effortLocked(descriptor, text)) return false;
+  // The step starts from the effort shown: Ultrathink while the prompt
+  // carries its prefix, though the saved level is underneath.
+  const QJsonArray injected = descriptor.value(QLatin1String("promptInjectedValues")).toArray();
+  if (!injected.isEmpty() && text.trimmed().startsWith(kUltrathinkPrefix.trimmed())) descriptor.insert(QStringLiteral("currentValue"), injected.first());
   const std::optional<QString> next = composer::steppedChoice(descriptor, direction);
   return next && setOption(target, str(descriptor, QLatin1String("id")), *next);
 }

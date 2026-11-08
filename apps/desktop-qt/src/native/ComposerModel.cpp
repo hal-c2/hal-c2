@@ -646,13 +646,18 @@ std::optional<QString> steppedChoice(const QJsonObject& descriptor, int directio
   const qsizetype count = choices.size();
   if (count < 2) return std::nullopt;
   qsizetype at = choices.indexOf(descriptor.value(QLatin1String("currentValue")).toString());
+  // From the prompt's own effort (Ultrathink), which sits above the top
+  // level: up wraps to the lowest, down comes to the highest.
+  if (at < 0 && injected.contains(descriptor.value(QLatin1String("currentValue")))) return direction > 0 ? choices.first() : choices.last();
   if (at < 0) at = choices.indexOf(fallback);
   if (at < 0) return direction > 0 ? choices.first() : choices.last();
   return choices.at(((at + (direction > 0 ? 1 : -1)) % count + count) % count);
 }
 
 bool ultrathinkInWords(const QString& text) {
-  static const QRegularExpression prefix(QStringLiteral("^\\s*Ultrathink:\\s*"), QRegularExpression::CaseInsensitiveOption);
+  // The picker writes the prefix with a capital; typed any other way it is
+  // the user's own word.
+  static const QRegularExpression prefix(QStringLiteral("^\\s*Ultrathink:\\s*"));
   static const QRegularExpression word(QStringLiteral("\\bultrathink\\b"), QRegularExpression::CaseInsensitiveOption);
   return word.match(QString(text).remove(prefix)).hasMatch();
 }

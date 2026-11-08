@@ -139,6 +139,18 @@ Rectangle {
                     detail: item.displayText
                 });
                 menu.built.push(sub);
+                // Why none of its rows can be chosen, above them, as the
+                // picker's own note says it.
+                if ((item.note ?? "").length > 0) {
+                    const note = overflowItemComponent.createObject(null, {
+                        objectName: "composerOverflowNote",
+                        text: qsTr("Locked"),
+                        reason: item.note,
+                        enabled: false
+                    });
+                    menu.built.push(note);
+                    sub.addItem(note);
+                }
                 item.choices.forEach((label, index) => {
                     const row = overflowItemComponent.createObject(null, {
                         text: label,
