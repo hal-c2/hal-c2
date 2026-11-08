@@ -178,10 +178,11 @@ Queued messages appear above the composer. Rows show a thumbnail of any attached
 the text. Drag a row by its handle to reorder it, use the handle's arrow keys, promote the message
 to a steer, or remove it.
 
-If the server restarts, saved queued messages keep their order and are held. Choose
-**Resume queue** above the composer on desktop, or in the queue sheet on mobile,
-to continue. You can edit, reorder, or remove held messages without starting them. A
-message you queue while the queue is held waits behind them.
+Stopping the agent holds the queue, and so does a server restart: saved queued messages keep
+their order and wait. Choose **Resume queue** above the composer on desktop or in the queue sheet
+on mobile, or press `Ctrl+X` then `q` in the terminal client (also **Resume the queue** in its
+command palette). Sending a message resumes it too. You can edit, reorder, or remove held messages
+without starting them. A message you queue while the queue is held waits behind them.
 
 When a task the agent delegated finishes, its result waits at the front of the queue, so the
 agent hears it before your next message. It cannot be moved, edited, or sent as a steer.

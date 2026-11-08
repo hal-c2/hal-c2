@@ -473,6 +473,9 @@ defmodule HalC2.UpgradeReleasePropTest do
     Application.delete_env(:hal_c2, :install_release)
     :persistent_term.erase({Upgrade, :version})
     :persistent_term.erase({Upgrade, :outcome})
+    # A case's simulated reboot can leave this set; the next property in the VM
+    # would read it as this boot's answer (`Recovery.deliverable?/2` does).
+    :persistent_term.erase({Upgrade, :continue_threads})
     :code.set_path(Process.get(:paths))
     Mc.restore_modules()
     File.rm_rf(Process.get(:home))

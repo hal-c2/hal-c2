@@ -350,6 +350,28 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
   end
 
   step "the turn fails", context do
+    if context[:codex_compaction] do
+      # A Codex turn held by its scenario (`:codex_compaction` names its thread):
+      # Codex ends it as failed.
+      title = context.codex_compaction
+      {_, runtime} = World.codex_runtime(context, title)
+
+      World.codex_notify(context, title, "turn/completed", %{
+        "turn" => %{
+          "id" => runtime.turn.native_turn_id,
+          "status" => "failed",
+          "error" => %{"message" => "the turn failed"}
+        }
+      })
+
+      World.await_runs(context, title, ["failed"])
+      context
+    else
+      turn_fails(context)
+    end
+  end
+
+  defp turn_fails(context) do
     if context[:batch_pending] do
       # An Antigravity batch held by its scenario (features/providers):
       # kill its agent process, so its turn fails around it.
