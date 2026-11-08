@@ -2160,6 +2160,56 @@ defmodule HalC2.OrchestrationTest do
       assert File.read!(HalC2.Attachments.path(file)) == whole
     end
 
+    # A long text quoting another message's cut mark, beside a pasted text of the name it
+    # quotes, is folded into a file of its own; an edit drops only that (#1363 review).
+    test "an edit of a long message quoting a cut mark drops only the file the MC folded" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      pasted = pending_text_upload("message.txt", "pasted by hand")
+
+      quoted =
+        "[... 5 characters cut here; the whole message is in the attached message.txt ...]\n" <>
+          String.duplicate("y", 130_000)
+
+      {:ok, _} = send_message(thread_id, "m2", quoted, %{"attachments" => [pasted]})
+      [_, second] = runs(await_statuses(thread_id, ["running", "queued"]))
+
+      assert [%{"name" => "message.txt"} = own, %{"name" => "message-2.txt"} = folded] =
+               StreamState.get(current(thread_id), "message")["m2"]["attachments"]
+
+      {:ok, _} = queue_command("queued-run.edit", thread_id, second["id"], %{"text" => "short"})
+
+      assert %{"text" => "short", "attachments" => [^own]} =
+               StreamState.get(current(thread_id), "message")["m2"]
+
+      assert File.read!(HalC2.Attachments.path(own)) == "pasted by hand"
+      refute HalC2.Attachments.path(folded)
+    end
+
+    # A client that sends the folded file back without the MC's mark keeps it the fold.
+    test "an edit listing a folded file without its mark keeps it the message's fold" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", String.duplicate("y", 130_000))
+      [_, second] = runs(await_statuses(thread_id, ["running", "queued"]))
+
+      %{"text" => text, "attachments" => [file]} =
+        StreamState.get(current(thread_id), "message")["m2"]
+
+      sent_back = HalC2.Attachments.unmarked(file)
+
+      {:ok, _} =
+        queue_command("queued-run.edit", thread_id, second["id"], %{
+          "text" => "Typo fixed. " <> text,
+          "attachments" => [sent_back]
+        })
+
+      assert %{"attachments" => [^file]} = StreamState.get(current(thread_id), "message")["m2"]
+
+      {:ok, _} = queue_command("queued-run.edit", thread_id, second["id"], %{"text" => "short"})
+      refute HalC2.Attachments.path(file)
+    end
+
     test "an edit naming a folded message's attachments leaves out the file its old text was in" do
       thread_id = launch("wait for it")
       _ = await_run(thread_id, "running")
@@ -5211,6 +5261,27 @@ defmodule HalC2.OrchestrationTest do
       "name" => "a.png",
       "mimeType" => "image/png",
       "sizeBytes" => byte_size(png)
+    }
+  end
+
+  # A pasted text a client folded and uploaded, as the desktop does with a long paste.
+  defp pending_text_upload(name, text) do
+    {:ok, %{"attachmentId" => id, "relativeUrl" => "/api/attachments/upload/" <> token}} =
+      HalC2.Attachments.create_upload_url(%{
+        "name" => name,
+        "mimeType" => "text/plain",
+        "sizeBytes" => byte_size(text)
+      })
+
+    :ok = HalC2.Attachments.store(token, text)
+
+    %{
+      "type" => "file",
+      "id" => id,
+      "name" => name,
+      "mimeType" => "text/plain",
+      "sizeBytes" => byte_size(text),
+      "source" => %{"_tag" => "pasted-text"}
     }
   end
 

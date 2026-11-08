@@ -3461,7 +3461,11 @@ defmodule HalC2.Orchestration do
         uploads = unstale.(attachments)
         command = Map.put(command, "attachments", uploads)
 
+        # The message's own attachments stay as it has them, marks and all
+        # (`HalC2.Attachments.unmarked/1`), whatever a client sends back.
         with {:ok, claimed} <- HalC2.Attachments.claim(thread_id, uploads),
+             claimed =
+               Enum.map(claimed, &(Enum.find(kept, fn a -> a["id"] == &1["id"] end) || &1)),
              {:ok, command} <- claimed(thread_id, command, claimed),
              do: {:ok, uploads, command, (command["attachments"] -- claimed) ++ stale}
 

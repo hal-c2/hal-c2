@@ -5,9 +5,10 @@ defmodule HalC2.LongTextPropTest do
   longer text keeps its first 8,000 and last 2,000 characters around a note giving the
   exact count cut and the name of the file holding the whole of it; that file is
   added after the message's own attachments under a name none of them has, holds the
-  text byte for byte, and is a `pasted-text` file; and what is sent is itself short
-  enough to pass through again untouched. `folded_into/2` finds that file from the
-  folded text, and no file in text that was not folded. An edit of the folded text
+  text byte for byte, and is a `pasted-text` file the MC marks as its fold; and what is
+  sent is itself short enough to pass through again untouched. `folded_into/2` finds
+  that file from the folded text, and no file in text that was not folded, even when
+  the text quotes a cut mark naming a pasted text the message has (#1363 review). An edit of the folded text
   that keeps its cut mark leaves that file with the message, and one that drops the
   mark, or keeps it but not the file, leaves it behind (`left_behind/4`). Counted in
   characters, so the text mixes in multi-byte ones.
@@ -67,7 +68,7 @@ defmodule HalC2.LongTextPropTest do
             whole: File.read!(Attachments.path(file)) == text,
             described:
               file["sizeBytes"] == byte_size(text) and
-                file["source"] == %{"_tag" => "pasted-text"} and
+                file["source"] == %{"_tag" => "pasted-text", "folded" => true} and
                 file["mimeType"] == "text/plain",
             found: Attachments.folded_into(folded, attachments) == [file],
             edited:
@@ -93,15 +94,21 @@ defmodule HalC2.LongTextPropTest do
   end
 
   # Mostly near the limit, where an off-by-one would show, and sometimes far past it.
+  # Sometimes it starts by quoting a cut mark naming a file the message may have.
   defp text do
-    let {length, unit} <-
+    let {length, unit, quoted} <-
           {oneof([integer(0, 200), integer(@limit - 3, @limit + 3), integer(@limit, 3 * @limit)]),
-           non_empty(list(oneof([range(?a, ?z), ?\n, ?é, ?€, 0x1F600])))} do
+           non_empty(list(oneof([range(?a, ?z), ?\n, ?é, ?€, 0x1F600]))),
+           oneof([nil, "message.txt", "message-2.txt"])} do
       unit = List.to_string(unit)
 
-      unit
-      |> String.duplicate(div(length, String.length(unit)) + 1)
-      |> String.slice(0, length)
+      quote =
+        if quoted,
+          do: "[... 5 characters cut here; the whole message is in the attached #{quoted} ...]",
+          else: ""
+
+      (quote <> String.duplicate(unit, div(length, String.length(unit)) + 1))
+      |> String.slice(0, max(length, String.length(quote)))
     end
   end
 

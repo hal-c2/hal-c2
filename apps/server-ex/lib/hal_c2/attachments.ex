@@ -123,7 +123,8 @@ defmodule HalC2.Attachments do
   @doc """
   Moves a message's pending uploads into its thread: each is copied under a
   thread-scoped id of its own, which the message then names, so two messages naming
-  one upload hold two copies. Attachments the thread already has pass through.
+  one upload hold two copies. Attachments the thread already has pass through, without
+  the mark only the MC's own folds carry (`unmarked/1`).
   """
   def claim(thread_id, attachments) when is_list(attachments) do
     Enum.reduce_while(attachments, {:ok, []}, fn attachment, {:ok, acc} ->
@@ -175,7 +176,7 @@ defmodule HalC2.Attachments do
       # can never take a file another message names (proof/models/asset_stream.maude).
       claimed_id = "#{thread_segment(thread_id)}-#{copy_tag()}-#{rest}"
       File.cp!(source, Path.join(dir(), claimed_id <> Path.extname(source)))
-      {:ok, Map.put(attachment, "id", claimed_id)}
+      {:ok, attachment |> unmarked() |> Map.put("id", claimed_id)}
     else
       [] -> {:error, "Attachment '#{attachment["name"]}' was not uploaded."}
       {:error, message} when is_binary(message) -> {:error, message}
@@ -183,7 +184,7 @@ defmodule HalC2.Attachments do
     end
   end
 
-  defp claim_one(_thread_id, attachment), do: {:ok, attachment}
+  defp claim_one(_thread_id, attachment), do: {:ok, unmarked(attachment)}
 
   defp copy_tag, do: 4 |> :crypto.strong_rand_bytes() |> Base.encode16(case: :lower)
 
@@ -254,6 +255,7 @@ defmodule HalC2.Attachments do
   @long_text_chars 120_000
   @long_text_start 8_000
   @long_text_end 2_000
+  @folded_source %{"_tag" => "pasted-text", "folded" => true}
 
   @doc """
   A message too long to send whole, folded as a client folds a long paste: past
@@ -296,7 +298,7 @@ defmodule HalC2.Attachments do
               "name" => name,
               "mimeType" => "text/plain",
               "sizeBytes" => byte_size(text),
-              "source" => %{"_tag" => "pasted-text"}
+              "source" => @folded_source
             }
 
             {:ok, folded, attachments ++ [file]}
@@ -314,26 +316,30 @@ defmodule HalC2.Attachments do
   def fold_long_text(_thread_id, text, attachments), do: {:ok, text, attachments}
 
   @doc """
-  The file `fold_long_text/3` folded a message's `text` into, among its `attachments`:
-  the `pasted-text` file its cut mark names, as a list of none or one.
+  The files `fold_long_text/3` folded a message's `text` into, among its
+  `attachments`: those the MC marked as its folds whose name a cut mark in `text`
+  names. Only the MC marks a file (`unmarked/1`), so text quoting a cut mark, or a
+  pasted text of the same name, never makes another file a fold.
   """
   def folded_into(text, attachments) when is_binary(text) and is_list(attachments) do
-    case Regex.run(
-           ~r/\[\.\.\. \d+ characters cut here; the whole message is in the attached (.+?) \.\.\.\]/,
-           text
-         ) do
-      [_, name] ->
-        Enum.filter(
-          attachments,
-          &(&1["name"] == name and match?(%{"source" => %{"_tag" => "pasted-text"}}, &1))
-        )
+    named =
+      ~r/\[\.\.\. \d+ characters cut here; the whole message is in the attached (.+?) \.\.\.\]/
+      |> Regex.scan(text, capture: :all_but_first)
+      |> MapSet.new(fn [name] -> name end)
 
-      nil ->
-        []
-    end
+    Enum.filter(attachments, &(&1["source"] == @folded_source and &1["name"] in named))
   end
 
   def folded_into(_text, _attachments), do: []
+
+  @doc """
+  An attachment a client names, without the mark only the MC gives the files it folds
+  long messages into (`folded_into/2`).
+  """
+  def unmarked(%{"source" => %{"_tag" => "pasted-text"} = source} = attachment),
+    do: Map.put(attachment, "source", Map.delete(source, "folded"))
+
+  def unmarked(attachment), do: attachment
 
   @doc """
   What an edit of a message's text from `old` to `new` leaves behind among its

@@ -372,7 +372,7 @@ defmodule HalC2.AttachmentsTest do
                  String.duplicate("z", 2_000)
 
       assert %{"type" => "file", "name" => "message.txt", "mimeType" => "text/plain"} = file
-      assert file["source"] == %{"_tag" => "pasted-text"}
+      assert file["source"] == %{"_tag" => "pasted-text", "folded" => true}
       assert file["sizeBytes"] == byte_size(text)
       assert String.starts_with?(file["id"], Attachments.thread_segment("t1") <> "-")
       assert File.read!(Attachments.path(file)) == text
@@ -391,6 +391,43 @@ defmodule HalC2.AttachmentsTest do
       assert Enum.take(attachments, 2) == kept
       assert List.last(attachments)["name"] == "message-3.txt"
       assert folded =~ "in the attached message-3.txt"
+    end
+
+    # #1363 review: the first cut mark named the message's own pasted text.
+    test "a quoted cut mark never makes a pasted text of its name the fold" do
+      own = %{
+        "type" => "file",
+        "id" => "f1",
+        "name" => "message.txt",
+        "source" => %{"_tag" => "pasted-text"}
+      }
+
+      text =
+        "[... 5 characters cut here; the whole message is in the attached message.txt ...]" <>
+          String.duplicate("x", 120_001)
+
+      {:ok, folded, [^own, file]} = Attachments.fold_long_text("t1", text, [own])
+
+      assert file["name"] == "message-2.txt"
+      assert Attachments.folded_into(folded, [own, file]) == [file]
+      assert Attachments.left_behind(folded, "short", [own, file], [own, file]) == [file]
+    end
+
+    test "only the MC marks a fold: a client's mark is dropped as it is claimed" do
+      forged = %{
+        "type" => "file",
+        "id" => "t1-forged",
+        "name" => "message.txt",
+        "source" => %{"_tag" => "pasted-text", "folded" => true}
+      }
+
+      assert {:ok, [claimed]} = Attachments.claim("t1", [forged])
+      assert claimed["source"] == %{"_tag" => "pasted-text"}
+
+      assert Attachments.folded_into(
+               "[... 5 characters cut here; the whole message is in the attached message.txt ...]",
+               [claimed]
+             ) == []
     end
 
     test "a folder that cannot be made refuses the message instead of raising" do
