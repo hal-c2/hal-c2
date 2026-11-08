@@ -616,7 +616,7 @@ Feature: Generated titles, branch names and source control text
     And the writer receives the first message's image and the three most recent ones
 
   # Legacy: apps/server/src/textGeneration/ThreadTitleContext.ts (assistantCitationsToPlainText), packages/shared/src/assistantCitations.ts
-  @backlog @mc
+  @mc
   Scenario: A quoted reply the user commented on is given to the title writer as plain text
     Given a user message that cites part of an assistant reply and adds a comment
     When a title is generated for that thread

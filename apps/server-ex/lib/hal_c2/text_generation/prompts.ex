@@ -364,7 +364,11 @@ defmodule HalC2.TextGeneration.Prompts do
       for {message, index} <- Enum.with_index(messages),
           message["role"] not in ["system", "reasoning"],
           String.trim(message["text"] || "") != "" or (message["attachments"] || []) != [] do
-        text = String.trim(message["text"] || "")
+        text =
+          message["text"]
+          |> Kernel.||("")
+          |> HalC2.ComposerContext.plain_citations()
+          |> String.trim()
 
         names = Enum.map_join(message["attachments"] || [], ", ", & &1["name"])
 

@@ -762,6 +762,38 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     Map.update!(context, :messages, &(&1 ++ [message("user", "Scope changed: also fix logout")]))
   end
 
+  step "a user message that cites part of an assistant reply and adds a comment", context do
+    query =
+      URI.encode_query(
+        text: "Cache keys include the tenant.",
+        start: 12,
+        end: 42,
+        prefix: "On caching: ",
+        suffix: "",
+        comment: "Is this still true?"
+      )
+
+    link = "[Assistant quote](hal-c2-citation://v1/env/thread/msg?#{query})"
+
+    Map.put(context, :messages, [
+      message("user", "Review the cache"),
+      message("assistant", "On caching: Cache keys include the tenant."),
+      message("user", "#{link} Please check")
+    ])
+  end
+
+  step "the writer sees the cited words followed by {string} and the comment",
+       %{args: [label]} = context do
+    assert prompt(context) =~ "Cache keys include the tenant.\n#{label} Is this still true?"
+    context
+  end
+
+  step "no citation link syntax is in the context", context do
+    refute prompt(context) =~ "citation://"
+    refute prompt(context) =~ "[Assistant quote]"
+    context
+  end
+
   step "a title is generated for that thread", context do
     regenerate(context, context.messages)
   end
