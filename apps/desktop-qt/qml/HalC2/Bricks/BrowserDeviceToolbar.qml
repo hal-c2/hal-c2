@@ -21,6 +21,8 @@ Rectangle {
     property real ratio: 0
     // What the user is typing ({width, height} as text), until it is applied.
     property var draft: null
+    // The size picked and the ratio it changed from and to, until the MC answers.
+    property var picking: null
     readonly property bool busy: page ? page.resizing : false
     readonly property int typedWidth: Number(draft ? draft.width : viewport.width)
     readonly property int typedHeight: Number(draft ? draft.height : viewport.height)
@@ -32,8 +34,18 @@ Rectangle {
 
     function apply(next, nextRatio) {
         draft = null;
+        picking = { viewport: next, ratio: nextRatio, before: ratio };
         ratio = nextRatio;
         page.setViewport(next);
+        answered();
+    }
+
+    // A size the MC did not take takes its ratio back with it.
+    function answered() {
+        if (busy || picking === null)
+            return;
+        ratio = BrowserJs.ratioAnswered(picking, page.viewport);
+        picking = null;
     }
 
     // What was typed, if it is a size that can be used and not the one shown.
@@ -93,6 +105,7 @@ Rectangle {
             applyDraft();
     }
 
+    onBusyChanged: answered()
     onViewportChanged: refill()
     onDraftChanged: refill()
     Component.onCompleted: refill()

@@ -211,4 +211,17 @@ TestCase {
         compare(BrowserJs.dragged({ width: 400, height: 800 }, 25, 0, { width: 900, height: 1000 }, 0.5, 0), { width: 500, height: 800 });
         compare(BrowserJs.dragged({ width: 400, height: 800 }, 0, -50, { width: 900, height: 1000 }, 1, 0), { width: 400, height: 700 });
     }
+
+    function test_aSizePickedKeepsItsRatioOnlyIfTaken() {
+        const phone = { _tag: "preset", width: 375, height: 667, presetId: "iphone-se" };
+        const turned = { _tag: "freeform", width: 800, height: 500 };
+        // Rotated with the ratio locked, then refused: the size and its ratio go back.
+        compare(BrowserJs.ratioAnswered({ viewport: turned, ratio: 1.6, before: 0.625 }, { _tag: "freeform", width: 500, height: 800 }), 0.625);
+        compare(BrowserJs.ratioAnswered({ viewport: turned, ratio: 1.6, before: 0.625 }, turned), 1.6);
+        // A preset picked with the ratio locked, refused while the tab fills.
+        compare(BrowserJs.ratioAnswered({ viewport: phone, ratio: 375 / 667, before: 0.5 }, { _tag: "fill" }), 0.5);
+        compare(BrowserJs.ratioAnswered({ viewport: phone, ratio: 375 / 667, before: 0.5 }, phone), 375 / 667);
+        // Another preset of the same size is another pick.
+        compare(BrowserJs.ratioAnswered({ viewport: phone, ratio: 1, before: 0 }, Object.assign({}, phone, { presetId: "other" })), 0);
+    }
 }

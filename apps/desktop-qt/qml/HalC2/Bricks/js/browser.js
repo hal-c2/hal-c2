@@ -235,6 +235,20 @@ function viewportOf(id, width, height) {
 }
 
 // A start page suggestion's label: the server's process, else the host.
+// Whether two PreviewViewportSettings are the same size.
+function sameViewport(a, b) {
+    if (!a || !b || a._tag !== b._tag)
+        return false;
+    return a._tag === "fill" || (a.width === b.width && a.height === b.height && (a.presetId || "") === (b.presetId || ""));
+}
+
+// The aspect ratio a size pick leaves once the MC has answered it, the pick
+// being {viewport, ratio, before}: the one it came with while the size shown
+// is the one picked, else (refused, or never answered) the one before.
+function ratioAnswered(pick, shown) {
+    return sameViewport(pick.viewport, shown) ? pick.ratio : pick.before;
+}
+
 function suggestionLabel(suggestion) {
     if (suggestion.label)
         return suggestion.label;
