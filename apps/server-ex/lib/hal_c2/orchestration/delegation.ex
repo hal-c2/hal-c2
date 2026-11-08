@@ -436,19 +436,23 @@ defmodule HalC2.Orchestration.Delegation do
   # (upstream #19801). A handover may already have tombstoned the child's links
   # before this result is built (PR news reached a quiet child still owing a
   # restart continuation, or a settle that handed over then failed is retried),
-  # so a tombstone the caller now carries counts too, named from the caller's
-  # copy. A tombstone the caller does not carry is a link the child dismissed,
-  # not one it handed back.
+  # so a link the child dismissed is named when the caller carries the same PR on
+  # its own visible links, named from the caller's copy. A PR the caller itself
+  # dismissed (its tombstone stays, so nothing is handed over), or does not carry,
+  # is not one the child handed back.
   defp with_pull_requests(result, child, child_id, parent_id) do
     thread = StreamState.get(child, "thread")[child_id] || %{}
     parent = StreamState.get(stream(parent_id), "thread")[parent_id] || %{}
-    carried = Map.new(Links.of(parent), &{Links.key(&1), &1})
+    mine = Links.of(parent)
+    carried = mine |> Links.visible() |> Map.new(&{Links.key(&1), &1})
+    dismissed = MapSet.new(mine -- Links.visible(mine), &Links.key/1)
 
     links =
       thread
       |> Links.of()
       |> Enum.flat_map(fn link ->
         cond do
+          Links.key(link) in dismissed -> []
           link["source"] != "stack-dismissed" -> [link]
           copy = carried[Links.key(link)] -> [copy]
           true -> []

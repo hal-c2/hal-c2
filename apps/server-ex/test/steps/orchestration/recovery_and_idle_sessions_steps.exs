@@ -1782,7 +1782,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
       # turn's result; the gate file lets the turn end.
       # The turn is held, so the monitor's `task_started` is the only thing to wait
       # for: the runtime answers with the task ids it matched once it has seen it.
-      mark_monitor(child, "task-mon-1")
+      mark_monitor(context, thread, child, "task-mon-1")
 
       gate = Path.join(context.mc.home, "gate")
       File.mkdir_p!(gate)
@@ -1993,14 +1993,6 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
     state =
       World.await_state(context, thread, fn state ->
-        IO.inspect(
-          Enum.map(
-            HalC2.StreamState.list(state, "turn-item"),
-            &Map.take(&1, ~w(id type output kind status))
-          ),
-          label: "DBGITEMS"
-        )
-
         Enum.any?(
           HalC2.StreamState.list(state, "subagent"),
           &(&1["origin"] == "provider_native" and &1["status"] == "running")
@@ -2592,20 +2584,18 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     |> Map.merge(%{settled_run: run, work: work})
   end
 
-  defp mark_monitor(child, task_id, deadline \\ 10_000) do
-    case HalC2.Claude.ThreadRuntime.await_background(child, [task_id], true) do
-      {:ok, [^task_id]} ->
-        :ok
+  # The monitor's launch acknowledgement ("Monitor started (task ...)") is the first
+  # thing recorded after its `task_started`, in order: once the monitor's turn item
+  # carries it, the runtime knows the task and is asked once.
+  defp mark_monitor(context, thread, child, task_id) do
+    World.await_state(context, thread, fn state ->
+      Enum.any?(
+        HalC2.StreamState.list(state, "turn-item"),
+        &String.contains?(to_string(&1["output"]), task_id)
+      )
+    end)
 
-      {:ok, []} when deadline > 0 ->
-        receive do
-        after
-          10 -> mark_monitor(child, task_id, deadline - 10)
-        end
-
-      other ->
-        flunk("the monitor was never known to the runtime: #{inspect(other)}")
-    end
+    assert {:ok, [^task_id]} = HalC2.Claude.ThreadRuntime.await_background(child, [task_id], true)
   end
 
   # Kills the provider process of `context.thread` once its one background task shows.

@@ -315,7 +315,9 @@ for line in sys.stdin:
               "content": f"Monitor started (task task-{mon})", "is_error": False}]}})
         if "and hold the turn" in text:
             gate = os.path.join(os.environ["FAKE_CLAUDE_GATE"], "monitor-awaited")
-            while not os.path.exists(gate):
+            for _ in range(3000):  # bounded: 30 s at most
+                if os.path.exists(gate):
+                    break
                 time.sleep(0.01)
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}i", "role": "assistant", "content": [{"type": "text", "text": "Watching the log"}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "Watching the log", "session_id": session})

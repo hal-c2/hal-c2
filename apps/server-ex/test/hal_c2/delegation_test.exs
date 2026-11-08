@@ -410,6 +410,35 @@ defmodule HalC2.Orchestration.DelegationTest do
     end
   end
 
+  describe "a pull request the caller dismissed" do
+    # The caller carries only a tombstone for it: it is not on the caller's visible
+    # links, so the result does not name it, though the child still links it.
+    test "is not named in the result" do
+      :ok = delegate("completed")
+      :ok = link_child()
+
+      {:ok, _} =
+        HalC2.Streams.commit("p", :thread, [
+          thread("p", %{
+            "pullRequests" => [
+              %{
+                "host" => "github.com",
+                "repository" => "acme/app",
+                "number" => 7,
+                "url" => "https://github.com/acme/app/pull/7",
+                "source" => "stack-dismissed",
+                "linkedAt" => @at
+              }
+            ]
+          })
+        ])
+
+      assert :ok = Delegation.settle_if_quiet("c")
+      assert %{"status" => "completed", "result" => result} = task()
+      refute result =~ "acme/app#7"
+    end
+  end
+
   describe "a task whose child fails or is cancelled while its worktree is prepared" do
     # Nothing but `fail_prepared/4` ends such a child's run, so it must tell the caller.
     for {status, failure, text} <- [
