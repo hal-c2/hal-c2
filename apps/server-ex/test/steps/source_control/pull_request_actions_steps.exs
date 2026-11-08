@@ -228,6 +228,87 @@ defmodule HalC2.Steps.SourceControl.PullRequestActions do
     Shared.reshape_pr(context, %{"mergeStateStatus" => status})
   end
 
+  # --- access ----------------------------------------------------------------------------
+
+  step "pull request {int} was opened by someone else", %{args: [number]} = context do
+    assert number == context.pr_number
+    Shared.reshape_pr(context, %{"viewerDidAuthor" => false})
+  end
+
+  step "the user opened pull request {int} and has only read access to {string}",
+       %{args: [number, @repository]} = context do
+    assert number == context.pr_number
+
+    context
+    |> Map.put(:permission, "READ")
+    |> Shared.reshape_pr(%{"viewerDidAuthor" => true, "viewerCanUpdate" => true})
+  end
+
+  @tries %{
+    "mark pull request 42 ready for review" => "ready",
+    "return pull request 42 to draft" => "draft",
+    "close pull request 42" => "close",
+    "reopen pull request 42" => "reopen",
+    "update the branch of pull request 42" => "update-branch",
+    "stop auto-merge on pull request 42" => "disable-auto-merge",
+    "approve the workflows of fork pull request 42" => "approve-workflows"
+  }
+
+  step ~r/^the user tries to (?<action>mark pull request 42 ready for review|return pull request 42 to draft|close pull request 42|reopen pull request 42|update the branch of pull request 42|stop auto-merge on pull request 42|approve the workflows of fork pull request 42)$/,
+       %{args: [action]} = context do
+    extra = if @tries[action] == "update-branch", do: %{"updateMethod" => "merge"}, else: %{}
+    act(context, 42, @tries[action], extra)
+  end
+
+  step "closing, reopening, marking ready and returning to draft are offered", context do
+    assert ~w(close reopen ready draft) -- context.viewer["actions"] == []
+    context
+  end
+
+  step "merging, auto-merge, reverting and approving workflows are not offered", context do
+    for action <- ~w(merge enable-auto-merge disable-auto-merge revert approve-workflows) do
+      refute action in context.viewer["actions"]
+    end
+
+    context
+  end
+
+  step "GitHub does not say the user may update its branch", context do
+    Shared.reshape_pr(context, %{"viewerCanUpdateBranch" => false})
+  end
+
+  step "updating the branch is offered to nobody", context do
+    for permission <- ~w(WRITE READ) do
+      detail =
+        context |> Map.put(:permission, permission) |> Shared.answer_pr() |> Shared.pr_detail!()
+
+      refute "update-branch" in detail["viewerPermissions"]["actions"]
+    end
+
+    context
+  end
+
+  step "the page offered merging pull request {int}", %{args: [number]} = context do
+    assert number == context.pr_number
+    assert "merge" in Shared.pr_detail!(context)["viewerPermissions"]["actions"]
+    context
+  end
+
+  step "the user's write access to {string} has since been withdrawn",
+       %{args: [@repository]} = context do
+    context |> Map.put(:permission, "READ") |> Shared.answer_pr()
+  end
+
+  step "the user merges pull request {int}", %{args: [number]} = context do
+    act(context, number, "merge", %{"mergeMethod" => "merge"})
+  end
+
+  step "pull request {int} is not merged", %{args: [number]} = context do
+    assert number == context.pr_number
+    assert World.cli_calls(context, "pr merge") == []
+    context
+  end
+
   # --- actions ---------------------------------------------------------------------------
 
   step ~r/^the user merges pull request (?<number>\d+) with the (?<method>merge|squash|rebase) method$/,

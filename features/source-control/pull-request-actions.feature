@@ -1233,7 +1233,7 @@ Feature: Acting on a pull request
     Then the user sees an "error" toast "Could not post the comment"
     And pull request 42 is still open
 
-  @backlog @mc
+  @mc
   Scenario Outline: A reader who did not open the pull request cannot change its state
     Given the user has only read access to "acme/shop"
     And pull request 42 was opened by someone else
@@ -1248,7 +1248,7 @@ Feature: Acting on a pull request
       | reopen pull request 42                | You need write access on this repository, or to have opened this change request, to reopen it.                |
       | update the branch of pull request 42  | You need write access on this repository, or to have opened this change request, to update its branch.        |
 
-  @backlog @mc
+  @mc
   Scenario Outline: Stopping auto-merge and approving fork workflows need write access
     Given the user has only read access to "acme/shop"
     When the user tries to <action>
@@ -1259,21 +1259,21 @@ Feature: Acting on a pull request
       | stop auto-merge on pull request 42              | You need write access on this repository to stop it being merged for you once it is ready. |
       | approve the workflows of fork pull request 42   | You need write access on this repository to approve workflows from a fork pull request.   |
 
-  @backlog @mc
+  @mc
   Scenario: The author of a pull request may change its state with read access only
     Given the user opened pull request 42 and has only read access to "acme/shop"
     When the user looks at its actions
     Then closing, reopening, marking ready and returning to draft are offered
     But merging, auto-merge, reverting and approving workflows are not offered
 
-  @backlog @mc
+  @mc
   Scenario: Updating a branch is offered only where the host says the user may
     Given pull request 42 is behind its base
     And GitHub does not say the user may update its branch
     When the user looks at its actions
     Then updating the branch is offered to nobody
 
-  @backlog @mc
+  @mc
   Scenario: Access withdrawn after the page loaded refuses the action
     Given the page offered merging pull request 42
     And the user's write access to "acme/shop" has since been withdrawn
