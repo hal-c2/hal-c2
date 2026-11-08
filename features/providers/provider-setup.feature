@@ -273,8 +273,9 @@ Feature: Provider setup, updates and sign-in
     When the MC checks provider versions
     Then after four seconds Codex's update status is unknown
 
-  # Upstream #27847: provider version checks went straight to the public npm registry.
-  @backlog @mc @priority-high
+  # Upstream #27847: provider version checks went straight to the public npm registry. When
+  # npm cannot say, upstream logs it and leaves the status unknown, with no message.
+  @priority-high
   Scenario Outline: Provider version checks go through the npm setup on the machine
     Given Codex was installed with npm
     And <setup>
@@ -284,7 +285,7 @@ Feature: Provider setup, updates and sign-in
     Examples:
       | setup                                                     | outcome                                                                    |
       | npm on the MC's path is configured for a company registry | the latest version comes from the company registry                         |
-      | npm on the MC's path fails to look the version up         | Codex's update status shows the error and the public registry is not asked |
+      | npm on the MC's path fails to look the version up         | Codex's update status is unknown and the public registry is not asked      |
       | npm is not installed on the machine                       | the latest version comes from the public npm registry                      |
 
   # Upstream #27321: a provider whose settings put a version manager's Node on its PATH failed to

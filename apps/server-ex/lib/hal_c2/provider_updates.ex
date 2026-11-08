@@ -3,7 +3,8 @@ defmodule HalC2.ProviderUpdates do
   Whether a provider CLI is behind its latest release (`versionAdvisory` on its
   `ServerProvider` entry), and updating it (`server.updateProvider`).
 
-  The latest version is the npm registry's — or, for a Claude install from
+  The latest version is what npm on the MC's PATH says, which follows the machine's
+  registry setup (the public registry's without npm) — or, for a Claude install from
   Claude's own installer, the newest its release channel offers — read in the
   background at most hourly unless the user turned off
   `enableProviderUpdateChecks`; providers are re-announced when it arrives.
@@ -17,6 +18,8 @@ defmodule HalC2.ProviderUpdates do
   installer is still the one the providers were last reported with, and afterwards
   that the provider is no longer behind.
   """
+
+  require Logger
 
   @packages %{
     "codex" => "@openai/codex",
@@ -69,7 +72,7 @@ defmodule HalC2.ProviderUpdates do
   defp latest_for("claudeAgent", [_executable, "update"], instance),
     do: channel_latest(claude_channel(instance))
 
-  defp latest_for(driver, _update, _instance), do: latest(driver)
+  defp latest_for(driver, update, _instance), do: latest(driver, update)
 
   # The channel a native Claude install follows, from the `autoUpdatesChannel`
   # of the instance's Claude settings; `latest` when it does not say. Only that
@@ -410,21 +413,21 @@ defmodule HalC2.ProviderUpdates do
   end
 
   # The latest release as last read, starting a read when it is missing or stale.
-  defp latest(driver) do
+  defp latest(driver, update) do
     case :persistent_term.get({__MODULE__, driver}, nil) do
       {version, read_at} ->
-        if System.monotonic_time(:millisecond) - read_at > @ttl, do: refresh(driver)
+        if System.monotonic_time(:millisecond) - read_at > @ttl, do: refresh(driver, update)
         version
 
       nil ->
-        refresh(driver)
+        refresh(driver, update)
         nil
     end
   end
 
   defp checked_at(driver), do: :persistent_term.get({__MODULE__, driver, :checked_at}, nil)
 
-  defp refresh(driver) do
+  defp refresh(driver, update) do
     package = @packages[driver]
     key = {__MODULE__, driver, :reading}
 
@@ -434,7 +437,7 @@ defmodule HalC2.ProviderUpdates do
 
       Task.start(fn ->
         try do
-          if version = registry_latest(package) do
+          if version = lookup_latest(package, update) do
             :persistent_term.put(
               {__MODULE__, driver},
               {version, System.monotonic_time(:millisecond)}
@@ -454,13 +457,69 @@ defmodule HalC2.ProviderUpdates do
     end
   end
 
+  # npm owns the registry, scoped auth and proxy the machine is set up with, so the
+  # npm on the MC's PATH is asked, at the install's prefix when npm installed it. When
+  # it cannot say, the public registry is not asked behind its back; without npm, it
+  # is (`:npm_registry_url` stands in for it in tests).
+  defp lookup_latest(package, update) do
+    case System.find_executable("npm") do
+      nil -> registry_latest(package)
+      npm -> npm_latest(npm, package, update)
+    end
+  end
+
+  defp npm_latest(npm, package, update) do
+    prefix =
+      case update do
+        [_npm, "install", "-g", "--prefix", prefix, _package] -> ["--prefix", prefix]
+        _ -> []
+      end
+
+    args = ["view", "--global"] ++ prefix ++ ["--json", package <> "@latest", "version"]
+    task = Task.async(fn -> npm_view([npm | args]) end)
+
+    version =
+      case Task.yield(task, 10_000) || Task.shutdown(task, :brutal_kill) do
+        {:ok, version} -> version
+        _ -> nil
+      end
+
+    if version == nil, do: Logger.warning("Configured npm version lookup failed for #{package}")
+    version
+  end
+
+  # `npm view --json` prints the version as a JSON string, or a list of one.
+  defp npm_view(argv) do
+    argv
+    |> Exile.stream(stderr: :disable, ignore_epipe: true)
+    |> Enum.reduce({[], nil}, fn
+      {:exit, status}, {out, _} -> {out, status}
+      data, {out, status} when is_binary(data) -> {[out, data], status}
+      _, acc -> acc
+    end)
+    |> case do
+      {out, {:status, 0}} ->
+        case out |> IO.iodata_to_binary() |> String.trim() |> JSON.decode() do
+          {:ok, version} when is_binary(version) and version != "" -> version
+          {:ok, [version]} when is_binary(version) and version != "" -> version
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  rescue
+    _ -> nil
+  end
+
   defp registry_latest(package) do
-    url = ~c"https://registry.npmjs.org/#{String.replace(package, "/", "%2F")}/latest"
+    base = Application.get_env(:hal_c2, :npm_registry_url, "https://registry.npmjs.org")
+    url = ~c"#{base}/#{String.replace(package, "/", "%2F")}/latest"
 
     case :httpc.request(
            :get,
            {url, []},
-           [timeout: 4_000, ssl: :httpc.ssl_verify_host_options(true)],
+           [timeout: 4_000] ++ ssl(url),
            body_format: :binary
          ) do
       {:ok, {{_, 200, _}, _, body}} ->
@@ -475,6 +534,9 @@ defmodule HalC2.ProviderUpdates do
   rescue
     _ -> nil
   end
+
+  defp ssl(~c"https://" ++ _), do: [ssl: :httpc.ssl_verify_host_options(true)]
+  defp ssl(_url), do: []
 
   defp newer?(latest, current) do
     with {:ok, latest} <- Version.parse(latest),

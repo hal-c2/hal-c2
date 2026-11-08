@@ -1054,4 +1054,102 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
     assert Acp.assistant_text(context.threads["Finished"]) != ""
     context
   end
+
+  # --- which registry says what is latest -----------------------------------------------
+
+  # Codex 0.1.0 at a global npm prefix, not yet compared with any release. The public
+  # registry (a fake) has 9.9.9.
+  step "Codex was installed with npm", context do
+    ctx = HalC2.Steps.Settings.Updates.install(context, "Codex", "a global npm install")
+    :persistent_term.erase({HalC2.ProviderUpdates, "codex"})
+    World.put_app_env(:provider_update_checks, true)
+
+    {url, registry} =
+      HalC2.Test.FakeHttp.start(%{"/@openai%2Fcodex/latest" => {200, %{"version" => "9.9.9"}}})
+
+    World.put_app_env(:npm_registry_url, url)
+    HalC2.Test.LogTap.attach()
+    :ok = HalC2.Settings.watch(self())
+    Map.put(ctx, :registry, registry)
+  end
+
+  # npm on the PATH answers from the registry it is set up with, which has 8.8.8.
+  step "npm on the MC's path is configured for a company registry", context do
+    npm_on_path(context, ~s(echo '"8.8.8"'))
+  end
+
+  step "npm on the MC's path fails to look the version up", context do
+    npm_on_path(context, ~s(echo "npm error code E401" >&2; exit 1))
+  end
+
+  # Only the tools a provider's version check runs, and no npm.
+  step "npm is not installed on the machine", context do
+    bin = Path.join(context.mc.home, "path-without-npm")
+    File.mkdir_p!(bin)
+
+    for tool <- ~w(sh dirname readlink cat printf python3 git env uname),
+        path = System.find_executable(tool),
+        do: File.ln_s!(path, Path.join(bin, tool))
+
+    World.put_env("PATH", bin)
+    refute System.find_executable("npm")
+    context
+  end
+
+  step "the latest version comes from the company registry", context do
+    assert latest_read(context) == "8.8.8"
+    prefix = Path.join(context.mc.home, "npm")
+
+    assert context.mc.home |> Path.join("npm-view.log") |> File.read!() |> codex_lines() ==
+             ["view --global --prefix #{prefix} --json @openai/codex@latest version"]
+
+    assert public_reads(context) == []
+    context
+  end
+
+  step "Codex's update status is unknown and the public registry is not asked", context do
+    assert_receive {:logged, :warning, "Configured npm version lookup failed" <> _}, 15_000
+    advisory = Acp.provider("codex")["versionAdvisory"]
+    assert %{"status" => "unknown", "latestVersion" => nil, "message" => nil} = advisory
+    assert public_reads(context) == []
+    context
+  end
+
+  step "the latest version comes from the public npm registry", context do
+    assert latest_read(context) == "9.9.9"
+
+    assert [_] = public_reads(context)
+
+    context
+  end
+
+  # Other providers found on this machine are looked up too.
+  defp codex_lines(log), do: log |> String.split("\n") |> Enum.filter(&(&1 =~ "@openai/codex"))
+
+  defp public_reads(context),
+    do:
+      Enum.filter(
+        HalC2.Test.FakeHttp.requests(context.registry),
+        &(&1["path"] == "/@openai%2Fcodex/latest")
+      )
+
+  defp npm_on_path(context, answer) do
+    bin = Path.join(context.mc.home, "path-bin")
+    log = Path.join(context.mc.home, "npm-view.log")
+    File.mkdir_p!(bin)
+    File.write!(Path.join(bin, "npm"), "#!/bin/sh\necho \"$*\" >> #{log}\n#{answer}\n")
+    File.chmod!(Path.join(bin, "npm"), 0o755)
+    World.put_env("PATH", bin <> ":" <> System.get_env("PATH"))
+    context
+  end
+
+  # The read lands, and the providers are announced with it.
+  defp latest_read(context) do
+    assert_receive {:hal_c2_providers_changed, _}, 15_000
+
+    case Acp.provider("codex")["versionAdvisory"]["latestVersion"] do
+      nil -> latest_read(context)
+      version -> version
+    end
+  end
 end
