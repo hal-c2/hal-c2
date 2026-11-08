@@ -58,6 +58,12 @@ Rectangle {
     function choiceLabel(choice) {
         return choice.isDefault ? qsTr("%1 (Default)").arg(choice.label) : choice.label;
     }
+    // A select option's chip text: its chosen value's label, else the option's own. By value, not
+    // the picker's currentIndex, which lags a model change by a binding.
+    function selectedLabel(option) {
+        const chosen = (option?.choices ?? []).find(choice => choice.id === option.value);
+        return chosen ? chosen.label : (option?.label ?? "");
+    }
     readonly property var effortOption: ready ? (model.options.find(option => option.type === "select") ?? null) : null
     // The model's other options, such as Claude's fast mode and context window.
     // By id: every read of model.options converts to fresh objects, so identity never matches.
@@ -1435,7 +1441,7 @@ Rectangle {
                                     visible: present && !composer.folded.includes(effortPicker)
                                     model: composer.effortOption ? composer.effortOption.choices.map(choice => composer.choiceLabel(choice)) : []
                                     currentIndex: composer.effortOption ? composer.effortOption.choices.findIndex(choice => choice.id === composer.effortOption.value) : -1
-                                    displayText: currentIndex < 0 ? (composer.effortOption ? composer.effortOption.label : "") : composer.effortOption.choices[currentIndex].label
+                                    displayText: composer.selectedLabel(composer.effortOption)
                                     Accessible.name: composer.effortOption ? composer.effortOption.label : ""
                                     onActivated: index => Shell.dispatch("composer.option.set", {
                                             id: composer.effortOption.id,
@@ -1460,7 +1466,7 @@ Rectangle {
                                         visible: !composer.folded.includes(selectChip)
                                         model: (option.choices ?? []).map(choice => composer.choiceLabel(choice))
                                         currentIndex: (option.choices ?? []).findIndex(choice => choice.id === option.value)
-                                        displayText: currentIndex < 0 ? (option.label ?? "") : option.choices[currentIndex].label
+                                        displayText: composer.selectedLabel(option)
                                         Accessible.name: option.label ?? ""
                                         onActivated: index => Shell.dispatch("composer.option.set", {
                                                 id: selectChip.option.id,
