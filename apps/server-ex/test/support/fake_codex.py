@@ -12,6 +12,7 @@
 # "answer" and replies with its contents, or with no message when it is empty; a steer
 # with "hold ..." writes "steer.held" and waits for the gate file "steer" before it answers.
 import glob, json, os, re, signal, string, sys, threading, time, uuid
+import fake_codex_goals as goals  # thread/goal/*: Codex's own goal
 
 # A "will-not-exit" file in the working directory has the process ignore SIGTERM and a
 # closed stdin, as a wedged app-server does: only SIGKILL ends it.
@@ -43,6 +44,9 @@ interrupted_turns = set()
 def send(msg):
     with send_lock:
         write(msg)
+    goals.sent(msg)
+
+goals.setup(send)
 
 def write(msg):
     # FAKE_CODEX_FRAMING plays the wire's shapes: "split" writes a message in two
@@ -733,6 +737,8 @@ for line in sys.stdin:
         send({"id": mid, "result": {}})
         if not ignore:
             send({"method": "turn/completed", "params": {"threadId": thread_id, "turn": {"id": params["turnId"], "status": "interrupted"}}})
+    elif (method or "").startswith("thread/goal/"):
+        goals.request(mid, method, params)
     else:
         send({"id": mid, "error": {"code": -32601, "message": method}})
 

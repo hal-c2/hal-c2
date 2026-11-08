@@ -665,9 +665,10 @@ Feature: Follow-ups while the agent is working
     When the user removes a queued message on the phone
     Then the queued message is cancelled
 
-  # Blocked on the MC driving goals at all: "/goal drives Codex's own goal"
-  # (providers/codex.feature) and "Claude's goal shows as a work state"
-  # (providers/claude.feature) have to land first.
+  # Blocked on Claude's goals: the MC drives Codex's ("/goal drives Codex's own goal",
+  # providers/codex.feature), but "Claude's goal shows as a work state"
+  # (providers/claude.feature) has to land first. The Codex rows also need dispatch to
+  # route a goal command around the queue and stop the running turn for it.
   @blocked
   Rule: A goal command takes over the running turn on Codex and Claude
 
