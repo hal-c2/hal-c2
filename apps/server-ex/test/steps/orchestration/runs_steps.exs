@@ -2215,6 +2215,21 @@ defmodule HalC2.Steps.Orchestration.Runs do
     )
   end
 
+  step "the user sends {string} another message and the left-over turn reports before it ends",
+       %{args: [thread]} = context do
+    File.rm!(Path.join(context.mc.home, "ignore-interrupt"))
+    File.write!(Path.join(context.mc.home, "ignore-interrupt-reports"), "")
+    next_message(context, thread)
+  end
+
+  step "the new run records nothing the left-over turn reported", context do
+    entities = &World.entities(context, context.thread, &1)
+    refute Enum.any?(entities.("message"), &(&1["text"] =~ "Left over"))
+    refute Enum.any?(entities.("runtime-request"), &(&1["id"] =~ "cmd-leftover"))
+    refute Enum.any?(entities.("turn-item"), &(&1["id"] =~ "leftover"))
+    context
+  end
+
   step "the new run fails because the previous turn is still running", context do
     assert ["turn/interrupt"] = context.methods_since
 

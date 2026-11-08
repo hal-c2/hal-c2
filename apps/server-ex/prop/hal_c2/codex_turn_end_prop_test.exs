@@ -329,7 +329,7 @@ defmodule HalC2.CodexTurnEndPropTest do
     expected = next_state(state, nil, call)
 
     seen.run == expected.run and seen.subs == expected.subs and
-      seen.follows == expected.follows and
+      seen.follows == expected.follows and seen.strays == 0 and
       (expected.pt == nil or seen.pt == expected.pt) and
       (name != :recover or seen.on_time)
   end
@@ -456,10 +456,12 @@ defmodule HalC2.CodexTurnEndPropTest do
 
   # The next message to the thread, while its provider turn is left over: Codex ends
   # the left-over turn when the message's stop reaches it, or (`:ignored`) goes on.
+  # Either way the left-over turn first reports an answer, an approval and a subagent,
+  # which the message's run, waiting for it, does not take (`strays`).
   def follow_up(how) do
-    if how == :honoured,
-      do: File.rm(Process.get(:ignore_interrupt)),
-      else: File.write!(Process.get(:ignore_interrupt), "")
+    ignore = Process.get(:ignore_interrupt)
+    if how == :honoured, do: File.rm(ignore), else: File.write!(ignore, "")
+    File.write!(ignore <> "-reports", "")
 
     n = length(observed().follows) + 1
     selection = %{"instanceId" => "codex", "model" => "gpt-5.4"}
@@ -592,7 +594,12 @@ defmodule HalC2.CodexTurnEndPropTest do
       run: run["status"],
       subs: state |> StreamState.list("subagent") |> Enum.map(& &1["status"]),
       pt: turn && turn["status"],
-      follows: follows |> Enum.sort_by(& &1["ordinal"]) |> Enum.map(& &1["status"])
+      follows: follows |> Enum.sort_by(& &1["ordinal"]) |> Enum.map(& &1["status"]),
+      strays:
+        Enum.count(
+          ~w(message runtime-request subagent turn-item),
+          &Enum.any?(Map.keys(StreamState.get(state, &1)), fn id -> id =~ "leftover" end)
+        )
     }
   end
 

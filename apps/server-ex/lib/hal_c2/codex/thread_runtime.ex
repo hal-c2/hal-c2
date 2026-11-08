@@ -609,6 +609,17 @@ defmodule HalC2.Codex.ThreadRuntime do
   def handle_info({:json_rpc, _conn, {:notification, method, params}}, state),
     do: {:noreply, notification(method, params || %{}, state)}
 
+  # A turn held for a left-over one (`stop_leftover/1`) has not started: what Codex asks
+  # meanwhile is the left-over turn's, and is answered as between turns.
+  def handle_info(
+        {:json_rpc, conn, {:request, id, method, params}},
+        %{turn: %{} = turn, leftover: %{hold: _}} = state
+      ) do
+    message = {:json_rpc, conn, {:request, id, method, params}}
+    {:noreply, state} = handle_info(message, %{state | turn: nil})
+    {:noreply, %{state | turn: turn}}
+  end
+
   # Codex may not pile up requests on the user: with 32 already waiting, another
   # is refused at once and the waiting ones are unaffected.
   def handle_info({:json_rpc, conn, {:request, id, method, _params}}, state)
@@ -2087,7 +2098,7 @@ defmodule HalC2.Codex.ThreadRuntime do
        when event in ["started", "completed"] do
     # Between turns only their states still land (a subagent finishing after
     # its parent's turn): nothing new is spawned for a turn that has ended.
-    if state.turn,
+    if state.turn && not held?(state),
       do: state |> flush() |> spawned(item) |> subagent_states(item),
       else: subagent_states(state, item)
   end
@@ -2145,6 +2156,10 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp notification(_method, _params, %{turn: %{native_turn_id: nil}, goal_hold: hold} = state)
        when hold != nil,
        do: state
+
+  # Nor are the left-over turn's reports the turn held for it (`stop_leftover/1`), which
+  # has not started: everything above (its end, background commands, subagents) lands.
+  defp notification(_method, _params, %{turn: %{}, leftover: %{hold: _}} = state), do: state
 
   # Between turns, everything above (background commands, memory threads,
   # subagents) still lands; a turn's own notifications need its turn.
@@ -2581,6 +2596,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp stop_leftover(state), do: %{state | leftover: nil}
+
+  defp held?(state), do: match?(%{turn: %{}, leftover: %{hold: _}}, state)
 
   # The held run is the runtime's from here, so its crash ends the run (TurnWatch).
   defp hold_for_leftover(state) do

@@ -87,6 +87,7 @@ defmodule HalC2.UnrecordedTurnsProofTest do
         "stops an idle session; turns.maude holds it, and a dry runtime is never idle",
       "HalC2.Codex.ThreadRuntime handle_call {:adopt, %{dir: _, snapshot: _}}" =>
         "programs here stop with the MC; a failed adoption settles as restart does",
+      # A turn held for a left-over one is between turns for what Codex asks meanwhile.
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:request, _, _, _}}" => @items,
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:request, _, \"item/tool/requestUserInput\", _}}" =>
         @items,

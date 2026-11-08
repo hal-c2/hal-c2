@@ -288,6 +288,15 @@ Feature: Runs and turns
     Then the new run fails because the previous turn is still running
     And the left-over provider turn still reads as running
 
+  # hal-c2#1398: while the follow-up waited for the left-over turn to end, what Codex
+  # reported of that turn was recorded as the follow-up's, and its approvals asked for it.
+  @mc
+  Scenario: A follow-up waiting on a left-over provider turn does not take that turn's reports
+    Given an earlier run of "t1" failed while its provider turn kept running
+    When the user sends "t1" another message and the left-over turn reports before it ends
+    Then the left-over provider turn is interrupted first
+    And the new run records nothing the left-over turn reported
+
   # Upstream #22846: the failure path wrote a turn that had already completed or failed as
   # interrupted, and wrote it even when the interrupt itself failed.
   @mc @priority-high

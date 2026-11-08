@@ -758,6 +758,17 @@ for line in sys.stdin:
                 sys.exit("fake Codex: interrupt held past 120s (stuck hold-interrupt gate)")
             time.sleep(0.01)
         send({"id": mid, "result": {}})
+        # A file named as FAKE_CODEX_IGNORE_INTERRUPT_FILE's with "-reports" after it has the
+        # stopped turn report an answer, ask an approval and start a subagent before it
+        # ends, once.
+        reports = os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT_FILE", "/nonexistent") + "-reports"
+        if os.path.exists(reports):
+            os.remove(reports)
+            ctx = {"threadId": thread_id, "turnId": params["turnId"]}
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-leftover", "text": ""}}})
+            send({"method": "item/agentMessage/delta", "params": {**ctx, "itemId": "msg-leftover", "delta": "Left over."}})
+            send({"id": "leftover-approval", "method": "item/commandExecution/requestApproval", "params": {**ctx, "itemId": "cmd-leftover", "command": "touch left-over"}})
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "collabAgentToolCall", "id": "collab-leftover", "tool": "spawnAgent", "prompt": "Look around", "senderThreadId": thread_id, "receiverThreadIds": ["native-leftover"], "status": "inProgress", "agentsStates": {"native-leftover": {"status": "running"}}}}})
         if not ignore:
             send({"method": "turn/completed", "params": {"threadId": thread_id, "turn": {"id": params["turnId"], "status": "interrupted"}}})
     elif (method or "").startswith("thread/goal/"):
