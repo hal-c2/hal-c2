@@ -459,6 +459,7 @@ private:
   // whether its thread exists. Sends still on their way take the open
   // thread's newest message as their `after` once it is known.
   void reconcileUnsent();
+  void forgetTakenPicks();
   // Sends the outbox's waiting messages of each thread whose environment is
   // connected, in the order they were written; drops those of a thread the
   // environment no longer has. One window drains it.

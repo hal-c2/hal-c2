@@ -682,6 +682,22 @@ QVariantMap effortBars(const QJsonObject& descriptor, const QString& current) {
   return {{QStringLiteral("count"), count}, {QStringLiteral("filled"), startsAtOff ? at : at + 1}, {QStringLiteral("special"), QString()}};
 }
 
+bool pickMatchesThread(const QJsonObject& pick, const QJsonObject& thread) {
+  const auto options = [](const QJsonObject& selection) {
+    QMap<QString, QJsonValue> byId;
+    for (const QJsonValue& entry : selection.value(QLatin1String("options")).toArray()) {
+      const QString id = entry.toObject().value(QLatin1String("id")).toString();
+      const QJsonValue value = entry.toObject().value(QLatin1String("value"));
+      if (id == QLatin1String("fastMode") && value == QJsonValue(false)) continue;
+      byId.insert(id, value);
+    }
+    return byId;
+  };
+  return !pick.value(QLatin1String("model")).toString().isEmpty() &&
+         pick.value(QLatin1String("instanceId")) == thread.value(QLatin1String("instanceId")) &&
+         pick.value(QLatin1String("model")) == thread.value(QLatin1String("model")) && options(pick) == options(thread);
+}
+
 bool ultrathinkInWords(const QString& text) {
   // The picker writes the prefix with a capital; typed any other way it is
   // the user's own word.

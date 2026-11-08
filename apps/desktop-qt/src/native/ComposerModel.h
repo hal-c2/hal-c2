@@ -106,10 +106,14 @@ std::optional<QString> steppedChoice(const QJsonObject& descriptor, int directio
 // is not the reasoning effort, has fewer than two levels, or a value it does
 // not list.
 QVariantMap effortBars(const QJsonObject& descriptor, const QString& current);
-// Whether `text` asks for ultrathink in its own words, past the prefix the
-// effort control puts there; the effort is then the prompt's (upstream's
+// Whether `text` asks for ultrathink in its own words, past the "Ultrathink:"
+// prefix a prompt can start with; the effort is then the prompt's (upstream's
 // isClaudeUltrathinkPrompt).
 bool ultrathinkInWords(const QString& text);
+// Whether a model picked in a thread's draft is what the thread already runs:
+// the same account, model and options, in any order, fast mode off counting
+// as unset (upstream's draftModelPickMatchesThread).
+bool pickMatchesThread(const QJsonObject& pick, const QJsonObject& thread);
 
 // `composer.runtimeModes`: [{value, label, description}].
 QVariantList runtimeModes(const Instance* instance);

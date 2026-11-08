@@ -9,6 +9,8 @@
 // provider until the MC records one, and a model of another provider than the
 // one it names moves the thread to it; a thread naming none is not moved. The
 // interaction mode picked goes before the message, and a provider change between.
+// A model picked for a thread is the thread's own again once the thread runs
+// it, so a model recorded later from elsewhere shows.
 // A thread holds a provider session per instance it ran on, steering or
 // not, and a switch keeps the old one: only the current instance's session
 // decides whether a follow-up steers or queues.
@@ -221,6 +223,13 @@ struct Model {
     }
     return true;
   }
+  // A thread's pick that the thread now runs is its own again, so a later
+  // change from elsewhere shows.
+  void settle(const QString& thread) {
+    if (!isThread(thread) || !targets.contains(thread)) return;
+    Target& target = targets[thread];
+    if (!target.model.isEmpty() && target.model == recorded.value(thread)) target.model.clear();
+  }
   QString selected(const QString& target) const {
     const QString picked = targets.value(target).model;
     if (!picked.isEmpty()) return picked;
@@ -287,7 +296,10 @@ void answerPick(Model& m, const HeldPick& pick) {
 // and a mode change sets its mode.
 void took(Model& m, const QString& thread, const QStringList& commands) {
   for (const QString& command : commands) {
-    if (command.startsWith(QLatin1String("provider|"))) m.recorded[thread] = command.section(u'|', 2);
+    if (command.startsWith(QLatin1String("provider|"))) {
+      m.recorded[thread] = command.section(u'|', 2);
+      m.settle(thread);
+    }
     if (command.startsWith(QLatin1String("interaction|"))) m.interactions[thread] = command.section(u'|', 1);
   }
 }
@@ -1029,6 +1041,7 @@ struct PickModel : Command {
     Target& target = m.targets[m.open];
     target.model = model;
     target.carried = false;
+    m.settle(m.open);
   }
   void run(const Model& m0, Sut& sut) const override {
     sut.bridge->dispatch(QStringLiteral("composer.model.select"),
@@ -1102,7 +1115,10 @@ struct Recorded : Command {
   void checkPreconditions(const Model& m) const override {
     RC_PRE(!m.lagging && !m.queues.contains(thread) && !m.limbo.contains(thread));
   }
-  void apply(Model& m) const override { m.recorded[thread] = model; }
+  void apply(Model& m) const override {
+    m.recorded[thread] = model;
+    m.settle(thread);
+  }
   void run(const Model& m0, Sut& sut) const override {
     QJsonObject row = sut.mc.threads.value(thread);
     row.insert(QStringLiteral("modelSelection"), Sut::selectionOf(model));

@@ -411,6 +411,42 @@ private slots:
       }
     }));
   }
+  void aPickMatchesTheThreadThatRunsIt() {
+    QVERIFY(rc::check("a pick matches the thread only on its account, model and options, in any order, fast mode off as unset", [] {
+      const auto option = [](const QString& id, const QJsonValue& value) { return QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("value"), value}}; };
+      const std::vector<QJsonObject> pool{option(QStringLiteral("effort"), QStringLiteral("low")), option(QStringLiteral("effort"), QStringLiteral("high")),
+                                          option(QStringLiteral("fastMode"), true), option(QStringLiteral("fastMode"), false),
+                                          option(QStringLiteral("contextWindow"), QStringLiteral("1m"))};
+      // One value per option id, so a selection reads as a map.
+      const auto selection = [&](const QString& instance, const QString& model) {
+        QList<QJsonObject> chosen;
+        QMap<QString, QJsonValue> byId;
+        for (const QJsonObject& entry : pool) {
+          const QString id = entry.value(QLatin1String("id")).toString();
+          if (byId.contains(id) || !*rc::gen::arbitrary<bool>()) continue;
+          byId.insert(id, entry.value(QLatin1String("value")));
+          chosen.append(entry);
+        }
+        if (*rc::gen::arbitrary<bool>()) std::reverse(chosen.begin(), chosen.end());
+        QJsonArray options;
+        for (const QJsonObject& entry : chosen) options.append(entry);
+        return std::pair{QJsonObject{{QStringLiteral("instanceId"), instance}, {QStringLiteral("model"), model}, {QStringLiteral("options"), options}}, byId};
+      };
+      const std::vector<QString> instances{QStringLiteral("codex"), QStringLiteral("claudeAgent")};
+      const std::vector<QString> models{QStringLiteral("gpt-5"), QStringLiteral("claude-opus")};
+      const auto [pick, picked] = selection(*rc::gen::elementOf(instances), *rc::gen::elementOf(models));
+      const auto [thread, runs] = selection(*rc::gen::elementOf(instances), *rc::gen::elementOf(models));
+      const auto withoutFastOff = [](QMap<QString, QJsonValue> byId) {
+        if (byId.value(QStringLiteral("fastMode")) == QJsonValue(false)) byId.remove(QStringLiteral("fastMode"));
+        return byId;
+      };
+      const bool same = pick.value(QLatin1String("instanceId")) == thread.value(QLatin1String("instanceId")) &&
+                        pick.value(QLatin1String("model")) == thread.value(QLatin1String("model")) && withoutFastOff(picked) == withoutFastOff(runs);
+      RC_ASSERT(composer::pickMatchesThread(pick, thread) == same);
+      RC_ASSERT(composer::pickMatchesThread(thread, pick) == same);
+      RC_ASSERT(composer::pickMatchesThread(pick, pick));
+    }));
+  }
 };
 
 HAL_C2_PROP_MAIN(ComposerPureProp)

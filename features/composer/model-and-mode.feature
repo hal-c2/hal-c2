@@ -253,7 +253,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the next turn moves the thread to Claude before it runs on "claude-opus"
 
   # Upstream #20886: a model picked earlier in a draft kept overriding a change made elsewhere.
-  @backlog @shared @mobile
+  @shared @mobile @backlog-mobile @backlog-tui
   Scenario: A draft follows a model change made on another client
     Given the user picked "gpt-5" in the draft of a thread on this client
     And then changed the thread to "claude-opus" on another client

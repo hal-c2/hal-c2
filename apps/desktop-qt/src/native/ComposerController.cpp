@@ -241,6 +241,7 @@ void ComposerController::activate() {
   // The row says whether a turn runs, which decides follow-ups and the plan.
   connect(m_store, &ShellStore::changed, this, [this] {
     carryDrafts();
+    forgetTakenPicks();
     reconcileUnsent();
     settleRuntimeModes();
     refreshPathSearch();
@@ -1904,6 +1905,21 @@ std::optional<QString> ComposerController::newestBefore(const QString& thread) c
 // rest come back to the draft: into it when it is empty, else behind a toast
 // that restores them once it is. A new thread's first send waits for the
 // shell to know whether the thread exists.
+// A model picked in a started thread's draft that the thread now runs is the
+// thread's again, so a change made on another client shows here; a pick the
+// thread has not taken stays (upstream #20886).
+void ComposerController::forgetTakenPicks() {
+  bool forgot = false;
+  for (auto it = m_drafts.begin(); it != m_drafts.end(); ++it) {
+    if (!it->modelSelection || it->multipleModels) continue;
+    const auto thread = m_store->thread(it.key());
+    if (!thread || !composer::pickMatchesThread(*it->modelSelection, thread->modelSelection)) continue;
+    it->modelSelection.reset();
+    forgot = true;
+  }
+  if (forgot) save();
+}
+
 void ComposerController::reconcileUnsent() {
   // A send made before its thread's messages were known measures from when
   // they are, so a newer message from elsewhere still drops it.
@@ -3880,6 +3896,7 @@ bool ComposerController::selectModel(const QString& target, const QString& insta
   kept.modelSelection = chosen;
   kept.multipleModels.reset();
   kept.carried = false;
+  forgetTakenPicks();
   NativeShell::of(this)->controller<WorkspaceController>()->publish();
   save();
   publish();
@@ -3915,6 +3932,7 @@ bool ComposerController::setOption(const QString& target, const QString& id, con
                              *options);
   m_drafts[target].modelSelection = chosen;
   m_drafts[target].carried = false;
+  forgetTakenPicks();
   save();
   publish();
   return true;
