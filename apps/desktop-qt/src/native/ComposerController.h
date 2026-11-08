@@ -104,7 +104,7 @@ class TimelineModel;
 // goes to each model so chosen),
 // composer.option.set {id, value}, composer.runtimeMode.set {mode},
 // composer.interactionMode.set {mode}, composer.submit {text, intent, edit},
-// composer.interrupt, composer.attach {files, folders} (a file is {name,
+// composer.interrupt {runId} (only that run, when named), composer.attach {files, folders} (a file is {name,
 // mimeType, base64} for an image, {name, mimeType, path} for any other file,
 // {name, text} for a pasted text), composer.attachment.remove {id},
 // composer.attachment.retry {id}, composer.question.attach {requestId,
@@ -395,7 +395,7 @@ private:
     bool waited = false;
   };
 
-  bool interrupt();
+  bool interrupt(const QString& only = {});
   bool submit(const QVariantMap& payload);
   // A new thread's first send: its images, then the thread with its message.
   bool submitDraft(const QString& draftId, const QVariantMap& payload);

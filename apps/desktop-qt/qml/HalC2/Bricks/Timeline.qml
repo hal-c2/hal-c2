@@ -7,8 +7,8 @@ import "js/changedFilesTree.js" as ChangedFilesTree
 // A thread's timeline: the rows of a TimelineModel (Threads.timeline), or any
 // model with its roles (rowId, kind, author, text, streaming, title, status,
 // statusLabel, marker, entries, hiddenCount, expanded, files, time, icon,
-// intent, attribution, meta, attachments, and optionally summary, summaryFailed
-// and sentFiles).
+// intent, attribution, meta, attachments, and optionally summary, summaryFailed,
+// sentFiles and stopRun).
 //
 //   Timeline { anchors.fill: parent; model: Threads.timeline }
 //
@@ -804,7 +804,7 @@ Item {
             required property var intent
             required property var attribution
             required property var meta
-            // Roles a model may leave out (summary, summaryFailed).
+            // Roles a model may leave out (summary, summaryFailed, stopRun).
             required property var model
             required property var messageId
             required property var attachments
@@ -1576,8 +1576,8 @@ Item {
                             exited: entry.exitCode !== undefined && entry.exitCode !== null,
                             exitCode: entry.exitCode ?? 0,
                             preview: entry.preview ?? "",
-                            // A plugin's notice that offers to stop the run while it works.
-                            interrupt: entry.interrupt === true,
+                            // The run a plugin's notice offers to stop while it works; empty when none.
+                            interrupt: entry.interrupt ?? "",
                             // Work a fork carried over: "Inherited", and the thread it came from.
                             visibility: entry.visibility ?? "",
                             source: entry.source ?? "",
@@ -1595,12 +1595,11 @@ Item {
                             })
                         };
                     }
-                    // A plugin's notice in the group offers to stop the run
-                    // while it works; the live row carries its Stop too.
-                    property bool stopOffered: false
+                    // A plugin's notice in the group, shown or folded, offers to
+                    // stop its own run while that works; the live row carries its Stop too.
+                    readonly property string stopRun: row.model.stopRun ?? ""
                     function syncCalls() {
                         const next = root.list(row.entries);
-                        stopOffered = next.some(entry => entry.interrupt === true);
                         let at = 0;
                         for (; at < next.length && at < calls.count; ++at) {
                             const want = callOf(next[at]);
@@ -1673,10 +1672,13 @@ Item {
                             id: groupStop
                             objectName: "noticeInterrupt"
                             anchors.verticalCenter: parent.verticalCenter
-                            visible: workGroup.merged && workGroup.stopOffered
+                            visible: workGroup.merged && workGroup.stopRun.length > 0
                             text: qsTr("Stop")
                             Accessible.name: qsTr("Stop the agent")
-                            onClicked: Shell.dispatch("composer.interrupt")
+                            // The notice's run, never whichever run is current by now.
+                            onClicked: Shell.dispatch("composer.interrupt", {
+                                runId: workGroup.stopRun
+                            })
                         }
                         RowText {
                             objectName: "workGroupStatus"
@@ -1858,10 +1860,12 @@ Item {
                                             id: stopLink
                                             objectName: "noticeInterrupt"
                                             anchors.verticalCenter: parent.verticalCenter
-                                            visible: call.modelData.interrupt === true
+                                            visible: call.modelData.interrupt.length > 0
                                             text: qsTr("Stop")
                                             Accessible.name: qsTr("Stop the agent")
-                                            onClicked: Shell.dispatch("composer.interrupt")
+                                            onClicked: Shell.dispatch("composer.interrupt", {
+                                                runId: call.modelData.interrupt
+                                            })
                                         }
                                         RowText {
                                             objectName: "workCallVisibility"

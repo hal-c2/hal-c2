@@ -155,6 +155,9 @@ public:
     SpanRole,
     // The scheduled task that sent a user message, which opens from it; empty for any other.
     ScheduledTaskRole,
+    // The run a plugin's notice in a work group offers to stop while that run works,
+    // shown or behind "+N previous tool calls"; empty when none does.
+    StopRunRole,
   };
 
   // Calls shown per collapsed work group.
@@ -432,6 +435,8 @@ private:
   // `live`: the latest call of a running turn, whose command reads as what it
   // is doing ("Running npm").
   QVariantMap entry(const QJsonObject& item, bool live = false) const;
+  // Whether `item` is a plugin's notice offering to stop its run, and the run works.
+  bool offersStop(const QJsonObject& item) const;
   // A work group's last call as it reads while its turn runs or not, by `row.live`.
   QVariantMap liveEntry(const Row& row) const;
   // When a row or turn item happened, or invalid.

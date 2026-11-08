@@ -525,7 +525,7 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     return true;
   }
 
-  if (action == QLatin1String("composer.interrupt")) return interrupt();
+  if (action == QLatin1String("composer.interrupt")) return interrupt(map.value(QStringLiteral("runId")).toString());
   if (action == QLatin1String("composer.submit")) return submit(map);
   if (action == QLatin1String("composer.attach")) {
     if (target.isEmpty()) return true;
@@ -831,8 +831,9 @@ QVariantMap ComposerController::stashState() const {
 }
 
 // Stops the thread's active run, or the latest one while it still waits on
-// the provider or background work.
-bool ComposerController::interrupt() {
+// the provider or background work. A Stop naming its run (`only`, a plugin
+// notice's) stops nothing once another run is the one to stop.
+bool ComposerController::interrupt(const QString& only) {
   if (onPage()) {
     if (auto* spaces = NativeShell::of(this)->controller<SpaceController>()) {
       spaces->handle(QStringLiteral("space.agent.stop"), QVariantMap());
@@ -845,7 +846,7 @@ bool ComposerController::interrupt() {
   if (!runId && (thread->activityRunStatus == QStringLiteral("waiting") || thread->pendingBackgroundTasks > 0)) {
     runId = thread->latestRunId;
   }
-  if (!runId) return true;
+  if (!runId || (!only.isEmpty() && *runId != only)) return true;
   // The turn the user stops here stays open once it settles.
   if (m_timeline) m_timeline->keepOpen(*runId);
   m_client->dispatchCommand(this, thread->environmentId,
