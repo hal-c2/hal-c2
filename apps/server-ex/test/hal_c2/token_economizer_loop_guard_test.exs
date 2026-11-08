@@ -420,6 +420,90 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       {g, _} = stuck_turn(g, 12, later)
       assert g.judge_calls >= 2
     end
+
+    test "decides nothing while its redirect is on its way, and starts afresh only once it lands" do
+      opts = [envelope: 10.0, thr: Rules.defaults(), nudge_budget: 1]
+
+      {g, [{_, {:nudge, _}}]} =
+        Enum.reduce_while(1..120, {Turn.new("t"), []}, fn i, {g, _} ->
+          {g, decision, _} =
+            if rem(i, 2) == 0,
+              do: edit(g, opts),
+              else: Turn.fold(g, "Bash", %{"command" => "pytest -q"}, "FAILED t", 1, opts)
+
+          if decision, do: {:halt, {Turn.redirect(g), [{i, decision}]}}, else: {:cont, {g, []}}
+        end)
+
+      # The calls the agent made before it took the redirect: still stuck, nothing decided.
+      {g, decisions} = stuck_turn(g, 40, opts)
+      assert decisions == [] and g.redirecting and g.segment == 0
+
+      # Refused: the segment goes on, and its next stuck call is offered a stop.
+      refused = Turn.redirected(g, false)
+      assert refused.segment == 0 and refused.redirects == 0
+      assert {_, [{1, {:abort, _}}]} = stuck_turn(refused, 2, opts)
+
+      landed = Turn.redirected(g, true)
+      assert landed.segment == 1 and landed.st.turns == 0 and landed.redirects == 1
+    end
+  end
+
+  describe "the ended-green proxy" do
+    test "a check run through mise exec is a verification, and its failure is not green" do
+      assert Turn.status_of_tests("mise exec -- mix test test/a_test.exs") == "own"
+      assert Turn.status_of_tests("mise x elixir@1.18 -- mix test") == "own"
+
+      g =
+        Turn.new()
+        |> fold("Edit", %{"file_path" => "/r/a.ex"}, "ok")
+        |> fold("Bash", %{"command" => "mise exec -- mix test"}, "1 test, 1 failure", 2)
+
+      refute Turn.resolved_proxy(g)
+    end
+
+    test "an edit that failed changed nothing, so the failing check before it still counts" do
+      g =
+        Turn.new()
+        |> fold("Bash", %{"command" => "pytest -q"}, "FAILED t - AssertionError", 1)
+        |> fold("Edit", %{"file_path" => "/r/a.py"}, "String to replace not found in file.", 1)
+
+      refute Turn.resolved_proxy(g)
+      assert g.edits == 0
+
+      assert Turn.resolved_proxy(fold(g, "Edit", %{"file_path" => "/r/a.py"}, "ok", 0))
+    end
+  end
+
+  describe "the judge's digest" do
+    defp digest(cmd),
+      do: State.new() |> State.update("Bash", %{"command" => cmd}, "") |> State.recent_digest()
+
+    defp shell_edit(cmd) do
+      g = Turn.new()
+      {g, nil, nil} = Turn.fold(g, "Bash", %{"command" => cmd}, "", 0)
+      State.recent_digest(g.st)
+    end
+
+    test "names a command that writes files and their names, never what it writes" do
+      patch =
+        "apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: src/a.py\n" <>
+          "+SECRET = 1\n*** End Patch\nPATCH"
+
+      for cmd <- [
+            patch,
+            "bash -lc \"" <> patch <> "\"",
+            "printf 'SECRET = 1\\n' > src/a.py",
+            "sed -i 's/x = 0/SECRET = 1/' src/a.py",
+            "cat > src/a.py <<EOF\nSECRET = 1\nEOF"
+          ] do
+        text = shell_edit(cmd)
+        refute text =~ "SECRET", "#{inspect(cmd)} showed #{inspect(text)}"
+        assert text =~ "a.py", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
+      # What only runs or searches keeps its words.
+      assert digest(~s(grep -rn "def handle" src)) =~ ~s(grep -rn "def handle" src)
+    end
   end
 
   describe "missed events" do
@@ -596,11 +680,102 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
       refute Map.has_key?(Judge.run("digest", 0.7, unsure), "_nudge")
 
+      # A reply with no words is paid for all the same, and cached input is part of the
+      # input, not more of it.
+      blank = fn
+        _prompt, %{"stuck" => _} ->
+          {:ok, %{"stuck" => true, "confidence" => 0.9, "reason" => "same test"},
+           %{"inputTokens" => 10, "cachedInputTokens" => 8, "outputTokens" => 2}}
+
+        _prompt, %{"text" => _} ->
+          {:ok, %{"text" => "  \n "}, %{"inputTokens" => 5, "outputTokens" => 3}}
+      end
+
+      blank_run = Judge.run("digest", 0.7, blank)
+      assert blank_run["_tokens"] == 20
+      refute Map.has_key?(blank_run, "_nudge")
+
       failing = fn _, _ -> {:error, "no model"} end
       assert %{"stuck" => nil} = Judge.run("digest", 0.7, failing)
 
       assert Rules.read_verdict(Judge.run("digest", 0.7, failing), Rules.defaults()) ==
                {false, "judge-ambiguous-spared"}
+    end
+  end
+
+  describe "the plugin's redirects and judge jobs" do
+    defp sleeper(state, thread, kind) do
+      {:ok, pid} = Task.Supervisor.start_child(state.sup, fn -> Process.sleep(:infinity) end)
+      Process.monitor(pid)
+      {pid, put_in(state.tasks[pid], {thread, kind})}
+    end
+
+    defp redirecting(thread) do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = observe(state, started(thread))
+      update_in(state.turns[thread].guard, &Turn.redirect/1)
+    end
+
+    defp delivered(state, thread, result) do
+      entry = %{"threadId" => thread, "runId" => "run-" <> thread, "action" => "nudge"}
+
+      {:noreply, state} =
+        TokenEconomizer.handle_info({:delivered, thread, "run-" <> thread, entry, result}, state)
+
+      state
+    end
+
+    test "a refused redirect is not reported as delivered and leaves the segment as it was" do
+      state =
+        delivered(redirecting("a"), "a", {:error, "Codex cannot take messages while it works."})
+
+      guard = state.turns["a"].guard
+      refute guard.redirecting
+      assert guard.segment == 0 and guard.redirects == 0
+      assert [%{"action" => "nudge", "delivered" => false}] = state.recent
+    end
+
+    test "a redirect that landed starts the next segment and stops the old segment's judge job" do
+      {judge, state} = sleeper(redirecting("a"), "a", :judge)
+      {other, state} = sleeper(state, "b", :judge)
+      state = delivered(state, "a", {:ok, %{}})
+
+      assert_receive {:DOWN, _, :process, ^judge, _}
+      assert Process.alive?(other)
+      assert state.turns["a"].guard.segment == 1
+      assert [%{"delivered" => true}] = state.recent
+    end
+
+    test "a turn's end stops its judge job, watching stops deliveries, and off stops every task" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = state |> observe(started("a")) |> observe(started("b"))
+      {judge, state} = sleeper(state, "a", :judge)
+      {delivery, state} = sleeper(state, "b", :delivery)
+
+      state =
+        observe(state, %{
+          "type" => "turn.finished",
+          "threadId" => "a",
+          "runId" => "run-a",
+          "status" => "completed"
+        })
+
+      assert_receive {:DOWN, _, :process, ^judge, _}
+      assert Process.alive?(delivery)
+
+      {:reply, :ok, state} =
+        TokenEconomizer.handle_call({:settings, %{"loopGuard" => "watch"}}, nil, state)
+
+      assert_receive {:DOWN, _, :process, ^delivery, _}
+      assert state.tasks == %{}
+
+      {judge, state} = sleeper(state, "b", :judge)
+
+      {:reply, :ok, state} =
+        TokenEconomizer.handle_call({:settings, %{"loopGuard" => "off"}}, nil, state)
+
+      assert_receive {:DOWN, _, :process, ^judge, _}
+      assert state.tasks == %{} and state.turns == %{}
     end
   end
 end

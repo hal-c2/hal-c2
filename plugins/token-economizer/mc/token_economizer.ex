@@ -13,15 +13,17 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   It hears every thread's turns. Each turn gets a guard (`LoopGuard.Turn`) that folds its
   tool calls as they end. When the guard finds the turn stuck in a loop, the plugin
-  steers the agent once with a redirect and says so in a notice; if the turn still looks
-  stuck after that, a notice offers to stop it. The plugin never stops a turn itself:
-  the person decides.
+  steers the agent once with a redirect and, once the agent took it, says so in a notice;
+  if the turn still looks stuck after that, a notice offers to stop it. The plugin never
+  stops a turn itself: the person decides.
 
   What counts as stuck is learned per project and agent, from turns that ended green
   (`LoopGuard.Envelope`), kept in the plugin's data directory. Until a project has
   enough of them the guard watches and does nothing. The paid judge, the user's text
   generation model, runs only when the free gate opens, in a process of its own; its
-  verdict is read at the turn's next call.
+  verdict is read at the turn's next call. The judge's jobs and the deliveries are the
+  plugin's tasks, which end with it: a job is stopped once its segment or turn is over, a
+  delivery once the mode no longer delivers.
 
   A turn whose start the plugin missed is not watched. Missed events (`"dropped"`) mark
   the turns under way as partial, and the turns heard over the next full feed queue
@@ -174,9 +176,14 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   @impl GenServer
   def init(settings) do
+    {:ok, sup} = Task.Supervisor.start_link()
+
     {:ok,
      %{
        settings: settings,
+       # The plugin's tasks, linked to it: `tasks` is pid => {thread id, :judge | :delivery}.
+       sup: sup,
+       tasks: %{},
        # thread id => %{run, project, guard, partial}, the turn under way
        turns: %{},
        # Events still to hear that the feed may have queued before ones it missed.
@@ -220,7 +227,31 @@ defmodule HalC2Plugins.TokenEconomizer do
     # The level and pinned thresholds shape each tracker: read them afresh. Tool
     # pruning reads its settings at each decision, so its evidence stays.
     state = %{state | settings: settings, trackers: %{}}
-    state = if on?(state), do: state, else: %{state | turns: %{}}
+
+    state =
+      cond do
+        not on?(state) ->
+          %{cancel(state, fn _ -> true end) | turns: %{}}
+
+        # Watching delivers nothing: a redirect on its way is stopped, and did not land.
+        shadow?(state) ->
+          state = cancel(state, &match?({_, :delivery}, &1))
+
+          turns =
+            Map.new(state.turns, fn {id, turn} ->
+              {id,
+               update_in(
+                 turn.guard,
+                 &if(&1.redirecting, do: Turn.redirected(&1, false), else: &1)
+               )}
+            end)
+
+          %{state | turns: turns}
+
+        true ->
+          state
+      end
+
     {:reply, :ok, state |> publish() |> publish_prune()}
   end
 
@@ -263,6 +294,34 @@ defmodule HalC2Plugins.TokenEconomizer do
     {:noreply,
      prune_tick(%{state | prune_timers: Map.delete(state.prune_timers, project)}, project)}
   end
+
+  # A delivery's outcome. A redirect that reached its turn starts the turn's next segment,
+  # whose judge job is not the old one's; one that did not leaves the guard to offer a
+  # stop. The status says which, even when the turn has ended since.
+  def handle_info({:delivered, thread_id, run_id, entry, result}, state) do
+    landed = match?({:ok, _}, result)
+
+    unless landed,
+      do:
+        Logger.info(
+          "token-economizer: #{entry["action"]} not delivered to #{thread_id}: #{inspect(result)}"
+        )
+
+    state =
+      case {entry["action"], state.turns[thread_id]} do
+        {"nudge", %{run: ^run_id, guard: %{redirecting: true} = guard}} ->
+          state = if landed, do: cancel_judge(state, thread_id), else: state
+          put_in(state.turns[thread_id].guard, Turn.redirected(guard, landed))
+
+        _ ->
+          state
+      end
+
+    {:noreply, state |> remember(Map.put(entry, "delivered", landed)) |> publish()}
+  end
+
+  def handle_info({:DOWN, _ref, :process, pid, _reason}, state),
+    do: {:noreply, %{state | tasks: Map.delete(state.tasks, pid)}}
 
   def handle_info(_other, state), do: {:noreply, state}
 
@@ -788,7 +847,7 @@ defmodule HalC2Plugins.TokenEconomizer do
         state
 
       {turn, turns} ->
-        state = %{state | turns: turns}
+        state = cancel_judge(%{state | turns: turns}, thread_id)
         state = update_in(state.stats["turns"], &(&1 + 1))
         summary = Turn.summary(turn.guard, stopped_normally)
 
@@ -831,8 +890,14 @@ defmodule HalC2Plugins.TokenEconomizer do
         now: System.monotonic_time(:second)
       )
 
-    if job, do: start_judge(thread_id, turn.run, job, thr["judge_confidence"])
-    state = if job, do: update_in(state.stats["judgeCalls"], &(&1 + 1)), else: state
+    state =
+      if job,
+        do:
+          state
+          |> start_judge(thread_id, turn.run, job, thr["judge_confidence"])
+          |> update_in([:stats, "judgeCalls"], &(&1 + 1)),
+        else: state
+
     {guard, state} = act(state, thread_id, turn.run, guard, decision)
     put_in(state.turns[thread_id].guard, guard)
   end
@@ -841,30 +906,38 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   defp act(state, thread_id, run_id, guard, {:nudge, reason}) do
     {body, guard} = Turn.nudge_body(guard)
-    guard = Turn.after_nudge(guard)
     short = reason |> String.split(":") |> hd()
+    entry = entry(thread_id, run_id, "nudge", reason, guard)
+    state = update_in(state.stats["nudges"], &(&1 + 1))
 
     Logger.info(
       "token-economizer: nudged #{thread_id} (#{reason}, #{guard.cum_turns} tool calls)"
     )
 
-    unless shadow?(state) do
-      # The notice first, so the thread says why before the agent acts on the redirect.
-      deliver(fn ->
-        Host.notice(
-          @id,
-          thread_id,
-          run_id,
-          "TokenEconomizer nudged this turn (#{short}): the same failure kept recurring.",
-          title: "Loop guard"
-        )
+    if shadow?(state) do
+      state = cancel_judge(state, thread_id)
+      entry = Map.put(entry, "delivered", false)
+      {Turn.after_nudge(guard), state |> remember(entry) |> publish()}
+    else
+      # The thread says the agent was redirected only once the provider took it, which
+      # it refuses once the run is over, or while it works if it cannot take a message.
+      state =
+        deliver(state, thread_id, run_id, entry, fn ->
+          with {:ok, _} = steered <- Host.steer(@id, thread_id, run_id, body) do
+            Host.notice(
+              @id,
+              thread_id,
+              run_id,
+              "TokenEconomizer nudged this turn (#{short}): the same failure kept recurring.",
+              title: "Loop guard"
+            )
 
-        Host.steer(@id, thread_id, run_id, body)
-      end)
+            steered
+          end
+        end)
+
+      {Turn.redirect(guard), state}
     end
-
-    state = update_in(state.stats["nudges"], &(&1 + 1))
-    {guard, state |> remember(thread_id, run_id, "nudge", reason, guard) |> publish()}
   end
 
   defp act(state, thread_id, run_id, %{abort_delivered: false} = guard, {:abort, reason}) do
@@ -876,46 +949,64 @@ defmodule HalC2Plugins.TokenEconomizer do
       "token-economizer: #{thread_id} still stuck (#{reason}, #{guard.cum_turns} tool calls)"
     )
 
-    unless shadow?(state) do
-      redirected = if guard.nudges_done > 0, do: " after a redirect", else: ""
+    guard = %{guard | abort_delivered: true}
+    state = update_in(state.stats["aborts"], &(&1 + 1))
+    entry = entry(thread_id, run_id, "stop", reason, guard)
+
+    if shadow?(state) do
+      {guard, state |> remember(Map.put(entry, "delivered", false)) |> publish()}
+    else
+      redirected = if guard.redirects > 0, do: " after a redirect", else: ""
 
       text =
         "TokenEconomizer: this turn still looks stuck#{redirected} (#{short}, #{guard.cum_turns} tool calls). " <>
           "Stop it here if it should not go on."
 
-      deliver(fn ->
-        Host.notice(@id, thread_id, run_id, text, title: "Loop guard", interrupt: true)
-      end)
-    end
+      state =
+        deliver(state, thread_id, run_id, entry, fn ->
+          Host.notice(@id, thread_id, run_id, text, title: "Loop guard", interrupt: true)
+        end)
 
-    guard = %{guard | abort_delivered: true}
-    state = update_in(state.stats["aborts"], &(&1 + 1))
-    {guard, state |> remember(thread_id, run_id, "stop", reason, guard) |> publish()}
+      {guard, state}
+    end
   end
 
   defp act(state, _thread_id, _run_id, guard, {:abort, _}), do: {guard, state}
 
-  defp remember(state, thread_id, run_id, action, reason, guard) do
-    entry = %{
+  defp entry(thread_id, run_id, action, reason, guard) do
+    %{
       "threadId" => thread_id,
       "runId" => run_id,
       "action" => action,
       "reason" => reason,
       "toolCalls" => guard.cum_turns,
-      "delivered" => not shadow?(state),
       "at" => DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
     }
-
-    %{state | recent: Enum.take([entry | state.recent], @recent)}
   end
 
-  # Steering and notices go through orchestration; the guard does not wait on them.
-  defp deliver(fun), do: Task.start(fun)
+  defp remember(state, entry), do: %{state | recent: Enum.take([entry | state.recent], @recent)}
 
-  defp start_judge(thread_id, run_id, job, threshold) do
+  # Steering and notices go through orchestration; the guard does not wait on them, and
+  # hears how each went (`{:delivered, ...}`).
+  defp deliver(state, thread_id, run_id, entry, fun) do
     server = self()
 
-    Task.start(fn ->
+    spawn_task(state, thread_id, :delivery, fn ->
+      result =
+        try do
+          fun.()
+        catch
+          kind, reason -> {:error, Exception.format_banner(kind, reason)}
+        end
+
+      send(server, {:delivered, thread_id, run_id, entry, result})
+    end)
+  end
+
+  defp start_judge(state, thread_id, run_id, job, threshold) do
+    server = self()
+
+    spawn_task(state, thread_id, :judge, fn ->
       verdict =
         try do
           Judge.run(job["digest"], threshold, &Host.generate(@id, &1, &2))
@@ -928,6 +1019,23 @@ defmodule HalC2Plugins.TokenEconomizer do
       send(server, {:verdict, thread_id, run_id, job["id"], verdict})
     end)
   end
+
+  defp spawn_task(state, thread_id, kind, fun) do
+    {:ok, pid} = Task.Supervisor.start_child(state.sup, fun)
+    Process.monitor(pid)
+    put_in(state.tasks[pid], {thread_id, kind})
+  end
+
+  # Stops the tasks `fun` picks. What one sent before it stopped may still come, and is
+  # read as from a job or redirect no longer out.
+  defp cancel(state, fun) do
+    {gone, kept} = Map.split_with(state.tasks, fn {_pid, task} -> fun.(task) end)
+    Enum.each(Map.keys(gone), &Task.Supervisor.terminate_child(state.sup, &1))
+    %{state | tasks: kept}
+  end
+
+  # A thread's judge jobs, once their segment or turn is over: a paid answer no one reads.
+  defp cancel_judge(state, thread_id), do: cancel(state, &(&1 == {thread_id, :judge}))
 
   # --- settings and the envelope's files ----------------------------------------------
 
