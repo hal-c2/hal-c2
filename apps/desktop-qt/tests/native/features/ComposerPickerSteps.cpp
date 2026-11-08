@@ -3,6 +3,9 @@
 // send/stop button (features/composer/model-and-mode.feature,
 // qt-scenarios.feature).
 
+#include <algorithm>
+#include <functional>
+
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QJSValue>
@@ -255,6 +258,15 @@ void toolbarDraft(World& world) {
   composerBrick(world);
 }
 
+// A model with efforts keeps the model control open on them; one without closes it.
+void closedOrOnEfforts(World& world) {
+  world.waitFor([&] {
+    if (!pickerOpen(world)) return true;
+    QQuickItem* focused = world.brick->window().activeFocusItem();
+    return focused && focused->objectName().startsWith(QLatin1String("modelControlEffort:"));
+  }, QStringLiteral("the picker to close or move to the model's efforts"));
+}
+
 const Steps steps([] {
   const QString q = kQuoted;
 
@@ -384,8 +396,9 @@ const Steps steps([] {
     const Expected& second = world.mc.part<Expected>();
     expect(!second.slug.isEmpty(), QStringLiteral("the picker listed one model"));
     expectSwitched(world, second.instanceId, second.slug);
-    expect(!popupOf(picker(world))->property("opened").toBool(), QStringLiteral("the picker stayed open"));
+    closedOrOnEfforts(world);
   });
+  step(QStringLiteral("the model picker closes, or stays open on the model's efforts"), [](World& world, const Captures&, const Table&) { closedOrOnEfforts(world); });
   step(QStringLiteral("the next turn runs on (?:that model|the second model listed)"), [](World& world, const Captures&, const Table&) {
     const Expected& second = world.mc.part<Expected>();
     expect(!second.slug.isEmpty(), QStringLiteral("the picker listed one model"));
@@ -465,7 +478,8 @@ const Steps steps([] {
 
   // The toolbar shortcuts (composer.effort, .mode, .host, .workspace, .branch).
   const QHash<QString, std::pair<QString, QString>> controls{
-      {QStringLiteral("effort picker"), {QStringLiteral("composer.effort"), QStringLiteral("effortPicker")}},
+      // The effort is the model control's.
+      {QStringLiteral("effort picker"), {QStringLiteral("composer.effort"), QStringLiteral("modelPicker")}},
       // A new thread names its permissions in the context strip.
       {QStringLiteral("access mode picker"), {QStringLiteral("composer.mode"), QStringLiteral("contextPermissions")}},
       {QStringLiteral("host picker"), {QStringLiteral("composer.host"), QStringLiteral("hostPicker")}},
@@ -508,7 +522,7 @@ const Steps steps([] {
     }
     return rows;
   };
-  step(QStringLiteral("the composer offers its reasoning effort, plan and access controls"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the composer offers its plan and access controls"), [](World& world, const Captures&, const Table&) {
     openTurnThread(world);
     publishProviders(world.mc, {provider(QStringLiteral("codex"), QStringLiteral("Codex"), {model(QStringLiteral("gpt-5.4"), QStringLiteral("GPT-5.4"))})});
     // Permissions other than the default, which the toolbar names.
@@ -516,10 +530,8 @@ const Steps steps([] {
                          {QStringLiteral("runtimeMode"), QStringLiteral("approval-required")}});
     expect(world.native().controller<SettingsController>()->writeDevice(QStringLiteral("planModeEnabled"), true), QStringLiteral("plan mode could not be turned on"));
     composerBrick(world);
-    world.waitFor([&] {
-      return part(world, QStringLiteral("effortPicker"))->isVisible() && part(world, QStringLiteral("planToggle"))->isVisible() &&
-             part(world, QStringLiteral("runtimeModePicker"))->isVisible();
-    }, [&] { return QStringLiteral("the effort, plan and access on the toolbar; the composer shows %1").arg(show(composer(world))); });
+    world.waitFor([&] { return part(world, QStringLiteral("planToggle"))->isVisible() && part(world, QStringLiteral("runtimeModePicker"))->isVisible(); },
+                  [&] { return QStringLiteral("plan and access on the toolbar; the composer shows %1").arg(show(composer(world))); });
   });
   step(QStringLiteral("the composer is too narrow to show all its controls"), [](World& world, const Captures&, const Table&) {
     Brick& brick = composerBrick(world);
@@ -539,11 +551,11 @@ const Steps steps([] {
       if (item->objectName() != QLatin1String("primaryAction")) expect(middle.x() <= right, QStringLiteral("%1 runs under Send").arg(item->objectName()));
     }
   });
-  step(QStringLiteral("the reasoning effort is offered in its menu of further controls"), [shownChips, overflowRows](World& world, const Captures&, const Table&) {
-    expect(!shownChips(world).contains(part(world, QStringLiteral("effortPicker"))), QStringLiteral("the effort is still on the toolbar"));
+  step(QStringLiteral("plan is offered in its menu of further controls"), [shownChips, overflowRows](World& world, const Captures&, const Table&) {
+    expect(!shownChips(world).contains(part(world, QStringLiteral("planToggle"))), QStringLiteral("plan is still on the toolbar"));
     click(world, part(world, QStringLiteral("composerOverflow")));
-    world.waitFor([&] { return overflowRows(world).contains(QStringLiteral("composerOverflow:effortPicker")); },
-                  [&] { return QStringLiteral("the effort in the menu; it offers %1").arg(overflowRows(world).join(u", ")); });
+    world.waitFor([&] { return overflowRows(world).contains(QStringLiteral("composerOverflow:planToggle")); },
+                  [&] { return QStringLiteral("plan in the menu; it offers %1").arg(overflowRows(world).join(u", ")); });
   });
   step(QStringLiteral("the model can still be chosen beside it"), [](World& world, const Captures&, const Table&) {
     QQuickItem* picker = part(world, QStringLiteral("modelPicker"));
@@ -897,6 +909,33 @@ bool modelPickerChoosesSetup(World& world) {
   if (!setup || !setup->isVisible()) return false;
   click(world, setup);
   return true;
+}
+
+QQuickItem* openModelControl(World& world) {
+  composerBrick(world);
+  QQuickItem* control = picker(world);
+  expect(control->property("controlDocked").toBool(), QStringLiteral("the model picker holds no efforts"));
+  if (!popupOf(control)->property("visible").toBool()) click(world, control);
+  world.waitFor([&] { return pickerOpen(world); }, QStringLiteral("the model control to open"));
+  return control;
+}
+
+QQuickItem* modelControlPart(World& world, const QString& objectName) {
+  QQuickItem* item = nullptr;
+  world.waitFor([&] { return (item = composerPart(world, objectName)) != nullptr && item->isVisible(); },
+                QStringLiteral("the model control to show %1").arg(objectName));
+  return item;
+}
+
+QList<QQuickItem*> modelControlEfforts(World& world) {
+  QList<QQuickItem*> found;
+  const std::function<void(QQuickItem*)> collect = [&](QQuickItem* item) {
+    if (item->isVisible() && item->objectName().startsWith(QLatin1String("modelControlEffort:"))) found.append(item);
+    for (QQuickItem* child : item->childItems()) collect(child);
+  };
+  collect(composerBrick(world).window().contentItem());
+  std::sort(found.begin(), found.end(), [](QQuickItem* a, QQuickItem* b) { return a->mapToScene(QPointF()).y() < b->mapToScene(QPointF()).y(); });
+  return found;
 }
 
 bool modelPickerShownOpen(World& world) {

@@ -178,6 +178,8 @@ Item {
 
             objectName: "composer"
             takesDrops: false
+            // The phone keeps the effort and options as chips.
+            optionsInModelControl: false
             Layout.fillWidth: true
             visible: ready && !screen.panelShown
             conversationScrolled: centre.conversationScrolled

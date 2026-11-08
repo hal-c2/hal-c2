@@ -122,15 +122,13 @@ const Steps steps([] {
   // Ultrathink is typed, not picked: what the picker lists and the steps reach.
   step(QStringLiteral("the user opens the effort choices or steps the effort"), [](World& world, const Captures&, const Table&) {
     Brick& brick = composerBrick(world);
-    QQuickItem* picker = composerPart(world, QStringLiteral("effortPicker"));
-    expect(picker && picker->isVisible(), QStringLiteral("the composer shows no effort picker"));
+    QQuickItem* picker = openModelControl(world);
     QObject* popup = picker->property("popup").value<QObject*>();
-    QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(picker));
-    world.waitFor([&] { return popup->property("opened").toBool(); }, QStringLiteral("the effort picker to open"));
     Offered& offered = world.mc.part<Offered>();
-    offered.listed = picker->property("model").toStringList();
+    world.waitFor([&] { return !modelControlEfforts(world).isEmpty(); }, QStringLiteral("the model control to list the efforts"));
+    for (QQuickItem* row : modelControlEfforts(world)) offered.listed.append(row->property("text").toString());
     QTest::keyClick(&brick.window(), Qt::Key_Escape);
-    world.waitFor([&] { return !popup->property("opened").toBool(); }, QStringLiteral("the effort picker to close"));
+    world.waitFor([&] { return !popup->property("opened").toBool(); }, QStringLiteral("the model control to close"));
     // Once round the levels and one more, so a level the step reaches is seen.
     for (int i = 0; i <= offered.listed.size(); ++i) {
       const QString before = effortValue(world);
@@ -151,14 +149,14 @@ const Steps steps([] {
     QMetaObject::invokeMethod(composerItem(world), "focusInput");
     typeInComposer(world, c[0]);
     settleComposer(world);
-    QQuickItem* picker = composerPart(world, QStringLiteral("effortPicker"));
-    expect(picker != nullptr, QStringLiteral("the composer shows no effort picker"));
+    QQuickItem* picker = composerPart(world, QStringLiteral("modelPickerEffort"));
+    expect(picker != nullptr, QStringLiteral("the composer names no effort"));
     // The effort follows the typed prompt once the composer publishes it.
     const QString typed = c[0];
     world.waitFor([&] { return effortValue(world) == QLatin1String("ultrathink") || !typed.startsWith(QLatin1String("Ultrathink:")); },
                   [&] { return QStringLiteral("the effort to follow the typed prompt; it is %1 under \"%2\"").arg(effortValue(world), composer(world).value(QStringLiteral("text")).toString()); });
     world.sync();
-    world.mc.part<Offered>().shown = picker->property("displayText").toString();
+    world.mc.part<Offered>().shown = picker->property("text").toString();
     QMetaObject::invokeMethod(composerItem(world), "focusInput");
     pressInComposer(world, QStringLiteral("Enter"));
   });

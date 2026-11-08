@@ -15,13 +15,6 @@ using namespace stream;
 
 namespace {
 
-QQuickItem* effortPicker(World& world) {
-  composerBrick(world);
-  QQuickItem* picker = composerPart(world, QStringLiteral("effortPicker"));
-  expect(picker && picker->isVisible(), QStringLiteral("the composer shows no effort picker"));
-  return picker;
-}
-
 const Steps steps([] {
   const QString q = kQuoted;
 
@@ -33,11 +26,18 @@ const Steps steps([] {
   });
 
   // The provider's default.
-  step(QStringLiteral("the user opens the model's options"), [](World& world, const Captures&, const Table&) { effortPicker(world); });
+  step(QStringLiteral("the user opens the model's options"), [](World& world, const Captures&, const Table&) { openModelControl(world); });
   step(QStringLiteral("the provider's default effort is marked %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QStringList labels = effortPicker(world)->property("model").toStringList();
-    const QStringList marked = labels.filter(QStringLiteral("(%1)").arg(c[0]));
-    expect(marked.size() == 1 && marked.first().startsWith(QLatin1String("medium")), QStringLiteral("only the default marked \"%1\"; the effort offers %2").arg(c[0], labels.join(QStringLiteral(", "))));
+    expect(c[0] == QLatin1String("Default"), QStringLiteral("the model control marks the default \"Default\", not \"%1\"").arg(c[0]));
+    QList<QQuickItem*> rows;
+    world.waitFor([&] { return !(rows = modelControlEfforts(world)).isEmpty(); }, QStringLiteral("the model control to list the efforts"));
+    QStringList marked, offered;
+    for (QQuickItem* row : rows) {
+      const QString id = row->objectName().section(u':', 1);
+      offered.append(id);
+      if (row->property("isDefault").toBool()) marked.append(id);
+    }
+    expect(marked == QStringList{QStringLiteral("medium")}, QStringLiteral("only medium marked \"%1\"; %2 are, of %3").arg(c[0], marked.join(u", "), offered.join(u", ")));
   });
 });
 

@@ -3,7 +3,8 @@
 // behind the running turn (composer::queued) and the rich text drawing
 // (ComposerHighlighter), whose limits "/usage-limits" shows
 // (composer::usageLimitsReport), and stepping the effort from the keyboard
-// (composer::steppedChoice) or drawing it as bars (composer::effortBars).
+// (composer::steppedChoice), drawing it as bars (composer::effortBars) or
+// finding it among the model's options (composer::effortIndex).
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -384,16 +385,21 @@ private slots:
         ids.append(id);
         options.append(QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("label"), id.toUpper()}});
       }
-      const QString descriptorId = *rc::gen::elementOf(std::vector<QString>{QStringLiteral("effort"), QStringLiteral("reasoningEffort"), QStringLiteral("contextWindow")});
-      const QJsonObject descriptor{{QStringLiteral("id"), descriptorId}, {QStringLiteral("type"), QStringLiteral("select")}, {QStringLiteral("options"), options},
-                                   {QStringLiteral("promptInjectedValues"), QJsonArray{QStringLiteral("ultrathink")}}};
+      const QString descriptorId = *rc::gen::elementOf(std::vector<QString>{QStringLiteral("effort"), QStringLiteral("reasoningEffort"), QStringLiteral("contextWindow"),
+                                                                            QStringLiteral("thought_level")});
+      // An agent's own id is the effort once the agent marks it as reasoning.
+      const bool marked = *rc::gen::arbitrary<bool>();
+      QJsonObject descriptor{{QStringLiteral("id"), descriptorId}, {QStringLiteral("type"), QStringLiteral("select")}, {QStringLiteral("options"), options},
+                             {QStringLiteral("promptInjectedValues"), QJsonArray{QStringLiteral("ultrathink")}}};
+      if (marked) descriptor.insert(QStringLiteral("role"), QStringLiteral("reasoning"));
+      const bool reasoning = marked || descriptorId == QLatin1String("effort") || descriptorId == QLatin1String("reasoningEffort");
       const QString current = *rc::gen::elementOf(pool);
       const QVariantMap bars = composer::effortBars(descriptor, current);
 
       const auto named = [](const QString& id) { return id == QLatin1String("max") || id == QLatin1String("ultracode") || id == QLatin1String("ultrathink"); };
       QStringList levels = ids;
       levels.removeIf(named);
-      if (descriptorId == QLatin1String("contextWindow") || levels.size() < 2 || (!levels.contains(current) && !named(current))) {
+      if (!reasoning || levels.size() < 2 || (!levels.contains(current) && !named(current))) {
         RC_ASSERT(bars.isEmpty());
         return;
       }
@@ -409,6 +415,32 @@ private slots:
         RC_ASSERT(bars.value(QStringLiteral("filled")).toInt() == count);
         RC_ASSERT(bars.value(QStringLiteral("special")).toString() == (ids.contains(current) ? current.toUpper() : current));
       }
+    }));
+  }
+  void theEffortIsTheMarkedReasoningSelect() {
+    QVERIFY(rc::check("the effort is the first reasoning select, else the first select, and never a switch", [] {
+      const std::vector<QString> pool{QStringLiteral("mode"), QStringLiteral("contextWindow"), QStringLiteral("effort"), QStringLiteral("thought_level"),
+                                      QStringLiteral("fastMode")};
+      const int size = *rc::gen::inRange(0, 6);
+      QJsonArray descriptors;
+      for (int i = 0; i < size; ++i) {
+        const QString id = *rc::gen::elementOf(pool);
+        QJsonObject descriptor{{QStringLiteral("id"), id},
+                               {QStringLiteral("type"), id == QLatin1String("fastMode") ? QStringLiteral("boolean") : QStringLiteral("select")}};
+        if (id == QLatin1String("thought_level") && *rc::gen::arbitrary<bool>()) descriptor.insert(QStringLiteral("role"), QStringLiteral("reasoning"));
+        descriptors.append(descriptor);
+      }
+      const auto isSelect = [&](qsizetype i) { return descriptors.at(i).toObject().value(QLatin1String("type")) == QLatin1String("select"); };
+      const auto isReasoning = [&](qsizetype i) {
+        const QJsonObject descriptor = descriptors.at(i).toObject();
+        return isSelect(i) && (descriptor.value(QLatin1String("id")) == QLatin1String("effort") || descriptor.value(QLatin1String("role")) == QLatin1String("reasoning"));
+      };
+      qsizetype expected = -1;
+      for (qsizetype i = 0; i < descriptors.size() && expected < 0; ++i)
+        if (isReasoning(i)) expected = i;
+      for (qsizetype i = 0; i < descriptors.size() && expected < 0; ++i)
+        if (isSelect(i)) expected = i;
+      RC_ASSERT(composer::effortIndex(descriptors) == expected);
     }));
   }
 };

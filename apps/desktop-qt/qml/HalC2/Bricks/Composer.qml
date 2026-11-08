@@ -64,12 +64,16 @@ Rectangle {
         const chosen = (option?.choices ?? []).find(choice => choice.id === option.value);
         return chosen ? chosen.label : (option?.label ?? "");
     }
-    readonly property var effortOption: ready ? (model.options.find(option => option.type === "select") ?? null) : null
+    readonly property var effortOption: ready ? (model.options.find(option => option.effort === true) ?? model.options.find(option => option.type === "select") ?? null) : null
     // The model's other options, such as Claude's fast mode and context window.
     // By id: every read of model.options converts to fresh objects, so identity never matches.
     readonly property var otherOptions: ready ? model.options.filter(option => option.id !== effortOption?.id) : []
     readonly property var selectOptions: otherOptions.filter(option => option.type === "select")
     readonly property var toggleOptions: otherOptions.filter(option => option.type !== "select")
+    // The model's efforts and options live in the model control (upstream's
+    // ComposerModelEffort) rather than as chips on the toolbar. The phone,
+    // whose model control has no room beside its list, keeps the chips.
+    property bool optionsInModelControl: true
     readonly property int maximumCardWidth: 768
     readonly property int gutter: 20
 
@@ -319,6 +323,11 @@ Rectangle {
         // they open in the model control. That control is shut while a
         // message is on its way to the MC (isSendBusy), and so is this key,
         // as the model key is; it opens again once the send lands.
+        // The effort is the model control's, on its current level.
+        if (command === "composer.effort" && optionsInModelControl) {
+            modelPicker.openEffort();
+            return;
+        }
         if (command === "composer.mode" && !runtimeModePicker.present) {
             if (contextPermissions.visible && contextPermissions.enabled) {
                 contextPermissions.forceActiveFocus();
@@ -1467,6 +1476,9 @@ Rectangle {
                             selectedModel: composer.ready ? composer.model.selectedModel : null
                             runtimeModes: composer.permissionModes
                             runtimeMode: composer.ready ? (composer.model.runtimeMode ?? "") : ""
+                            docked: composer.optionsInModelControl
+                            options: composer.ready ? composer.model.options : []
+                            effortDisplay: composer.ready ? (composer.model.effortDisplay ?? "label") : "label"
                         }
 
                         // The room left beside the model; the chips that fit it
@@ -1490,7 +1502,7 @@ Rectangle {
                                     id: effortPicker
                                     objectName: "effortPicker"
 
-                                    present: composer.effortOption !== null
+                                    present: !composer.optionsInModelControl && composer.effortOption !== null
                                     visible: present && !composer.folded.includes(effortPicker)
                                     model: composer.effortOption ? composer.effortOption.choices.map(choice => composer.choiceLabel(choice)) : []
                                     currentIndex: composer.effortOption ? composer.effortOption.choices.findIndex(choice => choice.id === composer.effortOption.value) : -1
@@ -1545,7 +1557,7 @@ Rectangle {
                                 Repeater {
                                     id: selectChips
 
-                                    model: composer.selectOptions.length
+                                    model: composer.optionsInModelControl ? 0 : composer.selectOptions.length
 
                                     delegate: ChipPicker {
                                         id: selectChip
@@ -1569,7 +1581,7 @@ Rectangle {
                                 Repeater {
                                     id: toggleChips
 
-                                    model: composer.toggleOptions.length
+                                    model: composer.optionsInModelControl ? 0 : composer.toggleOptions.length
 
                                     delegate: Chip {
                                         id: toggleChip
@@ -2311,37 +2323,6 @@ Rectangle {
         tint: checked || hovered || down ? composer.foreground : composer.chipLabel
         iconSize: Theme.icon.md
         font.weight: Theme.type.body.weight
-    }
-
-    // The effort as rising bars (upstream's EffortGlyph): one per level, 2px
-    // wide on a 4px step, from about half height up, the unfilled ones faint.
-    component EffortBars: Item {
-        id: glyph
-
-        property int count: 0
-        property int filled: 0
-        property color color
-        readonly property int maxBar: 12
-        // Rounding each bar mixes 1px and 2px steps, so the step is rounded once.
-        readonly property int rise: Math.max(1, Math.round(maxBar / 2 / Math.max(count - 1, 1)))
-
-        width: Math.max(0, 4 * count - 2)
-        height: 14
-
-        Repeater {
-            model: glyph.count
-
-            Rectangle {
-                required property int index
-
-                x: index * 4
-                y: glyph.maxBar - height
-                width: 2
-                height: glyph.maxBar - (glyph.count - 1 - index) * glyph.rise
-                color: glyph.color
-                opacity: index < glyph.filled ? 1 : 0.4
-            }
-        }
     }
 
     component ChipPicker: ShellComboBox {

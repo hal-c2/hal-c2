@@ -3936,11 +3936,9 @@ bool ComposerController::stepEffort(const QString& target, int direction) {
   const QJsonArray descriptors =
       composer::descriptors(composer::findModel(*instance, chosen.value(QLatin1String("model")).toString()),
                             chosen.value(QLatin1String("options")).toArray(), planModeOn(instance));
-  const auto effort = std::find_if(descriptors.begin(), descriptors.end(), [](const QJsonValue& entry) {
-    return str(entry.toObject(), QLatin1String("type")) == QLatin1String("select");
-  });
-  if (effort == descriptors.end()) return false;
-  QJsonObject descriptor = effort->toObject();
+  const qsizetype effort = composer::effortIndex(descriptors);
+  if (effort < 0) return false;
+  QJsonObject descriptor = descriptors.at(effort).toObject();
   const QString text = draft(target);
   if (effortLocked(descriptor, text)) return false;
   // The step starts from the effort shown: Ultrathink while the prompt
@@ -4377,14 +4375,14 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
     }
     shownOptions[i] = option;
   }
-  // The effort as bars, for the composer to draw when Appearance asks for them.
-  for (qsizetype i = 0; i < described.size() && i < shownOptions.size(); ++i) {
-    if (str(described.at(i).toObject(), QLatin1String("type")) != QLatin1String("select")) continue;
-    QVariantMap option = shownOptions.at(i).toMap();
-    const QVariantMap bars = composer::effortBars(described.at(i).toObject(), option.value(QStringLiteral("value")).toString());
+  // The effort is marked, with its bars for the composer to draw when
+  // Appearance asks for them.
+  if (const qsizetype at = composer::effortIndex(described); at >= 0 && at < shownOptions.size()) {
+    QVariantMap option = shownOptions.at(at).toMap();
+    option.insert(QStringLiteral("effort"), true);
+    const QVariantMap bars = composer::effortBars(described.at(at).toObject(), option.value(QStringLiteral("value")).toString());
     if (!bars.isEmpty()) option.insert(QStringLiteral("bars"), bars);
-    shownOptions[i] = option;
-    break;
+    shownOptions[at] = option;
   }
   const auto orNull = [](const QString& value) { return value.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(value); };
   // A page's ask: the project it runs in and the ones it could.
