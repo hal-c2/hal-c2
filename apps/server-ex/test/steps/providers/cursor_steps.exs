@@ -772,6 +772,31 @@ defmodule HalC2.Steps.Providers.Cursor do
     Map.merge(context, %{cursor_usage_log: log, cursor_instance: instance, cursor_key: key})
   end
 
+  step "the stored Cursor sign-in expired yesterday", context do
+    expired = System.system_time(:millisecond) - 86_400_000
+
+    File.write!(
+      credentials("cursor"),
+      JSON.encode!(%{"apiKey" => context.cursor_key, "apiKeyExpiresAtMs" => expired})
+    )
+
+    context
+  end
+
+  step "Cursor shows no usage limits", context do
+    cursor = Enum.find(context.providers, &(&1["instanceId"] == "cursor"))
+
+    assert %{"windows" => [], "unavailable" => %{"reason" => "unsupported"}} =
+             cursor["usageLimits"]
+
+    context
+  end
+
+  step "the expired key was not sent anywhere", context do
+    assert HalC2.Test.FakeHttp.requests(context.cursor_usage_log) == []
+    context
+  end
+
   step "the Cursor instance uses a custom API endpoint", context do
     {url, log} = HalC2.Test.FakeHttp.start(%{})
 

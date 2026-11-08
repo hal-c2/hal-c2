@@ -272,6 +272,15 @@ Feature: Cursor
       | Sign in with Cursor                            |
       | a CURSOR_API_KEY in the instance's environment |
 
+  # The Cursor SDK's stored sign-in records `apiKeyExpiresAtMs` (StoredSdkCredentials in @cursor/sdk).
+  # An expired key is never traded for a token; with no Cursor CLI login either, there are no limits.
+  Scenario: Cursor limits ignore a stored sign-in whose key has expired
+    Given the user signed in to Cursor with Sign in with Cursor and has no Cursor CLI login
+    And the stored Cursor sign-in expired yesterday
+    When the user opens the limits view
+    Then Cursor shows no usage limits
+    And the expired key was not sent anywhere
+
   # Upstream #29419: an API key is sent only to Cursor's own endpoint.
   Scenario: Cursor limits for an API key are not read from a custom endpoint
     Given the user signed in to Cursor with a CURSOR_API_KEY in the instance's environment and has no Cursor CLI login
