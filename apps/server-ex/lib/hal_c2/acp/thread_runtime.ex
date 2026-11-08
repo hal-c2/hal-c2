@@ -2040,7 +2040,7 @@ defmodule HalC2.Acp.ThreadRuntime do
             |> Map.put(:reasoning, effort)
 
           {:error, reason} ->
-            Logger.warning("could not select #{target}: #{inspect(reason)}")
+            Logger.warning("could not select #{target}: #{redacted(reason)}")
             state
         end
     end
