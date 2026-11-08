@@ -24,7 +24,8 @@ defmodule HalC2Plugins.TokenEconomizer do
   verdict is read at the turn's next call.
 
   A turn whose start the plugin missed is not watched. Missed events (`"dropped"`) mark
-  the turns under way as partial, and a partial turn does not teach the envelope.
+  the turns under way as partial, and the turns heard over the next full feed queue
+  too, and a partial turn does not teach the envelope.
 
   The topic `loopGuard` carries `status/1`: counts since the MC started and the latest
   redirects and stop offers. It is published when a turn ends and when the guard acts,
@@ -178,6 +179,8 @@ defmodule HalC2Plugins.TokenEconomizer do
        settings: settings,
        # thread id => %{run, project, guard, partial}, the turn under way
        turns: %{},
+       # Events still to hear that the feed may have queued before ones it missed.
+       missing: 0,
        # {project id, provider} => tracker
        trackers: %{},
        # {project id, provider} => tool pruning's evidence, loaded on first use
@@ -237,7 +240,7 @@ defmodule HalC2Plugins.TokenEconomizer do
 
     state =
       if on?(state) do
-        state |> missed(event["dropped"]) |> hear(event)
+        state |> missed(event["dropped"]) |> hear(event) |> suspect(event)
       else
         state
       end
@@ -719,10 +722,27 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   # --- turns ------------------------------------------------------------------------------
 
-  defp missed(state, n) when is_integer(n) and n > 0,
-    do: %{state | turns: Map.new(state.turns, fn {id, turn} -> {id, %{turn | partial: true}} end)}
+  # The feed says what it missed on the next event it delivers, which it queued before
+  # the missed ones: up to a full queue of events still to come were too, and a turn
+  # that starts in them may have lost what was missed. So the turns under way are
+  # partial, and so is each turn heard until that queue has been heard.
+  defp missed(state, n) when is_integer(n) and n > 0 do
+    turns = Map.new(state.turns, fn {id, turn} -> {id, %{turn | partial: true}} end)
+    %{state | turns: turns, missing: HalC2.Plugins.Feed.max_queue()}
+  end
 
   defp missed(state, _), do: state
+
+  defp suspect(%{missing: 0} = state, _event), do: state
+
+  defp suspect(state, event) do
+    state = %{state | missing: state.missing - 1}
+
+    case state.turns[event["threadId"]] do
+      nil -> state
+      _turn -> put_in(state.turns[event["threadId"]].partial, true)
+    end
+  end
 
   defp hear(
          state,

@@ -49,6 +49,11 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
   #     thread says why.
   #   - A turn under way when the feed missed an event (a failing check, say) teaches
   #     the envelope a turn that did not end green. It is partial, and teaches nothing.
+  #   - Marking only the turn under way when the feed says it missed one: the feed
+  #     misses the newest event and says so on the next it delivers, which it queued
+  #     first, so a turn that starts in the events still queued, its failing call
+  #     missed, is heard whole and teaches. The turns heard until those are heard are
+  #     partial too.
   #   - Teaching every turn that closes teaches the ones that ended failing or that the
   #     person stopped.
   @model "the turn the plugin hears; the MC's side of it is the model's environment"
@@ -72,6 +77,7 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
         ~w(hear-start hear-finish hear-other calm backstop judge mark close),
       "HalC2Plugins.TokenEconomizer handle_info {:verdict, _, _, _, _}" => ~w(verdict arrive),
       "HalC2Plugins.TokenEconomizer state :turns" => ~w(watching turn),
+      "HalC2Plugins.TokenEconomizer state :missing" => "gap",
       "HalC2Plugins.TokenEconomizer state :trackers" => ~w(taught close),
       "HalC2Plugins.TokenEconomizer state :settings" => ~w(cfg budget),
       "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.new/1" => "fresh",
@@ -128,7 +134,8 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
       "call" => @model <> ": the agent makes a call, a check that fails or anything else",
       "finish" => @model <> ": the agent ends its turn",
       "interrupt" => @model <> ": the person stops the turn from the stop offer",
-      "drop" => "the feed misses an event, and says so with the next it delivers",
+      "drop" =>
+        "the feed misses the newest event, one that found its queue full, and says so with the next it delivers",
       "answer" => "the judge, the user's text model, answers its job",
       "lose" => "a judge job that never answers",
       "deliver" =>
@@ -142,8 +149,8 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
       ]
     }
 
-  # Keyed, Reset, Once, Stale, Aimed, First, Whole, Green.
-  @design "true, true, true, true, true, true, true, true"
+  # Keyed, Reset, Once, Stale, Aimed, First, Whole, Green, Window.
+  @design "true, true, true, true, true, true, true, true, true"
   # After the switches: the budget, the calls each turn makes, the turns, the events the
   # feed may miss, the judge jobs that may never answer, whether one that answers may go
   # stale first, whether the judge may find a turn productive, and whether every call
