@@ -8,8 +8,9 @@ defmodule HalC2.TextGeneration do
   Commits, pull requests, and branch names are written by the project's source
   control writer model when its provider is usable, otherwise by its text
   generation model, which also writes titles (`model_selection/2`). A selection
-  whose provider is disabled, not installed, or has no runner here falls back to
-  the first usable provider, with that provider's default model.
+  whose provider is disabled, not installed, signed out, failed its last check,
+  or has no runner here falls back to the first usable provider, with that
+  provider's default model; a provider still being checked keeps its selection.
 
   Claude runs `claude -p` with a JSON schema and no tools; Codex runs `codex exec`
   in a read-only sandbox; Grok, OpenCode, Cursor, and Antigravity answer one ACP
@@ -31,10 +32,13 @@ defmodule HalC2.TextGeneration do
   }
   @default_models %{
     "codex" => "gpt-6-luna",
-    "claudeAgent" => "claude-haiku-4-5",
+    # Upstream #18781: Claude's default writer moved from Haiku 4.5 to Haiku 5.5;
+    # a model the user saved is kept (it only names the fallback's model).
+    "claudeAgent" => "claude-haiku-5-5",
     "cursor" => "composer-2",
     "grok" => "grok-build",
-    "opencode" => "openai/gpt-5",
+    # Upstream #22442: many OpenCode users have no access to "openai/gpt-5".
+    "opencode" => "opencode/big-pickle",
     # Pi's and Antigravity's own default model.
     "pi" => "default",
     "antigravity" => "antigravity-default"
@@ -238,16 +242,45 @@ defmodule HalC2.TextGeneration do
   @doc "Whether a selection's provider is enabled and installed under `settings`."
   def usable?(settings, %{"instanceId" => id}) when is_binary(id) do
     case driver(id) do
-      "codex" -> enabled?(settings, id) and executable?(codex_command(id))
-      "claudeAgent" -> enabled?(settings, id) and executable?(claude_command(id))
-      "pi" -> acp_on?(settings, id) and executable?(HalC2.Acp.binary_path(id) || "pi")
-      driver when driver in @acp_drivers -> acp_on?(settings, id) and acp_installed?(id)
+      "codex" ->
+        enabled?(settings, id) and executable?(codex_command(id)) and healthy?(id, "codex")
+
+      "claudeAgent" ->
+        enabled?(settings, id) and executable?(claude_command(id)) and
+          healthy?(id, "claudeAgent")
+
+      "pi" ->
+        acp_on?(settings, id) and executable?(HalC2.Acp.binary_path(id) || "pi")
+
+      driver when driver in @acp_drivers ->
+        acp_on?(settings, id) and acp_installed?(id) and healthy?(id, driver)
+
       # A text-generation backend plugin (`HalC2.Plugins.TextGeneration`) by its id.
-      _ -> HalC2.Plugins.text_backend?(id)
+      _ ->
+        HalC2.Plugins.text_backend?(id)
     end
   end
 
   def usable?(_settings, _selection), do: false
+
+  # What the provider's last check found, read without starting a new one
+  # (upstream #29607): a check that failed, or an account a probe found signed
+  # out, cannot write; a provider still being checked keeps its selection, so
+  # titles at startup are not handed to another provider on a guess.
+  defp healthy?(id, "codex") do
+    HalC2.Codex.Provider.check_state(id) != :failed and
+      HalC2.ProviderUsageLimits.account_status(id) != "unauthenticated"
+  end
+
+  defp healthy?(id, "claudeAgent") do
+    HalC2.Claude.Provider.health_state(id) != :failed and
+      HalC2.ProviderUsageLimits.account_status(id) != "unauthenticated"
+  end
+
+  defp healthy?(id, driver) when driver in @acp_drivers,
+    do: not HalC2.Acp.unauthenticated?(id)
+
+  defp healthy?(_id, _driver), do: true
 
   # Codex and Claude are on unless turned off.
   defp enabled?(settings, id), do: HalC2.Settings.provider_on?(settings, nil, id)
@@ -655,12 +688,33 @@ defmodule HalC2.TextGeneration do
 
       remove_antigravity_session(id, dir)
 
-      if File.ls!(dir) == [],
+      if antigravity_left_nothing?(dir),
         do: result,
         else: {:error, "Antigravity wrote files during text generation."}
     else
       {:error,
        "Antigravity text generation is unavailable for profiles with global hooks or MCP configuration. Select another system model."}
+    end
+  end
+
+  # The empty skill folders Antigravity makes when its session starts
+  # (upstream #27191) are not files it wrote; anything else left behind is.
+  @antigravity_start_dirs ~w(.agents .agents/skills .gemini .gemini/skills)
+
+  defp antigravity_left_nothing?(dir), do: antigravity_clean?(dir, "")
+
+  defp antigravity_clean?(dir, rel) do
+    case File.ls(Path.join(dir, rel)) do
+      {:ok, names} ->
+        Enum.all?(names, fn name ->
+          child = if rel == "", do: name, else: rel <> "/" <> name
+
+          child in @antigravity_start_dirs and
+            File.dir?(Path.join(dir, child)) and antigravity_clean?(dir, child)
+        end)
+
+      _ ->
+        false
     end
   end
 
@@ -874,7 +928,9 @@ defmodule HalC2.TextGeneration do
   defp linked_context(cwd, message) do
     links =
       Regex.scan(~r{https://[^\s<>"')\]`]+}, message)
-      |> Enum.map(fn [url] -> URI.parse(String.replace(url, ~r/[.,;!?]+$/, "")) end)
+      # Sentence punctuation and markdown emphasis after a link are not part of
+      # it (upstream #29656): "…/pull/12: the tests fail", "**…/pull/12**".
+      |> Enum.map(fn [url] -> URI.parse(String.replace(url, ~r/[.,;!?:*]+$/, "")) end)
       |> Enum.flat_map(fn uri ->
         with %URI{host: "github.com", userinfo: nil, path: path} when is_binary(path) <- uri,
              [_, owner, repo, number] <-

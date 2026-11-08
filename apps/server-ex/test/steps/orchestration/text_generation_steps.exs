@@ -21,10 +21,10 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
   @acp ~w(cursor grok opencode)
   @defaults %{
     "codex" => "gpt-6-luna",
-    "claudeAgent" => "claude-haiku-4-5",
+    "claudeAgent" => "claude-haiku-5-5",
     "cursor" => "composer-2",
     "grok" => "grok-build",
-    "opencode" => "openai/gpt-5"
+    "opencode" => "opencode/big-pickle"
   }
 
   # --- model choices -------------------------------------------------------------------
@@ -126,7 +126,14 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
 
   step "a branch name is generated", context do
     context = install(context)
-    reply(context, TextGeneration.branch_name(root(context), "Add a login page"))
+
+    reply(
+      context,
+      TextGeneration.branch_name(
+        root(context),
+        Map.get(context, :first_message, "Add a login page")
+      )
+    )
   end
 
   step "a commit message is generated for {string}", %{args: [project]} = context do
@@ -877,6 +884,323 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
 
   step "the writer is given no template from that path", context do
     refute prompt(context) =~ "change request template"
+    context
+  end
+
+  # --- provider health and saved models -------------------------------------------------
+
+  step "the text generation model was saved as {string} on {string}",
+       %{args: [model, provider]} = context do
+    context
+    |> install()
+    |> World.update_settings(%{"textGenerationModelSelection" => selection(provider, model)})
+  end
+
+  step "a text generation model the user saved for OpenCode is kept", context do
+    context =
+      World.update_settings(context, %{
+        "textGenerationModelSelection" => selection("opencode", "acme/saved-model")
+      })
+
+    context = title(context, "Fix the login redirect loop")
+    assert {:ok, _} = context.reply
+
+    assert %{"instanceId" => "opencode", "model" => "acme/saved-model"} =
+             TextGeneration.model_selection(root(context), :text)
+
+    context
+  end
+
+  step "the text model is {string} and Codex is not installed", %{args: [model]} = context do
+    context
+    |> install(["claudeAgent"])
+    |> World.update_settings(%{"textGenerationModelSelection" => selection(model)})
+  end
+
+  step "the text model is {string} and Codex is signed out", %{args: [model]} = context do
+    context =
+      context
+      |> install()
+      |> World.update_settings(%{"textGenerationModelSelection" => selection(model)})
+
+    account(context, "codex", %{
+      "status" => "unauthenticated",
+      "message" => "Sign in to Codex."
+    })
+
+    context
+  end
+
+  step "{string} is installed, signed in and enabled", %{args: [_provider]} = context do
+    # Installed by the step before; no probe has recorded it signed out.
+    install(context)
+  end
+
+  step "the text model is {string} and Codex's check has not finished",
+       %{args: [model]} = context do
+    context =
+      context
+      |> install()
+      |> World.update_settings(%{"textGenerationModelSelection" => selection(model)})
+
+    :ok = HalC2.Codex.Provider.record_check(model, nil)
+    context
+  end
+
+  step "the text model's provider cannot be used", context do
+    context
+    |> install(["claudeAgent", "cursor"])
+    |> World.update_settings(%{"textGenerationModelSelection" => selection("codex", "chosen")})
+  end
+
+  step "{string} is installed but its version check failed, and {string} is healthy",
+       %{args: [failed, _healthy]} = context do
+    # The Claude provider resolves its executable from `:claude_command`; point
+    # it at the text fake so the recorded check is the one text generation reads.
+    World.put_app_env(:claude_command, [Path.expand("../../support/fake_text_cli.py", __DIR__)])
+
+    ExUnit.Callbacks.on_exit(fn ->
+      HalC2.Claude.Provider.record_health(failed, {:ok, "1.0.0"})
+    end)
+
+    :ok =
+      HalC2.Claude.Provider.record_health(
+        failed,
+        {:error, "Claude Agent CLI is installed but failed to run.", nil}
+      )
+
+    context
+  end
+
+  # Records what a provider probe found about the account, drained before the
+  # scenario reads it and cleared with the scenario. The drain waits out the
+  # server's boot probes, which a fresh server runs before the record lands.
+  defp account(_context, instance, account) do
+    HalC2.Test.Mc.ensure(HalC2.ProviderUsageLimits)
+    # Drain the boot probes first: their own account records land during the
+    # boot continue and would overwrite this one if it were queued before them.
+    _ = :sys.get_state(HalC2.ProviderUsageLimits, 120_000)
+    HalC2.ProviderUsageLimits.remember_account(instance, account)
+    _ = :sys.get_state(HalC2.ProviderUsageLimits, 120_000)
+    assert HalC2.ProviderUsageLimits.account_status(instance) == account["status"]
+
+    ExUnit.Callbacks.on_exit(fn ->
+      # The supervised server (and its record) may already be gone with the test.
+      if Process.whereis(HalC2.ProviderUsageLimits) do
+        HalC2.ProviderUsageLimits.remember_account(instance, %{})
+        _ = :sys.get_state(HalC2.ProviderUsageLimits, 120_000)
+      end
+    end)
+  end
+
+  # --- slash commands, aliases and wrapped titles ----------------------------------------
+
+  step "a first message {string}", %{args: [message]} = context do
+    Map.put(install(context), :first_message, message)
+  end
+
+  step "the writer is given {string} as text to name", %{args: [message]} = context do
+    assert [%{"prompt" => prompt}] = calls(context)
+    assert prompt =~ "User message:\n#{message}"
+    context
+  end
+
+  step "no script or skill runs", context do
+    # The message reaches the writer only as prompt text on stdin, never as an
+    # argument the CLI could run, in Codex's read-only sandbox.
+    assert [%{"argv" => argv} = call] = calls(context)
+    refute "/call-script" in argv
+    assert after_flag(call, "-s") == "read-only"
+    context
+  end
+
+  step "the text model is a custom alias the user configured", context do
+    context
+    |> install(["claudeAgent"])
+    |> World.update_settings(%{
+      "textGenerationModelSelection" => selection("claudeAgent", "my-router-alias")
+    })
+    |> Map.put(:alias, "my-router-alias")
+  end
+
+  step "Claude is run with the alias exactly as configured", context do
+    assert {:ok, _} = context.reply
+    assert [call] = calls(context)
+    assert after_flag(call, "--model") == context.alias
+    context
+  end
+
+  step "the writing agent answers the title as a JSON object with a {string} field",
+       %{args: [_field]} = context do
+    answered_titles(context, [JSON.encode!(%{"title" => "Fix the parser"})])
+  end
+
+  step "the title is the text of that field", context do
+    assert titles(context) == ["Fix the parser"]
+    context
+  end
+
+  # --- context limits ----------------------------------------------------------------------
+
+  step "the staged change is far larger than the writer's prompt limit", context do
+    context
+    |> install()
+    |> Map.put(:staged_patch, String.duplicate("x", 100_000) <> "ENDMARKER")
+  end
+
+  step "the writer receives only the first 40,000 characters of the staged patch", context do
+    prompt = prompt(context)
+    assert prompt =~ String.duplicate("x", 40_000)
+    refute prompt =~ String.duplicate("x", 40_001)
+    refute prompt =~ "ENDMARKER"
+    context
+  end
+
+  step "a thread whose messages together run past 8,000 characters", context do
+    messages =
+      for n <- 1..6 do
+        role = if rem(n, 2) == 1, do: "user", else: "assistant"
+        message(role, "Message #{n} " <> String.duplicate("m", 3_000))
+      end
+
+    Map.put(context, :messages, messages)
+  end
+
+  step "the writer is given at most 8,000 characters of messages", context do
+    assert String.length(thread_contents(context)) <= 8_000
+    context
+  end
+
+  step "each message is cut to 2,000 characters", context do
+    sections =
+      thread_contents(context)
+      |> String.replace_prefix("[Earlier content truncated]\n\n", "")
+      |> String.split("\n\n")
+
+    assert sections != []
+
+    for section <- sections do
+      text =
+        section
+        |> String.replace_prefix("USER:\n", "")
+        |> String.replace_prefix("ASSISTANT:\n", "")
+
+      assert String.length(text) <= 2_000,
+             "a message reached the writer at #{String.length(text)} characters"
+    end
+
+    context
+  end
+
+  defp thread_contents(context) do
+    prompt(context)
+    |> String.split("Thread contents:\n", parts: 2)
+    |> List.last()
+    |> String.split("\n\nAttachment metadata:", parts: 2)
+    |> List.first()
+  end
+
+  # --- Antigravity's start folders ---------------------------------------------------------
+
+  step "Antigravity makes empty {string} and {string} folders in its working folder when it starts",
+       %{args: [first, second]} = context do
+    Map.put(context, :antigravity_start_dirs, [first, second])
+  end
+
+  step "{string} writes a title and leaves only those empty folders", context do
+    context
+    |> antigravity_writes([])
+    |> title("Fix the login redirect loop")
+  end
+
+  step "{string} writes a commit message and leaves only those empty folders", context do
+    commit(antigravity_writes(context, []), root(context))
+  end
+
+  step "{string} writes a title and leaves a file inside {string}",
+       %{args: [_provider, dir]} = context do
+    context
+    |> antigravity_writes([%{"writeFile" => Path.join(dir, "notes.md")}])
+    |> title("Fix the login redirect loop")
+  end
+
+  step "{string} writes a title and leaves a folder Antigravity does not make on start",
+       context do
+    context
+    |> antigravity_writes([%{"writeDir" => "scratch"}])
+    |> title("Fix the login redirect loop")
+  end
+
+  step "the title is used", context do
+    assert {:ok, %{"title" => "antigravity title"}} = context.reply
+    context
+  end
+
+  step "the commit message is used", context do
+    assert {:ok, %{"subject" => "antigravity subject"}} = context.reply
+    context
+  end
+
+  # Antigravity answering with every key a title or a commit asks for, after
+  # making its start folders and whatever else the scenario leaves behind.
+  defp antigravity_writes(context, extra) do
+    dirs = for dir <- context.antigravity_start_dirs, do: %{"writeDir" => dir}
+
+    answer = %{
+      "text" =>
+        JSON.encode!(%{
+          "title" => "antigravity title",
+          "needsRefinement" => false,
+          "subject" => "antigravity subject",
+          "body" => "antigravity body"
+        })
+    }
+
+    antigravity_model(context, dirs ++ extra ++ [answer])
+  end
+
+  # --- linked items, more shapes ------------------------------------------------------------
+
+  step "a title is generated for a message holding {string}", %{args: [message]} = context do
+    context =
+      github(context, [
+        %{
+          "args" => ["--hostname github.com", "repos/acme/app/issues/12 "],
+          "stdout" => %{
+            "title" => "Login redirect loops",
+            "body" => "The login page redirects forever."
+          }
+        }
+      ])
+
+    title(context, message)
+  end
+
+  step "the writer is given the title of {string} and the start of its body",
+       %{args: [_item]} = context do
+    prompt = prompt(context)
+    assert prompt =~ JSON.encode!("Login redirect loops")
+    assert prompt =~ "The login page redirects forever."
+    context
+  end
+
+  step "a title is generated for a message linking a repository page, a pull request on another host and then two github.com issues",
+       context do
+    context =
+      github(context, [
+        item(1, "First issue", "One. "),
+        item(2, "Second issue", "Two. ")
+      ])
+
+    title(
+      context,
+      "See https://github.com/hal-c2/code and https://gitlab.com/hal-c2/code/pull/7, " <>
+        "then https://github.com/hal-c2/code/issues/1 and https://github.com/hal-c2/code/issues/2"
+    )
+  end
+
+  step "both issues are looked up", context do
+    assert gh_endpoints(context) == ["repos/hal-c2/code/issues/1", "repos/hal-c2/code/issues/2"]
     context
   end
 

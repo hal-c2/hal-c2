@@ -136,6 +136,30 @@ defmodule HalC2.Codex.Provider do
 
   defp check(id), do: :persistent_term.get(@status, %{})[id]
 
+  @doc """
+  What instance `id`'s last check found, without starting a new one: `:ok`,
+  `:failed`, or `:pending` when no check has finished this session. Text
+  generation reads it so a writer that failed its check is not asked to write.
+  """
+  def check_state(id) do
+    case check(id) do
+      nil -> :pending
+      :ok -> :ok
+      %{} -> :failed
+    end
+  end
+
+  @doc """
+  Records what a check of instance `id` found (`:ok`, a failure map as
+  `probe/1` writes, or `nil` for no finished check), as the probe does.
+  """
+  def record_check(id, nil) do
+    :persistent_term.put(@status, Map.delete(:persistent_term.get(@status, %{}), id))
+    :ok
+  end
+
+  def record_check(id, value), do: put_check(id, value)
+
   defp put_check(id, value) do
     :persistent_term.put(@status, Map.put(:persistent_term.get(@status, %{}), id, value))
     :ok

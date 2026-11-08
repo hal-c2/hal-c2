@@ -147,7 +147,7 @@ defmodule HalC2.TextGenerationTest do
 
       assert {:ok, %{"title" => "claude title"}} = TextGeneration.thread_title(repo, "Fix it")
       assert [%{"argv" => argv, "cwd" => cwd}] = calls(log)
-      assert after_flag(argv, "--model") == "claude-haiku-4-5"
+      assert after_flag(argv, "--model") == "claude-haiku-5-5"
       # Titles run outside the checkout.
       assert Path.basename(cwd) =~ ~r/^hal-c2-text-/
 
@@ -155,6 +155,32 @@ defmodule HalC2.TextGenerationTest do
 
       assert {:error, "No text generation provider is available" <> _} =
                TextGeneration.commit_message(repo, "main", "M a.txt", "diff")
+    end
+
+    test "a writer whose check failed falls back, and one still being checked keeps its selection",
+         %{repo: repo, log: log} do
+      install([:claude, :codex])
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex", "model" => "gpt-text"}
+      })
+
+      on_exit(fn -> HalC2.Codex.Provider.record_check("codex", nil) end)
+
+      # Still being checked: the selection stands.
+      :ok = HalC2.Codex.Provider.record_check("codex", nil)
+      assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
+
+      # Check failed: the next usable provider writes, with its default model.
+      :ok =
+        HalC2.Codex.Provider.record_check("codex", %{
+          "installed" => true,
+          "message" => "Codex app-server provider probe failed: signed out."
+        })
+
+      assert {:ok, %{"title" => "claude title"}} = TextGeneration.thread_title(repo, "Fix it")
+      assert [_, %{"argv" => argv}] = calls(log)
+      assert after_flag(argv, "--model") == "claude-haiku-5-5"
     end
 
     test "an ACP agent writes through one prompt in an empty directory", %{repo: repo} do

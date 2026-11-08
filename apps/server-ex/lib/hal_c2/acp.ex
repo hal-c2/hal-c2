@@ -1424,6 +1424,10 @@ defmodule HalC2.Acp do
     HalC2.Settings.notify_providers()
   end
 
+  @doc "Whether instance `id` is recorded signed out, as its entry's auth says."
+  def unauthenticated?(id),
+    do: :persistent_term.get({__MODULE__, id, :unauthenticated}, false) == true
+
   @doc """
   Replaces an instance's models with those of a session's `configOptions`, as an
   agent reports them mid-session, and tells subscribed clients.

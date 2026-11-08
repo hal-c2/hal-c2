@@ -112,22 +112,21 @@ Feature: Generated titles, branch names and source control text
     Examples:
       | provider      | model              |
       | "codex"       | "gpt-6-luna"       |
-      | "claudeAgent" | "claude-haiku-4-5" |
+      | "claudeAgent" | "claude-haiku-5-5" |
       | "cursor"      | "composer-2"       |
       | "grok"        | "grok-build"       |
-      | "opencode"    | "openai/gpt-5"     |
+      | "opencode"    | "opencode/big-pickle" |
 
-  # Upstream #18781 moved Claude's default writer from Haiku 4.5 to Haiku 5.5. Replaces the
-  # "claudeAgent" row above once the MC carries it.
-  @backlog @mc
+  # Upstream #18781: Claude's default writer moved from Haiku 4.5 to Haiku 5.5.
+  @mc
   Scenario: Claude falls back to writing with Haiku 5.5
     Given the text model's provider cannot be used and only "claudeAgent" is installed and enabled
     When a title is generated
     Then "claudeAgent" writes it with "claude-haiku-5-5"
 
   # Upstream #22442: many OpenCode users have no access to "openai/gpt-5", so the default moved
-  # to OpenCode's own model. Replaces the "opencode" row above once the MC carries it.
-  @backlog @mc @plugin-opencode
+  # to OpenCode's own model.
+  @mc @plugin-opencode
   Scenario: OpenCode writes with Big Pickle by default
     Given the text model's provider cannot be used and only "opencode" is installed and enabled
     When a title is generated
@@ -136,7 +135,7 @@ Feature: Generated titles, branch names and source control text
 
   # Upstream #29607: Codex, the default writer, was still asked when it was missing or signed out,
   # so every title silently stayed the cut first message.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A writer that is <state> hands the title to the next usable provider
     Given the text model is "codex" and Codex is <state>
     And "claudeAgent" is installed, signed in and enabled
@@ -149,21 +148,21 @@ Feature: Generated titles, branch names and source control text
       | signed out    |
 
   # Upstream #29607: providers still being checked at startup keep the selection.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: A writer still being checked keeps the title
     Given the text model is "codex" and Codex's check has not finished
     When a title is generated
     Then "codex" writes it
 
   # Upstream #29607: an installed provider whose check failed could be picked ahead of a healthy one.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: The fallback skips a provider whose check failed
     Given the text model's provider cannot be used
     And "claudeAgent" is installed but its version check failed, and "cursor" is healthy
     When a title is generated
     Then "cursor" writes it
 
-  @backlog @mc
+  @mc
   Scenario: A saved Haiku 4.5 text model is kept
     Given the text generation model was saved as "claude-haiku-4-5" on "claudeAgent"
     When a title is generated
@@ -222,7 +221,7 @@ Feature: Generated titles, branch names and source control text
     Then Claude is run with that instance's home as its configuration folder
 
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.test.ts ("generates branch names from skill prompts without executable capabilities")
-  @backlog @mc
+  @mc
   Scenario: A message that looks like a slash command is text for the writer, not a command
     Given a first message "/call-script"
     When a branch name is generated
@@ -240,7 +239,7 @@ Feature: Generated titles, branch names and source control text
     And no effort option is passed
 
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.test.ts ("keeps a configured custom alias opaque to the Claude CLI")
-  @backlog @mc
+  @mc
   Scenario: A custom model alias is passed to Claude unchanged
     Given the text model is a custom alias the user configured
     When a title is generated
@@ -459,7 +458,7 @@ Feature: Generated titles, branch names and source control text
 
   # Upstream #27191: Antigravity creates empty skill folders when its session starts, and a valid
   # title was refused as a file write because of them.
-  @backlog @mc @plugin-antigravity @priority-high
+  @mc @plugin-antigravity @priority-high
   Scenario Outline: The empty skill folders Antigravity makes on start are not taken for written files
     Given Antigravity makes empty ".agents/skills" and ".gemini/skills" folders in its working folder when it starts
     When "antigravity" writes a <text> and leaves <left>
@@ -521,7 +520,7 @@ Feature: Generated titles, branch names and source control text
       | a thread's first message, at its start | a thread title     |
       | a thread's first message, at its end   | a thread title     |
 
-  @backlog @mc
+  @mc
   Scenario: A very large change is cut before the commit writer sees it
     Given the staged change is far larger than the writer's prompt limit
     When a commit message is generated
@@ -546,7 +545,7 @@ Feature: Generated titles, branch names and source control text
       | 200 characters long                  | the first 117 characters followed by "..."   |
       | empty                                | "New thread"                                 |
 
-  @backlog @mc
+  @mc
   Scenario: A title the writer wraps in a JSON object is unwrapped
     When the writing agent answers the title as a JSON object with a "title" field
     Then the title is the text of that field
@@ -556,7 +555,7 @@ Feature: Generated titles, branch names and source control text
     When the writing agent answers a title and says it needs refinement
     Then the title result says it needs refinement
 
-  @backlog @mc
+  @mc
   Scenario: A long thread gives the title writer only its recent context
     Given a thread whose messages together run past 8,000 characters
     When a title is generated for that thread
@@ -626,7 +625,7 @@ Feature: Generated titles, branch names and source control text
 
   # Upstream #29656: a link followed by a colon, or wrapped in bold markers, kept them on its path and
   # was never looked up.
-  @backlog @mc
+  @mc
   Scenario Outline: A linked pull request written as <written> gives the title writer context
     When a title is generated for a message holding <written>
     Then the writer is given the title of "acme/app#12" and the start of its body
@@ -663,7 +662,7 @@ Feature: Generated titles, branch names and source control text
       | a github.com pull request number that is zero              | nothing is looked up                                       |
 
   # Legacy: apps/server/src/textGeneration/ThreadTitleLinks.ts (providers select supported links before the budget)
-  @mc @backlog
+  @mc
   Scenario: Links that cannot be looked up do not use up the two lookups
     When a title is generated for a message linking a repository page, a pull request on another host and then two github.com issues
     Then both issues are looked up
