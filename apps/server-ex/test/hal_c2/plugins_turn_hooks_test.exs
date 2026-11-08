@@ -152,6 +152,15 @@ defmodule HalC2.PluginsTurnHooksTest do
     for argv <- launches(dir), do: assert(denied(argv) =~ "WebFetch")
   end
 
+  test "a Claude tool a plugin turned off does not tell Claude to keep to HAL-C2's workers" do
+    mcp = %{url: "http://127.0.0.1:1/mcp", authorization: "Bearer t"}
+    note = String.trim(HalC2.Mcp.workers_only_note())
+    told? = &(HalC2.Claude.Protocol.cli_args(&1) |> Enum.any?(fn arg -> arg =~ note end))
+
+    refute told?.(mcp: mcp, disallowed_tools: ["WebFetch"], workers_only: false)
+    assert told?.(mcp: mcp, disallowed_tools: ["Agent", "WebFetch"], workers_only: true)
+  end
+
   test "a plugin turning Codex's collaboration off starts the native thread without it",
        %{work: work, dir: dir} do
     grant(%{"shaper" => ["runs:shape"]})

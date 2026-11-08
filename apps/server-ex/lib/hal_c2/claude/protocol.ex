@@ -51,7 +51,7 @@ defmodule HalC2.Claude.Protocol do
       if(opts[:thinking_display], do: ["--thinking-display", "summarized"], else: []) ++
       if(opts[:tools] in [nil, []], do: [], else: ["--tools", Enum.join(opts[:tools], ",")]) ++
       Enum.flat_map(List.wrap(opts[:add_dirs]), &["--add-dir", &1]) ++
-      mcp_args(opts[:mcp], opts[:disallowed_tools] not in [nil, []], opts) ++
+      mcp_args(opts[:mcp], opts[:workers_only] == true, opts) ++
       if(opts[:disallowed_tools] in [nil, []],
         do: [],
         else: ["--disallowedTools", Enum.join(opts[:disallowed_tools], ",")]
