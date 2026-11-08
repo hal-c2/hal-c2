@@ -365,13 +365,11 @@ Feature: Grok
     Then reading fails naming the step that failed and the project folder
     And the failure is not remembered as an empty skill list
 
-  @backlog
   Scenario: Choosing Grok's default model keeps the model the session already has
     Given a Grok session that started on the model Grok picked
     When a turn runs with Grok's default model chosen
     Then Grok is not asked to switch models
 
-  @backlog
   Scenario: A reasoning level Grok could not accept is not sent
     Given a Grok thread whose saved reasoning level is not a plain word
     When the user sends a message
@@ -544,13 +542,11 @@ Feature: Grok
     When the user stops the turn
     Then Grok's cancel request carries the cancel trigger "ctrl_c"
 
-  @backlog
   Scenario: A reasoning level chosen with Grok's default model applies to the model the session is on
     Given a Grok session that started on the model Grok picked
     When a turn runs with Grok's default model and a reasoning level chosen
     Then Grok is asked for that reasoning level on the model the session already has
 
-  @backlog
   Scenario: Choosing the same Grok model again without a reasoning level keeps Grok's own reasoning
     Given a Grok session running on a model at the reasoning level Grok chose
     When a turn runs on that model with no reasoning level chosen

@@ -1549,6 +1549,9 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     state = remember_config(state, result)
 
+    state =
+      if grok?(state), do: Map.put(state, :reasoning, session_reasoning(result)), else: state
+
     case Enum.find(result["configOptions"] || [], &(&1["id"] == "model")) do
       %{"currentValue" => model} ->
         %{state | model: model, model_method: "session/set_config_option"}
@@ -1761,6 +1764,14 @@ defmodule HalC2.Acp.ThreadRuntime do
   # already has. A picked model is set again, so a restarted session resumes
   # on the thread's model.
   defp select_model(state, model) do
+    if grok?(state) do
+      {:ok, grok_model(state, model, Map.get(state.turn, :options) || %{})}
+    else
+      select_model_of(state, model)
+    end
+  end
+
+  defp select_model_of(state, model) do
     if Antigravity.antigravity?(state.agent) and Antigravity.default_alias?(model) do
       case Antigravity.default_model(state.options, state.model) do
         resolved when is_binary(resolved) and resolved != state.model ->
@@ -1773,6 +1784,64 @@ defmodule HalC2.Acp.ThreadRuntime do
       {:ok, set_model(state, model)}
     end
   end
+
+  # Grok's `grok-build` is the CLI's product name, not a model it accepts: choosing it
+  # keeps the model the session has. A reasoning level goes with the model, as
+  # `session/set_model`'s `_meta.reasoningEffort`, and only when it is a plain word and
+  # differs from the level the session is on. Omitting a level on the same model leaves
+  # Grok's own default alone, so only a changed model or a changed level is sent.
+  @grok_default_model "grok-build"
+  @grok_effort ~r/^[a-z0-9][a-z0-9._-]{0,31}$/i
+
+  defp grok_model(state, model, options) do
+    requested = if model in [nil, "", @grok_default_model], do: nil, else: model
+    provided = options["reasoningEffort"]
+    effort = if is_binary(provided) and provided =~ @grok_effort, do: provided
+    model_changed = requested != nil and requested != state.model
+    effort_changed = provided != nil and effort != Map.get(state, :reasoning)
+    target = requested || state.model
+
+    cond do
+      (not model_changed and not effort_changed) or target == nil ->
+        state
+
+      # Agents that switch models through a config option keep that way when no level
+      # needs to travel with the model.
+      effort == nil and state.model_method == "session/set_config_option" ->
+        set_model(state, target)
+
+      true ->
+        params = %{"sessionId" => state.session_id, "modelId" => target}
+
+        params =
+          if effort, do: Map.put(params, "_meta", %{"reasoningEffort" => effort}), else: params
+
+        case Connection.call(state.conn, "session/set_model", params) do
+          {:ok, _} ->
+            state
+            |> Map.merge(%{model: target, model_method: "session/set_model"})
+            |> Map.put(:reasoning, effort)
+
+          {:error, reason} ->
+            Logger.warning("could not select #{target}: #{inspect(reason)}")
+            state
+        end
+    end
+  end
+
+  # The level of reasoning the model a Grok session starts on is at.
+  defp session_reasoning(%{"models" => %{"currentModelId" => current} = models}) do
+    with model when is_map(model) <-
+           Enum.find(models["availableModels"] || [], &(&1["modelId"] == current)),
+         effort when is_binary(effort) <- get_in(model, ["_meta", "reasoningEffort"]),
+         true <- effort =~ @grok_effort do
+      effort
+    else
+      _ -> nil
+    end
+  end
+
+  defp session_reasoning(_result), do: nil
 
   # "Pi default" leaves the model to the user's own Pi settings.
   defp set_model(%{agent: agent} = state, "default") when agent != nil do
