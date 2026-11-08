@@ -1085,27 +1085,36 @@ defmodule HalC2.Steps.Orchestration.Runs do
     :erlang.trace(runtime, true, [:receive])
     failure = HalC2.Orchestration.TurnWriter.start_failure(nil, :closed)
     HalC2.Orchestration.TurnWriter.abandon(id, first["id"], "failed", failure)
-    # The second run waits on the first's session to let go of it: the conversation
-    # that session opened may hold the first prompt, under an id the MC never learnt.
-    assert_receive {:trace, ^runtime, :receive, {:"$gen_call", _, :release}}, 5_000
-    :erlang.trace(runtime, false, [:receive])
+    # The second run waits behind the first's start in the same session.
+    assert_receive {:trace, ^runtime, :receive, {:"$gen_call", _, {:start_turn, _}}}, 5_000
     Map.merge(context, %{thread: thread, runtime: runtime, watch: watch})
   end
 
   step "the provider starts the first turn anyway", context do
-    ref = Process.monitor(context.runtime)
     :ok = :sys.resume(context.watch)
-    Map.put(context, :released, ref)
+    context
   end
 
   step "the first run of {string} stays failed and the second runs alone",
        %{args: [thread]} = context do
     World.await_runs(context, thread, ["failed", "running"])
-    # The first turn's session stops once it lets go of the turn; what it ends as it
-    # stops is not the second's.
-    ref = context.released
-    assert_receive {:DOWN, ^ref, :process, _, {:shutdown, :released}}, 5_000
-    World.await_runs(context, thread, ["failed", "running"])
+    # The first turn ends as the session stops it; that end is not the second's.
+    runtime = context.runtime
+
+    assert_receive {:trace, ^runtime, :receive,
+                    {:json_rpc, _, {:notification, "turn/completed", %{"turn" => turn}}}},
+                   5_000
+
+    assert turn["status"] == "interrupted"
+    _ = :sys.get_state(runtime)
+    :erlang.trace(runtime, false, [:receive])
+
+    statuses =
+      World.entities(context, thread, "run")
+      |> Enum.sort_by(& &1["ordinal"])
+      |> Enum.map(& &1["status"])
+
+    assert statuses == ["failed", "running"]
     context
   end
 

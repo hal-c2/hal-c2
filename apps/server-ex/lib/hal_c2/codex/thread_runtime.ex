@@ -1062,7 +1062,11 @@ defmodule HalC2.Codex.ThreadRuntime do
           "turnId" => native_turn
         })
 
-        {:ok, %{state | turn: nil}}
+        # A conversation the turn opened holds its prompt under an id the MC never
+        # learnt, which no handoff counts: the next turn opens its own instead.
+        native = if state.native_thread_id == turn.native_thread_id, do: turn.native_thread_id
+
+        {:ok, %{state | turn: nil, native_thread_id: native}}
     end
   end
 
