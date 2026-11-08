@@ -617,7 +617,8 @@ void PreviewAutomationHost::open(const RequestPtr& request) {
                                                                       : input.value(QLatin1String("show"));
   const int show = openValue.isBool() ? int(openValue.toBool()) : -1;
   const bool reuse = input.value(QLatin1String("reuseExistingTab")).toBool(true);
-  const QUrl url = QUrl(input.value(QLatin1String("url")).toString());
+  QUrl url;
+  if (!address(request, url)) return;
 
   auto opened = [this, request, show, url](const QString& tab, bool load) {
     request->tabId = tab;
@@ -658,32 +659,37 @@ void PreviewAutomationHost::open(const RequestPtr& request) {
                  });
 }
 
+bool PreviewAutomationHost::address(const RequestPtr& request, QUrl& url) {
+  const QJsonObject& input = request->input;
+  const QJsonObject target = input.value(QLatin1String("target")).toObject();
+  if (target.isEmpty()) {
+    url = QUrl(input.value(QLatin1String("url")).toString());
+  } else if (target.value(QLatin1String("kind")).toString() == QLatin1String("url")) {
+    url = QUrl(target.value(QLatin1String("url")).toString());
+  } else {
+    // A port of the environment's machine, which only this machine's own
+    // MC is reached by name from here.
+    if (request->environmentId != m_client->environment()) {
+      fail(request, tag::Unreachable,
+           QStringLiteral("Ports of environment %1 are not reachable from this desktop; navigate to a url instead.")
+               .arg(request->environmentId));
+      return false;
+    }
+    QString host = m_client->origin().host();
+    if (host.isEmpty() || host == QLatin1String("127.0.0.1")) host = QStringLiteral("localhost");
+    url = QUrl();
+    url.setScheme(target.value(QLatin1String("protocol")).toString(QStringLiteral("http")));
+    url.setHost(host);
+    url.setPort(target.value(QLatin1String("port")).toInt());
+    url.setPath(target.value(QLatin1String("path")).toString(QStringLiteral("/")));
+  }
+  return true;
+}
+
 void PreviewAutomationHost::navigate(const RequestPtr& request) {
   const QJsonObject& input = request->input;
   QUrl url;
-  if (input.contains(QLatin1String("url"))) {
-    url = QUrl(input.value(QLatin1String("url")).toString());
-  } else {
-    const QJsonObject target = input.value(QLatin1String("target")).toObject();
-    if (target.value(QLatin1String("kind")).toString() == QLatin1String("url")) {
-      url = QUrl(target.value(QLatin1String("url")).toString());
-    } else {
-      // A port of the environment's machine, which only this machine's own
-      // MC is reached by name from here.
-      if (request->environmentId != m_client->environment()) {
-        fail(request, tag::Unreachable,
-             QStringLiteral("Ports of environment %1 are not reachable from this desktop; navigate to a url instead.")
-                 .arg(request->environmentId));
-        return;
-      }
-      QString host = m_client->origin().host();
-      if (host.isEmpty() || host == QLatin1String("127.0.0.1")) host = QStringLiteral("localhost");
-      url.setScheme(target.value(QLatin1String("protocol")).toString(QStringLiteral("http")));
-      url.setHost(host);
-      url.setPort(target.value(QLatin1String("port")).toInt());
-      url.setPath(target.value(QLatin1String("path")).toString(QStringLiteral("/")));
-    }
-  }
+  if (!address(request, url)) return;
   if (!url.isValid() || url.scheme().isEmpty()) {
     fail(request, tag::InvalidInput, QStringLiteral("Preview navigation needs an absolute url, not %1.").arg(url.toString()));
     return;
@@ -773,20 +779,38 @@ void PreviewAutomationHost::capture(const RequestPtr& request, int attempt,
   });
 }
 
-void PreviewAutomationHost::snapshot(const RequestPtr& request) {
-  runtime(request, QStringLiteral("snapshot"), {}, [this, request](const QJsonObject& value) {
-    capture(request, 0, [this, request, value](const QJsonObject& shot) {
-      QJsonObject result = value;
-      QJsonArray network = value.value(QLatin1String("networkEntries")).toArray();
-      for (const QJsonValue& entry : request->page->failedLoads()) network.append(entry);
-      while (network.size() > PreviewAutomationPage::kConsoleEntries) network.removeFirst();
-      result.remove(QStringLiteral("viewport"));
-      result.insert(QStringLiteral("tabId"), request->tabId);
-      result.insert(QStringLiteral("networkEntries"), network);
-      result.insert(QStringLiteral("consoleEntries"), request->page->consoleEntries());
-      result.insert(QStringLiteral("actionTimeline"), m_timelines.value(request->tabId));
-      result.insert(QStringLiteral("screenshot"), shot);
-      succeed(request, result);
+void PreviewAutomationHost::snapshot(const RequestPtr& request, int attempt) {
+  // A page whose password fields (or what it draws as dots) changed between
+  // reading its text and drawing its picture may show what the text hid.
+  constexpr int kAttempts = 3;
+  runtime(request, QStringLiteral("snapshot"), {}, [this, request, attempt](const QJsonObject& value) {
+    capture(request, 0, [this, request, attempt, value](const QJsonObject& shot) {
+      runtime(request, QStringLiteral("secrets"), {}, [this, request, attempt, value, shot](const QJsonObject& now) {
+        if (now.value(QLatin1String("print")) != value.value(QLatin1String("secrets"))) {
+          if (attempt + 1 < kAttempts) {
+            snapshot(request, attempt + 1);
+          } else {
+            fail(request, tag::CaptureFailed,
+                 QStringLiteral("Preview tab %1 was too busy to read safely: its password fields changed while each of "
+                                "%2 snapshots was taken.")
+                     .arg(request->tabId)
+                     .arg(kAttempts));
+          }
+          return;
+        }
+        QJsonObject result = value;
+        QJsonArray network = value.value(QLatin1String("networkEntries")).toArray();
+        for (const QJsonValue& entry : request->page->failedLoads()) network.append(entry);
+        while (network.size() > PreviewAutomationPage::kConsoleEntries) network.removeFirst();
+        result.remove(QStringLiteral("viewport"));
+        result.remove(QStringLiteral("secrets"));
+        result.insert(QStringLiteral("tabId"), request->tabId);
+        result.insert(QStringLiteral("networkEntries"), network);
+        result.insert(QStringLiteral("consoleEntries"), request->page->consoleEntries());
+        result.insert(QStringLiteral("actionTimeline"), m_timelines.value(request->tabId));
+        result.insert(QStringLiteral("screenshot"), shot);
+        succeed(request, result);
+      });
     });
   });
 }

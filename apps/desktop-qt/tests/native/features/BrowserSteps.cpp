@@ -24,6 +24,7 @@
 
 #include "Brick.h"
 #include "Browser.h"
+#include "Browsing.h"
 #include "Harness.h"
 #include "KeybindingController.h"
 #include "Preview.h"
@@ -908,3 +909,32 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+namespace webtab {
+
+void servePage(World& world, const QString& path, const QString& title, const QString& body) {
+  devServer(world).page(path, title, body);
+}
+QString serverUrl(World& world, const QString& path) {
+  return devServer(world).url(path);
+}
+void showTab(World& world, const QString& path) {
+  ::showTab(world, path);
+}
+BrowserPage* page(World& world) {
+  return ::page(world);
+}
+QString tabId(World& world) {
+  return world.mc.part<Browsing>().tabId;
+}
+QVariant evaluate(World& world, const QString& script) {
+  return ::evaluate(world, script);
+}
+void waitForEngine(World& world, const std::function<bool()>& condition, const std::function<QString()>& what) {
+  ::waitForEngine(world, condition, what);
+}
+QList<QQuickWindow*> popups(World& world) {
+  return ::popups(world);
+}
+
+}  // namespace webtab

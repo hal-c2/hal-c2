@@ -212,6 +212,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/model-and-mode.feature:The composer names the permissions only when they differ*"),
     QStringLiteral("composer/model-and-mode.feature:A new thread says which permissions*"),
     QStringLiteral("navigation/toasts.feature"),
+    QStringLiteral("preview/automation.feature"),
     QStringLiteral("preview/devices.feature"),
     QStringLiteral("preview/remote.feature"),
     QStringLiteral("plugins/ui-plugins.feature"),
