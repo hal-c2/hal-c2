@@ -1635,11 +1635,9 @@ defmodule HalC2.Orchestration.Handoff do
     end
   end
 
-  @doc """
-  The turn as it opens a new provider conversation: the thread's history wrapped into its
-  text. A turn with nothing to carry is unchanged.
-  """
-  def afresh(%{fresh: %{} = fresh} = turn) do
+  # The turn as it opens a new provider conversation: the thread's history wrapped into
+  # its text. A turn with nothing to carry is unchanged.
+  defp afresh(%{fresh: %{} = fresh} = turn) do
     max_chars = Map.get(fresh, :max_chars, @max_chars)
     history = HalC2.Streams.read(fresh.thread, &transcript(&1, fresh.ordinal, 0, max_chars))
     context = wrap(history, fresh.merged, fresh.moved, nil, fresh.restart, :merged_first)
@@ -1647,7 +1645,7 @@ defmodule HalC2.Orchestration.Handoff do
     ahead(%{turn | text: fresh.text, fresh: nil} |> Map.delete(:history), context)
   end
 
-  def afresh(turn), do: turn
+  defp afresh(turn), do: turn
 
   # The new conversation holds only what this run hands it, which may be lost before
   # the provider confirms the run, so the run marks its provider thread as any
