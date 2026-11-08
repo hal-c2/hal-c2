@@ -29,10 +29,26 @@ AbstractButton {
         return onlyInstances === null ? all : all.filter(instance => onlyInstances.includes(instance.instanceId));
     }
     readonly property var activeInstance: Picker.findInstance(instances, selectedInstanceId)
+    // The instance the rail is looking at, when it cannot be used but the MC
+    // can set it up: its panel offers the setup instead of models.
+    readonly property var setupInstance: {
+        const looked = Picker.findInstance(instances, view);
+        return looked && !looked.isAvailable && looked.canSetUp === true ? looked : null;
+    }
     readonly property var activeModel: Picker.findModel(activeInstance, selectedModel)
     // The models a new thread's prompt goes to, once more than one is chosen.
     readonly property var multiple: onlyInstances === null ? (catalogue?.multiple ?? null) : null
-    readonly property string triggerTitle: multiple !== null ? qsTr("%1 models").arg(multiple.length) : activeModel ? Picker.displayName(activeModel, true) : (selectedModel ? selectedModel : qsTr("Choose model"))
+    // What stands where the model would be when no provider can run a turn
+    // (catalogue.noProvider, keyed in C++): it wins over the model name,
+    // which a keep-unlisted provider can still resolve while unready.
+    readonly property string noProviderText: catalogue?.noProvider === "open-provider-settings" ? qsTr("Open provider settings") : catalogue?.noProvider === "no-provider-available" ? qsTr("No provider available") : ""
+    // Short names are for chat models; where favorites is off (a Space's
+    // image models) the trigger keeps the model's own name.
+    readonly property string triggerTitle: multiple !== null ? qsTr("%1 models").arg(multiple.length) : noProviderText.length > 0 ? noProviderText : activeModel ? Picker.displayName(activeModel, favorites, activeInstance) : (selectedModel ? selectedModel : qsTr("Choose model"))
+    // The full name, for the tooltip the short title stands in for. Where
+    // the button shows a stand-in instead (no provider, or several models),
+    // the tooltip follows the button.
+    readonly property string triggerFullTitle: multiple === null && noProviderText.length === 0 && activeModel ? Picker.displayName(activeModel, false, activeInstance) + (activeModel.isUnavailable ? qsTr(" (Unavailable)") : "") : triggerTitle
 
     function inMultiple(instanceId, model) {
         return multiple !== null && multiple.some(entry => entry.instanceId === instanceId && entry.model === model);
@@ -40,6 +56,14 @@ AbstractButton {
     readonly property string triggerLabel: activeModel && activeModel.isUnavailable ? triggerTitle + qsTr(" (Unavailable)") : triggerTitle
     readonly property bool mac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
     readonly property alias popup: popup
+
+    // The permissions the popup's footer offers ({value, label, icon}) and
+    // the thread's; with none the popup has no footer.
+    property var runtimeModes: []
+    property string runtimeMode: ""
+    readonly property bool showFooter: onlyInstances === null && runtimeModes.length > 0
+    // The part the popup opens on: "models" (the search) or "permissions".
+    property string openOn: "models"
 
     signal chosen(string instanceId, string model)
 
@@ -73,8 +97,30 @@ AbstractButton {
             popup.open();
     }
 
+    // Opens the popup with its permissions menu open, or moves there.
+    function openPermissions() {
+        if (!enabled || !showFooter)
+            return;
+        if (popup.opened) {
+            permissionsPicker.forceActiveFocus();
+            permissionsPicker.popup.open();
+            return;
+        }
+        openOn = "permissions";
+        popup.open();
+    }
+
     function close() {
         popup.close();
+    }
+
+    // One step back (the phone's system back): out of the permissions menu
+    // when it is open, else out of the popup.
+    function stepBack() {
+        if (permissionsPicker.popup.visible)
+            permissionsPicker.popup.close();
+        else
+            popup.close();
     }
 
     function selectView(next) {
@@ -210,9 +256,20 @@ AbstractButton {
 
     ToolTip.visible: hovered && !popup.visible
     ToolTip.delay: 500
-    ToolTip.text: catalogue && catalogue.shortcut ? triggerLabel + " · " + catalogue.shortcut : triggerLabel
+    ToolTip.text: catalogue && catalogue.shortcut ? triggerFullTitle + " · " + catalogue.shortcut : triggerFullTitle
 
-    onClicked: popup.visible ? popup.close() : popup.open()
+    onClicked: {
+        // The stand-in that names provider settings goes there, as it says.
+        if (catalogue?.noProvider === "open-provider-settings") {
+            Shell.dispatch("settings.navigate", {
+                to: "/settings/providers"
+            });
+        } else if (popup.visible) {
+            popup.close();
+        } else {
+            popup.open();
+        }
+    }
 
     background: Rectangle {
         id: triggerBackground
@@ -283,7 +340,7 @@ AbstractButton {
         width: 360
         // The search row, then six whole rows (46 tall, 2 apart) between the
         // list's margins: the list never stops on a sliced row.
-        height: 40 + 2 * Theme.space.sm + 6 * 46 + 5 * 2
+        height: 40 + 2 * Theme.space.sm + 6 * 46 + 5 * 2 + (control.showFooter ? footer.height : 0)
         padding: 0
         margins: 8
         focus: true
@@ -298,15 +355,22 @@ AbstractButton {
             control.expandedLegacy = control.activeModel && control.activeModel.isLegacy ? {
                 [control.selectedInstanceId]: true
             } : {};
-            control.view = Picker.initialView(control.instances, control.selectedInstanceId);
+            control.view = Picker.initialView(control.instances, control.selectedInstanceId, control.catalogue?.locked === true);
         }
         // The keymap's modelPickerOpen.
         onVisibleChanged: Keybindings.modelPickerOpen = visible
         onOpened: {
             const selected = control.rows.findIndex(row => row.kind === "model" && row.instance.instanceId === control.selectedInstanceId && row.model.slug === control.selectedModel);
             control.highlightedIndex = selected >= 0 ? selected : control.firstSelectableRow(0, 1);
-            search.forceActiveFocus();
+            if (control.openOn === "permissions" && control.showFooter) {
+                permissionsPicker.forceActiveFocus();
+                permissionsPicker.popup.open();
+            } else {
+                search.forceActiveFocus();
+            }
+            control.openOn = "models";
         }
+        onClosed: permissionsPicker.popup.close()
 
         enter: Transition {
             NumberAnimation {
@@ -368,7 +432,7 @@ AbstractButton {
                 objectName: "modelPickerRail"
                 visible: control.showRail
                 width: 44
-                height: parent.height
+                height: parent.height - (control.showFooter ? footer.height : 0)
                 color: control.fade(control.mutedSurface, 0.3)
                 radius: Theme.radiusLg
 
@@ -419,6 +483,7 @@ AbstractButton {
                                 objectName: "modelPickerProvider:" + modelData.instanceId
                                 railId: modelData.instanceId
                                 available: modelData.isAvailable
+                                canSetUp: modelData.canSetUp === true
                                 tooltip: modelData.unavailableReason ?? modelData.displayName
 
                                 ProviderIcon {
@@ -443,7 +508,7 @@ AbstractButton {
                 anchors.left: rail.visible ? rail.right : parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
-                anchors.bottom: parent.bottom
+                anchors.bottom: control.showFooter ? footer.top : parent.bottom
                 color: control.fade(control.mutedSurface, 0.4)
                 radius: rail.visible ? 0 : Theme.radiusLg
 
@@ -569,14 +634,89 @@ AbstractButton {
                         }
 
                         Text {
+                            objectName: "modelPickerEmpty"
                             anchors.centerIn: parent
-                            visible: list.count === 0
+                            visible: list.count === 0 && control.setupInstance === null
                             text: qsTr("No models found")
                             color: control.muted
                             font.family: control.fontFamily
                             font.pixelSize: Theme.type.body.size
                         }
+
+                        Column {
+                            anchors.centerIn: parent
+                            width: parent.width - Theme.space.lg * 2
+                            visible: control.setupInstance !== null
+                            spacing: Theme.space.sm
+
+                            Text {
+                                objectName: "modelPickerSetupReason"
+                                width: parent.width
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.WordWrap
+                                text: control.setupInstance ? (control.setupInstance.unavailableReason ?? "") : ""
+                                color: control.muted
+                                font.family: control.fontFamily
+                                font.pixelSize: Theme.type.body.size
+                            }
+
+                            ShellButton {
+                                objectName: "modelPickerSetup"
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                text: qsTr("Open provider setup")
+                                Accessible.name: qsTr("Open provider setup")
+                                onClicked: {
+                                    popup.close();
+                                    Shell.dispatch("settings.navigate", {
+                                        to: "/settings/providers"
+                                    });
+                                }
+                            }
+                        }
                     }
+                }
+            }
+
+            // Below the models: the thread's permissions, which open their
+            // own menu.
+            Rectangle {
+                id: footer
+
+                objectName: "modelPickerFooter"
+                visible: control.showFooter
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: Theme.control.md + 2 * Theme.space.xs + 1
+                color: control.fade(control.mutedSurface, 0.4)
+                radius: Theme.radiusLg
+
+                Rectangle {
+                    width: parent.width
+                    height: 1
+                    color: control.divider
+                }
+
+                ShellComboBox {
+                    id: permissionsPicker
+
+                    readonly property int current: control.runtimeModes.findIndex(mode => mode.value === control.runtimeMode)
+
+                    objectName: "modelPickerPermissions"
+                    // At the footer's end, where the speed controls do not reach.
+                    width: Math.min(implicitWidth, parent.width - 2 * Theme.space.xs)
+                    x: parent.width - width - Theme.space.xs
+                    y: 1 + Theme.space.xs
+                    iconName: current >= 0 ? (control.runtimeModes[current].icon ?? "") : ""
+                    model: control.runtimeModes.map(mode => mode.label)
+                    currentIndex: current
+                    Accessible.name: qsTr("Permissions")
+                    ToolTip.visible: hovered && !popup.visible && current >= 0
+                    ToolTip.delay: 500
+                    ToolTip.text: current >= 0 ? (control.runtimeModes[current].description ?? "") : ""
+                    onActivated: index => Shell.dispatch("composer.runtimeMode.set", {
+                            mode: control.runtimeModes[index].value
+                        })
                 }
             }
         }
@@ -616,7 +756,7 @@ AbstractButton {
             opacity: disabledReason.length > 0 ? 0.64 : 1
             color: highlighted || (rowHover.hovered && disabledReason.length === 0) ? control.highlight : isSelected ? control.fade(control.foreground, 0.08) : "transparent"
             Accessible.role: Accessible.ListItem
-            Accessible.name: model ? Picker.displayName(model, true) : ""
+            Accessible.name: model ? Picker.displayName(model, false, instance) : ""
             // The search field's arrows and Enter reach it from the keyboard.
             Accessible.onPressAction: if (row.model)
                 control.choose(row.instance.instanceId, row.model.slug)
@@ -663,7 +803,7 @@ AbstractButton {
                             Layout.fillWidth: implicitWidth > width
                             Layout.maximumWidth: implicitWidth
                             Layout.fillHeight: false
-                            text: row.model ? Picker.displayName(row.model, true) : ""
+                            text: row.model ? Picker.displayName(row.model, false, row.instance) : ""
                             color: control.foreground
                             font.family: control.fontFamily
                             font.pixelSize: Theme.type.meta.size
@@ -896,6 +1036,10 @@ AbstractButton {
         property string railId: ""
         property string tooltip: ""
         property bool available: true
+        // An unavailable provider the MC can set up can still be opened:
+        // its panel says why and offers the setup.
+        property bool canSetUp: false
+        readonly property bool selectable: available || canSetUp
         readonly property bool selected: control.view === railId
         default property alias content: face.data
 
@@ -927,7 +1071,7 @@ AbstractButton {
         }
 
         TapHandler {
-            enabled: railButton.available
+            enabled: railButton.selectable
             onTapped: control.selectView(railButton.railId)
         }
 
@@ -954,7 +1098,7 @@ AbstractButton {
             case Qt.Key_Return:
             case Qt.Key_Enter:
             case Qt.Key_Space:
-                if (railButton.available)
+                if (railButton.selectable)
                     control.selectView(railButton.railId);
                 break;
             case Qt.Key_Escape:
