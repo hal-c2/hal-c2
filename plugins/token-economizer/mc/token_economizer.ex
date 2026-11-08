@@ -37,10 +37,10 @@ defmodule HalC2Plugins.TokenEconomizer do
   `microSkills` topic carries the same listing, published as facts change.
 
   A turn whose start the plugin missed is not watched. Missed events (`"dropped"`) mark
-  the turns under way as partial, and the turns heard over the next full feed queue
-  too, and a partial turn does not teach the envelope. The micro-skills read a
-  partial turn back from the thread (`Host.history/3`) so a missed event in the
-  middle of it teaches nothing half-seen; a turn never folded twice.
+  the turns under way as partial, and the turns heard until the events that were still
+  waiting (`"waiting"`) have been, and a partial turn does not teach the envelope. The
+  micro-skills read a partial turn back from the thread (`Host.history/3`) so a missed
+  event in the middle of it teaches nothing half-seen; a turn never folded twice.
 
   The topic `loopGuard` carries `status/1`: counts since the MC started and the latest
   redirects and stop offers. It is published when a turn ends and when the guard acts,
@@ -277,7 +277,7 @@ defmodule HalC2Plugins.TokenEconomizer do
   def handle_call({:observe, event}, _from, state) do
     state =
       if on?(state) or micro_on?(state) do
-        state |> missed(event["dropped"]) |> hear(event) |> suspect(event)
+        state |> missed(event) |> hear(event) |> suspect(event)
       else
         state
       end
@@ -356,13 +356,14 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   # --- turns ------------------------------------------------------------------------------
 
-  # The feed says what it missed on the next event it delivers, which it queued before
-  # the missed ones: up to a full queue of events still to come were too, and a turn
-  # that starts in them may have lost what was missed. So the turns under way are
-  # partial, and so is each turn heard until that queue has been heard.
-  defp missed(state, n) when is_integer(n) and n > 0 do
+  # The feed says what it missed on the next event it delivers, and how many events were
+  # waiting behind that one then: those and it may have been sent before the missed
+  # ones, and a turn that starts in them may have lost what was missed. So the turns
+  # under way are partial, and so is each turn heard until they have been heard.
+  defp missed(state, %{"dropped" => n, "waiting" => waiting})
+       when is_integer(n) and n > 0 and is_integer(waiting) do
     turns = Map.new(state.turns, fn {id, turn} -> {id, %{turn | partial: true}} end)
-    %{state | turns: turns, missing: HalC2.Plugins.Feed.max_queue()}
+    %{state | turns: turns, missing: max(state.missing, waiting + 1)}
   end
 
   defp missed(state, _), do: state

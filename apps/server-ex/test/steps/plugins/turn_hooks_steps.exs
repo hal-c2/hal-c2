@@ -4,7 +4,7 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
   package `turn-probe`, which the plugin host runs as it runs any extension: it exports
   `observe/2` and `shape_run/2`, telling the scenario's process (registered as
   `:hal_c2_turn_probe`) what it heard and was asked, and shapes runs with the
-  `:turn_probe_shape` app env (`:raise` fails). Its call `"host"` drives the host calls
+  `:turn_probe_shape` app env (`:raise`, `:linked_exit` and `:not_json` fail). Its call `"host"` drives the host calls
   on turns, `Host.steer/4`, `notice/5`, `generate/3` and `history/3`, with the
   scenario's thread and run. Threads run on the fake providers
   (`HalC2.Test.Mc.World.fake_providers/2`).
@@ -13,12 +13,17 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
   import ExUnit.Assertions
 
   alias HalC2.Steps.Plugins.Fixtures
+  alias HalC2.StreamState
+  alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
 
   @id "turn-probe"
   @probe :hal_c2_turn_probe
   @thread "Turns"
   @instances %{"Claude" => "claudeAgent", "Codex" => "codex", "OpenCode" => "opencode"}
+  @fork "Turns fork"
+  # A second Claude instance on the same home as the first (`~/.claude`).
+  @same_home "claude-same-home"
 
   # --- plugins ----------------------------------------------------------------------
 
@@ -36,9 +41,15 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
     install(context, ["runs:shape"])
   end
 
-  step "a plugin that fails when asked to shape a run", context do
-    World.put_app_env(:turn_probe_shape, :raise)
-    install(context, ["runs:shape"])
+  for {how, shape} <- [
+        {"raises", :raise},
+        {"dies with a process it linked", :linked_exit},
+        {"answers with what is not JSON", :not_json}
+      ] do
+    step "a plugin that #{how} when asked to shape a run", context do
+      World.put_app_env(:turn_probe_shape, unquote(shape))
+      install(context, ["runs:shape"])
+    end
   end
 
   step "a plugin on turns granted {string}", %{args: [permission]} = context do
@@ -59,12 +70,84 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
     run(context, "Claude", ["first", "second"])
   end
 
+  step "a Claude thread that ran three turns", context do
+    run(context, "Claude", ["first", "second", "third"])
+  end
+
   step "a Claude thread whose turn ended", context do
     run(context, "Claude", ["hello"])
   end
 
   step "a {word} thread runs a turn", %{args: [provider]} = context do
     run(context, provider, ["hello"])
+  end
+
+  step "a Codex thread works toward the goal {string}, then runs a turn",
+       %{args: [objective]} = context do
+    run(context, "Codex", ["/goal #{objective}", "next"])
+  end
+
+  step "a Codex thread that ran a turn", context do
+    run(context, "Codex", ["hello"])
+  end
+
+  # The fake Claude keeps its transcripts under the home both instances share.
+  step "a Claude thread that ran a turn", context do
+    World.put_os_env("HOME", Mc.tmp_dir(context.mc, "user-home"))
+    World.put_os_env("CLAUDE_CONFIG_DIR", nil)
+    World.put_os_env("FAKE_SESSIONS", "1")
+
+    context
+    |> World.fake_providers()
+    |> World.update_settings(%{
+      "providerInstances" => %{
+        @same_home => %{
+          "driver" => "claudeAgent",
+          "enabled" => true,
+          "displayName" => "Claude (same home)",
+          "config" => %{"homePath" => "~/.claude"}
+        }
+      }
+    })
+    |> run("Claude", ["hello"])
+  end
+
+  step "the thread is forked and the fork runs a turn", context do
+    context = World.fork_thread(context, @thread, @fork)
+    World.finish_turn(context, @fork, "next")
+    context
+  end
+
+  step "its next turn runs on another Claude account with the same home", context do
+    context =
+      World.send_turn(context, @thread, "next", %{
+        "modelSelection" => %{"instanceId" => @same_home, "model" => "sonnet"}
+      })
+
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  step "a Claude thread working on a turn with a command running", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "leave a tool pending")
+
+    World.await_thread(context, @thread, fn state ->
+      state
+      |> StreamState.list("turn-item")
+      |> Enum.any?(&(&1["providerToolName"] == "Bash" and &1["status"] == "running"))
+    end)
+
+    # The thread "the user stops the turn" stops (common steps).
+    Map.put(context, :thread, @thread)
+  end
+
+  step "the turn's runtime dies", context do
+    [{runtime, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    Process.exit(runtime, :kill)
+    context
   end
 
   step "a Claude thread working on a turn", context do
@@ -105,6 +188,17 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
     context
   end
 
+  step ~r/^the plugin hears the command end (?<status>\w+), then the turn end$/,
+       %{args: [status]} = context do
+    events = heard([])
+    assert %{"type" => "turn.finished"} = List.last(events)
+
+    assert %{"status" => ^status} =
+             Enum.find(events, &(&1["type"] == "turn.item" and &1["tool"] == "Bash"))
+
+    context
+  end
+
   step "it hears the turn end last", context do
     assert %{"type" => "turn.finished", "status" => "completed"} =
              finished = List.last(context.events)
@@ -127,6 +221,25 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
     call(context, %{"call" => "history", "threadId" => World.thread_id(context, @thread)})
   end
 
+  step "the plugin reads one turn from before the thread's last turn", context do
+    last = context |> World.runs(@thread) |> List.last()
+
+    call(context, %{
+      "call" => "history",
+      "threadId" => World.thread_id(context, @thread),
+      "before" => last["id"],
+      "limit" => 1
+    })
+  end
+
+  step "it gets the thread's second turn, which ran on Claude", context do
+    assert {:ok, [turn]} = context.reply
+    assert [_first, second, _third] = World.runs(context, @thread)
+    assert %{"runId" => id, "provider" => "claudeAgent"} = turn
+    assert id == second["id"]
+    context
+  end
+
   step "it gets both turns, oldest first, each with its tool calls", context do
     assert {:ok, [one, two]} = context.reply
     assert [first, second] = World.runs(context, @thread)
@@ -144,6 +257,22 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
     {at, _} = :binary.match(first, hd(context.texts))
     assert ahead < at
     for later <- rest, do: refute(later =~ text)
+    context
+  end
+
+  step "Codex is asked to work toward {string} after {string}",
+       %{args: [objective, text]} = context do
+    [first | _] = prompts(context, "Codex")
+    {ahead, _} = :binary.match(first, text)
+    {at, _} = :binary.match(first, HalC2.Codex.Goals.first_prompt(objective))
+    assert ahead < at
+    context
+  end
+
+  step "the turn after the goal comes without {string}", %{args: [text]} = context do
+    assert [_goal, next] = prompts(context, "Codex")
+    assert next =~ "next"
+    refute next =~ text
     context
   end
 
@@ -172,6 +301,37 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
 
   step "{word} ran the turn with {string} off", %{args: ["Claude", tool]} = context do
     for argv <- claude_launches(context), do: assert(denied(argv) =~ tool)
+    context
+  end
+
+  step "Codex forks its own conversation with its subagent tools still off", context do
+    assert [fork] =
+             for(
+               %{"in" => %{"method" => "thread/fork", "params" => params}} <-
+                 World.provider_log(context, "codex"),
+               do: params
+             )
+
+    assert %{
+             "features" => %{"multi_agent" => false, "multi_agent_v2" => false},
+             "include_collaboration_mode_instructions" => false
+           } = fork["config"]
+
+    context
+  end
+
+  step "the fork's message comes without {string}", %{args: [text]} = context do
+    assert List.last(prompts(context, "Codex")) =~ "next"
+    refute List.last(prompts(context, "Codex")) =~ text
+    context
+  end
+
+  step "that account resumes the conversation without {string}", %{args: [tool]} = context do
+    argv = List.last(claude_launches(context))
+    native = World.stream(context, @thread) |> StreamState.list("provider-thread")
+    native = Enum.find_value(native, &get_in(&1, ["nativeThreadRef", "nativeId"]))
+    assert ["--resume", native] in Enum.chunk_every(argv, 2, 1)
+    assert denied(argv) =~ tool
     context
   end
 
@@ -211,6 +371,11 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
 
   step "the plugin steers that turn with {string}", %{args: [text]} = context do
     call(context, %{"call" => "steer", "text" => text} |> Map.merge(ids(context)))
+  end
+
+  step "the plugin steers the thread with {string}, naming no turn", %{args: [text]} = context do
+    input = %{"call" => "steer", "text" => text, "threadId" => World.thread_id(context, @thread)}
+    call(context, input)
   end
 
   step "Claude gets {string} in that turn", %{args: [text]} = context do
@@ -436,8 +601,18 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
         tell({:shaping, run})
 
         case Application.get_env(:hal_c2, :turn_probe_shape) do
-          :raise -> raise "no shape"
-          shape -> shape
+          :raise ->
+            raise "no shape"
+
+          :linked_exit ->
+            spawn_link(fn -> exit(:boom) end)
+            receive do: (:never -> nil)
+
+          :not_json ->
+            %{"context" => self()}
+
+          shape ->
+            shape
         end
       end
 
@@ -455,8 +630,10 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
              do: {:ok, %{"out" => out, "usage" => usage}}
       end
 
-      def call("host", %{"call" => "history"} = input, _context),
-        do: Host.history(@id, input["threadId"])
+      def call("host", %{"call" => "history"} = input, _context) do
+        opts = [before: input["before"], limit: input["limit"]]
+        Host.history(@id, input["threadId"], Enum.reject(opts, &(elem(&1, 1) == nil)))
+      end
 
       def call(method, _input, _context), do: {:error, "no method " <> method}
 

@@ -61,6 +61,7 @@ defmodule HalC2.Plugins do
   # `{{:list, pid}, ref}`, `{{:topic, id, topic, pid}, ref}` and `{{:last, id, topic}, value}`.
   @watchers __MODULE__.Watchers
   @heir __MODULE__.Heir
+  @shapes __MODULE__.Shapes
 
   @kinds %{
     HalC2.Plugins.ProviderAdapter => "providerAdapter",
@@ -76,7 +77,9 @@ defmodule HalC2.Plugins do
   def child_spec(_) do
     server = %{id: __MODULE__, start: {__MODULE__, :start_link, [nil]}}
     hooks = {Registry, keys: :unique, name: HalC2.Plugins.Hooks}
-    HalC2.Heir.supervise(@heir, server, HalC2.Plugins.Supervisor, [hooks])
+    # The plugins' answers to `shape_run/1`, unlinked from the turn that asks.
+    shapes = {Task.Supervisor, name: @shapes}
+    HalC2.Heir.supervise(@heir, server, HalC2.Plugins.Supervisor, [hooks, shapes])
   end
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -543,10 +546,14 @@ defmodule HalC2.Plugins do
     :ok
   end
 
-  # A plugin's answer to `shape_run/2`; one that raises, throws or exits has none, and
-  # never takes the starting turn down with it.
+  # A plugin's answer to `shape_run/2`, as JSON; one that raises, throws or exits, or
+  # answers with what JSON cannot hold, has none, and never takes the starting turn down
+  # with it.
   defp shaped(id, fun) do
-    fun.()
+    case fun.() do
+      %{} = shape -> json(shape)
+      _ -> nil
+    end
   rescue
     e ->
       Logger.warning("plugin #{id} failed shaping a run: #{Exception.message(e)}")
@@ -568,13 +575,19 @@ defmodule HalC2.Plugins do
   not answer within #{@shape_ms} ms, is left out: a plugin never holds an agent back.
   """
   def shape_run(run) do
+    # Each is asked with the settings saved last, read as it is asked: a save is seen at
+    # once, whatever the plugin's feed is still busy with.
     asks =
-      for {_pid, %{id: id, module: module, settings: settings}} <-
+      for {_pid, %{id: id, module: module, fields: fields}} <-
             HalC2.Plugins.Feed.lookup(:shape),
-          "runs:shape" in granted(id) do
-        context = %{id: id, settings: settings, thread_id: run["threadId"]}
-        {id, Task.async(fn -> shaped(id, fn -> module.shape_run(run, context) end) end)}
-      end
+          "runs:shape" in granted(id),
+          task =
+            ask_shape(id, fn ->
+              context = %{id: id, settings: current(id, fields), thread_id: run["threadId"]}
+              module.shape_run(run, context)
+            end),
+          task,
+          do: {id, task}
 
     answers =
       asks
@@ -582,7 +595,7 @@ defmodule HalC2.Plugins do
       |> Task.yield_many(timeout: @shape_ms, on_timeout: :kill_task)
       |> Enum.zip(asks)
       |> Enum.flat_map(fn
-        {{_task, {:ok, %{} = shape}}, {id, _}} -> [{id, json(shape)}]
+        {{_task, {:ok, %{} = shape}}, {id, _}} -> [{id, shape}]
         {{_task, _}, {_id, _}} -> []
       end)
       |> Enum.flat_map(fn {id, shape} ->
@@ -600,6 +613,16 @@ defmodule HalC2.Plugins do
         "plugins" => Enum.map(answers, &elem(&1, 0))
       }
     end
+  end
+
+  # A shape asked apart from the asker, or nil when it cannot be (the supervisor of
+  # shapes restarting): that plugin has no answer, the others are still awaited.
+  defp ask_shape(id, fun) do
+    Task.Supervisor.async_nolink(@shapes, fn -> shaped(id, fun) end)
+  catch
+    :exit, reason ->
+      Logger.warning("plugin #{id} could not be asked to shape a run: #{inspect(reason)}")
+      nil
   end
 
   defp failure_event(%{"class" => class} = failure) when is_binary(class) do
@@ -738,6 +761,12 @@ defmodule HalC2.Plugins do
       {:ok, pid}
     end
   end
+
+  @doc false
+  # The settings plugin `id` runs with now, from the `fields` its manifest declares: what
+  # its feed reads each time it starts (`HalC2.Plugins.Feed`), so a restart after a save
+  # runs with the saved ones.
+  def settings_now(id, fields), do: current(id, fields)
 
   # --- server -------------------------------------------------------------------------
 
@@ -1571,7 +1600,7 @@ defmodule HalC2.Plugins do
     # The extension's turn feed and run hooks (`observe/1`, `shape_run/1`).
     children =
       if "extension" in plugin.kinds and module != nil and HalC2.Plugins.Feed.hooks?(module),
-        do: children ++ [{HalC2.Plugins.Feed, {id, module, settings(plugin)}}],
+        do: children ++ [{HalC2.Plugins.Feed, {id, module, fields(plugin)}}],
         else: children
 
     # A provider's thread processes (`sessions/1`).

@@ -231,10 +231,12 @@ defmodule HalC2.Plugins.Host do
   Steers run `run_id` of `thread_id` with `text`, as a user's steer does, and only it:
   a run that has ended, is being stopped, or whose provider cannot take a message while
   it works refuses it, and the message is neither queued nor kept (`steerOnly`). Needs
-  `threads:steer`. `{:ok, receipt}` once the provider took it, or `{:error, message}`.
+  `threads:steer`. `{:ok, receipt}` once the provider took it, or `{:error, message}`,
+  also when `run_id` names no run.
   """
   def steer(id, thread_id, run_id, text) when is_binary(text) and text != "" do
-    with :ok <- permit(id, "threads:steer") do
+    with :ok <- permit(id, "threads:steer"),
+         :ok <- if(is_binary(run_id), do: :ok, else: {:error, "A steer must name its run."}) do
       HalC2.Orchestration.dispatch(%{
         "type" => "message.dispatch",
         "commandId" => "plugin:#{id}:#{HalC2.Environment.uuid4()}",
@@ -330,19 +332,29 @@ defmodule HalC2.Plugins.Host do
 
   @doc """
   The turns `thread_id` ran, oldest first, the newest `limit` (50 when left out) of
-  those that ended: `%{"runId", "ordinal", "status", "instanceId", "model",
+  those that ended: `%{"runId", "ordinal", "status", "provider", "instanceId", "model",
   "startedAt", "completedAt", "tokenUsage", "items"}`, each item as plugins hear it
   (`HalC2.Orchestration.TurnWriter.observed_item/1`), in the turn's order. What a
   plugin that hears turns missed while it was not running. Needs `turns:observe`.
   `{:error, message}` when there is no such thread.
+
+  `"provider"` is the driver the turn ran on (`"claudeAgent"`, `"codex"`, ...), kept
+  with the thread, so it is known after the instance the turn ran on is deleted and
+  `providers/0` no longer lists it.
+
+  `before: run_id` keeps only the turns that ended before run `run_id` started (a lower
+  ordinal), whether that run ended or not, and takes `limit` of those: a plugin that
+  hears of a turn late, after more turns ended, still gets the turns before it. A run
+  the thread does not have cuts nothing off.
   """
   def history(id, thread_id, opts \\ []) do
     limit = Keyword.get(opts, :limit, 50)
+    before = Keyword.get(opts, :before)
 
     with :ok <- permit(id, "turns:observe") do
       HalC2.Streams.read(thread_id, fn stream ->
         if HalC2.StreamState.get(stream, "thread")[thread_id],
-          do: {:ok, turns(stream, limit)},
+          do: {:ok, turns(stream, limit, before)},
           else: {:error, "There is no thread #{thread_id}."}
       end)
     end
@@ -350,29 +362,43 @@ defmodule HalC2.Plugins.Host do
 
   @ended ~w(completed interrupted failed cancelled)
 
-  defp turns(stream, limit) do
+  defp turns(stream, limit, before) do
     alias HalC2.StreamState
-
-    items =
-      stream
-      |> StreamState.list("turn-item")
-      |> Enum.group_by(& &1["runId"])
 
     attempts = StreamState.get(stream, "run-attempt")
     provider_turns = StreamState.get(stream, "provider-turn")
+    provider_threads = StreamState.get(stream, "provider-thread")
+    runs = StreamState.get(stream, "run")
 
-    stream
-    |> StreamState.list("run")
-    |> Enum.filter(&(&1["status"] in @ended))
-    |> Enum.sort_by(& &1["ordinal"])
-    |> Enum.take(-limit)
-    |> Enum.map(fn run ->
+    cutoff =
+      case runs[before] do
+        %{"ordinal" => ordinal} -> &(&1["ordinal"] < ordinal)
+        _ -> fn _run -> true end
+      end
+
+    selected =
+      runs
+      |> Map.values()
+      |> Enum.filter(&(&1["status"] in @ended and cutoff.(&1)))
+      |> Enum.sort_by(& &1["ordinal"])
+      |> Enum.take(-limit)
+
+    # The items of those runs alone, an older run's read back from the store once it
+    # has gone cold (`HalC2.StreamState`, "Hot and cold").
+    items =
+      for {"turn-item", _id, item} <- StreamState.run_rows(stream, Enum.map(selected, & &1["id"])),
+          reduce: %{} do
+        acc -> Map.update(acc, item["runId"], [item], &[item | &1])
+      end
+
+    Enum.map(selected, fn run ->
       provider_turn = (attempts[run["activeAttemptId"]] || %{})["providerTurnId"]
 
       %{
         "runId" => run["id"],
         "ordinal" => run["ordinal"],
         "status" => run["status"],
+        "provider" => (provider_threads[run["providerThreadId"]] || %{})["driver"],
         "instanceId" => run["providerInstanceId"],
         "model" => get_in(run, ["modelSelection", "model"]),
         "startedAt" => run["startedAt"],

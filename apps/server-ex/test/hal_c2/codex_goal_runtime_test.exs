@@ -82,6 +82,50 @@ defmodule HalC2.CodexGoalRuntimeTest do
     assert ["failed"] = statuses(thread_id)
   end
 
+  # Codex's answer to the activation came behind its reports of the goal turns it ran
+  # and of the goal it completed in the last; dropping those as stale left the run
+  # waiting for a turn Codex would never start.
+  test "a goal Codex completes before its answer to the activation is read ends the run",
+       %{work: work} do
+    System.delete_env("FAKE_CODEX_GOAL_STALL")
+    System.put_env("FAKE_CODEX_GOAL_ANSWER_LAST", "1")
+    on_exit(fn -> System.delete_env("FAKE_CODEX_GOAL_ANSWER_LAST") end)
+
+    thread_id = "thread-goal-answer-last"
+    :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
+    selection = %{"instanceId" => "codex", "model" => "gpt-5.4"}
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "thread.create",
+        "threadId" => thread_id,
+        "projectId" => "project-1",
+        "title" => "Goal",
+        "modelSelection" => selection,
+        "runtimeMode" => "full-access",
+        "interactionMode" => "default",
+        "worktreePath" => work
+      })
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "threadId" => thread_id,
+        "messageId" => "m1",
+        "text" => "/goal ship the fix",
+        "attachments" => [],
+        "modelSelection" => selection,
+        "dispatchMode" => %{"type" => "start_immediately"}
+      })
+
+    await(fn -> if statuses(thread_id) == ["completed"], do: :done, else: [] end)
+    state = HalC2.Streams.ensure(thread_id) |> HalC2.Streams.Server.state()
+    assert [%{"goal" => %{"status" => "complete"}}] = StreamState.list(state, "provider-thread")
+
+    assert ["completed", "completed", "completed"] =
+             state |> StreamState.list("provider-turn") |> Enum.map(& &1["status"])
+  end
+
   defp statuses(thread_id) do
     HalC2.Streams.ensure(thread_id)
     |> HalC2.Streams.Server.state()

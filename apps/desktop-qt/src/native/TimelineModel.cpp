@@ -2043,7 +2043,14 @@ QHash<int, QByteArray> TimelineModel::roleNames() const {
       {AvatarsRole, "avatars"},
       {MoreRole, "more"},
       {SpanRole, "span"}, {ScheduledTaskRole, "scheduledTask"},
+      {StopRunRole, "stopRun"},
   };
+}
+
+bool TimelineModel::offersStop(const QJsonObject& item) const {
+  return text(item, QLatin1String("type")) == QLatin1String("system_notice") &&
+         item.value(QLatin1String("actions")).toArray().contains(QStringLiteral("interrupt")) &&
+         kRunning.contains(text(entity(QStringLiteral("run"), text(item, QLatin1String("runId"))), QLatin1String("status")));
 }
 
 // One tool call of a work group (apps/tui/src/orchestrationV2Adapter.ts itemSummary).
@@ -2223,11 +2230,8 @@ QVariantMap TimelineModel::entry(const QJsonObject& item, bool live) const {
     label = text(item, QLatin1String("message"));
     // A plugin's titled notice keeps its message as the detail (Host.notice).
     if (!title.isEmpty() && title != label) detail = label;
-    // It offers to stop its run while that works.
-    if (item.value(QLatin1String("actions")).toArray().contains(QStringLiteral("interrupt")) &&
-        kRunning.contains(text(entity(QStringLiteral("run"), text(item, QLatin1String("runId"))), QLatin1String("status")))) {
-      entry.insert(QStringLiteral("interrupt"), true);
-    }
+    // Stop names the notice's run (ComposerController::interrupt).
+    if (offersStop(item)) entry.insert(QStringLiteral("interrupt"), text(item, QLatin1String("runId")));
   } else {
     label = type;
   }
@@ -2260,6 +2264,14 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
     const int shown = row.summarized ? 0 : visibleWorkEntries;
     if (role == ExpandedRole) return expanded;
     if (role == HiddenCountRole) return std::max<int>(0, int(row.items.size()) - shown);
+    // Every call counts, not only those on screen: a folded notice keeps its Stop.
+    if (role == StopRunRole) {
+      for (const QString& id : row.items) {
+        const QJsonObject item = entity(QStringLiteral("turn-item"), id);
+        if (offersStop(item)) return text(item, QLatin1String("runId"));
+      }
+      return QString();
+    }
     if (role == EntriesRole) {
       QVariantList entries;
       const qsizetype first = expanded ? 0 : std::max<qsizetype>(0, row.items.size() - shown);

@@ -131,6 +131,8 @@ defmodule HalC2.TurnsProofTest do
         "answers a call into a session that stopped mid-call as a lookup that found none would; it changes no run",
       "HalC2.Orchestration.TurnWriter.commit/2" => @items,
       "HalC2.Orchestration.TurnWriter.observed_item/1" => @observe,
+      "HalC2.Orchestration.TurnWriter.with_usage/3" =>
+        "the usage a provider turn keeps as it settles; no run changes",
       "HalC2.Orchestration.TurnWriter.new_conversation?/1" => @observe,
       "HalC2.Orchestration.TurnWriter.observe_started/1" => @observe,
       "HalC2.Orchestration.TurnWriter.buffer/4" => @items,
@@ -138,7 +140,8 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.TurnWriter.split_ready/1" => @items,
       "HalC2.Orchestration.TurnWriter.item_id/2" => @items,
       "HalC2.Orchestration.TurnWriter.ensure_item/4" => @items,
-      "HalC2.Orchestration.TurnWriter.finish_item/4" => @items,
+      "HalC2.Orchestration.TurnWriter.finish_item/5" => @items,
+      "HalC2.Orchestration.TurnWriter.observe_item/3" => @observe,
       "HalC2.Orchestration.TurnWriter.finish_plan/3" => @items,
       "HalC2.Orchestration.TurnWriter.write_todo/4" => @items,
       "HalC2.Orchestration.TurnWriter.open_request/6" => @items,

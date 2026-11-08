@@ -4593,13 +4593,13 @@ defmodule HalC2.Orchestration do
       reason = handoff_refusal(state, thread, command) ->
         {[], {:error, reason}}
 
-      get_in(command, ["dispatchMode", "type"]) == "defer_start" ->
-        prepare_run(state, thread, runs, command)
-
       # A steer or restart aimed at a run that is not the active one is a
       # delivery no provider can make as asked.
       untargeted = untargeted_delivery(runs, command) ->
         {[], {:error, untargeted}}
+
+      get_in(command, ["dispatchMode", "type"]) == "defer_start" ->
+        prepare_run(state, thread, runs, command)
 
       active = Enum.find(runs, &(&1["status"] in @active_statuses)) ->
         intent = command["deliveryIntent"]
@@ -4792,19 +4792,28 @@ defmodule HalC2.Orchestration do
   end
 
   # A steer or restart naming a run other than the active one (or naming one
-  # when nothing runs) cannot be delivered as asked, whatever the provider.
+  # when nothing runs) cannot be delivered as asked, whatever the provider. A steer
+  # meant only for its run (`steerOnly`) that names none has no run to go to: it
+  # neither steers whatever runs nor starts a turn.
   defp untargeted_delivery(runs, command) do
     mode = get_in(command, ["dispatchMode", "type"])
     target = get_in(command, ["dispatchMode", "targetRunId"])
     active = Enum.find(runs, &(&1["status"] in @active_statuses))
 
-    if mode in ["steer_active", "restart_active"] and is_binary(target) and
-         (active == nil or active["id"] != target) do
-      instance =
-        get_in(command, ["modelSelection", "instanceId"]) ||
-          (active && active["providerInstanceId"]) || "codex"
+    cond do
+      command["steerOnly"] == true and not is_binary(target) ->
+        "A steer meant only for its run must name the run."
 
-      HalC2.Orchestration.UserFacingErrors.unsupported_delivery_message(instance)
+      mode in ["steer_active", "restart_active"] and is_binary(target) and
+          (active == nil or active["id"] != target) ->
+        instance =
+          get_in(command, ["modelSelection", "instanceId"]) ||
+            (active && active["providerInstanceId"]) || "codex"
+
+        HalC2.Orchestration.UserFacingErrors.unsupported_delivery_message(instance)
+
+      true ->
+        nil
     end
   end
 
@@ -5105,8 +5114,9 @@ defmodule HalC2.Orchestration do
 
   # Two Claude instances whose config directories resolve to the same home share
   # Claude Code's own sessions, so a run moved between them resumes the native
-  # thread the other instance started instead of starting a new conversation.
-  defp carried_native_ref(state, "claudeAgent", instance, cwd) do
+  # thread the other instance started instead of starting a new conversation: the
+  # other instance's provider thread, whose native thread and plugin shape it carries.
+  defp carried(state, "claudeAgent", instance, cwd) do
     home = HalC2.Claude.Provider.config_dir(instance, cwd)
 
     state
@@ -5118,11 +5128,11 @@ defmodule HalC2.Orchestration do
            (other["providerInstanceId"] || "claudeAgent") != instance and
            HalC2.Claude.Provider.config_dir(other["providerInstanceId"] || "claudeAgent", cwd) ==
              home,
-         do: other["nativeThreadRef"]
+         do: other
     end)
   end
 
-  defp carried_native_ref(_state, _driver, _instance, _cwd), do: nil
+  defp carried(_state, _driver, _instance, _cwd), do: nil
 
   # Points the relocated runs, their attempts and their provider turns at their new
   # provider threads; nodes and turn items stay as they were (`relocated/4`).
@@ -5202,6 +5212,10 @@ defmodule HalC2.Orchestration do
         (provider_thread["providerInstanceId"] || driver) != instance
 
     provider_thread = if foreign, do: nil, else: provider_thread
+
+    # A first run on an instance that shares another's Claude home continues that
+    # instance's conversation (see `carried/4`).
+    carried = if provider_thread == nil, do: carried(state, driver, instance, cwd)
     scope_id = HalC2.Checkpoint.scope_id(thread_id)
 
     # One root checkpoint scope per thread; it follows the latest run.
@@ -5253,15 +5267,18 @@ defmodule HalC2.Orchestration do
 
     # Its earlier runs' native turns are in the native thread it no longer has
     # (`HalC2.Orchestration.Fork`), and what that thread's session could do is not
-    # known of the new one until it opens.
+    # known of the new one until it opens. The conversation it carries on keeps the
+    # shape plugins gave it (`HalC2.Orchestration.RunShape`).
     taken_over =
       if foreign,
-        do: %{
-          "providerInstanceId" => instance,
-          "nativeThreadRef" => nil,
-          "canSwitchModel" => nil,
-          "nativeSinceRunOrdinal" => ordinal
-        },
+        do:
+          %{
+            "providerInstanceId" => instance,
+            "nativeThreadRef" => nil,
+            "canSwitchModel" => nil,
+            "nativeSinceRunOrdinal" => ordinal
+          }
+          |> Map.merge(Map.take(carried || %{}, ["pluginShape"])),
         else: %{}
 
     # A `/compact` or `/logout` reaches a conversation the provider already has as the
@@ -5288,8 +5305,8 @@ defmodule HalC2.Orchestration do
                 "providerSessionId" => session_id,
                 "nativeConversationHeadRef" => nil
               })
-              |> Map.merge(taken_over)
-              |> Map.drop(if(foreign, do: ["carriedSession"], else: [])))
+              |> Map.drop(if(foreign, do: ["carriedSession", "pluginShape"], else: []))
+              |> Map.merge(taken_over))
           )
         ]
       else
@@ -5307,12 +5324,7 @@ defmodule HalC2.Orchestration do
               driver,
               instance
             )
-            |> then(fn record ->
-              case carried_native_ref(state, driver, instance, cwd) do
-                nil -> record
-                ref -> Map.put(record, "nativeThreadRef", ref)
-              end
-            end)
+            |> Map.merge(Map.take(carried || %{}, ["nativeThreadRef", "pluginShape"]))
           )
         ]
       end
@@ -5400,11 +5412,7 @@ defmodule HalC2.Orchestration do
         |> Enum.reject(&is_nil/1)
       )
 
-    # A first run on an instance that shares another's Claude home continues
-    # that instance's native thread (see `carried_native_ref/4`).
-    carried_ref =
-      if provider_thread == nil,
-        do: carried_native_ref(state, driver, instance, cwd)
+    carried_ref = carried && carried["nativeThreadRef"]
 
     provider_thread =
       provider_thread ||

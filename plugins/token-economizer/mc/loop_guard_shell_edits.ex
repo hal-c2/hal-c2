@@ -3,7 +3,8 @@
 # Ported from tokeneconomizer/loopguard/shell_edits.py (microsoft/TokenEconomizer@cb42207e3e09),
 # into Elixir for HAL-C2's MC. Changed: Python's `shlex` (non-POSIX, with punctuation
 # characters) is reimplemented here, quirks included, so commands split as upstream's do;
-# `fold_shell_edits` lives in State.
+# `fold_shell_edits` lives in State; a heredoc's delimiter may be any word (`<<'EOF-CODE'`),
+# not only an identifier; `programs/1` and `writes?/1` are new; QML counts as source.
 
 defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   @moduledoc """
@@ -20,7 +21,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   alias HalC2Plugins.TokenEconomizer.LoopGuard.State
 
   @shells ~w(sh bash zsh dash ksh)
-  @heredoc_start ~r/<<-?\s*(['"]?)([A-Za-z_]\w*)\1/
+  # A heredoc's delimiter, quoted (`<<'EOF-CODE'`, `<<"END"`) or not (`<<EOF`, `<<\EOF`);
+  # not a here-string (`<<<`).
+  @heredoc_start ~r/(?<!<)<<-?\s*(?:'([^'\n]+)'|"([^"\n]+)"|\\?([A-Za-z_][^\s'"<>|&;()]*))/
   @ops ["&&", "||", ";", ";;", "|", "|&", "&", "\n", "(", ")"]
   # Redirects that write their operand.
   @out [">", ">>", ">|", "&>", "&>>"]
@@ -28,7 +31,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   @skip_operand ["<", "<<", "<<<", "<&", ">&", "<>"]
   # Redirect and `tee` targets count only when they look like source, so `> out.log` or
   # `| tee /tmp/run.txt`, capturing output, is not mistaken for an edit.
-  @source_file ~r/\.(?:py|pyi|pyx|pxd|js|jsx|mjs|cjs|ts|tsx|rs|go|java|kt|kts|scala|c|cc|cpp|cxx|h|hh|hpp|rb|php|cs|swift|m|mm|sh|bash|zsh|lua|jl|ex|exs|erl|hs|ml|clj|sql|toml|ya?ml|json|cfg|ini|conf|md|rst|html?|css|scss|vue|svelte|xml|gradle|properties|in)$/i
+  @source_file ~r/\.(?:py|pyi|pyx|pxd|js|jsx|mjs|cjs|ts|tsx|rs|go|java|kt|kts|scala|c|cc|cpp|cxx|h|hh|hpp|rb|php|cs|swift|m|mm|sh|bash|zsh|lua|jl|ex|exs|erl|hs|ml|clj|sql|toml|ya?ml|json|cfg|ini|conf|md|rst|html?|css|scss|vue|svelte|qml|xml|gradle|properties|in)$/i
   @python ~r/(?:^|[\s\/;&|(])python\d?(?:\.\d+)?\b/
   @py_open_lit ~r/open\(\s*(['"])([^'"\n]+)\1\s*,\s*(['"])([^'"]*)\3/
   @py_open_var ~r/open\(\s*([A-Za-z_]\w*)\s*,\s*(['"])([^'"]*)\2/
@@ -42,34 +45,48 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   for one run as `bash -lc '<script>'`.
   """
   def targets(cmd) when is_binary(cmd) do
+    for({kind, path} <- writes(cmd), kind == :edit or Regex.match?(@source_file, path), do: path)
+    |> Enum.filter(&(String.starts_with?(&1, "(") or not_scratch(&1)))
+    |> Enum.map(&if(String.starts_with?(&1, "("), do: &1, else: State.basename(&1)))
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+  end
+
+  def targets(_), do: []
+
+  @doc """
+  Whether a shell command writes any file but a device (`> /dev/null`), source or not,
+  scratch or not: what `targets/1` leaves out (`> out.log`, `> /tmp/a.py`, `> Makefile`)
+  is still written, and the words that write it may be the file's contents.
+  """
+  def writes?(cmd) when is_binary(cmd),
+    do: Enum.any?(writes(cmd), fn {_, path} -> not String.starts_with?(path, "/dev/") end)
+
+  def writes?(_), do: false
+
+  # Every path the command writes, as `{:edit, path}` for an editor's (`sed -i`, `patch`,
+  # a Python script's) and `{:capture, path}` for a redirect's or `tee`'s, which may only
+  # be capturing output.
+  defp writes(cmd) do
     cmd = script(cmd)
 
     if String.trim(cmd) == "" do
       []
     else
       {shell, bodies} = split_heredocs(cmd)
-      {cmds, writes} = commands(shell)
-      found = Enum.filter(writes, &Regex.match?(@source_file, &1))
+      {cmds, redirects} = commands(shell)
+      found = for path <- redirects, do: {:capture, path}
 
       found =
         Enum.reduce(bare(cmds), found, fn tokens, found ->
           found ++ written_by(head(tokens), tokens, bodies)
         end)
 
-      found =
-        if Regex.match?(@python, shell),
-          do: found ++ py_writes(Enum.join([shell | bodies], "\n")),
-          else: found
-
-      found
-      |> Enum.filter(&(String.starts_with?(&1, "(") or not_scratch(&1)))
-      |> Enum.map(&if(String.starts_with?(&1, "("), do: &1, else: State.basename(&1)))
-      |> Enum.reject(&(&1 == ""))
-      |> Enum.uniq()
+      if Regex.match?(@python, shell),
+        do: found ++ for(p <- py_writes(Enum.join([shell | bodies], "\n")), do: {:edit, p}),
+        else: found
     end
   end
-
-  def targets(_), do: []
 
   @doc """
   Basenames of the files a shell command puts back with `git checkout --` or `git
@@ -93,37 +110,55 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   def revert_targets(_), do: []
 
+  @doc """
+  The programs a shell command runs, by name (`sed`, `printf`, `pytest`), without their
+  arguments; of the script for one run as `bash -lc '<script>'`.
+  """
+  def programs(cmd) when is_binary(cmd) do
+    {shell, _} = cmd |> script() |> split_heredocs()
+    {cmds, _} = commands(shell)
+    cmds |> bare() |> Enum.map(&head/1) |> Enum.reject(&(&1 == ""))
+  end
+
+  def programs(_), do: []
+
   defp written_by("sed", tokens, _),
     do:
-      inplace_files(
-        tokens,
-        &Regex.match?(~r/^(?:-[a-zA-Z]*i|--in-place)/, &1),
-        &(&1 in ["-e", "-f", "--expression", "--file"])
+      edits(
+        inplace_files(
+          tokens,
+          &Regex.match?(~r/^(?:-[a-zA-Z]*i|--in-place)/, &1),
+          &(&1 in ["-e", "-f", "--expression", "--file"])
+        )
       )
 
   defp written_by("perl", tokens, _),
     do:
-      inplace_files(
-        tokens,
-        &Regex.match?(~r/^-[a-zA-Z]*i/, &1),
-        &Regex.match?(~r/^-[a-zA-Z]*e$/, &1)
+      edits(
+        inplace_files(
+          tokens,
+          &Regex.match?(~r/^-[a-zA-Z]*i/, &1),
+          &Regex.match?(~r/^-[a-zA-Z]*e$/, &1)
+        )
       )
 
   defp written_by("tee", [_ | args], _),
-    do: Enum.filter(args, &(not String.starts_with?(&1, "-") and Regex.match?(@source_file, &1)))
+    do: for(a <- args, not String.starts_with?(a, "-"), do: {:capture, a})
 
   defp written_by("apply_patch", [_ | args], bodies) do
     text = Enum.join(bodies ++ [Enum.join(args, " ")], "\n")
 
     case Regex.scan(@patch_file, text, capture: :all_but_first) do
-      [] -> ["(patch)"]
-      found -> Enum.map(found, &hd/1)
+      [] -> [{:edit, "(patch)"}]
+      found -> for [path] <- found, do: {:edit, path}
     end
   end
 
-  defp written_by("patch", _, _), do: ["(patch)"]
-  defp written_by("git", [_, "apply" | _], _), do: ["(patch)"]
-  defp written_by(_, tokens, _), do: restored(tokens)
+  defp written_by("patch", _, _), do: [{:edit, "(patch)"}]
+  defp written_by("git", [_, "apply" | _], _), do: [{:edit, "(patch)"}]
+  defp written_by(_, tokens, _), do: edits(restored(tokens))
+
+  defp edits(paths), do: for(p <- paths, do: {:edit, p})
 
   defp head([first | _]), do: first |> String.split("/") |> List.last()
 
@@ -148,8 +183,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
         line, {shell, bodies, nil, []} ->
           tag =
             case Regex.run(@heredoc_start, line) do
-              [_, _, tag] -> tag
-              _ -> nil
+              [_ | tags] -> Enum.find(tags, &(&1 != ""))
+              nil -> nil
             end
 
           {[line | shell], bodies, tag, []}
@@ -241,9 +276,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   # resolve.
   defp py_writes(text) do
     lit =
-      for [_, _, path, _, mode] <- Regex.scan(@py_open_lit, text), writes?(mode), do: path
+      for [_, _, path, _, mode] <- Regex.scan(@py_open_lit, text), write_mode?(mode), do: path
 
-    vars = for [_, var, _, mode] <- Regex.scan(@py_open_var, text), writes?(mode), do: var
+    vars = for [_, var, _, mode] <- Regex.scan(@py_open_var, text), write_mode?(mode), do: var
     lit = lit ++ for([_, _, path] <- Regex.scan(@py_write_path_lit, text), do: path)
     vars = vars ++ for([_, var] <- Regex.scan(@py_write_path_var, text), do: var)
 
@@ -272,7 +307,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
       end)
   end
 
-  defp writes?(mode), do: String.contains?(mode, ["w", "a", "x", "+"])
+  defp write_mode?(mode), do: String.contains?(mode, ["w", "a", "x", "+"])
 
   # The paths a `git checkout -- <path>` or `git restore <path>` puts back; [] for any
   # other command.

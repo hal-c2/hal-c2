@@ -15,9 +15,13 @@ defmodule HalC2.PluginsPropTest do
   kill a client, crash a plugin's process once or until its supervisor gives up, crash
   a worker announced the way a host from before an update in place heard of them,
   hand the running plugins a turn (`observe/1`: every package hears turns, and only
-  those granted `turns:observe` may) and ask them to shape a run (`shape_run/1`:
-  version 2 of a package answers from the settings it runs with, so a save it takes
-  live must reach that too), install and turn on a package that hears Slack, hand the running plugins Slack events (`slack_event/2`, in one series, as the Slack
+  those granted `turns:observe` may, with the settings saved last) and ask them to shape
+  a run (`shape_run/1`: version 2 of a package answers from the settings it runs with,
+  so a save it takes live must reach that too), ask from a process that does not trap
+  exits while one of them raises, dies with a process it linked, or answers what is not
+  JSON (it is left out, and the asker lives), ask while the supervisor shapes are asked
+  under restarts (none is asked, and the asker lives), kill the process a plugin hears turns in
+  (it starts again with the settings saved last), install and turn on a package that hears Slack, hand the running plugins Slack events (`slack_event/2`, in one series, as the Slack
   courier does) that each plugin holds until the test releases it, check that a
   package's code compiles without enabling it (`plugins.compile`: what runs and is
   loaded must be as it was, whatever the code does as it compiles), and kill the host
@@ -105,6 +109,7 @@ defmodule HalC2.PluginsPropTest do
   defp stop do
     for {_, pid} <- Process.delete({__MODULE__, :clients}) || %{}, do: Process.exit(pid, :kill)
     HalC2.Prop.stop_services()
+    Application.delete_env(:hal_c2, Packages.failing())
     Process.unregister(Packages.probe())
     flush_heard()
   end
@@ -112,7 +117,7 @@ defmodule HalC2.PluginsPropTest do
   defp flush_heard do
     receive do
       {:prop_heard, _id, _n, _pid} -> flush_heard()
-      {:prop_observed, _id, _n} -> flush_heard()
+      {:prop_observed, _id, _n, _mode} -> flush_heard()
     after
       0 -> :ok
     end
@@ -191,13 +196,27 @@ defmodule HalC2.PluginsPropTest do
             {2, {:call, __MODULE__, :crash, [oneof(workers)]}},
             {1, {:call, __MODULE__, :crash_hard, [oneof(workers)]}},
             {3, {:call, __MODULE__, :save_settings, [oneof(workers), accepted_settings()]}},
-            {3, {:call, __MODULE__, :call_plugin, [oneof(workers)]}}
+            {3, {:call, __MODULE__, :call_plugin, [oneof(workers)]}},
+            {2, {:call, __MODULE__, :kill_feed, [oneof(workers)]}}
           ]
+        end ++
+        case hooked(state, :shape, "runs:shape") do
+          [] ->
+            []
+
+          shaping ->
+            [
+              {3, {:call, __MODULE__, :shape_failing, [oneof(shaping), failure()]}},
+              {1, {:call, __MODULE__, :shape_restarting, []}}
+            ]
         end
     )
   end
 
   defp id, do: frequency([{5, "alpha"}, {4, "beta"}, {1, "Gamma"}])
+
+  # How a plugin asked to shape a run can fail.
+  defp failure, do: oneof([:raise, :linked_exit, :not_json])
 
   # Mostly an id the host holds, so the commands that need one reach it.
   defp held_id(%{held: held}) when held == %{}, do: id()
@@ -300,7 +319,8 @@ defmodule HalC2.PluginsPropTest do
         "missing.txt"
       ])
 
-  def precondition(state, {:call, _, op, [id]}) when op in [:crash, :crash_hard] do
+  # A feed killed counts toward its supervisor's restarts as the worker's crashes do.
+  def precondition(state, {:call, _, op, [id]}) when op in [:crash, :crash_hard, :kill_feed] do
     case state.held[id] do
       %{running: true, st: :compiled, desc: {:ok, _, _}, crashes: crashes} ->
         op == :crash_hard or crashes < 3
@@ -401,6 +421,18 @@ defmodule HalC2.PluginsPropTest do
   defp hooked(s, hook, permission),
     do: for({^hook, id} <- hooked(s), permission in conf(s, id).granted, do: id)
 
+  # What the plugins `ids` add to a new conversation, as `shape/0` reads it.
+  defp shape_of(_s, []), do: {:exactly, nil}
+
+  defp shape_of(s, ids),
+    do:
+      {:exactly,
+       %{
+         contexts: Enum.sort(for id <- ids, do: "#{id} #{effective(conf(s, id))["mode"]}"),
+         denied: Enum.sort(["shared" | for(id <- ids, do: "#{id}-tool")]),
+         plugins: Enum.sort(ids)
+       }}
+
   # Every running plugin whose code loaded and that was granted slack:read is handed the
   # event; it hears it once it is done with the ones before.
   defp act(s, {:call, _, :deliver, [n]}) do
@@ -412,24 +444,26 @@ defmodule HalC2.PluginsPropTest do
     {%{s | queue: queue, next: max(s.next, n + 1)}, :ok}
   end
 
+  # Each plugin that hears turns hears it with the settings saved last.
   defp act(s, {:call, _, :observe_turn, [_n]}),
-    do: {s, {:exactly, Enum.sort(hooked(s, :observe, "turns:observe"))}}
+    do:
+      {s,
+       {:exactly,
+        Enum.sort(
+          for id <- hooked(s, :observe, "turns:observe"), do: {id, effective(conf(s, id))["mode"]}
+        )}}
 
-  defp act(s, {:call, _, :shape, []}) do
-    case hooked(s, :shape, "runs:shape") do
-      [] ->
-        {s, {:exactly, nil}}
+  defp act(s, {:call, _, :shape, []}), do: {s, shape_of(s, hooked(s, :shape, "runs:shape"))}
 
-      ids ->
-        {s,
-         {:exactly,
-          %{
-            contexts: Enum.sort(for id <- ids, do: "#{id} #{effective(conf(s, id))["mode"]}"),
-            denied: Enum.sort(["shared" | for(id <- ids, do: "#{id}-tool")]),
-            plugins: Enum.sort(ids)
-          }}}
-    end
-  end
+  # A plugin that fails as it is asked is left out, and the asker lives.
+  defp act(s, {:call, _, :shape_failing, [id, _how]}),
+    do: {s, shape_of(s, hooked(s, :shape, "runs:shape") -- [id])}
+
+  # No plugin can be asked: the conversation goes unshaped, and the asker lives.
+  defp act(s, {:call, _, :shape_restarting, []}), do: {s, {:exactly, nil}}
+
+  # Its supervisor starts it again, as it does a crashed worker.
+  defp act(s, {:call, _, :kill_feed, [id]}), do: {update_in(s.held[id].crashes, &(&1 + 1)), :ok}
 
   defp act(s, {:call, _, :release, [id, n]}),
     do: {update_in(s.queue[id], &tl/1), {:exactly, {:heard, n}}}
@@ -1212,28 +1246,89 @@ defmodule HalC2.PluginsPropTest do
 
   defp heard_turn(n, ids) do
     receive do
-      {:prop_observed, id, ^n} -> heard_turn(n, [id | ids])
+      {:prop_observed, id, ^n, mode} -> heard_turn(n, [{id, mode} | ids])
     after
       0 -> Enum.sort(ids)
     end
   end
 
   # What the plugins that shape runs add to a new conversation, without their order.
-  def shape do
-    reply =
-      case Plugins.shape_run(%{"threadId" => "prop"}) do
-        nil ->
-          nil
+  def shape, do: {shaped(), observe()}
 
-        %{"context" => context, "deniedTools" => denied, "plugins" => plugins} ->
-          %{
-            contexts: context |> String.split("\n\n") |> Enum.sort(),
-            denied: Enum.sort(denied),
-            plugins: Enum.sort(plugins)
-          }
+  defp shaped do
+    case Plugins.shape_run(%{"threadId" => "prop"}) do
+      nil ->
+        nil
+
+      %{"context" => context, "deniedTools" => denied, "plugins" => plugins} ->
+        %{
+          contexts: context |> String.split("\n\n") |> Enum.sort(),
+          denied: Enum.sort(denied),
+          plugins: Enum.sort(plugins)
+        }
+    end
+  end
+
+  # A shape asked from a process that does not trap exits while plugin `id` fails `how`
+  # as it answers. The reply is what the others added, or how the asker died.
+  def shape_failing(id, how) do
+    Application.put_env(:hal_c2, Packages.failing(), {id, how})
+    probe = self()
+    {asker, ref} = spawn_monitor(fn -> send(probe, {:shaped, self(), shaped()}) end)
+
+    reply =
+      receive do
+        {:shaped, ^asker, reply} -> reply
+        {:DOWN, ^ref, _, _, reason} -> {:asker_died, reason}
       end
 
+    Process.demonitor(ref, [:flush])
+    Application.delete_env(:hal_c2, Packages.failing())
     {reply, observe()}
+  end
+
+  # A shape asked from a process that does not trap exits while the supervisor the
+  # plugins' shapes run under is down, as it is while it restarts.
+  def shape_restarting do
+    :ok = Supervisor.terminate_child(HalC2.Plugins.Supervisor, HalC2.Plugins.Shapes)
+    probe = self()
+    {asker, ref} = spawn_monitor(fn -> send(probe, {:shaped, self(), shaped()}) end)
+
+    reply =
+      receive do
+        {:shaped, ^asker, reply} -> reply
+        {:DOWN, ^ref, _, _, reason} -> {:asker_died, reason}
+      end
+
+    Process.demonitor(ref, [:flush])
+    {:ok, _} = Supervisor.restart_child(HalC2.Plugins.Supervisor, HalC2.Plugins.Shapes)
+    {reply, observe()}
+  end
+
+  # The process plugin `id` hears turns in is killed; its supervisor starts it again.
+  def kill_feed(id) do
+    [{feed, _}] = Registry.lookup(HalC2.Plugins.Hooks, {:observe, id})
+    sup = parent(feed)
+    ref = Process.monitor(feed)
+    Process.exit(feed, :kill)
+
+    receive do
+      {:DOWN, ^ref, _, _, _} -> :ok
+    end
+
+    await_feed(id, feed, sup)
+    {:ok, observe()}
+  end
+
+  # As `await_restart/3`: asked until the feed that registers is a new one.
+  defp await_feed(id, old, sup, deadline \\ deadline()) do
+    if past?(deadline), do: raise("the plugin's supervisor never restarted its feed")
+    :sys.get_state(sup, 60_000)
+
+    case Registry.lookup(HalC2.Plugins.Hooks, {:observe, id}) do
+      [{feed, _}] when feed != old -> :ok
+      _ -> await_feed(id, old, sup, deadline)
+    end
   end
 
   # Event `n` is handed on, after the ones before it, as the Slack courier hands them.
@@ -1467,6 +1562,9 @@ defmodule HalC2.PluginsPropTest do
     def plugin_module(id), do: Module.concat(HalC2PropPlugin, Macro.camelize(id))
     def probe, do: HalC2.PluginsPropTest.Probe
 
+    @doc "The app env key naming the plugin that fails as it is asked to shape, and how."
+    def failing, do: :prop_shape_fails
+
     # Where a plugin's `handle_event` waits to be released, by a tail call: a process
     # waiting in the plugin's own code keeps that code in use, and the host stops it when
     # it reloads the last good version after a refused update (`install_busy/2` covers
@@ -1600,7 +1698,8 @@ defmodule HalC2.PluginsPropTest do
 
         def call(method, _input, _context), do: {:error, "no method " <> method}
 
-        def observe(event, context), do: send(#{inspect(probe())}, {:prop_observed, context.id, event["n"]})
+        def observe(event, context),
+          do: send(#{inspect(probe())}, {:prop_observed, context.id, event["n"], context.settings["mode"]})
 
         #{if version == "2", do: shape_run()}
 
@@ -1614,8 +1713,23 @@ defmodule HalC2.PluginsPropTest do
 
     defp shape_run do
       """
-      def shape_run(_run, context),
-        do: %{"context" => context.id <> " " <> context.settings["mode"], "deniedTools" => [context.id <> "-tool", "shared"]}
+      def shape_run(_run, context) do
+        case Application.get_env(:hal_c2, #{inspect(failing())}) do
+          {id, how} when id == context.id -> fail(how)
+          _ -> %{"context" => context.id <> " " <> context.settings["mode"], "deniedTools" => [context.id <> "-tool", "shared"]}
+        end
+      end
+
+      defp fail(:raise), do: raise("shaping failed")
+      defp fail(:not_json), do: %{"context" => self()}
+
+      defp fail(:linked_exit) do
+        spawn_link(fn -> exit(:shaping_failed) end)
+
+        receive do
+          :never -> %{}
+        end
+      end
       """
     end
 

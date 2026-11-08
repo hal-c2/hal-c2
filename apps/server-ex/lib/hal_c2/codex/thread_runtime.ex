@@ -2619,22 +2619,39 @@ defmodule HalC2.Codex.ThreadRuntime do
   # under way, so the turn is the one asked to work toward it. The thread shows only
   # the goal that results, never the cleared or paused ones on the way.
   defp run_goal(state, turn, {:set, objective}, goal) do
-    turn = %{turn | text: Goals.first_prompt(objective)}
+    turn = %{turn | text: goal_prompt(turn, objective)}
     paused = %{"objective" => objective, "status" => "paused"}
 
     with {:ok, _} <- if(goal, do: goal_call(state, "thread/goal/clear", %{}), else: {:ok, %{}}),
          {:ok, _} <- goal_call(state, "thread/goal/set", paused),
          {:ok, native_turn, state} <- start_native_turn(state, turn),
          {:ok, %{turn: %{}} = state} <- native_turn_started(state, turn, native_turn) do
+      mark = goal_mark()
+
       case goal_call(state, "thread/goal/set", %{"status" => "active"}) do
         {:ok, got} ->
-          {:ok, state |> drain_goal_updates() |> put_goal(Goals.from_codex(got["goal"]))}
+          {:ok, state |> drain_goal_updates(mark) |> put_goal(Goals.from_codex(got["goal"]))}
 
         {:error, reason, state} ->
           Logger.warning("codex goal not activated: #{inspect(reason)}")
           {:ok, state}
       end
     end
+  end
+
+  # The goal's first prompt in place of the user's `/goal` message, after what the turn
+  # put ahead of it: a new conversation's context from the plugins
+  # (`HalC2.Orchestration.RunShape`) and a handed-off history. A resumed conversation
+  # has nothing ahead, so nothing is put there again.
+  defp goal_prompt(%{text: text} = turn, objective) do
+    message = Map.get(turn, :message)
+
+    ahead =
+      if is_binary(text) and is_binary(message) and String.ends_with?(text, message),
+        do: binary_part(text, 0, byte_size(text) - byte_size(message)),
+        else: ""
+
+    ahead <> Goals.first_prompt(objective)
   end
 
   defp goal_call(state, method, params) do
@@ -2722,13 +2739,24 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   # Setting a goal passes through cleared and paused ones on its way: Codex's reports
-  # of those, already here behind its answer, are stale once the answer is in.
-  defp drain_goal_updates(%{conn: conn} = state) do
+  # of those, already here behind its answer, are stale once the answer is in. Only
+  # those ahead of `mark` are dropped: the connection reports to this process in the
+  # order Codex wrote, so what Codex said of the goal after it was asked (completing it
+  # in turns of its own, say) is behind the mark and still heard. A mark left by a call
+  # that failed is dropped by `handle_info/2`'s last clause.
+  defp goal_mark do
+    mark = make_ref()
+    send(self(), {:codex_goal_mark, mark})
+    mark
+  end
+
+  defp drain_goal_updates(%{conn: conn} = state, mark \\ goal_mark()) do
     receive do
+      {:codex_goal_mark, ^mark} ->
+        state
+
       {:json_rpc, ^conn, {:notification, "thread/goal/" <> _, _params}} ->
-        drain_goal_updates(state)
-    after
-      0 -> state
+        drain_goal_updates(state, mark)
     end
   end
 
@@ -2785,14 +2813,18 @@ defmodule HalC2.Codex.ThreadRuntime do
     %{ids: ids} = turn = state.turn
     at = Entities.now()
 
+    # With the usage it ended with, as the run's end would leave it: the run may end
+    # before Codex starts another turn.
     commit(state, fn stream ->
+      done = %{"status" => "completed", "completedAt" => at}
+
       [
         HalC2.StreamState.get(stream, "provider-turn")[ids.provider_turn] &&
           Orchestration.upsert(
             stream,
             "provider-turn",
             ids.provider_turn,
-            &Map.merge(&1, %{"status" => "completed", "completedAt" => at})
+            &Map.merge(&1, HalC2.Orchestration.TurnWriter.with_usage(stream, ids, done))
           )
       ]
     end)
@@ -3313,6 +3345,8 @@ defmodule HalC2.Codex.ThreadRuntime do
       |> Enum.map(fn {change, detail} -> file_diff(change, detail) end)
       |> Enum.join()
 
+    fields = %{"fileName" => hd(details)["path"], "diffStr" => diff, "changes" => details}
+
     commit(state, fn stream ->
       [
         Orchestration.create(
@@ -3325,15 +3359,18 @@ defmodule HalC2.Codex.ThreadRuntime do
             Orchestration.next_ordinal(stream),
             "completed",
             at,
-            %{
-              "fileName" => hd(details)["path"],
-              "diffStr" => diff,
-              "changes" => details
-            }
+            fields
           )
         )
       ]
     end)
+
+    # Written ended, never through `finish_item/5`: plugins that hear turns hear it here.
+    observe_item(
+      state,
+      "completed",
+      Map.merge(fields, %{"id" => item_id, "type" => "file_change", "status" => "completed"})
+    )
 
     Map.put(
       state,
