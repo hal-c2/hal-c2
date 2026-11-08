@@ -209,6 +209,54 @@ defmodule HalC2.Steps.Providers.CodexRuntime do
     context
   end
 
+  # --- stopping a command of a thread Codex unloaded -------------------------------------
+
+  step "Codex left a command running and the thread was settled", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "codex", "run the dev server in the background")
+
+    World.await_runs(context, @thread, ["completed"])
+    id = World.thread_id(context, @thread)
+    :ok = HalC2.Shell.subscribe(self())
+    World.await_row(id, &(&1["runningBackgroundTasks"] != []))
+    {{:ok, _}, context} = World.dispatch(context, %{"type" => "thread.settle", "threadId" => id})
+    Map.put(context, :thread, @thread)
+  end
+
+  step "Codex has since unloaded the thread", context do
+    cwd = World.thread(context, @thread)["worktreePath"] || World.project(context, "shop").root
+    File.write!(Path.join(cwd, "thread-unloaded"), "")
+    context
+  end
+
+  step "the command counts as already stopped", context do
+    assert {:ok, _} = context.reply
+
+    World.await_provider_log(
+      context,
+      "codex",
+      &(get_in(&1, ["in", "method"]) == "thread/backgroundTerminals/terminate")
+    )
+
+    item =
+      World.await_value(context, @thread, fn state ->
+        Enum.find(
+          StreamState.list(state, "turn-item"),
+          &(&1["nativeItemRef"]["nativeId"] == "cmd-bg" and &1["status"] != "running")
+        )
+      end)
+
+    assert item["status"] == "interrupted"
+    context
+  end
+
+  step "the running banner clears", context do
+    World.await_row(World.thread_id(context, @thread), &(&1["runningBackgroundTasks"] == []))
+    context
+  end
+
   # --- helpers ---------------------------------------------------------------------------
 
   # Kills the app-server by the pid its connection started (never found by name), and

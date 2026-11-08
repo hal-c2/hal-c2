@@ -729,6 +729,9 @@ for line in sys.stdin:
             send({"id": mid, "result": {"outcome": outcome}})
     # A "terminal-stays" file in the working directory has the terminal outlive the
     # terminate, still listed.
+    elif method.startswith("thread/backgroundTerminals/") and os.path.exists("thread-unloaded"):
+        # Codex unloads a thread it has had idle a while: its calls on it no longer find it.
+        send({"id": mid, "error": {"code": -32600, "message": f"thread not found: {params.get('threadId')}"}})
     elif method == "thread/backgroundTerminals/terminate":
         send({"id": mid, "result": {"terminated": not os.path.exists("terminal-stays")}})
     elif method == "thread/backgroundTerminals/list":

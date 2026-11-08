@@ -1645,7 +1645,7 @@ Feature: Codex
     When the user forks the thread
     Then the MC unarchives that session and the fork starts with the thread's conversation
 
-  @backlog @mc @plugin-codex @priority-high
+  @mc @plugin-codex
   Scenario: Stop ends a Codex command after its thread was settled
     Given Codex left a command running and the thread was settled
     And Codex has since unloaded the thread
