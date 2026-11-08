@@ -274,7 +274,8 @@ defmodule HalC2.Orchestration.Delegation do
   Settles the task `thread_id` works on, once the child is quiet: no run active or
   queued, and no background work still running (`BackgroundWork.derive/1`: all of
   it, not only what holds the sidebar's Working, since a child's answer may wait on
-  a command it never marked). Until then the task works on, however many turns the
+  a command it never marked; a monitor it did not mark is the exception, as one
+  never finishes by itself). Until then the task works on, however many turns the
   child takes. It ends as the child's last run that was not rolled back did, with
   the child's last answer in such a run, and wakes the caller once.
 
@@ -319,10 +320,13 @@ defmodule HalC2.Orchestration.Delegation do
          true <- quiet?(child),
          false <- continuing?(child, continuations),
          {status, run, ended_at} <- last_end(child, runs) do
-      result = result_for(child_id, run, status)
+      result =
+        child_id |> result_for(run, status) |> with_pull_requests(child, child_id, parent_id)
+
       # Before the result starts the caller's turn, so a link its agent makes from the
       # report finds the child's already there, with what the child heard of it.
       hand_over_pull_requests(child_id)
+      hook(:handed_over, child_id)
 
       # A child found quiet twice (two runs' ends, a provider replaying its turn's end
       # after a reconnect, the periodic check racing a report) settles and wakes once:
@@ -376,7 +380,11 @@ defmodule HalC2.Orchestration.Delegation do
           parent_id,
           task,
           ended,
-          if(run, do: result_for(child_id, run, ended)),
+          # Named also when no run is left to speak for the child (every one rolled
+          # back): its pull requests are handed over all the same.
+          child_id
+          |> result_for(run, ended)
+          |> with_pull_requests(stream(child_id), child_id, parent_id),
           "disposed",
           :once,
           ended_at
@@ -419,6 +427,54 @@ defmodule HalC2.Orchestration.Delegation do
     end
 
     :ok
+  end
+
+  # The result names the pull requests the child hands back, with their head and
+  # checks as last heard of them, so the caller knows what to watch
+  # (upstream #19801). A handover may already have tombstoned the child's links
+  # before this result is built (PR news reached a quiet child still owing a
+  # restart continuation, or a settle that handed over then failed is retried),
+  # so a link the child dismissed is named when the caller carries the same PR on
+  # its own visible links, named from the caller's copy. A PR the caller itself
+  # dismissed (its tombstone stays, so nothing is handed over), or does not carry,
+  # is not one the child handed back.
+  defp with_pull_requests(result, child, child_id, parent_id) do
+    thread = StreamState.get(child, "thread")[child_id] || %{}
+    parent = StreamState.get(stream(parent_id), "thread")[parent_id] || %{}
+    mine = Links.of(parent)
+    carried = mine |> Links.visible() |> Map.new(&{Links.key(&1), &1})
+    dismissed = MapSet.new(mine -- Links.visible(mine), &Links.key/1)
+
+    links =
+      thread
+      |> Links.of()
+      |> Enum.flat_map(fn link ->
+        cond do
+          Links.key(link) in dismissed -> []
+          link["source"] != "stack-dismissed" -> [link]
+          copy = carried[Links.key(link)] -> [copy]
+          true -> []
+        end
+      end)
+
+    case links do
+      [] ->
+        result
+
+      _ ->
+        named =
+          Enum.map_join(links, ", ", fn link ->
+            snapshot = link["snapshot"] || %{}
+            head = snapshot["headSha"] && " at #{snapshot["headSha"]}"
+            checks = snapshot["checksState"] && " (checks #{snapshot["checksState"]})"
+            "#{link["repository"]}##{link["number"]}#{head}#{checks}"
+          end)
+
+        Enum.join(
+          Enum.reject([result, "Pull requests handed to you to watch: #{named}."], &is_nil/1),
+          "\n\n"
+        )
+    end
   end
 
   defp hand_over(link, child_id, parent_id) do
@@ -549,7 +605,7 @@ defmodule HalC2.Orchestration.Delegation do
             get_in(task, ["completionDelivery", "state"]) == "pending",
           do: task["id"]
 
-    pending ++
+    background =
       HalC2.Projection.BackgroundWork.derive(
         latest_run: HalC2.Projection.Shell.latest_run(runs),
         provider_threads: StreamState.list(child, "provider-thread"),
@@ -558,6 +614,18 @@ defmodule HalC2.Orchestration.Delegation do
           (HalC2.Projection.Timeline.thread(child) || %{})["activeProviderThreadId"],
         runs: runs
       )
+
+    pending ++ Enum.reject(background, &monitor_not_awaited?/1)
+  end
+
+  # A monitor runs until it is stopped, so one the child did not mark as work it
+  # waits on (`hal_c2_background_wait`) is not owed: it would keep the task from
+  # ever finishing (upstream #27468). A command is still owed unmarked, since the
+  # child's answer may wait on its exit (`settle_if_quiet/1`).
+  defp monitor_not_awaited?(task) do
+    task["awaited"] != true and
+      (task["taskType"] == "monitor" or
+         (task["taskType"] == "dynamic_tool" and task["description"] == "Monitor"))
   end
 
   defp working?(runs), do: Enum.any?(runs, &(&1["status"] in @active or &1["status"] == "queued"))
@@ -1650,7 +1718,7 @@ defmodule HalC2.Orchestration.Delegation do
 
   # A failed run's own word on why: its latest error item, which outranks any
   # answer it gave before failing (upstream `subagentResultForRun`).
-  defp failure_text(_child, _run, status) when status != "failed", do: nil
+  defp failure_text(_child, run, status) when status != "failed" or run == nil, do: nil
 
   defp failure_text(child, %{"id" => run_id}, "failed") do
     child
