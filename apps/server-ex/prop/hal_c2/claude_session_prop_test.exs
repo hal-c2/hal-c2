@@ -39,7 +39,8 @@ defmodule HalC2.ClaudeSessionPropTest do
   a refused one is not passed on. A new process resumes the thread's session, unless
   that session lost its transcript, Claude cannot resume it where the thread asks, or
   its last prompt handed the thread over unconfirmed: then it starts a new one, handed the whole thread, which the next
-  process resumes.
+  process resumes. The MC looks for a session's transcript where Claude keeps it, in a
+  config dir given absolute or relative to the folder Claude runs in.
   """
 
   use ExUnit.Case, async: false
@@ -71,9 +72,9 @@ defmodule HalC2.ClaudeSessionPropTest do
   property "a Claude thread keeps its background work across the turns it allows",
     numtests: HalC2.Prop.numtests(20),
     max_size: 20 do
-    forall cmds <- commands(__MODULE__) do
+    forall {relative?, cmds} <- {boolean(), commands(__MODULE__)} do
       trap_exit do
-        start()
+        start(relative?)
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
         Application.delete_env(:hal_c2, :claude_command)
@@ -93,7 +94,9 @@ defmodule HalC2.ClaudeSessionPropTest do
     end
   end
 
-  defp start do
+  # Claude's config dir is given absolute, or relative, as Claude takes it: from the
+  # folder it runs in, where the MC must look for its transcripts too (#1363 review).
+  defp start(relative?) do
     home = HalC2.Prop.scratch_home("claude-session")
     work = Path.join(home, "work")
     File.mkdir_p!(work)
@@ -101,7 +104,7 @@ defmodule HalC2.ClaudeSessionPropTest do
     # Claude's own settings are the scratch home's, never the user's (`policy/1`).
     config = Path.join(home, "claude")
     File.mkdir_p!(config)
-    System.put_env("CLAUDE_CONFIG_DIR", config)
+    System.put_env("CLAUDE_CONFIG_DIR", if(relative?, do: "../claude", else: config))
     Process.put(:work, work)
     # Every message Claude reads, one JSON string a line (`sent/1`).
     System.put_env("FAKE_CLAUDE_INPUT_LOG", Path.join(home, "input.log"))

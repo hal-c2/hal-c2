@@ -515,7 +515,7 @@ defmodule HalC2.PortableSessions do
   end
 
   defp locate("claudeAgent", instance, id, cwd) do
-    projects = Path.join(claude_home(instance), "projects")
+    projects = Path.join(claude_home(instance, cwd), "projects")
     own = Path.join([projects, claude_folder(cwd), "#{id}.jsonl"])
 
     if File.regular?(own),
@@ -547,7 +547,9 @@ defmodule HalC2.PortableSessions do
     do: {codex_home(instance), main_name(session)}
 
   defp target("claudeAgent", instance, root, session),
-    do: {Path.join([claude_home(instance), "projects", claude_folder(root)]), main_name(session)}
+    do:
+      {Path.join([claude_home(instance, root), "projects", claude_folder(root)]),
+       main_name(session)}
 
   defp target("pi", instance, root, session),
     do: {Path.join(pi_sessions(instance), pi_folder(root)), main_name(session)}
@@ -619,8 +621,17 @@ defmodule HalC2.PortableSessions do
 
   # --- homes -----------------------------------------------------------------------
 
-  @doc "The Claude Code home an instance keeps its sessions in."
-  def claude_home(instance), do: home(instance, "CLAUDE_CONFIG_DIR", ".claude")
+  @doc """
+  The Claude Code home an instance keeps its sessions in, for Claude run in `cwd`:
+  the config directory the instance's Claude is given (`HalC2.Claude.Provider.config_dir/3`).
+  """
+  def claude_home(instance, cwd \\ nil),
+    do:
+      HalC2.Claude.Provider.config_dir(
+        instance,
+        cwd,
+        Application.get_env(:hal_c2, :agent_sessions_home)
+      )
 
   @doc "The Codex home an instance keeps its sessions in."
   def codex_home(instance), do: home(instance, "CODEX_HOME", ".codex")

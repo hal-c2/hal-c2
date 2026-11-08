@@ -114,6 +114,61 @@ defmodule HalC2.PortableSessionsTest do
     assert lib == to <> "/lib"
   end
 
+  # #1363 review: the lookup took neither, and a stale transcript where it did look hid
+  # the lost one Claude itself would open.
+  describe "a Claude transcript is found" do
+    setup %{tmp_dir: dir} do
+      previous = Application.get_env(:hal_c2, :home)
+      Application.put_env(:hal_c2, :home, Path.join(dir, "mc"))
+
+      on_exit(fn ->
+        if previous,
+          do: Application.put_env(:hal_c2, :home, previous),
+          else: Application.delete_env(:hal_c2, :home)
+      end)
+
+      start_supervised!(HalC2.Settings)
+      :ok
+    end
+
+    test "in the instance's own home", %{tmp_dir: dir, to: cwd} do
+      home = Path.join(dir, "claude-work")
+      {_, version} = HalC2.Settings.get()
+
+      {:ok, _} =
+        HalC2.Settings.put(
+          %{
+            "providerInstances" => %{
+              "claudeAgent" => %{"driver" => "claudeAgent", "config" => %{"homePath" => home}}
+            }
+          },
+          version
+        )
+
+      stale = transcript(Path.join(dir, "claude"), cwd)
+      own = transcript(home, cwd)
+
+      assert PortableSessions.claude_transcript("claudeAgent", "s1", cwd) == own
+      assert own != stale
+    end
+
+    test "in a relative config dir, from Claude's folder",
+         %{tmp_dir: dir, to: cwd} do
+      System.put_env("CLAUDE_CONFIG_DIR", "claude-here")
+      transcript(Path.join(dir, "claude"), cwd)
+      own = transcript(Path.join(cwd, "claude-here"), cwd)
+
+      assert PortableSessions.claude_transcript("claudeAgent", "s1", cwd) == own
+    end
+
+    defp transcript(home, cwd) do
+      path = Path.join([home, "projects", PortableSessions.claude_folder(cwd), "s1.jsonl"])
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, jsonl([%{"type" => "user", "sessionId" => "s1"}]))
+      path
+    end
+  end
+
   test "a Pi session's header moves, and Pi finds the copy by its path",
        %{tmp_dir: dir, from: from, to: to} do
     name = "2026-09-26T10-00-00-000Z_p1.jsonl"
