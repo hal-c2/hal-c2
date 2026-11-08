@@ -1169,7 +1169,12 @@ defmodule HalC2.Codex.ThreadRuntime do
 
     with {:ok, args} <- launch_args(instance),
          {:ok, home} <- home_env(instance),
-         env = HalC2.ProjectEnvironment.for_turn(turn, home ++ env, cmd ++ args),
+         env =
+           HalC2.ProjectEnvironment.for_turn(
+             turn,
+             HalC2.Codex.Provider.app_server_env(home ++ env),
+             cmd ++ args
+           ),
          {:ok, conn} <-
            Connection.start_link(
              cmd: cmd ++ args,
@@ -2451,22 +2456,10 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
-  defp sharing_limit?(error) when is_map(error) do
-    message = String.downcase(error["message"] || "")
-    String.contains?(message, "sharing") and String.contains?(message, "usage limit")
-  end
+  defp sharing_limit?(error), do: HalC2.Codex.SharingLimit.code(error) != nil
 
-  defp sharing_limit?(_error), do: false
-
-  defp sharing_failure(error) do
-    %{
-      "class" => "usage_limit",
-      "message" => "ChatGPT sharing usage limit reached.",
-      "code" => error_code(error["codexErrorInfo"]),
-      "retryable" => nil,
-      "resetAt" => nil
-    }
-  end
+  defp sharing_failure(error),
+    do: error |> HalC2.Codex.SharingLimit.code() |> HalC2.Codex.SharingLimit.failure()
 
   # Instead of Codex's own sentence (which on a workspace blames credits for a window
   # that simply ran out): the used-up window resetting last, and what to do next.
@@ -2905,7 +2898,10 @@ defmodule HalC2.Codex.ThreadRuntime do
           HalC2.Orchestration.NativeSubagent.start(state.turn.ids, "#{id}:#{thread}", %{
             "prompt" => item["prompt"] || "",
             "title" => nil,
-            "model" => if(item["model"] in [nil, ""], do: nil, else: item["model"])
+            "model" => if(item["model"] in [nil, ""], do: nil, else: item["model"]),
+            # Codex names each subagent's own effort; none named is none, not the parent's.
+            "reasoningEffort" =>
+              if(item["reasoningEffort"] in [nil, ""], do: nil, else: item["reasoningEffort"])
           })
 
         {thread, %{sub: sub, done: false}}

@@ -481,7 +481,7 @@ Feature: Codex
     And a reasoning level the user picks is used instead, in plan mode too
 
   # Upstream #27931: with ChatGPT sign-in, models newer than the installed CLI came without reasoning choices.
-  @backlog @priority-high
+  @priority-high
   Scenario: A model newer than the installed Codex still offers its reasoning levels
     Given Codex is signed in with a ChatGPT account
     And the account's model catalog lists a model the installed Codex does not know yet
@@ -494,7 +494,7 @@ Feature: Codex
     And the user can open the subagent's own thread
 
   # Upstream #24467: a native Codex child thread copied its parent's reasoning effort.
-  @backlog @priority-low
+  @priority-low
   Scenario Outline: A Codex subagent's thread shows its own reasoning effort
     Given a Codex thread with reasoning effort "high"
     When Codex starts a subagent <reported>
@@ -539,7 +539,6 @@ Feature: Codex
 
   # Codex's check starts its app server and reads the account, models and skills, so it
   # gets twice the budget other providers' checks get (pingdotgg/t3code#15945).
-  @backlog
   Scenario Outline: A slow but healthy Codex is not shown as unavailable
     Given the Codex command answers its status check after <seconds> seconds
     When the MC checks Codex
@@ -586,7 +585,7 @@ Feature: Codex
 
   # Upstream #23361: a turn stopped by a ChatGPT sharing limit showed Codex's raw error. OpenAI's
   # partner guidelines give each limit its own recovery.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario Outline: A turn stopped by a ChatGPT plan limit says how to recover
     Given Codex is signed in with <plan>
     When a turn stops because the plan's limit for other apps is reached
@@ -648,7 +647,7 @@ Feature: Codex
     When Codex's account is read
     Then Codex shows as signed in and its plan is shown by the plan's own name
 
-  @backlog @shared @priority-low
+  @shared @priority-low @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: The Ultrafast service tier is offered for a model that lists it
     Given the selected Codex model lists the "ultrafast" service tier
     When the user opens the service tier choices
@@ -657,7 +656,7 @@ Feature: Codex
   # Upstream #18200. Codex shares one model catalog cache between every client on the
   # machine, and the plain CLI's catalog has no Ultrafast. Codex started by the MC asks for
   # HAL-C2's own catalog, and the probe waits briefly for that refresh before it lists.
-  @backlog @mc @plugin-codex @priority-low
+  @mc @plugin-codex @priority-low
   Scenario: Ultrafast stays offered after another Codex client refreshes the catalog
     Given the ChatGPT account is entitled to the Ultrafast tier
     And another Codex client on the machine wrote a model catalog without it
@@ -665,14 +664,14 @@ Feature: Codex
     Then the models still list the Ultrafast tier
     And a thread set to Ultrafast stays on Ultrafast
 
-  @backlog @mc @plugin-codex @priority-low
+  @mc @plugin-codex @priority-low
   Scenario: Ultrafast is no longer offered once the account loses it
     Given the ChatGPT account was entitled to the Ultrafast tier and no longer is
     When the MC checks Codex's models
     Then the models no longer list the Ultrafast tier
 
   # Upstream #15623: Codex inheriting Fast from its global config showed the catalog's Standard default.
-  @backlog @shared @priority-low
+  @shared @priority-low @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A Fast tier set in Codex's own config shows as selected
     Given Codex's global config sets the service tier to fast
     When the user opens the service tier choices for a model that offers Fast

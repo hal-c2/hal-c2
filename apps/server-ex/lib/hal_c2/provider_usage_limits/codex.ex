@@ -247,7 +247,7 @@ defmodule HalC2.ProviderUsageLimits.Codex do
   # and its variables, such as CODEX_HOME); nil when it cannot start.
   defp with_app_server(instance, fun) do
     Process.flag(:trap_exit, true)
-    env = Enum.to_list(HalC2.Settings.instance_env(instance))
+    env = HalC2.Codex.Provider.app_server_env(Enum.to_list(HalC2.Settings.instance_env(instance)))
 
     case Connection.start_link(cmd: command(instance), handler: self(), env: env) do
       {:ok, conn} ->
