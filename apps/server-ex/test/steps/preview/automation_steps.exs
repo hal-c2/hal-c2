@@ -1258,7 +1258,8 @@ defmodule HalC2.Steps.Preview.Automation do
     |> answer("open", fn request, context ->
       {:ok, %{"tabId" => tab}} = made.(request, context)
 
-      # The desktop names the tab a failed open reached, as PreviewAutomationHost does.
+      # The error names the tab the open reached: PreviewAutomationHost::finish adds
+      # request->tabId to every failure of an open, a page that never registers included.
       {:error,
        %{
          "_tag" => "PreviewAutomationExecutionError",
