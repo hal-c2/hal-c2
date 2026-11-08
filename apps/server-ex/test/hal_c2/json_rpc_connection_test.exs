@@ -90,7 +90,10 @@ defmodule HalC2.JsonRpc.ConnectionTest do
   test "stopping a connection whose subprocess already closed it is a no-op" do
     {:ok, conn} = GenServer.start(Connection, cmd: ["sh", "-c", "exit 137"], handler: self())
     ref = Process.monitor(conn)
-    assert_receive {:DOWN, ^ref, :process, ^conn, :normal}, 5_000
+    # The subprocess can exit and the connection stop before the monitor is set, in
+    # which case the DOWN reason is :noproc rather than :normal.
+    assert_receive {:DOWN, ^ref, :process, ^conn, reason}, 5_000
+    assert reason in [:normal, :noproc]
 
     assert Connection.stop(conn) == :ok
   end
