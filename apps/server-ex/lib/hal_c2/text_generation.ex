@@ -457,10 +457,11 @@ defmodule HalC2.TextGeneration do
   defp valid?(_out, _schema), do: false
 
   defp option(selection, id) do
-    Enum.find_value(selection["options"] || [], fn
-      %{"id" => ^id, "value" => value} -> value
+    # An off switch (`false`) is a choice too, so it cannot come from `find_value`.
+    case Enum.find(selection["options"] || [], &(&1["id"] == id)) do
+      %{"value" => value} -> value
       _ -> nil
-    end)
+    end
   end
 
   defp claude(cwd, prompt, schema, selection, opts) do
@@ -476,17 +477,20 @@ defmodule HalC2.TextGeneration do
         &if(option(selection, "fastMode") == true, do: Map.put(&1, "fastMode", true), else: &1)
       )
 
+    # An effort the model has no option for is left out.
+    model = selection["model"] || @default_models["claudeAgent"]
+    instance = selection["instanceId"] || "claudeAgent"
     effort = option(selection, "effort")
+    effort = if HalC2.Claude.Provider.offers_option?(model, "effort", instance), do: effort
 
     args =
       ~w(-p --output-format json --json-schema) ++
-        [JSON.encode!(schema), "--model", selection["model"] || @default_models["claudeAgent"]] ++
+        [JSON.encode!(schema), "--model", model] ++
         if(is_binary(effort), do: ["--effort", effort], else: []) ++
         ["--settings", JSON.encode!(settings), "--tools", ""] ++
         ["--disable-slash-commands", "--strict-mcp-config", "--permission-mode", "dontAsk"]
 
     # The instance's own env and config folder, as its sessions get them.
-    instance = selection["instanceId"] || "claudeAgent"
 
     env =
       (Enum.to_list(HalC2.Settings.instance_env(instance)) ++

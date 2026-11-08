@@ -217,6 +217,38 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     context
   end
 
+  step "the text model has a thinking switch turned off and an effort chosen", context do
+    context
+    |> install(["claudeAgent"])
+    |> World.update_settings(%{
+      "textGenerationModelSelection" => %{
+        "instanceId" => "claudeAgent",
+        "model" => "claude-haiku-4-5",
+        "options" => [
+          %{"id" => "thinking", "value" => false},
+          %{"id" => "effort", "value" => "high"}
+        ]
+      }
+    })
+  end
+
+  step "the model does not take an effort option", context do
+    refute HalC2.Claude.Provider.offers_option?("claude-haiku-4-5", "effort")
+    context
+  end
+
+  step "Claude is run with thinking turned off in its settings", context do
+    assert {:ok, _} = context.reply
+    assert [call] = calls(context)
+    assert %{"alwaysThinkingEnabled" => false} = JSON.decode!(after_flag(call, "--settings"))
+    context
+  end
+
+  step "no effort option is passed", context do
+    refute "--effort" in List.last(calls(context))["argv"]
+    context
+  end
+
   step "a title is generated", context do
     title(context, "Fix the login redirect loop")
   end

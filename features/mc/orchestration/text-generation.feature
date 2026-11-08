@@ -229,8 +229,7 @@ Feature: Generated titles, branch names and source control text
     And no script or skill runs
 
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.test.ts ("forwards Claude thinking settings without passing unsupported effort")
-  # Uncertain: the legacy test names a model whose effort is unsupported; the exact capability rule was not reread.
-  @backlog @mc
+  @mc
   Scenario: A model's thinking choice is passed as a setting and unsupported effort is left out
     Given the text model has a thinking switch turned off and an effort chosen
     And the model does not take an effort option
