@@ -739,6 +739,9 @@ for line in sys.stdin:
         send({"id": mid, "result": {"data": stays, "nextCursor": None}})
     elif method == "thread/inject_items":
         send({"id": mid, "result": {}})
+    elif method == "turn/interrupt" and os.path.exists("interrupt-unanswered"):
+        # While the file "interrupt-unanswered" exists, a stop is never answered.
+        pass
     elif method == "turn/interrupt":
         # FAKE_CODEX_IGNORE_INTERRUPT, or the file FAKE_CODEX_IGNORE_INTERRUPT_FILE names
         # existing, acknowledges the stop and never ends the turn.

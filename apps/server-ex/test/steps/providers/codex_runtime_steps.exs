@@ -257,6 +257,74 @@ defmodule HalC2.Steps.Providers.CodexRuntime do
     context
   end
 
+  # --- a subagent's late turn ------------------------------------------------------------
+
+  # Upstream #25322. In the MC a thread's subagents run in its app-server and each
+  # thread has its own; the runtime taking that app-server's reports is what must not
+  # wait on Codex's answer to the late turn's stop.
+  step "a Codex run was stopped while one of its subagents was still working", context do
+    context = context |> World.fake_providers() |> World.launch_on(@thread, "codex", "wait")
+    World.await_running(context, @thread)
+    World.await_provider_log(context, "codex", &(get_in(&1, ["in", "method"]) == "turn/start"))
+    {_, runtime} = World.codex_runtime(context, @thread)
+    ctx = %{"threadId" => runtime.native_thread_id, "turnId" => runtime.turn.native_turn_id}
+
+    World.codex_notify(
+      context,
+      @thread,
+      "item/started",
+      Map.put(ctx, "item", %{
+        "type" => "collabAgentToolCall",
+        "id" => "collab-1",
+        "tool" => "spawnAgent",
+        "prompt" => "List the modules in lib",
+        "senderThreadId" => runtime.native_thread_id,
+        "receiverThreadIds" => ["native-child-1"],
+        "status" => "inProgress",
+        "agentsStates" => %{}
+      })
+    )
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, @thread),
+        "runId" => World.latest_run(context, @thread)["id"]
+      })
+
+    World.await_runs(context, @thread, ["interrupted"])
+    context
+  end
+
+  step "another Codex thread shares the same app-server", context do
+    # From here on, Codex never answers a stop.
+    cwd = World.thread(context, @thread)["worktreePath"] || World.project(context, "shop").root
+    File.write!(Path.join(cwd, "interrupt-unanswered"), "")
+    context
+  end
+
+  step "the subagent starts another turn and HAL-C2 stops it", context do
+    World.codex_notify(context, @thread, "turn/started", %{
+      "threadId" => "native-child-1",
+      "turn" => %{"id" => "native-child-turn-9", "status" => "inProgress"}
+    })
+
+    World.await_provider_log(context, "codex", fn entry ->
+      get_in(entry, ["in", "method"]) == "turn/interrupt" and
+        get_in(entry, ["in", "params", "turnId"]) == "native-child-turn-9"
+    end)
+
+    context
+  end
+
+  # Waiting on the unanswered stop would hold the runtime for the call's 30 seconds.
+  step "the other thread keeps receiving its events without a pause", context do
+    context = World.post_message(context, @thread, "hello")
+    World.await_runs(context, @thread, ["interrupted", "completed"], 5_000)
+    assert [_ | _] = World.replies(context, @thread)
+    context
+  end
+
   # --- helpers ---------------------------------------------------------------------------
 
   # Kills the app-server by the pid its connection started (never found by name), and

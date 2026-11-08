@@ -1323,7 +1323,7 @@ Feature: Codex
     Then the subagent stays completed
 
   # Upstream #25322: stopping the subagent's late turn waited on its own reply and froze every Codex thread for 10 seconds.
-  @backlog @mc @priority-high
+  @mc
   Scenario: A subagent turn that starts after its parent stopped does not hold up other Codex threads
     Given a Codex run was stopped while one of its subagents was still working
     And another Codex thread shares the same app-server

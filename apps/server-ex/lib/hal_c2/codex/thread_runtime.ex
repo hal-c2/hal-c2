@@ -1832,7 +1832,7 @@ defmodule HalC2.Codex.ThreadRuntime do
          %{turn: nil, stopped: true, subagents: subagents} = state
        )
        when is_map_key(subagents, thread) do
-    Connection.call(state.conn, "turn/interrupt", %{"threadId" => thread, "turnId" => turn_id})
+    interrupt_unwaited(state, thread, turn_id)
     entry = subagents[thread]
 
     sub = HalC2.Orchestration.NativeSubagent.finish(entry.sub, "interrupted", entry[:final])
@@ -2814,14 +2814,20 @@ defmodule HalC2.Codex.ThreadRuntime do
   # A turn Codex starts for a goal no run waits on is stopped, the goal paused.
   defp stop_goal_turn(state, native) do
     state = pause_goal(state)
-
-    Connection.call(state.conn, "turn/interrupt", %{
-      "threadId" => state.native_thread_id,
-      "turnId" => native
-    })
-
+    interrupt_unwaited(state, state.native_thread_id, native)
     state
   end
+
+  # Stops a turn no run waits on without waiting for Codex's answer, which may come late
+  # or never: waiting would hold up every other report of this app-server (Upstream
+  # #25322). The answer reaches this process and is dropped (`handle_info/2`'s last clause).
+  defp interrupt_unwaited(%{conn: conn}, thread, turn_id) when conn != nil do
+    params = %{"threadId" => thread, "turnId" => turn_id}
+    Connection.request(conn, "turn/interrupt", params, :unwaited, :gen_server.reqids_new())
+    :ok
+  end
+
+  defp interrupt_unwaited(_state, _thread, _turn_id), do: :ok
 
   # Pauses an active goal, so Codex starts no more turns for it; one it starts
   # before it hears of the pause is stopped (`goal_stop`).

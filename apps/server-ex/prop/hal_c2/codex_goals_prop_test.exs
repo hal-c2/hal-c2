@@ -218,6 +218,10 @@ defmodule HalC2.CodexGoalsPropTest do
     Process.put(:native_turn, "goal-turn-#{n}")
     notify("turn/started", %{"turn" => %{"id" => "goal-turn-#{n}", "status" => "inProgress"}})
     settle_runtime()
+    # The runtime does not wait on Codex's answer to a stop; a call of our own through
+    # the same app-server, after it, is answered once the fake has read the stop.
+    {_, runtime} = runtime()
+    HalC2.JsonRpc.Connection.call(runtime.conn, "test/ping", %{})
     observed()
   end
 
@@ -266,6 +270,10 @@ defmodule HalC2.CodexGoalsPropTest do
     Process.put(:late, "goal-turn-#{n}")
     notify("turn/started", %{"turn" => %{"id" => "goal-turn-#{n}", "status" => "inProgress"}})
     settle_runtime()
+    # The runtime does not wait on Codex's answer to a stop; a call of our own through
+    # the same app-server, after it, is answered once the fake has read the stop.
+    {_, runtime} = runtime()
+    HalC2.JsonRpc.Connection.call(runtime.conn, "test/ping", %{})
     observed()
   end
 
