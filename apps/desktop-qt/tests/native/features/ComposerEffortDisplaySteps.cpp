@@ -98,20 +98,22 @@ const Steps steps([] {
     QQuickItem* model = part(world, S("modelPicker"));
     world.waitFor([&] { return model->property("triggerTitle").toString() == c[0]; },
                   [&] { return S("the model to read %1; it reads %2").arg(c[0], model->property("triggerTitle").toString()); });
-    QQuickItem* effort = part(world, S("effortPicker"));
-    expect(effort->isVisible(), S("the effort is not on the toolbar"));
-    expect(effort->mapToScene(QPointF()).x() > model->mapToScene(QPointF()).x(), S("the effort is not after the model"));
-    QQuickItem* bars = part(world, S("effortBars"));
+    // The effort is the model control's, named after the model on its trigger.
+    QQuickItem* title = part(world, S("modelPickerTitle"));
+    QQuickItem* effort = part(world, S("modelPickerEffort"));
+    QQuickItem* bars = part(world, S("modelPickerEffortBars"));
     if (c[1].startsWith(u'"')) {
       const QString word = c[1].mid(1, c[1].size() - 2);
-      world.waitFor([&] { return !bars->isVisible() && effort->property("displayText") == word; },
-                    [&] { return S("the effort to read %1; it reads %2 with bars %3").arg(word, effort->property("displayText").toString(), bars->isVisible() ? S("shown") : S("hidden")); });
+      world.waitFor([&] { return !bars->isVisible() && effort->isVisible() && effort->property("text") == word; },
+                    [&] { return S("the effort to read %1; it reads %2 with bars %3").arg(word, effort->property("text").toString(), bars->isVisible() ? S("shown") : S("hidden")); });
+      expect(effort->mapToScene(QPointF()).x() > title->mapToScene(QPointF()).x(), S("the effort is not after the model"));
       return;
     }
     const int filled = barsNamed(c[1].section(u' ', 0, 0));
     expect(filled >= 0, S("no number of bars in %1").arg(c[1]));
     world.waitFor([&] { return bars->isVisible() && bars->property("filled").toInt() == filled; },
                   [&] { return S("%1 bars filled; %2 of %3 are, shown: %4").arg(filled).arg(bars->property("filled").toInt()).arg(bars->property("count").toInt()).arg(bars->isVisible()); });
+    expect(bars->mapToScene(QPointF()).x() > title->mapToScene(QPointF()).x(), S("the bars are not after the model"));
     // One bar a level, Max named apart: low, medium, high and extra high.
     expect(bars->property("count").toInt() == 4, S("the bars count %1 levels").arg(bars->property("count").toInt()));
   });

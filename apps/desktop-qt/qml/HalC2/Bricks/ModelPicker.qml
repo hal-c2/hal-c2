@@ -10,6 +10,12 @@ import "js/modelPicker.js" as Picker
 // has the provider rail (ModelPickerSidebar) beside a searchable model list
 // (ModelPickerContent, ModelListRow). The catalogue is Shell.state.modelPicker;
 // choosing a model or starring it is dispatched to the shell.
+//
+// Docked (upstream's ComposerModelEffort), it is the composer's one model
+// control: the chosen model's efforts and other options sit in a column
+// beside the list, its speed beside the permissions below, and the trigger
+// names the effort, fast mode and context window after the model. A pick
+// leaves it open until Escape or a click outside.
 AbstractButton {
     id: control
 
@@ -61,9 +67,147 @@ AbstractButton {
     // the thread's; with none the popup has no footer.
     property var runtimeModes: []
     property string runtimeMode: ""
-    readonly property bool showFooter: onlyInstances === null && runtimeModes.length > 0
-    // The part the popup opens on: "models" (the search) or "permissions".
+    // Docked, the footer stays for the speed so the popup keeps one height.
+    readonly property bool showFooter: onlyInstances === null && (runtimeModes.length > 0 || controlDocked)
+    // The part the popup opens on: "models" (the search), "effort" or
+    // "permissions".
     property string openOn: "models"
+
+    // The model control: the composer's options for the chosen model
+    // (model.options, the effort marked `effort`) and Appearance's effort
+    // display ("label" or "bars").
+    property bool docked: false
+    property var options: []
+    property string effortDisplay: "label"
+    readonly property bool controlDocked: docked && onlyInstances === null
+    readonly property var effortOption: controlDocked ? (options.find(option => option.effort === true) ?? null) : null
+    readonly property bool effortLocked: (effortOption?.lockedReason ?? "").length > 0
+    // Fast mode, and Codex's service tier in its place, are the footer's speed.
+    readonly property var fastOption: controlDocked ? (options.find(option => option.id === "fastMode" && option.type === "boolean") ?? null) : null
+    readonly property var tierOption: controlDocked && activeInstance?.driverKind === "codex" ? (options.find(option => option.id === "serviceTier" && option.type === "select") ?? null) : null
+    // The column's other options, one row each below the efforts.
+    readonly property var columnOptions: controlDocked ? options.filter(option => !option.effort && option.id !== fastOption?.id && option.id !== tierOption?.id) : []
+    readonly property var speedChoices: tierOption ? tierOption.choices.map(choice => ({
+                value: choice.id,
+                label: choice.label,
+                fast: /fast/i.test(choice.label),
+                checked: choice.id === tierOption.value
+            })) : fastOption ? [false, true].map(value => ({
+                value: value,
+                label: value ? qsTr("Fast") : qsTr("Standard"),
+                fast: value,
+                checked: (fastOption.value === true) === value
+            })) : []
+    // What the trigger adds after the model: the effort as a word or as bars
+    // (Max and Ultrathink keep their names), a bolt for fast and the context
+    // window.
+    readonly property var triggerBars: effortDisplay === "bars" && effortOption?.bars && !effortOption.bars.special ? effortOption.bars : null
+    readonly property string triggerEffort: effortOption === null || triggerBars !== null ? "" : optionValueLabel(effortOption)
+    readonly property bool triggerFast: speedChoices.some(choice => choice.checked && choice.fast)
+    readonly property var contextWindowOption: controlDocked ? (options.find(option => option.id === "contextWindow" && option.type === "select" && !option.effort) ?? null) : null
+    readonly property string triggerContextWindow: contextWindowOption ? optionValueLabel(contextWindowOption) : ""
+    // A model chosen with an effort to pick, until its options arrive.
+    property string pendingEffortFor: ""
+    // The row a pick came from: the options it changes rebuild the rows, and
+    // the keyboard stays on the one picked.
+    property string refocusName: ""
+
+    // A select's chosen value by its label, else the option's own.
+    function optionValueLabel(option) {
+        const chosen = (option?.choices ?? []).find(choice => choice.id === option.value);
+        return chosen ? chosen.label : (option?.label ?? "");
+    }
+
+    function setOption(id, value) {
+        const focused = control.Window.activeFocusItem;
+        refocusName = popup.opened && focused ? focused.objectName : "";
+        Shell.dispatch("composer.option.set", {
+            id: id,
+            value: value
+        });
+    }
+
+    // The column's rows the keyboard moves through, top to bottom.
+    function columnRows() {
+        return columnBody.children.filter(child => child.inColumn === true && child.visible && child.enabled);
+    }
+
+    // Focuses the chosen effort, else the first effort; with `any` falls
+    // back to the column's first option. False when nothing took focus.
+    function focusEffort(any) {
+        const rows = columnRows();
+        const levels = rows.filter(row => row.effortLevel === true);
+        const row = levels.find(level => level.checked) ?? levels[0] ?? (any ? rows[0] : undefined);
+        if (!row)
+            return false;
+        row.forceActiveFocus(Qt.TabFocusReason);
+        return true;
+    }
+
+    function stepColumn(from, step) {
+        const rows = columnRows();
+        const next = rows[Math.max(0, Math.min(rows.length - 1, rows.indexOf(from) + step))];
+        if (next)
+            next.forceActiveFocus(Qt.TabFocusReason);
+    }
+
+    // Opens the popup on the current effort, or moves there.
+    function openEffort() {
+        if (!enabled || !controlDocked)
+            return;
+        if (popup.opened) {
+            focusEffort(true);
+            return;
+        }
+        openOn = "effort";
+        popup.open();
+    }
+
+    onOptionsChanged: {
+        if (pendingEffortFor.length > 0)
+            Qt.callLater(focusPendingEffort);
+        if (refocusName.length > 0)
+            Qt.callLater(restoreFocus);
+    }
+
+    function restoreFocus() {
+        const name = refocusName;
+        refocusName = "";
+        // Only when the rebuild dropped the keyboard to the popup itself: a
+        // user who moved on to another part keeps it there.
+        const focused = control.Window.activeFocusItem;
+        if (!popup.opened || (focused && popup.contentItem !== focused && isAncestor(popup.contentItem, focused)))
+            return;
+        const row = named(popup.contentItem, name);
+        if (row)
+            row.forceActiveFocus(Qt.TabFocusReason);
+    }
+
+    function isAncestor(ancestor, item) {
+        for (let at = item.parent; at; at = at.parent) {
+            if (at === ancestor)
+                return true;
+        }
+        return false;
+    }
+
+    function named(item, name) {
+        if (item.objectName === name)
+            return item;
+        for (const child of item.children) {
+            const found = named(child, name);
+            if (found)
+                return found;
+        }
+        return null;
+    }
+
+    function focusPendingEffort() {
+        if (pendingEffortFor !== selectedInstanceId + "\n" + selectedModel || !popup.opened)
+            return;
+        if (focusEffort(false))
+            pendingEffortFor = "";
+    }
 
     signal chosen(string instanceId, string model)
 
@@ -112,6 +256,12 @@ AbstractButton {
 
     function close() {
         popup.close();
+    }
+
+    // Out of the popup with the keyboard back on the trigger.
+    function leave() {
+        popup.close();
+        control.forceActiveFocus();
     }
 
     // One step back (the phone's system back): out of the permissions menu
@@ -163,6 +313,12 @@ AbstractButton {
             instanceId: instanceId,
             model: model
         });
+        // In the model control, a model with an effort stays open on it.
+        if (controlDocked && entry.hasEffort === true) {
+            pendingEffortFor = instanceId + "\n" + model;
+            Qt.callLater(focusPendingEffort);
+            return;
+        }
         popup.close();
     }
 
@@ -323,6 +479,46 @@ AbstractButton {
             visible: control.activeModel !== null && control.activeModel.isUnavailable
             text: qsTr("Unavailable")
         }
+
+        Text {
+            objectName: "modelPickerEffort"
+            visible: text.length > 0
+            Layout.maximumWidth: Theme.control.md * 3
+            text: control.triggerEffort
+            font: control.font
+            color: control.muted
+            elide: Text.ElideRight
+            verticalAlignment: Text.AlignVCenter
+        }
+
+        EffortBars {
+            objectName: "modelPickerEffortBars"
+            visible: control.triggerBars !== null
+            count: control.triggerBars?.count ?? 0
+            filled: control.triggerBars?.filled ?? 0
+            color: control.muted
+        }
+
+        ShellIcon {
+            objectName: "modelPickerFast"
+            visible: control.triggerFast
+            name: "zap"
+            filled: true
+            size: Theme.icon.sm
+            color: control.muted
+        }
+
+        Text {
+            objectName: "modelPickerContextWindow"
+            visible: text.length > 0
+            Layout.maximumWidth: Theme.control.md * 3
+            text: control.triggerContextWindow
+            font.family: control.fontFamily
+            font.pixelSize: Theme.type.meta.size
+            color: control.muted
+            elide: Text.ElideRight
+            verticalAlignment: Text.AlignVCenter
+        }
     }
 
     Popup {
@@ -337,7 +533,7 @@ AbstractButton {
         x: 0
         y: below ? control.height + 4 : -height - 4
         // ljos-allow(layout-fixed-size): the rail and the list scroll inside it, and a size that followed the search's results would move the rows under the pointer as one types
-        width: 360
+        width: 360 + (control.controlDocked ? column.width : 0)
         // The search row, then six whole rows (46 tall, 2 apart) between the
         // list's margins: the list never stops on a sliced row.
         height: 40 + 2 * Theme.space.sm + 6 * 46 + 5 * 2 + (control.showFooter ? footer.height : 0)
@@ -356,6 +552,8 @@ AbstractButton {
                 [control.selectedInstanceId]: true
             } : {};
             control.view = Picker.initialView(control.instances, control.selectedInstanceId, control.catalogue?.locked === true);
+            control.pendingEffortFor = "";
+            control.refocusName = "";
         }
         // The keymap's modelPickerOpen.
         onVisibleChanged: Keybindings.modelPickerOpen = visible
@@ -365,7 +563,7 @@ AbstractButton {
             if (control.openOn === "permissions" && control.showFooter) {
                 permissionsPicker.forceActiveFocus();
                 permissionsPicker.popup.open();
-            } else {
+            } else if (control.openOn !== "effort" || !control.focusEffort(true)) {
                 search.forceActiveFocus();
             }
             control.openOn = "models";
@@ -392,6 +590,9 @@ AbstractButton {
             // A Popup is no Item, so its name is on its content.
             Accessible.role: Accessible.Pane
             Accessible.name: qsTr("Models")
+            // Escape from any part the search and rail do not handle: the
+            // column, the speed and the permissions while their menu is shut.
+            Keys.onEscapePressed: control.leave()
 
             // The provider rail: favourites, then one button per enabled
             // instance. Hidden while searching, since search spans them all.
@@ -506,7 +707,7 @@ AbstractButton {
                 id: main
 
                 anchors.left: rail.visible ? rail.right : parent.left
-                anchors.right: parent.right
+                anchors.right: column.visible ? column.left : parent.right
                 anchors.top: parent.top
                 anchors.bottom: control.showFooter ? footer.top : parent.bottom
                 color: control.fade(control.mutedSurface, 0.4)
@@ -567,6 +768,13 @@ AbstractButton {
                                 event.accepted = control.chordFor(event) !== null;
                             }
                             Keys.onPressed: event => {
+                                // Enter and Escape mid-composition are the input method's:
+                                // they confirm or cancel the text, and leave the picker be.
+                                // Taken here, so the popup's own Escape never sees them.
+                                if (inputMethodComposing && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Escape)) {
+                                    event.accepted = true;
+                                    return;
+                                }
                                 if (control.handleChord(event)) {
                                     event.accepted = true;
                                     return;
@@ -677,8 +885,192 @@ AbstractButton {
                 }
             }
 
-            // Below the models: the thread's permissions, which open their
-            // own menu.
+            // Beside the models in the model control: the chosen model's
+            // efforts, then its other options one row each.
+            Rectangle {
+                id: column
+
+                objectName: "modelControlColumn"
+                visible: control.controlDocked
+                // ljos-allow(layout-fixed-size): one width for every provider, so the popup does not move as the user goes between them
+                width: 200
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.bottom: control.showFooter ? footer.top : parent.bottom
+                color: control.fade(control.mutedSurface, 0.4)
+                radius: Theme.radiusLg
+
+                Rectangle {
+                    width: 1
+                    height: parent.height
+                    color: control.divider
+                }
+
+                RowLayout {
+                    id: columnHeader
+
+                    x: Theme.space.sm + 1
+                    width: parent.width - 2 * Theme.space.sm - 1
+                    height: 40
+                    spacing: Theme.space.sm
+
+                    Text {
+                        objectName: "modelControlHeader"
+                        text: control.effortOption?.label ?? (control.columnOptions.length > 0 ? qsTr("Options") : qsTr("Effort"))
+                        color: control.muted
+                        font.family: control.fontFamily
+                        font.pixelSize: Theme.type.meta.size
+                        font.weight: Font.DemiBold
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+
+                    Text {
+                        objectName: "modelControlModel"
+                        text: control.triggerTitle
+                        color: control.muted
+                        font.family: control.fontFamily
+                        font.pixelSize: Theme.type.meta.size
+                        elide: Text.ElideRight
+                        horizontalAlignment: Text.AlignRight
+                        Layout.maximumWidth: parent.width / 2
+                    }
+                }
+
+                Flickable {
+                    id: columnScroll
+
+                    anchors.top: columnHeader.bottom
+                    anchors.left: parent.left
+                    anchors.leftMargin: 1
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    contentHeight: columnBody.implicitHeight
+                    boundsBehavior: Flickable.StopAtBounds
+                    clip: true
+
+                    Column {
+                        id: columnBody
+
+                        width: columnScroll.width
+                        padding: 4
+                        spacing: 2
+
+                        Text {
+                            objectName: "modelControlEffortNote"
+                            visible: control.effortLocked
+                            width: parent.width - 8
+                            leftPadding: 4
+                            text: control.effortOption?.lockedReason ?? ""
+                            color: control.muted
+                            font.family: control.fontFamily
+                            font.pixelSize: Theme.type.meta.size
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Repeater {
+                            model: control.effortOption?.choices ?? []
+
+                            delegate: ColumnRow {
+                                required property var modelData
+
+                                objectName: "modelControlEffort:" + modelData.id
+                                effortLevel: true
+                                text: modelData.label
+                                isDefault: modelData.isDefault === true
+                                description: modelData.description ?? ""
+                                checked: modelData.id === control.effortOption?.value
+                                enabled: !control.effortLocked
+                                onClicked: control.setOption(control.effortOption.id, modelData.id)
+                            }
+                        }
+
+                        Text {
+                            objectName: "modelControlNoEffort"
+                            visible: control.effortOption === null && control.columnOptions.length === 0
+                            width: parent.width - 8
+                            leftPadding: 4
+                            text: qsTr("No effort levels")
+                            color: control.muted
+                            font.family: control.fontFamily
+                            font.pixelSize: Theme.type.body.size
+                        }
+
+                        Rectangle {
+                            visible: control.effortOption !== null && control.columnOptions.length > 0
+                            x: 4
+                            width: parent.width - 8
+                            height: 1
+                            color: control.divider
+                        }
+
+                        Repeater {
+                            model: control.columnOptions
+
+                            delegate: ColumnRow {
+                                id: optionRow
+
+                                required property var modelData
+                                readonly property bool isSwitch: modelData.type === "boolean"
+
+                                objectName: (isSwitch ? "modelControlSwitch:" : "modelControlOption:") + modelData.id
+                                text: modelData.label
+                                detail: isSwitch ? (modelData.value === true ? qsTr("On") : qsTr("Off")) : control.optionValueLabel(modelData)
+                                chevron: !isSwitch
+                                switchRow: isSwitch
+                                switchOn: isSwitch && modelData.value === true
+                                description: modelData.description ?? ""
+                                Accessible.role: isSwitch ? Accessible.CheckBox : Accessible.ButtonMenu
+                                onClicked: {
+                                    if (isSwitch)
+                                        control.setOption(modelData.id, modelData.value !== true);
+                                    else
+                                        choicesMenu.open();
+                                }
+                                Keys.onRightPressed: event => {
+                                    event.accepted = !isSwitch;
+                                    if (!isSwitch)
+                                        choicesMenu.open();
+                                }
+
+                                // The option's choices, beside its row.
+                                ShellMenu {
+                                    id: choicesMenu
+
+                                    objectName: "modelControlChoices:" + optionRow.modelData.id
+                                    x: optionRow.width
+                                    y: 0
+                                    // On the chosen value, so the arrows start from it.
+                                    onOpened: currentIndex = (optionRow.modelData.choices ?? []).findIndex(choice => choice.id === optionRow.modelData.value)
+                                    onClosed: if (popup.opened)
+                                        optionRow.forceActiveFocus()
+
+                                    Instantiator {
+                                        model: optionRow.isSwitch ? [] : optionRow.modelData.choices
+
+                                        delegate: ShellMenuItem {
+                                            required property var modelData
+
+                                            objectName: "modelControlChoice:" + optionRow.modelData.id + ":" + modelData.id
+                                            text: modelData.label
+                                            detail: modelData.isDefault === true ? qsTr("Default") : ""
+                                            current: modelData.id === optionRow.modelData.value
+                                            onTriggered: control.setOption(optionRow.modelData.id, modelData.id)
+                                            // Left closes the choices, back on their row.
+                                            Keys.onLeftPressed: choicesMenu.close()
+                                        }
+                                        onObjectAdded: (index, object) => choicesMenu.insertItem(index, object)
+                                        onObjectRemoved: (index, object) => choicesMenu.removeItem(object)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Below the models: the speed and the thread's permissions, which
+            // open their own menu.
             Rectangle {
                 id: footer
 
@@ -697,12 +1089,38 @@ AbstractButton {
                     color: control.divider
                 }
 
+                // The speed, as segments at the footer's start.
+                Row {
+                    objectName: "modelControlSpeed"
+                    visible: control.speedChoices.length > 0
+                    x: Theme.space.xs
+                    y: 1 + Theme.space.xs
+                    spacing: 2
+
+                    Repeater {
+                        model: control.speedChoices
+
+                        delegate: ShellButton {
+                            required property var modelData
+
+                            objectName: "modelControlSpeed:" + modelData.value
+                            subtle: !modelData.checked
+                            checked: modelData.checked
+                            text: modelData.label
+                            iconName: modelData.fast ? "zap" : ""
+                            Accessible.name: qsTr("Speed: %1").arg(modelData.label)
+                            onClicked: control.setOption(control.tierOption?.id ?? control.fastOption.id, modelData.value)
+                        }
+                    }
+                }
+
                 ShellComboBox {
                     id: permissionsPicker
 
                     readonly property int current: control.runtimeModes.findIndex(mode => mode.value === control.runtimeMode)
 
                     objectName: "modelPickerPermissions"
+                    visible: control.runtimeModes.length > 0
                     // At the footer's end, where the speed controls do not reach.
                     width: Math.min(implicitWidth, parent.width - 2 * Theme.space.xs)
                     x: parent.width - width - Theme.space.xs
@@ -718,6 +1136,117 @@ AbstractButton {
                             mode: control.runtimeModes[index].value
                         })
                 }
+            }
+        }
+    }
+
+    // A row of the model control's column: an effort level (a check when
+    // chosen, "Default" on the provider's own), or another option naming its
+    // value with a chevron to its choices or a switch.
+    component ColumnRow: AbstractButton {
+        id: columnRow
+
+        readonly property bool inColumn: true
+        property bool effortLevel: false
+        property bool isDefault: false
+        property string description: ""
+        property string detail: ""
+        property bool chevron: false
+        property bool switchOn: false
+        property bool switchRow: false
+
+        width: parent ? parent.width - 8 : 0
+        x: 4
+        implicitHeight: detail.length > 0 ? 40 : 30
+        focusPolicy: Qt.StrongFocus
+        hoverEnabled: true
+        opacity: enabled ? 1 : 0.64
+        Accessible.role: effortLevel ? Accessible.RadioButton : Accessible.Button
+        Accessible.name: detail.length > 0 ? text + ", " + detail : text
+        Accessible.checked: checked || switchOn
+        ToolTip.visible: hovered && description.length > 0
+        ToolTip.delay: 500
+        ToolTip.text: description
+        Keys.onUpPressed: control.stepColumn(columnRow, -1)
+        Keys.onDownPressed: control.stepColumn(columnRow, 1)
+        Keys.onLeftPressed: search.forceActiveFocus()
+        Keys.onReturnPressed: clicked()
+        Keys.onEnterPressed: clicked()
+        Keys.onSpacePressed: clicked()
+
+        background: Rectangle {
+            radius: Theme.radiusXs
+            color: columnRow.hovered || columnRow.activeFocus ? control.highlight : columnRow.checked ? control.fade(control.foreground, 0.08) : "transparent"
+            border.color: Theme.palette.color("focus", "#3b82f6")
+            border.width: columnRow.visualFocus ? 1 : 0
+        }
+
+        contentItem: RowLayout {
+            spacing: Theme.space.sm
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: 6
+                spacing: 0
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.space.xs
+
+                    Text {
+                        text: columnRow.text
+                        color: control.foreground
+                        font.family: control.fontFamily
+                        font.pixelSize: Theme.type.body.size
+                        elide: Text.ElideRight
+                        Layout.fillWidth: !columnRow.isDefault
+                    }
+
+                    Text {
+                        visible: columnRow.isDefault
+                        text: qsTr("Default")
+                        color: control.muted
+                        font.family: control.fontFamily
+                        font.pixelSize: Theme.type.meta.size
+                        Layout.fillWidth: true
+                    }
+                }
+
+                Text {
+                    visible: columnRow.detail.length > 0
+                    text: columnRow.detail
+                    color: control.muted
+                    font.family: control.fontFamily
+                    font.pixelSize: Theme.type.meta.size
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+            }
+
+            ShellIcon {
+                visible: columnRow.effortLevel && columnRow.checked
+                name: "check"
+                size: Theme.icon.sm
+                color: control.foreground
+                Layout.rightMargin: 4
+            }
+
+            ShellIcon {
+                visible: columnRow.chevron
+                name: "chevron-right"
+                size: Theme.icon.sm
+                color: control.muted
+                Layout.rightMargin: 4
+            }
+
+            ShellSwitch {
+                visible: columnRow.switchRow
+                checked: columnRow.switchOn
+                // The row's value, not its own: a click asks the row.
+                checkable: false
+                focusPolicy: Qt.NoFocus
+                onClicked: columnRow.clicked()
+                Layout.rightMargin: 2
             }
         }
     }

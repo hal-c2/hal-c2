@@ -99,12 +99,16 @@ std::optional<QJsonArray> applyOption(const QJsonArray& descriptors, const QStri
 // never stepped to. A value outside the list steps from the default, or
 // from the ends when none is marked. Nothing with fewer than two to step through.
 std::optional<QString> steppedChoice(const QJsonObject& descriptor, int direction);
+// The index of the model's effort among its option `descriptors`: the first
+// select that is the reasoning effort by its id or that its agent marks as
+// reasoning (`role`), else the first select; -1 with no select.
+qsizetype effortIndex(const QJsonArray& descriptors);
 // The effort as bars (upstream's resolveEffortGlyph): {count, filled,
 // special}, one bar per ordinary level filled up to `current`, an off level as
 // none filled. Max, Ultracode and the prompt's levels (Ultrathink) are named
 // instead: all bars filled and `special` their label. Nothing for a select that
-// is not the reasoning effort, has fewer than two levels, or a value it does
-// not list.
+// is not the reasoning effort, has fewer than two levels or more than seven,
+// or a value it does not list.
 QVariantMap effortBars(const QJsonObject& descriptor, const QString& current);
 // Whether `text` asks for ultrathink in its own words, past the "Ultrathink:"
 // prefix a prompt can start with; the effort is then the prompt's (upstream's

@@ -485,7 +485,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the user is told "No models found"
 
   # Upstream #23493: Enter or Escape that confirmed or cancelled input-method text closed the picker.
-  @backlog @desktop
+  @desktop
   Scenario: Confirming input-method text in the model search keeps the picker open
     Given the user is searching the models with a Japanese input method
     When the user presses Enter to confirm the composed text, or Escape to cancel it
@@ -692,7 +692,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #28057: the model and its effort were two touching targets that read as one label;
   # now one control opens the model list with the chosen model's efforts beside it.
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario: One control chooses the model and then its effort
     When the user opens the model control in the composer
     Then the models are listed with the chosen model's efforts beside them, and speed and permissions below
@@ -701,9 +701,9 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And picking a model without efforts chooses it at once
 
   # Upstream #28057: the effort and permissions keys open the same control at their part.
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario Outline: A key opens the model control at its part
-    When the user presses <keys>
+    When the user presses <keys> while typing in the composer
     Then the model control opens on <part>
     And pressing it while the control is open moves there
 
@@ -713,7 +713,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | mod+shift+a | the permissions        |
 
   # Upstream #28076: picks kept closing the picker at odd times; a pick now leaves it open.
-  @backlog @shared @priority-low
+  @shared @backlog-mobile @backlog-tui @priority-low
   Scenario: The model control stays open until the user leaves it
     Given the user opened the model control
     When the user picks an effort, turns fast mode on or changes the permissions
@@ -730,7 +730,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the list scrolls inside the picker
 
   # Upstream #28409: an agent's own options stretched the control and its effort column.
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario: An agent's own options do not crowd the model control
     Given an ACP agent offers a long model name, a session mode, auto-approve and its own thinking levels
     When the user opens the model control
