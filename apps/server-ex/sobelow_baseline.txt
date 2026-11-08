@@ -7,7 +7,6 @@ CI.System: Command Injection via `System` function | lib/hal_c2/editors.ex | reg
 CI.System: Command Injection via `System` function | lib/hal_c2/environment/machine.ex | path
 CI.System: Command Injection via `System` function | lib/hal_c2/local_servers.ex | path
 CI.System: Command Injection via `System` function | lib/hal_c2/machine_files/helper.ex | exe
-CI.System: Command Injection via `System` function | lib/hal_c2/provider_updates.ex | program
 CI.System: Command Injection via `System` function | lib/hal_c2/service.ex | path
 CI.System: Command Injection via `System` function | lib/hal_c2/service.ex | path
 CI.System: Command Injection via `System` function | lib/hal_c2/subprocess/durable.ex | cmd

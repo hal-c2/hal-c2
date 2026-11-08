@@ -540,9 +540,25 @@ defmodule HalC2.Mcp.Tools do
      })}
   end
 
-  def run("hal_c2_preview_close", %{"tabId" => tab}, %{row: me}) do
-    {:ok, _} = HalC2.Preview.close(%{"threadId" => me["id"], "tabId" => tab})
-    {:ok, %{}}
+  # Only the agent session that opened a tab can close it; a tab no agent
+  # opened is the user's, and another session's is that session's.
+  def run("hal_c2_preview_close", %{"tabId" => tab}, %{row: me} = caller) do
+    scope = %{thread_id: me["id"], instance: caller.instance}
+
+    case HalC2.PreviewAutomation.tab_ownership(scope, tab) do
+      :own ->
+        {:ok, _} = HalC2.Preview.close(%{"threadId" => me["id"], "tabId" => tab})
+        HalC2.PreviewAutomation.forget_tab(scope, tab)
+        {:ok, %{}}
+
+      :other_agent ->
+        {:error, "preview_tab_other_agent",
+         "That preview tab belongs to another agent session; only the session that opened it can close it."}
+
+      :not_agent ->
+        {:error, "preview_tab_not_opened_by_agent",
+         "You did not open that preview tab; only the agent session that opened a tab can close it."}
+    end
   end
 
   # --- access ---------------------------------------------------------------------------

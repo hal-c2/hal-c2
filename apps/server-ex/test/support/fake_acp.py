@@ -461,12 +461,14 @@ for line in sys.stdin:
             else:
                 finish_turn(mid, sid)
         elif "wait" in text:
+            waiting = (mid, sid, steered_end(text))
+            note_waiting()
             # OpenCode names the command once it runs, with its output so far.
+            # Sent after the note, so the update on the thread is the receipt
+            # that the pid is there for a step waiting to signal it.
             update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "in_progress",
                          "kind": "execute", "title": "ls", "rawInput": {"command": "ls"},
                          "content": [{"type": "content", "content": {"type": "text", "text": "a.txt\n"}}]})
-            waiting = (mid, sid, steered_end(text))
-            note_waiting()
         elif "approve" in text:
             pending = (mid, sid)
             asked += 1

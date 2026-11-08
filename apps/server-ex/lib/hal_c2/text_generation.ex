@@ -671,6 +671,11 @@ defmodule HalC2.TextGeneration do
       Task.async(fn ->
         Process.flag(:trap_exit, true)
 
+        # Who asked for the text: only its exit is a cancellation. The task
+        # is also linked to the agent connection and to the prompt task, and
+        # their exits are failures to report, not the user cancelling.
+        caller = List.first(Process.get(:"$callers") || [])
+
         try do
           in_dir(nil, fn dir ->
             cond do
@@ -681,7 +686,7 @@ defmodule HalC2.TextGeneration do
                  "Cursor text generation cannot enforce workspace isolation with a custom ~/.cursor/sandbox.json. Use another text-generation provider."}
 
               antigravity ->
-                antigravity(id, dir, selection["model"], prompt)
+                antigravity(id, dir, selection["model"], prompt, caller)
 
               driver(id) == "opencode" and selection["model"] not in [nil, "", "default"] and
                   not provider_model?(selection["model"]) ->
@@ -696,7 +701,7 @@ defmodule HalC2.TextGeneration do
                   id,
                   dir,
                   fn conn, _init ->
-                    acp_prompt(conn, dir, selection["model"], prompt, false, attachments)
+                    acp_prompt(conn, dir, selection["model"], prompt, false, attachments, caller)
                   end,
                   mode
                 )
@@ -726,8 +731,15 @@ defmodule HalC2.TextGeneration do
       {:ok, {:error, reason}} when is_binary(reason) ->
         {:error, reason}
 
-      {:ok, {:error, %{"message" => message}}} ->
-        {:error, "#{label} request failed: #{message}"}
+      {:ok, {:error, %{"message" => _} = error}} ->
+        if driver(id) == "opencode",
+          do: {:error, opencode_failure(error)},
+          else: {:error, "#{label} request failed: #{error["message"]}"}
+
+      {:ok, {:error, %{} = error}} ->
+        if driver(id) == "opencode",
+          do: {:error, opencode_failure(error)},
+          else: {:error, "#{label} request failed: #{inspect(error)}"}
 
       {:ok, {:error, reason}} ->
         {:error, "#{label} request failed: #{inspect(reason)}"}
@@ -736,11 +748,44 @@ defmodule HalC2.TextGeneration do
         {:error, "Antigravity text generation timed out."}
 
       nil ->
-        {:error, "#{label} request timed out."}
+        if driver(id) == "opencode",
+          do: {:error, "OpenCode did not finish generating in time."},
+          else: {:error, "#{label} request timed out."}
     end
   end
 
-  defp acp_prompt(conn, dir, model, prompt, antigravity, attachments) do
+  # An OpenCode generation the model provider failed, in fixed plain words: the
+  # provider's own text (sometimes only "<none>") never reaches the user.
+  defp opencode_failure(error) do
+    message = String.downcase(to_string(error["message"] || ""))
+    data = if is_map(error["data"]), do: error["data"], else: %{}
+    status = data["statusCode"] || data["status"]
+    name = String.downcase(to_string(data["errorName"] || ""))
+
+    cond do
+      status in [401, 403] or name =~ "auth" or
+          message =~ ~r/unauthor|invalid (api )?key|credential|sign[ -]?in|authentication/ ->
+        "The model provider rejected the credentials. Check the provider's sign-in or API key in OpenCode."
+
+      status == 429 or name =~ "rate" or name =~ "quota" or
+          message =~ ~r/rate.?limit|too many requests|quota/ ->
+        "The model provider's usage or rate limit was reached. Try again later."
+
+      message =~ ~r/context|too long|too large/ ->
+        "The prompt is too long for the selected model's context window."
+
+      message =~ "abort" or name =~ "abort" ->
+        "OpenCode stopped the generation."
+
+      is_integer(status) ->
+        "The model provider failed the request (HTTP #{status})."
+
+      true ->
+        "OpenCode could not generate the text."
+    end
+  end
+
+  defp acp_prompt(conn, dir, model, prompt, antigravity, attachments, caller) do
     with {:ok, %{"sessionId" => session_id} = session} <-
            Connection.call(conn, "session/new", %{"cwd" => dir, "mcpServers" => []}, 60_000),
          :ok <- acp_mode(conn, session_id, antigravity),
@@ -748,7 +793,9 @@ defmodule HalC2.TextGeneration do
       blocks = [%{"type" => "text", "text" => prompt} | acp_images(attachments)]
       params = %{"sessionId" => session_id, "prompt" => blocks}
       task = Task.async(fn -> Connection.call(conn, "session/prompt", params, :infinity) end)
-      acp_collect(conn, task.ref, [], antigravity)
+      result = acp_collect(conn, task.ref, [], antigravity, caller)
+      delete_session(conn, session_id)
+      result
     end
   end
 
@@ -760,6 +807,16 @@ defmodule HalC2.TextGeneration do
         mime in @acp_image_types,
         {:ok, bytes} <- [HalC2.Attachments.read(attachment)],
         do: %{"type" => "image", "mimeType" => mime, "data" => Base.encode64(bytes)}
+  end
+
+  # A generation's throwaway session is deleted again, so titles and commit
+  # messages leave nothing in the agent's session history. Best effort: an
+  # agent without `session/delete` just says so.
+  defp delete_session(conn, session_id) do
+    Connection.call(conn, "session/delete", %{"sessionId" => session_id}, 2_000)
+    :ok
+  catch
+    :exit, _ -> :ok
   end
 
   # Antigravity runs in its default (asking) mode, never a thread's access mode.
@@ -801,7 +858,7 @@ defmodule HalC2.TextGeneration do
 
   # Other agents have their tool and permission requests refused and go on. Antigravity
   # fails at the first one, or at tool work it reports: its global hooks could act first.
-  defp acp_collect(conn, ref, text, antigravity) do
+  defp acp_collect(conn, ref, text, antigravity, caller) do
     receive do
       {:json_rpc, ^conn,
        {:notification, "session/update",
@@ -814,7 +871,7 @@ defmodule HalC2.TextGeneration do
         if antigravity and
              String.length(IO.iodata_to_binary([text, chunk])) > @antigravity_max_output,
            do: {:error, "Antigravity text generation exceeded the output limit."},
-           else: acp_collect(conn, ref, [text, chunk], antigravity)
+           else: acp_collect(conn, ref, [text, chunk], antigravity, caller)
 
       {:json_rpc, ^conn,
        {:notification, "session/update", %{"update" => %{"sessionUpdate" => update}}}}
@@ -826,7 +883,7 @@ defmodule HalC2.TextGeneration do
 
         if antigravity,
           do: {:error, "Antigravity text generation requested a tool permission or user input."},
-          else: acp_collect(conn, ref, text, antigravity)
+          else: acp_collect(conn, ref, text, antigravity, caller)
 
       {:json_rpc, ^conn, {:request, id, method, _params}} ->
         Connection.respond(
@@ -837,7 +894,7 @@ defmodule HalC2.TextGeneration do
 
         cond do
           not antigravity ->
-            acp_collect(conn, ref, text, antigravity)
+            acp_collect(conn, ref, text, antigravity, caller)
 
           method == "elicitation/create" ->
             {:error, "Antigravity text generation requested user input."}
@@ -845,6 +902,16 @@ defmodule HalC2.TextGeneration do
           true ->
             {:error, "Antigravity text generation requested a tool or user input."}
         end
+
+      # The caller that asked for the text went away (the user cancelled):
+      # the generation stops with it instead of running on unattended. Any
+      # other linked exit (the connection, the prompt task) is not this:
+      # the prompt's own answer, or its DOWN just below, reports it.
+      {:EXIT, ^caller, _reason} ->
+        {:error, "The request was cancelled."}
+
+      {:DOWN, ^ref, :process, _pid, reason} ->
+        {:error, reason}
 
       {^ref, reply} ->
         Process.demonitor(ref, [:flush])
@@ -870,13 +937,13 @@ defmodule HalC2.TextGeneration do
         end
 
       _other ->
-        acp_collect(conn, ref, text, antigravity)
+        acp_collect(conn, ref, text, antigravity, caller)
     end
   end
 
   # Antigravity signs in with the instance's own login, answers in an empty directory,
   # and leaves neither files there nor its session in the profile.
-  defp antigravity(id, dir, model, prompt) do
+  defp antigravity(id, dir, model, prompt, caller) do
     if antigravity_available?(Antigravity.profile(id)) do
       prompt =
         "Use only the input below. Do not use tools, read or write files, run commands, or ask questions.\n" <>
@@ -885,7 +952,7 @@ defmodule HalC2.TextGeneration do
       result =
         HalC2.Acp.with_agent(id, dir, fn conn, _init ->
           with :ok <- AntigravitySession.authenticate(conn, id),
-               do: acp_prompt(conn, dir, model, prompt, true, [])
+               do: acp_prompt(conn, dir, model, prompt, true, [], caller)
         end)
 
       remove_antigravity_session(id, dir)

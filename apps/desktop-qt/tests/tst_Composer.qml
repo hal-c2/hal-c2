@@ -94,6 +94,26 @@ Item {
             verify(!!findChild(composer, "optionToggle:fastMode"));
         }
 
+        // A model with fewer levels can replace one whose chosen level was past
+        // their end: each chip reads its value's label, never a stale index.
+        function test_aChipNamesTheValueAcrossAModelChange() {
+            const levels = (ids, value) => ({ id: "effort", label: "Effort", type: "select", value: value, choices: ids.map(id => ({ id: id, label: id.toUpperCase() })) });
+            const window = (ids, value) => ({ id: "contextWindow", label: "Context", type: "select", value: value, choices: ids.map(id => ({ id: id, label: id.toUpperCase() })) });
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), {
+                options: [levels(["low", "medium", "high", "max"], "max"), window(["200k", "500k", "1m"], "1m")]
+            }), workspace: null };
+            const composer = createTemporaryObject(composerComponent, root);
+            const effort = findChild(composer, "effortPicker");
+            const context = findChild(composer, "optionPicker:contextWindow");
+            compare(effort.displayText, "MAX");
+            compare(context.displayText, "1M");
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), {
+                options: [levels(["low", "high"], "high"), window(["200k"], "200k")]
+            }), workspace: null };
+            compare(effort.displayText, "HIGH");
+            compare(context.displayText, "200K");
+        }
+
         function test_aTriggerWithNothingToOfferSaysSo() {
             const empty = "No skills found. Try / to browse provider commands.";
             Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), {
@@ -256,6 +276,25 @@ Item {
             tryVerify(() => composer.overflowMenu === null, 1000, "pressing the chip again closes its menu");
             compare(overflow.checked, false);
             verify(again !== null);
+        }
+
+        // A locked effort, folded, says why above its greyed rows.
+        function test_aFoldedLockedEffortSaysWhy() {
+            const reason = "Your prompt contains \"ultrathink\" in the text. Remove it to change this option.";
+            const state = crowded();
+            state.composer.options[0] = Object.assign({}, state.composer.options[0], { lockedReason: reason });
+            Shell.state = state;
+            let composer = createTemporaryObject(composerComponent, root, { width: 260, y: 350, height: 350 });
+            waitForRendering(composer);
+            verify(composer.folded.some(chip => chip.objectName === "effortPicker"));
+            composer.openOverflow(null);
+            const effort = overflowRow(composer.overflowMenu, "composerOverflow:effortPicker").subMenu;
+            compare(effort.count, 3);
+            const note = effort.itemAt(0);
+            compare(note.objectName, "composerOverflowNote");
+            compare(note.reason, reason);
+            verify(!note.enabled);
+            verify(!effort.itemAt(1).enabled && !effort.itemAt(2).enabled, "the efforts are greyed");
         }
 
         // Plan, folded, is a row of the menu that asks for plan mode.

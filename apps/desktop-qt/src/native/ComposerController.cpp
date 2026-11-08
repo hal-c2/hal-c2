@@ -457,6 +457,10 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     if (!target.isEmpty()) setOption(target, map.value(QStringLiteral("id")).toString(), map.value(QStringLiteral("value")));
     return true;
   }
+  if (action == QLatin1String("composer.effort.step")) {
+    if (!target.isEmpty()) stepEffort(target, map.value(QStringLiteral("direction")).toInt());
+    return true;
+  }
   if (action == QLatin1String("composer.runtimeMode.set")) {
     if (target.isEmpty()) return true;
     const QString mode = map.value(QStringLiteral("mode")).toString();
@@ -938,9 +942,17 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   const bool implement = planFollowUp && trimmed.isEmpty();
 
   const QString createdAt = sidebar::formatIso(m_now());
+  const QJsonObject modelSelection = selection(target);
   // Only a mode the user changed is set; a thread the MC has no mode for
-  // keeps the MC's default.
-  const QString runtimeMode = m_drafts.value(target).runtimeMode;
+  // keeps the MC's default. A saved mode the provider no longer offers is
+  // set to the mode the composer shows instead, so the turn runs as read.
+  QString runtimeMode = m_drafts.value(target).runtimeMode;
+  if (!runtimeMode.isEmpty()) {
+    runtimeMode = composer::shownRuntimeMode(instanceOf(modelSelection), runtimeMode);
+  } else if (!thread->runtimeMode.isEmpty()) {
+    const QString shown = composer::shownRuntimeMode(instanceOf(modelSelection), thread->runtimeMode);
+    if (shown != thread->runtimeMode) runtimeMode = shown;
+  }
   QString interactionMode = interactionModeOf(target);
   if (planFollowUp) interactionMode = implement ? QStringLiteral("default") : QStringLiteral("plan");
   if (thread->interactionMode.isEmpty() && interactionMode == QLatin1String("default")) interactionMode.clear();
@@ -964,7 +976,6 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   // Another provider takes the thread over, handed its conversation by the MC.
   // A thread that names no provider is not leaving one: the message's model
   // selection is what the MC runs it on.
-  const QJsonObject modelSelection = selection(target);
   const QString instanceId = str(modelSelection, QLatin1String("instanceId"));
   const QString current = str(thread->modelSelection, QLatin1String("instanceId"));
   if (!instanceId.isEmpty() && !current.isEmpty() && instanceId != current) {
@@ -1011,7 +1022,8 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   const QString messageId = str(message, QLatin1String("messageId"));
   // What the outbox sends again, and gives back with a refusal.
   const QJsonObject choices{{QStringLiteral("modelSelection"), modelSelection},
-                            {QStringLiteral("runtimeMode"), runtimeModeOf(target)},
+                            {QStringLiteral("runtimeMode"),
+                             composer::shownRuntimeMode(instanceOf(modelSelection), runtimeModeOf(target))},
                             {QStringLiteral("interactionMode"), interactionMode.isEmpty() ? interactionModeOf(target) : interactionMode}};
   if (waits) {
     m_kept.unsent.removeIf([&](const Unsent& unsent) { return unsent.kept && unsent.target == target; });
@@ -1144,7 +1156,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
       {QStringLiteral("projectId"), where.projectId},
       {QStringLiteral("title"), launchTitle(trimmed, attachments.isEmpty() ? QString() : attachments.constFirst().name)},
       {QStringLiteral("generateTitle"), true},
-      {QStringLiteral("runtimeMode"), runtimeModeOf(draftId)},
+      {QStringLiteral("runtimeMode"), composer::shownRuntimeMode(instanceOf(modelSelection), runtimeModeOf(draftId))},
       {QStringLiteral("interactionMode"), interactionModeOf(draftId)},
       {QStringLiteral("workspaceStrategy"), where.strategy},
       {QStringLiteral("initialMessage"), QJsonObject{{QStringLiteral("messageId"), messageId},
@@ -1403,6 +1415,8 @@ bool ComposerController::submitToModels(const QString& draftId, const QList<QJso
     launch.insert(QStringLiteral("commandId"), newId());
     launch.insert(QStringLiteral("threadId"), threadId);
     launch.insert(QStringLiteral("modelSelection"), model);
+    // Each model's own provider decides which of the saved permissions stand.
+    launch.insert(QStringLiteral("runtimeMode"), composer::shownRuntimeMode(instanceOf(model), runtimeModeOf(draftId)));
     launch.insert(QStringLiteral("workspaceStrategy"), worktree);
     launch.insert(QStringLiteral("initialMessage"), message);
     const QString name = str(model, QLatin1String("model"));
@@ -3186,7 +3200,8 @@ bool ComposerController::submitPage(const QString& target, const QString& text) 
   for (const QJsonValue& file : fileRecords(kept.attachments)) attachments.append(file);
   const QJsonObject modelSelection = selection(target);
   QJsonObject ask{{QStringLiteral("request"), message.value(QLatin1String("text")).toString()},
-                  {QStringLiteral("runtimeMode"), runtimeModeOf(target)},
+                  {QStringLiteral("runtimeMode"),
+                   composer::shownRuntimeMode(instanceOf(modelSelection), runtimeModeOf(target))},
                   {QStringLiteral("interactionMode"), interactionModeOf(target)}};
   if (const QString projectId = pageProject(); !projectId.isEmpty()) ask.insert(QStringLiteral("projectId"), projectId);
   if (!modelSelection.isEmpty()) ask.insert(QStringLiteral("modelSelection"), modelSelection);
@@ -3819,6 +3834,10 @@ void ComposerController::setInteractionMode(const QString& target, const QString
 
 void ComposerController::rememberModel(const QJsonObject& selection) {
   const QString instanceId = selection.value(QLatin1String("instanceId")).toString();
+  if (!instanceId.isEmpty() && selection.contains(QLatin1String("options"))) {
+    m_kept.modelOptions.insert(instanceId + u'\n' + selection.value(QLatin1String("model")).toString(),
+                               selection.value(QLatin1String("options")).toArray());
+  }
   if (instanceId.isEmpty() || (m_kept.lastInstance == instanceId && m_kept.lastModels.value(instanceId) == selection)) return;
   m_kept.lastInstance = instanceId;
   m_kept.lastModels.insert(instanceId, selection);
@@ -3841,11 +3860,22 @@ bool ComposerController::selectModel(const QString& target, const QString& insta
     }
   }
   Draft& kept = m_drafts[target];
-  const QJsonObject current = selection(target);
   QJsonObject chosen{{QStringLiteral("instanceId"), instanceId}, {QStringLiteral("model"), model}};
-  // Options belong to the provider they were set on.
-  if (current.value(QLatin1String("instanceId")).toString() == instanceId && current.contains(QLatin1String("options"))) {
-    chosen.insert(QStringLiteral("options"), current.value(QLatin1String("options")));
+  // Options belong to the model they were picked with: this model's own come back.
+  if (const auto remembered = m_kept.modelOptions.constFind(instanceId + u'\n' + model);
+      remembered != m_kept.modelOptions.cend()) {
+    chosen.insert(QStringLiteral("options"), *remembered);
+  } else {
+    // Nothing given to it on this device: the options the thread (or the
+    // project's default, for a draft) already holds for this model, or the
+    // ones the composer shows for it now, stay with it.
+    for (const QJsonObject& held : {selection(target), baseSelection(target)}) {
+      if (held.value(QLatin1String("instanceId")) == instanceId && held.value(QLatin1String("model")) == model &&
+          held.contains(QLatin1String("options"))) {
+        chosen.insert(QStringLiteral("options"), held.value(QLatin1String("options")));
+        break;
+      }
+    }
   }
   kept.modelSelection = chosen;
   kept.multipleModels.reset();
@@ -3865,13 +3895,14 @@ bool ComposerController::setOption(const QString& target, const QString& id, con
                             chosen.value(QLatin1String("options")).toArray(), planModeOn(instance));
   // A choice the provider takes from the prompt (Claude's ultrathink) is put
   // there instead; any other choice takes it out.
-  static const QRegularExpression prefix(QStringLiteral("^Ultrathink:\\s*"), QRegularExpression::CaseInsensitiveOption);
+  static const QRegularExpression prefix(QStringLiteral("^Ultrathink:\\s*"));
   static const QRegularExpression slashCommand(QStringLiteral("^/[^\\s/]+(?:\\s|$)"));
   for (const QJsonValue& entry : descriptors) {
     const QJsonObject descriptor = entry.toObject();
     const QJsonArray injected = descriptor.value(QLatin1String("promptInjectedValues")).toArray();
     if (str(descriptor, QLatin1String("id")) != id || injected.isEmpty()) continue;
     const QString text = draft(target).trimmed();
+    if (effortLocked(descriptor, text)) return false;
     if (injected.contains(QJsonValue::fromVariant(value))) {
       if (!text.startsWith(kUltrathinkPrefix.trimmed()) && !slashCommand.match(text).hasMatch()) {
         const QString next = kUltrathinkPrefix + text;
@@ -3887,11 +3918,50 @@ bool ComposerController::setOption(const QString& target, const QString& id, con
   const std::optional<QJsonArray> options = composer::applyOption(descriptors, id, value);
   if (!options) return false;
   chosen.insert(QStringLiteral("options"), *options);
+  m_kept.modelOptions.insert(chosen.value(QLatin1String("instanceId")).toString() + u'\n' +
+                                 chosen.value(QLatin1String("model")).toString(),
+                             *options);
   m_drafts[target].modelSelection = chosen;
   m_drafts[target].carried = false;
   save();
   publish();
   return true;
+}
+
+// The effort one level up or down, as the picker would set it, without
+// opening it (composer.increaseEffort / decreaseEffort). It stands down
+// while something else owns the composer: an approval or question waiting,
+// a queued message being edited, or the prompt's own ultrathink.
+bool ComposerController::stepEffort(const QString& target, int direction) {
+  const QJsonObject chosen = selection(target);
+  const composer::Instance* instance = instanceOf(chosen);
+  if (!instance || !instance->ready()) return false;
+  if (m_queuedEdit && m_queuedEdit->thread == target) return false;
+  if (target == m_thread) {
+    const QVariantMap turn = turnState();
+    if (!turn.value(QStringLiteral("approvals")).toList().isEmpty() || !turn.value(QStringLiteral("questions")).toList().isEmpty()) return false;
+  }
+  const QJsonArray descriptors =
+      composer::descriptors(composer::findModel(*instance, chosen.value(QLatin1String("model")).toString()),
+                            chosen.value(QLatin1String("options")).toArray(), planModeOn(instance));
+  const auto effort = std::find_if(descriptors.begin(), descriptors.end(), [](const QJsonValue& entry) {
+    return str(entry.toObject(), QLatin1String("type")) == QLatin1String("select");
+  });
+  if (effort == descriptors.end()) return false;
+  QJsonObject descriptor = effort->toObject();
+  const QString text = draft(target);
+  if (effortLocked(descriptor, text)) return false;
+  // The step starts from the effort shown: Ultrathink while the prompt
+  // carries its prefix, though the saved level is underneath.
+  const QJsonArray injected = descriptor.value(QLatin1String("promptInjectedValues")).toArray();
+  if (!injected.isEmpty() && text.trimmed().startsWith(kUltrathinkPrefix.trimmed())) descriptor.insert(QStringLiteral("currentValue"), injected.first());
+  const std::optional<QString> next = composer::steppedChoice(descriptor, direction);
+  return next && setOption(target, str(descriptor, QLatin1String("id")), *next);
+}
+
+// An effort the prompt asks for in its own words is the prompt's to change.
+bool ComposerController::effortLocked(const QJsonObject& descriptor, const QString& text) {
+  return !descriptor.value(QLatin1String("promptInjectedValues")).toArray().isEmpty() && composer::ultrathinkInWords(text);
 }
 
 // Puts the suggestion in the trigger's place; the composer's own commands act instead.
@@ -4064,19 +4134,61 @@ const composer::Instance* ComposerController::instanceOf(const QJsonObject& sele
 
 QJsonObject ComposerController::selection(const QString& target) const {
   QJsonObject chosen = m_drafts.value(target).modelSelection.value_or(baseSelection(target));
-  if (chosen.value(QLatin1String("instanceId")).toString().isEmpty()) {
-    const auto ready = std::find_if(m_catalogue.cbegin(), m_catalogue.cend(), [](const composer::Instance& instance) {
-      return instance.ready();
-    });
+  const auto firstReady = [this]() -> QJsonObject {
+    const auto ready = std::find_if(m_catalogue.cbegin(), m_catalogue.cend(),
+                                    [](const composer::Instance& instance) { return instance.ready(); });
     if (ready == m_catalogue.cend()) return {};
-    return {{QStringLiteral("instanceId"), ready->instanceId}, {QStringLiteral("model"), composer::defaultModel(*ready)}};
-  }
-  if (chosen.value(QLatin1String("model")).toString().isEmpty()) {
-    if (const composer::Instance* instance = instanceOf(chosen)) {
+    QJsonObject next{{QStringLiteral("instanceId"), ready->instanceId},
+                     {QStringLiteral("model"), composer::defaultModel(*ready)}};
+    if (const auto remembered = m_kept.modelOptions.constFind(
+            ready->instanceId + u'\n' + next.value(QLatin1String("model")).toString());
+        remembered != m_kept.modelOptions.cend()) {
+      next.insert(QStringLiteral("options"), *remembered);
+    }
+    return next;
+  };
+  const QString instanceId = chosen.value(QLatin1String("instanceId")).toString();
+  if (instanceId.isEmpty()) return firstReady();
+  const QString model = chosen.value(QLatin1String("model")).toString();
+  const composer::Instance* instance = instanceOf(chosen);
+  const bool isThread = bool(m_store->thread(target));
+  if (instance && instance->ready()) {
+    if (model.isEmpty()) {
       chosen.insert(QStringLiteral("model"), composer::defaultModel(*instance));
+    } else if (!isThread && composer::findModel(*instance, model).isEmpty()) {
+      // A draft still naming the model picked on another instance, whose own
+      // catalogue has no such model: this instance's default, with the
+      // options last given to it here.
+      const QString own = composer::defaultModel(*instance);
+      chosen.insert(QStringLiteral("model"), own);
+      chosen.remove(QStringLiteral("options"));
+      if (const auto remembered = m_kept.modelOptions.constFind(instanceId + u'\n' + own);
+          remembered != m_kept.modelOptions.cend()) {
+        chosen.insert(QStringLiteral("options"), *remembered);
+      }
+    }
+    return chosen;
+  }
+  // The chosen account cannot run a turn: another account of the same driver
+  // that lists the model takes over, with the options last given to the model
+  // there, or the ones picked for it here when it has none of its own.
+  if (instance) {
+    for (const composer::Instance& candidate : m_catalogue) {
+      if (!candidate.ready() || candidate.driver != instance->driver || candidate.instanceId == instanceId) continue;
+      const QString slug = composer::fallbackModelSlug(candidate, model);
+      if (slug.isEmpty()) continue;
+      chosen.insert(QStringLiteral("instanceId"), candidate.instanceId);
+      chosen.insert(QStringLiteral("model"), slug);
+      if (const auto remembered = m_kept.modelOptions.constFind(candidate.instanceId + u'\n' + slug);
+          remembered != m_kept.modelOptions.cend()) {
+        chosen.insert(QStringLiteral("options"), *remembered);
+      }
+      return chosen;
     }
   }
-  return chosen;
+  // A thread keeps its own provider and model, unavailable as they may be; a
+  // draft or a page's ask starts on the first provider that can run instead.
+  return isThread ? chosen : firstReady();
 }
 
 bool ComposerController::planModeOn(const composer::Instance* instance) const {
@@ -4093,6 +4205,17 @@ QString ComposerController::runtimeModeOf(const QString& target) const {
     return newThreadRuntimeMode(kept->projectId);
   }
   return QStringLiteral("full-access");
+}
+
+// The permissions a new thread of the target's project starts in: the
+// composer names a thread's own only when they differ from these.
+QString ComposerController::defaultRuntimeModeOf(const QString& target) const {
+  if (onPage() && target == pageKey(m_pageId)) return newThreadRuntimeMode(pageProject());
+  if (const auto thread = m_store->thread(target)) return newThreadRuntimeMode(thread->projectId);
+  if (const auto kept = NativeShell::of(this)->controller<DraftController>()->draft(target)) {
+    return newThreadRuntimeMode(kept->projectId);
+  }
+  return newThreadRuntimeMode(QString());
 }
 
 QString ComposerController::newThreadRuntimeMode(const QString& projectId) const {
@@ -4241,15 +4364,20 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       instance ? composer::shellOptions(composer::descriptors(composer::findModel(*instance, selectedModel),
                                                               chosen.value(QLatin1String("options")).toArray(), planOn))
                : QVariantList();
-  // An effort the prompt asks for (Ultrathink) is the one shown.
+  // An effort the prompt asks for (Ultrathink) is the one shown; asked for in
+  // the prompt's own words, it cannot be changed until they go.
   QVariantList shownOptions = options;
-  if (instance && text.trimmed().startsWith(kUltrathinkPrefix.trimmed())) {
+  const bool prefixed = text.trimmed().startsWith(kUltrathinkPrefix.trimmed());
+  if (instance && (prefixed || composer::ultrathinkInWords(text))) {
     const QJsonArray described = composer::descriptors(composer::findModel(*instance, selectedModel), chosen.value(QLatin1String("options")).toArray(), planOn);
     for (qsizetype i = 0; i < described.size() && i < shownOptions.size(); ++i) {
       const QJsonArray injected = described.at(i).toObject().value(QLatin1String("promptInjectedValues")).toArray();
       if (injected.isEmpty()) continue;
       QVariantMap option = shownOptions.at(i).toMap();
       option.insert(QStringLiteral("value"), injected.first().toVariant());
+      if (effortLocked(described.at(i).toObject(), text)) {
+        option.insert(QStringLiteral("lockedReason"), QStringLiteral("Your prompt contains \"ultrathink\" in the text. Remove it to change this option."));
+      }
       shownOptions[i] = option;
     }
   }
@@ -4316,7 +4444,8 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       {QStringLiteral("selectedInstanceId"), orNull(selectedInstance)},
       {QStringLiteral("selectedModel"), orNull(selectedModel)},
       {QStringLiteral("options"), shownOptions},
-      {QStringLiteral("runtimeMode"), runtimeModeOf(target)},
+      {QStringLiteral("runtimeMode"), composer::shownRuntimeMode(instance, runtimeModeOf(target))},
+      {QStringLiteral("defaultRuntimeMode"), composer::shownRuntimeMode(instance, defaultRuntimeModeOf(target))},
       {QStringLiteral("runtimeModes"), composer::runtimeModes(instance)},
       {QStringLiteral("interactionMode"), interactionModeOf(target)},
       {QStringLiteral("showInteractionModeToggle"), planOn},
@@ -4356,6 +4485,14 @@ QVariantMap ComposerController::pickerState() const {
                                               chosen.value(QLatin1String("model")).toString(), thread && thread->runtime,
                                               current.value(QLatin1String("instanceId")).toString(),
                                               current.value(QLatin1String("model")).toString())},
+      {QStringLiteral("locked"), !onImages() && thread && bool(thread->runtime)},
+      // What stands where the model would be when no provider can run a turn.
+      {QStringLiteral("noProvider"),
+       onImages() ? QVariant::fromValue(nullptr)
+                  : [&]() -> QVariant {
+                      const QString standIn = composer::noProviderStandIn(m_catalogue);
+                      return standIn.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(standIn);
+                    }()},
       // Image models are not starred.
       {QStringLiteral("favorites"), !onImages()},
       // A new thread may go to several models: [{instanceId, model}] once
@@ -4435,6 +4572,7 @@ QVariantMap ComposerController::imagesComposerState() const {
       {QStringLiteral("selectedModel"), orNull(chosen.value(QLatin1String("model")).toString())},
       {QStringLiteral("options"), QVariantList()},
       {QStringLiteral("runtimeMode"), QString()},
+      {QStringLiteral("defaultRuntimeMode"), QString()},
       {QStringLiteral("runtimeModes"), QVariantList()},
       {QStringLiteral("interactionMode"), QStringLiteral("default")},
       {QStringLiteral("showInteractionModeToggle"), false},
@@ -4523,6 +4661,8 @@ void ComposerController::setStorePath(const QString& path) {
   m_kept.lastInstance = str(stored, QLatin1String("lastInstance"));
   const QJsonObject lastModels = stored.value(QLatin1String("lastModels")).toObject();
   for (auto it = lastModels.begin(); it != lastModels.end(); ++it) m_kept.lastModels.insert(it.key(), it.value().toObject());
+  const QJsonObject modelOptions = stored.value(QLatin1String("modelOptions")).toObject();
+  for (auto it = modelOptions.begin(); it != modelOptions.end(); ++it) m_kept.modelOptions.insert(it.key(), it.value().toArray());
   const QJsonObject targets = stored.value(QLatin1String("targets")).toObject();
   for (auto it = targets.begin(); it != targets.end(); ++it) {
     const QJsonObject entry = it.value().toObject();
@@ -4654,6 +4794,11 @@ bool ComposerController::save() const {
       for (auto it = m_kept.lastModels.cbegin(); it != m_kept.lastModels.cend(); ++it) lastModels.insert(it.key(), it.value());
       stored.insert(QStringLiteral("lastInstance"), m_kept.lastInstance);
       stored.insert(QStringLiteral("lastModels"), lastModels);
+    }
+    if (!m_kept.modelOptions.isEmpty()) {
+      QJsonObject modelOptions;
+      for (auto it = m_kept.modelOptions.cbegin(); it != m_kept.modelOptions.cend(); ++it) modelOptions.insert(it.key(), it.value());
+      stored.insert(QStringLiteral("modelOptions"), modelOptions);
     }
     file.write(QJsonDocument(stored).toJson(QJsonDocument::Compact));
     written = file.commit();
