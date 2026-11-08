@@ -1318,15 +1318,15 @@ defmodule HalC2Plugins.CodeReview do
 
   # Who stands behind each pull request updated since the last look, or never read:
   # its author, its fork, and who last added the label and asked for the review; and
-  # the time of the latest comment of someone trusted starting with the review
-  # command. A pull request read is seen at this update (`seenAt`) for the trigger label
-  # then, so one left unread, or read for another label, is read at the next look. The
-  # first read that fails ends the reading with the problem: each remaining pull request
-  # would fail the same way, and harder against a rate limit.
+  # who commented starting with the review command, and when (`asked_at/2` tells
+  # which of them asks under the settings when the look is applied). A pull request
+  # read is seen at this update (`seenAt`) for the trigger label then, so one left
+  # unread, or read for another label, is read at the next look. The first read that
+  # fails ends the reading with the problem: each remaining pull request would fail the
+  # same way, and harder against a rate limit.
   defp read_trust(found, settings, known) do
     command = String.trim(settings["command"] || "")
     label = String.trim(settings["label"] || "")
-    commands? = settings["activation"] == "selective" and command != ""
 
     {entries, asked, problem} =
       Enum.reduce(found.entries, {[], %{}, found.problem}, fn pr, {entries, asked, problem} ->
@@ -1344,10 +1344,10 @@ defmodule HalC2Plugins.CodeReview do
 
             case Host.pull_request_trust(@id, ref) do
               {:ok, trust} ->
-                at = if commands?, do: command_at(settings, trust, command)
+                commands = commands(trust, command)
                 trust = facts(trust, label)
                 pr = Map.merge(pr, %{"trust" => trust, "seenAt" => pr["updatedAt"]})
-                {[pr | entries], Map.put(asked, pr["key"], at), nil}
+                {[pr | entries], Map.put(asked, pr["key"], commands), nil}
 
               {:error, error} ->
                 {[pr | entries], asked, message(error)}
@@ -1369,18 +1369,39 @@ defmodule HalC2Plugins.CodeReview do
   # Whether what `known` keeps of who stands behind its pull request still holds for
   # `pr`: read at its last update, for the trigger label `label`.
   defp read_already?(known, pr, label) do
-    known != nil and is_map(known["trust"]) and known["seenAt"] == pr["updatedAt"] and
-      String.downcase(known["trust"]["label"] || "") == String.downcase(label)
+    known != nil and known["seenAt"] == pr["updatedAt"] and read_for?(known["trust"], label)
   end
 
-  defp command_at(settings, trust, command) do
-    trust["comments"]
-    |> Enum.filter(
-      &(String.starts_with?(String.trim(&1["body"] || ""), command) and
-          trusted?(settings, &1, trust["viewer"]))
-    )
-    |> Enum.map(& &1["createdAt"])
-    |> Enum.max(fn -> nil end)
+  # Whether `trust` was read for the trigger label `label`: who added another label
+  # says nothing of who added this one.
+  defp read_for?(trust, label),
+    do: is_map(trust) and String.downcase(trust["label"] || "") == String.downcase(label)
+
+  # The comments starting with the review command `command`, who wrote each and when,
+  # without their text.
+  defp commands(_trust, ""), do: nil
+
+  defp commands(trust, command) do
+    comments =
+      for comment <- trust["comments"],
+          String.starts_with?(String.trim(comment["body"] || ""), command),
+          do: Map.take(comment, ~w(login isBot association role createdAt))
+
+    %{"command" => command, "viewer" => trust["viewer"], "comments" => comments}
+  end
+
+  # When someone trusted last asked for a review with the command, under `settings`
+  # as they are when the look is applied, not as they were when it began: a login
+  # taken off the trusted ones, or another command, while GitHub was read asks nothing.
+  defp asked_at(_settings, nil), do: nil
+
+  defp asked_at(settings, %{"command" => command, "viewer" => viewer, "comments" => comments}) do
+    if settings["activation"] == "selective" and String.trim(settings["command"] || "") == command do
+      comments
+      |> Enum.filter(&trusted?(settings, &1, viewer))
+      |> Enum.map(& &1["createdAt"])
+      |> Enum.max(fn -> nil end)
+    end
   end
 
   # The user's own ask for pull request `number`, which need not be watched. It is read
@@ -1482,13 +1503,15 @@ defmodule HalC2Plugins.CodeReview do
         |> Map.put("sizeUnknown", pr["key"] in unknown)
 
       known = state.reviews[pr["key"]]
-      asked = found.asked[pr["key"]]
+      asked = asked_at(settings, found.asked[pr["key"]])
       asked? = asked != nil and (known == nil or later?(asked, known["startedAt"]))
       # A pull request not read this look keeps what was read of it before, if nothing
-      # has changed on it since; otherwise who stands behind it is not known.
+      # has changed on it since; otherwise who stands behind it is not known. One read
+      # for a label the trigger is no longer is not known either, and read at the next look.
       pr =
         cond do
-          Map.has_key?(pr, "trust") -> pr
+          Map.has_key?(pr, "trust") and read_for?(pr["trust"], label) -> pr
+          Map.has_key?(pr, "trust") -> Map.merge(pr, %{"trust" => nil, "seenAt" => nil})
           read_already?(known, pr, label) -> Map.merge(pr, Map.take(known, ~w(trust seenAt)))
           true -> Map.merge(pr, %{"trust" => nil, "seenAt" => nil})
         end
@@ -2258,12 +2281,15 @@ defmodule HalC2Plugins.CodeReview do
             [] ->
               summary
 
+            # The place goes in a paragraph of its own: ahead of the body on its line,
+            # it would move a fence the body opens with off the start of that line,
+            # and the fences `closed/1` balanced would pair up otherwise.
             _ ->
               notes =
                 Enum.map_join(
                   general,
                   "\n\n",
-                  &"#{code("#{&1["path"]}:#{&1["line"]}")}: #{&1["body"]}"
+                  &"#{code("#{&1["path"]}:#{&1["line"]}")}:\n\n#{&1["body"]}"
                 )
 
               String.trim("#{summary}\n\n#{notes}")
@@ -3156,27 +3182,38 @@ defmodule HalC2Plugins.CodeReview do
     by_author = Enum.filter(starts, &(&1["author"] == author))
     in_repository = Enum.filter(starts, &(&1["repository"] == repository))
 
-    cond do
-      review["trigger"] in ~w(user retry) ->
-        nil
+    over =
+      if(per_author > 0 and author != "" and length(by_author) >= per_author,
+        do: [
+          {"#{review["author"]}'s pull requests had #{length(by_author)} reviews in the last day, the most the settings allow.",
+           room_at(by_author, per_author)}
+        ],
+        else: []
+      ) ++
+        if(per_repository > 0 and length(in_repository) >= per_repository,
+          do: [
+            {"#{review["repository"]} had #{length(in_repository)} reviews in the last day, the most the settings allow.",
+             room_at(in_repository, per_repository)}
+          ],
+          else: []
+        )
 
-      per_author > 0 and author != "" and length(by_author) >= per_author ->
-        {"#{review["author"]}'s pull requests had #{length(by_author)} reviews in the last day, the most the settings allow.",
-         room_at(by_author)}
-
-      per_repository > 0 and length(in_repository) >= per_repository ->
-        {"#{review["repository"]} had #{length(in_repository)} reviews in the last day, the most the settings allow.",
-         room_at(in_repository)}
-
-      true ->
-        nil
+    # With both over, the one with room last says when.
+    if review["trigger"] not in ~w(user retry) and over != [] do
+      {why, at} = Enum.max_by(over, &elem(&1, 1), DateTime)
+      {why, DateTime.to_iso8601(at)}
     end
   end
 
-  # A day after the oldest of `starts`, when one of them stops counting.
-  defp room_at(starts) do
-    {:ok, oldest, _} = starts |> Enum.map(& &1["at"]) |> Enum.min() |> DateTime.from_iso8601()
-    oldest |> DateTime.add(@day_seconds, :second) |> DateTime.to_iso8601()
+  # When fewer than `limit` of `starts` count again: a day after the start that leaves
+  # `limit - 1` newer ones. The user's own asks can take the count past the limit, so
+  # that need not be the oldest.
+  defp room_at(starts, limit) do
+    starts
+    |> Enum.map(&elem(DateTime.from_iso8601(&1["at"]), 1))
+    |> Enum.sort(DateTime)
+    |> Enum.at(length(starts) - limit)
+    |> DateTime.add(@day_seconds, :second)
   end
 
   # Names the run and its findings as they stand, dismissed comments included: a

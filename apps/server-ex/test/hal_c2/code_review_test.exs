@@ -168,6 +168,76 @@ defmodule HalC2.CodeReviewTest do
     assert_receive {:DOWN, ^ref, :process, _, _}, 1_000
   end
 
+  # A look whose read of who stands behind #1 waits until `release/0` is called.
+  defp hold_trust_read(context, opts) do
+    hold = Path.join(context.dir, "trust.hold")
+    File.write!(hold, "")
+    on_exit(fn -> File.rm(hold) end)
+    held = "touch '#{context.dir}/trust.held'; while [ -e '#{hold}' ]; do sleep 0.05; done"
+    rules!(context, Keyword.put(opts, :trust, held))
+    send(@server, :poll)
+    await_file(Path.join(context.dir, "trust.held"))
+    fn -> File.rm!(hold) end
+  end
+
+  test "a commenter taken off the trusted logins while GitHub is read asks for no review",
+       context do
+    save_settings(%{"trustedLogins" => ["hubot"]})
+
+    comment = %{
+      "author" => %{"__typename" => "Bot", "login" => "hubot"},
+      "authorAssociation" => "NONE",
+      "body" => "/review",
+      "createdAt" => "2026-09-01T00:00:00Z"
+    }
+
+    release =
+      hold_trust_read(context, head: 1, comments: [comment], updated: "2026-09-05T00:00:00Z")
+
+    put_settings(%{"trustedLogins" => []})
+    release.()
+    await_look()
+    settle()
+    assert %{"status" => "ready"} = review()
+
+    # Trusted when the look is applied, the same comment asks.
+    save_settings(%{"trustedLogins" => ["hubot"]})
+    rules!(context, head: 1, comments: [comment], updated: "2026-09-06T00:00:00Z")
+    refresh()
+    assert %{"trigger" => "command"} = review()
+  end
+
+  test "who added the old trigger label, read while the label changed, does not start a review",
+       context do
+    labeled = fn name, login ->
+      %{
+        "__typename" => "LabeledEvent",
+        "createdAt" => "2026-09-01T00:00:00Z",
+        "actor" => %{"__typename" => "User", "login" => login},
+        "label" => %{"name" => name}
+      }
+    end
+
+    release =
+      hold_trust_read(context,
+        head: 1,
+        labels: ["agent-review", "ship-it"],
+        updated: "2026-09-05T00:00:00Z",
+        timeline: [labeled.("agent-review", "monalisa"), labeled.("ship-it", "stranger")]
+      )
+
+    put_settings(%{"label" => "ship-it"})
+    release.()
+    await_look()
+    settle()
+    assert %{"status" => "ready", "untrusted" => untrusted} = review()
+    assert untrusted =~ "has not been read yet"
+
+    # Read again for the label that is the trigger now, its adder is not trusted.
+    refresh()
+    assert %{"status" => "ready", "untrusted" => nil} = review()
+  end
+
   test "a head pushed back to the commit reviewed is no longer changed since the review",
        context do
     review = start_review()
@@ -520,6 +590,55 @@ defmodule HalC2.CodeReviewTest do
     assert message =~ "changed since you looked at it"
     assert %{"status" => "waiting"} = review()
     assert posts(context) == []
+  end
+
+  test "a comment off the change that opens with a fence keeps its suggestion in its own block",
+       _context do
+    review = start_review()
+    bait = "![x](https://example.com/p.png) @octocat"
+
+    comment = %{
+      "path" => "src/elsewhere.ts",
+      "line" => 3,
+      "side" => "old",
+      "body" => "```ts\nconst limit = 2;",
+      "suggestion" => bait
+    }
+
+    arguments = %{"verdict" => "comment", "summary" => "One note.", "comments" => [comment]}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+    settle()
+
+    assert %{"summary" => summary, "comments" => []} = review()
+
+    assert summary ==
+             "One note.\n\n`src/elsewhere.ts:3`:\n\n```ts\nconst limit = 2;\n```\n\n" <>
+               "Suggested change:\n\n```\n#{bait}\n```"
+  end
+
+  test "a limit that asks of the user went past holds until enough reviews stop counting",
+       context do
+    report = fn review ->
+      arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+      {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+      settle()
+    end
+
+    report.(start_review())
+    {:ok, _} = call("retry", %{"key" => @key})
+    settle()
+    report.(review())
+
+    # Two starts of octocat's, both asked for, against a limit of one: the next of the
+    # watch's own has room once the newer of them stops counting, not the older.
+    save_settings(%{"reviewNewPushes" => true, "reviewsPerAuthorPerDay" => 1})
+    rules!(context, head: 2)
+    refresh()
+
+    newer = apply(@server, :starts, []) |> Enum.map(& &1["at"]) |> Enum.max()
+    {:ok, newer, _} = DateTime.from_iso8601(newer)
+    assert %{"limited" => %{"until" => until}} = review()
+    assert until == newer |> DateTime.add(86_400, :second) |> DateTime.to_iso8601()
   end
 
   test "a review run again with the same findings is not published on what the run before showed",
@@ -1597,7 +1716,9 @@ defmodule HalC2.CodeReviewTest do
 
   # The fake GitHub: pull request #1 of acme/api open at head commit `head`, listed
   # unless `listed: false`; `list` runs while it is listed. Its author is a member of
-  # the repository unless `association` says otherwise.
+  # the repository unless `association` says otherwise. It carries the `labels` (names),
+  # its `comments` and `timeline` are the trust read's nodes, which `trust` runs ahead
+  # of, and it was last updated at `updated`.
   defp rules!(context, opts) do
     pr = %{
       "number" => 1,
@@ -1609,10 +1730,10 @@ defmodule HalC2.CodeReviewTest do
       "state" => "OPEN",
       "isDraft" => false,
       "createdAt" => "2026-09-01T00:00:00Z",
-      "updatedAt" => "2026-09-01T00:00:00Z",
+      "updatedAt" => opts[:updated] || "2026-09-01T00:00:00Z",
       "reviewRequests" => [],
       "latestReviews" => [],
-      "labels" => [],
+      "labels" => Enum.map(opts[:labels] || [], &%{"name" => &1}),
       "statusCheckRollup" => [],
       "headRefOid" => context.shas[opts[:head]],
       "additions" => 2,
@@ -1637,6 +1758,7 @@ defmodule HalC2.CodeReviewTest do
       %{
         "args" => ["api graphql"],
         "stdin" => ["PullRequestTrust"],
+        "run" => opts[:trust] || "true",
         "stdout" => %{
           "data" => %{
             "viewer" => %{"login" => "monalisa"},
@@ -1647,8 +1769,8 @@ defmodule HalC2.CodeReviewTest do
                 "isCrossRepository" => false,
                 "headRefOid" => context.shas[opts[:head]],
                 "headRepositoryOwner" => %{"login" => "acme"},
-                "comments" => %{"nodes" => []},
-                "timelineItems" => %{"nodes" => []}
+                "comments" => %{"nodes" => opts[:comments] || []},
+                "timelineItems" => %{"nodes" => opts[:timeline] || []}
               }
             }
           }

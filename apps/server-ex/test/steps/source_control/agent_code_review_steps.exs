@@ -1216,7 +1216,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   step "the comment is kept in the review's summary instead of on the line", context do
     {review, context} = await_review(context, 12, &(&1["status"] == "waiting"))
     assert review["comments"] == []
-    assert review["summary"] == "Mostly fine.\n\n`src/other.ts:40`: Check the caller."
+    assert review["summary"] == "Mostly fine.\n\n`src/other.ts:40`:\n\nCheck the caller."
     context
   end
 
