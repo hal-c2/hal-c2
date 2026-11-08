@@ -506,6 +506,8 @@ defmodule HalC2.Web.Socket do
   end
 
   @session_methods HalC2.Rpc.session_methods()
+  @provider_auth_methods ~w(provider.auth.start provider.auth.respond provider.auth.cancel
+                            provider.auth.logout provider.auth.complete)
   @session_elsewhere %{
     "_tag" => "EnvironmentOperationForbiddenError",
     "code" => "operation_forbidden",
@@ -554,6 +556,10 @@ defmodule HalC2.Web.Socket do
 
         method in @session_methods ->
           {HalC2.Rpc, :handle, [method, payload || %{}, state.session]}
+
+        # A sign-in belongs to the client that started it (`HalC2.ProviderAuth`).
+        method in @provider_auth_methods ->
+          {HalC2.ProviderAuth, :handle, [method, payload || %{}, auth_owner(state)]}
 
         # A desktop app update this socket asks for is cancelled when it goes.
         method == "server.updateServer" and mc == node() ->
@@ -903,6 +909,7 @@ defmodule HalC2.Web.Socket do
   # it lets go of the ref itself once the subscribe has been taken, ordered after it.
   defp watch(state, shape) do
     {key, mc, module, sub, unsub, args} = watch_spec(shape)
+    {sub, args} = downgrade_sub(shape, mc, sub, args)
     socket = self()
     tag = make_ref()
     verdict = :atomics.new(1, [])
@@ -919,7 +926,7 @@ defmodule HalC2.Web.Socket do
         # next subscription to it, or when the socket exits.
         _given_up ->
           with {_, ref, _} when ref != nil <- result,
-               do: :erpc.cast(mc, module, unsub, args ++ [ref])
+               do: :erpc.cast(mc, module, unsub, unsub_args(shape, args) ++ [ref])
       end
     end)
 
@@ -980,11 +987,45 @@ defmodule HalC2.Web.Socket do
   # last subscription holding none, by the arity without one, which every MC has.
   defp let_go(shape, ref, others) do
     {_key, mc, module, _sub, unsub, args} = watch_spec(shape)
+    args = unsub_args(shape, args)
 
     cond do
       ref != nil -> :erpc.cast(mc, module, unsub, args ++ [ref])
       nil in Map.values(others) -> :ok
       true -> :erpc.cast(mc, module, unsub, args)
+    end
+  end
+
+  # Letting go takes no more than the watcher; the local servers' addresses are only
+  # for subscribing.
+  defp unsub_args({:local_servers, _mc, _urls}, [pid | _]), do: [pid]
+  defp unsub_args(_shape, args), do: args
+
+  # An MC without `subscribe_urls` is watched by `subscribe`, which never probes the
+  # addresses. Only subscribing asks (`urls_supported?/1` can block on a remote MC);
+  # keys and unsubscribing do not.
+  defp downgrade_sub({:local_servers, _mc, _urls}, mc, :subscribe_urls, [pid | _] = args),
+    do: if(urls_supported?(mc), do: {:subscribe_urls, args}, else: {:subscribe, [pid]})
+
+  defp downgrade_sub(_shape, _mc, sub, args), do: {sub, args}
+
+  # Whether `mc` has `HalC2.LocalServers.subscribe_urls/3`, asked once per MC.
+  defp urls_supported?(mc) when mc == node(), do: true
+
+  defp urls_supported?(mc) do
+    case Process.get({:urls_supported, mc}) do
+      nil ->
+        # An MC that cannot be asked is not remembered as lacking it.
+        with {:ok, supported} <-
+               remote(mc, Kernel, :function_exported?, [HalC2.LocalServers, :subscribe_urls, 3]) do
+          Process.put({:urls_supported, mc}, supported)
+          supported
+        else
+          _ -> false
+        end
+
+      supported ->
+        supported
     end
   end
 
@@ -1813,6 +1854,13 @@ defmodule HalC2.Web.Socket do
       {{:provider_install, instance}, mc, HalC2.Acp.Antigravity.Installation, :subscribe,
        :unsubscribe, [instance, self()]}
 
+  # The addresses go by `subscribe_urls`, which an MC from before it lacks; that one is
+  # watched by `subscribe` and simply never probes them. Unsubscribing is the same.
+  defp watch_spec({:local_servers, mc, urls}),
+    do:
+      {{:local_servers, mc}, mc, HalC2.LocalServers, :subscribe_urls, :unsubscribe,
+       [self(), urls]}
+
   defp watch_spec({kind, mc} = shape) when is_map_key(@services, kind),
     do: {shape, mc, Map.fetch!(@services, kind), :subscribe, :unsubscribe, [self()]}
 
@@ -1855,7 +1903,9 @@ defmodule HalC2.Web.Socket do
   defp snapshot({:resource_telemetry, mc}, {:ok, value}),
     do: {:hal_c2_resource_telemetry, mc, value}
 
-  defp snapshot({:local_servers, mc}, {:ok, value}), do: {:hal_c2_local_servers, mc, value}
+  defp snapshot({:local_servers, mc, _urls}, {:ok, value}),
+    do: {:hal_c2_local_servers, mc, value}
+
   defp snapshot({:devices, mc}, {:ok, value}), do: {:hal_c2_devices, mc, value}
   defp snapshot({:slack, mc}, {:ok, value}), do: {:hal_c2_slack, mc, value}
   defp snapshot({:project_clones, mc}, {:ok, value}), do: {:hal_c2_project_clones, mc, value}
@@ -1987,8 +2037,13 @@ defmodule HalC2.Web.Socket do
       {{:space_presence, space, page}, "spacePresence",
        %{"viewers" => space_viewers(view, device_key(state))}}
 
-  defp watched_frame({:hal_c2_provider_auth, instance, auth}, _state),
-    do: {{:provider_auth, instance}, "providerAuth", %{"state" => auth}}
+  defp watched_frame({:hal_c2_provider_auth, instance, auth}, state),
+    do:
+      {{:provider_auth, instance}, "providerAuth",
+       %{"state" => HalC2.ProviderAuth.view(auth, auth_owner(state))}}
+
+  # Whose sign-ins a socket acts on and sees whole (`HalC2.ProviderAuth.owner/2`).
+  defp auth_owner(%{session: session}), do: HalC2.ProviderAuth.owner(session)
 
   # This socket's device on a page: its session's, or for the MC's own token, itself.
   defp device(state) do

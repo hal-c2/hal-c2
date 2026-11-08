@@ -322,12 +322,19 @@ Feature: ACP registry agents
 
   # Upstream #21323: when an agent closed its output but kept running, the waiting request and every
   # later one hung.
-  @backlog @priority-high
+  @priority-high
   Scenario: A request to an agent fails soon after the agent closes its output while still running
     Given the MC is waiting on "acme" for an answer
     When "acme" closes its output and keeps running
     Then within a quarter of a second the request fails saying the agent's input ended
-    And later requests to "acme" fail the same way instead of waiting
+    And the next message to "acme" starts it afresh instead of waiting on the closed one
+
+  # Review of hal-c2#1309: an agent's own error without a code was taken for its end, and
+  # the agent was left running with nothing to stop it.
+  Scenario: An error the agent answers without a code keeps the agent it came from
+    Given an "acme" turn the agent answers with an error that has no code
+    When the user sends a second message to "acme"
+    Then it runs on the same "acme" process
 
   Scenario: The next turn after a rollback starts a fresh agent session
     Given an "acme" thread with three turns
@@ -363,7 +370,7 @@ Feature: ACP registry agents
 
   # Upstream #26623: a saved model the session's account could not use was skipped silently, and
   # the turn ran on the agent's own default.
-  @backlog @priority-high
+  @priority-high
   Scenario: A chosen model the agent's session does not offer is refused
     Given the thread is set to the model "acme-pro"
     And "acme" offers only "acme-lite" to the signed-in account
@@ -478,7 +485,6 @@ Feature: ACP registry agents
     Then "acme-large" is offered with low and high reasoning
 
   # Upstream #19313: Cline accepts "cline-free/*" models it does not advertise.
-  @backlog
   Scenario: A turn on a registry agent's custom model reaches the agent
     Given "acme" does not advertise the model "acme-free/large"
     And the user added "acme-free/large" as a custom model
@@ -557,7 +563,7 @@ Feature: ACP registry agents
       | line separator (U+2028)      |
       | paragraph separator (U+2029) |
   # Upstream #26715: steering a Copilot thread interrupted its prompt and killed its background agents.
-  @backlog @priority-high
+  @priority-high
   Scenario: A follow-up to a Copilot thread waits for the prompt instead of interrupting it
     Given Copilot CLI runs over ACP and a Copilot background agent is still working in the thread
     When the user sends "After the background agent completes, reply FOLLOWUP_DONE."
@@ -592,7 +598,8 @@ Feature: ACP registry agents
     When "acme" returns an image resource in its answer
     Then the answer shows a placeholder for the image instead of dropping it
 
-  @backlog
+  # HAL-C2 installs an npx package with npm (and a uvx one with uv) rather than running npx,
+  # so the runner it names is npm.
   Scenario Outline: A registry agent that cannot run yet says why
     Given the instance's registry agent <state>
     When the MC checks the instance
@@ -603,8 +610,16 @@ Feature: ACP registry agents
       | has not been chosen                  | Select an ACP Registry agent before starting a thread.                         |
       | is no longer in the registry         | ACP Registry does not contain agent 'acme'.                                    |
       | has no build for this machine        | ACP Registry agent 'acme' has no compatible distribution for this environment. |
-      | needs npx and npx is not on the path | ACP Registry agent 'acme' requires 'npx' on this environment's PATH.           |
-      | has not been downloaded yet          | ACP Registry agent 'acme' has not been prepared on this environment.           |
+      | runs through npx and npm is missing  | ACP Registry agent 'acme' requires 'npm' on this environment's PATH.           |
+
+  # Upstream's instances run only prepared agents. HAL-C2 installs a registry agent the first
+  # time it is used (`HalC2.Acp.Catalog.command/1`), so it has no unprepared state to show.
+  # Proposed @dropped.
+  @backlog
+  Scenario: A registry agent that has not been downloaded yet says so
+    Given the instance's registry agent has not been downloaded yet
+    When the MC checks the instance
+    Then the instance is shown with "ACP Registry agent 'acme' has not been prepared on this environment."
 
   @backlog
   Scenario: Checking an agent's readiness never waits on the network
@@ -732,7 +747,6 @@ Feature: ACP registry agents
     When the user installs "acme"
     Then "acme" is installed
 
-  @backlog
   Scenario: An unsafe command path is refused before anything is downloaded
     Given the registry entry for "acme" names a command path that leaves the install folder
     When the user installs "acme"
@@ -774,7 +788,6 @@ Feature: ACP registry agents
     When the user sends a message on that instance
     Then it fails with "ACP Registry agent acme requires 'my-acme', but it is not available on this provider instance's PATH."
 
-  @backlog
   Scenario: An instance with an executable override reports no agent version
     Given the instance of "acme" has an executable override
     When the MC checks the instance
@@ -924,7 +937,7 @@ Feature: ACP registry agents
 
   # Upstream #30295: an agent's own reason for refusing sign-in or the session after it was hidden
   # behind the generic message.
-  @backlog @priority-low
+  @priority-low
   Scenario Outline: A sign-in the agent refuses names the agent's reason
     Given "acme" answers <step> with the error "Token expired: run acme login"
     When the user signs in to "acme"
@@ -935,8 +948,49 @@ Feature: ACP registry agents
       | its sign-in                           | The ACP agent could not complete sign-in.              |
       | the session it is asked for afterward | The provider could not create a session after sign-in. |
 
+  # Review of hal-c2#1309: the reason was cut to its own length after redaction, which lengthens
+  # it, so a key early in a short reason took the reason's start with it.
+  Scenario: A secret early in a short reason is redacted and the reason keeps its start
+    Given "acme" answers its sign-in with the error "Bearer abc123 rejected by the proxy"
+    When the user signs in to "acme"
+    Then the user is told "The ACP agent could not complete sign-in. Bearer [redacted] rejected by the proxy."
+    And the MC's log holds the reason without "abc123"
+
+  # Review of hal-c2#1309: a device code or sign-in address in a reason is the sign-in
+  # interaction's alone; other hyphenated words stay.
+  Scenario Outline: A reason holding a device code or sign-in address is not shown
+    Given "acme" answers its sign-in with the error "<reason>"
+    When the user signs in to "acme"
+    Then the user is told "The ACP agent could not complete sign-in."
+    And the MC's log holds the reason "<reason>"
+
+    Examples:
+      | reason                                       |
+      | Enter WXYZ-9876 at https://acme.example/device |
+      | Enter wxyz-9876 to continue                  |
+      | Open github.com/login/device to continue     |
+      | Enter WDJB-MJHT to continue                  |
+      | Enter AB12C-DE34F to continue                |
+
+  Scenario Outline: A reason with a hyphenated word that is no device code is shown
+    Given "acme" answers its sign-in with the error "<reason>"
+    When the user signs in to "acme"
+    Then the user is told "The ACP agent could not complete sign-in. <reason>."
+
+    Examples:
+      | reason                |
+      | HTTP-502 from upstream |
+      | SHA-256 mismatch      |
+      | Model gpt4-mini unavailable |
+      | Request id 550e8400-e29b-41d4-a716-446655440000 rejected |
+      | Request id 550E8400-E29B-41D4-A716-446655440000 rejected |
+      | 550e8400-e29b-4123-a716-446655440000 |
+      | AUTH-ERROR from proxy |
+      | Model gpt-4o-mini-2024-07-18 unavailable |
+      | Valid 2025-2026 only |
+
   # Upstream #30295: a proxy's HTML error page would otherwise fill the sign-in panel.
-  @backlog @priority-low
+  @priority-low
   Scenario: A very long reason from the agent is cut at 500 characters
     Given "acme" answers its sign-in with an error of 4,000 characters
     When the user signs in to "acme"
@@ -987,7 +1041,6 @@ Feature: ACP registry agents
       | the agent refuses or cannot sign out      | This ACP agent could not sign out. It may not advertise logout support. |
       | the agent does not finish in 60 seconds   | The ACP agent did not finish signing out in time.                       |
 
-  @backlog
   Scenario Outline: A session or model provider request the agent does not answer in a minute times out
     When the user <action> and "acme" does not answer within 60 seconds
     Then the user is told "<message>"
@@ -1000,7 +1053,6 @@ Feature: ACP registry agents
       | changes a model provider         | The ACP provider configuration request timed out. |
       | disables a model provider        | The ACP provider disable request timed out.       |
 
-  @backlog
   Scenario Outline: An agent that cannot manage model providers or sign out says so
     Given "acme" does not offer <feature>
     When the user <action>
@@ -1011,7 +1063,6 @@ Feature: ACP registry agents
       | model provider configuration | lists its model providers       | The ACP agent does not advertise provider configuration. |
       | signing out                  | signs out from session settings | The ACP agent does not advertise logout.                 |
 
-  @backlog
   Scenario: An agent's sessions are listed a page at a time
     Given "acme" has more sessions than it returns in one answer
     When the user lists the agent's sessions
@@ -1029,13 +1080,11 @@ Feature: ACP registry agents
     Then the settings move to a project that remains, and results for the removed project are cleared
     But a project the user chose that still exists stays chosen
 
-  @backlog
   Scenario: At most 64 model providers are listed for an agent
     Given "acme" reports more than 64 model providers
     When the user lists its model providers
     Then the first 64 are listed
 
-  @backlog
   Scenario: What an agent advertises is bounded
     Given "acme" advertises hundreds of sign-in methods, models and commands
     When the MC checks the instance
@@ -1043,21 +1092,34 @@ Feature: ACP registry agents
     And commands that differ only in letter case are listed once
     And over-long names and descriptions are cut
 
-  @backlog
   Scenario: An agent's session options are offered with its models
     Given "acme" offers a session option "Thinking" with the choices low and high
     When the user opens the options of an "acme" model
     Then "Thinking" is offered with low and high
     And the agent's own model and plan-mode options are not repeated there
 
-  @backlog
   Scenario: An agent that only has modes gets one "Mode" option
     Given "acme" offers the modes "ask" and "code" and no session options
     When the user opens the options of an "acme" model
     Then one option "Mode" offers "ask" and "code"
     And an agent with a single mode gets no such option
 
-  @backlog
+  # The way to use the option above: older ACP agents change modes through session/set_mode.
+  Scenario: A mode of an agent's older session modes is set through the agent's set-mode request
+    Given "acme" offers the modes "ask" and "code" and no session options
+    When the user sends "acme" a message in the mode "code"
+    Then "acme" is asked to switch its session to the mode "code"
+    And its "Mode" option now holds "code"
+
+  # An agent that leaves plan mode on its own says so with current_mode_update.
+  Scenario: An agent that changes its older session mode by itself is followed
+    Given "acme" offers the modes "ask" and "code" and no session options
+    When "acme" switches its session to the mode "code" by itself
+    Then its "Mode" option now holds "code"
+    When the user sends "acme" a message in the mode "ask"
+    Then "acme" is asked to switch its session to the mode "ask"
+    And its "Mode" option now holds "ask"
+
   Scenario: Session options are bounded
     Given "acme" offers more than 16 session options, one of them with more than 64 choices
     When the MC reads the options
@@ -1066,26 +1128,22 @@ Feature: ACP registry agents
 
   # Upstream #19330: GitHub Copilot's default agent has the value "", and the composer
   # picked and saved the first custom agent instead.
-  @backlog
   Scenario: A default choice whose value is empty stays selectable
     Given "acme" offers the option "Agent" whose default choice "Default" has the value ""
     When the user opens the options of an "acme" model
     Then "Agent" offers "Default", selected, alongside the custom agents
     And picking "Default" sends "" to "acme"
 
-  @backlog
   Scenario: An option value the agent does not offer is refused
     Given "acme" offers the option "thinking" with the choices low and high
     When a client sets "thinking" to "extreme"
-    Then it is refused with 'Invalid value "extreme" for session config option "thinking": expected one of low, high'
+    Then it is refused with "Invalid value \"extreme\" for session config option \"thinking\": expected one of low, high"
 
-  @backlog
   Scenario: Setting an option to the value it already has sends nothing to the agent
     Given the session of "acme" already uses the model "acme-large"
     When the user picks "acme-large" again
     Then "acme" is not asked to change its model
 
-  @backlog
   Scenario: A model named "Default" is offered only when the agent names none
     Given "acme" reports no models
     When the MC checks the instance
@@ -1094,20 +1152,17 @@ Feature: ACP registry agents
 
   # Upstream #18807: a completed discovery replaces the model list whatever the sign-in state;
   # a readiness or failed check keeps the last list.
-  @backlog
   Scenario: Models an agent stopped reporting are no longer offered
     Given "acme" needs no sign-in and used to report "acme-large" and "acme-small"
     When the MC checks the instance and "acme" reports only "acme-large"
     Then only "acme-large" is offered
     And a check that fails leaves the offered models as they were
 
-  @backlog
   Scenario: An agent that withdraws its commands clears the composer's list
     Given a running "acme" session offered the command "/review"
     When "acme" reports that it now offers no commands
     Then "/review" is no longer offered
 
-  @backlog
   Scenario: A client that connects later sees the commands and options the agent last reported
     Given a running "acme" session reported its commands and options
     When another client connects
@@ -1118,7 +1173,6 @@ Feature: ACP registry agents
     When "acme" reports its commands and modes before its session has finished starting
     Then they are applied once the session has started
 
-  @backlog
   Scenario: Registry agents are not offered an update from HAL-C2
     Given the registry agent "acme" is installed
     When the user opens the provider list
@@ -1179,7 +1233,7 @@ Feature: ACP registry agents
       | Linux or macOS without that                                | every process the MC saw the agent start is asked to stop, then killed after one second  |
       | Windows                                                    | the agent's whole process tree is force-stopped                                          |
 
-  @backlog @priority-high
+  @priority-high
   Scenario: Stopping an agent never signals a process the agent did not start
     Given a helper of "acme" exited and its process id was reused by an unrelated program
     When the session ends
@@ -1212,14 +1266,13 @@ Feature: ACP registry agents
       | killed by "SIGKILL"      | by the signal "SIGKILL"    |
       | ended with exit code 3   | with exit code 3           |
 
-  @backlog
   Scenario: An agent that exits mid-turn fails the turn with its last error output
     Given a turn is running on "acme"
     When the agent process exits with an error
-    Then the turn fails naming the exit code and the last 4,096 characters the agent wrote to its error output
+    Then the turn fails naming the exit code and the end of what the agent wrote to its error output, 4,096 characters in all
     And requests still waiting on the agent fail instead of hanging
 
-  @backlog @priority-high
+  @priority-high
   Scenario Outline: An agent's error output is shown without secrets
     When the error output of "acme" contains <content>
     Then the failure shows <shown>
@@ -1231,7 +1284,7 @@ Feature: ACP registry agents
       | a bearer or basic authorization value                       | "[redacted]" in place of the value   |
       | an API key header or a token that looks like a provider key | "[redacted]" in place of the value   |
   # Upstream #24015: an "sk-" key with "_" in its body kept its body, or was not redacted at all.
-  @backlog @priority-high
+  @priority-high
   Scenario Outline: A provider key with underscores in an agent's error output is redacted whole
     When the error output of "acme" contains "<key>"
     Then the failure and the MC's log show "[redacted]" in place of the whole key
@@ -1263,27 +1316,28 @@ Feature: ACP registry agents
     And updates in between are shown only once 256 new characters or ten skipped updates have built up
 
   # Upstream #25559: a tool the agent cancelled kept running and was marked completed when the turn ended.
-  @backlog
   Scenario: A tool call the agent cancels ends as failed
     Given a tool of "acme" is running
     When "acme" reports the tool call as cancelled
     Then the tool stops showing as running
     And it is not marked completed when the turn ends
 
-  @backlog
   Scenario: Streamed text arrives in bounded pieces
     When "acme" sends a single piece of text longer than 65,536 characters
     Then the thread receives it cut to 65,536 characters in that update
 
-  @backlog
   Scenario: Embedded binary content is never kept in the thread
     When "acme" sends an image, audio clip or binary resource inline
     Then the thread keeps a short placeholder naming its type and not the bytes
 
-  @backlog
   Scenario: Content of a kind HAL-C2 does not know is shown as unsupported
     When "acme" sends content of the unknown kind "hologram"
     Then the thread shows "[Unsupported ACP content: hologram]"
+
+  Scenario: A text part without text is dropped
+    When "acme" sends a text part whose text is null, then the text "Done."
+    Then the thread shows "Done."
+    And the thread does not show "[Unsupported ACP content: text]"
 
   @backlog
   Scenario Outline: Context compaction by an agent is shown as a work item
@@ -1363,12 +1417,10 @@ Feature: ACP registry agents
     When Hermes calls it with the title "delegate_task: summarise the logs"
     Then the call is shown as Hermes' own tool, not as HAL-C2's delegation
 
-  @backlog
   Scenario: A file request with a relative path is refused
     When "acme" asks the client for the file "src/app.ts" without a full path
     Then the request is refused with "ACP fs requests require an absolute path, received 'src/app.ts'."
 
-  @backlog
   Scenario: An agent can read part of a workspace file
     When "acme" asks the client for 20 lines of a workspace file starting at line 100
     Then it receives lines 100 to 119
@@ -1435,7 +1487,6 @@ Feature: ACP registry agents
     When the command writes the first byte of "€", then "X" as error output, then the rest of "€"
     Then the agent receives "€" and "X" whole
 
-  @backlog
   Scenario: A request for a terminal the client does not know is refused
     When "acme" asks for the output of the terminal "t-404" that was never created
     Then it is refused with "ACP terminal/output received an unknown terminal ID 't-404'."
@@ -1461,7 +1512,6 @@ Feature: ACP registry agents
     When the MC starts a session on "acme"
     Then the MC speaks the generation the agent's first answer is shaped as
 
-  @backlog
   Scenario: A request HAL-C2 does not implement is answered rather than left waiting
     When "acme" sends the client a request "x/unknown" that HAL-C2 does not know
     Then "acme" is answered with the error "Method not found: x/unknown"
@@ -1657,7 +1707,6 @@ Feature: ACP registry agents
     When "acme" reports that it is waiting for the user to act
     Then the work log shows "Action required" with what the agent is waiting for
 
-  @backlog
   Scenario: An update of a kind HAL-C2 does not know is shown, not dropped
     When "acme" sends a session update of the unknown kind "hologram"
     Then the work log shows "Unsupported ACP update: hologram"
@@ -1760,14 +1809,12 @@ Feature: ACP registry agents
       | a message with no text and no attachments is sent                | ACP turn requires non-empty text or attachments   |
       | a message is sent while the turn "turn-1" still runs natively    | ACP provider turn turn-1 is still active          |
 
-  @backlog
   Scenario: An option the agent's session does not offer is skipped
     Given the thread asks for a reasoning effort that the session of "acme" does not offer
     When a turn starts
     Then the turn runs with the agent's own default for it
     And the MC logs which option was skipped
 
-  @backlog
   Scenario: The model is only set when the session lets it be chosen
     Given the thread's model is "Default"
     When a turn starts on "acme"
@@ -1901,7 +1948,6 @@ Feature: ACP registry agents
     Then the turn ends as cancelled
     And a turn the user stopped ends as interrupted instead
 
-  @backlog
   Scenario: Tool output an agent sends as a list of byte values is shown as text
     When "acme" reports a tool's output as a list of whole numbers instead of text
     Then the output is shown as the text those bytes spell
@@ -1942,7 +1988,6 @@ Feature: ACP registry agents
     When the MC checks "acme"
     Then "acme" is shown with "Could not inspect ACP Registry agent: registry unreadable"
 
-  @backlog
   Scenario: Asking a registry instance for a title or commit message anyway is refused
     When a thread title or a commit message is asked of the registry instance "acme"
     Then it is refused with "ACP Registry instances do not provide application text generation."
@@ -1997,14 +2042,12 @@ Feature: ACP registry agents
     Then the request is denied
 
   # AcpSessionConfig.ts
-  @backlog
   Scenario: Modes an agent also offers as a session option are shown once
     Given "acme" offers the same choices as its modes and as a thinking-level session option
     When the user opens the options of an "acme" model
     Then the choices are offered once, under the session option
     And no separate "Mode" option is added
 
-  @backlog
   Scenario: Grouped choices of a session option are offered as one list
     Given "acme" offers a session option whose choices are arranged in groups
     When the user opens the options of an "acme" model
@@ -2098,7 +2141,6 @@ Feature: ACP registry agents
     Then the method names the first 16 variables
     And it carries no link
 
-  @backlog
   Scenario Outline: A session or model provider request the agent fails says what could not be done
     When the user <action> and "acme" answers with an error
     Then the user is told "<message>"
@@ -2110,19 +2152,16 @@ Feature: ACP registry agents
       | changes a model provider         | Could not update the ACP provider configuration. |
       | disables a model provider        | Could not update the ACP provider configuration. |
 
-  @backlog
   Scenario: A sign-out from session settings the agent does not answer in a minute times out
     When the user signs out from session settings and "acme" does not answer within 60 seconds
     Then the user is told "The ACP logout request timed out."
 
-  @backlog
   Scenario: A listed session without a usable id or folder is left out
     Given "acme" lists a session whose id is empty and one whose folder is padded with spaces
     When the user lists the agent's sessions
     Then neither of them is listed
     And the other sessions are listed with titles cut to 1,024 characters
 
-  @backlog
   Scenario: A model provider's current setting is shown only when its address is a web address
     Given "acme" reports a model provider whose current base address is not http or https
     When the user lists its model providers
@@ -2339,31 +2378,27 @@ Feature: ACP registry agents
     And agents published only as binaries are left out
 
   # AcpRuntimeModel.ts, AcpSessionRuntime.ts: how an agent's updates become the thread's timeline.
-  @backlog
   Scenario Outline: An option set to a value of the wrong kind is refused
     Given "acme" offers <option>
     When a client sets it to <value>
-    Then it is refused with '<message>'
+    Then it is refused with "<message>"
 
     Examples:
-      | option                                   | value          | message                                                                  |
-      | the on/off option "web"                  | the text "yes" | Invalid value "yes" for session config option "web": expected boolean    |
-      | the option "thinking" with named choices | on             | Invalid value true for session config option "thinking": expected string |
+      | option                                   | value          | message                                                                      |
+      | the on/off option "web"                  | the text "yes" | Invalid value \"yes\" for session config option \"web\": expected boolean      |
+      | the option "thinking" with named choices | on             | Invalid value true for session config option \"thinking\": expected string   |
 
-  @backlog
   Scenario: An agent's thinking is shown apart from its answer
     When "acme" streams its thoughts and then its answer in one turn
     Then the thoughts are shown as the turn's thinking
     And they are not part of the answer
 
-  @backlog
   Scenario: What an agent writes after using a tool starts a new message
     Given "acme" wrote some text and then ran a tool
     When "acme" writes more text
     Then the thread shows the first text, the tool and the later text as three items in that order
     And text that is only spaces does not start a new message
 
-  @backlog
   Scenario Outline: The command a tool ran is read from wherever the agent names it
     When "acme" reports a tool that <names>
     Then the tool is shown with the command "<command>"
@@ -2388,14 +2423,12 @@ Feature: ACP registry agents
       | searching or fetching       | a web search  |
       | anything else, or nothing   | a tool call   |
 
-  @backlog
   Scenario: A linked resource in an agent's answer is shown by its name and address
     When "acme" links a resource in its answer
     Then the answer shows the resource's title, or its name, or "resource" when it has neither
     And its description follows the name when it has one
     And its address is shown on the next line, unless the address carries the data itself
 
-  @backlog
   Scenario Outline: Context usage is shown from what the agent reports and no more
     When "acme" reports <report>
     Then the context meter shows <shown>
@@ -2422,7 +2455,6 @@ Feature: ACP registry agents
     When a character of more than one byte arrives half in one piece of output and half in the next
     Then the output shows that character once and unbroken
 
-  @backlog
   Scenario: Updates an agent sends for another of its sessions are not mixed into the thread
     Given a thread runs on one session of "acme"
     When "acme" sends updates for a session it started by itself
@@ -2526,7 +2558,6 @@ Feature: ACP registry agents
     Then "acme" is sent nothing about the abandoned request
     And an answer that arrives afterwards is ignored
 
-  @backlog
   Scenario: An answer whose id is text does not settle a request whose id is a number
     Given the MC sent "acme" a request with the id 1
     When "acme" sends an answer with the id "1" as text
@@ -2568,7 +2599,6 @@ Feature: ACP registry agents
     Then the MC's log holds one warning for it
     And the agent protocol log records each of the ten dropped updates
 
-  @backlog
   Scenario: A sign-in method of a kind HAL-C2 does not know is left out
     When "acme" of generation 2 advertises a sign-in method of the unknown kind "hologram"
     Then that method is not offered
@@ -2616,13 +2646,13 @@ Feature: ACP registry agents
     When the MC restarts
     Then "acme" is not shown as signed in until it is checked again
 
-  @backlog @priority-high
+  @priority-high
   Scenario: Signing in to one instance does not sign in another instance of the same agent
     Given two instances of "acme"
     When the user signs in to the first from HAL-C2
     Then the second is not shown as signed in
 
-  @backlog @priority-high
+  @priority-high
   Scenario: The record of a confirmed sign-in holds none of the instance's secrets
     Given an instance of "acme" with a secret environment variable
     When the user signs in to it from HAL-C2
@@ -2648,7 +2678,7 @@ Feature: ACP registry agents
     And the agent's models and reasoning options are discovered over ACP, values kept exactly
     And no registry entry is needed
 
-  @backlog @mc @plugin-acp-registry
+  @mc @plugin-acp-registry
   Scenario: An ACP mode with a null description is kept
     Given an ACP agent sends its modes with one description null
     When the session starts

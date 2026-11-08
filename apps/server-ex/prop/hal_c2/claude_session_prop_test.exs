@@ -12,7 +12,8 @@ defmodule HalC2.ClaudeSessionPropTest do
   turn can ask which tools it has. A turn on a new process can find Claude slow to
   answer about that server, so its message is held: meanwhile the MC can go down and
   the next one adopt the process (it runs durable), and the user can stop the turn,
-  until Claude answers.
+  until Claude answers. Between turns Claude's settings in the project can turn
+  bypassing permissions off, and Auto mode with it.
 
   The promise: a turn on another selection (fast mode off and unset are one) while
   background work runs is refused, and the work and its Claude process are kept; any
@@ -26,7 +27,12 @@ defmodule HalC2.ClaudeSessionPropTest do
   Every user message reaches Claude, whether its process took HAL-C2's server or
   refused it, and the process has HAL-C2's tools exactly when it took them. A held
   message reaches Claude once it answers, across an MC that went down meanwhile, and a
-  stop sent while it is held ends its turn as interrupted.
+  stop sent while it is held ends its turn as interrupted. A Full access turn runs in
+  bypass mode, in Auto when Claude's settings turn bypass off, and in the default
+  mode when they turn Auto off too: each turn reads them again. The message of a turn
+  refused for background work reaches Claude with the next turn's, before it; a
+  `/compact` reaches Claude as the command alone, and leaves them for the turn after;
+  a refused one is not passed on.
   """
 
   use ExUnit.Case, async: false
@@ -67,6 +73,8 @@ defmodule HalC2.ClaudeSessionPropTest do
         System.delete_env("FAKE_CLAUDE_ORPHANED")
         System.delete_env("FAKE_CLAUDE_MCP_REFUSE")
         System.delete_env("FAKE_CLAUDE_MCP_HOLD")
+        System.delete_env("CLAUDE_CONFIG_DIR")
+        System.delete_env("FAKE_CLAUDE_INPUT_LOG")
         Application.put_env(:hal_c2, :durable_programs, false)
         Application.delete_env(:hal_c2, :claude_interrupt_timeout_ms)
 
@@ -82,6 +90,13 @@ defmodule HalC2.ClaudeSessionPropTest do
     work = Path.join(home, "work")
     File.mkdir_p!(work)
     {_, 0} = System.cmd("git", ~w(init -q -b main), cd: work)
+    # Claude's own settings are the scratch home's, never the user's (`policy/1`).
+    config = Path.join(home, "claude")
+    File.mkdir_p!(config)
+    System.put_env("CLAUDE_CONFIG_DIR", config)
+    Process.put(:work, work)
+    # Every message Claude reads, one JSON string a line (`sent/1`).
+    System.put_env("FAKE_CLAUDE_INPUT_LOG", Path.join(home, "input.log"))
     Application.put_env(:hal_c2, :claude_command, ["python3", "-u", @fake_claude])
     # Durable, so a process outlives the MC that started it (`adopt/0`).
     Application.put_env(:hal_c2, :durable_programs, true)
@@ -133,7 +148,9 @@ defmodule HalC2.ClaudeSessionPropTest do
   #   whether work it left running in the background still runs; refusing: whether a
   #   process started now refuses HAL-C2's server; tools: whether the thread's process
   #   took it; held: the turn whose message waits on Claude's answer about the
-  #   server (%{n, text, interrupted}), or nil; n: a counter.
+  #   server (%{n, text, interrupted}), or nil; policy: what Claude's settings turn
+  #   off (`policy/1`); missed: the texts of turns refused since a message last reached
+  #   Claude, oldest first; n: a counter.
   def initial_state,
     do: %{
       launch: nil,
@@ -142,10 +159,13 @@ defmodule HalC2.ClaudeSessionPropTest do
       refusing: false,
       tools: false,
       held: nil,
+      policy: :allowed,
+      missed: [],
       n: 1
     }
 
   @turn_texts Map.keys(@texts) -- [:halfway]
+  @full_access_modes %{allowed: "bypassPermissions", no_bypass: "auto", no_auto: "default"}
   @held_texts [:hello, :which_tools, :halfway]
 
   def command(%{held: nil, n: n}) do
@@ -155,6 +175,7 @@ defmodule HalC2.ClaudeSessionPropTest do
         [n, oneof(@models), oneof([:unset, false, true]), oneof(@turn_texts)]}},
       {1, {:call, __MODULE__, :stop, []}},
       {1, {:call, __MODULE__, :refuse_tools, [boolean()]}},
+      {1, {:call, __MODULE__, :policy, [oneof([:allowed, :no_bypass, :no_auto])]}},
       {2,
        {:call, __MODULE__, :held_turn,
         [n, oneof(@models), oneof([:unset, false, true]), oneof(@held_texts)]}}
@@ -175,11 +196,18 @@ defmodule HalC2.ClaudeSessionPropTest do
         {1, {:call, __MODULE__, :adopt, []}}
       ])
 
-  # A held turn starts a new process; one half-answered runs until it is stopped.
+  # A held turn starts a new process; one half-answered runs until it is stopped. The
+  # fake answers a message by what it finds in it, so a refused "never start a turn"
+  # would fail every turn that carries it, and a held turn's answer is checked whole.
   def precondition(%{held: nil} = state, {:call, _, :held_turn, [_n, model, fast, _text]}),
-    do: not reused?(state, model, fast) and not refused?(state, model, fast)
+    do:
+      not reused?(state, model, fast) and not refused?(state, model, fast) and state.missed == []
 
-  def precondition(%{held: nil}, {:call, _, name, _}), do: name in [:turn, :stop, :refuse_tools]
+  def precondition(%{held: nil} = state, {:call, _, :turn, [_n, model, fast, text]}),
+    do: not (refused?(state, model, fast) and text == :never_start)
+
+  def precondition(%{held: nil}, {:call, _, name, _}),
+    do: name in [:turn, :stop, :refuse_tools, :policy]
 
   def precondition(%{held: held}, {:call, _, :release, [n]}),
     do: held.n == n and (held.text != :halfway or held.interrupted)
@@ -192,19 +220,32 @@ defmodule HalC2.ClaudeSessionPropTest do
   def next_state(state, _result, {:call, _, :turn, [_n, model, fast, text]}) do
     state = %{state | n: state.n + 1}
 
-    if refused?(state, model, fast) or empty_compact?(state, text),
-      do: state,
-      else: %{
-        state
-        | launch: {model, fast == true},
-          session: true,
-          background: state.background or text == :background,
-          tools: if(reused?(state, model, fast), do: state.tools, else: not state.refusing)
-      }
+    cond do
+      # A refused `/compact` is not quoted to the next turn: it would compact nothing.
+      refused?(state, model, fast) and text == :compact -> state
+      refused?(state, model, fast) -> %{state | missed: state.missed ++ [text]}
+      empty_compact?(state, text) -> state
+      true -> ran(state, model, fast, text)
+    end
   end
+
+  defp ran(state, model, fast, text),
+    do: %{
+      state
+      | launch: {model, fast == true},
+        session: true,
+        # The fake reads "never start a turn" before "in the background".
+        background:
+          state.background or text == :background or
+            (text != :never_start and carries?(state, :background, text)),
+        tools: if(reused?(state, model, fast), do: state.tools, else: not state.refusing),
+        missed: if(text == :compact, do: state.missed, else: [])
+    }
 
   def next_state(state, _result, {:call, _, :refuse_tools, [refusing]}),
     do: %{state | refusing: refusing}
+
+  def next_state(state, _result, {:call, _, :policy, [policy]}), do: %{state | policy: policy}
 
   def next_state(state, _result, {:call, _, :held_turn, [n, model, fast, text]}),
     do: %{
@@ -228,6 +269,9 @@ defmodule HalC2.ClaudeSessionPropTest do
 
   def next_state(state, _result, {:call, _, :stop, []}), do: state
 
+  # Whether this turn hands Claude the refused message `missed` along with its own.
+  defp carries?(state, missed, text), do: text != :compact and missed in state.missed
+
   defp reused?(state, model, fast), do: state.session and state.launch == {model, fast == true}
 
   defp refused?(state, model, fast),
@@ -239,7 +283,7 @@ defmodule HalC2.ClaudeSessionPropTest do
   def postcondition(state, {:call, _, :turn, [_n, model, fast, text]} = call, seen) do
     cond do
       refused?(state, model, fast) ->
-        seen.status == "failed" and seen.reused and seen.background
+        seen.status == "failed" and seen.reused and seen.background and seen.sent == []
 
       empty_compact?(state, text) ->
         seen.status == "failed" and not seen.background and seen.compactions == 0
@@ -247,14 +291,23 @@ defmodule HalC2.ClaudeSessionPropTest do
       text == :never_start ->
         seen.status == "failed" and
           seen.reused == (state.session and state.launch == {model, fast == true}) and
-          seen.background == state.background
+          seen.background == state.background and
+          sent?(state, text, seen.sent)
+
+      # The fake answers what it finds first in a message, so one that carries refused
+      # messages is checked by what reached Claude, not by its answer.
+      text != :compact and state.missed != [] ->
+        seen.status == "completed" and
+          seen.reused == (state.session and state.launch == {model, fast == true}) and
+          seen.background == next_state(state, seen, call).background and
+          sent?(state, text, seen.sent)
 
       true ->
         # A turn ends on its own answer, not on the one a turn of Claude's own gave.
         seen.status == "completed" and
           seen.reused == (state.session and state.launch == {model, fast == true}) and
           seen.background == (state.background or text == :background) and
-          (text != :which_mode or seen.reply == "mode bypassPermissions") and
+          (text != :which_mode or seen.reply == "mode #{@full_access_modes[state.policy]}") and
           (text != :hello or seen.reply == "Hello from claude") and
           (text != :which_tools or
              seen.reply ==
@@ -262,7 +315,31 @@ defmodule HalC2.ClaudeSessionPropTest do
                  do: "tools: hal-c2",
                  else: "tools: none"
                )) and
-          seen.compactions == if(text == :compact, do: 1, else: 0)
+          seen.compactions == if(text == :compact, do: 1, else: 0) and
+          sent?(state, text, seen.sent)
+    end
+  end
+
+  # What reached Claude for a turn that ran: its text, after those of the turns refused
+  # before it, oldest first; a `/compact` alone.
+  defp sent?(state, text, [sent]) do
+    own = @texts[text]
+
+    if text == :compact or state.missed == [],
+      do: sent == own,
+      else:
+        String.ends_with?(sent, "\n\n" <> own) and
+          ordered?(String.replace_suffix(sent, own, ""), Enum.map(state.missed, &@texts[&1]))
+  end
+
+  defp sent?(_state, _text, _sent), do: false
+
+  defp ordered?(_sent, []), do: true
+
+  defp ordered?(sent, [text | rest]) do
+    case String.split(sent, text, parts: 2) do
+      [_, after_text] -> ordered?(after_text, rest)
+      _ -> false
     end
   end
 
@@ -270,6 +347,7 @@ defmodule HalC2.ClaudeSessionPropTest do
     do: seen == %{stopped: state.background, background: false}
 
   def postcondition(_state, {:call, _, :refuse_tools, [_]}, seen), do: seen == :ok
+  def postcondition(_state, {:call, _, :policy, [_]}, seen), do: seen == :ok
 
   # Nothing reaches Claude before it has answered about the server.
   def postcondition(_state, {:call, _, :held_turn, _}, seen),
@@ -302,6 +380,7 @@ defmodule HalC2.ClaudeSessionPropTest do
     before = current(@tid)
     runs = MapSet.new(StreamState.list(before, "run"), & &1["id"])
     session = session()
+    read = read_lines()
 
     dispatch(n, model, fast, text)
     run = await_run(runs, System.monotonic_time(:millisecond) + @wait_ms)
@@ -312,8 +391,27 @@ defmodule HalC2.ClaudeSessionPropTest do
       reused: session != nil and session() == session,
       background: background?(),
       reply: reply(state, run),
-      compactions: Enum.count(items(state, run), &(&1["type"] == "compaction"))
+      compactions: Enum.count(items(state, run), &(&1["type"] == "compaction")),
+      sent: sent(read)
     }
+  end
+
+  # The messages Claude read since `read` lines of its input log.
+  defp sent(read) do
+    case File.read(System.fetch_env!("FAKE_CLAUDE_INPUT_LOG")) do
+      {:ok, log} ->
+        log |> String.split("\n", trim: true) |> Enum.drop(read) |> Enum.map(&Jason.decode!/1)
+
+      {:error, :enoent} ->
+        []
+    end
+  end
+
+  defp read_lines do
+    case File.read(System.fetch_env!("FAKE_CLAUDE_INPUT_LOG")) do
+      {:ok, log} -> length(String.split(log, "\n", trim: true))
+      {:error, :enoent} -> 0
+    end
   end
 
   defp dispatch(n, model, fast, text) do
@@ -348,6 +446,23 @@ defmodule HalC2.ClaudeSessionPropTest do
       )
 
   defp release_file(n), do: Path.join(Application.fetch_env!(:hal_c2, :home), "release-#{n}")
+
+  # Claude's settings in the project: nothing turned off, bypassing permissions, or
+  # bypassing and Auto mode.
+  def policy(policy) do
+    path = Path.join([Process.get(:work), ".claude", "settings.local.json"])
+    File.mkdir_p!(Path.dirname(path))
+    off = %{"permissions" => %{"disableBypassPermissionsMode" => "disable"}}
+
+    settings =
+      case policy do
+        :allowed -> %{}
+        :no_bypass -> off
+        :no_auto -> Map.put(off, "disableAutoMode", "disable")
+      end
+
+    File.write!(path, Jason.encode!(settings))
+  end
 
   # Whether the next Claude process refuses the MCP servers it is handed.
   def refuse_tools(true), do: System.put_env("FAKE_CLAUDE_MCP_REFUSE", "1")

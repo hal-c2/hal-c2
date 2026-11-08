@@ -4,6 +4,7 @@ import { expect } from "bun:test";
 import { DEFAULT_SERVER_SETTINGS, type OrchestrationThread } from "@hal-c2/contracts";
 
 import { step } from "../../steps.ts";
+import { flattenModelOptions } from "../../../src/models.ts";
 import { PROVIDERS, project, shell, thread } from "../fakeClient.ts";
 import { findObject, pressKey, settle, snapshot, type World } from "../world.ts";
 import { callsTo, composer, typeIntoPrompt } from "./composer.steps.ts";
@@ -85,7 +86,9 @@ step("the user starts a new thread on Codex", openDraft);
 step("{string} is chosen", async (ctx: World, slug: string) => {
   expect(newThread(ctx)!.projectKey).not.toBeNull();
   expect(composer(ctx).selectedModel).toBe(slug);
-  expect(await snapshot(ctx)).toContain(`model ${slug} `);
+  // The model control names it as the user would say it.
+  const name = flattenModelOptions(PROVIDERS).find((option) => option.model === slug)!.buttonLabel;
+  expect(await snapshot(ctx)).toContain(`model ${name} `);
 });
 
 step("a model set for the project takes precedence", async (ctx: World) => {

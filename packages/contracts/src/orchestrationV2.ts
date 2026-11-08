@@ -695,6 +695,22 @@ export const OrchestrationV2ProviderThreadNativeMetadata = Schema.Struct({
 export type OrchestrationV2ProviderThreadNativeMetadata =
   typeof OrchestrationV2ProviderThreadNativeMetadata.Type;
 
+export const OrchestrationV2ProviderThreadGoal = Schema.Struct({
+  objective: Schema.String,
+  status: Schema.Literals([
+    "active",
+    "paused",
+    "blocked",
+    "usage_limited",
+    "budget_limited",
+    "complete",
+  ]),
+  tokensUsed: NonNegativeInt,
+  tokenBudget: Schema.NullOr(NonNegativeInt),
+  timeUsedSeconds: NonNegativeInt,
+});
+export type OrchestrationV2ProviderThreadGoal = typeof OrchestrationV2ProviderThreadGoal.Type;
+
 export const OrchestrationV2ProviderThread = Schema.Struct({
   id: ProviderThreadId,
   driver: ProviderDriverKind,
@@ -723,6 +739,10 @@ export const OrchestrationV2ProviderThread = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   nativeMetadata: Schema.optional(Schema.NullOr(OrchestrationV2ProviderThreadNativeMetadata)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  // The provider's own goal for the thread (Codex's `/goal`); null when it has none.
+  goal: Schema.optional(Schema.NullOr(OrchestrationV2ProviderThreadGoal)).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   createdAt: Schema.DateTimeUtc,
@@ -794,6 +814,8 @@ export type OrchestrationV2ContextHandoff = typeof OrchestrationV2ContextHandoff
 export const OrchestrationV2ProviderTurnTokenUsage = Schema.Struct({
   usedTokens: NonNegativeInt,
   maxTokens: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  /** Where the provider compacts on its own, when that is before `maxTokens`. */
+  autoCompactThreshold: Schema.optional(PositiveInt),
   inputTokens: Schema.optional(NonNegativeInt),
   cachedInputTokens: Schema.optional(NonNegativeInt),
   outputTokens: Schema.optional(NonNegativeInt),
@@ -928,11 +950,15 @@ export const OrchestrationV2UserInputQuestion = Schema.Struct({
       label: TrimmedNonEmptyString,
       description: TrimmedNonEmptyString,
       value: Schema.optional(Schema.String),
+      /** What the option would produce, as Markdown; kept as the provider sent it. */
+      preview: Schema.optional(Schema.String),
     }),
   ),
   multiSelect: Schema.optional(Schema.Boolean),
   allowCustomAnswer: Schema.optional(Schema.Boolean),
   required: Schema.optional(Schema.Boolean),
+  /** The text a free answer starts from (a Pi editor dialog's current value), kept exactly. */
+  initialAnswer: Schema.optional(Schema.String),
 });
 export type OrchestrationV2UserInputQuestion = typeof OrchestrationV2UserInputQuestion.Type;
 
@@ -1328,6 +1354,10 @@ export const OrchestrationV2TurnItem = Schema.Union([
     viewedImagePath: Schema.optional(TrimmedNonEmptyString),
     input: Schema.Unknown,
     output: Schema.optional(Schema.Unknown),
+    /** Images the tool returned, stored with the thread like a message's. */
+    attachments: Schema.optional(Schema.Array(ChatAttachment)),
+    /** The tool's structured results, as the provider reported them. */
+    details: Schema.optional(Schema.Unknown),
   }),
 ]);
 export type OrchestrationV2TurnItem = typeof OrchestrationV2TurnItem.Type;
@@ -2079,6 +2109,10 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     viewedImagePath: Schema.optional(TrimmedNonEmptyString),
     input: Schema.Unknown,
     output: Schema.optional(Schema.Unknown),
+    /** Images the tool returned, stored with the thread like a message's. */
+    attachments: Schema.optional(Schema.Array(ChatAttachment)),
+    /** The tool's structured results, as the provider reported them. */
+    details: Schema.optional(Schema.Unknown),
   }),
 ]);
 export type OrchestrationV2TurnItemJson = typeof OrchestrationV2TurnItemJson.Type;

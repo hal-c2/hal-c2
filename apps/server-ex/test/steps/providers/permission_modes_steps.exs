@@ -536,9 +536,19 @@ defmodule HalC2.Steps.Providers.PermissionModes do
   # Shared with timeline/approvals-and-questions.feature, whose Claude scenario counts
   # the Claude processes started (`:claude_starts`).
   step "the user is asked again", context do
-    if Map.has_key?(context, :claude_starts),
-      do: HalC2.Steps.Timeline.ApprovalsAndQuestions.asked_again_by_new_claude_session(context),
-      else: asked_again_by_acp_agent(context)
+    cond do
+      Map.has_key?(context, :claude_starts) ->
+        HalC2.Steps.Timeline.ApprovalsAndQuestions.asked_again_by_new_claude_session(context)
+
+      context[:provider] == "pi" ->
+        request = HalC2.Test.FakeAcp.await_request(context)
+        assert request["status"] == "pending"
+        assert request["id"] != context.request["id"]
+        context
+
+      true ->
+        asked_again_by_acp_agent(context)
+    end
   end
 
   defp asked_again_by_acp_agent(context) do

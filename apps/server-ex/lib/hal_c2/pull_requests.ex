@@ -53,8 +53,15 @@ defmodule HalC2.PullRequests do
       "You need write access on this repository to stop it being merged for you once it is ready.",
     "revert" => "You need write access on this repository to open a revert pull request.",
     "approve-workflows" =>
-      "You need write access on this repository to approve workflows from a fork pull request."
+      "You need write access on this repository to approve workflows from a fork pull request.",
+    "allow-maintainer-edits" =>
+      "Only the author of a pull request from a fork can let maintainers edit its branch.",
+    "stop-maintainer-edits" =>
+      "Only the author of a pull request from a fork can stop maintainers editing its branch."
   }
+
+  @auto_merge_refusal "Auto-merge is not available here: this repository has it switched off, " <>
+                        "or the pull request can be merged now."
 
   @verdict_labels %{
     "approve" => "approve",
@@ -1025,6 +1032,30 @@ defmodule HalC2.PullRequests do
 
   # --- changes ----------------------------------------------------------------------
 
+  # A writer is refused enabling auto-merge only where GitHub would not wait.
+  defp refusal("enable-auto-merge", viewer) do
+    if "merge" in viewer["actions"],
+      do: @auto_merge_refusal,
+      else: @action_refusals["enable-auto-merge"]
+  end
+
+  # The toggle offered follows the current state, so a request that already holds
+  # (the page was stale) is answered as such, not as a lack of rights.
+  defp refusal("allow-maintainer-edits", %{"actions" => actions} = viewer) do
+    if "stop-maintainer-edits" in actions,
+      do: "Maintainers can already edit this branch.",
+      else: refusal_default("allow-maintainer-edits", viewer)
+  end
+
+  defp refusal("stop-maintainer-edits", %{"actions" => actions} = viewer) do
+    if "allow-maintainer-edits" in actions,
+      do: "Maintainers already can't edit this branch.",
+      else: refusal_default("stop-maintainer-edits", viewer)
+  end
+
+  defp refusal(action, viewer), do: refusal_default(action, viewer)
+  defp refusal_default(action, _viewer), do: @action_refusals[action]
+
   @doc """
   `pullRequests.runAction`: refused when GitHub cannot do it or this account may not,
   asked of the host fresh. Stack actions are not served.
@@ -1059,13 +1090,17 @@ defmodule HalC2.PullRequests do
           # update-branch button on this one.
           stack_rebase = input["stackNumber"] != nil and action == "update-branch"
 
-          with {:ok, viewer} <- GitHub.viewer_permissions(ctx, action == "update-branch") do
+          with {:ok, viewer} <-
+                 GitHub.viewer_permissions(
+                   ctx,
+                   action == "update-branch"
+                 ) do
             cond do
               if(stack_rebase,
                 do: viewer["stackRebase"] != true,
                 else: action not in viewer["actions"]
               ) ->
-                refuse("runAction", @action_refusals[action])
+                refuse("runAction", refusal(action, viewer))
 
               (not stack_rebase and input["updateMethod"]) &&
                   input["updateMethod"] not in (viewer["updateMethods"] || []) ->

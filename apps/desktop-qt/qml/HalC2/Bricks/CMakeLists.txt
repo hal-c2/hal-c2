@@ -9,6 +9,7 @@ set(hal_c2_bricks_qml_files
     Composer.qml
     ComposerAttachment.qml
     ModelPicker.qml
+    EffortBars.qml
     ProviderIcon.qml
     ComposerVimKeys.qml
     ConversationDrop.qml

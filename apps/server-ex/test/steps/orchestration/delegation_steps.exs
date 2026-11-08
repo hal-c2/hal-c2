@@ -3409,7 +3409,9 @@ defmodule HalC2.Steps.Orchestration.Delegation do
 
   step "{string} runs on a provider that can take messages mid-turn",
        %{args: [parent]} = context do
-    selection = %{"instanceId" => "claudeAgent", "model" => "claude-sonnet-4-6"}
+    # OpenCode takes a message mid-turn as its next prompt; Claude would cancel its
+    # pending tools (Upstream #15892).
+    selection = %{"instanceId" => "opencode", "model" => "openai/gpt-4.1"}
 
     context =
       World.launch_titled(context, parent, nil, "wait for it", %{"modelSelection" => selection})

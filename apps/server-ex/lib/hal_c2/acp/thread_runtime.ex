@@ -39,12 +39,18 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Acp.Kimi
   alias HalC2.Acp.OpenCode
 
-  @state_version 18
+  @state_version 20
   @registry HalC2.Acp.Registry
 
   # Grok's background task notifications.
   @xai_backgrounded ["x.ai/task_backgrounded", "_x.ai/task_backgrounded"]
   @xai_completed ["x.ai/task_completed", "_x.ai/task_completed"]
+
+  # The conversation a `session/load` replays (Grok's turn ends, as `turn_completed`,
+  # with it), history rather than the turn's; the commands, options and mode the agent
+  # sends meanwhile are the session's state now.
+  @replayed ~w(user_message_chunk agent_message_chunk agent_thought_chunk tool_call tool_call_update
+                plan turn_completed)
 
   # OpenCode 2's report of a child session (`opencode_child/2`).
   @opencode_child ["opencode/session/child_update", "_opencode/session/child_update"]
@@ -62,6 +68,47 @@ defmodule HalC2.Acp.ThreadRuntime do
   # Grok's own requests (`x.ai/...`), bare or wrapped in `{method, params}`.
   @xai_questions ["x.ai/ask_user_question", "_x.ai/ask_user_question"]
   @xai_plan ["x.ai/exit_plan_mode", "_x.ai/exit_plan_mode"]
+  # A single text update is cut to this many characters.
+  @max_chunk 65_536
+  # The session update kinds of the ACP schema, and the ones HAL-C2's agents add.
+  @session_updates [
+    "user_message_chunk",
+    "agent_message_chunk",
+    "agent_thought_chunk",
+    "tool_call",
+    "tool_call_update",
+    "plan",
+    "available_commands_update",
+    "current_mode_update",
+    "config_option_update",
+    "session_info_update",
+    "usage_update",
+    "proposed_plan",
+    "terminal_update",
+    "terminal_output_chunk",
+    "turn_completed",
+    "task_completed"
+  ]
+
+  # ACP's client methods: this client answers each, or says it does not support it.
+  @client_methods [
+    "fs/read_text_file",
+    "fs/write_text_file",
+    "terminal/create",
+    "terminal/output",
+    "terminal/wait_for_exit",
+    "terminal/kill",
+    "terminal/release",
+    "session/request_permission",
+    "elicitation/create"
+  ]
+
+  @terminal_requests [
+    "terminal/output",
+    "terminal/wait_for_exit",
+    "terminal/kill",
+    "terminal/release"
+  ]
   @empty_plan "# No plan written yet\n\n(The agent exited plan mode without writing a plan.)"
   @plan_captured "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn."
 
@@ -196,6 +243,7 @@ defmodule HalC2.Acp.ThreadRuntime do
        buffer: %{},
        flush_timer: nil,
        interrupted: false,
+       agent_cancelled: false,
        # Updates `session/load` replays are history, not this turn.
        replaying: false,
        # Open prompts: request id -> {:permission, rpc id, options, {kind, prompt}}
@@ -231,6 +279,8 @@ defmodule HalC2.Acp.ThreadRuntime do
        # those options held before HAL-C2's plan mode took them over.
        plan_modes: %{},
        build_modes: %{},
+       # The session's older ACP modes (`modes`) while they are its "mode" option.
+       legacy_modes: nil,
        # OpenCode's HTTP server (`HalC2.Acp.OpenCode`), and its session's newest
        # message when the turn began: `{:ok, id | nil}`, or `:unknown`.
        server: nil,
@@ -271,6 +321,15 @@ defmodule HalC2.Acp.ThreadRuntime do
         )
       end
 
+      if restored.interrupted and restored.turn != nil and
+           HalC2.Acp.driver(restored.agent) == "cursor" do
+        Process.send_after(
+          self(),
+          {:cursor_cancel_timeout, restored.turn.ids.run},
+          HalC2.Acp.cursor_cancel_timeout()
+        )
+      end
+
       {:reply, :ok,
        Durable.restored(
          %{
@@ -292,7 +351,8 @@ defmodule HalC2.Acp.ThreadRuntime do
   def handle_call({:start_turn, turn}, _from, state) do
     driver = turn.ids.driver
     ids = Map.put(turn.ids, :provider_turn, "provider-turn:#{driver}:#{turn.ids.run}")
-    turn = carried(%{turn | ids: ids})
+    # Its messages start in segment 0; a tool starts the next (`next_segment/2`).
+    turn = carried(%{turn | ids: ids}) |> Map.put(:segment, 0)
     # Subagents still working in the background carry over; the rest were this turn's.
     subagents = Map.filter(state.subagents, fn {_, e} -> background?(e) and not e.done end)
 
@@ -316,6 +376,7 @@ defmodule HalC2.Acp.ThreadRuntime do
          {:ok, state} <- check_model(state, driver, turn.model),
          {:ok, state} <- select_model(state, turn.model),
          state = set_options(state, turn),
+         {:ok, state} <- set_session_options(state, turn),
          state = set_parameters(state, turn) do
       # A run that ended while the session opened never reaches the agent.
       case started(state) do
@@ -330,9 +391,14 @@ defmodule HalC2.Acp.ThreadRuntime do
         finish(state, "failed", message)
         {:reply, :ok, %{state | turn: nil}}
 
+      # Refused before the agent heard of it, in words that need no agent's name.
+      {:refused, message, state} ->
+        finish(state, "failed", message)
+        {:reply, :ok, %{state | turn: nil}}
+
       {:error, reason, state} ->
         reason = Antigravity.failure(driver, reason)
-        Logger.warning("#{driver} turn failed to start: #{inspect(reason)}")
+        Logger.warning("#{driver} turn failed to start: #{redacted(reason)}")
         failure = if reason == :closed, do: reason, else: format(reason)
         finish(state, "failed", start_failure(HalC2.Acp.label(driver), failure))
         {:reply, :ok, %{state | turn: nil}}
@@ -394,6 +460,16 @@ defmodule HalC2.Acp.ThreadRuntime do
         self(),
         {:antigravity_cancel_timeout, state.turn.ids.run},
         HalC2.Acp.Antigravity.cancel_timeout()
+      )
+    end
+
+    # Cursor gets ten seconds to confirm the stop; after that the turn ends
+    # as interrupted anyway (`:cursor_cancel_timeout`).
+    if HalC2.Acp.driver(state.agent) == "cursor" and state.answer == nil do
+      Process.send_after(
+        self(),
+        {:cursor_cancel_timeout, state.turn.ids.run},
+        HalC2.Acp.cursor_cancel_timeout()
       )
     end
 
@@ -580,7 +656,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         else: update
 
     cond do
-      state.replaying ->
+      state.replaying and update["sessionUpdate"] in @replayed ->
         {:noreply, state}
 
       child_session?(params["sessionId"], state) ->
@@ -600,11 +676,17 @@ defmodule HalC2.Acp.ThreadRuntime do
           })
         end
 
+      foreign_session?(params["sessionId"], state) ->
+        {:noreply, state}
+
       subagent_ended?(update) ->
         {:noreply, subagent_ended(state, update)}
 
       commands = available_commands(update) ->
         {:noreply, offer(state, commands)}
+
+      update["sessionUpdate"] == "current_mode_update" ->
+        {:noreply, mode_changed(state, update)}
 
       state.turn == nil ->
         {:noreply, state}
@@ -700,11 +782,19 @@ defmodule HalC2.Acp.ThreadRuntime do
   def handle_info({:json_rpc, conn, {:request, id, method, params}}, %{turn: turn} = state)
       when method in @xai_plan and turn != nil do
     params = xai_params(params)
-    native = "plan:#{params["toolCallId"] || id}"
+    # The plan Grok wrote to its plan file is the one it presents, unless it sends text.
+    file = plan_file_native(state)
+
+    native =
+      if Map.has_key?(state.items, file),
+        do: file,
+        else: "plan:#{params["toolCallId"] || id}"
+
+    written = get_in(state.items, [file, :markdown])
 
     markdown =
       case String.trim(params["planContent"] || "") do
-        "" -> @empty_plan
+        "" -> written || @empty_plan
         text -> text
       end
 
@@ -844,13 +934,34 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
-  # This client writes no files and runs no terminal; say so rather than hang.
-  def handle_info({:json_rpc, conn, {:request, id, method, _params}}, state) do
+  # No client terminal is ever created, so every terminal an agent names is unknown.
+  def handle_info(
+        {:json_rpc, conn, {:request, id, method, %{"terminalId" => terminal}}},
+        state
+      )
+      when method in @terminal_requests and is_binary(terminal) do
     Connection.respond(
       conn,
       id,
-      {:error, %{"code" => -32601, "message" => "#{method} is not supported"}}
+      {:error,
+       %{
+         "code" => -32602,
+         "message" => "ACP #{method} received an unknown terminal ID '#{terminal}'."
+       }}
     )
+
+    {:noreply, state}
+  end
+
+  # This client writes no files and runs no terminal; say so rather than hang. A
+  # request outside ACP's client methods is answered as JSON-RPC's unknown method.
+  def handle_info({:json_rpc, conn, {:request, id, method, _params}}, state) do
+    message =
+      if method in @client_methods,
+        do: "#{method} is not supported",
+        else: "Method not found: #{String.slice(method, 0, 256)}"
+
+    Connection.respond(conn, id, {:error, %{"code" => -32601, "message" => message}})
 
     {:noreply, state}
   end
@@ -898,6 +1009,18 @@ defmodule HalC2.Acp.ThreadRuntime do
 
       {:noreply,
        released(%{stop_work(state, "failed") | conn: nil, session_id: nil, prompt: nil})}
+    else
+      {:noreply, state}
+    end
+  end
+
+  def handle_info({:cursor_cancel_timeout, run}, state) do
+    if state.turn && state.turn.ids.run == run && state.interrupted && state.conn do
+      Connection.stop(state.conn)
+      state = end_turn(%{state | prompt: nil}, "interrupted", nil)
+
+      {:noreply,
+       released(%{stop_work(state, "interrupted") | conn: nil, session_id: nil, prompt: nil})}
     else
       {:noreply, state}
     end
@@ -1004,8 +1127,21 @@ defmodule HalC2.Acp.ThreadRuntime do
         {:error, %{"code" => -32003}} ->
           {"failed", "Grok usage limit reached. Try again later."}
 
+        # A registry agent's exit (`exits/1`), with what it last wrote to its error output.
+        # The log keeps all of it; the failure the end that fits beside the exit, in the
+        # 4,096 characters a thread keeps of one (`HalC2.Orchestration.UserFacingErrors`).
+        {:error, %{"message" => message, "stderr" => stderr}} ->
+          Logger.warning(
+            "#{HalC2.Acp.label(state.agent)} failed: #{message}\n#{HalC2.Acp.Stderr.redact(stderr)}"
+          )
+
+          room = HalC2.Acp.Stderr.max() - String.length(message) - 1
+          {"failed", String.trim("#{message}\n#{HalC2.Acp.Stderr.sanitize(stderr, room)}")}
+
         {:error, %{"message" => message} = error} when is_binary(message) ->
-          {"failed", usage_limit(state, error) || prompt_failure(state, error)}
+          {"failed",
+           usage_limit(state, error) || cursor_failure(state, error) ||
+             prompt_failure(state, error)}
 
         {:error, %{} = error} ->
           {"failed", usage_limit(state, error) || prompt_failure(state, error)}
@@ -1024,12 +1160,31 @@ defmodule HalC2.Acp.ThreadRuntime do
            do: {"failed", limit},
            else: (_ -> {status, failure})
 
-    state = record_turn(%{state | prompt: nil})
+    # A run the agent itself cancelled (not the user's stop) cancels its subagents.
+    cancelled = not state.interrupted and match?({:ok, %{"stopReason" => "cancelled"}}, result)
+    state = record_turn(%{state | prompt: nil, agent_cancelled: cancelled})
     state = compacted(state, status)
     state = end_turn(state, status, failure)
     # A turn that did not complete takes its background work, and earlier turns', down.
-    {:noreply, if(status == "completed", do: state, else: stop_work(state, status))}
+    state = if status == "completed", do: state, else: stop_work(state, status)
+    {:noreply, if(ended?(result), do: dropped(state), else: state)}
   end
+
+  # The connection failed the call because the agent ended (`HalC2.JsonRpc.Connection`
+  # marks those errors `"ended"`): it is on its way out, and the next message starts
+  # the agent afresh rather than waiting on it. An error the agent answers itself,
+  # with or without a code, leaves it running.
+  defp ended?({:error, :closed}), do: true
+  defp ended?({:error, %{"ended" => true}}), do: true
+  defp ended?(_result), do: false
+
+  # Its exit, when it comes, no longer matches `state.conn` and is ignored.
+  defp dropped(%{conn: conn} = state) when is_pid(conn) do
+    Process.unlink(conn)
+    released(%{state | conn: nil, session_id: nil, prompt: nil, server: nil})
+  end
+
+  defp dropped(state), do: state
 
   # OpenCode 2 names why a prompt failed (`data.errorName`): its quota, rate-limit and
   # plan-limit stops are usage limits, with no reset time it does not give. A Claude plan
@@ -1069,6 +1224,28 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp usage_limit(_state, _error), do: nil
+
+  # A failed Cursor run fails the turn with Cursor's own message, as an error
+  # item a thread that delegated the turn reads its result from.
+  defp cursor_failure(state, %{"message" => message} = error) when is_binary(message) do
+    if HalC2.Acp.driver(state.agent) == "cursor" do
+      %{
+        "class" => "provider_error",
+        "message" => message,
+        # Cursor's own code rides in the RPC error's `data` (cursor-acp forwards
+        # the SDK's); the RPC code itself is always -32603 and says nothing.
+        "code" =>
+          case error do
+            %{"data" => %{"code" => code}} when is_binary(code) and code != "" -> code
+            %{"code" => code} when is_binary(code) and code != "" -> code
+            _ -> "cursor_run_failed"
+          end,
+        "retryable" => nil
+      }
+    end
+  end
+
+  defp cursor_failure(_state, _error), do: nil
 
   # How a failed prompt reads in the thread. OpenCode's own words are kept, except
   # an exit the connection reports (named with its code) and an error with no
@@ -1235,6 +1412,14 @@ defmodule HalC2.Acp.ThreadRuntime do
       |> Map.merge(%{v: 18, grok_prompt: nil, grok_seq: 0, grok_done: []})
       |> migrate()
 
+  # Older ACP session modes are read from the session's next options.
+  defp migrate(%{v: 18} = state),
+    do: state |> Map.merge(%{v: 19, legacy_modes: nil}) |> migrate()
+
+  # Whether the agent itself cancelled the last run; states from before it lack the key.
+  defp migrate(%{v: 19} = state),
+    do: state |> Map.put_new(:agent_cancelled, false) |> Map.put(:v, 20) |> migrate()
+
   # --- session -------------------------------------------------------------------
 
   # A signed-out registry agent is not started for a thread: it could only refuse the
@@ -1303,6 +1488,15 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # A registry agent's connection fails its calls with how the agent ended, in the ACP
+  # client's words ("ACP process exited with code 1", "ACP input stream ended."), and
+  # keeps its error output for the failure. Built-in agents keep their own wording.
+  defp exits(instance) do
+    if HalC2.Acp.driver(instance) == "acpRegistry",
+      do: [program: "ACP", stderr_tail: :whole, eof_grace: 100],
+      else: []
+  end
+
   # A new agent process for `instance` in the working directory of `context` (a turn,
   # or a rewind's plan), initialized; OpenCode's serves its HTTP API.
   defp launch(state, instance, mode, %{cwd: cwd} = context) do
@@ -1324,15 +1518,21 @@ defmodule HalC2.Acp.ThreadRuntime do
          env = subagents_off(instance, mcp, env),
          {:ok, conn} <-
            Connection.start_link(
-             cmd: command,
-             handler: self(),
-             cd: cwd,
-             env: env,
-             dialect: :v2,
-             log: state.thread_id,
-             durable: state.thread_id,
-             program: HalC2.Acp.label(instance),
-             stderr_prefix: Antigravity.stderr_prefix(instance)
+             Keyword.merge(
+               [
+                 cmd: command,
+                 handler: self(),
+                 cd: cwd,
+                 env: env,
+                 dialect: :v2,
+                 log: state.thread_id,
+                 durable: state.thread_id,
+                 program: HalC2.Acp.label(instance),
+                 stderr_prefix: Antigravity.stderr_prefix(instance)
+               ],
+               # A registry agent's own wording of its exit wins over the label.
+               exits(instance)
+             )
            ),
          {:ok, init} <-
            Connection.call(conn, "initialize", %{
@@ -1369,7 +1569,8 @@ defmodule HalC2.Acp.ThreadRuntime do
                do: HalC2.Acp.Antigravity.runtime_tmp(env)
              ),
            capabilities: init["agentCapabilities"] || %{}
-       }}
+       }
+       |> Map.put(:plan_prefixes, HalC2.Acp.GrokPlan.prefixes(env))}
     else
       {:error, reason} -> {:error, reason, state}
     end
@@ -1478,23 +1679,24 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   # Continue the recorded session when the agent can; otherwise start a new one.
   defp open_session(state, %{native_thread_id: native} = turn) when is_binary(native) do
-    params = %{"sessionId" => native, "cwd" => turn.cwd, "mcpServers" => mcp_servers(state, turn)}
+    servers = mcp_servers(state, turn)
+    params = %{"sessionId" => native, "cwd" => turn.cwd, "mcpServers" => servers}
     caps = state.capabilities
 
     cond do
       is_map(get_in(caps, ["sessionCapabilities", "resume"])) ->
         case Connection.call(state.conn, "session/resume", params, 60_000) do
-          {:ok, result} -> {:ok, native, opened(state, result, turn)}
+          {:ok, result} -> {:ok, native, opened(state, result, turn, false, servers)}
           {:error, _} -> fresh_session(state, turn)
         end
 
       caps["loadSession"] == true ->
-        state = %{state | replaying: true}
-        result = Connection.call(state.conn, "session/load", params, 120_000)
-        state = %{state | replaying: false}
+        {result, state} = load_session(state, params)
 
         case result do
-          {:ok, result} -> {:ok, native, opened(state, result || %{}, turn)}
+          {:ok, result} -> {:ok, native, opened(state, result || %{}, turn, false, servers)}
+          # A fresh session needs a live connection; this one is gone.
+          {:error, :closed} -> {:error, :closed, state}
           {:error, _} -> fresh_session(state, turn)
         end
 
@@ -1505,6 +1707,36 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp open_session(state, turn), do: new_session(state, turn)
 
+  # What the agent replays of the session while it loads is history, not this turn. It
+  # all comes ahead of the load's reply, so the agent's messages are handled as they come
+  # until then, as replayed (`replaying`); the runtime's other messages wait their turn.
+  defp load_session(state, params) do
+    tag = make_ref()
+    Connection.ask(state.conn, "session/load", params, tag)
+    deadline = System.monotonic_time(:millisecond) + 120_000
+    await_load(%{state | replaying: true}, tag, deadline)
+  end
+
+  defp await_load(%{conn: conn} = state, tag, deadline) do
+    receive do
+      {:json_rpc, ^conn, {:reply, ^tag, reply}} ->
+        {reply, %{state | replaying: false}}
+
+      {:json_rpc, ^conn, _} = message ->
+        {:noreply, state} = handle_info(message, state)
+        await_load(state, tag, deadline)
+
+      # A connection killed without a goodbye ends the wait at once; the exit goes back
+      # to the mailbox so `handle_info({:EXIT, ...})` still ends the turn and the work.
+      {:EXIT, ^conn, _} = exit ->
+        send(self(), exit)
+        {{:error, :closed}, %{state | replaying: false}}
+    after
+      max(deadline - System.monotonic_time(:millisecond), 0) ->
+        {{:error, :timeout}, %{state | replaying: false}}
+    end
+  end
+
   # A new session in place of the recorded one the agent could not open.
   defp fresh_session(state, turn) do
     with {:ok, id, state} <- new_session(state, turn),
@@ -1512,15 +1744,22 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp new_session(state, turn) do
+    servers = mcp_servers(state, turn)
+
     case Connection.call(
            state.conn,
            "session/new",
-           %{"cwd" => turn.cwd, "mcpServers" => mcp_servers(state, turn)},
+           %{"cwd" => turn.cwd, "mcpServers" => servers},
            60_000
          ) do
-      {:ok, %{"sessionId" => id} = result} -> {:ok, id, opened(state, result, turn, true)}
-      {:ok, other} -> {:error, {:unexpected, other}, state}
-      {:error, reason} -> {:error, reason, state}
+      {:ok, %{"sessionId" => id} = result} ->
+        {:ok, id, opened(state, result, turn, true, servers)}
+
+      {:ok, other} ->
+        {:error, {:unexpected, other}, state}
+
+      {:error, reason} ->
+        {:error, reason, state}
     end
   end
 
@@ -1594,7 +1833,16 @@ defmodule HalC2.Acp.ThreadRuntime do
   # Whether it offers a way to switch models is recorded on the provider thread
   # (`canSwitchModel`), which outlives the process and its session record: a new
   # session's answer says so, a continued one only when it names its model.
-  defp opened(state, result, turn, new? \\ false) do
+  defp opened(state, result, turn, new?, servers) do
+    # The protocol log keeps how the run started (model, mode, the MCP
+    # servers offered by name) — never a server's credential.
+    HalC2.ProviderLog.options(state.thread_id,
+      model: turn.model,
+      permission_mode: turn.runtime_mode,
+      cd: turn.cwd,
+      mcp_servers: servers |> Enum.map(& &1["name"]) |> Enum.reject(&is_nil/1)
+    )
+
     # What a local OpenCode session as it opened offers is its settled list:
     # an instance first read while its server was still starting is completed
     # by it, without a provider refresh. An external server's own read names
@@ -1608,7 +1856,11 @@ defmodule HalC2.Acp.ThreadRuntime do
       Enum.any?(result["configOptions"] || [], &(&1["id"] == "model")) or is_map(result["models"])
 
     if named? or new?, do: record_model_switch(state, turn, named?)
-    remember_model(if(named?, do: state, else: %{state | model: nil}), result)
+    # A session without older modes drops those of the session before it.
+    remember_model(
+      if(named?, do: state, else: %{state | model: nil}),
+      Map.put_new(result, "modes", nil)
+    )
   end
 
   defp record_model_switch(state, turn, switches?) do
@@ -1631,6 +1883,9 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     state = remember_config(state, result)
 
+    state =
+      if grok?(state), do: Map.put(state, :reasoning, session_reasoning(result)), else: state
+
     case Enum.find(result["configOptions"] || [], &(&1["id"] == "model")) do
       %{"currentValue" => model} ->
         %{state | model: model, model_method: "session/set_config_option"}
@@ -1648,15 +1903,32 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp check_model(state, driver, model) do
     case Antigravity.check_model(driver, model, state.options) do
-      :ok -> {:ok, state}
+      :ok -> offered(state, driver, model)
       {:error, message} -> {:error, message, state}
     end
   end
 
-  defp remember_config(state, %{"configOptions" => [_ | _] = options}) do
+  # The session's options, its older ACP modes among them as one "mode" option
+  # (`HalC2.Acp.session_config/1`); a result without `modes` keeps the session's.
+  defp remember_config(state, %{"modes" => _} = result), do: remember_options(state, result)
+
+  defp remember_config(state, %{"configOptions" => [_ | _]} = result),
+    do: remember_options(state, result)
+
+  defp remember_config(state, _result), do: state
+
+  defp remember_options(state, result) do
+    modes = Map.get(result, "modes", state.legacy_modes)
+
+    options =
+      HalC2.Acp.session_config(%{"configOptions" => result["configOptions"], "modes" => modes})
+
+    HalC2.Acp.put_config(state.agent, options)
+
     %{
       state
-      | config: Map.new(options, &{&1["id"], &1["currentValue"]}),
+      | legacy_modes: if(Enum.any?(options, &(&1["setBy"] == "session/set_mode")), do: modes),
+        config: Map.new(options, &{&1["id"], &1["currentValue"]}),
         plan_modes:
           for(
             %{"id" => id, "category" => category} = option <- options,
@@ -1667,8 +1939,6 @@ defmodule HalC2.Acp.ThreadRuntime do
           )
     }
   end
-
-  defp remember_config(state, _result), do: state
 
   # OpenCode's agent and reasoning variant (`OpenCodeAdapterV2`): the thread's `agent`
   # option, else its plan agent in plan mode (back to build after), and `variant`.
@@ -1779,13 +2049,59 @@ defmodule HalC2.Acp.ThreadRuntime do
           %{state | model: model}
 
         {:error, reason} ->
-          Logger.warning("could not set Cursor's model options: #{inspect(reason)}")
+          Logger.warning("could not set Cursor's model options: #{redacted(reason)}")
           state
       end
     else
       state
     end
   end
+
+  # The options picked for a registry agent's model that are its session's own
+  # (`HalC2.Acp.session_options/1`): a value it does not offer is refused before
+  # the turn reaches the agent, one it already has is not sent again, and an option
+  # its session does not offer is skipped. An id the model's own descriptors share is
+  # the model's, as `HalC2.Acp.taken/2` offers it.
+  defp set_session_options(%{agent: agent} = state, turn) when agent != nil do
+    options = Map.get(turn, :options) || %{}
+
+    if options == %{} or HalC2.Acp.driver(agent) != "acpRegistry" do
+      {:ok, state}
+    else
+      model = Enum.find(state.options || [], &(&1["slug"] == state.model))
+      own = get_in(model || %{}, ["capabilities", "optionDescriptors"]) || []
+      offered = agent |> HalC2.Acp.session_options() |> HalC2.Acp.taken(model)
+
+      options
+      |> Enum.sort()
+      |> Enum.reduce_while({:ok, state}, fn {id, value}, {:ok, state} ->
+        case HalC2.Acp.check_option(offered, id, value) do
+          :ok ->
+            {:cont, {:ok, set_config(state, id, value)}}
+
+          # The model's own option (its `_meta.parameters`) is not the session's to set.
+          :skip ->
+            if Enum.any?(own, &(&1["id"] == id)),
+              do: Logger.debug("#{agent}: the option #{id} is the model's, not its session's"),
+              else:
+                Logger.warning(
+                  "#{agent}: skipped the option #{id}, which its session does not offer"
+                )
+
+            {:cont, {:ok, state}}
+
+          {:error, message} ->
+            {:halt, {:refused, message, state}}
+        end
+      end)
+    end
+  end
+
+  defp set_session_options(state, _turn), do: {:ok, state}
+
+  # An agent's error as the MC's log keeps it, its secrets redacted.
+  defp redacted(reason) when is_binary(reason), do: HalC2.Acp.Stderr.redact(reason)
+  defp redacted(reason), do: reason |> inspect() |> HalC2.Acp.Stderr.redact()
 
   # The choice of a select option (flat or grouped) that plans, if it has one.
   defp plan_choice(option) do
@@ -1795,22 +2111,69 @@ defmodule HalC2.Acp.ThreadRuntime do
     |> Enum.find_value(&(&1["value"] in ["plan", "architect"] && &1["value"]))
   end
 
+  # An agent with older ACP modes says when it changes mode itself, leaving plan mode
+  # for one, in or between turns. The "mode" option follows, so picking the mode it
+  # left sends `session/set_mode` again.
+  defp mode_changed(%{legacy_modes: %{} = modes} = state, %{"currentModeId" => id})
+       when is_binary(id) and is_map_key(state.config, "mode") do
+    if Enum.any?(List.wrap(modes["availableModes"]), &(is_map(&1) and &1["id"] == id)) do
+      HalC2.Acp.put_option(state.agent, "mode", id)
+
+      %{
+        state
+        | legacy_modes: Map.put(modes, "currentModeId", id),
+          config: Map.put(state.config, "mode", id)
+      }
+    else
+      state
+    end
+  end
+
+  defp mode_changed(state, _update), do: state
+
+  # A mode of the session's older ACP modes is set through `session/set_mode`.
+  defp set_config(%{legacy_modes: %{} = modes} = state, "mode", value)
+       when is_binary(value) and is_map_key(state.config, "mode") do
+    if state.config["mode"] == value do
+      state
+    else
+      case Connection.call(state.conn, "session/set_mode", %{
+             "sessionId" => state.session_id,
+             "modeId" => value
+           }) do
+        {:ok, _} ->
+          HalC2.Acp.put_option(state.agent, "mode", value)
+
+          %{
+            state
+            | legacy_modes: Map.put(modes, "currentModeId", value),
+              config: Map.put(state.config, "mode", value)
+          }
+
+        {:error, reason} ->
+          Logger.warning("could not set the mode to #{value}: #{redacted(reason)}")
+          state
+      end
+    end
+  end
+
   defp set_config(state, id, value)
-       when is_binary(value) and is_map_key(state.config, id) do
+       when (is_binary(value) or is_boolean(value)) and is_map_key(state.config, id) do
     if state.config[id] == value do
       state
     else
-      case Connection.call(state.conn, "session/set_config_option", %{
-             "sessionId" => state.session_id,
-             "configId" => id,
-             "value" => value
-           }) do
+      case Connection.call(
+             state.conn,
+             "session/set_config_option",
+             %{"sessionId" => state.session_id, "configId" => id, "value" => value}
+             |> then(&if(is_boolean(value), do: Map.put(&1, "type", "boolean"), else: &1))
+           ) do
         {:ok, result} ->
           state = remember_config(state, result || %{})
           %{state | config: Map.put(state.config, id, value)}
 
         {:error, reason} ->
-          Logger.warning("could not set #{id} to #{value}: #{inspect(reason)}")
+          Logger.warning("could not set #{id} to #{value}: #{redacted(reason)}")
           state
       end
     end
@@ -1843,6 +2206,14 @@ defmodule HalC2.Acp.ThreadRuntime do
   # already has. A picked model is set again, so a restarted session resumes
   # on the thread's model.
   defp select_model(state, model) do
+    if grok?(state) do
+      {:ok, grok_model(state, model, Map.get(state.turn, :options) || %{})}
+    else
+      select_model_of(state, model)
+    end
+  end
+
+  defp select_model_of(state, model) do
     if Antigravity.antigravity?(state.agent) and Antigravity.default_alias?(model) do
       case Antigravity.default_model(state.options, state.model) do
         resolved when is_binary(resolved) and resolved != state.model ->
@@ -1856,9 +2227,106 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
-  # "Pi default" leaves the model to the user's own Pi settings.
+  # A registry agent's session lists the models its account may use: a model it does
+  # not offer, and the user did not add (`config.customModels`), is refused rather than
+  # skipped for the agent's own default (upstream #26623). The default alias, and an
+  # agent that lists no models, leave the choice to the agent.
+  defp offered(state, instance, model) do
+    offered = for %{"slug" => slug} <- state.options || [], do: slug
+
+    if HalC2.Acp.driver(instance) == "acpRegistry" and is_binary(model) and
+         model not in ["", "default"] and offered != [] and model not in offered and
+         not custom_model?(instance, model) do
+      {:error,
+       "the model #{model} is not available to this account. Pick another model and try again.",
+       state}
+    else
+      {:ok, state}
+    end
+  end
+
+  defp custom_model?(instance, model) do
+    case HalC2.Acp.entry(instance) do
+      %{"models" => models} when is_list(models) ->
+        Enum.any?(models, &(&1["isCustom"] == true and &1["slug"] == model))
+
+      _ ->
+        false
+    end
+  end
+
+  # Grok's `grok-build` is the CLI's product name, not a model it accepts: choosing it
+  # keeps the model the session has. A reasoning level goes with the model, as
+  # `session/set_model`'s `_meta.reasoningEffort`, and only when it is a plain word and
+  # differs from the level the session is on. Omitting a level on the same model leaves
+  # Grok's own default alone, so only a changed model or a changed level is sent.
+  @grok_default_model "grok-build"
+  @grok_effort ~r/^[a-z0-9][a-z0-9._-]{0,31}$/i
+
+  defp grok_model(state, model, options) do
+    requested = if model in [nil, "", @grok_default_model], do: nil, else: model
+    provided = options["reasoningEffort"]
+    effort = if is_binary(provided) and provided =~ @grok_effort, do: provided
+    model_changed = requested != nil and requested != state.model
+    effort_changed = effort != nil and effort != Map.get(state, :reasoning)
+    target = requested || state.model
+
+    cond do
+      (not model_changed and not effort_changed) or target == nil ->
+        state
+
+      # Agents that switch models through a config option keep that way when no level
+      # needs to travel with the model.
+      effort == nil and state.model_method == "session/set_config_option" ->
+        set_model(state, target)
+
+      true ->
+        params = %{"sessionId" => state.session_id, "modelId" => target}
+
+        params =
+          if effort, do: Map.put(params, "_meta", %{"reasoningEffort" => effort}), else: params
+
+        case Connection.call(state.conn, "session/set_model", params) do
+          {:ok, _} ->
+            state
+            |> Map.merge(%{model: target, model_method: "session/set_model"})
+            |> Map.put(:reasoning, effort)
+
+          {:error, reason} ->
+            Logger.warning("could not select #{target}: #{redacted(reason)}")
+            state
+        end
+    end
+  end
+
+  # The level of reasoning the model a Grok session starts on is at.
+  defp session_reasoning(%{"models" => %{"currentModelId" => current} = models}) do
+    with model when is_map(model) <-
+           Enum.find(models["availableModels"] || [], &(&1["modelId"] == current)),
+         effort when is_binary(effort) <- get_in(model, ["_meta", "reasoningEffort"]),
+         true <- effort =~ @grok_effort do
+      effort
+    else
+      _ -> nil
+    end
+  end
+
+  defp session_reasoning(_result), do: nil
+
+  # "Pi default" leaves the model to the user's own Pi settings, and a registry agent's
+  # default to the agent when its session offers no model of that name.
   defp set_model(%{agent: agent} = state, "default") when agent != nil do
-    if HalC2.Acp.driver(agent) == "pi", do: state, else: set_model_now(state, "default")
+    case HalC2.Acp.driver(agent) do
+      "pi" ->
+        state
+
+      "acpRegistry" ->
+        offered = for %{"slug" => slug} <- state.options || [], do: slug
+        if offered == [] or "default" in offered, do: set_model_now(state, "default"), else: state
+
+      _ ->
+        set_model_now(state, "default")
+    end
   end
 
   defp set_model(state, model), do: set_model_now(state, model)
@@ -1876,12 +2344,12 @@ defmodule HalC2.Acp.ThreadRuntime do
             %{state | model: model, model_method: "session/set_model"}
 
           {:error, reason} ->
-            Logger.warning("could not select #{model}: #{inspect(reason)}")
+            Logger.warning("could not select #{model}: #{redacted(reason)}")
             state
         end
 
       {:error, reason} ->
-        Logger.warning("could not select #{model}: #{inspect(reason)}")
+        Logger.warning("could not select #{model}: #{redacted(reason)}")
         state
     end
   end
@@ -1936,7 +2404,7 @@ defmodule HalC2.Acp.ThreadRuntime do
             %{state | titled: {session, title}}
 
           {:error, reason} ->
-            Logger.warning("could not name the OpenCode session: #{reason}")
+            Logger.warning("could not name the OpenCode session: #{redacted(reason)}")
             state
         end
     end
@@ -1951,7 +2419,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         {:ok, leaf}
 
       {:error, reason} ->
-        Logger.warning("could not read the OpenCode session: #{reason}")
+        Logger.warning("could not read the OpenCode session: #{redacted(reason)}")
         :unknown
     end
   end
@@ -2000,6 +2468,9 @@ defmodule HalC2.Acp.ThreadRuntime do
        do: subagent_call(state, id, call)
 
   defp update(%{"sessionUpdate" => "tool_call", "toolCallId" => id} = call, state) do
+    state = plan_file(state, call)
+    call = grok_call(call, state)
+
     cond do
       plan_call?(call, state) -> plan_call(state, id, call)
       subagent_call?(call, state) -> subagent_call(state, id, call)
@@ -2008,6 +2479,9 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp update(%{"sessionUpdate" => "tool_call_update", "toolCallId" => id} = call, state) do
+    state = plan_file(state, call)
+    call = grok_call(call, state)
+
     cond do
       plan_call?(call, state) -> plan_call(state, id, call)
       Map.has_key?(state.items, id) -> tool_update(state, id, call)
@@ -2067,6 +2541,18 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # A warning the agent itself announces for the thread (a HAL-C2 update, which
+  # the Cursor agent sends when its sandbox cannot run): a system notice.
+  defp update(%{"sessionUpdate" => "notice", "message" => message}, state)
+       when is_binary(message) do
+    native = "notice:#{state.turn.ids.run}:#{:erlang.phash2(message)}"
+
+    state
+    |> flush()
+    |> ensure_item(native, :notice, %{"title" => message, "message" => message})
+    |> finish_item(native, "completed", & &1)
+  end
+
   # Models the agent adds or drops mid-session reach the picker without a provider refresh.
   defp update(%{"sessionUpdate" => "config_option_update", "configOptions" => options}, state)
        when is_list(options) do
@@ -2092,6 +2578,22 @@ defmodule HalC2.Acp.ThreadRuntime do
       if is_integer(u["size"]) and u["size"] > 0,
         do: %{"usedTokens" => used, "maxTokens" => u["size"]},
         else: %{"usedTokens" => used}
+
+    # A cost is shown only with the currency it is in.
+    usage =
+      case u["cost"] do
+        %{"amount" => amount, "currency" => currency} when is_number(amount) ->
+          case meta(currency, nil) do
+            code when is_binary(code) and byte_size(code) <= 32 ->
+              Map.put(usage, "cost", %{"amount" => amount, "currency" => code})
+
+            _ ->
+              usage
+          end
+
+        _ ->
+          usage
+      end
 
     ids = state.turn.ids
 
@@ -2168,6 +2670,26 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # A registry agent's update of a kind the protocol does not name is shown in the
+  # work log rather than dropped. Built-in agents send vendor kinds of their own.
+  defp update(%{"sessionUpdate" => kind}, state) when is_binary(kind) do
+    if kind in @session_updates or HalC2.Acp.driver(state.agent) != "acpRegistry" do
+      state
+    else
+      text = "Unsupported ACP update: #{String.slice(kind, 0, 256)}"
+      native = "acp-update:#{state.turn.ids.provider_turn}:#{kind}"
+
+      if Map.has_key?(state.items, native) do
+        state
+      else
+        state
+        |> flush()
+        |> ensure_item(native, :notice, %{"title" => text, "message" => text})
+        |> finish_item(native, "completed", & &1)
+      end
+    end
+  end
+
   defp update(_update, state), do: state
 
   defp terminal_bytes(data) when is_binary(data) do
@@ -2181,7 +2703,9 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp tool(state, id, call) do
     {kind, fields} = tool_shape(call, state)
-    state = state |> flush() |> ensure_item(id, kind, fields) |> note_kill(id, call)
+
+    state =
+      state |> next_segment(id) |> flush() |> ensure_item(id, kind, fields) |> note_kill(id, call)
 
     cond do
       batch?(state, id) ->
@@ -2190,7 +2714,7 @@ defmodule HalC2.Acp.ThreadRuntime do
       task = started_task(call) ->
         start_task(state, id, task, call)
 
-      call["status"] in ["completed", "failed"] ->
+      call["status"] in ["completed", "failed", "cancelled"] ->
         state |> killed(id, call) |> finish_tool(id, call)
 
       true ->
@@ -2198,12 +2722,19 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # A new tool ends the message before it.
+  defp next_segment(state, id) do
+    if Map.has_key?(state.items, id),
+      do: state,
+      else: %{state | turn: Map.update(state.turn, :segment, 1, &(&1 + 1))}
+  end
+
   defp tool_update(state, id, call) do
     state =
       if Map.has_key?(state.items, id),
         do: state,
         else:
-          (fn {kind, fields} -> ensure_item(flush(state), id, kind, fields) end).(
+          (fn {kind, fields} -> ensure_item(flush(next_segment(state, id)), id, kind, fields) end).(
             tool_shape(call, state)
           )
 
@@ -2220,7 +2751,7 @@ defmodule HalC2.Acp.ThreadRuntime do
       id in Map.values(state.tasks) ->
         running_command(state, id, call)
 
-      call["status"] in ["completed", "failed"] ->
+      call["status"] in ["completed", "failed", "cancelled"] ->
         state |> killed(id, call) |> finish_tool(id, call)
 
       true ->
@@ -2390,6 +2921,141 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp plan_call(state, _id, _call), do: state
 
+  # Grok names a tool "Tool" and reports a command's end in its own result; the call
+  # is read as the other agents' are, with a name and a status.
+  defp grok_call(call, %{turn: %{ids: %{driver: driver}}}) do
+    if HalC2.Acp.driver(driver) == "grok",
+      do: call |> grok_title() |> grok_status(),
+      else: call
+  end
+
+  defp grok_call(call, _state), do: call
+
+  # What the call is about names it, in this order: its description (a monitor's
+  # reads "Monitor: ..."), what kind of call it is, and its command cut to 80
+  # characters.
+  defp grok_title(%{"title" => title} = call) when title in [nil, ""] or is_binary(title) do
+    if String.downcase(String.trim(title || "")) in ["", "tool", "tool call", "terminal"] do
+      input = if is_map(call["rawInput"]), do: call["rawInput"], else: %{}
+      description = non_empty(input["description"], nil)
+      variant = input["variant"] |> to_string() |> String.downcase()
+
+      command =
+        non_empty(input["command"], nil) || non_empty(get_in(call, ["rawOutput", "command"]), nil)
+
+      name =
+        cond do
+          description && variant == "monitor" &&
+              not String.starts_with?(String.downcase(description), "monitor") ->
+            "Monitor: " <> description
+
+          description ->
+            description
+
+          variant == "monitor" ->
+            "Monitor"
+
+          variant in ["task", "cursortask", "spawn_subagent"] ->
+            "Task"
+
+          variant in ["taskoutput", "task_output"] ->
+            "Task output"
+
+          variant != "" ->
+            variant
+
+          is_binary(command) ->
+            if utf16_length(command) > 80, do: cut_utf16(command, 77) <> "...", else: command
+
+          true ->
+            nil
+        end
+
+      if name, do: Map.put(call, "title", name), else: call
+    else
+      call
+    end
+  end
+
+  defp grok_title(call), do: call
+
+  defp utf16_length(text),
+    do: text |> String.to_charlist() |> Enum.reduce(0, &(&2 + if(&1 > 0xFFFF, do: 2, else: 1)))
+
+  # The first `units` UTF-16 code units of `text`, never half a character or half an
+  # emoji sequence.
+  defp cut_utf16(text, units) do
+    {kept, _} =
+      text
+      |> String.graphemes()
+      |> Enum.reduce_while({[], 0}, fn grapheme, {kept, used} ->
+        width = utf16_length(grapheme)
+
+        if used + width > units,
+          do: {:halt, {kept, used}},
+          else: {:cont, {[grapheme | kept], used + width}}
+      end)
+
+    kept |> Enum.reverse() |> Enum.join()
+  end
+
+  # A command's exit code decides how it ended; one that exited cleanly and has said
+  # nothing yet is still going.
+  defp grok_status(%{"rawOutput" => %{"type" => "Bash"} = output} = call) do
+    code =
+      Enum.find_value(["exit_code", "exitCode", "code"], fn key ->
+        if is_integer(output[key]), do: output[key]
+      end)
+
+    text = String.trim(content_text(call["content"]) || raw_output(output) || "")
+
+    cond do
+      code == nil ->
+        call
+
+      code != 0 ->
+        Map.put(call, "status", "failed")
+
+      text == "" and call["status"] not in ["completed", "failed"] ->
+        Map.put(call, "status", "in_progress")
+
+      true ->
+        Map.put(call, "status", "completed")
+    end
+  end
+
+  defp grok_status(%{"status" => "completed", "kind" => "execute"} = call) do
+    text = content_text(call["content"]) || ""
+
+    if text =~ ~r/Exit Code:\s*-?(?!0\b)\d+/i,
+      do: Map.put(call, "status", "failed"),
+      else: call
+  end
+
+  defp grok_status(call), do: call
+
+  # A write to the plan file of a Grok session shows as the thread's plan while Grok is
+  # still in plan mode (`HalC2.Acp.GrokPlan`).
+  defp plan_file(%{turn: %{ids: %{driver: driver}}} = state, call) do
+    markdown =
+      if HalC2.Acp.driver(driver) == "grok",
+        do: HalC2.Acp.GrokPlan.markdown(call, Map.get(state, :plan_prefixes, []))
+
+    if markdown in [nil, ""] do
+      state
+    else
+      file = plan_file_native(state)
+      state = state |> flush() |> ensure_item(file, :plan) |> finish_plan(file, markdown)
+
+      %{state | items: Map.update!(state.items, file, &Map.put(&1, :markdown, markdown))}
+    end
+  end
+
+  defp plan_file(state, _call), do: state
+
+  # One plan item per run: a later plan-mode turn must not rewrite the earlier plan.
+  defp plan_file_native(state), do: "plan:grok-file:#{state.turn.ids.run}"
+
   # The subagent's own session streams under another session id: its answer goes to
   # its child thread. Updates for a session no subagent has named yet wait for it.
   defp child_session?(session, state),
@@ -2397,12 +3063,18 @@ defmodule HalC2.Acp.ThreadRuntime do
       is_binary(session) and state.subagents != %{} and state.session_id != nil and
         session != state.session_id
 
+  # An update for a session of the agent's that is not the thread's, such as one it
+  # started by itself, is not the thread's to show.
+  defp foreign_session?(session, state),
+    do: is_binary(session) and is_binary(state.session_id) and session != state.session_id
+
   # OpenCode 2 reports a child session in its own notification once the client asks
   # for them (`opencode/child-session-updates`): the child's updates, and how its run
   # ended. That end is the only word of a background child that fails: it never
   # reports back to its parent (upstream pingdotgg/t3code#21979), so every call
   # attached to the child ends with it, a steer that joined its run included. A
-  # grandchild's updates are its parent subagent's work, not a call the MC names.
+  # grandchild's updates and end are its parent subagent's work, not a call the MC
+  # names, and a report replayed while a session loads was settled when it first came.
   defp opencode_child(%{"type" => "update", "update" => %{} = update} = params, state) do
     session = params["childSessionId"]
 
@@ -2413,22 +3085,33 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp opencode_child(
-         %{"type" => "status", "childSessionId" => session, "status" => status},
-         state
+         %{
+           "type" => "status",
+           "childSessionId" => session,
+           "parentSessionId" => parent,
+           "status" => status
+         },
+         %{replaying: false, session_id: parent} = state
        )
-       when is_binary(session) and status in ["completed", "failed", "interrupted"],
+       when is_binary(session) and is_binary(parent) and
+              status in ["completed", "failed", "interrupted"],
        do: end_task(state, session, status)
 
   defp opencode_child(_params, state), do: state
 
-  defp child_update(%{"sessionId" => session, "update" => update}, state) do
+  @doc false
+  def child_update(%{"sessionId" => session, "update" => update}, state) do
     case Enum.find(state.subagents, fn {_id, entry} -> entry.session == session end) do
       {id, %{sub: sub} = entry} ->
         sub =
           case update do
             %{"sessionUpdate" => "agent_message_chunk", "content" => %{"text" => text}}
             when is_binary(text) ->
-              NativeSubagent.append(sub, text)
+              child_text(sub, update["messageId"], text)
+
+            %{"sessionUpdate" => kind, "toolCallId" => call_id}
+            when kind in ["tool_call", "tool_call_update"] and is_binary(call_id) ->
+              child_tool(sub, call_id, update, state)
 
             _ ->
               sub
@@ -2441,9 +3124,150 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # A subagent's own tool call, in its child thread, in the same item shapes
+  # the parent thread's calls take.
+  # An update carries only what changed, so it is merged into the call the child
+  # announced before the item is computed, as the parent's calls are. A tool call also
+  # ends the message before it: what the child says after it is a new message.
+  defp child_tool(sub, call_id, call, state) do
+    calls = Map.get(sub, :calls, %{})
+    changed = call |> Enum.reject(fn {_key, value} -> is_nil(value) end) |> Map.new()
+    call = Map.merge(Map.get(calls, call_id, %{}), changed)
+    {type, status, fields} = child_item(call, state)
+
+    sub
+    |> Map.merge(%{
+      calls: Map.put(calls, call_id, compact_child_call(call, fields)),
+      segment: Map.get(sub, :segment, 0) + 1
+    })
+    |> NativeSubagent.item("cursor-task-tool:#{call_id}", type, status, fields)
+  end
+
+  # What the next sparse update needs of a call, and no more: the output is kept as the
+  # bounded text the item shows (the cache lives in memory and in the durable checkpoint),
+  # beside the raw fields `child_item/2` reads the exit code, line counts and results from.
+  defp compact_child_call(call, fields) do
+    output = fields["output"] || fields["diffStr"]
+
+    raw =
+      with %{} = raw <- call["rawOutput"] do
+        raw
+        |> Map.take(["results", "linesAdded", "linesRemoved", "exitCode", "metadata"])
+        |> Map.update("metadata", nil, &Map.take(&1 || %{}, ["exit"]))
+        |> Map.reject(fn {_key, value} -> is_nil(value) end)
+      end
+
+    call
+    |> Map.put(
+      "content",
+      if(is_binary(output),
+        do: [%{"type" => "content", "content" => %{"type" => "text", "text" => output}}]
+      )
+    )
+    |> Map.put("rawOutput", raw)
+    |> Map.reject(fn {_key, value} -> is_nil(value) end)
+  end
+
+  # The child's text, one message per message id (one per stretch between tool calls
+  # when the agent names none), so "Checking", a tool and "Done" stay in that order.
+  defp child_text(sub, _message_id, ""), do: sub
+
+  defp child_text(sub, message_id, text) do
+    key = message_id || "segment-#{Map.get(sub, :segment, 0)}"
+    chunks = Map.update(Map.get(sub, :chunks, %{}), key, text, &(&1 <> text))
+
+    sub
+    |> Map.put(:chunks, chunks)
+    |> NativeSubagent.item("cursor-task-message:#{key}", "assistant_message", "completed", %{
+      "text" => chunks[key]
+    })
+  end
+
+  @doc false
+  # The item type, status and fields a subagent's tool call is shown with.
+  def child_item(call, state) do
+    {kind, fields} = tool_shape(call, state)
+
+    type =
+      case kind do
+        :command -> "command_execution"
+        :file -> "file_change"
+        :search -> "file_search"
+        :web -> "web_search"
+        _ -> "dynamic_tool"
+      end
+
+    status =
+      cond do
+        # A tool the agent itself closed as never finished when its run ended.
+        get_in(call, ["_meta", "interrupted"]) == true ->
+          "interrupted"
+
+        # OpenCode reports a shell command's non-zero exit in its metadata alone, on a
+        # call it completes; Cursor's plain `exitCode` is not a failed tool by itself.
+        call["status"] == "completed" and kind == :command and
+            match?(
+              %{"metadata" => %{"exit" => code}} when is_integer(code) and code != 0,
+              call["rawOutput"]
+            ) ->
+          "failed"
+
+        call["status"] == "completed" ->
+          "completed"
+
+        call["status"] == "failed" ->
+          "failed"
+
+        true ->
+          "running"
+      end
+
+    # The child thread keeps the last `CommandTail.kept/0` bytes, as the parent's does.
+    output = bounded_output(content_text(call["content"]) || raw_output(call["rawOutput"]))
+
+    fields =
+      fields
+      |> then(fn fields ->
+        cond do
+          kind == :command and is_binary(output) -> Map.put(fields, "output", output)
+          kind == :file and is_binary(output) -> Map.put(fields, "diffStr", output)
+          kind == :tool and is_binary(output) -> Map.put(fields, "output", output)
+          true -> fields
+        end
+      end)
+      |> then(fn fields ->
+        case call["rawOutput"] do
+          %{"results" => results} when is_list(results) and kind == :search ->
+            Map.put(fields, "results", results)
+
+          %{"linesAdded" => added, "linesRemoved" => removed}
+          when is_integer(added) and is_integer(removed) and kind == :file ->
+            Map.merge(fields, %{"additions" => added, "deletions" => removed})
+
+          _ ->
+            fields
+        end
+      end)
+      |> then(fn fields ->
+        case kind == :command && reported_exit(call["rawOutput"]) do
+          code when is_integer(code) -> Map.put(fields, "exitCode", code)
+          _ -> fields
+        end
+      end)
+
+    {type, status, fields}
+  end
+
   # Kimi Code creates its Agent call before its input has streamed in, so its subagent
   # starts unnamed and is named once the input is whole. The subagent's work and its
   # end are in the session's records (`HalC2.Acp.Kimi`), read while it runs.
+  # A Grok subagent task with no description is named after the tool ("Task").
+  defp grok_task_title(%{turn: %{ids: %{driver: driver}}}, call) do
+    if HalC2.Acp.driver(driver) == "grok", do: non_empty(call["title"], nil)
+  end
+
+  defp grok_task_title(_state, _call), do: nil
+
   defp subagent_call(%{kimi: true} = state, id, call) do
     state = flush(state)
     input = call["rawInput"] || %{}
@@ -2510,11 +3334,13 @@ defmodule HalC2.Acp.ThreadRuntime do
             sub:
               NativeSubagent.start(state.turn.ids, id, %{
                 "prompt" => prompt,
-                "title" => input["description"],
+                "title" => input["description"] || grok_task_title(state, call),
                 # A subagent the call names no model for ran on the session's own.
                 "model" => input["model"] || state.model
               }),
-            session: nil,
+            # An agent that streams the subagent's own session names it on the
+            # call (Cursor's nested task updates); others name it in the result.
+            session: get_in(call, ["_meta", "childSessionId"]),
             done: false,
             named: prompt != nil
           }
@@ -2531,7 +3357,18 @@ defmodule HalC2.Acp.ThreadRuntime do
           entry
       end
 
-    fresh = entry.session == nil && (reported_session(call["rawOutput"]) || child_session(output))
+    fresh =
+      cond do
+        entry.session == nil ->
+          reported_session(call["rawOutput"]) || child_session(output)
+
+        not Map.has_key?(state.subagents, id) ->
+          entry.session
+
+        true ->
+          nil
+      end
+
     entry = if fresh, do: %{entry | session: fresh}, else: entry
 
     {waiting, orphans} =
@@ -2565,6 +3402,11 @@ defmodule HalC2.Acp.ThreadRuntime do
       call["status"] in ["completed", "failed"] and not entry.done and stopped?(state, call) ->
         sub = NativeSubagent.finish(entry.sub, "interrupted", nil)
         %{state | subagents: Map.put(state.subagents, id, %{entry | sub: sub, done: true})}
+
+      # A task the agent closed as never finished when its run ended takes the run's
+      # outcome, which ends it with the turn (`end_turn_subagents`).
+      get_in(call, ["_meta", "interrupted"]) == true and not entry.done ->
+        state
 
       call["status"] in ["completed", "failed"] and not entry.done ->
         status = if call["status"] == "failed", do: "failed", else: "completed"
@@ -2666,10 +3508,14 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp poll_wire(state), do: state
 
-  # A turn's foreground subagents end with it: Kimi may have exited, or the turn been
-  # interrupted, before the subagent's end reached its record or its call.
-  defp end_kimi_subagents(%{kimi: true} = state, status) do
-    state = read_wire(state)
+  # A turn's foreground subagents end with it: the agent may have exited, or
+  # the turn been interrupted, before a subagent that never reported back
+  # reached its record or its call. It takes the run's outcome — a run the
+  # agent itself cancelled (not the user's stop) cancels its subagents.
+  # Background subagents outlive the turn.
+  defp end_turn_subagents(state, status) do
+    state = if state.kimi, do: read_wire(state), else: state
+    status = if status == "interrupted" and state.agent_cancelled, do: "cancelled", else: status
 
     subagents =
       Map.new(state.subagents, fn
@@ -2682,10 +3528,8 @@ defmodule HalC2.Acp.ThreadRuntime do
           other
       end)
 
-    %{state | subagents: subagents}
+    %{state | subagents: subagents, agent_cancelled: false}
   end
-
-  defp end_kimi_subagents(state, _status), do: state
 
   @kimi_ends %{
     "subagent.completed" => "completed",
@@ -2990,15 +3834,21 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp non_empty(_, fallback), do: fallback
 
-  defp chunk(state, %{"content" => %{"type" => "text", "text" => text}} = u, kind) do
+  defp chunk(state, %{"content" => %{"type" => "text", "text" => text}} = u, kind)
+       when is_binary(text) do
+    text = String.slice(text, 0, @max_chunk)
     # Message ids are optional and need only be unique within a turn, so each turn
     # gets its own messages rather than overwriting an earlier turn's.
-    key = "#{kind}:#{state.turn.ids.run}:#{u["messageId"] || "current"}"
+    # What the agent writes after a tool starts a new message, so the text, the tool
+    # and the later text keep their order.
+    key = message_key(state.turn, kind, u["messageId"])
 
     state =
       if kind == :assistant, do: %{state | turn: Antigravity.reply(state.turn, text)}, else: state
 
-    state |> ensure_item(key, kind) |> buffer(key, "text", text)
+    if Map.has_key?(state.items, key) or String.trim(text) != "",
+      do: state |> ensure_item(key, kind) |> buffer(key, "text", text),
+      else: state
   end
 
   # Content the client cannot render is shown as a placeholder, never its data.
@@ -3007,7 +3857,23 @@ defmodule HalC2.Acp.ThreadRuntime do
     chunk(state, %{u | "content" => %{"type" => "text", "text" => placeholder(content)}}, kind)
   end
 
+  # A text part without text is dropped below, not named as an unknown kind.
+  defp chunk(state, %{"content" => %{"type" => type}} = u, kind)
+       when is_binary(type) and type != "text" do
+    text = "[Unsupported ACP content: #{meta(type, "unknown")}]"
+    chunk(state, %{u | "content" => %{"type" => "text", "text" => text}}, kind)
+  end
+
   defp chunk(state, _u, _kind), do: state
+
+  @doc false
+  # The item key of a turn's message. A turn begun before v19 has no segment and
+  # keeps the key it started with, so an upgrade does not split its message.
+  def message_key(%{segment: segment} = turn, kind, message_id),
+    do: "#{kind}:#{turn.ids.run}:#{segment}:#{message_id || "current"}"
+
+  def message_key(turn, kind, message_id),
+    do: "#{kind}:#{turn.ids.run}:#{message_id || "current"}"
 
   defp placeholder(%{"type" => "image"} = content),
     do: "[ACP image (#{meta(content["mimeType"], "unknown type")})#{uri(content["uri"])}]"
@@ -3077,6 +3943,11 @@ defmodule HalC2.Acp.ThreadRuntime do
     do: Antigravity.antigravity?(agent)
 
   defp antigravity_turn?(_state), do: false
+
+  defp cursor_turn?(%{agent: agent}) when not is_nil(agent),
+    do: HalC2.Acp.driver(agent) == "cursor"
+
+  defp cursor_turn?(_state), do: false
 
   # Antigravity's `start_subagent` tool starts a batch of subagents. The
   # batch shows its own output, or else its detail, or else its title.
@@ -3225,25 +4096,55 @@ defmodule HalC2.Acp.ThreadRuntime do
     )
   end
 
+  # The command a tool ran, wherever the agent put it: as text, as a list, as a
+  # program and its arguments, or only between backticks in the tool's title.
+  defp command_text(%{"command" => command, "args" => [_ | _] = args}, _title)
+       when is_binary(command),
+       do: Enum.join([command | Enum.filter(args, &is_binary/1)], " ")
+
   defp command_text(%{"command" => command}, _title) when is_binary(command), do: command
   defp command_text(%{"command" => [_ | _] = argv}, _title), do: Enum.join(argv, " ")
-  defp command_text(_input, title), do: title || ""
+
+  defp command_text(_input, title) when is_binary(title) do
+    case Regex.run(~r/`([^`]+)`/, title) do
+      [_, command] -> command
+      nil -> title
+    end
+  end
+
+  defp command_text(_input, _title), do: ""
 
   defp finish_tool(state, id, call) do
     %{kind: kind} = state.items[id]
 
-    # OpenCode reports a shell command's exit in its metadata, and a non-zero one as
-    # completed like any other.
+    # A command's reported exit code is shown either way; whether it failed
+    # the tool depends on who reported it. OpenCode reports a shell command's
+    # exit in its metadata alone, where a non-zero one failed the command,
+    # and other agents' plain non-zero `exitCode` with no failed status of
+    # their own failed it too. Antigravity and Cursor report a plain
+    # `exitCode` on a completed call: the command ran, and its exit code is
+    # not a failed tool by itself.
     exit_code = kind == :command && reported_exit(call["rawOutput"])
+
+    failed_exit? =
+      match?(
+        %{"metadata" => %{"exit" => code}} when is_integer(code) and code != 0,
+        call["rawOutput"]
+      ) or
+        (is_integer(exit_code) and exit_code != 0 and
+           not (antigravity_turn?(state) or cursor_turn?(state)))
 
     status =
       cond do
         # A tool the user's stop cut off was stopped: OpenCode 1 rewrites it as an
         # error, and agents report a stopped command done like any other.
         stopped?(state, call) -> "interrupted"
-        call["status"] == "failed" -> "failed"
+        # A tool the agent itself closed as never finished when its run ended.
+        get_in(call, ["_meta", "interrupted"]) == true -> "interrupted"
+        # A tool the agent cancelled did not complete (upstream #25559).
+        call["status"] in ["failed", "cancelled"] -> "failed"
         kind == :command and state.interrupted -> "interrupted"
-        is_integer(exit_code) and exit_code != 0 -> "failed"
+        failed_exit? -> "failed"
         true -> "completed"
       end
 
@@ -3285,7 +4186,28 @@ defmodule HalC2.Acp.ThreadRuntime do
           end)
 
         :file ->
-          Map.put(entity, "diffStr", output || entity["diffStr"] || "")
+          entity
+          |> Map.put("diffStr", output || entity["diffStr"] || "")
+          # A file named only once the call completes (a generated image's path).
+          |> then(fn entity ->
+            case call do
+              %{"locations" => [%{"path" => path} | _]} when is_binary(path) ->
+                Map.put(entity, "fileName", path)
+
+              _ ->
+                entity
+            end
+          end)
+          |> then(fn entity ->
+            case call["rawOutput"] do
+              %{"linesAdded" => added, "linesRemoved" => removed}
+              when is_integer(added) and is_integer(removed) ->
+                Map.merge(entity, %{"additions" => added, "deletions" => removed})
+
+              _ ->
+                entity
+            end
+          end)
 
         :tool ->
           entity
@@ -3296,8 +4218,23 @@ defmodule HalC2.Acp.ThreadRuntime do
           )
 
         # What the call named when it was announced stays; the end fills in the rest.
+        # Structured results the agent reports at the end (Cursor's searches)
+        # are the results, replacing what the announcement could only name.
         :search ->
-          Map.merge(search_fields(call), entity)
+          case call["rawOutput"] do
+            %{"results" => [_ | _] = results} = raw ->
+              entity
+              |> Map.put("results", results)
+              |> then(
+                &if(is_binary(raw["pattern"]),
+                  do: Map.put(&1, "pattern", raw["pattern"]),
+                  else: &1
+                )
+              )
+
+            _ ->
+              Map.merge(search_fields(call), entity)
+          end
 
         # OpenCode announces a web call before its input.
         :web ->
@@ -3336,13 +4273,22 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp stopped?(state, call), do: state.interrupted and call["status"] == "failed"
 
   defp reported_exit(%{"metadata" => %{"exit" => code}}) when is_integer(code), do: code
+  defp reported_exit(%{"exitCode" => code}) when is_integer(code), do: code
   defp reported_exit(_), do: nil
 
-  defp raw_output(%{"output" => output}) when is_binary(output), do: output
+  defp raw_output(%{"output" => output}) when is_binary(output) or is_list(output),
+    do: raw_output(output)
 
   defp raw_output(%{"combinedOutput" => output}) when is_binary(output), do: output
   defp raw_output(%{"combined_output" => output}) when is_binary(output), do: output
   defp raw_output(output) when is_binary(output), do: output
+
+  # Output sent as the list of its bytes is the text they spell.
+  defp raw_output([_ | _] = bytes) do
+    if Enum.all?(bytes, &(is_integer(&1) and &1 in 0..255)),
+      do: bytes |> :erlang.list_to_binary() |> String.replace_invalid()
+  end
+
   defp raw_output(_), do: nil
 
   # The commands and skills a session offers reach the composer as the agent
@@ -3369,8 +4315,21 @@ defmodule HalC2.Acp.ThreadRuntime do
   # ACP's `fs/read_text_file`: an absolute path that stays, once symlinks resolve,
   # in the workspace or among the uploads, from `line` (1-based) for `limit` lines.
   defp read_text_file(cwd, %{"path" => path} = params) when is_binary(path) do
-    with true <- Path.type(path) == :absolute,
-         {:ok, real} <- HalC2.Paths.real(path),
+    if Path.type(path) == :absolute,
+      do: read_absolute(cwd, path, params),
+      else:
+        {:error,
+         %{
+           "code" => -32602,
+           "message" => "ACP fs requests require an absolute path, received '#{path}'."
+         }}
+  end
+
+  defp read_text_file(_cwd, _params),
+    do: {:error, %{"code" => -32602, "message" => "fs/read_text_file needs a path"}}
+
+  defp read_absolute(cwd, path, params) do
+    with {:ok, real} <- HalC2.Paths.real(path),
          true <- Enum.any?([cwd, HalC2.Attachments.dir()], &inside?(real, &1)),
          {:ok, %File.Stat{type: :regular, size: size}} when size <= @max_read_bytes <-
            File.stat(real),
@@ -3382,9 +4341,6 @@ defmodule HalC2.Acp.ThreadRuntime do
         {:error, %{"code" => -32002, "message" => "#{path} cannot be read from this workspace"}}
     end
   end
-
-  defp read_text_file(_cwd, _params),
-    do: {:error, %{"code" => -32602, "message" => "fs/read_text_file needs a path"}}
 
   defp inside?(real, root) do
     case HalC2.Paths.real(root) do
@@ -3448,9 +4404,12 @@ defmodule HalC2.Acp.ThreadRuntime do
     # A subagent's session keeps its own limit of not delegating further:
     # its ask to start a subagent is refused where it stands, never raised
     # to the user (its other asks follow the thread's access mode as usual).
-    if HalC2.Acp.driver(state.agent) == "opencode" and is_binary(params["sessionId"]) and
-         params["sessionId"] != state.session_id and
-         String.downcase(call["name"] || call["title"] || "") == "task" do
+    # OpenCode 2 asks for a child on the thread's own session and names the
+    # child in `_meta` (only past its default depth limit, which fails the
+    # call without asking).
+    if HalC2.Acp.driver(state.agent) == "opencode" and
+         is_map(get_in(call, ["_meta", "opencode/child-session"])) and
+         String.downcase(call["name"] || "") == "subagent" do
       Connection.respond(conn, id, {:ok, %{"outcome" => outcome(options, "decline")}})
       state
     else
@@ -3652,12 +4611,12 @@ defmodule HalC2.Acp.ThreadRuntime do
     end)
   end
 
-  # `/compact` alone in an Antigravity, OpenCode 1 or Grok thread compacts its
+  # `/compact` alone in an Antigravity, OpenCode 1, Cursor or Grok thread compacts its
   # conversation, and none of them says so; the work log does, when the turn completes.
   defp compacted(state, "completed") do
     turn = state.turn
 
-    if turn && Entities.driver(turn.ids) in ["antigravity", "opencode", "grok"] &&
+    if turn && Entities.driver(turn.ids) in ["antigravity", "opencode", "cursor", "grok"] &&
          String.trim(turn.text || "") == "/compact" &&
          Map.get(turn, :attachments, []) == [],
        do: compaction(state),
@@ -3707,7 +4666,7 @@ defmodule HalC2.Acp.ThreadRuntime do
       state
       |> close_batches(status)
       |> close_open_items(status)
-      |> end_kimi_subagents(status)
+      |> end_turn_subagents(status)
       |> cancel_requests()
 
     finish(state, status, failure)
@@ -3739,7 +4698,12 @@ defmodule HalC2.Acp.ThreadRuntime do
     # Cursor invokes a skill by its slash name; HAL-C2's composer mentions one as `$name`.
     message =
       if turn.ids.driver == "cursor" and message =~ @skill_mention,
-        do: HalC2.Acp.cursor_skill_mentions(message, turn.cwd),
+        do:
+          HalC2.Acp.cursor_skill_mentions(
+            message,
+            HalC2.Orchestration.Entities.instance(turn.ids),
+            turn.cwd
+          ),
         else: message
 
     message =
@@ -3953,8 +4917,9 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
-  # The labels chosen for each question, by question text; free text is "Other"
-  # with the text as a note.
+  # The labels chosen for each question, by question text, in the order Grok asked;
+  # free text is "Other" with the text as a note. The chosen option's preview goes
+  # back too, for a question that takes a single answer.
   defp xai_answers(params, answers) do
     answered =
       for question <- params["questions"] || [],
@@ -3963,21 +4928,40 @@ defmodule HalC2.Acp.ThreadRuntime do
               answers[question["id"] || question["question"]] || answers[question["question"]]
             ),
           values != [] do
-        labels = for option <- question["options"] || [], do: option["label"]
-        {chosen, notes} = Enum.split_with(values, &(&1 in labels))
-        {question["question"], if(chosen == [], do: ["Other"], else: chosen), notes}
+        options = Map.new(question["options"] || [], &{&1["label"], &1})
+        {chosen, notes} = Enum.split_with(values, &Map.has_key?(options, &1))
+
+        preview =
+          if question["multiSelect"] != true,
+            do:
+              Enum.find_value(chosen, fn label ->
+                case String.trim(options[label]["preview"] || "") do
+                  "" -> nil
+                  text -> text
+                end
+              end)
+
+        annotation =
+          %{}
+          |> then(&if(preview, do: Map.put(&1, "preview", preview), else: &1))
+          |> then(&if(notes != [], do: Map.put(&1, "notes", Enum.join(notes, "\n")), else: &1))
+
+        {question["question"], if(chosen == [], do: ["Other"], else: chosen), annotation}
       end
 
     annotations =
-      for {text, _chosen, [_ | _] = notes} <- answered,
-          into: %{},
-          do: {text, %{"notes" => Enum.join(notes, "\n")}}
+      for {text, _chosen, annotation} <- answered, annotation != %{}, do: {text, annotation}
 
     %{
       "outcome" => "accepted",
-      "answers" => Map.new(answered, fn {text, chosen, _} -> {text, chosen} end)
+      "answers" => HalC2.Acp.Ordered.new(for {text, chosen, _} <- answered, do: {text, chosen})
     }
-    |> then(&if(annotations == %{}, do: &1, else: Map.put(&1, "annotations", annotations)))
+    |> then(
+      &if(annotations == [],
+        do: &1,
+        else: Map.put(&1, "annotations", HalC2.Acp.Ordered.new(annotations))
+      )
+    )
   end
 
   defp answer_values(values) when is_list(values),

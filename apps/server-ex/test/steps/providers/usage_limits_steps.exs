@@ -879,6 +879,43 @@ defmodule HalC2.Steps.Providers.UsageLimits do
     context
   end
 
+  # Upstream #15836. Both readings fail the same way to the MC: a usage read Claude
+  # refuses, once with the account signed out as well. Failing from the first check, as
+  # a failed check keeps an earlier good reading.
+  step "reading Claude's usage limits failed or found Claude signed out", context do
+    World.put_env("FAKE_CLAUDE_USAGE", "error")
+    context = context |> World.fake_providers() |> limits()
+
+    for signed_out <- ["", "1"] do
+      World.put_env("FAKE_CLAUDE_NO_ACCOUNT", signed_out)
+      {_, _} = World.call!(context, "server.refreshProviders", %{"instanceId" => "claudeAgent"})
+      {limits, _} = usage_limits(context, "claudeAgent")
+      assert %{"windows" => [], "unavailable" => %{"reason" => "probeFailed"}} = limits
+    end
+
+    context
+  end
+
+  # Signed back in, the next look reads Claude's limits rather than the failure.
+  step "the user opens the usage limits again", context do
+    World.put_env("FAKE_CLAUDE_USAGE", "")
+    World.put_env("FAKE_CLAUDE_NO_ACCOUNT", "")
+    context = Map.put(context, :checks_before, checks(context))
+
+    {_, context} =
+      World.call!(context, "server.refreshProviders", %{"instanceId" => "claudeAgent"})
+
+    context
+  end
+
+  step "Claude's usage limits are read again", context do
+    assert checks(context).claude == context.checks_before.claude + 1
+    {limits, context} = usage_limits(context, "claudeAgent")
+    assert %{"usedPercent" => 30} = window(limits, "five_hour")
+    refute Map.has_key?(limits, "unavailable")
+    context
+  end
+
   # --- background checks off -------------------------------------------------------
 
   step "the health check interval is set to never", context do

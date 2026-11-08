@@ -59,21 +59,7 @@ defmodule HalC2.ComposerContext do
 
   # The text with each quote link numbered, and the block that carries the quotes.
   defp cited(text) do
-    found =
-      if String.contains?(text, "-citation://v1/") do
-        for [{start, len}, {hs, hl}] <- Regex.scan(@citation, text, return: :index),
-            citation = citation(binary_part(text, hs, hl)),
-            citation != nil do
-          %{
-            source: binary_part(text, start, len),
-            citation: citation,
-            start: start,
-            stop: start + len
-          }
-        end
-      else
-        []
-      end
+    found = find_citations(text)
 
     if found == [] do
       {text, ""}
@@ -95,6 +81,39 @@ defmodule HalC2.ComposerContext do
         end
 
       {body, "\n\n<assistant_citations>\n#{description}\n[\n#{quotes}\n]\n</assistant_citations>"}
+    end
+  end
+
+  defp find_citations(text) do
+    if String.contains?(text, "-citation://v1/") do
+      for [{start, len}, {hs, hl}] <- Regex.scan(@citation, text, return: :index),
+          citation = citation(binary_part(text, hs, hl)),
+          citation != nil do
+        %{
+          source: binary_part(text, start, len),
+          citation: citation,
+          start: start,
+          stop: start + len
+        }
+      end
+    else
+      []
+    end
+  end
+
+  @doc """
+  A message's text with each quote link read as the words it cited, then `Comment:` and
+  the user's comment, for a writer that reads the thread (a title) and not the wire form.
+  """
+  def plain_citations(text) do
+    case find_citations(text) do
+      [] ->
+        text
+
+      found ->
+        replace(text, found, fn %{citation: c} ->
+          c["text"] <> if(c["comment"], do: "\nComment: " <> c["comment"], else: "")
+        end)
     end
   end
 

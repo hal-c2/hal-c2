@@ -709,6 +709,9 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
   # --- promoting to a steer ------------------------------------------------------------
 
   step "the user promotes {string} to a steer", %{args: [text]} = context do
+    # The fake keeps the turn working through a steer, so it is still running when checked.
+    File.write!(Path.join(context.mc.home, "keep-turn"), "")
+
     queue_command(context, "queued-message.promote-to-steer", %{
       "queuedRunId" => run_for(context, text)["id"],
       "targetRunId" => context.running

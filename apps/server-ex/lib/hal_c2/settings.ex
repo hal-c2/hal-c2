@@ -56,7 +56,7 @@ defmodule HalC2.Settings do
                      newWorktreesStartFromOrigin worktreeSubmodules defaultAutoPull
                      defaultProjectScripts enableAgentBrowserAccess enableAgentDeviceAccess
                      textGenerationModelSelection sourceControlWriterModelSelection
-                     sourceControlWritingStyle pullRequestMergeMethod sidebarAutoSettleOnMerge
+                     sourceControlWritingStyle threadTitleInstructions pullRequestMergeMethod sidebarAutoSettleOnMerge
                      sidebarAutoSettleAfterDays continueThreadsAfterServerUpdate
                      responseStreamingMode projectEnvironment projectEnvironmentFile)
 
@@ -894,8 +894,9 @@ defmodule HalC2.Settings do
     {old, new} = {binaries.(state.settings), binaries.(settings)}
 
     for id <- Enum.uniq(Map.keys(old) ++ Map.keys(new)),
-        old[id] != new[id],
-        do: HalC2.Acp.forget(id)
+        old[id] != new[id] do
+      if new[id] == nil, do: HalC2.Acp.drop(id), else: HalC2.Acp.forget(id)
+    end
 
     HalC2.Watchers.notify(state.watchers, {:hal_c2_settings, node(), settings})
 

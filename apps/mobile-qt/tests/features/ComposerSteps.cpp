@@ -7,7 +7,10 @@
 #include <QGuiApplication>
 #include <QInputMethod>
 #include <QQuickItem>
+#include <QRegularExpression>
+#include <QUrl>
 
+#include <algorithm>
 #include <functional>
 #include <utility>
 
@@ -15,6 +18,8 @@
 #include "Harness.h"
 #include "NativeShell.h"
 #include "SettingsController.h"
+#include "ShellBridge.h"
+#include "ThreadStore.h"
 #include "Phone.h"
 #include "World.h"
 
@@ -417,8 +422,9 @@ void openChip(World& world, const QString& name) {
 // A choice an open picker lists, as a list row or, folded, a menu row.
 bool offers(QQuickItem* candidate, const QString& label) {
   if (candidate->inherits("QQuickMenuItem")) return candidate->isVisible() && candidate->property("text").toString().compare(label, Qt::CaseInsensitive) == 0;
-  const auto* text = candidate->inherits("QQuickItemDelegate") ? candidate->property("contentItem").value<QQuickItem*>() : nullptr;
-  return text && text->property("text").toString().compare(label, Qt::CaseInsensitive) == 0;
+  // A picker's row lays its label out beside marks: the row's own text names it.
+  return candidate->inherits("QQuickItemDelegate") && candidate->isVisible() &&
+         candidate->property("text").toString().compare(label, Qt::CaseInsensitive) == 0;
 }
 
 // Claude offers Sonnet and Opus, and the thread runs on Sonnet: the user picks
@@ -698,6 +704,337 @@ const Steps steps([] {
     QQuickItem* action = world.item(S("primaryAction"));
     world.waitFor([&] { return action->property("label").toString() == c[0]; },
                   [&] { return S("the send control to read %1; it reads %2").arg(c[0], action->property("label").toString()); });
+  });
+
+  // ---- composer/queue-and-steer.feature: its Background, and the queue's rows.
+  step(S("a thread whose agent is working on a turn"), [working](World& world, const Captures&, const Table&) {
+    world.mc.label = S("My MacBook");
+    pairWithEnvironment(world);
+    world.thread = haveThread(world, S("Fix checkout"));
+    openThread(world, S("Fix checkout"));
+    editor(world);
+    working(world);
+  });
+  step(S("the follow-up behaviour setting is %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    saveOwnSetting(world.mc, S("followUpBehavior"), c[0]);
+    world.native().controller<SettingsController>()->writeDevice(S("followUpBehavior"), c[0]);
+    world.sync();
+  });
+  step(S("the user sends %1 the opposite way from the phone").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    typeMessage(world, c[0]);
+    // A long press on the send control offers the other way.
+    QQuickItem* action = world.item(S("primaryAction"));
+    world.hold(action,
+               [&] {
+                 QQuickItem* steer = world.find(S("sendModeSteer"));
+                 return steer != nullptr && steer->isVisible();
+               },
+               S("the steer way to send"));
+    world.tap(S("sendModeSteer"));
+    world.sync();
+  });
+  step(S("%1 steers the running turn").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return !commandsOf(world, S("message.dispatch")).isEmpty(); }, [&] { return S("the message; the MC has %1").arg(describeCommands(world)); });
+    const QJsonObject message = commandsOf(world, S("message.dispatch")).last();
+    expect(message.value(QLatin1String("text")) == c[0] && message.value(QLatin1String("deliveryIntent")) == QLatin1String("steer") &&
+               message.value(QLatin1String("dispatchMode")).toObject().value(QLatin1String("type")) == QLatin1String("start_immediately"),
+           S("the MC was sent %1").arg(show(message.toVariantMap())));
+  });
+  step(S("the user removes a queued message on the phone"), [queue, tapQueued](World& world, const Captures&, const Table&) {
+    queue(world, S("later"), {});
+    lastQueued = S("later");
+    tapQueued(world, S("queueRemove"), lastQueued);
+  });
+  step(S("the queued message is cancelled"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !commandsOf(world, S("queued-run.cancel")).isEmpty(); }, [&] { return S("the cancel; the MC has %1").arg(describeCommands(world)); });
+    const QList<QJsonObject> cancels = commandsOf(world, S("queued-run.cancel"));
+    expect(cancels.size() == 1 && cancels.first().value(QLatin1String("threadId")) == world.thread &&
+               cancels.first().value(QLatin1String("runId")).toString().startsWith(S("run-")),
+           S("the MC has %1").arg(describeCommands(world)));
+  });
+  step(S("%1 is queued").arg(kQuoted), [queue](World& world, const Captures& c, const Table&) {
+    queue(world, c[0], {});
+    lastQueued = c[0];
+  });
+  step(S("%1 and %1 are queued").arg(kQuoted), [queue](World& world, const Captures& c, const Table&) {
+    queue(world, c[0], {});
+    // `queue` starts each scenario afresh; the second one only adds.
+    FakeStreams& fake = world.mc.part<FakeStreams>();
+    const int ordinal = ++fake.ordinal;
+    const QString run = S("run-%1").arg(ordinal);
+    setEntity(world.mc, world.thread, S("message"), S("message:") + run, {{S("id"), S("message:") + run}, {S("role"), S("user")}, {S("text"), c[1]}});
+    setEntity(world.mc, world.thread, S("run"), run,
+              {{S("id"), run}, {S("ordinal"), ordinal}, {S("status"), S("queued")}, {S("queuePosition"), ordinal},
+               {S("userMessageId"), S("message:") + run}, {S("requestedAt"), kNow}});
+    world.sync();
+  });
+  // A queued row's control, unfolding the queue first.
+  const auto rowPart = [queuedRun](World& world, const QString& part, const QString& text) -> QQuickItem* {
+    const QString name = part + S("-") + queuedRun(world, text);
+    if (world.find(name) == nullptr && world.find(S("queueToggle")) != nullptr) world.tap(S("queueToggle"));
+    world.waitFor([&] { return world.find(name) != nullptr && world.find(name)->isVisible(); },
+                  [&] { return S("%1; the screen says: %2").arg(name, screenTexts(world)); });
+    return world.item(name);
+  };
+  // A queued follow-up that quotes the agent: its text holds the quote's link.
+  const auto quoting = [](const QString& quote) {
+    return S("see [Assistant quote](hal-c2-citation://v1/env-a/thread-1/msg-1?text=%1&start=0&end=%2&prefix=&suffix=)")
+        .arg(QString::fromLatin1(QUrl::toPercentEncoding(quote)).replace(QLatin1String("%20"), QLatin1String("+")))
+        .arg(quote.size());
+  };
+  step(S("the user queued a message quoting %1 from the agent's reply").arg(kQuoted), [queue, quoting](World& world, const Captures& c, const Table&) {
+    queue(world, quoting(c[0]), {});
+    lastQueued = quoting(c[0]);
+  });
+  step(S("the queued message reads %1, not a link").arg(kQuoted), [rowPart](World& world, const Captures& c, const Table&) {
+    QQuickItem* text = rowPart(world, S("queueText"), lastQueued);
+    expect(text->property("text").toString() == S("see ") + c[0], S("the row reads %1").arg(show(text->property("text"))));
+  });
+  step(S("editing it gives back the message with its quote"), [tapQueued](World& world, const Captures&, const Table&) {
+    tapQueued(world, S("queueEdit"), lastQueued);
+    world.waitFor([&] { return composer(world).value(S("text")).toString() == lastQueued; },
+                  [&] { return S("the composer is %1").arg(show(composer(world))); });
+  });
+  step(S("the user looks at %1 in the queue").arg(kQuoted), [rowPart](World& world, const Captures& c, const Table&) {
+    rowPart(world, S("queueText"), c[0]);
+  });
+  step(S("the user is offered to send %1 now, to edit it and to remove it").arg(kQuoted), [rowPart](World& world, const Captures& c, const Table&) {
+    QStringList offered;
+    for (const QString& part : {S("queueSendNow"), S("queueEdit"), S("queueRemove")}) {
+      if (rowPart(world, part, c[0])->isEnabled()) offered.append(part);
+    }
+    expect(offered.size() == 3 && rowPart(world, S("queueSendNow"), c[0])->property("text") == QLatin1String("Send now"),
+           S("the row offers %1").arg(offered.join(u", ")));
+  });
+  step(S("the user is not offered to move %1 in the queue").arg(kQuoted), [queuedRun](World& world, const Captures& c, const Table&) {
+    QStringList moves;
+    const std::function<void(QQuickItem*)> walk = [&](QQuickItem* item) {
+      // Remove is not a move.
+      static const QRegularExpression move(S("(?<![Rr]e)[Mm]ove|[Hh]andle|[Dd]rag|[Rr]eorder|[Pp]osition"));
+      if (item->isVisible() && move.match(item->objectName()).hasMatch()) moves.append(item->objectName());
+      for (QQuickItem* child : item->childItems()) walk(child);
+    };
+    walk(world.item(S("queueRow-") + queuedRun(world, c[0])));
+    expect(moves.isEmpty(), S("the row offers %1").arg(moves.join(u", ")));
+  });
+  const auto queuedAndHeld = [queue](World& world, const QStringList& texts) {
+    queue(world, texts.first(), {});
+    FakeStreams& fake = world.mc.part<FakeStreams>();
+    for (const QString& text : texts.mid(1)) {
+      const int ordinal = ++fake.ordinal;
+      const QString run = S("run-%1").arg(ordinal);
+      setEntity(world.mc, world.thread, S("message"), S("message:") + run, {{S("id"), S("message:") + run}, {S("role"), S("user")}, {S("text"), text}});
+      setEntity(world.mc, world.thread, S("run"), run,
+                {{S("id"), run}, {S("ordinal"), ordinal}, {S("status"), S("queued")}, {S("queuePosition"), ordinal},
+                 {S("userMessageId"), S("message:") + run}, {S("requestedAt"), kNow}});
+    }
+    for (const QVariant& entry : world.state(S("turn")).toMap().value(S("queue")).toList()) {
+      setEntity(world.mc, world.thread, S("run"), entry.toMap().value(S("runId")).toString(), {{S("queueHeld"), true}});
+    }
+    setEntity(world.mc, world.thread, S("run"), world.run, {{S("status"), S("completed")}, {S("completedAt"), kNow}});
+    updateRow(world.mc, world.thread, {{S("activeRunId"), QJsonValue::Null}});
+    world.sync();
+  };
+  step(S("%1, %1 and %1 are queued and held, and the turn is no longer running").arg(kQuoted),
+       [queuedAndHeld](World& world, const Captures& c, const Table&) { queuedAndHeld(world, {c[0], c[1], c[2]}); });
+  step(S("the user is offered to send %1 now instead of steering it").arg(kQuoted), [rowPart, queuedRun](World& world, const Captures& c, const Table&) {
+    QQuickItem* send = rowPart(world, S("queueSendNow"), c[0]);
+    world.waitFor([&] { return send->isEnabled(); }, S("Send now to be usable"));
+    expect(send->property("text") == QLatin1String("Send now"), S("the row offers %1").arg(send->property("text").toString()));
+    world.tap(send);
+    world.waitFor([&] { return !commandsOf(world, S("queued-run.start")).isEmpty(); }, [&] { return S("the MC has %1").arg(describeCommands(world)); });
+    expect(commandsOf(world, S("queued-run.start")).last().value(QLatin1String("runId")) == queuedRun(world, c[0]) &&
+               commandsOf(world, S("queued-message.promote-to-steer")).isEmpty(),
+           S("the MC has %1").arg(describeCommands(world)));
+  });
+  // The agent's question takes the composer from the queue. The MC closes it
+  // once it is answered.
+  const auto askQuestion = [](World& world) {
+    world.mc.effects.append([&world](const QJsonObject& command) {
+      if (command.value(QLatin1String("type")) != QLatin1String("runtime-request.respond") ||
+          command.value(QLatin1String("requestId")) != QLatin1String("request-queue"))
+        return;
+      setEntity(world.mc, world.thread, S("runtime-request"), S("request-queue"), {{S("status"), S("resolved")}});
+      setEntity(world.mc, world.thread, S("turn-item"), S("question-queue"), {{S("status"), S("completed")}});
+    });
+    FakeStreams& fake = world.mc.part<FakeStreams>();
+    setEntity(world.mc, world.thread, S("runtime-request"), S("request-queue"),
+              {{S("id"), S("request-queue")}, {S("status"), S("pending")}, {S("responseCapability"), QJsonObject{{S("type"), S("live")}}}});
+    setEntity(world.mc, world.thread, S("turn-item"), S("question-queue"),
+              {{S("id"), S("question-queue")}, {S("type"), S("user_input_request")}, {S("runId"), world.run}, {S("ordinal"), ++fake.ordinal},
+               {S("status"), S("waiting")}, {S("requestId"), S("request-queue")}, {S("updatedAt"), kNow},
+               {S("questions"), QJsonArray{QJsonObject{{S("id"), S("database")}, {S("header"), S("Database")}, {S("question"), S("Which database?")},
+                                                       {S("options"), QJsonArray{QJsonObject{{S("label"), S("Postgres")}, {S("description"), QString()}}}},
+                                                       {S("multiSelect"), false}, {S("allowCustomAnswer"), true}}}}});
+    world.sync();
+    world.waitFor([&] { return !world.state(S("turn")).toMap().value(S("questions")).toList().isEmpty(); },
+                  [&] { return S("the question; the turn is %1").arg(show(world.state(S("turn")))); });
+  };
+  step(S("the agent has asked the user a question"), [askQuestion](World& world, const Captures&, const Table&) { askQuestion(world); });
+  step(S("the agent asks which database to use"), [askQuestion](World& world, const Captures&, const Table&) { askQuestion(world); });
+  step(S("editing %1 is unavailable, saying %1").arg(kQuoted), [rowPart](World& world, const Captures& c, const Table&) {
+    QQuickItem* edit = rowPart(world, S("queueEdit"), c[0]);
+    world.waitFor([&] { return !edit->isEnabled(); }, S("Edit to be unavailable"));
+    expect(edit->property("toolTip") == c[1], S("Edit says \"%1\"").arg(edit->property("toolTip").toString()));
+    // A disabled button takes no tap; what it would ask is refused too.
+    world.bridge().dispatch(S("composer.queue.edit"), QVariantMap{{S("runId"), edit->objectName().mid(int(qstrlen("queueEdit-")))}});
+    world.sync();
+    expect(composer(world).value(S("editingQueuedRunId")).isNull(), S("an edit opened"));
+  });
+  step(S("the edit-latest shortcut does nothing"), [](World& world, const Captures&, const Table&) {
+    const QString before = composer(world).value(S("text")).toString();
+    world.bridge().dispatch(S("composer.queue.edit"), QVariantMap());
+    world.sync();
+    expect(composer(world).value(S("editingQueuedRunId")).isNull() && composer(world).value(S("text")).toString() == before,
+           S("the composer is %1").arg(show(composer(world))));
+  });
+  // ---- A queued edit belongs to its thread.
+
+  // The composer's text replaced as the user types it, through to the controller.
+  const auto retype = [](World& world, const QString& text) {
+    QQuickItem* input = editor(world);
+    world.tap(input);
+    world.press(S("ctrl+a"));
+    world.type(text);
+    world.waitFor([&] { return composer(world).value(S("text")).toString() == text; },
+                  [&] { return S("the draft to reach the controller; the composer is %1").arg(show(composer(world))); });
+  };
+  // Home, then the thread `title` on its own screen.
+  const auto go = [](World& world, const QString& title) {
+    for (int tries = 0; tries < 6 && world.find(S("homeScreen")) == nullptr; ++tries) {
+      world.back();
+      world.sync();
+    }
+    openThread(world, title);
+    world.sync();
+  };
+  const auto otherThread = [go](World& world) {
+    haveThread(world, S("Other"));
+    go(world, S("Other"));
+  };
+  const auto editing = [](World& world, const QString& text) {
+    QQuickItem* input = editor(world);
+    world.waitFor([&] { return !composer(world).value(S("editingQueuedRunId")).isNull() && input->property("text").toString() == text; },
+                  [&] { return S("the edit of %1; the composer is %2 and reads %3").arg(text, show(composer(world)), input->property("text").toString()); });
+  };
+  // The phone has no edit key: the last queued message is edited from its card.
+  step(S("the user starts editing the last queued message from the start of the composer"), [tapQueued](World& world, const Captures&, const Table&) {
+    priorDraft = composer(world).value(S("text")).toString();
+    tapQueued(world, S("queueEdit"), lastQueued);
+    QQuickItem* input = editor(world);
+    world.waitFor([&] { return input->property("text").toString() == lastQueued; },
+                  [&] { return S("the composer to hold %1; it reads %2").arg(lastQueued, input->property("text").toString()); });
+  });
+  step(S("the user changes the edit to %1").arg(kQuoted), [retype](World& world, const Captures& c, const Table&) { retype(world, c[0]); });
+  step(S("the user edits the queued message again to %1").arg(kQuoted), [retype](World& world, const Captures& c, const Table&) { retype(world, c[0]); });
+  step(S("the user (?:switches|switched) to thread B and back to thread A"), [go, otherThread](World& world, const Captures&, const Table&) {
+    otherThread(world);
+    go(world, S("Fix checkout"));
+  });
+  step(S("the user has gone to another thread"), [otherThread](World& world, const Captures&, const Table&) { otherThread(world); });
+  step(S("the user is still editing the queued message, reading %1").arg(kQuoted), [editing](World& world, const Captures& c, const Table&) { editing(world, c[0]); });
+  step(S("the user is editing the queued %1").arg(kQuoted), [startEdit](World& world, const Captures& c, const Table&) { startEdit(world, c[0]); });
+  step(S("the user is editing the queued %1 again").arg(kQuoted), [editing](World& world, const Captures& c, const Table&) { editing(world, c[0]); });
+  step(S("the user is editing a queued message in thread A"), [startEdit](World& world, const Captures&, const Table&) { startEdit(world, S("fix typo")); });
+  step(S("the user is editing the queued %1 with a change").arg(kQuoted), [startEdit, retype](World& world, const Captures& c, const Table&) {
+    startEdit(world, c[0]);
+    retype(world, c[0] + S(" and the docs"));
+  });
+  step(S("the user saved %1 over the queued %1 and the MC has not answered yet").arg(kQuoted), [startEdit, retype](World& world, const Captures& c, const Table&) {
+    startEdit(world, c[1]);
+    world.mc.hold(S("answers:") + world.thread);
+    retype(world, c[0]);
+    world.tap(S("primaryAction"));
+    world.sync();
+    expect(commandsOf(world, S("queued-run.edit")).size() == 1, S("the MC has %1").arg(describeCommands(world)));
+  });
+  step(S("the first save finishes"), [](World& world, const Captures&, const Table&) {
+    world.mc.answerHeld();
+    world.sync();
+    expect(commandsOf(world, S("queued-run.edit")).size() == 1, S("the MC has %1").arg(describeCommands(world)));
+  });
+  step(S("the queued run of %1 starts").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    // Its run, by its message: the edit may have left the thread's screen.
+    QString run;
+    const QMap<QString, QJsonObject> entities = world.mc.part<FakeStreams>().threads.value(world.thread);
+    for (auto it = entities.cbegin(); it != entities.cend(); ++it) {
+      if (it.key().startsWith(S("message\n")) && it->value(QLatin1String("text")) == c[0])
+        run = it->value(QLatin1String("id")).toString().mid(int(qstrlen("message:")));
+    }
+    expect(!run.isEmpty(), S("no queued message reads %1").arg(c[0]));
+    setEntity(world.mc, world.thread, S("run"), run, {{S("status"), S("running")}});
+    world.sync();
+  });
+  step(S("the edit has ended"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return composer(world).value(S("editingQueuedRunId")).isNull(); },
+                  [&] { return S("the edit to end; the composer is %1").arg(show(composer(world))); });
+  });
+  const auto toastsTitled = [](World& world, const QString& title) {
+    QVariantList found;
+    for (const QVariant& toast : world.state(S("toasts")).toMap().value(S("items")).toList()) {
+      if (toast.toMap().value(S("title")) == title) found.append(toast);
+    }
+    return found;
+  };
+  step(S("no message about the edit is shown"), [toastsTitled](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QVariantList shown = toastsTitled(world, S("Queued message is no longer queued"));
+    expect(shown.isEmpty(), S("the phone says %1").arg(show(shown)));
+  });
+  step(S("the changed edit waits in the thread's composer if it was empty, with a message naming the thread"),
+       [go, toastsTitled](World& world, const Captures&, const Table&) {
+         world.waitFor([&] {
+           const QVariantList shown = toastsTitled(world, S("Queued message is no longer queued"));
+           return std::any_of(shown.cbegin(), shown.cend(), [](const QVariant& toast) {
+             return toast.toMap().value(S("description")).toString().contains(S("Fix checkout"));
+           });
+         }, [&] { return S("a toast naming \"Fix checkout\"; the toasts are %1").arg(show(world.state(S("toasts")))); });
+         // Back in the thread, the change is its draft, no longer an edit.
+         go(world, S("Fix checkout"));
+         QQuickItem* input = editor(world);
+         world.waitFor([&] { return composer(world).value(S("editingQueuedRunId")).isNull() && input->property("text").toString() == S("fix typo and the docs"); },
+                       [&] { return S("the draft; the composer is %1 and reads %2").arg(show(composer(world)), input->property("text").toString()); });
+       });
+  step(S("thread A is deleted"), [](World& world, const Captures&, const Table&) {
+    QJsonObject row = world.mc.threads.take(world.thread);
+    row.insert(S("deletedAt"), kNow);
+    world.mc.sendRow(world.thread, row);
+    const QString key = world.mc.environmentId + QLatin1Char(':') + world.thread;
+    world.waitFor([&] { return !world.native().store()->thread(key).has_value(); }, S("the thread to go"));
+  });
+
+  // Saves of a queued edit, one at a time.
+  step(S("the user saved %1 over it and the MC has not answered yet").arg(kQuoted), [tapQueued](World& world, const Captures& c, const Table&) {
+    tapQueued(world, S("queueEdit"), lastQueued);
+    QQuickItem* input = editor(world);
+    world.waitFor([&] { return input->property("text").toString() == lastQueued; },
+                  [&] { return S("the composer to hold the queued message; it reads %1").arg(input->property("text").toString()); });
+    world.mc.hold(S("answers"));
+    world.tap(input);
+    world.press(S("ctrl+a"));
+    world.type(c[0]);
+    world.tap(S("primaryAction"));
+    world.sync();
+    expect(commandsOf(world, S("queued-run.edit")).size() == 1, S("the MC has %1").arg(describeCommands(world)));
+  });
+  step(S("the user edits it again and saves %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* input = editor(world);
+    world.tap(input);
+    world.press(S("ctrl+a"));
+    world.type(c[0]);
+    world.tap(S("primaryAction"));
+    world.sync();
+  });
+  step(S("%1 is sent only after the MC answered the first save").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    expect(commandsOf(world, S("queued-run.edit")).size() == 1, S("the MC has %1").arg(describeCommands(world)));
+    world.mc.answerHeld();
+    world.waitFor([&] { return commandsOf(world, S("queued-run.edit")).size() == 2; }, [&] { return S("the MC has %1").arg(describeCommands(world)); });
+    expect(commandsOf(world, S("queued-run.edit")).last().value(QLatin1String("text")) == c[0], S("the MC has %1").arg(describeCommands(world)));
+  });
+  step(S("the queued message ends as %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return composer(world).value(S("editingQueuedRunId")).isNull(); }, S("the edit to end"));
+    const QList<QJsonObject> saves = commandsOf(world, S("queued-run.edit"));
+    expect(saves.size() == 2 && saves.last().value(QLatin1String("text")) == c[0], S("the MC has %1").arg(describeCommands(world)));
   });
 
   // A follow-up sent during a turn.

@@ -94,6 +94,10 @@ defmodule HalC2.Steps.Common do
     %{context | mc: Mc.restart(context.mc), clients: %{}}
   end
 
+  step "the MC restarted", context do
+    %{context | mc: Mc.restart(context.mc), clients: %{}}
+  end
+
   step "the MC starts again", context do
     %{context | mc: Mc.restart(context.mc), clients: %{}}
   end
@@ -301,7 +305,10 @@ defmodule HalC2.Steps.Common do
         do: %{"instanceId" => context.provider, "refreshModels" => true},
         else: %{"refreshModels" => true}
 
-    {reply, context} = World.call_keeping(context, "server.refreshProviders", input)
+    # A refresh probes CLIs synchronously; a slow one is given a minute.
+    {reply, context} =
+      World.call_keeping(context, "server.refreshProviders", input, "default", 60_000)
+
     context = Map.put(context, :reply, reply)
 
     case reply do
@@ -1399,7 +1406,8 @@ defmodule HalC2.Steps.Common do
             context
             |> Map.delete(:pending_launch)
             |> HalC2.Test.AcpFixtures.launch("Work", instance, "hello",
-              mode: fields["runtimeMode"]
+              mode: fields["runtimeMode"],
+              model: fields["model"]
             )
 
           HalC2.Test.AcpFixtures.await_runs(ctx.threads["Work"], 1)
@@ -1590,9 +1598,13 @@ defmodule HalC2.Steps.Common do
   end
 
   # Into a draft ("a new thread titled ...") this launches the thread with a title
-  # asked for; otherwise it is sent to the current thread.
+  # asked for; with `context.send_message` (a fun of the context and the text) that
+  # sends it; otherwise it is sent to the current thread.
   step "the user sends {string}", %{args: [text]} = context do
     case context[:draft] do
+      nil when is_function(context.send_message, 2) ->
+        context.send_message.(context, text)
+
       nil ->
         title = World.current(context)
         {{:ok, _}, context} = World.send_message(context, title, text)

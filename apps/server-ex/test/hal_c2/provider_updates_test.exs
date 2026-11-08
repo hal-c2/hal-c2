@@ -114,6 +114,42 @@ defmodule HalC2.ProviderUpdatesTest do
              HalC2.ProviderUpdates.advisory("claudeAgent", path, "2.1.0")
   end
 
+  # Review of #1322: a lookup npm could not answer was not remembered, so every
+  # provider snapshot ran `npm view` again and logged again.
+  test "a failed npm lookup is not tried again within the hour", %{tmp_dir: dir} do
+    bin = Path.join(dir, "path-bin")
+    log = Path.join(dir, "npm.log")
+    File.mkdir_p!(bin)
+    File.write!(Path.join(bin, "npm"), "#!/bin/sh\necho \"$*\" >> #{log}\nexit 1\n")
+    File.chmod!(Path.join(bin, "npm"), 0o755)
+    path = System.get_env("PATH")
+    System.put_env("PATH", bin <> ":" <> path)
+    previous = Application.fetch_env(:hal_c2, :provider_update_checks)
+    Application.put_env(:hal_c2, :provider_update_checks, true)
+
+    on_exit(fn ->
+      System.put_env("PATH", path)
+
+      case previous do
+        {:ok, value} -> Application.put_env(:hal_c2, :provider_update_checks, value)
+        :error -> Application.delete_env(:hal_c2, :provider_update_checks)
+      end
+    end)
+
+    HalC2.Test.LogTap.attach()
+    :persistent_term.erase({HalC2.ProviderUpdates, "codex"})
+    codex = install(dir, "Cellar/codex/0.1.0/bin/codex", "bin/codex")
+
+    assert HalC2.ProviderUpdates.advisory("codex", codex, "0.1.0")["status"] == "unknown"
+
+    assert_receive {:logged, :warning, "Configured npm version lookup failed for @openai/codex"},
+                   15_000
+
+    assert HalC2.ProviderUpdates.advisory("codex", codex, "0.1.0")["status"] == "unknown"
+    refute_received {:logged, :warning, _}
+    assert [_] = log |> File.read!() |> String.split("\n", trim: true)
+  end
+
   test "a release channel's answer is a plain version or nothing" do
     assert HalC2.ProviderUpdates.parse_channel_version("2.1.300\n") == "2.1.300"
     assert HalC2.ProviderUpdates.parse_channel_version("v2.1.300") == "2.1.300"

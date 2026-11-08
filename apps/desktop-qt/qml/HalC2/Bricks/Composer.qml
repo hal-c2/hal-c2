@@ -64,12 +64,16 @@ Rectangle {
         const chosen = (option?.choices ?? []).find(choice => choice.id === option.value);
         return chosen ? chosen.label : (option?.label ?? "");
     }
-    readonly property var effortOption: ready ? (model.options.find(option => option.type === "select") ?? null) : null
+    readonly property var effortOption: ready ? (model.options.find(option => option.effort === true) ?? model.options.find(option => option.type === "select") ?? null) : null
     // The model's other options, such as Claude's fast mode and context window.
     // By id: every read of model.options converts to fresh objects, so identity never matches.
     readonly property var otherOptions: ready ? model.options.filter(option => option.id !== effortOption?.id) : []
     readonly property var selectOptions: otherOptions.filter(option => option.type === "select")
     readonly property var toggleOptions: otherOptions.filter(option => option.type !== "select")
+    // The model's efforts and options live in the model control (upstream's
+    // ComposerModelEffort) rather than as chips on the toolbar. The phone,
+    // whose model control has no room beside its list, keeps the chips.
+    property bool optionsInModelControl: true
     readonly property int maximumCardWidth: 768
     readonly property int gutter: 20
 
@@ -319,6 +323,11 @@ Rectangle {
         // they open in the model control. That control is shut while a
         // message is on its way to the MC (isSendBusy), and so is this key,
         // as the model key is; it opens again once the send lands.
+        // The effort is the model control's, on its current level.
+        if (command === "composer.effort" && optionsInModelControl) {
+            modelPicker.openEffort();
+            return;
+        }
         if (command === "composer.mode" && !runtimeModePicker.present) {
             if (contextPermissions.visible && contextPermissions.enabled) {
                 contextPermissions.forceActiveFocus();
@@ -558,7 +567,19 @@ Rectangle {
             singleLine: { "": "foreground", [mod]: composer.model.isRunning ? "alternate" : "background" }
         };
         const intents = /[\r\n]/.test(input.text) ? table.multiline ?? table.singleLine : table.singleLine;
-        return intents[held.join("+")] ?? "";
+        const intent = intents[held.join("+")] ?? "";
+        // A shifted chord that sends is a window shortcut too (mod+Shift+Enter
+        // sends the first queued message): with nothing to send it stays theirs.
+        if (intent !== "" && held.includes("shift") && !composer.hasMessage())
+            return "";
+        return intent;
+    }
+
+    // Whether there is something to send: the controller's canSend counts every
+    // chip (excerpts, review comments, context, citations) and the open queued
+    // edit, but lags this input by the debounce, so local text and attachments count too.
+    function hasMessage() {
+        return composer.model.canSend || input.text.trim().length > 0 || composer.attachments.length > 0 || (composer.model.editingQueuedRunId ?? null) !== null;
     }
 
     function submit(intent) {
@@ -568,7 +589,7 @@ Rectangle {
         // canSend reflects the text the controller has seen, which lags this
         // input by the debounce; with local text, let the controller validate
         // the send (it echoes the prompt back if it declines).
-        if (!composer.model.canSend && input.text.trim().length === 0 && composer.attachments.length === 0 && (composer.model.editingQueuedRunId ?? null) === null) {
+        if (!composer.hasMessage()) {
             return;
         }
         textDebounce.stop();
@@ -1467,6 +1488,9 @@ Rectangle {
                             selectedModel: composer.ready ? composer.model.selectedModel : null
                             runtimeModes: composer.permissionModes
                             runtimeMode: composer.ready ? (composer.model.runtimeMode ?? "") : ""
+                            docked: composer.optionsInModelControl
+                            options: composer.ready ? composer.model.options : []
+                            effortDisplay: composer.ready ? (composer.model.effortDisplay ?? "label") : "label"
                         }
 
                         // The room left beside the model; the chips that fit it
@@ -1490,12 +1514,44 @@ Rectangle {
                                     id: effortPicker
                                     objectName: "effortPicker"
 
-                                    present: composer.effortOption !== null
+                                    present: !composer.optionsInModelControl && composer.effortOption !== null
                                     visible: present && !composer.folded.includes(effortPicker)
                                     model: composer.effortOption ? composer.effortOption.choices.map(choice => composer.choiceLabel(choice)) : []
                                     currentIndex: composer.effortOption ? composer.effortOption.choices.findIndex(choice => choice.id === composer.effortOption.value) : -1
                                     displayText: composer.selectedLabel(composer.effortOption)
                                     Accessible.name: composer.effortOption ? composer.effortOption.label : ""
+                                    // Appearance's "Bars": the level drawn instead of named. Max and
+                                    // the prompt's Ultrathink keep their names; the word stays the
+                                    // overflow's and the screen reader's.
+                                    readonly property var bars: composer.model?.effortDisplay === "bars" && composer.effortOption?.bars
+                                        && !composer.effortOption.bars.special ? composer.effortOption.bars : null
+                                    contentItem: Item {
+                                        implicitWidth: effortPicker.bars ? effortBars.width : effortWord.implicitWidth
+                                        implicitHeight: effortWord.implicitHeight
+
+                                        Text {
+                                            id: effortWord
+
+                                            anchors.fill: parent
+                                            visible: effortPicker.bars === null
+                                            text: effortPicker.displayText
+                                            font: effortPicker.font
+                                            color: effortPicker.labelColor
+                                            verticalAlignment: Text.AlignVCenter
+                                            elide: Text.ElideRight
+                                        }
+
+                                        EffortBars {
+                                            id: effortBars
+
+                                            objectName: "effortBars"
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            visible: effortPicker.bars !== null
+                                            count: effortPicker.bars?.count ?? 0
+                                            filled: effortPicker.bars?.filled ?? 0
+                                            color: effortPicker.labelColor
+                                        }
+                                    }
                                     // The prompt says ultrathink in its own words: the effort is its.
                                     readonly property bool locked: (composer.effortOption?.lockedReason ?? "").length > 0
                                     note: locked ? composer.effortOption.lockedReason : ""
@@ -1513,7 +1569,7 @@ Rectangle {
                                 Repeater {
                                     id: selectChips
 
-                                    model: composer.selectOptions.length
+                                    model: composer.optionsInModelControl ? 0 : composer.selectOptions.length
 
                                     delegate: ChipPicker {
                                         id: selectChip
@@ -1537,7 +1593,7 @@ Rectangle {
                                 Repeater {
                                     id: toggleChips
 
-                                    model: composer.toggleOptions.length
+                                    model: composer.optionsInModelControl ? 0 : composer.toggleOptions.length
 
                                     delegate: Chip {
                                         id: toggleChip
@@ -1672,14 +1728,20 @@ Rectangle {
                             Accessible.role: Accessible.Button
                             // With a plan offered, sending implements it, or refines it with what was typed.
                             readonly property string planAction: composer.model?.planAction ?? ""
-                            // What the button does, which is also its accessible name.
+                            // What the button does, in a word (the phone shows it).
                             readonly property string label: stopMode ? qsTr("Stop")
                                 : editing ? qsTr("Update queued message")
                                 // With no connection the message waits on this device to be sent.
                                 : composer.model?.waitsForConnection === true ? qsTr("Queue")
                                 : followUp === "steer" ? qsTr("Steer") : followUp === "queue" ? qsTr("Queue")
                                 : planAction === "refine" ? qsTr("Refine") : planAction === "implement" ? qsTr("Implement") : qsTr("Send")
-                            Accessible.name: label
+                            // Its accessible name, upstream's: what sending will do to the message.
+                            readonly property string name: stopMode ? qsTr("Stop generation")
+                                : editing ? qsTr("Update queued message")
+                                : composer.model?.waitsForConnection === true || followUp === "queue" ? qsTr("Queue message")
+                                : followUp === "steer" ? qsTr("Steer message")
+                                : planAction.length > 0 ? label : qsTr("Submit message")
+                            Accessible.name: name
                             ToolTip.visible: hovered && followUp.length > 0
                             ToolTip.delay: 400
                             ToolTip.text: followUp === "steer"
@@ -1846,7 +1908,7 @@ Rectangle {
                             id: hostPicker
                             objectName: "hostPicker"
 
-                            visible: contextStrip.wsReady && contextStrip.ws.environments.length > 1
+                            visible: contextStrip.wsReady && (contextStrip.ws.environmentShown ?? false)
                             implicitHeight: Theme.control.sm
                             iconSize: Theme.icon.sm
                             chevronSize: Theme.icon.sm
@@ -1856,12 +1918,16 @@ Rectangle {
                             iconName: "monitor"
                             enabled: contextStrip.wsReady && contextStrip.ws.environmentChangeable
                             model: contextStrip.wsReady ? contextStrip.ws.environments.map(env => env.label) : []
-                            currentIndex: contextStrip.wsReady ? contextStrip.ws.environments.findIndex(env => env.environmentId === contextStrip.ws.activeEnvironmentId) : -1
+                            currentIndex: contextStrip.wsReady ? contextStrip.ws.environments.findIndex(env => env.current) : -1
                             Accessible.name: qsTr("Environment")
-                            onActivated: index => Shell.dispatch("workspace.environment.set", {
+                            onActivated: index => {
+                                Shell.dispatch("workspace.environment.set", {
                                     environmentId: contextStrip.ws.environments[index].environmentId,
                                     key: contextStrip.ws.environments[index].key
-                                })
+                                });
+                                // A refused choice (Auto balance with files attached) leaves the machine shown.
+                                currentIndex = Qt.binding(() => contextStrip.wsReady ? contextStrip.ws.environments.findIndex(env => env.current) : -1);
+                            }
                         }
 
                         ShellComboBox {

@@ -727,6 +727,31 @@ defmodule HalC2.Steps.Providers.Claude do
     Map.merge(context, %{argv: argv, model: model["slug"]})
   end
 
+  step "a Claude thread uses a model that is not in HAL-C2's model list", context do
+    context |> World.fake_providers() |> Map.put(:model, "claude-unlisted-9")
+  end
+
+  step "the user chooses {string} effort and sends a message", %{args: [effort]} = context do
+    selection = %{
+      "instanceId" => "claudeAgent",
+      "model" => context.model,
+      "options" => [%{"id" => "effort", "value" => effort}]
+    }
+
+    context =
+      World.launch_on(context, @thread, "claudeAgent", "hello", %{"modelSelection" => selection})
+
+    World.await_runs(context, @thread, ["completed"])
+    assert [argv] = for(%{"argv" => argv} <- World.provider_log(context, "claude"), do: argv)
+    Map.put(context, :argv, argv)
+  end
+
+  step "Claude runs the turn with {string} effort", %{args: [effort]} = context do
+    assert ["--model", context.model] in pairs(context.argv)
+    assert ["--effort", effort] in pairs(context.argv)
+    context
+  end
+
   step "Claude is started with the effort {string}", %{args: [effort]} = context do
     assert ["--effort", effort] in pairs(context.argv)
     context
@@ -1372,6 +1397,123 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- a foreground fork --------------------------------------------------------------
+
+  # Claude Code's frames for `Agent` with subagent_type "fork" in the foreground: the
+  # fork's own stream opens with a placeholder result for its launch call.
+  step "Claude starts a fork of itself in the foreground", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "wait while you fork")
+
+    World.await_running(context, @thread)
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-fork",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "fork-1",
+            "name" => "Agent",
+            "input" => %{
+              "description" => "Fork to check the tests",
+              "prompt" => "Check the tests",
+              "subagent_type" => "fork",
+              "run_in_background" => false
+            }
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_started",
+      "task_id" => "task-fork-1",
+      "tool_use_id" => "fork-1",
+      "description" => "Fork to check the tests",
+      "subagent_type" => "fork",
+      "task_type" => "local_agent",
+      "is_backgrounded" => false
+    })
+
+    claude_says(context, %{
+      "type" => "user",
+      "parent_tool_use_id" => "fork-1",
+      "message" => %{
+        "role" => "user",
+        "content" => [
+          %{
+            "type" => "tool_result",
+            "tool_use_id" => "fork-1",
+            "content" => "Fork started — that fork is you."
+          }
+        ]
+      }
+    })
+
+    flush_runtime(context)
+  end
+
+  step "the fork shows as working until it ends", context do
+    assert [%{"status" => "running", "result" => nil}] =
+             World.entities(context, @thread, "subagent")
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "parent_tool_use_id" => "fork-1",
+      "message" => %{
+        "id" => "m-fork-says",
+        "content" => [%{"type" => "text", "text" => "FORK-DONE"}]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-fork-1",
+      "tool_use_id" => "fork-1",
+      "status" => "completed",
+      "summary" => "FORK-DONE"
+    })
+
+    claude_says(context, %{
+      "type" => "user",
+      "message" => %{
+        "role" => "user",
+        "content" => [
+          %{
+            "type" => "tool_result",
+            "tool_use_id" => "fork-1",
+            "content" => "[Subagent hand-back] FORK-DONE"
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "its result is what the fork answers, not the note that it started", context do
+    assert [%{"status" => "completed", "result" => result} = subagent] =
+             World.entities(context, @thread, "subagent")
+
+    assert result =~ "FORK-DONE"
+    child = HalC2.Streams.Server.state(HalC2.Streams.ensure(subagent["childThreadId"]))
+
+    refute Enum.any?(
+             StreamState.list(child, "turn-item"),
+             &(inspect(&1, limit: :infinity) =~ "Fork started")
+           )
+
+    context
+  end
+
   # --- a resumed subagent ----------------------------------------------------------------
 
   # The subagent of the fake's "in the background" turn finished; then the runtime that
@@ -1459,6 +1601,90 @@ defmodule HalC2.Steps.Providers.Claude do
 
     claude_says(context, %{"type" => "result", "subtype" => "success"})
     World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  # A turn the MC never saw start a subagent (Claude's own session started it, say,
+  # before the thread came to the MC); the next turn sends that subagent a message.
+  step "the MC missed the launch of a Claude subagent", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "hello")
+
+    World.await_runs(context, @thread, ["completed"])
+    assert [] = World.entities(context, @thread, "subagent")
+    context
+  end
+
+  step "Claude resumes that subagent", context do
+    context = World.post_message(context, @thread, "wait and resume it")
+    World.await_running(context, @thread)
+
+    World.await_provider_log(
+      context,
+      "claude",
+      &(inspect(get_in(&1, ["in", "message", "content"])) =~ "wait and resume it")
+    )
+
+    send_to_subagent(context, "send-1", "Also check the tests", "Check the tests")
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  step "the subagent gets its own child thread", context do
+    state = World.stream(context, @thread)
+    assert [subagent] = StreamState.list(state, "subagent")
+    assert %{"status" => "completed", "result" => "The tests pass"} = subagent
+    assert subagent["nativeTaskId"] == "task-agent-7"
+    child = HalC2.Streams.Server.state(HalC2.Streams.ensure(subagent["childThreadId"]))
+    assert %{"title" => title} = StreamState.get(child, "thread")[subagent["childThreadId"]]
+    assert title =~ "Check the tests"
+
+    assert [{"user_message", "Also check the tests"}, {"assistant_message", "The tests pass"}] =
+             child
+             |> StreamState.list("turn-item")
+             |> Enum.sort_by(& &1["ordinal"])
+             |> Enum.filter(&(&1["type"] in ["user_message", "assistant_message"]))
+             |> Enum.map(&{&1["type"], &1["text"]})
+
+    # The message is the subagent's, not a tool call of the parent's.
+    refute Enum.any?(StreamState.list(state, "turn-item"), &(&1["toolName"] == "SendMessage"))
+    Map.put(context, :subagent, subagent)
+  end
+
+  # Resumed again, under another description: the child thread it has is kept as it is.
+  step "an existing child thread keeps its title and model", context do
+    child_id = context.subagent["childThreadId"]
+
+    read = fn ->
+      HalC2.Streams.Server.state(HalC2.Streams.ensure(child_id))
+      |> StreamState.get("thread")
+      |> Map.get(child_id)
+    end
+
+    before = read.()
+    context = World.post_message(context, @thread, "wait and resume it again")
+    World.await_running(context, @thread)
+
+    World.await_provider_log(
+      context,
+      "claude",
+      &(inspect(get_in(&1, ["in", "message", "content"])) =~ "wait and resume it again")
+    )
+
+    send_to_subagent(context, "send-2", "And the docs", "Something else entirely")
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed", "completed", "completed"])
+
+    assert [subagent] = World.entities(context, @thread, "subagent")
+    assert subagent["childThreadId"] == child_id
+    assert subagent["title"] == context.subagent["title"]
+    assert subagent["model"] == context.subagent["model"]
+    after_resume = read.()
+    assert after_resume["title"] == before["title"]
+    assert after_resume["modelSelection"] == before["modelSelection"]
     context
   end
 
@@ -1870,11 +2096,121 @@ defmodule HalC2.Steps.Providers.Claude do
     do: Enum.filter(World.entities(context, @thread, "turn-item"), &(&1["type"] == "compaction"))
 
   # The newest usage any of the thread's provider turns reported: what the meter shows.
+  step "the user added the custom Claude model {string}, which is not in the catalog",
+       %{args: [model]} = context do
+    context =
+      context
+      |> World.fake_providers()
+      |> write_settings(fn settings ->
+        put_in(
+          settings,
+          [Access.key("providerInstances", %{}), Access.key("claudeAgent", %{})],
+          %{"driver" => "claudeAgent", "config" => %{"customModels" => [model]}}
+        )
+      end)
+
+    refute HalC2.Claude.Provider.known?(model)
+    Map.put(context, :model, model)
+  end
+
+  step ~r/^a Claude turn runs on it and Claude reports a context window of (?<size>[\d,]+) tokens$/,
+       %{args: [size]} = context do
+    World.put_os_env("FAKE_CLAUDE_CONTEXT_WINDOW", String.replace(size, ",", ""))
+
+    context
+    |> World.launch_on(@thread, "claudeAgent", "report your usage", %{
+      "modelSelection" => %{"instanceId" => "claudeAgent", "model" => context.model}
+    })
+    |> tap(&World.await_runs(&1, @thread, ["completed"]))
+  end
+
+  step ~r/^the context meter is out of (?<size>[\d,]+) tokens before the turn settles$/,
+       %{args: [size]} = context do
+    # The usage is written with Claude's result, before the run completes.
+    assert context_usage(context)["maxTokens"] ==
+             size |> String.replace(",", "") |> String.to_integer()
+
+    context
+  end
+
+  step "a model in the catalog keeps the catalog's window", context do
+    assert HalC2.Claude.Provider.known?("sonnet")
+
+    context =
+      context
+      |> World.launch_on("Catalog", "claudeAgent", "report your usage", %{
+        "modelSelection" => %{"instanceId" => "claudeAgent", "model" => "sonnet"}
+      })
+      |> tap(&World.await_runs(&1, "Catalog", ["completed"]))
+
+    assert [%{"tokenUsage" => %{"maxTokens" => window}}] =
+             World.entities(context, "Catalog", "provider-turn")
+
+    assert window == HalC2.Claude.Provider.launch("sonnet", %{}).context_window
+    assert window != 204_800
+    context
+  end
+
+  step "Claude runs through a gateway that reports zero tokens when a message starts", context do
+    World.put_os_env("FAKE_CLAUDE_GATEWAY_USAGE", "1")
+    World.fake_providers(context)
+  end
+
+  step "the gateway reports the real counts as the message ends", context do
+    context = World.launch_on(context, @thread, "claudeAgent", "hello")
+    World.await_runs(context, @thread, ["completed"])
+    Map.put(context, :usage, context_usage(context))
+  end
+
+  step "the context meter shows those counts", context do
+    assert %{
+             "usedTokens" => 41_580,
+             "inputTokens" => 41_500,
+             "cachedInputTokens" => 40_000,
+             "outputTokens" => 80
+           } = context.usage
+
+    context
+  end
+
+  step "a compaction is not undone by usage from before it", context do
+    context = World.post_message(context, @thread, "compact, then")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    assert %{"usedTokens" => 5000} = context_usage(context)
+    context
+  end
+
   defp context_usage(context) do
     World.entities(context, @thread, "provider-turn")
     |> Enum.filter(& &1["tokenUsage"])
     |> Enum.max_by(& &1["tokenUsage"]["updatedAt"], fn -> %{} end)
     |> Map.get("tokenUsage")
+  end
+
+  # Opus 5.5 always runs with a 1M window.
+  step ~r/^Claude is set to compact the conversation at (?<size>[\d,]+) tokens on a model with a larger window$/,
+       %{args: [size]} = context do
+    context
+    |> World.fake_providers(claude_version: "999.0.0")
+    |> World.put_settings(%{
+      "providers" => %{"claudeAgent" => %{"autoCompactWindow" => String.replace(size, ",", "")}}
+    })
+    |> Map.put(:model, "claude-opus-5-5")
+  end
+
+  step "the user looks at the context meter", context do
+    context
+    |> World.launch_on(@thread, "claudeAgent", "report your usage", %{
+      "modelSelection" => %{"instanceId" => "claudeAgent", "model" => context.model}
+    })
+    |> tap(&World.await_runs(&1, @thread, ["completed"]))
+  end
+
+  step ~r/^it says the conversation compacts at about (?<size>[\d,]+) tokens$/,
+       %{args: [size]} = context do
+    assert %{"maxTokens" => 1_000_000, "autoCompactThreshold" => at} = context_usage(context)
+    assert at == size |> String.replace(",", "") |> String.to_integer()
+    context
   end
 
   step "the Claude instance compacts after 200000 tokens", context do
@@ -1927,9 +2263,10 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   step "the user sends the next message", context do
-    context = World.post_message(context, @thread, "hello")
+    title = if context[:provider] == "pi", do: context.thread, else: @thread
+    context = World.post_message(context, title, "hello")
 
-    World.await_value(context, @thread, fn state ->
+    World.await_value(context, title, fn state ->
       runs = StreamState.list(state, "run")
       length(runs) == 2 and Enum.all?(runs, &(&1["status"] in ["completed", "failed"]))
     end)
@@ -2000,16 +2337,24 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   step "the user compacts the thread", context do
-    context = World.post_message(context, @thread, "/compact")
+    # A Cursor thread on the AcpFixtures world (features/providers/cursor.feature)
+    # compacts the same way, through its own launch helpers.
+    if context[:cursor_world] do
+      ctx = HalC2.Test.AcpFixtures.follow_up(context, "Cursor", "/compact")
+      HalC2.Test.AcpFixtures.await_runs(ctx.threads["Cursor"], 2)
+      ctx
+    else
+      context = World.post_message(context, @thread, "/compact")
 
-    World.await_value(context, @thread, fn state ->
-      runs = StreamState.list(state, "run")
+      World.await_value(context, @thread, fn state ->
+        runs = StreamState.list(state, "run")
 
-      length(runs) >= 2 and Enum.all?(runs, &(&1["status"] in ["completed", "failed"])) and
-        Enum.any?(StreamState.list(state, "turn-item"), &(&1["type"] == "compaction"))
-    end)
+        length(runs) >= 2 and Enum.all?(runs, &(&1["status"] in ["completed", "failed"])) and
+          Enum.any?(StreamState.list(state, "turn-item"), &(&1["type"] == "compaction"))
+      end)
 
-    context
+      context
+    end
   end
 
   step "the turn completes once, after the real compaction", context do
@@ -2324,6 +2669,41 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  step "Claude asked whether to compact a long conversation before resuming it", context do
+    context = context |> World.providers() |> World.launch_on(@thread, "claudeAgent", "hello")
+    World.await_runs(context, @thread, ["completed"])
+    :ok = HalC2.Orchestration.release_session(World.thread_id(context, @thread))
+    context = World.send_turn(context, @thread, "long session")
+    Map.put(context, :request, World.await_request(context, @thread))
+  end
+
+  step "the user answers and the turn completes", context do
+    [%{"questions" => [question]}] =
+      for i <- StreamState.list(World.stream(context, @thread), "turn-item"),
+          i["type"] == "user_input_request",
+          do: i
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => context.request["id"],
+        "answers" => %{question["id"] => "Compact and continue"}
+      })
+
+    World.await_runs(context, @thread, ["completed", "completed"])
+    assert "resume compact" in World.replies(context, @thread)
+    context
+  end
+
+  step "the turn's work shows no failed tool call for the question", context do
+    items = StreamState.list(World.stream(context, @thread), "turn-item")
+    assert [] = for(i <- items, i["status"] == "failed", do: {i["type"], i["toolName"]})
+    assert [%{"status" => status}] = for(i <- items, i["type"] == "user_input_request", do: i)
+    refute status == "waiting"
+    context
+  end
+
   step "the project allows the HAL-C2 tools", context do
     context = World.fake_providers(context)
     Mc.ensure(HalC2.Mcp)
@@ -2546,7 +2926,45 @@ defmodule HalC2.Steps.Providers.Claude do
       )
     end)
 
-    assert "resumed at uuid-2 fork True history False" in World.replies(context, "fork")
+    # With transcripts kept (`FAKE_SESSIONS`), the reply goes on to list them.
+    assert Enum.any?(
+             World.replies(context, "fork"),
+             &String.starts_with?(&1, "resumed at uuid-2 fork True history False")
+           )
+
+    context
+  end
+
+  # The fake keeps transcripts in the config directory it runs with, so a fork resumed
+  # from any other finds no conversation.
+  step "a Claude instance {string} with its own home", %{args: [instance]} = context do
+    context = World.fake_providers(context)
+    own = Mc.tmp_dir(context.mc, "claude-mc-home")
+    home = Mc.tmp_dir(context.mc, "claude-instance-home")
+    World.put_os_env("CLAUDE_CONFIG_DIR", own)
+    World.put_os_env("FAKE_SESSIONS", "1")
+
+    context =
+      write_settings(context, fn settings ->
+        put_in(settings, [Access.key("providerInstances", %{}), instance], %{
+          "driver" => "claudeAgent",
+          "enabled" => true,
+          "config" => %{"homePath" => home}
+        })
+      end)
+
+    Map.put(context, :claude_homes, %{own: own, instance: home})
+  end
+
+  step "a thread on {string} with three turns", %{args: [instance]} = context do
+    World.run_turns(context, @thread, instance, ["hello", "hello again", "one more"])
+  end
+
+  step "the MC's own Claude home is left as it was", context do
+    assert File.ls!(context.claude_homes.own) == []
+
+    # The source's session and the fork's, both in the instance's home.
+    assert [_, _] = Path.wildcard(Path.join(context.claude_homes.instance, "projects/*/*.jsonl"))
     context
   end
 
@@ -3019,6 +3437,38 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # Claude gave up on repeated API errors and said why in its result.
+  step "Claude ends a turn on an API error with the result {string}",
+       %{args: [text]} = context do
+    context = running_turn(context)
+
+    claude_says(context, %{
+      "type" => "result",
+      "subtype" => "success",
+      "is_error" => true,
+      "terminal_reason" => "api_error",
+      "result" => text <> String.duplicate(".", 600)
+    })
+
+    World.await_runs(context, @thread, ["failed"])
+    Map.put(context, :error_text, text)
+  end
+
+  # The failure is Claude's text, cut to 500 characters.
+  step "the thread's failure reads {string}", %{args: [text]} = context do
+    items = StreamState.list(World.stream(context, @thread), "turn-item")
+    %{"failure" => %{"message" => message}} = Enum.find(items, &(&1["type"] == "error"))
+    assert String.starts_with?(message, text)
+    assert String.length(message) == 500
+    context
+  end
+
+  step "not a generic message about repeated API errors", context do
+    items = StreamState.list(World.stream(context, @thread), "turn-item")
+    refute inspect(items) =~ "repeated API errors"
+    context
+  end
+
   step "the last Claude turn of a thread failed with an API error", context do
     context = api_error_turn(context, 529)
     World.await_runs(context, @thread, ["failed"])
@@ -3079,11 +3529,19 @@ defmodule HalC2.Steps.Providers.Claude do
       "terminal_reason" => "tool_deferred_unavailable"
     },
     "the turn could not be set up" => %{"terminal_reason" => "turn_setup_failed"},
-    "a usage limit blocked the request" => %{"terminal_reason" => "blocking_limit"},
+    "a blocking limit came with no rate-limit evidence" => %{
+      "terminal_reason" => "blocking_limit"
+    },
     "the context refilled straight after compaction" => %{
       "terminal_reason" => "rapid_refill_breaker"
     },
     "the prompt is larger than the context window" => %{"terminal_reason" => "prompt_too_long"},
+    # Claude ends a turn on a full context window as a blocking limit.
+    "the prompt is too long for the context window" => %{
+      "terminal_reason" => "blocking_limit",
+      "is_error" => true,
+      "result" => "Prompt is too long"
+    },
     "an image could not be processed" => %{"terminal_reason" => "image_error"},
     "the model returned an error" => %{"terminal_reason" => "model_error"},
     "the API was overloaded" => %{"api_error_status" => 529},
@@ -3091,7 +3549,7 @@ defmodule HalC2.Steps.Providers.Claude do
   }
 
   step ~r/^Claude ends a turn because (?<reason>.+)$/, %{args: [reason]} = context do
-    context = running_turn(context)
+    context = if context[:turn_running], do: context, else: running_turn(context)
 
     result =
       Map.merge(
@@ -3182,7 +3640,73 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # Upstream #21231. A UserPromptSubmit hook in the project's Claude settings, which the
+  # fake CLI runs on each prompt: exit 2 drops the prompt with the hook's reason.
+  step "a Claude hook blocks prompts that mention {string} with the reason {string}",
+       %{args: [word, reason]} = context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "hello")
+
+    World.await_runs(context, @thread, ["completed"])
+    root = World.project(context).root
+    hook = Path.join(Mc.tmp_dir(context.mc, "claude-hooks"), "block.sh")
+    File.write!(hook, "#!/bin/sh\nif grep -q '#{word}'; then echo '#{reason}' >&2; exit 2; fi\n")
+    File.chmod!(hook, 0o755)
+
+    settings = %{
+      "UserPromptSubmit" => [%{"hooks" => [%{"type" => "command", "command" => hook}]}]
+    }
+
+    File.mkdir_p!(Path.join(root, ".claude"))
+
+    File.write!(
+      Path.join([root, ".claude", "settings.json"]),
+      JSON.encode!(%{"hooks" => settings})
+    )
+
+    Map.put(context, :current, @thread)
+  end
+
+  step "the thread shows Claude's notice {string}", %{args: [text]} = context do
+    World.await_runs(context, @thread, ["completed", "completed"])
+
+    assert [notice] =
+             World.stream(context, @thread)
+             |> StreamState.list("turn-item")
+             |> Enum.filter(&(&1["type"] == "system_notice"))
+
+    assert notice["message"] =~ text
+    assert notice["status"] == "completed"
+    Map.put(context, :notice, notice)
+  end
+
+  step "the notice is not shown a second time as Claude's answer", context do
+    state = World.stream(context, @thread)
+    [_, run] = World.runs(context, @thread)
+
+    refute Enum.any?(
+             StreamState.list(state, "turn-item"),
+             &(&1["runId"] == run["id"] and &1["type"] == "assistant_message")
+           )
+
+    refute Enum.any?(World.replies(context, @thread), &(&1 == context.notice["message"]))
+    context
+  end
+
   step "the turn carries on", context do
+    if context[:provider] == "pi" do
+      # Pi already carried on past what the step before this did to the turn.
+      World.await_runs(context, context.thread, ["completed"])
+      assert World.replies(context, context.thread) != []
+      context
+    else
+      turn_carries_on(context)
+    end
+  end
+
+  defp turn_carries_on(context) do
     assert [%{"status" => "running"}] = World.runs(context, @thread)
 
     claude_says(context, %{
@@ -3399,6 +3923,74 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # Claude's refused answer repeats the window in its `api_error_params`; only the first
+  # turn also sends the rate-limit event.
+  defp refused_turn(context, event?) do
+    context =
+      if event? do
+        running_turn(context)
+      else
+        context = World.send_turn(context, @thread, "wait again")
+
+        World.await_provider_log(
+          context,
+          "claude",
+          &(get_in(&1, ["in", "type"]) == "user" and inspect(&1) =~ "wait again")
+        )
+
+        context
+      end
+
+    info = %{"status" => "rejected", "rateLimitType" => "five_hour", "resetsAt" => at_o_clock(14)}
+
+    if event?,
+      do: claude_says(context, %{"type" => "rate_limit_event", "rate_limit_info" => info})
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "error" => "rate_limit",
+      "api_error_params" => %{"rate_limit_info" => info},
+      "message" => %{
+        "id" => "m-limit-#{System.unique_integer([:positive])}",
+        "content" => [%{"type" => "text", "text" => "You've hit your limit"}]
+      }
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => true})
+    context
+  end
+
+  step "a Claude turn was refused by a limit that resets at 14:00", context do
+    context = refused_turn(context, true)
+    World.await_runs(context, @thread, ["failed"])
+    context
+  end
+
+  step "the user retries at once and Claude refuses it with the same limit", context do
+    context = refused_turn(context, false)
+    World.await_runs(context, @thread, ["failed", "failed"])
+    context
+  end
+
+  step "the thread's reset time is still 14:00", context do
+    World.await_row(
+      World.thread_id(context, @thread),
+      &(&1["lastErrorClass"] == "usage_limit" and
+          &1["usageLimitResetAt"] == "2026-09-24T14:00:00.000Z")
+    )
+
+    items = StreamState.list(World.stream(context, @thread), "turn-item")
+
+    assert [_, _] =
+             for(
+               %{"type" => "error", "failure" => %{"resetAt" => "2026-09-24T14:00:00.000Z"}} <-
+                 items,
+               do: true
+             )
+
+    context
+  end
+
   step "the thread's reset time is 18:00", context do
     World.await_row(
       World.thread_id(context, @thread),
@@ -3515,6 +4107,40 @@ defmodule HalC2.Steps.Providers.Claude do
       end
 
     context |> at_13_00() |> gateway_503(body)
+  end
+
+  step "Claude's latest rate-limit report allows requests", context do
+    context = running_turn(context)
+
+    claude_says(context, %{
+      "type" => "rate_limit_event",
+      "rate_limit_info" => %{"status" => "allowed", "rateLimitType" => "five_hour"}
+    })
+
+    Map.put(context, :turn_running, true)
+  end
+
+  step "the turn fails saying the context window is full and to run /compact or start a new thread",
+       context do
+    World.await_runs(context, @thread, ["failed"])
+    items = StreamState.list(World.stream(context, @thread), "turn-item")
+
+    assert %{"failure" => %{"class" => "provider_error", "message" => message}} =
+             Enum.find(items, &(&1["type"] == "error"))
+
+    assert message =~ "context window is full"
+    assert message =~ "/compact"
+    assert message =~ "new thread"
+    context
+  end
+
+  step "the thread is not marked as limited", context do
+    World.await_row(
+      World.thread_id(context, @thread),
+      &(&1["lastErrorClass"] == "provider_error" and &1["usageLimitResetAt"] == nil)
+    )
+
+    context
   end
 
   step "the run fails with a provider error and the thread is not marked as limited", context do
@@ -3673,6 +4299,47 @@ defmodule HalC2.Steps.Providers.Claude do
     background_running?(context) and
       :sys.get_state(context.runtime).session == context.first_session and
       Process.alive?(context.first_session)
+  end
+
+  # Upstream #16287: the refused message never reached Claude, so the next turn on the
+  # same session carries it.
+  step "a Claude thread whose background subagent is still working", context do
+    left_running(context)
+  end
+
+  step "Claude refuses the user's next turn because of that work", context do
+    context = send_on(context, [%{"id" => "fastMode", "value" => true}], ["completed", "failed"])
+    assert refused?(context)
+    context
+  end
+
+  step "the user sends another message", context do
+    selection = %{"instanceId" => "claudeAgent", "model" => "claude-opus-4-6", "options" => []}
+    context = World.post_message(context, @thread, "what next?", %{"modelSelection" => selection})
+    World.await_runs(context, @thread, ["completed", "failed", "completed"])
+    context
+  end
+
+  step "Claude resumes the same session", context do
+    assert :sys.get_state(context.runtime).session == context.first_session
+    assert length(for(%{"argv" => _} <- World.provider_log(context, "claude"), do: 1)) == 1
+    context
+  end
+
+  step "it reads the messages it missed before the new one", context do
+    assert [sent] =
+             for(
+               %{"in" => %{"type" => "user"} = message} <- World.provider_log(context, "claude"),
+               text = inspect(message["message"]["content"]),
+               text =~ "what next?",
+               do: text
+             )
+
+    assert [{missed, _}, {new, _}] =
+             Enum.map(["and now?", "what next?"], &:binary.match(sent, &1))
+
+    assert missed < new
+    context
   end
 
   # The fake finishes "never start a turn" without a turn; "the turn fails with {string}"
@@ -3922,6 +4589,63 @@ defmodule HalC2.Steps.Providers.Claude do
     )
 
     context
+  end
+
+  # Claude sends the subagent it knows as task-agent-7 `message` with tool call `tool`,
+  # registers the task under `description`, and the subagent answers.
+  defp send_to_subagent(context, tool, message, description) do
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-#{tool}",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => tool,
+            "name" => "SendMessage",
+            "input" => %{"to" => "task-agent-7", "message" => message}
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_started",
+      "task_id" => "task-agent-7",
+      "tool_use_id" => tool,
+      "description" => description,
+      "task_type" => "local_agent",
+      "is_backgrounded" => true
+    })
+
+    claude_says(context, %{
+      "type" => "user",
+      "message" => %{
+        "role" => "user",
+        "content" => [
+          %{"type" => "tool_result", "tool_use_id" => tool, "content" => "Message delivered"}
+        ]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "parent_tool_use_id" => tool,
+      "message" => %{
+        "id" => "m-sub-#{tool}",
+        "content" => [%{"type" => "text", "text" => "The tests pass"}]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-agent-7",
+      "tool_use_id" => tool,
+      "status" => "completed",
+      "summary" => "The tests pass"
+    })
   end
 
   defp flush_runtime(context) do
@@ -4178,6 +4902,64 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- notebook edits ------------------------------------------------------------------------
+
+  # Claude's NotebookEdit names its file `notebook_path`, never `file_path`.
+  step "Claude edits the notebook {string} with its NotebookEdit tool",
+       %{args: [path]} = context do
+    context = running_turn(context)
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-notebook",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "tool-notebook",
+            "name" => "NotebookEdit",
+            "input" => %{"notebook_path" => path, "cell_id" => "c1", "new_source" => "print(1)"}
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "user",
+      "message" => %{
+        "content" => [
+          %{
+            "type" => "tool_result",
+            "tool_use_id" => "tool-notebook",
+            "content" => "Updated cell c1"
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  defp file_changes(context) do
+    for item <- StreamState.list(World.stream(context, @thread), "turn-item"),
+        item["type"] == "file_change",
+        do: item
+  end
+
+  step "the timeline shows a file change to {string}", %{args: [path]} = context do
+    assert [%{"fileName" => ^path}] = file_changes(context)
+    context
+  end
+
+  # A client's Open diff asks for the file the change names.
+  step "opening its diff opens {string}", %{args: [path]} = context do
+    refute Enum.any?(file_changes(context), &(inspect(&1) =~ "NotebookEdit result"))
+    assert Enum.all?(file_changes(context), &(&1["fileName"] == path))
+    context
+  end
+
   # --- questions ------------------------------------------------------------------------------
 
   defp questions(context) do
@@ -4217,6 +4999,56 @@ defmodule HalC2.Steps.Providers.Claude do
       })
 
     World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "Claude asks a question with a choice {string} that has a blank description",
+       %{args: [label]} = context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "claudeAgent", "ask skip")
+
+    context = Map.put(context, :request, World.await_request(context, @thread))
+    [question] = questions(context)
+
+    assert %{"label" => ^label, "description" => ^label} =
+             Enum.find(question["options"], &(&1["label"] == label))
+
+    Map.put(context, :question, question)
+  end
+
+  step "the user picks {string}", %{args: [label]} = context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => context.request["id"],
+        "answers" => %{context.question["id"] => label}
+      })
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "the run does not fail", context do
+    assert ["completed"] = context |> World.runs(@thread) |> Enum.map(& &1["status"])
+    context
+  end
+
+  step "Claude asks a question whose option {string} has a preview", %{args: [label]} = context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "claudeAgent", "ask preview")
+
+    World.await_request(context, @thread)
+    Map.put(context, :option, label)
+  end
+
+  # What a client subscribed to the thread renders the question from.
+  step "the question the clients receive carries the preview of {string}",
+       %{args: [label]} = context do
+    [question] = questions(context)
+    options = Map.new(question["options"], &{&1["label"], &1})
+    assert options[label]["preview"] == "```sql\nCREATE TABLE orders (id serial);\n```"
+    refute Map.has_key?(options["SQLite"], "preview")
     context
   end
 
@@ -4306,6 +5138,268 @@ defmodule HalC2.Steps.Providers.Claude do
 
   step "a list that had already completed stays completed", context do
     assert Enum.any?(todo_plans(context), &(&1["status"] == "completed"))
+    context
+  end
+
+  # --- Claude 5's task tools ---------------------------------------------------------------------
+
+  # The built-in instance with its own Claude home, where Claude keeps its task lists, and
+  # its own variables.
+  defp task_instance(context, vars) do
+    home = Mc.tmp_dir(context.mc, "claude-tasks-home")
+    context = World.fake_providers(context)
+
+    context =
+      write_settings(context, fn settings ->
+        put_in(settings, [Access.key("providerInstances", %{}), "claudeAgent"], %{
+          "driver" => "claudeAgent",
+          "enabled" => true,
+          "config" => %{"homePath" => home},
+          "environment" =>
+            Enum.map(vars, fn {name, value} ->
+              %{"name" => name, "value" => value, "sensitive" => false}
+            end)
+        })
+      end)
+
+    Map.put(context, :claude_home, home)
+  end
+
+  # Claude calls task tool `name` and reports `output`: a structured result, or the text
+  # alone, as a subagent's call (under `opts[:parent]`) returns it.
+  defp task_call(context, id, name, input, output, opts \\ []) do
+    under = if parent = opts[:parent], do: %{"parent_tool_use_id" => parent}, else: %{}
+
+    claude_says(
+      context,
+      Map.merge(under, %{
+        "type" => "assistant",
+        "message" => %{
+          "id" => "m-#{id}",
+          "content" => [%{"type" => "tool_use", "id" => id, "name" => name, "input" => input}]
+        }
+      })
+    )
+
+    result = %{
+      "type" => "tool_result",
+      "tool_use_id" => id,
+      "content" => if(is_binary(output), do: output, else: "Task tool finished."),
+      "is_error" => opts[:error] == true
+    }
+
+    user =
+      Map.merge(under, %{
+        "type" => "user",
+        "message" => %{"role" => "user", "content" => [result]}
+      })
+
+    claude_says(
+      context,
+      if(is_map(output), do: Map.put(user, "tool_use_result", output), else: user)
+    )
+
+    context
+  end
+
+  # Claude creates task `id` and saves it where it keeps the session's task list.
+  defp task_created(context, id, subject) do
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    dir = Path.join([context.claude_home, "tasks", :sys.get_state(pid).session_id])
+    File.mkdir_p!(dir)
+
+    task = %{"id" => id, "subject" => subject, "description" => "", "status" => "pending"}
+    File.write!(Path.join(dir, "#{id}.json"), JSON.encode!(task))
+
+    task_call(context, "task-create-#{id}", "TaskCreate", %{"subject" => subject}, %{
+      "task" => %{"id" => id, "subject" => subject}
+    })
+  end
+
+  # The steps of the thread's newest active task list, once the runtime has handled
+  # what Claude said.
+  defp task_steps(context) do
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    _ = :sys.get_state(pid)
+
+    for %{"status" => "active"} = plan <- todo_plans(context),
+        step <- plan["steps"],
+        do: {step["id"], step["text"], step["status"]}
+  end
+
+  defp claude_ends_turn(context) do
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    context
+  end
+
+  step "the Claude instance turns on Claude's task tools in its environment variables",
+       context do
+    task_instance(context, %{"CLAUDE_CODE_ENABLE_TODO_TOOLS" => "1"})
+  end
+
+  step "a Claude 5 model creates tasks, updates one to in progress and lists them", context do
+    context =
+      context
+      |> running_turn()
+      |> task_call("t1", "TaskCreate", %{"subject" => "Inspect the logs"}, %{
+        "task" => %{"id" => "1", "subject" => "Inspect"}
+      })
+      |> task_call("t2", "TaskCreate", %{"subject" => "Fix the bug"}, %{
+        "task" => %{"id" => "2", "subject" => "Fix the bug"}
+      })
+      |> task_call("t3", "TaskUpdate", %{"taskId" => "1", "status" => "in_progress"}, %{
+        "success" => true,
+        "taskId" => "1",
+        "updatedFields" => ["status"]
+      })
+
+    assert task_steps(context) == [
+             {"task-1", "Inspect", "running"},
+             {"task-2", "Fix the bug", "pending"}
+           ]
+
+    context
+    |> task_call("t4", "TaskList", %{}, %{
+      "tasks" => [
+        %{"id" => "1", "subject" => "Inspect", "status" => "in_progress", "blockedBy" => []},
+        %{"id" => "2", "subject" => "Fix the bug", "status" => "completed", "blockedBy" => []}
+      ]
+    })
+    |> claude_ends_turn()
+    |> tap(&World.await_runs(&1, @thread, ["completed"]))
+  end
+
+  step "the thread's task list shows those tasks with their status", context do
+    assert task_steps(context) == [
+             {"task-1", "Inspect", "running"},
+             {"task-2", "Fix the bug", "completed"}
+           ]
+
+    start = Enum.find(World.provider_log(context, "claude"), &Map.has_key?(&1, "argv"))
+    assert start["env"]["CLAUDE_CODE_ENABLE_TODO_TOOLS"] == "1"
+    context
+  end
+
+  step "Claude's task list has three tasks", context do
+    context =
+      context
+      |> task_instance(%{})
+      |> running_turn()
+      |> task_created("1", "Inspect")
+      |> task_created("2", "Fix")
+      |> task_created("3", "Test")
+      |> claude_ends_turn()
+
+    World.await_runs(context, @thread, ["completed"])
+    assert [{_, "Inspect", _}, {_, "Fix", _}, {_, "Test", _}] = task_steps(context)
+    context
+  end
+
+  step "Claude adds a fourth task", context do
+    context = World.post_message(context, @thread, "wait for the fourth task")
+    World.await_running(context, @thread)
+
+    World.await_provider_log(
+      context,
+      "claude",
+      &(get_in(&1, ["in", "message", "content"]) == "wait for the fourth task")
+    )
+
+    context
+    |> task_created("4", "Deploy")
+    |> claude_ends_turn()
+    |> tap(&World.await_runs(&1, @thread, ["completed", "completed"]))
+  end
+
+  step "the task list shows all four tasks", context do
+    assert [
+             {"task-1", "Inspect", "pending"},
+             {"task-2", "Fix", "pending"},
+             {"task-3", "Test", "pending"},
+             {"task-4", "Deploy", "pending"}
+           ] = task_steps(context)
+
+    context
+  end
+
+  step "a Claude thread has a task list", context do
+    context =
+      context
+      |> task_instance(%{})
+      |> running_turn()
+      |> task_created("1", "Inspect")
+      |> task_created("2", "Fix")
+
+    assert [{"task-1", "Inspect", "pending"}, {"task-2", "Fix", "pending"}] = task_steps(context)
+    context
+  end
+
+  step "a Claude subagent adds a task and finishes another", context do
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-agent-tasks",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "agent-tasks",
+            "name" => "Agent",
+            "input" => %{"description" => "Helper", "prompt" => "Help with the tasks"}
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_started",
+      "task_id" => "task-agent-tasks",
+      "tool_use_id" => "agent-tasks",
+      "description" => "Helper",
+      "task_type" => "local_agent"
+    })
+
+    context
+    |> task_call(
+      "sub-create",
+      "TaskCreate",
+      %{"subject" => "Write docs", "description" => "Document the fix"},
+      "Task #3 created successfully: Write docs",
+      parent: "agent-tasks"
+    )
+    |> task_call(
+      "sub-update",
+      "TaskUpdate",
+      %{"taskId" => "1", "status" => "completed"},
+      "Updated task #1 status",
+      parent: "agent-tasks"
+    )
+  end
+
+  step "the thread's task list shows the added task and the finished one", context do
+    assert task_steps(context) == [
+             {"task-1", "Inspect", "completed"},
+             {"task-2", "Fix", "pending"},
+             {"task-3", "Write docs", "pending"}
+           ]
+
+    context
+  end
+
+  step "a task change that failed leaves the list as it was", context do
+    before = task_steps(context)
+    update = %{"taskId" => "2", "status" => "completed"}
+
+    context
+    |> task_call("sub-failed", "TaskUpdate", update, "Task not found",
+      parent: "agent-tasks",
+      error: true
+    )
+    # A hook that blocks the call answers in text, without the error flag.
+    |> task_call("sub-blocked", "TaskUpdate", update, "Blocked by a hook", parent: "agent-tasks")
+    |> task_call("root-failed", "TaskUpdate", update, %{"success" => false, "taskId" => "2"})
+
+    assert task_steps(context) == before
     context
   end
 
@@ -4415,6 +5509,484 @@ defmodule HalC2.Steps.Providers.Claude do
     end)
 
     context
+  end
+
+  # --- background work when Claude's process ends --------------------------------------
+
+  # Its process lingers a second once its stdin closes, as Claude finishing its
+  # background work does; a process reads that as it starts.
+  step "Claude launched a subagent in the background", context do
+    World.put_env("FAKE_CLAUDE_EXIT_DELAY", "1")
+    background_subagent(context)
+  end
+
+  step "Claude launched a subagent in the background and the launching turn completed",
+       context do
+    background_subagent(context)
+  end
+
+  # Between turns the stop closes the thread's process, which lingers.
+  step "the user stopped the turn", context do
+    stop = Task.async(fn -> stop_thread(context) end)
+    World.await_provider_log(context, "claude", &Map.has_key?(&1, "eof"))
+    Map.put(context, :stop, stop)
+  end
+
+  step "the next turn starts a new Claude process before the old one has exited", context do
+    [%{"pid" => old}] = claude_processes(context)
+    assert alive?(old)
+    context = World.post_message(context, @thread, "hello")
+    Task.await(context.stop, 10_000)
+    World.await_runs(context, @thread, ["completed", "completed"])
+    assert [_, _] = claude_processes(context)
+    Map.put(context, :old_process, old)
+  end
+
+  step "the old process exits", context do
+    refute alive?(context.old_process)
+    context
+  end
+
+  step "the thread can show that it is awaiting input", context do
+    assert Enum.all?(World.runs(context, @thread), &(&1["status"] == "completed"))
+    [{runtime, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    assert %{turn: nil, work: work} = :sys.get_state(runtime)
+    assert work == %{}
+    context
+  end
+
+  step ~r/^Claude's process (?<ends>exits unexpectedly|is stopped by the user) without reporting the subagent finished$/,
+       %{args: [ends]} = context do
+    case ends do
+      "exits unexpectedly" ->
+        [%{"pid" => pid}] = claude_processes(context)
+        {_, 0} = System.cmd("kill", ["-9", to_string(pid)])
+
+      "is stopped by the user" ->
+        stop_thread(context)
+    end
+
+    context
+  end
+
+  defp stop_thread(context),
+    do:
+      {:ok, _} =
+        HalC2.Orchestration.dispatch(%{
+          "type" => "run.interrupt",
+          "threadId" => World.thread_id(context, @thread)
+        })
+
+  defp background_subagent(context) do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "survey in the background")
+
+    World.await_runs(context, @thread, ["completed"])
+
+    assert [%{"status" => "running"}] =
+             StreamState.list(World.stream(context, @thread), "subagent")
+
+    context
+  end
+
+  # The fake Claude processes started in the scenario, oldest first: their OS pids.
+  defp claude_processes(context),
+    do: Enum.filter(World.provider_log(context, "claude"), &Map.has_key?(&1, "argv"))
+
+  defp alive?(os_pid), do: File.exists?("/proc/#{os_pid}")
+
+  # --- a nested subagent that finishes before its wake's run (Upstream #23561) ----------
+
+  # Claude reacts to the survey by itself and the survey launches a subagent of its
+  # own, all while the runtime is held: the wake ends, and the user's message is sent
+  # before the runtime is let go, so the user's run comes first and the wake's run,
+  # which replays the nested launch, queues behind it.
+  step "a background Claude subagent launched a subagent of its own while the thread was idle",
+       context do
+    context = background_subagent(context)
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+
+    [survey] =
+      for {tool, %{sub: %{}}} <- :sys.get_state(pid).work, do: tool
+
+    :ok = :sys.suspend(pid)
+    session = :sys.get_state(pid).session
+    says = &send(pid, {:claude, session, {:message, &1}})
+
+    says.(%{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-wake",
+        "content" => [%{"type" => "text", "text" => "The survey is under way"}]
+      }
+    })
+
+    says.(%{
+      "type" => "assistant",
+      "parent_tool_use_id" => survey,
+      "message" => %{
+        "id" => "s-nested",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "agent-nested",
+            "name" => "Agent",
+            "input" => %{
+              "description" => "Count the files",
+              "prompt" => "Count the files",
+              "run_in_background" => true
+            }
+          }
+        ]
+      }
+    })
+
+    says.(%{
+      "type" => "system",
+      "subtype" => "task_started",
+      "task_id" => "task-agent-nested",
+      "tool_use_id" => "agent-nested",
+      "description" => "Count the files",
+      "task_type" => "local_agent",
+      "is_backgrounded" => true
+    })
+
+    says.(%{"type" => "result", "subtype" => "success", "is_error" => false})
+    Map.merge(context, %{runtime: pid, survey: survey})
+  end
+
+  step "the nested subagent finished during a later user turn", context do
+    done = length(World.runs(context, @thread))
+    send = Task.async(fn -> World.post_message(context, @thread, "wait for the survey") end)
+    World.await_value(context, @thread, &(length(StreamState.list(&1, "run")) == done + 1))
+    :ok = :sys.resume(context.runtime)
+    Task.await(send, 10_000)
+    assert %{turn: %{}, wake: %{open: false, buffer: [_ | _]}} = :sys.get_state(context.runtime)
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-agent-nested",
+      "tool_use_id" => "agent-nested",
+      "status" => "completed",
+      "summary" => "There are 3 files"
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed", "completed", "completed"], 10_000)
+    context
+  end
+
+  step "another subagent finishing wakes the thread", context do
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-#{context.survey}",
+      "tool_use_id" => context.survey,
+      "status" => "completed",
+      "summary" => "The repo holds a server"
+    })
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-survey-done",
+        "content" => [%{"type" => "text", "text" => "The survey is done"}]
+      }
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, List.duplicate("completed", 4), 10_000)
+    context
+  end
+
+  step "the nested subagent is shown as completed", context do
+    subagents = StreamState.list(World.stream(context, @thread), "subagent")
+    assert %{"status" => "completed"} = Enum.find(subagents, &(&1["title"] == "Count the files"))
+    assert Enum.all?(subagents, &(&1["status"] == "completed")), inspect(subagents)
+    context
+  end
+
+  # --- notices wait for Claude's pending tools (Upstream #15892) -------------------------
+
+  # The fake's turn calls Bash (tool-pending-1) and the call runs on.
+  step "Claude has a tool call pending", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "leave a tool pending")
+
+    World.await_state(context, @thread, fn state ->
+      Enum.any?(
+        StreamState.list(state, "turn-item"),
+        &(&1["type"] == "command_execution" and &1["status"] == "running")
+      )
+    end)
+
+    [run] = World.runs(context, @thread)
+    Map.merge(context, %{thread: @thread, active_run: run["id"]})
+  end
+
+  # Its delegated task's child (a Codex thread) is steered to its answer.
+  step "a delegated task finishes while the run is active", context do
+    input = %{
+      "task" => "wait for it",
+      "mode" => "async",
+      "target" => %{"providerInstanceId" => "codex"}
+    }
+
+    # The tool finds its caller by the thread's sidebar row.
+    World.await_row(World.thread_id(context, @thread), & &1)
+
+    assert {:ok, %{"taskId" => task_id}} =
+             World.mcp_tool(context, @thread, "delegate_task", input, "claudeAgent")
+
+    task = fn state -> StreamState.get(state, "subagent")[task_id] end
+    child = World.await_state(context, @thread, &task.(&1)) |> task.()
+    context = put_in(context, [:threads, "delegated child"], child["childThreadId"])
+    World.await_runs(context, "delegated child", ["running"])
+    World.send_turn(context, "delegated child", "say Done")
+    World.await_state(context, @thread, &(task.(&1)["status"] == "completed"))
+    Map.put(context, :notice, &(get_in(&1, ["delegatedCompletion", "taskIds"]) == [task_id]))
+  end
+
+  # A schedule bound to the thread, run now as it would be when it comes due.
+  step "a scheduled prompt comes due while the run is active", context do
+    Mc.ensure(HalC2.ScheduledTasks)
+    [run] = World.runs(context, @thread)
+
+    {:ok, %{"task" => %{"id" => id}}} =
+      HalC2.ScheduledTasks.upsert(%{
+        "title" => "Check the build",
+        "prompt" => "Check the build",
+        "enabled" => false,
+        "schedule" => %{"type" => "interval", "everyMs" => 3_600_000},
+        "projectId" => World.project(context).id,
+        "threadId" => World.thread_id(context, @thread),
+        "workspaceStrategy" => %{"type" => "root"},
+        "modelSelection" => run["modelSelection"],
+        "runtimeMode" => "full-access",
+        "interactionMode" => "default"
+      })
+
+    {:ok, _} = HalC2.ScheduledTasks.run_now(%{"id" => id})
+    Map.put(context, :notice, &(&1["scheduledTaskId"] == id))
+  end
+
+  step "the notice is queued and delivered after the active run ends", context do
+    notice = fn state -> Enum.find(StreamState.list(state, "message"), context.notice) end
+    state = World.await_state(context, @thread, &(notice.(&1) != nil))
+    message = notice.(state)
+
+    assert [%{"id" => active, "status" => "running"}, %{"status" => "queued"} = queued] =
+             World.runs(context, @thread)
+
+    assert active == context.active_run
+    assert queued["userMessageId"] == message["id"]
+
+    claude_says(context, %{
+      "type" => "user",
+      "message" => %{
+        "role" => "user",
+        "content" => [
+          %{"type" => "tool_result", "tool_use_id" => "tool-pending-1", "content" => "ok"}
+        ]
+      }
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "result" => "Tests pass"})
+
+    World.await_state(context, @thread, fn state ->
+      match?(
+        [%{"status" => "completed"}, %{"status" => status}] when status != "queued",
+        StreamState.list(state, "run") |> Enum.sort_by(& &1["ordinal"])
+      )
+    end)
+
+    World.await_provider_log(context, "claude", fn entry ->
+      get_in(entry, ["in", "type"]) == "user" and
+        inspect(get_in(entry, ["in", "message", "content"])) =~
+          String.slice(message["text"], 0, 20)
+    end)
+
+    context
+  end
+
+  step "the user steers the run", context do
+    World.send_turn(context, @thread, "Look at this instead", %{
+      "dispatchMode" => %{"type" => "steer_active", "targetRunId" => context.active_run}
+    })
+  end
+
+  step "the steer goes in at once", context do
+    World.await_provider_log(context, "claude", &(get_in(&1, ["in", "priority"]) == "now"))
+    state = World.await_runs(context, @thread, ["completed"])
+
+    assert Enum.any?(
+             StreamState.list(state, "message"),
+             &(&1["role"] == "assistant" and &1["text"] =~ "steered: Look at this instead")
+           )
+
+    context
+  end
+
+  step "the tool call Claude did not run shows as cancelled, not as denied permission",
+       context do
+    items = StreamState.list(World.stream(context, @thread), "turn-item")
+    assert %{"status" => "cancelled"} = Enum.find(items, &(&1["type"] == "command_execution"))
+    context
+  end
+
+  # --- a wake turn keeps the thread working (Upstream ClaudeAdapterV2 continuations) -----
+
+  # The fake's first turn leaves a background command (task task-build-1) running, and
+  # the thread waits on it as `hal_c2_background_wait` makes it.
+  step "a Claude thread waiting on a background command", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "background commands: build")
+
+    World.await_runs(context, @thread, ["completed"])
+    id = World.thread_id(context, @thread)
+
+    assert {:ok, ["task-build-1"]} =
+             HalC2.Claude.ThreadRuntime.await_background(id, ["task-build-1"], true)
+
+    World.await_row(id, &match?([_], &1["pendingBackgroundTasks"]))
+    context
+  end
+
+  # Claude says the command ended, then answers it in a turn of its own.
+  step "the command finishes and Claude begins reacting", context do
+    id = World.thread_id(context, @thread)
+    flush_rows()
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-build-1",
+      "tool_use_id" => "build-1",
+      "status" => "completed",
+      "summary" => "The build passed"
+    })
+
+    # Claude thinks before it answers: the sidebar row in the meantime.
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, id)
+    _ = :sys.get_state(pid)
+    :ok = HalC2.Streams.flush_shell(id)
+    context = Map.put(context, :meantime, World.row(context, @thread))
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-build-done",
+        "content" => [%{"type" => "text", "text" => "The build passed"}]
+      }
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    idle = first_idle_row(id)
+    World.await_runs(context, @thread, ["completed", "completed"])
+    Map.put(context, :idle, idle)
+  end
+
+  # The row while Claude thinks still holds the command; the stream may fold the rows
+  # of quick commits into one, so the rest is checked on the first row that shows the
+  # thread idle after the notice: by then the wake's run, the thread's last, has ended.
+  step "the thread never leaves working in between", context do
+    assert context.meantime["pendingBackgroundTasks"] != [], inspect(context.meantime)
+    wake = List.last(World.runs(context, @thread))
+    assert %{"latestRunId" => latest, "status" => "completed"} = context.idle
+    assert latest == wake["id"], inspect(context.idle)
+
+    assert Enum.any?(
+             StreamState.list(World.stream(context, @thread), "turn-item"),
+             &(&1["input"] == "run build" and &1["status"] == "completed")
+           )
+
+    context
+  end
+
+  # The hold on the notice runs out (`:claude_notice_hold_ms`) without Claude answering:
+  # the deadline's message is sent at once.
+  step "the command finishes and Claude does not answer it", context do
+    id = World.thread_id(context, @thread)
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-build-1",
+      "tool_use_id" => "build-1",
+      "status" => "completed",
+      "summary" => "The build passed"
+    })
+
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, id)
+    assert [_] = :sys.get_state(pid).notices
+    send(pid, {:release_notices, "task-build-1"})
+    context
+  end
+
+  # The notice is held for Claude's answer when the user stops the thread.
+  step "the command finishes and the user stops the thread before Claude answers it",
+       context do
+    id = World.thread_id(context, @thread)
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-build-1",
+      "tool_use_id" => "build-1",
+      "status" => "completed",
+      "summary" => "The build passed"
+    })
+
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, id)
+    assert [_] = :sys.get_state(pid).notices
+    stop_thread(context)
+    context
+  end
+
+  step "the command ends and the thread settles", context do
+    World.await_row(
+      World.thread_id(context, @thread),
+      &(&1["activeRunId"] == nil and &1["pendingBackgroundTasks"] == [])
+    )
+
+    World.await_value(context, @thread, fn state ->
+      Enum.any?(
+        StreamState.list(state, "turn-item"),
+        &(&1["input"] == "run build" and &1["status"] == "completed" and
+            &1["output"] == "The build passed")
+      )
+    end)
+
+    assert ["completed"] = Enum.map(World.runs(context, @thread), & &1["status"])
+    context
+  end
+
+  defp flush_rows do
+    receive do
+      {:hal_c2_shell, {:rows, _, _}} -> flush_rows()
+    after
+      0 -> :ok
+    end
+  end
+
+  # The first row the shell sends this process that shows the thread idle.
+  defp first_idle_row(id) do
+    receive do
+      {:hal_c2_shell, {:rows, _, changed}} ->
+        case List.keyfind(changed, id, 0) do
+          {^id, {_kind, %{"activeRunId" => nil, "pendingBackgroundTasks" => []} = row}} -> row
+          _ -> first_idle_row(id)
+        end
+    after
+      10_000 -> flunk("the thread never settled")
+    end
   end
 
   step "Claude launches a subagent in the background and the launch returns at once",
@@ -5329,7 +6901,7 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
-  step ~r/^a Claude turn runs on (?<model>.+)$/, %{args: [model]} = context do
+  step ~r/^a Claude turn runs on (?<model>(?!it ).+)$/, %{args: [model]} = context do
     {slug, options} =
       case model do
         "Opus 4.6" ->
@@ -5519,7 +7091,7 @@ defmodule HalC2.Steps.Providers.Claude do
 
   step "the thread says full access is not available and runs in the mode Claude allows",
        context do
-    assert flag_value(last_argv(context), "--permission-mode") == "default"
+    assert flag_value(last_argv(context), "--permission-mode") == "auto"
     assert [notice] = bypass_notices(context)
     assert notice =~ "turn off bypassing permissions"
     context
@@ -6077,9 +7649,17 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # Codex's "a new Codex app-server is started" names the thread whose turn ran.
   step "the turn runs", context do
-    World.await_runs(context, @thread, ["completed"])
-    assert "Hello from claude" in World.replies(context, @thread)
+    case context[:turn_thread] do
+      nil ->
+        World.await_runs(context, @thread, ["completed"])
+        assert "Hello from claude" in World.replies(context, @thread)
+
+      title ->
+        assert "Hello from codex" in World.replies(context, title)
+    end
+
     context
   end
 
@@ -6212,6 +7792,71 @@ defmodule HalC2.Steps.Providers.Claude do
     assert starts != []
     refute "--resume" in List.last(starts)
     assert "Hello from claude" in World.replies(context, @thread)
+    context
+  end
+
+  # Upstream #19637. The first prompt's session left a transcript with only the metadata
+  # Claude writes before the message itself, as when the MC stopped in between.
+  step "the MC restarted after sending Claude a prompt and before Claude saved it", context do
+    home = Mc.tmp_dir(context.mc, "claude-unsaved")
+    World.put_os_env("CLAUDE_CONFIG_DIR", home)
+    World.put_os_env("FAKE_SESSIONS", "1")
+
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "hello")
+
+    World.await_runs(context, @thread, ["completed"])
+
+    assert [%{"nativeThreadRef" => %{"nativeId" => session}}] =
+             World.stream(context, @thread) |> StreamState.list("provider-thread")
+
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    assert [transcript] = Path.wildcard(Path.join([home, "projects", "*", session <> ".jsonl"]))
+
+    File.write!(
+      transcript,
+      Enum.map_join(
+        [
+          %{"type" => "last-prompt", "lastPrompt" => "hello", "sessionId" => session},
+          %{"type" => "atis-latch", "sessionId" => session},
+          %{"type" => "cost-state", "sessionId" => session}
+        ],
+        &(JSON.encode!(&1) <> "\n")
+      )
+    )
+
+    Map.put(context, :unsaved_session, session)
+  end
+
+  step "the user sends the next message in the thread", context do
+    context = World.send_turn(context, @thread, "and then?")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  # The new conversation carried the thread so far, and is the one a later session
+  # resumes: the MC restarts again before the next message.
+  step "later messages in the thread do not fail with {string}", %{args: [_]} = context do
+    assert Enum.any?(World.provider_log(context, "claude"), fn entry ->
+             sent = inspect(entry["in"])
+             sent =~ "and then?" and sent =~ "Hello from claude"
+           end)
+
+    assert [%{"nativeThreadRef" => %{"nativeId" => session}}] =
+             World.stream(context, @thread) |> StreamState.list("provider-thread")
+
+    assert session != context.unsaved_session
+
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    context = World.send_turn(context, @thread, "one more")
+    World.await_runs(context, @thread, ["completed", "completed", "completed"])
+    starts = for %{"argv" => argv} <- World.provider_log(context, "claude"), do: argv
+
+    assert ["--resume", ^session] =
+             starts |> List.last() |> Enum.drop_while(&(&1 != "--resume")) |> Enum.take(2)
+
     context
   end
 
@@ -6442,6 +8087,52 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # Claude's plugin registry and `enabledPlugins`, as `/plugin install` leaves them:
+  # `acme` is on, `tidy` is installed but switched off.
+  step "the Claude plugin {string} is installed and enabled and has the skill {string}",
+       %{args: [plugin, skill]} = context do
+    {context, home} = skills_home(context)
+
+    install = fn name ->
+      path = Path.join([home, "plugins", "cache", "market", name, "1.0.0"])
+
+      write_skill_file(Path.join(path, "skills"), if(name == plugin, do: skill, else: "fmt"), """
+      ---
+      description: From #{name}
+      ---
+      Do it.
+      """)
+
+      {"#{name}@market", [%{"scope" => "user", "installPath" => path, "version" => "1.0.0"}]}
+    end
+
+    plugins = Map.new([install.(plugin), install.("tidy")])
+
+    File.write!(
+      Path.join([home, "plugins", "installed_plugins.json"]),
+      JSON.encode!(%{"version" => 2, "plugins" => plugins})
+    )
+
+    settings = Path.join(home, "settings.json")
+
+    File.write!(
+      settings,
+      JSON.encode!(%{"enabledPlugins" => %{"#{plugin}@market" => true, "tidy@market" => false}})
+    )
+
+    context
+  end
+
+  step ~r/^"(?<name>[a-z0-9_-]+:[a-z0-9_-]+)" is offered$/, %{args: [name]} = context do
+    assert %{"scope" => "plugin", "enabled" => true} = offered(context, name)
+    context
+  end
+
+  step "the skills of a disabled plugin are not", context do
+    refute Enum.any?(context.skills, &(&1["name"] in ["tidy:fmt", "fmt"]))
+    context
+  end
+
   step "the user opens the skill list in a Claude thread", context do
     context = World.fake_providers(context)
     open_skill_list(context)
@@ -6474,6 +8165,25 @@ defmodule HalC2.Steps.Providers.Claude do
        %{args: [first, second]} = context do
     context = World.fake_providers(context)
     context |> project_skill(first) |> project_skill(second)
+  end
+
+  step "the project has the Claude skills {string} and {string}, which only the user may invoke",
+       %{args: [first, second]} = context do
+    context = World.fake_providers(context)
+    body = "---\ndescription: Only on request\ndisable-model-invocation: true\n---\nDo it.\n"
+    context |> project_skill(first, body) |> project_skill(second, body)
+  end
+
+  # Upstream #19485: the earlier skill is named with where its instructions are.
+  step "Claude is told the user asked for {string} and where its instructions are",
+       %{args: [name]} = context do
+    root = World.project(context).root
+    path = Path.join([root, ".claude", "skills", name, "SKILL.md"])
+
+    assert hd(last_user_texts(context)) ==
+             "/#{name} [The user invoked this skill. Follow the instructions at: #{path}] the diff, then"
+
+    context
   end
 
   step "the project has the Claude skills {string} and {string}, and the header of {string} is malformed",
@@ -7173,7 +8883,8 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   step "the user is asked for permission", context do
-    assert flag_value(last_argv(context), "--permission-mode") == "default"
+    # Those settings leave Auto allowed, so Full access falls back to it.
+    assert flag_value(last_argv(context), "--permission-mode") == "auto"
 
     World.await_value(context, @thread, fn state ->
       match?([%{"status" => "pending"}], StreamState.list(state, "runtime-request"))
@@ -7219,6 +8930,45 @@ defmodule HalC2.Steps.Providers.Claude do
     context = World.post_message(context, @thread, "which mode")
     World.await_runs(context, @thread, ["completed", "completed"])
     assert World.replies(context, @thread) == ["mode default", "mode bypassPermissions"]
+    context
+  end
+
+  step ~r/^Claude has bypass turned off and (?<auto>Auto turned on|Auto turned off too)$/,
+       %{args: [auto]} = context do
+    {context, _home} = skills_home(context)
+    path = settings_file(context, "the project's Claude settings")
+    File.mkdir_p!(Path.dirname(path))
+
+    settings =
+      if auto == "Auto turned off too",
+        do: %{"disableAutoMode" => "disable"},
+        else: %{}
+
+    settings = Map.put(settings, "permissions", %{"disableBypassPermissionsMode" => "disable"})
+    File.write!(path, Jason.encode!(settings))
+    context
+  end
+
+  step "a Claude thread runs in Full access", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "which mode")
+
+    World.await_runs(context, @thread, ["completed"])
+    Map.put(context, :thread, @thread)
+  end
+
+  step ~r/^Claude runs in (?<mode>Auto|its default mode, with approvals)$/,
+       %{args: [mode]} = context do
+    expected = if mode == "Auto", do: "auto", else: "default"
+    argv = last_argv(context)
+    assert flag_value(argv, "--permission-mode") == expected
+    refute Enum.any?(argv, &String.contains?(&1, "dangerously-skip-permissions"))
+    assert World.replies(context, @thread) == ["mode #{expected}"]
+    assert [notice] = bypass_notices(context)
+    assert notice =~ "Claude's settings turn off bypassing permissions"
+    assert notice =~ "Auto mode" == (mode == "Auto")
     context
   end
 
@@ -7271,6 +9021,103 @@ defmodule HalC2.Steps.Providers.Claude do
     end)
 
     Map.put(context, :ask_reason, reason)
+  end
+
+  defp safety_check_asks(context, request_context) do
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    {_type, reason} = @full_access_causes["Claude's own safety check on a recursive delete"]
+
+    send(
+      pid,
+      {:claude, :sys.get_state(pid).session,
+       {:permission, "perm-once", "Bash", %{"command" => "rm -rf build"},
+        Map.merge(
+          %{"decision_reason" => reason, "decision_reason_type" => "safetyCheck"},
+          request_context
+        )}}
+    )
+
+    item =
+      World.await_value(context, @thread, fn state ->
+        Enum.find(StreamState.list(state, "turn-item"), &(&1["type"] == "approval_request"))
+      end)
+
+    context |> Map.put(:ask_reason, reason) |> Map.put(:approval, item)
+  end
+
+  # The fake's safety check asks during the running turn, as the CLI does.
+  step "Claude's safety check asks to run a command and forbids an always-allow rule", context do
+    [%{"id" => run_id}] = World.runs(context, @thread)
+
+    context =
+      World.send_turn(context, @thread, "ask once", %{
+        "dispatchMode" => %{"type" => "steer_active", "targetRunId" => run_id}
+      })
+
+    item =
+      World.await_value(context, @thread, fn state ->
+        Enum.find(StreamState.list(state, "turn-item"), &(&1["type"] == "approval_request"))
+      end)
+
+    Map.put(context, :approval, item)
+  end
+
+  step "the user can only decline or approve it", context do
+    assert ["decline", "accept"] = Enum.map(context.approval["options"], & &1["decision"])
+    context
+  end
+
+  # A client that still sends a session grant gets no rule written: the request is
+  # declined.
+  step "there is no way to always allow it for the session", context do
+    request = World.await_request(context, @thread)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => request["id"],
+        "decision" => "acceptForSession"
+      })
+
+    entry =
+      World.await_provider_log(
+        context,
+        "claude",
+        &(get_in(&1, ["in", "type"]) == "control_response" and
+            get_in(&1, ["in", "response", "request_id"]) == "perm-once")
+      )
+
+    answer = get_in(entry, ["in", "response", "response"])
+    assert answer["behavior"] == "deny"
+    refute Map.has_key?(answer, "updatedPermissions")
+    context
+  end
+
+  step "a Claude thread in Full access is waiting on an approval Claude's safety check raised",
+       context do
+    context |> running_turn() |> safety_check_asks(%{})
+  end
+
+  step "an agent reads the thread", context do
+    context = World.create_thread(context, "Reader", "shop")
+
+    {:ok, read} =
+      World.mcp_tool(context, "Reader", "hal_c2_thread_read", %{
+        "threadId" => World.thread_id(context, @thread),
+        "view" => "activity"
+      })
+
+    Map.put(context, :mcp_read, read)
+  end
+
+  step "the pending approval includes Claude's reason", context do
+    assert %{"status" => "waiting", "reason" => reason, "text" => text} =
+             Enum.find(context.mcp_read["items"], &(&1["type"] == "approval_request"))
+
+    assert reason == context.ask_reason
+    assert text =~ "rm -rf build"
+    context
   end
 
   # --- skill calls --------------------------------------------------------------------------------
@@ -7391,6 +9238,54 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  step "a Claude thread in Supervised mode", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "wait for me", %{
+        "runtimeMode" => "approval-required"
+      })
+
+    World.await_running(context, @thread)
+    World.await_provider_log(context, "claude", &(get_in(&1, ["in", "type"]) == "user"))
+    assert :sys.get_state(runtime(context)).permission_mode == "default"
+    Map.put(context, :thread, @thread)
+  end
+
+  # Claude's ordinary ask outside Full access: a rule of its default mode.
+  step ~r/^Claude asks to run "(?<command>[^"]+)"$/, %{args: [command]} = context do
+    send(
+      runtime(context),
+      {:claude, :sys.get_state(runtime(context)).session,
+       {:permission, "perm-plain", "Bash", %{"command" => command},
+        %{
+          "title" => "Claude wants to run #{command}",
+          # An ask rule, which in Full access would explain why it still asked.
+          "decision_reason" => "Bash(touch:*) is an ask rule",
+          "decision_reason_type" => "rule"
+        }}}
+    )
+
+    World.await_value(context, @thread, fn state ->
+      Enum.any?(StreamState.list(state, "turn-item"), &(&1["type"] == "approval_request"))
+    end)
+
+    Map.put(context, :command, command)
+  end
+
+  step "the approval reads as an ordinary approval with no explanation of why Full access asked",
+       context do
+    approval = approval_item(context)
+    assert approval["prompt"] == "Claude wants to run #{context.command}"
+    refute Map.has_key?(approval, "fullAccessOverride")
+    context
+  end
+
+  defp runtime(context) do
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    pid
+  end
+
   defp approval_item(context) do
     [approval] =
       for item <- StreamState.list(World.stream(context, @thread), "turn-item"),
@@ -7445,6 +9340,153 @@ defmodule HalC2.Steps.Providers.Claude do
     # The fake keeps a resumed transcript whole; `resumed at` is where Claude cuts it.
     assert answer =~ "earlier [first question | second question", answer
     refute answer =~ "resumed at None", answer
+    context
+  end
+
+  # --- the goal (`/goal`, Upstream #15592, #16598, #25426) --------------------------------
+
+  # The fake's "/goal OBJECTIVE" says "Goal set", works, gets one unmet check back as
+  # Stop hook feedback ("the tests still fail") and stays open; an objective "in the
+  # background" starts a background subagent (agent-1, task task-agent-1) and ends the turn.
+  defp goal(context) do
+    World.stream(context, @thread)
+    |> StreamState.list("provider-thread")
+    |> Enum.find_value(& &1["goal"])
+  end
+
+  defp await_goal(context, fun) do
+    World.await_value(context, @thread, fn state ->
+      state |> StreamState.list("provider-thread") |> Enum.find_value(& &1["goal"]) |> fun.()
+    end)
+  end
+
+  step "the user sends {string} with an objective in a Claude thread",
+       %{args: ["/goal"]} = context do
+    context
+    |> World.fake_providers()
+    |> World.launch_on(@thread, "claudeAgent", "/goal make the tests pass")
+  end
+
+  step "the goal's state and the number of checks show in the thread", context do
+    await_goal(
+      context,
+      &(&1 == %{
+          "objective" => "make the tests pass",
+          "status" => "active",
+          "checks" => 1,
+          "lastCheck" => "the tests still fail"
+        })
+    )
+
+    context
+  end
+
+  # A Stop hook of the user's ends the turn first: Claude never ran the goal's check.
+  step "the goal shows complete only when Claude ends the turn normally", context do
+    claude_says(context, %{
+      "type" => "result",
+      "subtype" => "success",
+      "is_error" => false,
+      "terminal_reason" => "stop_hook_prevented"
+    })
+
+    World.await_runs(context, @thread, ["completed"])
+    assert %{"status" => "active", "checks" => 1} = goal(context)
+
+    context = World.post_message(context, @thread, "keep going")
+    World.await_runs(context, @thread, ["completed", "completed"])
+
+    assert goal(context) == %{
+             "objective" => "make the tests pass",
+             "status" => "complete",
+             "checks" => 1
+           }
+
+    context
+  end
+
+  step "a Claude thread is working on a {string} objective", %{args: ["/goal"]} = context do
+    context
+    |> World.fake_providers()
+    |> World.launch_on(@thread, "claudeAgent", "/goal survey the repo in the background")
+  end
+
+  step "Claude has a subagent running in the background", context do
+    World.await_value(context, @thread, fn state ->
+      match?([%{"status" => "running"}], StreamState.list(state, "subagent"))
+    end)
+
+    context
+  end
+
+  step "the main turn ends normally", context do
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "the goal is still shown as active", context do
+    assert %{"objective" => "survey the repo in the background", "status" => "active"} =
+             goal(context)
+
+    context
+  end
+
+  # A turn of the user's ends while the subagent runs, then the subagent's end wakes Claude.
+  step "it shows complete only after a later turn ends normally with no subagent running",
+       context do
+    context = World.post_message(context, @thread, "keep going")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    assert %{"status" => "active"} = goal(context)
+
+    subagent_notification(context, "completed", "lib has three modules")
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-goal-wake",
+        "content" => [%{"type" => "text", "text" => "The survey is done"}]
+      }
+    })
+
+    World.await_value(context, @thread, fn _state ->
+      match?([_, _, %{"status" => "running"}], World.runs(context, @thread))
+    end)
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed", "completed", "completed"])
+    await_goal(context, &match?(%{"status" => "complete"}, &1))
+    context
+  end
+
+  step "the user sends {string} in a Claude thread", %{args: [command]} = context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "claudeAgent", "hello")
+
+    World.await_runs(context, @thread, ["completed"])
+    context = World.post_message(context, @thread, command)
+    World.await_runs(context, @thread, ["completed", "failed"])
+    Map.put(context, :goal_command, command)
+  end
+
+  step "the command is refused, saying Claude cannot pause or resume a goal", context do
+    assert Enum.any?(
+             StreamState.list(World.stream(context, @thread), "turn-item"),
+             &(&1["type"] == "error" and &1["failure"]["code"] == "goal_unsupported" and
+                 &1["failure"]["message"] ==
+                   "Claude goals cannot be paused or resumed. Send /goal clear to remove the goal.")
+           )
+
+    # The command never reached Claude.
+    refute Enum.any?(
+             World.provider_log(context, "claude"),
+             &(get_in(&1, ["in", "message", "content"]) == context.goal_command)
+           )
+
+    context
+  end
+
+  step "no goal named {string} is set", %{args: [_word]} = context do
+    assert goal(context) == nil
     context
   end
 

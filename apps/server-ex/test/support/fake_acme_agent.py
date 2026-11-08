@@ -6,7 +6,8 @@
 # request is appended to DIR/NAME.log as JSON lines, written before the answer, so
 # a test reads it once the call it made has returned. A prompt's text picks what
 # the turn does (see `prompt` below).
-import base64, json, os, re, signal, sys
+import subprocess
+import base64, json, os, re, signal, sys, time
 
 argv = sys.argv[1:]
 def opt(flag, default=None):
@@ -33,7 +34,7 @@ def log(entry):
     with open(os.path.join(DIR, NAME + ".log"), "a") as f:
         f.write(json.dumps(entry) + "\n")
 
-log({"event": "launch", "argv0": ARGV0, "args": ARGS, "cwd": os.getcwd(),
+log({"event": "launch", "pid": os.getpid(), "argv0": ARGV0, "args": ARGS, "cwd": os.getcwd(),
      "env": {k: os.environ[k] for k in LOG_ENV if k in os.environ}})
 
 def signed_in():
@@ -61,6 +62,26 @@ if "login" in ARGS:
         sys.exit(0)
     sys.exit(1)
 
+# SIGUSR1: writes DIR/NAME.stderr to the error output and exits with code 3, mid-turn.
+def crash(*_):
+    try:
+        sys.stderr.write(open(os.path.join(DIR, NAME + ".stderr")).read())
+        sys.stderr.flush()
+    finally:
+        os._exit(3)
+signal.signal(signal.SIGUSR1, crash)
+
+# SIGUSR2: the background agent of a held prompt finishes, and so does the prompt.
+def background_done(*_):
+    global held
+    if held:
+        pid, sid = held
+        held = None
+        log({"event": "background done"})
+        update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "bg-1", "status": "completed"})
+        finish(pid, sid, "background done")
+signal.signal(signal.SIGUSR2, background_done)
+
 def send(msg):
     msg["jsonrpc"] = "2.0"
     sys.stdout.write(json.dumps(msg) + "\n")
@@ -84,6 +105,13 @@ MODE_FILE = os.path.join(DIR, NAME + ".mode")
 if CONTROL.get("keepMode") and os.path.exists(MODE_FILE):
     mode = open(MODE_FILE).read()
 
+# "legacyModes": older ACP session modes (`modes`, set by session/set_mode).
+legacy_modes = CONTROL.get("legacyModes", [])
+legacy_mode = legacy_modes[0] if legacy_modes else None
+
+# "sessionOptions": more configOptions, as given; a set one keeps its new value.
+extra_options = [dict(o) for o in CONTROL.get("sessionOptions", [])]
+
 def config_options():
     options = []
     if models and not CONTROL.get("legacyModels"):
@@ -92,7 +120,7 @@ def config_options():
     if modes:
         options.append({"id": "mode", "name": "Mode", "category": "mode", "type": "select",
                         "currentValue": mode, "options": [{"value": v, "name": v} for v in modes]})
-    return options
+    return options + extra_options
 
 def providers():
     try:
@@ -120,6 +148,13 @@ asked = {}           # our request id -> (kind, prompt id, session)
 answers = {}         # replies collected for a "read file" turn
 authenticating = None
 
+def mode_entry(m):
+    # `modeDescriptions` may hold null, as some agents send.
+    entry = {"id": m, "name": m.capitalize()}
+    if m in CONTROL.get("modeDescriptions", {}):
+        entry["description"] = CONTROL["modeDescriptions"][m]
+    return entry
+
 def finish(pid, sid, text, reason="end_turn"):
     if text:
         say(sid, text, "msg-%d-%s" % (os.getpid(), pid))
@@ -131,9 +166,55 @@ def title_json(text):
     return json.dumps({k: (False if k == "needsRefinement" else "%s %s" % (NAME, k)) for k in keys})
 
 def prompt(pid, sid, text):
-    global held
+    global held, legacy_mode
+    # Closes its output and keeps running, deaf to its input (upstream #21323).
+    if "close output" in text and "<conversation_history>" not in text:
+        log({"event": "closed", "at": time.time()})
+        sys.stdout.close()
+        os.close(1)
+        signal.signal(signal.SIGTERM, lambda *_: (log({"event": "signalled", "signal": "TERM"}), sys.exit(143)))
+        time.sleep(60)
+        sys.exit(0)
+    # "stop reading": answers, then closes its input and runs on with its output open,
+    # as an agent that stopped reading does (upstream #27924): the MC's next write fails.
+    if "stop reading" in text and "<conversation_history>" not in text:
+        finish(pid, sid, "no longer reading")
+        os.close(0)
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+        while True:
+            time.sleep(1)
+    # "fail without a code": answers the prompt with an error that has no JSON-RPC code.
+    if "fail without a code" in text:
+        return send({"id": pid, "error": {"message": "Prompt refused"}})
+    # "crash": writes control's "stderr" to its error output and exits with "exitCode".
+    if "crash" in text:
+        sys.stderr.write(CONTROL.get("stderr", ""))
+        sys.stderr.flush()
+        os._exit(CONTROL.get("exitCode", 1))
     if "Return a JSON object" in text or "Return JSON with keys" in text:
         return finish(pid, sid, "Here it is: " + title_json(text))
+    # "switch yourself to MODE": changes its older session mode on its own, as an agent
+    # leaving plan mode does, and says so. "say your mode" names the mode it is in.
+    m = re.search(r"switch yourself to (\S+)", text)
+    if m and legacy_modes and "<conversation_history>" not in text:
+        legacy_mode = m.group(1)
+        update(sid, {"sessionUpdate": "current_mode_update", "currentModeId": legacy_mode})
+        return finish(pid, sid, "mode: " + legacy_mode)
+    if "say your mode" in text:
+        return finish(pid, sid, "mode: %s" % legacy_mode)
+    # "start a helper": runs a helper that exits at once, so its pid is free for reuse.
+    if "start a helper" in text and "<conversation_history>" not in text:
+        helper = subprocess.Popen(["true"])
+        helper.wait()
+        log({"event": "helper", "pid": helper.pid, "pgid": os.getpgrp()})
+        finish(pid, sid, "helper done")
+        return
+    # "start a background agent": one works on, holding the prompt until SIGUSR2.
+    if "start a background agent" in text and "<conversation_history>" not in text:
+        update(sid, {"sessionUpdate": "tool_call", "toolCallId": "bg-1", "title": "Background agent",
+                     "kind": "other", "status": "in_progress"})
+        held = (pid, sid)
+        return
     if "wait" in text:
         held = (pid, sid)
         return
@@ -166,6 +247,25 @@ def prompt(pid, sid, text):
         send({"id": "url-" + m.group(1), "method": "elicitation/create", "params": {"mode": "url",
               "url": "https://acme.test/" + m.group(1), "elicitationId": m.group(1), "message": "Sign in to Acme"}})
         return finish(pid, sid, "asked for " + m.group(1))
+    # "say N characters": one text update that long.
+    m = re.search(r"say (\d+) characters", text)
+    if m and "<conversation_history>" not in text:
+        say(sid, "x" * int(m.group(1)), "long-%s" % pid)
+        return finish(pid, sid, "")
+    # "updates [...]": sends each session update as given, then ends the turn.
+    m = re.search(r"updates (\[.*\])", text)
+    if m and "<conversation_history>" not in text:
+        for u in json.loads(m.group(1)):
+            # "_session" sends the update for another session of the agent's.
+            update(u.pop("_session", sid), u)
+        return finish(pid, sid, "")
+    m = re.search(r"ask (\S+) (\{.*\})", text)
+    if m:
+        # One client request; the turn ends with its answer.
+        asked["ask-%s" % pid] = ("ask", pid, sid)
+        send({"id": "ask-%s" % pid, "method": m.group(1),
+              "params": dict(json.loads(m.group(2)), sessionId=sid)})
+        return
     if "read file" in text:
         # A file outside the workspace, and a terminal.
         answers[pid] = {}
@@ -197,6 +297,9 @@ def prompt(pid, sid, text):
         update(sid, {"sessionUpdate": "terminal_output_chunk", "terminalId": "term-1", "data": b64("1 failed\n")})
         update(sid, {"sessionUpdate": "terminal_update", "terminalId": "term-1", "exitStatus": {"exitCode": 1}})
         return finish(pid, sid, "ran it")
+    if "withdraw commands" in text and "<conversation_history>" not in text:
+        update(sid, {"sessionUpdate": "available_commands_update", "availableCommands": []})
+        return finish(pid, sid, "no commands")
     if "offer commands" in text:
         update(sid, {"sessionUpdate": "available_commands_update", "availableCommands": CONTROL.get("commands", [])})
         held = (pid, sid)
@@ -230,11 +333,12 @@ def prompt(pid, sid, text):
     finish(pid, sid, "Hello from %s" % NAME)
 
 def initialize_result():
-    caps = {"loadSession": True, "sessionCapabilities": {"resume": {}, "list": {}, "delete": {}},
-            "providers": {}}
+    caps = {"loadSession": True, "sessionCapabilities": {"resume": {}, "list": {}, "delete": {}}}
+    if CONTROL.get("providerConfig", True):
+        caps["providers"] = {}
     if CONTROL.get("logout", True):
         caps["auth"] = {"logout": {}}
-    return {"protocolVersion": 1, "agentInfo": {"name": NAME, "version": CONTROL.get("version", "1.2.3")},
+    return {"protocolVersion": CONTROL.get("protocolVersion", 1), "agentInfo": {"name": NAME, "version": CONTROL.get("version", "1.2.3")},
             "authMethods": CONTROL.get("methods", []), "agentCapabilities": caps}
 
 for line in sys.stdin:
@@ -242,6 +346,13 @@ for line in sys.stdin:
     method, params, mid = msg.get("method"), msg.get("params") or {}, msg.get("id")
     log({"event": "request" if method else "response", "method": method, "id": mid,
          "params": params, "result": msg.get("result"), "error": msg.get("error")})
+
+    # Requests left unanswered, or answered with an error.
+    if method in CONTROL.get("silent", []):
+        continue
+    if method in CONTROL.get("fail", []):
+        send({"id": mid, "error": {"code": -32603, "message": "acme could not do " + method}})
+        continue
 
     if method is None:
         kind, pid, sid = asked.pop(mid, (None, None, None))
@@ -254,6 +365,8 @@ for line in sys.stdin:
         elif kind == "permission":
             allowed = msg["result"]["outcome"].get("optionId") == "allow"
             finish(pid, sid, "allowed" if allowed else "denied")
+        elif kind == "ask":
+            finish(pid, sid, "answer: %s" % json.dumps(msg.get("result") or msg.get("error")))
         elif kind == "read":
             say(sid, "read: %s\n\n" % json.dumps(msg.get("result") or msg.get("error")), "read-%s" % pid)
         elif kind in ("fs", "terminal"):
@@ -265,7 +378,10 @@ for line in sys.stdin:
         continue
 
     if method == "initialize":
-        send({"id": mid, "result": initialize_result()})
+        if CONTROL.get("initializeError"):
+            send({"id": mid, "error": {"code": -32000, "message": CONTROL["initializeError"]}})
+        else:
+            send({"id": mid, "result": initialize_result()})
     elif method == "authenticate":
         failure = CONTROL.get("authenticateError")
         if failure:
@@ -276,6 +392,8 @@ for line in sys.stdin:
                   "url": "https://acme.test/login", "elicitationId": "login-1", "message": "Sign in to Acme"}})
     elif method in ("session/new", "session/resume", "session/load") and not signed_in():
         send({"id": mid, "error": {"code": -32000, "message": "Authentication required"}})
+    elif method == "session/new" and CONTROL.get("sessionError"):
+        send({"id": mid, "error": {"code": -32000, "message": CONTROL["sessionError"]}})
     elif method in ("session/resume", "session/load") and lost and params.get("sessionId") not in mine:
         send({"id": mid, "error": {"code": -32002, "message": "Session not found"}})
     elif method in ("session/new", "session/resume", "session/load"):
@@ -286,9 +404,15 @@ for line in sys.stdin:
         if CONTROL.get("legacyModels") and not (method != "session/new" and CONTROL.get("resumeWithoutModels")):
             result["models"] = {"currentModelId": model,
                                 "availableModels": [{"modelId": v, "name": n} for v, n in models]}
+        if legacy_modes:
+            result["modes"] = {"currentModeId": legacy_mode,
+                               "availableModes": [mode_entry(m) for m in legacy_modes]}
         if method == "session/new":
             result["sessionId"] = sid
         send({"id": mid, "result": result})
+    elif method == "session/set_mode" and legacy_modes:
+        legacy_mode = params["modeId"]
+        send({"id": mid, "result": {}})
     elif method == "session/set_config_option":
         if CONTROL.get("legacyModels") and params.get("configId") == "model":
             send({"id": mid, "error": {"code": -32601, "message": "Use session/set_model"}})
@@ -299,6 +423,9 @@ for line in sys.stdin:
             mode = params["value"]
             if CONTROL.get("keepMode"):
                 open(MODE_FILE, "w").write(mode)
+        for option in extra_options:
+            if option.get("id") == params.get("configId"):
+                option["currentValue"] = params["value"]
         send({"id": mid, "result": {"configOptions": config_options()}})
     elif method == "session/set_model" and CONTROL.get("legacyModels"):
         model = params["modelId"]
@@ -310,7 +437,13 @@ for line in sys.stdin:
             send({"id": held[0], "result": {"stopReason": "cancelled"}})
             held = None
     elif method == "session/list":
-        send({"id": mid, "result": {"nextCursor": None, "sessions": []}})
+        # `sessions`, `pageSize` at a time; the cursor is where the next page starts.
+        listed = CONTROL.get("sessions", [])
+        start = int(params.get("cursor") or 0)
+        size = CONTROL.get("pageSize", len(listed) or 1)
+        more = start + size < len(listed)
+        send({"id": mid, "result": {"nextCursor": str(start + size) if more else None,
+                                    "sessions": listed[start:start + size]}})
     elif method == "session/delete":
         send({"id": mid, "result": {}})
     elif method == "providers/list":
@@ -328,6 +461,12 @@ for line in sys.stdin:
                         for p in providers()])
         send({"id": mid, "result": {}})
     elif method == "logout":
+        # `logoutHold` names a pipe the sign-out waits on until a line is written to it.
+        if CONTROL.get("logoutHold"):
+            open(CONTROL["logoutHold"]).readline()
+        if CONTROL.get("logoutError"):
+            send({"id": mid, "error": {"code": -32000, "message": CONTROL["logoutError"]}})
+            continue
         if os.path.exists(AUTH_FILE):
             os.remove(AUTH_FILE)
         send({"id": mid, "result": {}})

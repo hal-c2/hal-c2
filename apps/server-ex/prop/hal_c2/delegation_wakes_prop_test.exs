@@ -14,6 +14,9 @@ defmodule HalC2.DelegationWakesPropTest do
   - every task that ended is delivered, or waits on a wake for its turn already with
     the caller; none is dropped, however many wakes came before;
   - no task is named by two wakes, and every wake names its tasks once;
+  - a wake runs as a turn of its own, never joining the turn it found working: the
+    caller is on Codex or on Claude, and Claude would cancel its pending tools for a
+    message mid-turn (Upstream #15892);
 
   and once the commands are done and the caller has worked through its queue, every
   task that ended was named by exactly one wake, and that wake ran to its end.
@@ -32,32 +35,40 @@ defmodule HalC2.DelegationWakesPropTest do
   @parent "parent"
   @tasks ~w(t1 t2 t3 t4)
   @active ~w(preparing starting running waiting)
+  @models %{"codex" => "gpt-5.4", "claudeAgent" => "claude-sonnet-4-6"}
 
-  property "every delegated result reaches its caller in exactly one wake that ran",
-    numtests: HalC2.Prop.numtests(100),
-    max_size: 30 do
-    forall cmds <- commands(__MODULE__) do
-      trap_exit do
-        home = HalC2.Prop.scratch_home("delegation-wakes")
-
-        HalC2.Prop.start_services([
-          {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
-          HalC2.Streams,
-          HalC2.Shell,
-          HalC2.Orchestration.TurnWatch,
-          __MODULE__.Provider
-        ])
-
-        setup()
-        {history, state, result} = run_commands(__MODULE__, cmds)
-        drained = result == :ok and drained?(state)
-        HalC2.Prop.stop_services()
-
-        drained
-        |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
-        |> aggregate(command_names(cmds))
+  for {instance, caller} <- [{"codex", "a Codex caller"}, {"claudeAgent", "a Claude caller"}] do
+    property "every delegated result reaches #{caller} in exactly one wake that ran",
+      numtests: HalC2.Prop.numtests(100),
+      max_size: 30 do
+      forall cmds <- commands(__MODULE__) do
+        trap_exit do
+          Process.put(:caller_instance, unquote(instance))
+          run(cmds)
+        end
       end
     end
+  end
+
+  defp run(cmds) do
+    home = HalC2.Prop.scratch_home("delegation-wakes")
+
+    HalC2.Prop.start_services([
+      {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
+      HalC2.Streams,
+      HalC2.Shell,
+      HalC2.Orchestration.TurnWatch,
+      __MODULE__.Provider
+    ])
+
+    setup()
+    {history, state, result} = run_commands(__MODULE__, cmds)
+    drained = result == :ok and drained?(state)
+    HalC2.Prop.stop_services()
+
+    drained
+    |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
+    |> aggregate(command_names(cmds))
   end
 
   # Stands in for the effects runner: a turn the MC starts is taken and never driven,
@@ -106,7 +117,19 @@ defmodule HalC2.DelegationWakesPropTest do
   def postcondition(state, {:call, _, call, args}, _result) do
     ended = if call == :finish, do: state.ended ++ args, else: state.ended
     caller = stream(@parent)
-    ended?(caller, ended) and never_dropped?(caller) and wakes_agree?(caller)
+
+    ended?(caller, ended) and never_dropped?(caller) and wakes_agree?(caller) and
+      own_turns?(caller)
+  end
+
+  # Each wake the caller is working on, or worked on, started that turn itself.
+  defp own_turns?(caller) do
+    runs = StreamState.get(caller, "run")
+
+    Enum.all?(wakes(caller), fn {message, _ids} ->
+      run = message["runId"] && runs[message["runId"]]
+      run == nil or run["userMessageId"] == message["id"]
+    end)
   end
 
   # The tasks that ended in the MC are those the model ended.
@@ -208,7 +231,7 @@ defmodule HalC2.DelegationWakesPropTest do
         "threadId" => @parent,
         "projectId" => "project-1",
         "title" => "Caller",
-        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+        "modelSelection" => selection(),
         "runtimeMode" => "full-access",
         "interactionMode" => "default"
       })
@@ -217,7 +240,15 @@ defmodule HalC2.DelegationWakesPropTest do
 
     commit(
       @parent,
-      [{"run", "parent-run", %{"id" => "parent-run", "ordinal" => 1, "status" => "running"}}] ++
+      [
+        {"run", "parent-run",
+         %{
+           "id" => "parent-run",
+           "ordinal" => 1,
+           "status" => "running",
+           "providerInstanceId" => selection()["instanceId"]
+         }}
+      ] ++
         Enum.flat_map(@tasks, fn task ->
           [
             {"subagent", task,
@@ -300,7 +331,7 @@ defmodule HalC2.DelegationWakesPropTest do
         "messageId" => "msg-user-#{id}",
         "text" => "carry on",
         "attachments" => [],
-        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+        "modelSelection" => selection(),
         "dispatchMode" => %{"type" => "queue_after_active"},
         "createdBy" => "user",
         "creationSource" => "web"
@@ -310,6 +341,12 @@ defmodule HalC2.DelegationWakesPropTest do
   end
 
   defp child(task), do: "child-#{task}"
+
+  # The caller's provider, picked for the run.
+  defp selection do
+    instance = Process.get(:caller_instance, "codex")
+    %{"instanceId" => instance, "model" => @models[instance]}
+  end
 
   defp commit(id, entities) do
     {:ok, _} =

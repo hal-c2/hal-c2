@@ -121,7 +121,14 @@ defmodule HalC2.Orchestration.Rollback do
           |> StreamState.list("provider-turn")
           |> Enum.filter(&(&1["providerThreadId"] == provider_thread["id"]))
 
-        dropped = Enum.filter(turns, &MapSet.member?(ordinals, &1["ordinal"]))
+        # A turn whose native ref is null left nothing in the provider's
+        # conversation (a Pi command, or a rewind Pi made): nothing to drop.
+        dropped =
+          Enum.filter(
+            turns,
+            &(MapSet.member?(ordinals, &1["ordinal"]) and
+                not (Map.has_key?(&1, "nativeTurnRef") and &1["nativeTurnRef"] == nil))
+          )
 
         head =
           Enum.find_value(turns, fn turn ->

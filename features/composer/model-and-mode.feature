@@ -26,6 +26,8 @@
 #   docs/user/permission-modes.md
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (model, effort, permissions, Build and Plan, context strip)
 #   apps/web/src/components/BranchToolbar.logic.ts (Run on: every connected machine's projects)
+#   apps/desktop-qt/src/native/WorkspaceController.cpp (machine choice, Auto balance, workspace label)
+#   apps/desktop-qt/tests/native/features/ComposerMachineSteps.cpp
 #   apps/tui/src/models.ts (flattened model list, unavailable providers skipped)
 #   apps/tui/src/components/ChatView.tsx (plan toggle, access, model and effort shortcuts)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (thread.runtime-mode.set, thread.interaction-mode.set, thread.model-selection.set)
@@ -79,6 +81,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #25511: a second instance showed the default instance's draft model, whose slug its
   # own catalog lacks, so its effort control vanished and sending asked for a model it had disabled.
+  # The TUI's picker chooses an instance and its model together, so it cannot switch only the instance.
   @shared @backlog-mobile @backlog-tui
   Scenario: A second instance with no draft model of its own uses its own default
     Given the draft picked "Kimi K3.1 Pro" on the default OpenCode instance
@@ -93,6 +96,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #24205: the model button repeated what the provider icon says ("Claude Opus 5.5" beside
   # the Claude icon), and aggregator catalogs added a vendor ("NVIDIA: Nemotron 3 Super").
+  # The TUI's model control reads the short name and its picker the full one, but it has no tooltips.
   @shared @backlog-mobile @backlog-tui
   Scenario Outline: The model button shows the name the user would say
     When the user chooses the <provider> model "<full>"
@@ -110,7 +114,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
   # here said "5.5", which upstream never did.
 
   # Upstream #24205
-  @shared @backlog-mobile @backlog-tui @priority-low
+  @shared @backlog-mobile @priority-low
   Scenario: A short name the model manifest gives wins over the worked-out one
     Given the model manifest names "Claude Opus 5.5" "Opus" for short
     When the user chooses "Claude Opus 5.5"
@@ -208,7 +212,8 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the next turn builds again
 
   # Upstream #21406: the phone hid Ultrathink and Ultracode.
-  @desktop @mobile @backlog-mobile
+  # Upstream #28044: replaced by "Ultrathink is typed, not picked"; the effort choices leave it out.
+  @dropped @desktop @mobile
   Scenario: Ultrathink prefixes the prompt
     Given the thread runs on Claude
     When the user turns on Ultrathink and sends "design the cache"
@@ -236,7 +241,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then it is no longer listed among the favourites
 
   # Upstream #14961: the model picker offers every saved custom model, not just the first 32
-  @backlog @shared
+  @shared @backlog-mobile
   Scenario: Every saved custom model is offered
     Given the user has saved 40 custom models for Codex
     When the user opens the model picker
@@ -250,7 +255,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the next turn moves the thread to Claude before it runs on "claude-opus"
 
   # Upstream #20886: a model picked earlier in a draft kept overriding a change made elsewhere.
-  @backlog @shared @mobile
+  @shared @mobile @backlog-mobile
   Scenario: A draft follows a model change made on another client
     Given the user picked "gpt-5" in the draft of a thread on this client
     And then changed the thread to "claude-opus" on another client
@@ -286,7 +291,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #27114: at the default chat width a project on several machines showed only the
   # machine's name, with the checkout or worktree choice hidden in its menu.
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: At the default chat width the machine, workspace and branch each have their own control
     Given the project can run on more than one machine
     When the user starts a new thread at the default chat width
@@ -294,8 +299,8 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And only a phone-width composer folds the machine and workspace into one control
 
   # Upstream #21404: the phone could inherit new-worktree mode for a plain folder and then
-  # refuse to start on a branch that cannot exist.
-  @backlog @shared
+  # refuse to start on a branch that cannot exist. The TUI half is #1345.
+  @shared @backlog-mobile @backlog-tui
   Scenario: A project that is not a Git repository starts its thread in its folder
     Given the project is a plain folder with no Git repository
     And the last thread was started in a new worktree, or a saved draft asked for one
@@ -317,7 +322,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the user is asked to select a base branch
 
   # Upstream #13590: a thread whose worktree is still being checked out is in worktree mode.
-  @desktop @backlog
+  @desktop
   Scenario: A thread still preparing its worktree says "New worktree" until checkout finishes
     Given the user started a thread in a new worktree
     And the worktree is still being checked out
@@ -343,38 +348,53 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #22242: reverted #15636, which listed every checkout as its own row; checkouts of
   # one repository are grouped as one project again.
-  @backlog @desktop
+  @desktop
   Scenario: Checkouts of one repository are one project in the new-thread picker
     Given "shop" has checkouts on "laptop" and "server"
     When the user opens the project picker for a new thread
     Then "shop" is listed once
     And both machines are offered under it
 
-  @backlog @desktop
+  # "Auto balance" is the machine choice of a draft no machine is tied to while balancing is on:
+  # the MC places it when its first message is sent (settings/load-balancing.feature).
+  @desktop
   Scenario: The user lets a new thread's machine be picked automatically
     Given the project exists on two connected machines and load balancing is on
     When the user chooses "Auto balance" as the machine a new thread runs on
     Then the thread starts on the machine with the most room when the first message is sent
 
-  @backlog @desktop @priority-low
+  # Waits for a maintainer decision: HAL-C2's MC places a balanced thread when its first
+  # message is sent (settings/load-balancing.feature, "The MC chooses, not the client"), so
+  # the composer has no checking, failing or "no room" state to show before the send.
+  # Carrying this means asking the MC while the draft is open and holding the send on it (#1344).
+  @backlog @desktop @priority-low @blocked
   Scenario: Auto balance says when it cannot check the machines
     Given the user chose "Auto balance" for a new thread
     When checking the machines' free resources fails
     Then the picker shows "Auto balance unavailable"
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: The user takes a new thread off Auto balance
     Given the user chose "Auto balance" for a new thread
     When the user chooses the machine "laptop" instead
+    And the user sends the first message
     Then the thread starts on "laptop"
 
-  @backlog @desktop @priority-low
+  # Waits for a maintainer decision: HAL-C2's MC places a balanced thread when its first
+  # message is sent (settings/load-balancing.feature, "The MC chooses, not the client"), so
+  # the composer has no checking, failing or "no room" state to show before the send.
+  # Carrying this means asking the MC while the draft is open and holding the send on it (#1344).
+  @backlog @desktop @priority-low @blocked
   Scenario: Auto balance says it is checking until a machine is picked
     Given the user chose "Auto balance" for a new thread
     When the machines' free resources are still being checked
     Then the picker shows "Checking machines…"
 
-  @backlog @desktop
+  # Waits for a maintainer decision: HAL-C2's MC places a balanced thread when its first
+  # message is sent (settings/load-balancing.feature, "The MC chooses, not the client"), so
+  # the composer has no checking, failing or "no room" state to show before the send.
+  # Carrying this means asking the MC while the draft is open and holding the send on it (#1344).
+  @backlog @desktop @blocked
   Scenario Outline: A first message waits for Auto balance to pick a machine
     Given the user chose "Auto balance" for a new thread
     And <situation>
@@ -387,14 +407,14 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | the machines are still being checked    | Checking machine resources   |
       | no machine has room for another thread  | Choose a machine to continue |
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: Auto balance is refused while the draft has attachments
     Given the draft of a new thread has an attached file
     When the user chooses "Auto balance" as the machine the thread runs on
     Then the user is told "Keep attachments on this machine" and to remove them first
     And the thread still runs on the machine it was on
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario Outline: A machine is named the way its owner would know it
     Given the machine is <machine> and its own name is "<own>" and the user named it "<saved>"
     When the user opens the choice of machine for a new thread
@@ -408,7 +428,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | another one         | server   | Rack      | server      |
       | another one         |          | Rack      | Rack        |
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: The only connected machine is still shown when it is a remote one
     Given the project runs on a remote machine "server" and no other machine is connected
     When the user looks at a new thread's composer
@@ -416,20 +436,22 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And it cannot be changed
 
   # Upstream #19900: a started thread offered other machines, and picking one did nothing.
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: A started thread names its machine without offering others
     Given a thread has started on the machine "server" in a project on several machines
     When the user looks at the thread's composer
     Then the machine "server" is shown
     And no other machine is offered, by the menu or by the machine shortcut
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: The machine is left out when it is the only one and it is this one
     Given the project runs on the machine being used and no other machine is connected
     When the user looks at a new thread's composer
     Then no machine is shown
 
-  @backlog @desktop @priority-low
+  # Waits for a maintainer decision with the Auto balance scenarios above, and for each
+  # machine's update status to reach the composer (#1344).
+  @backlog @desktop @priority-low @blocked
   Scenario Outline: Updates for every balanced machine are gathered in one notice
     Given the user chose "Auto balance" for a new thread
     And <state>
@@ -482,7 +504,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the user is told "No models found"
 
   # Upstream #23493: Enter or Escape that confirmed or cancelled input-method text closed the picker.
-  @backlog @desktop
+  @desktop
   Scenario: Confirming input-method text in the model search keeps the picker open
     Given the user is searching the models with a Japanese input method
     When the user presses Enter to confirm the composed text, or Escape to cancel it
@@ -496,10 +518,11 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then "gpt-6" is marked as new
 
   # Upstream #25609: the new mark comes from the model's release date and lasts seven days.
-  @backlog @mc @desktop
+  # The MC derives the mark for the providers whose models come from the model manifest.
+  @mc @desktop @backlog-desktop
   Scenario Outline: A model is marked new for seven days after its release
-    Given "gpt-6" was released <age>
-    When the user looks through Codex's models
+    Given "gpt-6" was released <age> in the model manifest
+    When the user looks through the manifest's models
     Then "gpt-6" <mark>
 
     Examples:
@@ -639,7 +662,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
   # Upstream #25869: the composer names the effort as a word after the model, such as
   # "Opus 5.5 Extra High", and a bolt after it when Fast is on. Settings › Appearance ›
   # Effort display shows the level as rising bars instead; Max, Ultracode and Ultrathink stay words.
-  @backlog @shared
+  @shared @backlog-mobile
   Scenario Outline: The composer names the model's effort as the user chose to see it
     Given the thread runs on "Opus 5.5" with <effort> effort
     And the effort display is set to "<display>"
@@ -648,14 +671,14 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
     Examples:
       | effort     | display | shown                     |
-      | Extra High | Words   | "Extra High"              |
+      | Extra High | Word    | "Extra High"              |
       | Extra High | Bars    | four bars                 |
       | Low        | Bars    | one bar                   |
       | Max        | Bars    | "Max"                     |
 
   # Upstream #25869: the composer names the permissions only when they are not the user's
   # default; they change from the effort menu or the permissions key.
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: The composer names the permissions only when they differ from the default
     Given the default permissions are Supervised
     And the open thread runs in Supervised
@@ -678,7 +701,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
   # Upstream #25869: a new thread always says which permissions its first message will use,
   # and choosing them there opens the permissions as the permissions key does.
   # Upstream #30275: choosing them opens the permissions menu directly, not the model list first.
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: A new thread says which permissions its first message uses
     Given the default permissions are Full access
     When the user starts a new thread
@@ -688,7 +711,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #28057: the model and its effort were two touching targets that read as one label;
   # now one control opens the model list with the chosen model's efforts beside it.
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario: One control chooses the model and then its effort
     When the user opens the model control in the composer
     Then the models are listed with the chosen model's efforts beside them, and speed and permissions below
@@ -697,9 +720,9 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And picking a model without efforts chooses it at once
 
   # Upstream #28057: the effort and permissions keys open the same control at their part.
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario Outline: A key opens the model control at its part
-    When the user presses <keys>
+    When the user presses <keys> while typing in the composer
     Then the model control opens on <part>
     And pressing it while the control is open moves there
 
@@ -709,7 +732,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | mod+shift+a | the permissions        |
 
   # Upstream #28076: picks kept closing the picker at odd times; a pick now leaves it open.
-  @backlog @shared @priority-low
+  @shared @backlog-mobile @backlog-tui @priority-low
   Scenario: The model control stays open until the user leaves it
     Given the user opened the model control
     When the user picks an effort, turns fast mode on or changes the permissions
@@ -717,8 +740,8 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And Escape or a click outside closes it
 
   # Upstream #28076: "Legacy models" became a "Show more" row at the end of the list. Replaces
-  # "A provider's older models are folded away until asked for" once the clients carry it.
-  @backlog @shared @priority-low
+  # "A provider's older models are folded away until asked for".
+  @shared @backlog-mobile @priority-low
   Scenario: A provider's older models are shown in place from the end of the list
     Given Codex lists two current models and three it calls legacy
     When the user chooses "Show more" at the end of Codex's models
@@ -726,7 +749,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the list scrolls inside the picker
 
   # Upstream #28409: an agent's own options stretched the control and its effort column.
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario: An agent's own options do not crowd the model control
     Given an ACP agent offers a long model name, a session mode, auto-approve and its own thinking levels
     When the user opens the model control
@@ -736,14 +759,15 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the picker keeps one height while the user moves between providers
 
   # Upstream #28409: Grok listed its levels from strongest to weakest.
-  @backlog @shared @priority-low
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
   Scenario: Grok's efforts are listed from lowest to highest
+    Given Grok advertises a model's efforts from the strongest to the weakest
     When the user opens the model control on a Grok model
     Then its efforts run from the lowest to the highest
 
   # Upstream #28044: Ultrathink is a word in the prompt, not a setting, so the effort choices
-  # leave it out. Replaces turning on Ultrathink above once the clients carry it.
-  @backlog @shared @priority-low
+  # leave it out. Replaces turning on Ultrathink above.
+  @shared @backlog-mobile @priority-low
   Scenario: Ultrathink is typed, not picked
     Given the thread runs on Claude
     When the user opens the effort choices or steps the effort
@@ -764,7 +788,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
   @desktop @priority-low
   Scenario: Choosing another effort takes Ultrathink off the prompt
     Given the thread runs on Claude
-    And the user turned on Ultrathink and typed "design the cache"
+    And the user has typed "Ultrathink: design the cache"
     When the user sets the effort to high
     Then the draft reads "design the cache" without "Ultrathink:"
     And the next turn runs with high effort
@@ -778,7 +802,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the user is told "Your prompt contains "ultrathink" in the text. Remove it to change this option."
 
   # Upstream #19928: two commands step the composer's effort one level without opening the picker.
-  @desktop @tui @backlog-tui
+  @desktop @tui
   Scenario Outline: The user steps the effort from the keyboard without leaving the prompt
     Given the thread runs on a model whose efforts are low, medium and high
     And the effort is <from> and the user is typing a draft
@@ -796,10 +820,10 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Ultrathink, put on the prompt, sits above the model's top level: a step
   # leaves it from there, not from the level saved underneath.
-  @desktop @tui @backlog-tui
+  @desktop @tui
   Scenario Outline: Stepping the effort leaves Ultrathink from above the top level
     Given the thread runs on Claude
-    And the user turned on Ultrathink and typed "design the cache"
+    And the user has typed "Ultrathink: design the cache"
     When the user steps the effort <direction>
     Then the effort is <to>
     And the draft reads "design the cache" without "Ultrathink:"
@@ -831,7 +855,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the draft reads "/review the cache"
 
   # Upstream #19928: writing "ultrathink" in the prompt locks effort for the step as for the picker.
-  @desktop @tui @backlog-tui @priority-low
+  @desktop @tui @priority-low
   Scenario: Stepping the effort does nothing while the prompt says ultrathink in its own words
     Given the thread runs on Claude
     And the user has typed "please ultrathink about the cache"
@@ -840,7 +864,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #19928: a level the provider reports outside the model's list (OpenCode's "default")
   # steps from the model's default instead of doing nothing.
-  @desktop @tui @backlog-tui @priority-low
+  @desktop @tui @priority-low
   Scenario: An effort outside the model's levels steps from the model's default
     Given the provider reports an effort the model does not list
     And the model's default effort is medium
@@ -856,7 +880,8 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the next turn runs without Fast mode
 
   # Upstream #19928: the step stands down whenever something else owns the composer.
-  @desktop @tui @backlog-tui
+  # The TUI stands down on every row but cannot edit a queued message, so that row cannot run there.
+  @desktop @tui
   Scenario Outline: Stepping the effort does nothing while the composer is taken
     Given <situation>
     When the user steps the effort up
@@ -866,9 +891,13 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | situation                                            |
       | an approval is waiting for the user                  |
       | the agent's question is waiting for an answer        |
-      | the user is editing a queued message                 |
       | no provider is available                             |
       | the user is holding the step key down after one step |
+
+    @backlog-tui
+    Examples:
+      | situation                            |
+      | the user is editing a queued message |
 
   # Upstream #21406: the phone previewed different options from those it saved.
   @desktop @backlog-mobile @priority-high
@@ -905,7 +934,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then it reads "High Fast" with the reasoning icon, and Fast off still shows the icon
 
   # Upstream #23957: a fallback to another instance of the same provider dropped the picked effort.
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: A composer that falls back to another account keeps the effort picked for the model
     Given new threads default to Claude Opus at extra high effort on the account "Claude Personal"
     And "Claude Personal" is turned off and the account "Claude Team" is ready
@@ -914,7 +943,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the first turn is sent at extra high effort
 
   # Upstream #23957: options belong to the model they were picked with.
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario Outline: A fallback account takes no options that were not picked for what it shows
     Given new threads default to Claude Opus at extra high effort on the account "Claude Personal"
     And "Claude Personal" is turned off and <fallback> is ready
@@ -928,7 +957,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #27859: a thread saved under a model alias such as "5.4" lost its effort when the
   # composer fell back to another account.
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A fallback keeps the effort of a model saved under an alias
     Given a thread saved on the account "Codex Personal" with the model "5.4" at high effort
     And "Codex Personal" is turned off and the account "Codex Work" is ready
@@ -938,7 +967,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #29789: picking a custom model whose name matched a built-in Codex alias stored the
   # built-in model, and its effort was saved under the built-in model too.
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: A custom model named like a Codex alias stays the model the user picked
     Given the Codex account "Codex Proxy" has the custom model "gpt-5-codex"
     When the user picks "gpt-5-codex" on "Codex Proxy" at high effort and sends a message

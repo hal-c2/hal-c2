@@ -212,7 +212,7 @@ Feature: In-app preview browser
 
     # Upstream #27537: a load report for the page being left, still reading that page's title, could
     # land after a navigation failed and report success, hiding the failure from every client.
-    @backlog @mc
+    @mc
     Scenario: A late report for the page being left does not hide a failed navigation
       Given a browser tab showing "Dashboard" whose load report is still on its way
       When a navigation to "http://localhost:9999" starts and fails with "ERR_CONNECTION_REFUSED"
@@ -342,7 +342,7 @@ Feature: In-app preview browser
       Then the thread has no browser tabs
       And the MC reports a different run number so clients drop their old tabs
 
-    @backlog @mc
+    @mc
     Scenario Outline: Deleting a thread closes its browser tabs
       Given the thread has browser tabs
       When <deletion>
@@ -350,9 +350,9 @@ Feature: In-app preview browser
       And every client is told they closed
 
       Examples:
-        | deletion                          |
-        | the thread is deleted             |
-        | the thread's project is deleted   |
+        | deletion                                |
+        | the thread with browser tabs is deleted |
+        | the thread's project is deleted         |
 
     @mc
     Scenario Outline: Acting on a tab the thread does not have is refused
@@ -508,8 +508,7 @@ Feature: In-app preview browser
         | 9400 | plain text                 | is not suggested       |
         | 9500 | an XHTML page              | is suggested           |
 
-    # Not yet in apps/server-ex/lib/hal_c2/local_servers.ex: it only asks over plain HTTP.
-    @backlog @mc
+    @mc
     Scenario: A listener that only speaks HTTPS is suggested with an https address
       Given a program listening on port 8443 that answers an HTML page over HTTPS only
       When a client watches for local servers
@@ -529,8 +528,7 @@ Feature: In-app preview browser
       Then port 7000 is not suggested
       And the other suggestions are not held up for longer than the probe takes
 
-    # Not yet in apps/server-ex/lib/hal_c2/local_servers.ex: it probes every port on every scan.
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario: A probe's answer is reused for fifteen seconds
       Given port 5173 was probed and answered with an HTML page
       When the list is scanned again within fifteen seconds
@@ -568,19 +566,19 @@ Feature: In-app preview browser
       When a client watches for local servers
       Then "http://localhost:5173" is suggested
 
-    @backlog @mc
+    @mc
     Scenario: A configured preview address that serves a page is suggested as written
       Given a client names the configured address "http://localhost:3000/app" when it watches for local servers
       And the address answers with an HTML page
       Then "http://localhost:3000/app" is suggested with the path the project configured
 
-    @backlog @mc
+    @mc
     Scenario: A configured preview address that serves no page is not suggested
       Given a client names the configured address "http://localhost:3000/app" when it watches for local servers
       And nothing answers there
-      Then "http://localhost:3000/app" is not suggested
+      Then "http://localhost:3000/app" is not among the suggestions
 
-    @backlog @mc
+    @mc
     Scenario Outline: Only local web addresses are probed for the project's configured previews
       Given a client names the configured address "<address>" when it watches for local servers
       Then the MC does not probe "<address>"
@@ -591,19 +589,19 @@ Feature: In-app preview browser
         | ftp://localhost/files    |
         | not a url                |
 
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario: A configured address on every interface is suggested as localhost
       Given a client names the configured address "http://0.0.0.0:3000" when it watches for local servers
       And the address answers with an HTML page
       Then "http://localhost:3000/" is suggested
 
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario: A configured address is suggested even when the server's root serves no page
       Given a client names the configured address "http://localhost:3000/docs" when it watches for local servers
       And "http://localhost:3000/" answers 404 but "http://localhost:3000/docs" serves an HTML page
       Then "http://localhost:3000/docs" is suggested as written
 
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario Outline: A configured address on this machine keeps its scheme and host
       Given a client names the configured address "<address>" when it watches for local servers
       And the address answers with an HTML page
@@ -614,38 +612,38 @@ Feature: In-app preview browser
         | https://127.0.0.1:8443/docs |
         | http://[::1]:3000/docs     |
 
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario: A configured address that is too long once rewritten as localhost is not probed
       Given a client names the configured address "http://0.0.0.0/" followed by enough characters to reach the 2048 character limit
       Then the MC does not probe it
       And the other configured addresses are probed as usual
 
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario: Each watching client gets suggestions for its own configured addresses
       Given one client names "http://localhost:3000/docs" and another names "http://localhost:3000/admin"
       And both addresses answer with an HTML page
       Then the first client is suggested "/docs" and not "/admin"
       And the second client is suggested "/admin" and not "/docs"
 
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario: A client with many configured addresses does not use up another client's allowance
       Given one client names 32 configured addresses
       And another client names one more address that serves a page
       Then the second client is still suggested its address
 
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario: A client that stops watching no longer has its configured addresses probed
       Given two clients watching with different configured addresses
       When the first client stops watching
       Then the MC keeps probing the second client's addresses
       And the MC no longer probes the first client's addresses
 
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario: No more than thirty-two configured addresses are probed
       Given a client names 40 configured local addresses when it watches for local servers
       Then the MC probes only the first 32
 
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario: A configured address does not hide the same server found by scanning
       Given a client names the configured address "http://localhost:3000" when it watches for local servers
       And a dev server listens on port 3000

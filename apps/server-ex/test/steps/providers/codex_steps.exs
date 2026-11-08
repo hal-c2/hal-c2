@@ -104,8 +104,21 @@ defmodule HalC2.Steps.Providers.Codex do
     context
   end
 
-  # `server.updateProvider` with a `targetVersion`; the reply is `context.reply`.
+  # `server.updateProvider` with a `targetVersion`; the reply is `context.reply`. A
+  # client offers a chosen version only as the one Codex's compatibility policy
+  # recommends, so unless the scenario set a policy this one recommends `version`.
   step "the user installs Codex {string}", %{args: [version]} = context do
+    unless Application.get_env(:hal_c2, :provider_compatibility) do
+      World.put_app_env(:provider_compatibility, [
+        %{
+          "driver" => "codex",
+          "halC2Range" => ">=0",
+          "recommendedVersion" => String.trim_leading(version, "v"),
+          "ranges" => [%{"range" => ">=0", "status" => "supported"}]
+        }
+      ])
+    end
+
     {reply, context} =
       World.call(context, "server.updateProvider", %{
         "provider" => "codex",
@@ -2229,10 +2242,20 @@ Red"} <- StreamState.get(state, "message")[message],
   end
 
   step "the turn fails with {string}", %{args: [message]} = context do
-    state = World.await_runs(context, "Work", ["failed"])
-    assert [%{"lastError" => error}] = StreamState.list(state, "provider-session")
-    assert error =~ message
-    context
+    if context[:cursor_world] do
+      # A Cursor thread on the AcpFixtures world: its failed run's own reason,
+      # the session's last error and its error item saying the same.
+      alias HalC2.Test.AcpFixtures, as: Acp
+      assert [%{"status" => "failed"}] = Acp.runs(context.threads[context.thread])
+      state = Acp.stream(context.threads[context.thread])
+      assert [%{"lastError" => ^message}] = StreamState.list(state, "provider-session")
+      Map.put(context, :failure_message, message)
+    else
+      state = World.await_runs(context, "Work", ["failed"])
+      assert [%{"lastError" => error}] = StreamState.list(state, "provider-session")
+      assert error =~ message
+      context
+    end
   end
 
   step "Codex is not started against the shared home instead", context do
