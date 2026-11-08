@@ -1426,8 +1426,11 @@ defmodule HalC2.PullRequests do
   # Resolving an alias can start `ssh` (and evaluate the user's config), and
   # `projects/0` asks once per project on unrecognised hosts on every list
   # read, so an answer is held per alias until the configs it came from
-  # change: keyed on their newest modification time, and forgotten with
-  # the signed-in accounts on `invalidate/1`. A host that resolves to
+  # change: keyed on the newest modification time of the two configs and
+  # of the files in their conventional `Include` directories (`config.d`,
+  # `ssh_config.d`), and forgotten with the signed-in accounts on
+  # `invalidate/1`. An edit to a file included from anywhere else needs
+  # that refresh. A host that resolves to
   # nothing is held too, so a self-hosted forge under an unrecognised name
   # does not pay for `ssh` on every read either.
   defp ssh_hostname(alias_name) do
@@ -1454,7 +1457,13 @@ defmodule HalC2.PullRequests do
     do: Path.join([System.get_env("HOME") || System.user_home() || "", ".ssh", "config"])
 
   defp ssh_config_stamp(config) do
-    [config, "/etc/ssh/ssh_config"]
+    included =
+      for dir <- [config <> ".d", "/etc/ssh/ssh_config.d"],
+          {:ok, names} <- [File.ls(dir)],
+          name <- names,
+          do: Path.join(dir, name)
+
+    [config, "/etc/ssh/ssh_config" | included]
     |> Enum.map(fn path ->
       case File.stat(path, time: :posix) do
         {:ok, stat} -> stat.mtime

@@ -2595,12 +2595,23 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     )
   end
 
-  step "ssh was asked once how {string} resolves", %{args: [alias_name]} = context do
+  step ~r/^ssh was asked (?<times>once|twice) how "(?<alias>[^"]+)" resolves$/,
+       %{args: [times, alias_name]} = context do
     asked =
       World.cli_calls(context, "-G")
       |> Enum.count(&(&1["cmd"] == "ssh" and alias_name in &1["args"]))
 
-    assert asked == 1
+    assert asked == if(times == "once", do: 1, else: 2)
+    context
+  end
+
+  # Dated a minute ahead, so the change is seen within the same second.
+  step "a file in the ssh config's include directory changes", context do
+    dir = Path.join(HalC2.Test.Mc.Host.home(context), ".ssh/config.d")
+    File.mkdir_p!(dir)
+    path = Path.join(dir, "work")
+    File.write!(path, "# work hosts\n")
+    File.touch!(path, System.os_time(:second) + 60)
     context
   end
 
