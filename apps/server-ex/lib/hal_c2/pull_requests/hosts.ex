@@ -156,13 +156,17 @@ defmodule HalC2.PullRequests.Hosts do
   end
 
   # The list read carries no approval, so GitLab is asked once per hundred
-  # merge requests whether each has every approval its rules require, which
-  # answers for a lone approver and an approval rule the same way. A host that
-  # will not say leaves the rows without a review decision, still listed.
+  # merge requests how its approvals stand. `approved` alone means only
+  # "every required approval is there", which is also true when none are
+  # required and nobody approved, so a row is approved only when its rules
+  # are met and either approvals were required or someone gave one; it is
+  # waiting whenever approvals are still left, assigned reviewers or not
+  # (approval-rule approvers often are not reviewers). A host that will
+  # not say leaves the rows without a review decision, still listed.
   defp gitlab_approvals([], _project), do: []
 
   defp gitlab_approvals(items, project) do
-    approved =
+    approvals =
       items
       |> Enum.chunk_every(100)
       |> Enum.reduce_while(%{}, fn chunk, acc ->
@@ -172,26 +176,38 @@ defmodule HalC2.PullRequests.Hosts do
         end
       end)
 
-    case approved do
+    case approvals do
       :error ->
         items
 
       found ->
         Enum.map(items, fn item ->
-          decision =
-            cond do
-              found[item["number"]] == true ->
-                "approved"
-
-              found[item["number"]] == false and item["reviewRequestLogins"] != [] ->
-                "review-required"
-
-              true ->
-                nil
-            end
-
-          %{item | "reviewDecision" => decision}
+          %{item | "reviewDecision" => gitlab_decision(found[item["number"]], item)}
         end)
+    end
+  end
+
+  defp gitlab_decision(nil, _item), do: nil
+
+  defp gitlab_decision(%{} = approval, item) do
+    cond do
+      is_integer(approval.left) and approval.left > 0 ->
+        "review-required"
+
+      approval.approved and
+          ((is_integer(approval.required) and approval.required > 0) or
+             (is_list(approval.by) and approval.by != []) or
+             (approval.required == nil and approval.left == nil and approval.by == nil)) ->
+        "approved"
+
+      approval.approved ->
+        nil
+
+      item["reviewRequestLogins"] != [] ->
+        "review-required"
+
+      true ->
+        nil
     end
   end
 
@@ -200,7 +216,8 @@ defmodule HalC2.PullRequests.Hosts do
 
     query =
       "query { project(fullPath: #{JSON.encode!(project.repository)}) " <>
-        "{ mergeRequests(iids: [#{iids}], first: 100) { nodes { iid approved } } } }"
+        "{ mergeRequests(iids: [#{iids}], first: 100) { nodes { iid approved " <>
+        "approvalsRequired approvalsLeft approvedBy { nodes { username } } } } } }"
 
     case Cli.run("glab", ["api", "graphql", "-f", "query=" <> query],
            cd: project.root,
@@ -212,9 +229,25 @@ defmodule HalC2.PullRequests.Hosts do
           when is_list(nodes) ->
             {:ok,
              Map.new(nodes, fn node ->
+               by =
+                 case node["approvedBy"] do
+                   %{"nodes" => approvers} when is_list(approvers) ->
+                     for(a <- approvers, is_binary(a["username"]), do: a["username"])
+
+                   _ ->
+                     nil
+                 end
+
+               approval = %{
+                 approved: node["approved"] == true,
+                 required: node["approvalsRequired"],
+                 left: node["approvalsLeft"],
+                 by: by
+               }
+
                case Integer.parse(to_string(node["iid"])) do
-                 {iid, ""} -> {iid, node["approved"] == true}
-                 _ -> {0, false}
+                 {iid, ""} -> {iid, approval}
+                 _ -> {0, approval}
                end
              end)}
 
@@ -461,12 +494,7 @@ defmodule HalC2.PullRequests.Hosts do
       end
     end
 
-    # `az` pages in creation order, but a merged or closed row's place in the
-    # list is its closing time, so those lists are read whole before they
-    # are sorted and sliced; an open row's time is its creation, which the
-    # paging already follows.
-    with {:ok, items, more} <-
-           collect(fetch, &azure_item/1, 100, opts[:before], opts.state != "open") do
+    with {:ok, items, more} <- collect(fetch, &azure_item/1, 100, opts[:before]) do
       {:ok, %{items: by_update(items), more: more}}
     end
   end
@@ -522,8 +550,14 @@ defmodule HalC2.PullRequests.Hosts do
           "additions" => 0,
           "deletions" => 0,
           "createdAt" => iso_utc(created),
-          # Azure keeps no last-touched time: the closing time stands in.
+          # Azure keeps no last-touched time: the closing time stands in
+          # as the row's date. But `az` pages in creation order, so the
+          # list is ordered and carried on by creation (`cursorAt`),
+          # never by closing time: a cursor on the closing time would
+          # pass over rows merged long after they were opened, and
+          # reading every page to sort by it is unbounded.
           "updatedAt" => iso_utc(trimmed(raw["closedDate"]) || created),
+          "cursorAt" => iso_utc(created),
           "reviewRequestLogins" =>
             for(
               user <- raw["reviewers"] || [],
@@ -800,51 +834,54 @@ defmodule HalC2.PullRequests.Hosts do
 
   # Up to five pages of a host's items, a page being `size` rows when full:
   # `{:ok, items, more?}`. With a continuation boundary, only items no newer
-  # than it are kept and the walk scans on (to `@max_walk` pages) until it
-  # holds five pages of them, so rows past the first five host pages are
-  # still reached; without one it stops after five pages as before. A walk
-  # that gives up at `@max_walk` without reaching its boundary is an error,
-  # never an ended list: the host still has the older rows. An `exhaustive`
-  # walk (Azure's merged, closed and all lists, whose pages are in creation
-  # order while their rows are ordered by closing time) reads every page
-  # before the caller slices, so no row is passed over unseen.
-  defp collect(fetch, mapper, size, before, exhaustive \\ false),
-    do: collect(fetch, mapper, size, before, exhaustive, 1, [])
+  # than it (by the instant the list is ordered by, `cursor_at/1`) are kept
+  # and the walk scans on (to `@max_walk` pages) until it holds five pages
+  # of them, so rows past the first five host pages are still reached;
+  # without one it stops after five pages as before. A walk that gives up
+  # at `@max_walk` without reaching its boundary is an error, never an
+  # ended list: the host still has the older rows.
+  defp collect(fetch, mapper, size, before), do: collect(fetch, mapper, size, before, 1, [], 0)
 
-  defp collect(fetch, mapper, size, before, exhaustive, page, acc) do
+  defp collect(fetch, mapper, size, before, page, chunks, count) do
     case fetch.(page) do
       {:ok, rows} ->
         kept =
           rows
           |> Enum.flat_map(mapper)
-          |> Enum.filter(&(before == nil or no_newer?(&1["updatedAt"], before)))
+          |> Enum.filter(&(before == nil or no_newer?(cursor_at(&1), before)))
 
-        acc = acc ++ kept
+        chunks = [kept | chunks]
+        count = count + length(kept)
+        acc = fn -> chunks |> Enum.reverse() |> Enum.concat() end
 
         cond do
           length(rows) < size ->
-            {:ok, acc, false}
+            {:ok, acc.(), false}
 
           page >= @max_walk ->
-            if exhaustive or acc == [],
+            if count == 0,
               do:
                 {:error, {:failed, "There are too many change requests to carry this list on."}},
-              else: {:ok, acc, true}
+              else: {:ok, acc.(), true}
 
-          not exhaustive and length(acc) >= @pages * size ->
-            {:ok, acc, true}
+          count >= @pages * size ->
+            {:ok, acc.(), true}
 
-          not exhaustive and before == nil and page >= @pages ->
-            {:ok, acc, true}
+          before == nil and page >= @pages ->
+            {:ok, acc.(), true}
 
           true ->
-            collect(fetch, mapper, size, before, exhaustive, page + 1, acc)
+            collect(fetch, mapper, size, before, page + 1, chunks, count)
         end
 
       error ->
         error
     end
   end
+
+  # The instant a row is ordered and carried on by: its update time, except
+  # where the host pages by another (Azure, by creation).
+  defp cursor_at(item), do: item["cursorAt"] || item["updatedAt"]
 
   defp cli_json(exe, args, root) do
     args = if exe == "az", do: args ++ ["--only-show-errors", "--output", "json"], else: args
@@ -873,7 +910,9 @@ defmodule HalC2.PullRequests.Hosts do
     end
   end
 
-  defp by_update(items), do: Enum.sort_by(items, & &1["updatedAt"], :desc)
+  # Newest first by the instant each row is ordered and carried on by
+  # (`cursor_at/1`): the update time, or Azure's creation time.
+  defp by_update(items), do: Enum.sort_by(items, &cursor_at/1, :desc)
 
   defp branch_name(ref), do: String.replace_prefix(ref, "refs/heads/", "")
 

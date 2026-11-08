@@ -2380,19 +2380,60 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
        %{args: [_edition, approval]} = context do
     approved = approval != "still needs approvals by the rules"
 
+    node = %{
+      "iid" => "1",
+      "approved" => approved,
+      "approvalsRequired" => if(approval == "someone approved", do: 0, else: 1),
+      "approvalsLeft" => if(approved, do: 0, else: 1),
+      "approvedBy" => %{
+        "nodes" => if(approved, do: [%{"username" => "hubot"}], else: [])
+      }
+    }
+
     context
     |> hosted_project("GitLab", [h(1, %{"reviewers" => ["hubot"]})])
-    |> World.cli_rules(%{
+    |> gitlab_approval_answer(node)
+  end
+
+  defp gitlab_approval_answer(context, node) do
+    World.cli_rules(context, %{
       "cmd" => "glab",
       "args" => ["api graphql"],
       "stdout" => %{
-        "data" => %{
-          "project" => %{
-            "mergeRequests" => %{"nodes" => [%{"iid" => "1", "approved" => approved}]}
-          }
-        }
+        "data" => %{"project" => %{"mergeRequests" => %{"nodes" => [node]}}}
       }
     })
+  end
+
+  step "a merge request on GitLab that needs no approvals and nobody approved", context do
+    context
+    |> hosted_project("GitLab", [h(1, %{"reviewers" => ["hubot"]})])
+    |> gitlab_approval_answer(%{
+      "iid" => "1",
+      "approved" => true,
+      "approvalsRequired" => 0,
+      "approvalsLeft" => 0,
+      "approvedBy" => %{"nodes" => []}
+    })
+  end
+
+  step "a merge request on GitLab that still needs an approval and has no reviewers",
+       context do
+    context
+    |> hosted_project("GitLab", [h(1)])
+    |> gitlab_approval_answer(%{
+      "iid" => "1",
+      "approved" => false,
+      "approvalsRequired" => 1,
+      "approvalsLeft" => 1,
+      "approvedBy" => %{"nodes" => []}
+    })
+  end
+
+  step "its row shows no review decision", context do
+    assert [row] = hosted_entries(context)
+    refute Map.has_key?(row, "reviewDecision")
+    context
   end
 
   step "GitLab refuses to say which merge requests are approved", context do
@@ -2435,6 +2476,52 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     context
   end
 
+  step "pull request 42 on github.com is in a stack on the second page of stacks",
+       context do
+    pr = Shared.gh_pr("acme/shop", 42)
+
+    others =
+      for n <- 1..100 do
+        %{
+          "number" => 1000 + n,
+          "base" => %{"ref" => "main"},
+          "pull_requests" => [%{"number" => 5000 + n}]
+        }
+      end
+
+    context
+    |> shop_rule([pr], %{"stdin" => ["PullRequestListSearch", "is:open "]})
+    |> World.cli_rules([
+      %{"args" => ["api", "stacks?per_page=100&page=1"], "stdout" => others},
+      %{
+        "args" => ["api", "stacks?per_page=100&page=2"],
+        "stdout" => [
+          %{
+            "number" => 9,
+            "base" => %{"ref" => "main"},
+            "pull_requests" => [%{"number" => 41}, %{"number" => 42}, %{"number" => 43}]
+          }
+        ]
+      }
+    ])
+  end
+
+  step "pull request 42 on github.com is in a stack that names no base", context do
+    pr = Shared.gh_pr("acme/shop", 42)
+
+    context
+    |> shop_rule([pr], %{"stdin" => ["PullRequestListSearch", "is:open "]})
+    |> World.cli_rules(%{
+      "args" => ["api", "repos/acme/shop/stacks"],
+      "stdout" => [
+        %{
+          "number" => 9,
+          "pull_requests" => [%{"number" => 41}, %{"number" => 42}, %{"number" => 43}]
+        }
+      ]
+    })
+  end
+
   step "GitHub cannot answer which stacks the listed pull requests belong to", context do
     World.cli_rules(context, %{
       "args" => ["api", "stacks"],
@@ -2459,6 +2546,21 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
       Path.join(home, ".ssh/config"),
       "Host #{alias_name}\n  HostName gitlab.example.com\n"
     )
+
+    hosted_project(context, "GitLab", hosted_fixture(),
+      title: title,
+      repository: "acme/infra",
+      remote: remote
+    )
+  end
+
+  step "the project {string} has the remote {string} and {string} is an SSH alias in an included file",
+       %{args: [title, remote, pattern]} = context do
+    home = HalC2.Test.Mc.Host.home(context)
+    File.mkdir_p!(Path.join(home, ".ssh"))
+    included = Path.join(home, ".ssh/work")
+    File.write!(Path.join(home, ".ssh/config"), "Include #{included}\n")
+    File.write!(included, "Host=#{pattern}\n  HostName=gitlab.example.com\n")
 
     hosted_project(context, "GitLab", hosted_fixture(),
       title: title,
@@ -2610,8 +2712,34 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     end
   end
 
-  step "the pull request merged last is listed first", context do
-    assert hd(context.all_hosted) == 1
+  # Pages are chosen in opening order (the order `az` serves them), newest
+  # opened first; the rows on a page are then shown by their closing date,
+  # as every host's rows are.
+  step "the first page holds the newest opened of them", context do
+    assert context.all_hosted |> Enum.take(99) |> Enum.sort() == Enum.to_list(552..650)
+    context
+  end
+
+  step "an Azure project with 5100 merged pull requests", context do
+    items =
+      for number <- 5100..1//-1 do
+        created =
+          DateTime.add(~U[2026-01-01 00:00:00Z], number * 3600) |> DateTime.to_iso8601()
+
+        closed =
+          DateTime.add(~U[2027-01-01 00:00:00Z], (5101 - number) * 3600)
+          |> DateTime.to_iso8601()
+
+        h(number, %{"state" => "merged", "created" => created, "updated" => closed})
+      end
+
+    hosted_project(context, "Azure DevOps", items)
+  end
+
+  step "the first page of merged pull requests is listed without an error", context do
+    assert {:ok, %{"errors" => errors}} = context.reply
+    refute Enum.any?(errors, &(&1["projectId"] == context.hosted.id))
+    assert hosted_numbers(context) |> Enum.sort() == Enum.to_list(5002..5100)
     context
   end
 

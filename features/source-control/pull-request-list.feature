@@ -248,6 +248,18 @@ Feature: Browsing pull requests
     When the user lists merge requests
     Then the merge requests are listed without an approval
 
+  @mc
+  Scenario: A GitLab merge request nobody had to approve is not shown as approved
+    Given a merge request on GitLab that needs no approvals and nobody approved
+    When the user lists merge requests
+    Then its row shows no review decision
+
+  @mc
+  Scenario: A GitLab merge request short of its approval rules waits, reviewers or not
+    Given a merge request on GitLab that still needs an approval and has no reviewers
+    When the user lists merge requests
+    Then its row shows it as waiting for a review
+
   # Upstream #30433: GitLab rows carried no checks state, so the checks filter did nothing.
   @mc
   Scenario Outline: A GitLab merge request is listed by the state of its pipeline
@@ -1936,6 +1948,12 @@ Feature: Browsing pull requests
     Then the open change requests of "infra" are listed
 
   @mc
+  Scenario: An SSH alias from an included file, spelled with an equals sign and a wildcard, is identified
+    Given the project "infra" has the remote "git@work-gitlab:acme/infra.git" and "work-*" is an SSH alias in an included file
+    When the user lists open pull requests
+    Then the open change requests of "infra" are listed
+
+  @mc
   Scenario: Pull requests carry the stacks they belong to
     Given pull request 42 on github.com is the second layer of a stack
     When the user lists open pull requests
@@ -1944,6 +1962,18 @@ Feature: Browsing pull requests
   @mc
   Scenario: A failing stack lookup does not break the list
     Given GitHub cannot answer which stacks the listed pull requests belong to
+    When the user lists open pull requests
+    Then the pull requests are listed without stack membership
+
+  @mc
+  Scenario: A stack past the first page of stacks still gives its place
+    Given pull request 42 on github.com is in a stack on the second page of stacks
+    When the user lists open pull requests
+    Then pull request 42 is listed with its place in the stack
+
+  @mc
+  Scenario: A stack that names no base gives no membership
+    Given pull request 42 on github.com is in a stack that names no base
     When the user lists open pull requests
     Then the pull requests are listed without stack membership
 
@@ -2016,13 +2046,21 @@ Feature: Browsing pull requests
     When the user carries the list on from fifty pages deep
     Then the list says the project could not be read instead of ending
 
+  # Azure pages its pull requests in the order they were opened, so its lists are ordered
+  # and carried on in that order; a row's date is still when it closed.
   @mc
   Scenario: An Azure pull request merged long after it was opened is not passed over
     Given an Azure project with 650 merged pull requests, the oldest of them merged last
     When the user lists merged pull requests
     And the user loads more merged pull requests until none are left
-    Then the pull request merged last is listed first
+    Then the first page holds the newest opened of them
     And every change request is listed exactly once
+
+  @mc
+  Scenario: A large Azure repository still loads its first page of merged pull requests
+    Given an Azure project with 5100 merged pull requests
+    When the user lists merged pull requests
+    Then the first page of merged pull requests is listed without an error
 
   @mc
   Scenario Outline: A host that cannot search text lists without narrowing

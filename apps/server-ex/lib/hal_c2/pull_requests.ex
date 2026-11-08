@@ -22,6 +22,7 @@ defmodule HalC2.PullRequests do
   alias HalC2.GitHub.Limits
   alias HalC2.PullRequests.{Branches, GitHub, Held, Hosts, Refreshes}
   alias HalC2.SourceControl.ChangeRequests
+  alias HalC2.SourceControl.Cli
 
   @default_limit 99
   @viewer_ttl 600_000
@@ -316,7 +317,7 @@ defmodule HalC2.PullRequests do
 
         fetched =
           if cursor,
-            do: Enum.filter(kept, &no_newer?(&1["updatedAt"], cursor.boundary)),
+            do: Enum.filter(kept, &no_newer?(cursor_at(&1), cursor.boundary)),
             else: kept
 
         after_seen =
@@ -324,7 +325,7 @@ defmodule HalC2.PullRequests do
             do:
               Enum.reject(
                 fetched,
-                &(same_instant?(&1["updatedAt"], cursor.boundary) and
+                &(same_instant?(cursor_at(&1), cursor.boundary) and
                     &1["number"] in cursor.seen)
               ),
             else: fetched
@@ -649,11 +650,17 @@ defmodule HalC2.PullRequests do
     end
   end
 
+  # The instant a row is ordered and carried on by: its update time, except
+  # where the host pages by another (Azure, by creation; see
+  # `HalC2.PullRequests.Hosts`). Internal to the listing: `entry/4` does
+  # not carry it to clients.
+  defp cursor_at(item), do: item["cursorAt"] || item["updatedAt"]
+
   defp oldest(items),
     do:
       items
-      |> Enum.min_by(&{instant_key(&1["updatedAt"]), &1["updatedAt"]})
-      |> Map.get("updatedAt")
+      |> Enum.min_by(&{instant_key(cursor_at(&1)), cursor_at(&1)})
+      |> cursor_at()
 
   defp instant_key(text) do
     case instant(text) do
@@ -675,7 +682,7 @@ defmodule HalC2.PullRequests do
       (same_instant?(boundary, previous.boundary) and
          Enum.any?(
            items,
-           &(same_instant?(&1["updatedAt"], boundary) and
+           &(same_instant?(cursor_at(&1), boundary) and
                &1["number"] not in previous.seen)
          ))
   end
@@ -690,7 +697,7 @@ defmodule HalC2.PullRequests do
 
     seen =
       kept ++
-        for(item <- fetched, same_instant?(item["updatedAt"], boundary), do: item["number"])
+        for(item <- fetched, same_instant?(cursor_at(item), boundary), do: item["number"])
 
     "#{boundary}|#{((previous && previous.delivered) || 0) + count}|#{Enum.join(seen, ",")}"
   end
@@ -1406,9 +1413,50 @@ defmodule HalC2.PullRequests do
 
   defp resolve_ssh_alias(remote), do: remote
 
-  # Reads only the one config `ssh` itself reads, under the MC's own home.
-  # sobelow_skip ["Traversal.FileModule"]
   defp ssh_hostname(alias_name) do
+    ssh_g_hostname(alias_name) || ssh_config_hostname(alias_name)
+  end
+
+  # How `ssh` itself resolves the alias (`ssh -G` prints the effective
+  # configuration without connecting), which follows `Include`s, `Host=`
+  # spellings and wildcard patterns the way a real connection would. The
+  # alias comes from a git remote, so only a plain host name is ever
+  # handed to `ssh`: nothing that could be read as one of its options.
+  # Evaluating the config is `ssh`'s own work on the user's own config,
+  # the same a `git` transport through this alias would do.
+  defp ssh_g_hostname(alias_name) do
+    if alias_name =~ ~r/\A[A-Za-z0-9][A-Za-z0-9._-]*\z/ do
+      # `ssh` reads the config under the account's home, not `$HOME`, so
+      # name the config under the MC's home when there is one there.
+      config =
+        Path.join([System.get_env("HOME") || System.user_home() || "", ".ssh", "config"])
+
+      args =
+        if File.regular?(config), do: ["-G", "-F", config, alias_name], else: ["-G", alias_name]
+
+      case Cli.run("ssh", args, timeout: 5_000) do
+        {:ok, out, _} ->
+          Enum.find_value(String.split(out, ~r/\r?\n/), fn line ->
+            case Regex.run(~r/^hostname\s+(\S+)$/i, String.trim(line)) do
+              [_, hostname] ->
+                hostname = String.downcase(hostname)
+                if hostname != String.downcase(alias_name), do: hostname
+
+              _ ->
+                nil
+            end
+          end)
+
+        _ ->
+          nil
+      end
+    end
+  end
+
+  # The plain reading of the config file, for a machine with no `ssh` to
+  # ask: only the one config `ssh` itself reads, under the MC's own home.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp ssh_config_hostname(alias_name) do
     # `ssh` reads the config under `$HOME`, which the account's home only
     # names when the variable is unset.
     path = Path.join([System.get_env("HOME") || System.user_home() || "", ".ssh", "config"])
