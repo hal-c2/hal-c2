@@ -531,18 +531,40 @@ defmodule HalC2.Orchestration.NativeSubagent do
   end
 
   # The child's title (upstream `subagentThreadTitle`): its given title, else its
-  # prompt, cut to 72 characters; with neither, it is named after its parent.
+  # prompt, cut to 72 characters; with neither, it is named after its parent. The
+  # cut counts UTF-16 units as upstream's did, and never falls through a character
+  # (an emoji's surrogate pair), which clients would show as a replacement glyph.
   defp title(parent_title, given, prompt, ordinal) do
     case trimmed(given) || trimmed(prompt) do
-      nil ->
-        "#{parent_title} subagent #{ordinal}"
-
-      detail ->
-        if String.length(detail) > 72,
-          do: String.slice(detail, 0, 69) <> "...",
-          else: detail
+      nil -> "#{parent_title} subagent #{ordinal}"
+      detail -> cut(detail, 72, 69)
     end
   end
+
+  defp cut(text, limit, keep) do
+    if utf16_length(text) > limit, do: grapheme_prefix(text, keep) <> "...", else: text
+  end
+
+  # The longest prefix of `text` within `budget` UTF-16 units that ends on a
+  # grapheme boundary, so the cut never falls through a surrogate pair, a
+  # joined sequence, a flag, or a variation selector.
+  defp grapheme_prefix(text, budget) do
+    text
+    |> String.graphemes()
+    |> Enum.reduce_while({0, []}, fn grapheme, {used, kept} ->
+      length = utf16_length(grapheme)
+
+      if used + length <= budget,
+        do: {:cont, {used + length, [grapheme | kept]}},
+        else: {:halt, {used, kept}}
+    end)
+    |> elem(1)
+    |> Enum.reverse()
+    |> Enum.join()
+  end
+
+  defp utf16_length(text),
+    do: text |> :unicode.characters_to_binary(:utf8, :utf16) |> byte_size() |> div(2)
 
   defp trimmed(value) when is_binary(value) do
     case String.trim(value) do

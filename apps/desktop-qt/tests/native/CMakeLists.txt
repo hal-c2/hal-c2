@@ -39,6 +39,11 @@ add_executable(tst_LocalCache tst_LocalCache.cpp ../../src/native/LocalCache.cpp
 target_include_directories(tst_LocalCache PRIVATE ../../src/native)
 target_link_libraries(tst_LocalCache PRIVATE Qt6::Core Qt6::Sql Qt6::Test)
 add_test(NAME LocalCache COMMAND tst_LocalCache)
+# What a group of tool calls did, in a sentence.
+add_executable(tst_TimelineSummary tst_TimelineSummary.cpp ../../src/native/TimelineSummary.cpp)
+target_include_directories(tst_TimelineSummary PRIVATE ../../src/native)
+target_link_libraries(tst_TimelineSummary PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME TimelineSummary COMMAND tst_TimelineSummary)
 # The update button's release notes, from a GitHub release's body.
 add_executable(tst_ReleaseNotes tst_ReleaseNotes.cpp ../../src/native/DesktopUpdateLogic.cpp)
 target_include_directories(tst_ReleaseNotes PRIVATE ../../src/native)

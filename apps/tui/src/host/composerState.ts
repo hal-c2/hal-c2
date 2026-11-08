@@ -51,7 +51,7 @@ import {
 } from "../layout.ts";
 import type { TuiClient } from "../connection.ts";
 import { clip } from "../format.ts";
-import { projectLabel } from "../orchestrationV2Adapter.ts";
+import { projectLabel, type TuiThreadExtras } from "../orchestrationV2Adapter.ts";
 import {
   interactionModeLabel,
   RUNTIME_MODE_META,
@@ -2151,6 +2151,22 @@ export function createComposer(options: ComposerOptions): Composer {
     store.setStatus("Interrupt sent.", "success");
   };
 
+  // A Stop holds the thread's queue; this lets its saved messages run again.
+  const resumeQueue = () => {
+    const detail = selectedDetail() as (OrchestrationThread & TuiThreadExtras) | null;
+    if (!detail || detail.queueHeld !== true) {
+      store.setStatus("The queue is not held.", "info");
+      return;
+    }
+    void track(
+      client.resumeQueue(detail.id).then(
+        () => store.setStatus("Queue resumed.", "success"),
+        (error: unknown) =>
+          store.setStatus(`Failed to resume the queue. ${errorText(error)}`, "error"),
+      ),
+    );
+  };
+
   const escape = () => {
     if (newDraft) {
       if (createPending) return;
@@ -2638,6 +2654,9 @@ export function createComposer(options: ComposerOptions): Composer {
         return true;
       case "composer.interrupt":
         interrupt();
+        return true;
+      case "composer.queue.resume":
+        resumeQueue();
         return true;
       case "composer.paste": {
         const bytes = field(payload, "bytes");

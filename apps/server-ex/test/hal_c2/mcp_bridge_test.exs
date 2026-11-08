@@ -72,6 +72,41 @@ defmodule HalC2.McpBridgeTest do
     assert %{"id" => 7, "result" => %{}} = JSON.decode!(answer)
   end
 
+  test "run_bridge feeds its input lines through the post hook and writes answers with out" do
+    {:ok, seen} = Agent.start_link(fn -> [] end)
+    {:ok, written} = Agent.start_link(fn -> [] end)
+
+    post = fn _endpoint, _headers, body, emit ->
+      Agent.update(seen, &[body | &1])
+      %{"id" => id} = JSON.decode!(body)
+      emit.(%{"jsonrpc" => "2.0", "id" => id, "result" => %{}})
+      {:ok, 200, %{}}
+    end
+
+    separator = <<0x2028::utf8>>
+
+    call =
+      ~s({"jsonrpc":"2.0","id":99,"method":"tools/call","params":{"name":"x","arguments":{"text":"a) <>
+        separator <> ~s(b"}}})
+
+    {:ok, io} = StringIO.open(call <> "\n")
+
+    assert :ok =
+             BridgeCli.run_bridge(
+               "http://mc.invalid/mcp",
+               "Bearer [REDACTED]",
+               IO.stream(io, :line),
+               fn line -> Agent.update(written, &[line | &1]) end,
+               post: post
+             )
+
+    assert [body] = Agent.get(seen, &Enum.reverse/1)
+    assert get_in(JSON.decode!(body), ["params", "arguments", "text"]) == "a" <> separator <> "b"
+
+    assert [answer] = Agent.get(written, &Enum.reverse/1)
+    assert %{"id" => 99, "result" => %{}} = JSON.decode!(answer)
+  end
+
   test "a terminal call prints the tool result and nothing without its environment" do
     assert {:error, 2, message} = BridgeCli.command("acp-mcp-call", ["ping", "{}"], %{})
     assert message =~ "HAL_C2_ACP_MCP_ENDPOINT"

@@ -195,7 +195,9 @@ Feature: Recovering from restarts and releasing idle sessions
 
   # Upstream #19291. A continuation keeps the task working until it ends (see "A restart does not
   # report a delegated child's interrupted result as final"); with none, the
-  # interim message is not the task's result.
+  # interim message is not the task's result. Upstream #27468: a monitor holds the task only
+  # when the child marked it as work it waits on (hal_c2_background_wait), so the monitor
+  # here is one the child marked.
   @mc @priority-high
   Scenario Outline: A task whose child waited on work the restart stopped is not completed by it
     Given thread "parent" has a running turn on "codex" in worktree "/work/p"
@@ -407,7 +409,8 @@ Feature: Recovering from restarts and releasing idle sessions
       | claudeAgent |
       | opencode    |
 
-  # Nothing is left to interrupt, so the stop ends the run itself.
+  # Nothing is left to interrupt, so the stop ends the run itself. The stop holds the
+  # queue behind it, as any Stop does (queue-and-steering.feature).
   @mc
   Scenario: Stopping a turn whose runtime is gone ends it
     Given thread "t1" exists in "demo"
@@ -415,7 +418,7 @@ Feature: Recovering from restarts and releasing idle sessions
     And the runtime running the turn of "t1" stops without ending it
     When the user stops "t1"
     Then the run of "t1" is interrupted
-    And a run for "Next" starts
+    And "Next" is held
 
   @mc
   Scenario: Idle provider sessions are released after 30 minutes

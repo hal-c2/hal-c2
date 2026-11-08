@@ -258,6 +258,10 @@ defmodule HalC2.ContinuationDeliveryPropTest do
   # --- helpers --------------------------------------------------------------------
 
   defp setup do
+    # The model has no update that asked for continuations: pin the boot's answer
+    # (`HalC2.Upgrade.continue_threads?/0`, a persistent term other properties in
+    # this VM can leave set) to none, or `deliverable?/2` ignores the setting.
+    :persistent_term.erase({HalC2.Upgrade, :continue_threads})
     setting(true)
 
     {:ok, _} =
