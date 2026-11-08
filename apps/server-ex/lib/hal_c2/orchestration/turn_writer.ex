@@ -270,9 +270,10 @@ defmodule HalC2.Orchestration.TurnWriter do
   @doc """
   Finishes an item with `status`, applying `fun` to its turn item (and message). A
   command that printed the pull request it created links it to the thread
-  (`HalC2.PullRequests.Opened`).
+  (`HalC2.PullRequests.Opened`). Plugins that hear turns hear the item with `heard`
+  over it: what the thread does not keep of the call, such as a web call's result.
   """
-  def finish_item(state, native, status, fun) do
+  def finish_item(state, native, status, fun, heard \\ %{}) do
     %{id: item_id, node: node_id, message: message_id} = item = Map.fetch!(state.items, native)
     at = Entities.now()
     tail = item[:kind] == :command && CommandTail.get(state.thread_id, item_id)
@@ -315,7 +316,7 @@ defmodule HalC2.Orchestration.TurnWriter do
         # What plugins that hear turns get of the item, as the thread now has it.
         current =
           case observing && StreamState.get(stream, "turn-item")[item_id] do
-            %{} = current -> fun.(current)
+            %{} = current -> current |> fun.() |> Map.merge(heard)
             _ -> nil
           end
 
@@ -324,12 +325,21 @@ defmodule HalC2.Orchestration.TurnWriter do
 
     if opened != [], do: Opened.link(state.thread_id, opened)
     if item[:kind] == :command, do: CommandTail.delete(state.thread_id, item_id)
-    if current, do: observe_item(state, status, current)
+    if current, do: observed_item_event(state, status, current)
     state
   end
 
-  # Plugins that hear turns hear each item that ended, as the thread has it.
-  defp observe_item(state, status, current) do
+  @doc """
+  Tells plugins that hear turns (`HalC2.Plugins.observe/1`) that `item`, as the thread
+  now has it, ended with `status` in `state`'s turn. `finish_item/5` does; a runtime that
+  writes an item already ended calls it once it has.
+  """
+  def observe_item(state, status, item) do
+    if HalC2.Plugins.observing?(), do: observed_item_event(state, status, item)
+    :ok
+  end
+
+  defp observed_item_event(state, status, current) do
     HalC2.Plugins.observe(
       current
       |> observed_item()
@@ -348,8 +358,10 @@ defmodule HalC2.Orchestration.TurnWriter do
   What a plugin hears or reads of a turn item (`HalC2.Plugins.Extension`'s `observe/2`,
   `HalC2.Plugins.Host.history/2`): `"itemId", "itemType", "tool"` (the provider's own
   name for the tool, where it has one), `"title", "status", "input", "output",
-  "exitCode"`, the input and output cut to their last #{@observed_chars} characters, a
-  value that is not text as its JSON.
+  "exitCode", "path"`, the input and output cut to their last #{@observed_chars}
+  characters, a value that is not text as its JSON. A file edit's output is its diff
+  (`diffStr`), and a web call's input what it searched for or fetched (`patterns`); its
+  result is heard as the call ends (`finish_item/5`), and not kept for history.
   """
   def observed_item(item) do
     %{
@@ -358,12 +370,15 @@ defmodule HalC2.Orchestration.TurnWriter do
       "tool" => item["providerToolName"] || item["toolName"],
       "title" => item["title"],
       "status" => item["status"],
-      "input" => observed(item["input"]),
-      "output" => observed(item["output"]),
+      "input" => observed(item["input"] || nonempty(item["patterns"])),
+      "output" => observed(item["output"] || nonempty(item["diffStr"])),
       "exitCode" => item["exitCode"],
       "path" => item["fileName"]
     }
   end
+
+  defp nonempty(value) when value in [nil, "", []], do: nil
+  defp nonempty(value), do: value
 
   defp observed(nil), do: nil
   defp observed(text) when is_binary(text), do: cut_text(text)
@@ -554,50 +569,79 @@ defmodule HalC2.Orchestration.TurnWriter do
   defp response_fields(decision) when is_binary(decision), do: %{"decision" => decision}
   defp response_fields(%{} = response), do: Map.take(response, ["decision", "answers"])
 
-  @doc "Closes this turn's items that are still running (their node too) with `status`."
+  @doc """
+  Closes this turn's items that are still running (their node too) with `status`, and
+  tells plugins that hear turns how each ended.
+  """
   def close_open_items(state, status) do
     at = Entities.now()
 
-    commit(state, fn stream ->
-      for {_native, %{id: item_id, node: node_id} = item} <- state.items,
-          stream.entities["turn-item"][item_id]["status"] == "running",
-          change <- [
-            Orchestration.upsert(
-              stream,
-              "turn-item",
-              item_id,
-              &(Map.merge(&1, %{
-                  "status" => status,
-                  "streaming" => false,
-                  "completedAt" => at,
-                  "updatedAt" => at
-                })
-                |> retry_title(status)
-                |> stopped_output(item, state.thread_id))
-            ),
-            Orchestration.upsert(
-              stream,
-              "node",
-              node_id,
-              &Map.merge(&1, %{"status" => status, "completedAt" => at})
-            ),
-            # An assistant item's message stops streaming with it.
-            item[:message] &&
-              Orchestration.upsert(
-                stream,
-                "message",
-                item.message,
-                &Map.merge(&1, %{"streaming" => false, "updatedAt" => at})
-              )
-          ],
-          change,
-          do: change
-    end)
+    closed =
+      HalC2.Streams.transact(state.thread_id, :thread, fn stream ->
+        open =
+          for {_native, %{id: item_id} = item} <- state.items,
+              stream.entities["turn-item"][item_id]["status"] == "running",
+              do: item
+
+        {open
+         |> Enum.flat_map(&close_item(stream, state, &1, status, at))
+         |> Enum.filter(&is_tuple/1), Enum.map(open, & &1.id)}
+      end)
 
     for {_native, %{kind: :command, id: item_id}} <- state.items,
         do: CommandTail.delete(state.thread_id, item_id)
 
+    observe_closed(state, closed, status)
     state
+  end
+
+  defp close_item(stream, state, %{id: item_id, node: node_id} = item, status, at) do
+    [
+      Orchestration.upsert(
+        stream,
+        "turn-item",
+        item_id,
+        &(Map.merge(&1, %{
+            "status" => status,
+            "streaming" => false,
+            "completedAt" => at,
+            "updatedAt" => at
+          })
+          |> retry_title(status)
+          |> stopped_output(item, state.thread_id))
+      ),
+      Orchestration.upsert(
+        stream,
+        "node",
+        node_id,
+        &Map.merge(&1, %{"status" => status, "completedAt" => at})
+      ),
+      # An assistant item's message stops streaming with it.
+      item[:message] &&
+        Orchestration.upsert(
+          stream,
+          "message",
+          item.message,
+          &Map.merge(&1, %{"streaming" => false, "updatedAt" => at})
+        )
+    ]
+  end
+
+  # Tells plugins that hear turns how the items `item_ids` a turn's end closed ended, as
+  # the thread now has them, before they hear the turn end.
+  defp observe_closed(state, item_ids, status) do
+    if item_ids != [] and Map.get(state, :turn) != nil and HalC2.Plugins.observing?() do
+      items = state.thread_id |> HalC2.Streams.state() |> StreamState.get("turn-item")
+
+      for item <-
+            item_ids
+            |> Enum.map(&items[&1])
+            |> Enum.reject(&is_nil/1)
+            |> Enum.sort_by(& &1["ordinal"]),
+          do: observed_item_event(state, status, item)
+    end
+
+    :ok
   end
 
   # A retry still open when its turn ends says how it ended; a usage-limit end is
@@ -708,12 +752,15 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   @doc """
   Whether `turn` starts a new provider conversation, rather than resuming one, forking
-  one or waking one the provider started by itself.
+  one or waking one the provider started by itself. One its provider started afresh,
+  because the conversation to resume was gone (`HalC2.Orchestration.Handoff.fresh_start/2`),
+  does.
   """
   def new_conversation?(turn),
     do:
-      Map.get(turn, :native_thread_id) == nil and Map.get(turn, :fork) == nil and
-        Map.get(turn, :wake) != true
+      Map.get(turn, :fresh_start) == true or
+        (Map.get(turn, :native_thread_id) == nil and Map.get(turn, :fork) == nil and
+           Map.get(turn, :wake) != true)
 
   @doc """
   Ends the run: provider turn, attempt, run, root node, and provider thread.
@@ -828,7 +875,8 @@ defmodule HalC2.Orchestration.TurnWriter do
     end
 
     [
-      Map.has_key?(ids, :provider_turn) && settle.("provider-turn", ids.provider_turn, done),
+      Map.has_key?(ids, :provider_turn) &&
+        settle.("provider-turn", ids.provider_turn, with_usage(stream, ids, done)),
       settle.("run-attempt", ids.attempt, done),
       settle.("run", ids.run, run_done),
       settle.("node", ids.root_node, done),
@@ -842,6 +890,22 @@ defmodule HalC2.Orchestration.TurnWriter do
         ),
       is_map(failure) && status == "failed" && failure_item(stream, ids, failure, at)
     ] ++ held_queue(stream, status, failure) ++ stopped_limit(stream, ids, status, failure)
+  end
+
+  # A provider that reports the context's usage on its provider thread alone (Codex,
+  # ACP) leaves its turn the report the turn ended with: what reads the turn later (a
+  # plugin's `HalC2.Plugins.Host.history/2`) gets what plugins heard as it ended.
+  defp with_usage(stream, ids, done) do
+    with %{} = turn <- StreamState.get(stream, "provider-turn")[ids.provider_turn],
+         nil <- turn["tokenUsage"],
+         %{} = usage <-
+           (StreamState.get(stream, "provider-thread")[ids[:provider_thread]] || %{})[
+             "contextUsage"
+           ] do
+      Map.put(done, "tokenUsage", usage)
+    else
+      _ -> done
+    end
   end
 
   # A limit that ended a run the user (or a parent agent) had asked to stop is not resumed
@@ -991,21 +1055,20 @@ defmodule HalC2.Orchestration.TurnWriter do
   end
 
   # Plugins that hear turns hear this one end, from the process that drove it, after
-  # its items. The usage is the provider's last report of the conversation's context:
-  # the turn's own, or the provider thread's.
+  # its items. The usage is the provider's last report of the conversation's context,
+  # as the turn keeps it (`with_usage/3`).
   defp observe_finished(state, status) do
     if HalC2.Plugins.observing?() do
       ids = state.turn.ids
       stream = HalC2.Streams.state(state.thread_id)
       provider_turn = StreamState.get(stream, "provider-turn")[ids[:provider_turn]] || %{}
-      provider_thread = StreamState.get(stream, "provider-thread")[ids[:provider_thread]] || %{}
 
       HalC2.Plugins.observe(%{
         "type" => "turn.finished",
         "threadId" => state.thread_id,
         "runId" => ids.run,
         "status" => status,
-        "tokenUsage" => provider_turn["tokenUsage"] || provider_thread["contextUsage"]
+        "tokenUsage" => provider_turn["tokenUsage"]
       })
     end
   end
@@ -1029,13 +1092,15 @@ defmodule HalC2.Orchestration.TurnWriter do
             turn = Map.put(state.turn, :scope_id, scope_id)
             baselines = if checkpoint, do: baselines(turn, at), else: []
 
+            open = left_open(stream, run, status, at)
+
             changes =
               baseline_changes(stream, baselines) ++
                 checkpoint_changes(stream, turn, checkpoint, at) ++
-                left_open(stream, run, status, at) ++
-                ended(stream, state.turn.ids, status, failure, checkpoint, at)
+                open ++ ended(stream, state.turn.ids, status, failure, checkpoint, at)
 
-            {Enum.filter(changes, &is_tuple/1), {state, queue_starts?(stream, thread_id)}}
+            {Enum.filter(changes, &is_tuple/1),
+             {state, queue_starts?(stream, thread_id), closed_items(open)}}
 
           _ ->
             {[], {:already, recorded?(stream, checkpoint)}}
@@ -1048,10 +1113,11 @@ defmodule HalC2.Orchestration.TurnWriter do
         unless recorded?, do: drop_capture(cwd, checkpoint)
         :ok
 
-      {state, queue?} ->
+      {state, queue?, closed} ->
         # A start still in flight for the run (its runtime stopped answering)
         # must not hold the thread's work behind it.
         HalC2.Orchestration.Effects.cancel_pending(thread_id, "provider-turn.start", run_id)
+        observe_closed(state, closed, status)
         finished(state, status, failure, queue?)
     end
   end
@@ -1072,13 +1138,15 @@ defmodule HalC2.Orchestration.TurnWriter do
             turn = Map.put(state.turn, :scope_id, args["scopeId"])
             baselines = if checkpoint, do: baselines(%{turn | cwd: args["cwd"]}, at), else: []
 
+            open = left_open(stream, run, "completed", at)
+
             changes =
               baseline_changes(stream, baselines) ++
                 checkpoint_changes(stream, turn, checkpoint, at) ++
-                left_open(stream, run, "completed", at) ++
-                ended(stream, turn.ids, "completed", nil, checkpoint, at)
+                open ++ ended(stream, turn.ids, "completed", nil, checkpoint, at)
 
-            {Enum.filter(changes, &is_tuple/1), {state, queue_starts?(stream, thread_id)}}
+            {Enum.filter(changes, &is_tuple/1),
+             {state, queue_starts?(stream, thread_id), closed_items(open)}}
 
           _ ->
             {[], nil}
@@ -1086,8 +1154,12 @@ defmodule HalC2.Orchestration.TurnWriter do
       end)
 
     case completed do
-      {state, queue?} -> finished(state, "completed", nil, queue?)
-      nil -> :ok
+      {state, queue?, closed} ->
+        observe_closed(state, closed, "completed")
+        finished(state, "completed", nil, queue?)
+
+      nil ->
+        :ok
     end
   end
 
@@ -1141,6 +1213,9 @@ defmodule HalC2.Orchestration.TurnWriter do
     (StreamState.get(stream, "provider-thread")[ids.provider_thread] || %{})["providerSessionId"] ||
       Entities.provider_session_id(Entities.instance(ids), ids.thread)
   end
+
+  # The turn items `left_open/4` closes.
+  defp closed_items(changes), do: for({"turn-item", id, _patch} <- changes, do: id)
 
   # The items, nodes, provider subagents and prompts a run left open, and its message
   # still streaming. Its root node ends with the run. A task it delegated runs on in its

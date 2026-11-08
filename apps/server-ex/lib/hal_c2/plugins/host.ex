@@ -330,19 +330,29 @@ defmodule HalC2.Plugins.Host do
 
   @doc """
   The turns `thread_id` ran, oldest first, the newest `limit` (50 when left out) of
-  those that ended: `%{"runId", "ordinal", "status", "instanceId", "model",
+  those that ended: `%{"runId", "ordinal", "status", "provider", "instanceId", "model",
   "startedAt", "completedAt", "tokenUsage", "items"}`, each item as plugins hear it
   (`HalC2.Orchestration.TurnWriter.observed_item/1`), in the turn's order. What a
   plugin that hears turns missed while it was not running. Needs `turns:observe`.
   `{:error, message}` when there is no such thread.
+
+  `"provider"` is the driver the turn ran on (`"claudeAgent"`, `"codex"`, ...), kept
+  with the thread, so it is known after the instance the turn ran on is deleted and
+  `providers/0` no longer lists it.
+
+  `before: run_id` keeps only the turns that ended before run `run_id` started (a lower
+  ordinal), whether that run ended or not, and takes `limit` of those: a plugin that
+  hears of a turn late, after more turns ended, still gets the turns before it. A run
+  the thread does not have cuts nothing off.
   """
   def history(id, thread_id, opts \\ []) do
     limit = Keyword.get(opts, :limit, 50)
+    before = Keyword.get(opts, :before)
 
     with :ok <- permit(id, "turns:observe") do
       HalC2.Streams.read(thread_id, fn stream ->
         if HalC2.StreamState.get(stream, "thread")[thread_id],
-          do: {:ok, turns(stream, limit)},
+          do: {:ok, turns(stream, limit, before)},
           else: {:error, "There is no thread #{thread_id}."}
       end)
     end
@@ -350,7 +360,7 @@ defmodule HalC2.Plugins.Host do
 
   @ended ~w(completed interrupted failed cancelled)
 
-  defp turns(stream, limit) do
+  defp turns(stream, limit, before) do
     alias HalC2.StreamState
 
     items =
@@ -360,10 +370,18 @@ defmodule HalC2.Plugins.Host do
 
     attempts = StreamState.get(stream, "run-attempt")
     provider_turns = StreamState.get(stream, "provider-turn")
+    provider_threads = StreamState.get(stream, "provider-thread")
+    runs = StreamState.get(stream, "run")
 
-    stream
-    |> StreamState.list("run")
-    |> Enum.filter(&(&1["status"] in @ended))
+    cutoff =
+      case runs[before] do
+        %{"ordinal" => ordinal} -> &(&1["ordinal"] < ordinal)
+        _ -> fn _run -> true end
+      end
+
+    runs
+    |> Map.values()
+    |> Enum.filter(&(&1["status"] in @ended and cutoff.(&1)))
     |> Enum.sort_by(& &1["ordinal"])
     |> Enum.take(-limit)
     |> Enum.map(fn run ->
@@ -373,6 +391,7 @@ defmodule HalC2.Plugins.Host do
         "runId" => run["id"],
         "ordinal" => run["ordinal"],
         "status" => run["status"],
+        "provider" => (provider_threads[run["providerThreadId"]] || %{})["driver"],
         "instanceId" => run["providerInstanceId"],
         "model" => get_in(run, ["modelSelection", "model"]),
         "startedAt" => run["startedAt"],

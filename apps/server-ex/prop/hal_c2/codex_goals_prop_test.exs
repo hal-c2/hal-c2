@@ -18,6 +18,11 @@ defmodule HalC2.CodexGoalsPropTest do
   The goal runs on the fake app-server in `test/support/fake_codex.py` with
   FAKE_CODEX_GOAL_STALL set, so Codex never goes on by itself: the test plays its
   side, and fires the grace timer itself (the runtime's own is set far off).
+
+  Or Codex has already worked the goal to its end, in turns of its own, by the time
+  the runtime reads its answer to the activation (FAKE_CODEX_GOAL_ANSWER_LAST): what
+  Codex said after it was asked is not dropped as stale, so the run ends with the goal
+  complete, and a turn Codex starts later is left as it is.
   """
 
   use ExUnit.Case, async: false
@@ -40,25 +45,30 @@ defmodule HalC2.CodexGoalsPropTest do
   property "a Codex goal's turns are one run, which pauses a goal it leaves active",
     numtests: HalC2.Prop.numtests(25),
     max_size: 12 do
-    forall cmds <- commands(__MODULE__) do
-      trap_exit do
-        start()
-        {history, state, result} = run_commands(__MODULE__, cmds)
-        HalC2.Prop.stop_services()
+    forall answered_last <- frequency([{3, false}, {1, true}]) do
+      forall cmds <- commands(__MODULE__, initial(answered_last)) do
+        trap_exit do
+          started = start(answered_last)
+          {history, state, result} = run_commands(__MODULE__, cmds)
+          HalC2.Prop.stop_services()
 
-        for key <- [:codex_command, :codex_goal_grace_ms],
-            do: Application.delete_env(:hal_c2, key)
+          for key <- [:codex_command, :codex_goal_grace_ms],
+              do: Application.delete_env(:hal_c2, key)
 
-        for key <- ~w(FAKE_CODEX_TRACE FAKE_CODEX_GOAL_STALL), do: System.delete_env(key)
+          for key <- ~w(FAKE_CODEX_TRACE FAKE_CODEX_GOAL_STALL FAKE_CODEX_GOAL_ANSWER_LAST),
+              do: System.delete_env(key)
 
-        (result == :ok)
-        |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
-        |> aggregate(command_names(cmds))
+          (started == started(answered_last) and result == :ok)
+          |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
+          |> when_fail(IO.puts("started as #{inspect(started)}"))
+          |> aggregate(command_names(cmds))
+        end
       end
     end
   end
 
-  defp start do
+  # Starts the goal's run, and returns what it shows once started.
+  defp start(answered_last) do
     home = HalC2.Prop.scratch_home("codex-goals")
     work = Path.join(home, "work")
     File.mkdir_p!(work)
@@ -66,7 +76,11 @@ defmodule HalC2.CodexGoalsPropTest do
     trace = Path.join(home, "codex.log")
     Process.put(:trace, trace)
     System.put_env("FAKE_CODEX_TRACE", trace)
-    System.put_env("FAKE_CODEX_GOAL_STALL", "1")
+
+    if answered_last,
+      do: System.put_env("FAKE_CODEX_GOAL_ANSWER_LAST", "1"),
+      else: System.put_env("FAKE_CODEX_GOAL_STALL", "1")
+
     Application.put_env(:hal_c2, :codex_command, ["python3", "-u", @fake_codex])
     Application.put_env(:hal_c2, :codex_goal_grace_ms, 3_600_000)
 
@@ -116,24 +130,41 @@ defmodule HalC2.CodexGoalsPropTest do
         "dispatchMode" => %{"type" => "start_immediately"}
       })
 
-    # The goal's first turn (the fake's scripted reply) ends with the goal active.
-    await_until(
-      fn ->
-        case runtime() do
-          {_, %{goal_hold: hold, native_thread_id: thread}} when hold != nil ->
-            Process.put(:native_thread, thread)
-            observed().run == "running"
-
-          _ ->
-            false
-        end
-      end,
-      "the goal's first turn never ended"
-    )
-
-    Process.put(:goal_turns, 0)
     Process.delete(:late)
     Process.delete(:stale_hold)
+
+    if answered_last do
+      # The fake's two turns for the goal, the last completing it.
+      Process.put(:goal_turns, 2)
+      await_until(fn -> observed().run != "running" end, "the goal's run never ended")
+      {_, %{native_thread_id: thread}} = runtime()
+      Process.put(:native_thread, thread)
+    else
+      Process.put(:goal_turns, 0)
+
+      # The goal's first turn (the fake's scripted reply) ends with the goal active.
+      await_until(
+        fn ->
+          case runtime() do
+            {_, %{goal_hold: hold, native_thread_id: thread}} when hold != nil ->
+              Process.put(:native_thread, thread)
+              observed().run == "running"
+
+            _ ->
+              false
+          end
+        end,
+        "the goal's first turn never ended"
+      )
+    end
+
+    settle_runtime()
+    observed()
+  end
+
+  # What `start/1` should find: the model's initial state, as `observed/0` reads it.
+  defp started(answered_last) do
+    answered_last |> initial() |> Map.take([:run, :goal, :turns, :late]) |> Map.put(:runs, 1)
   end
 
   # --- model ---------------------------------------------------------------------
@@ -142,8 +173,13 @@ defmodule HalC2.CodexGoalsPropTest do
   # Codex started for the goal is running), :ended (the run ended) or :exited (the
   # app-server exited, so nothing more comes from Codex). turns: the
   # run's provider turns. stops: whether a turn Codex starts after the run is stopped.
-  def initial_state,
+  def initial_state, do: initial(false)
+
+  defp initial(false),
     do: %{phase: :held, run: "running", goal: "active", turns: 1, stops: false, late: nil}
+
+  defp initial(true),
+    do: %{phase: :ended, run: "completed", goal: "complete", turns: 3, stops: false, late: nil}
 
   def command(%{phase: :held}) do
     frequency([

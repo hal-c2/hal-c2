@@ -10,6 +10,11 @@ defmodule HalC2.Plugins.Feed do
   dropped and counted, and the next event delivered says how many were (`"dropped"`).
   Whether the plugin may hear turns is checked here, as each event is delivered, so a
   permission revoked while the plugin runs takes effect at once.
+
+  It reads the plugin's settings each time it starts, so a restart after a save hears
+  turns with the saved ones. Its `{:shape, id}` entry holds the manifest's fields, not
+  settings: `HalC2.Plugins.shape_run/1` reads the saved settings as it asks, so a save
+  is seen at once, even while this process is still busy observing.
   """
 
   use GenServer
@@ -23,8 +28,8 @@ defmodule HalC2.Plugins.Feed do
   def max_queue, do: @max_queue
 
   @doc false
-  def child_spec({id, module, settings}),
-    do: %{id: :feed, start: {__MODULE__, :start_link, [{id, module, settings}]}}
+  def child_spec({id, module, fields}),
+    do: %{id: :feed, start: {__MODULE__, :start_link, [{id, module, fields}]}}
 
   def start_link(args), do: GenServer.start_link(__MODULE__, args)
 
@@ -32,7 +37,7 @@ defmodule HalC2.Plugins.Feed do
   def hooks?(module),
     do: function_exported?(module, :observe, 2) or function_exported?(module, :shape_run, 2)
 
-  @doc "Hands the feed the settings the user saved, for the hooks it serves from now on."
+  @doc "Hands the feed the settings the user saved, for the turns it hears from now on."
   def settings_changed(pid, settings), do: GenServer.cast(pid, {:settings, settings})
 
   @doc """
@@ -46,8 +51,9 @@ defmodule HalC2.Plugins.Feed do
   end
 
   @impl true
-  def init({id, module, settings}) do
+  def init({id, module, fields}) do
     Logger.metadata(plugin: id)
+    settings = HalC2.Plugins.settings_now(id, fields)
     dropped = :counters.new(1, [:write_concurrency])
 
     if function_exported?(module, :observe, 2),
@@ -56,18 +62,13 @@ defmodule HalC2.Plugins.Feed do
     if function_exported?(module, :shape_run, 2),
       do:
         {:ok, _} =
-          Registry.register(@hooks, {:shape, id}, %{id: id, module: module, settings: settings})
+          Registry.register(@hooks, {:shape, id}, %{id: id, module: module, fields: fields})
 
     {:ok, %{id: id, module: module, settings: settings, dropped: dropped}}
   end
 
   @impl true
-  def handle_cast({:settings, settings}, state) do
-    if function_exported?(state.module, :shape_run, 2),
-      do: Registry.update_value(@hooks, {:shape, state.id}, &%{&1 | settings: settings})
-
-    {:noreply, %{state | settings: settings}}
-  end
+  def handle_cast({:settings, settings}, state), do: {:noreply, %{state | settings: settings}}
 
   @impl true
   def handle_info({:observe, event}, state) do

@@ -1,15 +1,18 @@
 # Sources:
 #   apps/server-ex/lib/hal_c2/plugins/kinds.ex (Extension observe/2 and shape_run/2)
 #   apps/server-ex/lib/hal_c2/plugins/feed.ex (a running extension's feed of turns, dropped events counted)
-#   apps/server-ex/lib/hal_c2/plugins.ex (observe/1, shape_run/1: asked as a new conversation starts)
-#   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (turn.started, turn.item, turn.finished)
+#   apps/server-ex/lib/hal_c2/plugins.ex (observe/1, shape_run/1: asked as a new conversation starts, each plugin apart from the asker, with its saved settings)
+#   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (turn.started, turn.item, turn.finished; the calls a stopped or abandoned turn closed; a turn's usage)
 #   apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (a Codex turn and a goal's run, started by Codex's own writer)
-#   apps/server-ex/lib/hal_c2/orchestration/run_shape.ex (a conversation's shape, kept on its provider thread)
-#   apps/server-ex/lib/hal_c2/plugins/host.ex (Host.steer, Host.notice, Host.generate, Host.history)
+#   apps/server-ex/lib/hal_c2/orchestration/run_shape.ex (a conversation's shape, kept on its provider thread, a native fork's inherited)
+#   apps/server-ex/lib/hal_c2/orchestration/handoff.ex (a native fork carries its source's shape; fresh_start/2: a resume that started afresh is a new conversation)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (new_run: another instance with the same home takes over the conversation and its shape)
+#   apps/server-ex/lib/hal_c2/plugins/host.ex (Host.steer, Host.notice, Host.generate, Host.history: the provider each turn ran on, the turns before one)
 #   apps/server-ex/lib/hal_c2/text_generation.ex (for_plugin/2: the text model, with what it used)
 #   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (--disallowedTools), apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (features off at thread/start)
 #   packages/contracts/src/orchestrationV2.ts (system_notice pluginId and actions, providerToolName)
-#   apps/desktop-qt/src/native/TimelineModel.cpp, apps/desktop-qt/qml/HalC2/Bricks/Timeline.qml (a notice's Stop)
+#   apps/desktop-qt/src/native/TimelineModel.cpp, apps/desktop-qt/qml/HalC2/Bricks/Timeline.qml (a notice's Stop, a folded group's StopRunRole)
+#   apps/desktop-qt/src/native/ComposerController.cpp (interrupt: a Stop naming its run stops only that run)
 #   hal-c2/hal-c2#1399 (the TokenEconomizer port these hooks are for)
 
 Feature: Plugins that watch and shape turns
@@ -57,6 +60,13 @@ Feature: Plugins that watch and shape turns
     Then it gets both turns, oldest first, each with its tool calls
 
   @mc
+  Scenario: A plugin that hears of a turn late reads the turns before it, with the provider each ran on
+    Given a plugin that hears turns
+    And a Claude thread that ran three turns
+    When the plugin reads one turn from before the thread's last turn
+    Then it gets the thread's second turn, which ran on Claude
+
+  @mc
   Scenario: A plugin adds context to a new conversation and turns a tool off for all of it
     Given a plugin that shapes runs with the context "Keep answers short." and "WebFetch" off
     When a Claude thread runs two turns
@@ -79,11 +89,46 @@ Feature: Plugins that watch and shape turns
       | OpenCode | anything      | nothing      | every tool it had       |
 
   @mc
-  Scenario: A plugin that fails while shaping a conversation leaves it as it was
-    Given a plugin that fails when asked to shape a run
+  Scenario Outline: A plugin that fails while shaping a conversation leaves it as it was
+    Given a plugin that <fails> when asked to shape a run
     When a Claude thread runs a turn
     Then Claude gets the message as the user wrote it
     And the turn completes unshaped
+
+    Examples:
+      | fails                                 |
+      | raises                                |
+      | dies with a process it linked         |
+      | answers with what is not JSON         |
+
+  @mc
+  Scenario: A fork that continues a shaped conversation keeps its shape
+    Given a plugin that shapes runs with the context "Keep answers short." and "collaboration" off
+    And a Codex thread that ran a turn
+    When the thread is forked and the fork runs a turn
+    Then Codex forks its own conversation with its subagent tools still off
+    And the fork's message comes without "Keep answers short."
+    And the plugin was asked once
+
+  @mc
+  Scenario: Another Claude account with the same home keeps the shape of the conversation it takes over
+    Given a plugin that shapes runs with the context "Keep answers short." and "WebFetch" off
+    And a Claude thread that ran a turn
+    When its next turn runs on another Claude account with the same home
+    Then that account resumes the conversation without "WebFetch"
+    And the plugin was asked once
+
+  @mc
+  Scenario Outline: A plugin hears how each call of a turn that <ended> ended, before the turn's end
+    Given a plugin that hears turns
+    And a Claude thread working on a turn with a command running
+    When <what>
+    Then the plugin hears the command end <status>, then the turn end
+
+    Examples:
+      | ended               | what                         | status      |
+      | was stopped         | the user stops the turn      | interrupted |
+      | lost its runtime    | the turn's runtime dies      | failed      |
 
   @mc
   Scenario: A plugin steers the turn it names while that turn works
@@ -113,6 +158,20 @@ Feature: Plugins that watch and shape turns
     Then the notice shows a Stop action
     When the turn ends
     Then the notice no longer offers to stop it
+
+  @desktop @mobile @backlog-mobile
+  Scenario: A notice folded behind later tool calls still offers Stop
+    Given a plugin's notice in a turn that is working, offering to stop it
+    When the turn runs another command after the notice
+    Then the folded tool calls still offer Stop
+    When the turn ends
+    Then the folded tool calls no longer offer Stop
+
+  @desktop @mobile @backlog-mobile
+  Scenario: A notice's Stop stops only the turn it is in
+    Given a plugin's notice in a turn that is working, offering to stop it
+    When the thread moves on to its next turn before the notice redraws
+    Then the notice's Stop stops nothing
 
   @tui @backlog-tui
   Scenario: A plugin's notice tells the terminal user how to stop its turn
