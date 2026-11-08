@@ -383,7 +383,6 @@ Feature: Codex
 
   # Upstream #26188: after the shared app-server was killed (an OOM killer took its whole
   # scope), every later Codex turn failed until the server restarted.
-  @backlog @priority-high
   Scenario Outline: Codex starts a new app-server after its old one was killed
     Given the Codex app-server was killed by a signal
     When the user <action>
