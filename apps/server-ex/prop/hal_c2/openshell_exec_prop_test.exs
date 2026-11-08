@@ -3,14 +3,17 @@ defmodule HalC2.OpenShellExecPropTest do
   `HalC2.OpenShell.Exec`, as `HalC2.OpenShell.Client.exec/4` starts it, against a
   model of what a command stream promises, over any sequence of commands started on
   one client, stdin written and half-closed, a command that stops reading while a
-  writer floods it, cancels, and owners that exit. The gateway is the TLS fake: `cat`
-  echoes its stdin and exits 0 at its end; `stall` never reads. The promises:
+  writer floods it, cancels (also while output pours in), and owners that exit. The
+  gateway is the TLS fake: `cat` echoes its stdin and exits 0 at its end; `stall`
+  never reads; `spew` writes small chunks of output as fast as the stream takes
+  them, then stalls. The promises:
 
     * a command's output is exactly the stdin it was sent, and it ends with exit 0
       once stdin is closed;
     * a cancel ends it with `{:error, :cancelled}` after at most the output it had
       made, and a writer it held fails;
-    * exactly one ending reaches the owner, and nothing after it;
+    * exactly one ending reaches the owner, and nothing after it, however a cancel
+      falls among the output;
     * however a command ends, its process and its connection are gone;
     * nothing that happens to one command (a writer stuck on it, its cancel, its
       owner's exit) stops another, or the client's own calls, from working;
@@ -31,6 +34,9 @@ defmodule HalC2.OpenShellExecPropTest do
 
   # Long enough for anything here to arrive; reaching it fails the case.
   @wait 5_000
+
+  # Chunks a `spew` writes before it stalls.
+  @spew 2_000
 
   property "a command stream ends once, with its connection, and never takes another down",
     numtests: HalC2.Prop.numtests(60),
@@ -71,6 +77,14 @@ defmodule HalC2.OpenShellExecPropTest do
 
   defp gateway_exec(["stall"], _io), do: receive(do: (:never -> :ok), after: (30_000 -> :ok))
   defp gateway_exec(["cat"], io), do: cat(io)
+  defp gateway_exec(["spew"], io), do: spew(io, @spew)
+
+  # Bounded, so a command left open fills no mailbox; it stops once the stream is gone.
+  defp spew(io, 0), do: gateway_exec(["stall"], io)
+
+  defp spew(io, n) do
+    if io.stdout.("spew\n") == :ok, do: spew(io, n - 1)
+  end
 
   defp cat(io) do
     case io.read.() do
@@ -99,7 +113,7 @@ defmodule HalC2.OpenShellExecPropTest do
 
     frequency(
       [
-        {3, {:call, __MODULE__, :start, [state.next, oneof([:cat, :stall])]}},
+        {3, {:call, __MODULE__, :start, [state.next, oneof([:cat, :stall, :spew])]}},
         {1, {:call, __MODULE__, :health, []}},
         {1, {:call, __MODULE__, :foreign, []}}
       ] ++
@@ -160,9 +174,10 @@ defmodule HalC2.OpenShellExecPropTest do
   def postcondition(state, {:call, _, :close, [i]}, result),
     do: result == {:ended, state.execs[i].sent, {:exit, 0}}
 
-  # `cat` may have echoed some of its stdin before the cancel.
+  # `cat` may have echoed some of its stdin before the cancel; `spew` any of its output.
   def postcondition(state, {:call, _, :cancel, [i]}, result) do
-    %{sent: sent, flooded: flooded} = state.execs[i]
+    %{kind: kind, sent: sent, flooded: flooded} = state.execs[i]
+    sent = if kind == :spew, do: String.duplicate("spew\n", @spew), else: sent
     writer = if flooded, do: :failed, else: nil
 
     match?({:ended, _, {:error, :cancelled}, ^writer}, result) and
