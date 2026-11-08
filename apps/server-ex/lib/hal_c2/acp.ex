@@ -422,27 +422,26 @@ defmodule HalC2.Acp do
     end
   end
 
-  # Whether the command that would start the instance's agent resolves, so a
-  # test's `:acp_commands` override counts the same as the configured binary.
-  defp found?(id) do
-    case command(id) do
-      {:ok, [executable | _], _env} -> System.find_executable(executable) != nil
-      _ -> false
-    end
-  end
-
   # Antigravity is always listed: its entry says how to install or sign in.
   defp base_entry(_id, "antigravity", instance) do
     {:ok, if(instance["displayName"], do: %{"displayName" => instance["displayName"]}, else: %{})}
   end
 
   defp base_entry(id, _driver, instance) do
-    with {:ok, [executable | _], _env} <- command(id),
-         path when is_binary(path) <- System.find_executable(executable) do
+    if found?(id) do
       {:ok,
        if(instance["displayName"], do: %{"displayName" => instance["displayName"]}, else: %{})}
     else
-      _ -> :error
+      :error
+    end
+  end
+
+  # Whether the command that would start the instance's agent resolves, so a
+  # test's `:acp_commands` override counts the same as the configured binary.
+  defp found?(id) do
+    case command(id) do
+      {:ok, [executable | _], _env} -> System.find_executable(executable) != nil
+      _ -> false
     end
   end
 
