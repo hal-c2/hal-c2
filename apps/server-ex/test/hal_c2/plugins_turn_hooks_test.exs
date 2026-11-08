@@ -241,6 +241,17 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert shape["plugins"] == ["good"]
   end
 
+  test "a conversation is left unshaped, and the asker lives, while the plugins' shapes cannot be asked" do
+    grant(%{"good" => ["runs:shape"]})
+    feed("good", nil, %{"context" => "Keep answers short."})
+    # The supervisor shapes are asked under is restarting.
+    :ok = stop_supervised(HalC2.Plugins.Shapes)
+
+    {pid, ref} = spawn_monitor(fn -> exit({:shaped, HalC2.Plugins.shape_run(%{})}) end)
+
+    assert_receive {:DOWN, ^ref, :process, ^pid, {:shaped, nil}}, 10_000
+  end
+
   test "a plugin hears turns with the settings saved last, after its feed restarts, and is asked to shape with them while its feed is busy" do
     grant(%{"tuned" => ["turns:observe", "runs:shape"]}, %{"tuned" => %{"mode" => "b"}})
     feed("tuned", nil, :mode, true)

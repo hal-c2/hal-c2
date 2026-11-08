@@ -580,17 +580,14 @@ defmodule HalC2.Plugins do
     asks =
       for {_pid, %{id: id, module: module, fields: fields}} <-
             HalC2.Plugins.Feed.lookup(:shape),
-          "runs:shape" in granted(id) do
-        task =
-          Task.Supervisor.async_nolink(@shapes, fn ->
-            shaped(id, fn ->
+          "runs:shape" in granted(id),
+          task =
+            ask_shape(id, fn ->
               context = %{id: id, settings: current(id, fields), thread_id: run["threadId"]}
               module.shape_run(run, context)
-            end)
-          end)
-
-        {id, task}
-      end
+            end),
+          task,
+          do: {id, task}
 
     answers =
       asks
@@ -616,6 +613,16 @@ defmodule HalC2.Plugins do
         "plugins" => Enum.map(answers, &elem(&1, 0))
       }
     end
+  end
+
+  # A shape asked apart from the asker, or nil when it cannot be (the supervisor of
+  # shapes restarting): that plugin has no answer, the others are still awaited.
+  defp ask_shape(id, fun) do
+    Task.Supervisor.async_nolink(@shapes, fn -> shaped(id, fun) end)
+  catch
+    :exit, reason ->
+      Logger.warning("plugin #{id} could not be asked to shape a run: #{inspect(reason)}")
+      nil
   end
 
   defp failure_event(%{"class" => class} = failure) when is_binary(class) do
