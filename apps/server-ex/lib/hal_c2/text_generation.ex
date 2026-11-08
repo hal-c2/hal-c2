@@ -744,9 +744,11 @@ defmodule HalC2.TextGeneration do
       try do
         with :ok <- pi_model(conn, model),
              {:ok, _} <- Connection.call(conn, "prompt", %{"message" => prompt}, :infinity),
-             :ok <- pi_settled(conn),
+             {:ok, failure} <- pi_settled(conn),
              {:ok, data} <- Connection.call(conn, "get_last_assistant_text", %{}, 60_000) do
           case String.trim((is_map(data) && is_binary(data["text"]) && data["text"]) || "") do
+            # An empty reply Pi ended with a turn error names that error.
+            "" when is_binary(failure) -> {:error, "Pi could not generate text: #{failure}"}
             "" -> {:error, "Pi returned empty output."}
             text -> {:ok, text}
           end
@@ -769,8 +771,21 @@ defmodule HalC2.TextGeneration do
     case String.split(model, "/", parts: 2) do
       [provider, model_id] when provider != "" and model_id != "" ->
         case Connection.call(conn, "set_model", %{"provider" => provider, "modelId" => model_id}) do
-          {:ok, _} -> :ok
-          error -> error
+          {:ok, _} ->
+            :ok
+
+          # The bare Pi that writes text loads no extensions, so a model only
+          # an extension provides cannot load here however good the slug is.
+          {:error, reason} ->
+            detail = if is_binary(reason), do: reason, else: inspect(reason)
+
+            {:error,
+             "Pi could not load the model '#{model}': #{detail}. " <>
+               "Extensions are not loaded when Pi writes titles and commit messages, " <>
+               "so a model only an extension provides cannot be used for them."}
+
+          error ->
+            error
         end
 
       _ ->
@@ -778,10 +793,24 @@ defmodule HalC2.TextGeneration do
     end
   end
 
-  defp pi_settled(conn) do
+  # Waits for the prompt's turn to settle, remembering a model error it ended
+  # with (`{:ok, message | nil}`), which an empty reply then names.
+  defp pi_settled(conn, failure \\ nil) do
     receive do
-      {:json_rpc, ^conn, {:notification, "agent_settled", _event}} -> :ok
-      {:EXIT, ^conn, reason} -> {:error, reason}
+      {:json_rpc, ^conn, {:notification, "agent_settled", _event}} ->
+        {:ok, failure}
+
+      {:json_rpc, ^conn,
+       {:notification, "message_end",
+        %{"message" => %{"stopReason" => "error", "errorMessage" => message}}}}
+      when is_binary(message) ->
+        pi_settled(conn, failure || message)
+
+      {:json_rpc, ^conn, {:notification, _type, _event}} ->
+        pi_settled(conn, failure)
+
+      {:EXIT, ^conn, reason} ->
+        {:error, reason}
     end
   end
 

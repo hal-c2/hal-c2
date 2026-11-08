@@ -374,7 +374,6 @@ Feature: Pi
     Then the thread shows one notice naming the folder and what Pi skipped
     And the notice says how to trust the folder with "/trust" in Pi's terminal app
 
-  @backlog
   Scenario: Pi writing titles and commit messages runs without tools, extensions or a saved session
     Given Pi's launch arguments name an extension and a tool list
     When Pi writes a thread title
@@ -382,7 +381,6 @@ Feature: Pi
     And no Pi session file is left behind
 
   # Upstream #19070: Pi text generation names the model it could not load and that extensions are off for it.
-  @backlog
   Scenario: Pi failing to write a title says which model it could not load
     Given the text-generation model is one only a Pi extension provides
     When Pi is asked for a thread title
@@ -390,7 +388,6 @@ Feature: Pi
     And says extensions are not loaded when Pi writes titles and commit messages
 
   # Upstream #23741: an empty Pi reply that came with a turn error reported a generic failure; it now names the error.
-  @backlog
   Scenario: Pi failing to write a title shows the provider's error
     Given Pi ends a title request with no text and the error "model overloaded"
     When Pi is asked for a thread title
@@ -818,6 +815,14 @@ Feature: Pi
     When the next Pi turn runs while Pi finishes the stopped compaction and then compacts again
     Then the next turn shows only its own compaction
 
+  Scenario: A stopped steered compaction that fails without an end does not hide the next compaction
+    Given a Pi turn that is still working while Pi's compaction fails slowly without an end event
+    When the user steers the thread with "/compact" and stops the turn before Pi finishes compacting
+    Then the steer is answered and the turn is stopped
+    When Pi's failed answer has landed and the user sends "/compact"
+    Then Pi compacts its conversation
+    And the work log shows the compaction
+
   Scenario: A message that only starts with /compact is an ordinary message
     When the user sends "/compacted logs look wrong" to a Pi thread
     Then Pi receives it as an ordinary message
@@ -1084,7 +1089,7 @@ Feature: Pi
     And its structured results are kept in the tool's details
 
   # Upstream #17853: Pi native abort outcomes are preserved
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: A turn Pi aborts on its own reads as interrupted
     When Pi aborts a turn itself, for an extension, a compaction or a session replacement
     Then the turn reads as interrupted, not completed
@@ -1139,7 +1144,6 @@ Feature: Pi
     And it is not folded into the tool calls
 
   # Upstream #15791: ids built from the per-turn ordinal let one thread's notice replace another's.
-  @backlog
   Scenario: Pi notices in two threads stay apart
     Given Pi threads "t1" and "t2" each send a notification as the first item of a turn
     When the user opens each thread
@@ -1148,7 +1152,6 @@ Feature: Pi
 
   # Upstream #30187: Pi renews expired logins in the background as it starts, and the MC stopped
   # its short-lived Pi processes mid-renewal, leaving a spent token so the next sign-in failed.
-  @backlog
   Scenario: A short-lived Pi process does not spend the user's login renewal
     Given the user's Pi login has expired and is renewed with a single-use token
     When the MC starts Pi only to check its status, write a title or fork a session

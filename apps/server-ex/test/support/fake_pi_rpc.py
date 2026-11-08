@@ -503,21 +503,27 @@ def command(msg):
         said = [e["message"]["content"] for e in session.entries if e["message"]["role"] == "assistant"]
         respond(msg, {"text": said[-1] if said else None})
     elif kind == "compact":
-        if "compactError" in cfg:
-            respond(msg, error=cfg["compactError"])
-        elif cfg.get("compactDelaySec"):
+        if cfg.get("compactDelaySec"):
             # A compaction Pi is slow to finish: it answers later, in its own
-            # thread, while other commands (an abort included) still land.
+            # thread, while other commands (an abort included) still land. A
+            # delayed failure answers with the error and sends no events.
             def later():
                 time.sleep(float(cfg["compactDelaySec"]))
+                if "compactError" in cfg:
+                    respond(msg, error=cfg["compactError"])
+                    log({"compact_answered": True})
+                    return
                 if cfg.get("compactEvents", True):
                     send({"type": "compaction_start", "reason": "manual"})
                     send({"type": "compaction_end", "aborted": False,
                           "result": {"summary": "Compacted.", "tokensBefore": 1000,
                                      "estimatedTokensAfter": 200}})
                 respond(msg, {"summary": "Compacted.", "tokensBefore": 1000})
+                log({"compact_answered": False})
 
             threading.Thread(target=later, daemon=True).start()
+        elif "compactError" in cfg:
+            respond(msg, error=cfg["compactError"])
         else:
             if cfg.get("compactEvents", True):
                 send({"type": "compaction_start", "reason": "manual"})

@@ -26,7 +26,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   alias HalC2.Orchestration
   alias HalC2.Orchestration.Entities
 
-  @state_version 6
+  @state_version 7
   # Extension failures queued between turns: only the newest are kept, so an
   # extension failing on a timer while idle cannot grow state without bound.
   @queued_extension_errors 20
@@ -160,10 +160,15 @@ defmodule HalC2.Pi.ThreadRuntime do
        # running turn also holds its caller until the compaction answers.
        compact: nil,
        compact_steer: nil,
-       # Compactions Pi is still finishing after their turn ended (`abort`
-       # does not stop one): their late `compaction_start`/`compaction_end`
-       # events are dropped, each until its `compaction_end` arrives.
-       abandoned_compacts: 0,
+       # The task refs of compactions Pi is still finishing after their turn
+       # ended (`abort` does not stop one): while any is out, its late
+       # `compaction_start`/`compaction_end` events are dropped. A dropped
+       # `compaction_end` forgets one ref, and the task's own reply or
+       # `:DOWN` forgets it too — a compaction can end without
+       # `compaction_end` (it fails, or sends no events), and then the reply
+       # is the only end it gets. Pi sends `compaction_end` before answering,
+       # so whichever arrives second finds nothing left to drop.
+       abandoned_compacts: MapSet.new(),
        items: %{},
        buffer: %{},
        flush_timer: nil,
@@ -408,13 +413,17 @@ defmodule HalC2.Pi.ThreadRuntime do
     cond do
       # A compaction abandoned when its turn ended: Pi finishes it anyway,
       # and its events land in whatever turn runs then (or between turns).
-      # They are that stopped turn's, so they are dropped; the abandoned
-      # compaction is forgotten once its `compaction_end` has been dropped.
-      state.abandoned_compacts > 0 and type in ["compaction_start", "compaction_end"] ->
+      # They are that stopped turn's, so they are dropped while its task is
+      # still out. Its `compaction_end` forgets one abandoned task; one that
+      # ends without an end is forgotten by its reply (`forget_abandoned/2`).
+      MapSet.size(state.abandoned_compacts) > 0 and
+          type in ["compaction_start", "compaction_end"] ->
         abandoned =
-          if type == "compaction_end",
-            do: state.abandoned_compacts - 1,
-            else: state.abandoned_compacts
+          if type == "compaction_end" do
+            MapSet.delete(state.abandoned_compacts, Enum.at(state.abandoned_compacts, 0))
+          else
+            state.abandoned_compacts
+          end
 
         {:noreply, %{state | abandoned_compacts: abandoned}}
 
@@ -489,7 +498,8 @@ defmodule HalC2.Pi.ThreadRuntime do
 
     if state.compact_steer, do: GenServer.reply(state.compact_steer, {:error, "Pi exited"})
 
-    {:noreply, %{state | conn: nil, compact: nil, compact_steer: nil, abandoned_compacts: 0}}
+    {:noreply,
+     %{state | conn: nil, compact: nil, compact_steer: nil, abandoned_compacts: MapSet.new()}}
   end
 
   def handle_info(:flush, state),
@@ -498,6 +508,8 @@ defmodule HalC2.Pi.ThreadRuntime do
   def handle_info({:steer_timeout, from}, state), do: {:noreply, steer_timeout(state, from)}
 
   def handle_info(message, state) do
+    state = forget_abandoned(state, message)
+
     case :gen_server.check_response(message, state.steers, true) do
       {reply, {from, timer}, steers} ->
         Process.cancel_timer(timer)
@@ -507,6 +519,25 @@ defmodule HalC2.Pi.ThreadRuntime do
         {:noreply, state}
     end
   end
+
+  # An abandoned compaction's task answered, or died without answering: Pi
+  # sends `compaction_end` before it answers the call and the Connection
+  # delivers that notification before the task can forward the reply, so by
+  # now its events have been dropped and nothing of it is still out. This is
+  # also the only end a compaction that fails (or sends no events) ever gets.
+  defp forget_abandoned(state, {ref, _result}) when is_reference(ref) do
+    if MapSet.member?(state.abandoned_compacts, ref) do
+      Process.demonitor(ref, [:flush])
+      %{state | abandoned_compacts: MapSet.delete(state.abandoned_compacts, ref)}
+    else
+      state
+    end
+  end
+
+  defp forget_abandoned(state, {:DOWN, ref, :process, _pid, _reason}),
+    do: %{state | abandoned_compacts: MapSet.delete(state.abandoned_compacts, ref)}
+
+  defp forget_abandoned(state, _message), do: state
 
   @impl true
   def terminate(_reason, state) do
@@ -523,6 +554,11 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   defp migrate(%{v: 1} = state),
     do: state |> Map.merge(%{v: 2, steers: :gen_server.reqids_new(), settled: false}) |> migrate()
+
+  # A count of abandoned compactions becomes the set of their task refs; a
+  # restored state's tasks went with the runtime that held them, so it starts empty.
+  defp migrate(%{v: 6} = state),
+    do: state |> Map.merge(%{v: 7, abandoned_compacts: MapSet.new()}) |> migrate()
 
   defp migrate(%{v: 5} = state),
     do: state |> Map.merge(%{v: 6, abandoned_compacts: 0}) |> migrate()
@@ -573,7 +609,7 @@ defmodule HalC2.Pi.ThreadRuntime do
         session_name: nil,
         compact: nil,
         compact_steer: nil,
-        abandoned_compacts: 0
+        abandoned_compacts: MapSet.new()
     }
   end
 
@@ -986,6 +1022,11 @@ defmodule HalC2.Pi.ThreadRuntime do
       do: state,
       else: %{state | failure: model_failure(message["errorMessage"])}
   end
+
+  # Pi aborted the turn itself (for an extension, a compaction or a session
+  # replacement), not at the user's stop: the turn still reads as interrupted.
+  defp event("message_end", %{"message" => %{"stopReason" => "aborted"}}, state),
+    do: %{state | interrupted: true}
 
   defp event("tool_execution_start", %{"toolCallId" => id} = event, state) do
     {kind, fields} = tool_shape(event["toolName"], event["args"] || %{})
@@ -1579,17 +1620,23 @@ defmodule HalC2.Pi.ThreadRuntime do
         compact_steer: nil,
         # A compaction still out when its turn ends is abandoned: Pi
         # finishes it anyway, and its late events are dropped on arrival
-        # (`handle_info` for notifications), so they show in no later turn.
-        abandoned_compacts: state.abandoned_compacts + if(state.compact, do: 1, else: 0)
+        # (`handle_info` for notifications) while its task is out, so they
+        # show in no later turn.
+        abandoned_compacts:
+          if(state.compact,
+            do: MapSet.put(state.abandoned_compacts, state.compact),
+            else: state.abandoned_compacts
+          )
     }
   end
 
   # A steered compaction still running when its turn ends (Pi's `abort` does
   # not stop a compaction): its caller hears what an unanswered steer hears,
   # and the task's late result falls into the catch-all. Pi still finishes
-  # the compaction and emits its events; `end_turn/3` counts it abandoned so
-  # those are dropped until its `compaction_end`. Nothing of it leaks into
-  # the next turn.
+  # the compaction and emits its events; `end_turn/3` keeps its task ref as
+  # abandoned so those are dropped while it is out, and its dropped
+  # `compaction_end` or its reply (or `:DOWN`) forgets it. Nothing of it
+  # leaks into the next turn.
   defp answer_compact_steer(%{compact_steer: nil} = state, _status), do: state
 
   defp answer_compact_steer(state, status) do

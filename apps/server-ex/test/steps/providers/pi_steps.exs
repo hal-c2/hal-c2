@@ -900,6 +900,68 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
+  # As the slow compaction above, but Pi's delayed answer is a failure and
+  # sends no compaction events at all, `compaction_end` included.
+  step "a Pi turn that is still working while Pi's compaction fails slowly without an end event",
+       context do
+    turns = [
+      %{
+        "match" => "a steered task",
+        "steps" => [%{"text" => "Working on it."}, %{"waitAbort" => true}]
+      }
+    ]
+
+    config = %{
+      "turns" => turns ++ FakeAcp.pi_turns(),
+      "compactDelaySec" => 1,
+      "compactError" => "nothing to compact"
+    }
+
+    context =
+      context
+      |> install(config)
+      |> FakeAcp.thread()
+      |> FakeAcp.send_message("please do a steered task")
+
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      Enum.any?(StreamState.list(state, "turn-item"), &(&1["type"] == "assistant_message"))
+    end)
+
+    context
+  end
+
+  # Pi answered the abandoned compaction (the fake logs it once the answer
+  # is on the wire); with the failure behind it, a fresh `/compact` succeeds.
+  step "Pi's failed answer has landed and the user sends {string}",
+       %{args: [text]} = context do
+    await_compact_answered(context)
+
+    context =
+      FakeAcp.configure(context, fn cfg ->
+        cfg |> Map.delete("compactError") |> Map.delete("compactDelaySec")
+      end)
+
+    turn(context, text)
+  end
+
+  defp await_compact_answered(context, deadline \\ nil) do
+    deadline = deadline || System.monotonic_time(:millisecond) + 10_000
+
+    cond do
+      Enum.any?(FakeAcp.log(context), &Map.has_key?(&1, "compact_answered")) ->
+        :ok
+
+      System.monotonic_time(:millisecond) > deadline ->
+        flunk("Pi never answered the abandoned compact")
+
+      true ->
+        receive do
+        after
+          20 -> await_compact_answered(context, deadline)
+        end
+    end
+  end
+
   defp steer(context, text) do
     HalC2.Orchestration.dispatch(%{
       "type" => "message.dispatch",
@@ -2469,6 +2531,239 @@ defmodule HalC2.Steps.Providers.Pi do
     refute shown =~ "Fancy title"
     refute shown =~ "draft text"
     context
+  end
+
+  # --- notices in two threads ---
+
+  step "Pi threads {string} and {string} each send a notification as the first item of a turn",
+       %{args: [one, two]} = context do
+    turns =
+      for title <- [one, two] do
+        %{
+          "match" => "notify #{title}",
+          "steps" => [
+            %{"uiEmit" => %{"method" => "notify", "message" => "Notice for #{title}"}},
+            %{"text" => "Done."}
+          ]
+        }
+      end
+
+    context = with_turns(context, turns)
+
+    context =
+      Enum.reduce([one, two], context, fn title, context ->
+        context = FakeAcp.thread(context, title)
+        turn(context, "notify #{title}", "completed", title)
+      end)
+
+    Map.put(context, :notice_threads, [one, two])
+  end
+
+  step "the user opens each thread", context do
+    opened = Map.new(context.notice_threads, &{&1, state(context, &1)})
+    Map.put(context, :opened, opened)
+  end
+
+  step "{string} shows its own notice", %{args: [title]} = context do
+    notices =
+      context.opened[title]
+      |> StreamState.list("turn-item")
+      |> Enum.filter(&(&1["type"] == "system_notice"))
+
+    assert [%{"message" => message}] = notices
+    assert message == "Notice for #{title}"
+    context
+  end
+
+  # --- titles and short-lived Pi processes ---
+
+  # The fake answers a title prompt with the JSON a title writer returns.
+  defp title_turns(extra \\ []) do
+    [
+      %{
+        "match" => "User message:",
+        "steps" => [%{"text" => ~s({"title":"Login form fix","needsRefinement":false})}]
+      }
+      | extra
+    ]
+  end
+
+  # Asks Pi for a thread title the way the MC does, with Pi as the text model.
+  defp ask_title(context, model \\ "default") do
+    FakeAcp.settings(
+      &Map.put(&1, "textGenerationModelSelection", %{"instanceId" => "pi", "model" => model})
+    )
+
+    result = HalC2.TextGeneration.thread_title(World.project(context).root, "Fix the login form")
+    Map.put(context, :title_result, result)
+  end
+
+  step "Pi's launch arguments name an extension and a tool list", context do
+    context = install(context, %{"turns" => title_turns() ++ FakeAcp.pi_turns()})
+
+    FakeAcp.settings(
+      &put_in(&1, ["providers", "pi", "launchArgs"], "--extension /user/ext.ts --tools read,bash")
+    )
+
+    context
+  end
+
+  step "Pi writes a thread title", context do
+    context = ask_title(context)
+    assert {:ok, %{"title" => "Login form fix"}} = context.title_result
+    context
+  end
+
+  step "Pi runs with every tool and extension turned off", context do
+    assert [%{"argv" => argv} | _] =
+             context
+             |> FakeAcp.starts("pi")
+             |> Enum.filter(&("--no-session" in &1["argv"] and "--no-tools" in &1["argv"]))
+
+    assert "--no-extensions" in argv
+    refute "/user/ext.ts" in argv
+    refute "read,bash" in argv
+    context
+  end
+
+  step "no Pi session file is left behind", context do
+    sessions = Path.join(FakeAcp.fake(context, "pi").dir, "sessions")
+    assert File.ls(sessions) in [{:error, :enoent}, {:ok, []}]
+    context
+  end
+
+  step "the text-generation model is one only a Pi extension provides", context do
+    context
+    |> install(%{"turns" => title_turns() ++ FakeAcp.pi_turns()})
+    |> Map.put(:title_model, "ext/only-model")
+  end
+
+  step "Pi is asked for a thread title", context do
+    ask_title(context, context[:title_model] || "default")
+  end
+
+  step "the failure names that model", context do
+    assert {:error, message} = context.title_result
+    assert message =~ context.title_model
+    Map.put(context, :title_error, message)
+  end
+
+  step "says extensions are not loaded when Pi writes titles and commit messages", context do
+    assert context.title_error =~
+             "Extensions are not loaded when Pi writes titles and commit messages"
+
+    context
+  end
+
+  step "Pi ends a title request with no text and the error {string}",
+       %{args: [error]} = context do
+    ended = %{
+      "event" => %{
+        "type" => "message_end",
+        "message" => %{"role" => "assistant", "stopReason" => "error", "errorMessage" => error}
+      }
+    }
+
+    install(context, %{
+      "turns" => [%{"match" => "User message:", "steps" => [ended]}] ++ FakeAcp.pi_turns()
+    })
+  end
+
+  step "the failure reads {string}", %{args: [expected]} = context do
+    assert {:error, ^expected} = context.title_result
+    context
+  end
+
+  # The fake has no login to expire; what the MC controls is that its
+  # short-lived Pi processes start offline, so they cannot spend a renewal.
+  step "the user's Pi login has expired and is renewed with a single-use token", context do
+    context
+    |> install(%{"turns" => title_turns() ++ FakeAcp.pi_turns()})
+    |> FakeAcp.thread()
+    |> turn("first")
+    |> turn("second")
+  end
+
+  step "the MC starts Pi only to check its status, write a title or fork a session", context do
+    HalC2.Acp.load()
+    context = ask_title(context)
+    assert {:ok, _} = context.title_result
+
+    source = World.thread_id(context, context.thread)
+    run = state(context) |> StreamState.list("run") |> Enum.find(&(&1["ordinal"] == 2))
+    id = "th-pi-fork-#{System.unique_integer([:positive])}"
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.fork",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "sourceThreadId" => source,
+        "targetThreadId" => id,
+        "title" => "fork",
+        "sourcePoint" => %{"type" => "run", "runId" => run["id"]}
+      })
+
+    context = put_in(context, [:threads, "fork"], id)
+    turn(context, "after the fork", "completed", "fork")
+  end
+
+  step "that Pi process starts without refreshing its catalog or logins", context do
+    short_lived =
+      Enum.filter(
+        FakeAcp.starts(context, "pi"),
+        &("--no-session" in &1["argv"] or "--fork" in &1["argv"])
+      )
+
+    # Status, the title and the fork copy each started one.
+    assert length(short_lived) >= 3
+    assert Enum.all?(short_lived, &("--offline" in &1["argv"]))
+    context
+  end
+
+  step "the user's next Pi turn still signs in", context do
+    context = turn(context, "still here")
+    assert [%{"argv" => argv} | _] = thread_starts(context)
+    refute "--offline" in argv
+    context
+  end
+
+  # --- Pi aborting a turn itself ---
+
+  step "Pi aborts a turn itself, for an extension, a compaction or a session replacement",
+       context do
+    aborted = %{
+      "event" => %{
+        "type" => "message_end",
+        "message" => %{"role" => "assistant", "stopReason" => "aborted"}
+      }
+    }
+
+    context =
+      context
+      |> with_turns([
+        %{"match" => "abort yourself", "steps" => [%{"text" => "Working."}, aborted]}
+      ])
+      |> FakeAcp.thread()
+      |> FakeAcp.send_message("abort yourself")
+
+    run =
+      World.await_stream(World.thread_id(context, context.thread), fn state ->
+        Enum.find(
+          StreamState.list(state, "run"),
+          &(&1["status"] in ~w(completed failed interrupted))
+        )
+      end)
+
+    Map.put(context, :aborted_run, run)
+  end
+
+  step "the turn reads as interrupted, not completed", context do
+    assert context.aborted_run["status"] == "interrupted"
+    context
+  end
+
+  step "the next turn Pi starts reads as its own outcome", context do
+    turn(context, "next please")
   end
 
   # "the turn carries on" is the shared step in claude_steps.exs.
