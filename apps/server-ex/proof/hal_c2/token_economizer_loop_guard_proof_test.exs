@@ -79,13 +79,27 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
       "HalC2Plugins.TokenEconomizer handle_call {:settings, _}" =>
         "the settings are fixed for a run of the model; a change reads the trackers afresh and, turned off, drops the turns",
       "HalC2Plugins.TokenEconomizer handle_call :status" => "reads the counts, changes nothing",
+      "HalC2Plugins.TokenEconomizer handle_call {:micro_skills, _}" =>
+        "reads a project's learned facts, changes nothing the guard decides; their lifecycle is prop/hal_c2/token_economizer_micro_skills_prop_test.exs",
+      "HalC2Plugins.TokenEconomizer handle_call {:micro_skill_drop, _}" =>
+        "a person's word drops a learned fact; the guard never reads the facts",
+      "HalC2Plugins.TokenEconomizer handle_call {:micro_skill_restore, _}" =>
+        "a person's word restores a dropped fact; the guard never reads the facts",
+      "HalC2Plugins.TokenEconomizer handle_call {:shape_run, _}" =>
+        "stages learned facts ahead of a new conversation's first message; it neither steers nor notices a turn under way, and decides nothing for the guard",
       "HalC2Plugins.TokenEconomizer handle_info _" => "any other message is ignored",
       "HalC2Plugins.TokenEconomizer state :stats" => "counts for the topic, which decide nothing",
+      "HalC2Plugins.TokenEconomizer state :skills" =>
+        "what each project's turns taught the micro-skills; folded as a turn closes, read by nothing the guard decides",
+      "HalC2Plugins.TokenEconomizer state :staged" =>
+        "the fact ids staged for a thread's conversation, for counting the waste they prevented; the guard never reads them",
       "HalC2Plugins.TokenEconomizer state :recent" =>
         "the latest actions for the topic, which decide nothing",
       "HalC2Plugins.TokenEconomizer.status/1" => "what the topic carries, which decides nothing",
       "HalC2Plugins.TokenEconomizer.envelope_path/1" =>
         "where a project's envelope is kept; the model keeps what it taught",
+      "HalC2Plugins.TokenEconomizer.micro_skills_path/1" =>
+        "where a project's learned facts are kept; their lifecycle is prop/hal_c2/token_economizer_micro_skills_prop_test.exs",
       "HalC2Plugins.TokenEconomizer.call_of/1" => @calls,
       "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.judge_base_gap/0" =>
         "the judge's rate limit only spaces jobs out by calls, which a stuck turn keeps making",
