@@ -136,7 +136,7 @@ Feature: Pi
   Scenario: A model Pi no longer offers is removed
     Given Pi listed the models "alpha" and "beta"
     When Pi's models are discovered again and only "alpha" is listed
-    Then only "alpha" is offered
+    Then only "alpha" is offered among Pi's models
     And a discovery that fails or does not finish keeps both
 
   Scenario: Pi stays usable when discovery cannot finish
