@@ -1239,8 +1239,28 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
 
   step "{string} reports no models", %{args: [_]} = context do
     ctx = acme(context, %{"models" => []})
-    assert Acp.check("acme")["models"] == []
+    assert [%{"slug" => "default"}] = Acp.check("acme")["models"]
     ctx |> watch_providers() |> Map.put(:model_instance, "acme")
+  end
+
+  step "one model {string} is offered", %{args: [name]} = context do
+    assert [%{"slug" => "default", "name" => ^name, "isDefault" => true}] =
+             context.entry["models"]
+
+    context
+  end
+
+  step "for an agent that reports models, the one it is currently using is marked as the default",
+       context do
+    Acp.control(context, "acme", %{"models" => [["acme/fast", "Fast"], ["acme/smart", "Smart"]]})
+    models = Acp.check("acme")["models"]
+
+    assert [
+             %{"slug" => "acme/fast", "isDefault" => true},
+             %{"slug" => "acme/smart", "isDefault" => false}
+           ] = models
+
+    context
   end
 
   step "the user adds the custom model {string}", %{args: [slug]} = context do
@@ -1800,6 +1820,40 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     usage = context_meter(context)
     assert usage["usedTokens"] == 1_200
     refute Map.has_key?(usage, "cost")
+    context
+  end
+
+  step "the instance's registry agent has not been chosen", context do
+    ctx = acme(context)
+    Acp.add_registry_instance("acme", nil)
+    ctx
+  end
+
+  step "the instance's registry agent is no longer in the registry", context do
+    ctx = acme(context)
+    Acp.publish(ctx, [Acp.acme_agent(ctx, id: "other")])
+  end
+
+  step "the instance's registry agent has no build for this machine", context do
+    ctx = acme(context)
+    Acp.publish(ctx, [agent(ctx, "acme", "Acme", elsewhere())])
+  end
+
+  step "the instance's registry agent runs through npx and npm is missing", context do
+    ctx = acme(context)
+    Acp.publish(ctx, [agent(ctx, "acme", "Acme", npx("@acme/agent@2.0.0"))])
+    # `AcpFixtures.ready/1` puts PATH back after the scenario.
+    empty = Path.join(ctx.mc.home, "empty-bin")
+    File.mkdir_p!(empty)
+    System.put_env("PATH", empty)
+    Map.put(ctx, :runners_removed, true)
+  end
+
+  step "the instance is shown with {string}", %{args: [message]} = context do
+    assert %{"status" => "error", "availability" => "unavailable", "message" => ^message} =
+             context.entry
+
+    refute Map.has_key?(context.entry, "unready")
     context
   end
 

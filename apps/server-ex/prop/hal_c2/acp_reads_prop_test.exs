@@ -74,7 +74,17 @@ defmodule HalC2.AcpReadsPropTest do
     :persistent_term.put(
       {HalC2.Acp.Catalog, :index},
       {System.system_time(:millisecond),
-       [%{"id" => @agent_id, "name" => "Prop agent", "version" => "1.0.0"}]}
+       [
+         %{
+           "id" => @agent_id,
+           "name" => "Prop agent",
+           "version" => "1.0.0",
+           # A build for this machine, so the instance counts as ready to run.
+           "distribution" => %{
+             "binary" => %{HalC2.Acp.Catalog.platform() => %{"archive" => "", "cmd" => "./prop"}}
+           }
+         }
+       ]}
     )
 
     HalC2.Acp.forget(@instance)

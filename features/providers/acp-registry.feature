@@ -598,7 +598,8 @@ Feature: ACP registry agents
     When "acme" returns an image resource in its answer
     Then the answer shows a placeholder for the image instead of dropping it
 
-  @backlog
+  # HAL-C2 installs an npx package with npm (and a uvx one with uv) rather than running npx,
+  # so the runner it names is npm.
   Scenario Outline: A registry agent that cannot run yet says why
     Given the instance's registry agent <state>
     When the MC checks the instance
@@ -609,8 +610,16 @@ Feature: ACP registry agents
       | has not been chosen                  | Select an ACP Registry agent before starting a thread.                         |
       | is no longer in the registry         | ACP Registry does not contain agent 'acme'.                                    |
       | has no build for this machine        | ACP Registry agent 'acme' has no compatible distribution for this environment. |
-      | needs npx and npx is not on the path | ACP Registry agent 'acme' requires 'npx' on this environment's PATH.           |
-      | has not been downloaded yet          | ACP Registry agent 'acme' has not been prepared on this environment.           |
+      | runs through npx and npm is missing  | ACP Registry agent 'acme' requires 'npm' on this environment's PATH.           |
+
+  # Upstream's instances run only prepared agents. HAL-C2 installs a registry agent the first
+  # time it is used (`HalC2.Acp.Catalog.command/1`), so it has no unprepared state to show.
+  # Proposed @dropped.
+  @backlog
+  Scenario: A registry agent that has not been downloaded yet says so
+    Given the instance's registry agent has not been downloaded yet
+    When the MC checks the instance
+    Then the instance is shown with "ACP Registry agent 'acme' has not been prepared on this environment."
 
   @backlog
   Scenario: Checking an agent's readiness never waits on the network
@@ -1093,7 +1102,6 @@ Feature: ACP registry agents
     When the user picks "acme-large" again
     Then "acme" is not asked to change its model
 
-  @backlog
   Scenario: A model named "Default" is offered only when the agent names none
     Given "acme" reports no models
     When the MC checks the instance

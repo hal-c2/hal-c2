@@ -224,13 +224,15 @@ defmodule HalC2.Acp do
   def entry(id) do
     with {driver, instance} <- instance(id),
          {:ok, base} <- base_entry(id, driver, instance) do
+      {unready, base} = Map.pop(base, "unready", false)
       enabled = enabled?(id)
       # Off on this MC but on for some project, it is read as an enabled one is, so
       # that project's turns can run on it.
       checked? = enabled or HalC2.Settings.provider_on_in_a_project?(id)
       models = :persistent_term.get({__MODULE__, id, :models}, nil)
-      failure = :persistent_term.get({__MODULE__, id, :error}, nil)
-      if checked? and models == nil and failure == nil, do: load_once(id)
+      # An agent that cannot run yet says why, not how its last start failed.
+      failure = if not unready, do: :persistent_term.get({__MODULE__, id, :error}, nil)
+      if checked? and models == nil and failure == nil and not unready, do: load_once(id)
 
       Map.merge(
         %{
@@ -243,7 +245,7 @@ defmodule HalC2.Acp do
           "status" =>
             cond do
               not checked? -> "disabled"
-              failure -> "error"
+              unready or failure -> "error"
               empty_catalog?(driver, models) -> "warning"
               true -> "ready"
             end,
@@ -254,7 +256,7 @@ defmodule HalC2.Acp do
           "showInteractionModeToggle" => false,
           "auth" => %{"status" => "authenticated"},
           "checkedAt" => HalC2.Orchestration.Entities.now(),
-          "models" => custom_models(models || [], instance, driver),
+          "models" => custom_models(named_models(driver, models), instance, driver),
           "slashCommands" => [],
           "skills" => []
         },
@@ -345,33 +347,21 @@ defmodule HalC2.Acp do
   def cursor_credentials(id),
     do: Path.join([HalC2.Paths.data_dir(), "provider-auth", id, "cursor.json"])
 
-  # A registry agent is installed when first used, so it counts as available. One run
-  # from an executable override is a local copy of no known version.
+  # A registry agent that cannot run yet is listed with why, and never started.
   defp base_entry(id, @registry, instance) do
-    agent_id = get_in(instance, ["config", "agentId"])
-    override? = get_in(instance, ["config", "commandPath"]) not in [nil, ""]
+    case HalC2.Acp.Catalog.readiness(instance["config"] || %{}) do
+      :ok ->
+        registry_entry(id, instance)
 
-    case HalC2.Acp.Catalog.describe(agent_id) do
-      nil ->
-        :error
-
-      agent ->
+      {:error, message} ->
         {:ok,
          %{
-           "displayName" => instance["displayName"] || agent.name,
-           "iconUrl" => "https://cdn.agentclientprotocol.com/registry/v1/latest/#{agent_id}.svg",
-           "version" =>
-             if(override?,
-               do: nil,
-               else: :persistent_term.get({__MODULE__, id, :version}, agent.version)
-             )
-         }
-         |> then(
-           &if(agent.website,
-             do: Map.put(&1, "setup", %{"documentationUrl" => agent.website}),
-             else: &1
-           )
-         )}
+           "displayName" => instance["displayName"] || label(id),
+           "installed" => false,
+           "availability" => "unavailable",
+           "message" => message,
+           "unready" => true
+         }}
     end
   end
 
@@ -413,6 +403,36 @@ defmodule HalC2.Acp do
        if(instance["displayName"], do: %{"displayName" => instance["displayName"]}, else: %{})}
     else
       _ -> :error
+    end
+  end
+
+  # A registry agent is installed when first used, so it counts as available. One run
+  # from an executable override is a local copy of no known version.
+  defp registry_entry(id, instance) do
+    agent_id = get_in(instance, ["config", "agentId"])
+    override? = get_in(instance, ["config", "commandPath"]) not in [nil, ""]
+
+    case HalC2.Acp.Catalog.describe(agent_id) do
+      nil ->
+        :error
+
+      agent ->
+        {:ok,
+         %{
+           "displayName" => instance["displayName"] || agent.name,
+           "iconUrl" => "https://cdn.agentclientprotocol.com/registry/v1/latest/#{agent_id}.svg",
+           "version" =>
+             if(override?,
+               do: nil,
+               else: :persistent_term.get({__MODULE__, id, :version}, agent.version)
+             )
+         }
+         |> then(
+           &if(agent.website,
+             do: Map.put(&1, "setup", %{"documentationUrl" => agent.website}),
+             else: &1
+           )
+         )}
     end
   end
 
@@ -464,7 +484,7 @@ defmodule HalC2.Acp do
   def load do
     # Apart, so one agent waiting on a sign-in does not hold up the others.
     instances()
-    |> Enum.filter(&enabled?/1)
+    |> Enum.filter(&(enabled?(&1) and ready?(&1)))
     |> Task.async_stream(
       fn id -> read(id, locked(id, fn -> start_read(id) end), :disk) end,
       timeout: :infinity,
@@ -1401,7 +1421,8 @@ defmodule HalC2.Acp do
     # Forgotten and started in one step, so no listing in between starts a read of
     # its own that would supersede this one (#459). A settings change that disables
     # the instance meanwhile forgets it after, which drops this read's generation.
-    enabled = enabled?(id) or HalC2.Settings.provider_on_in_a_project?(id)
+    # A registry agent that cannot run yet is not started (`entry/1` says why).
+    enabled = (enabled?(id) or HalC2.Settings.provider_on_in_a_project?(id)) and ready?(id)
 
     case locked(id, fn ->
            kept = kept_models(id)
@@ -1413,6 +1434,13 @@ defmodule HalC2.Acp do
     end
 
     :ok
+  end
+
+  defp ready?(id) do
+    case instance(id) do
+      {@registry, instance} -> HalC2.Acp.Catalog.readiness(instance["config"] || %{}) == :ok
+      _ -> true
+    end
   end
 
   # The models a registry instance offered before a check: a check that fails
@@ -1781,6 +1809,21 @@ defmodule HalC2.Acp do
   # One without options of its own takes the agent's, which its models share.
   # A custom model without capabilities of its own gets the catalog's first model's,
   # except Muse's, whose catalog describes each model apart: those get Muse's usual efforts.
+  # A registry agent that names no models runs on its own default, offered as one
+  # model "Default" (`set_model/2` in `HalC2.Acp.ThreadRuntime` leaves it to the agent).
+  defp named_models(@registry, []),
+    do: [
+      %{
+        "slug" => "default",
+        "name" => "Default",
+        "isCustom" => false,
+        "isDefault" => true,
+        "capabilities" => nil
+      }
+    ]
+
+  defp named_models(_driver, models), do: models || []
+
   defp custom_models(models, instance, driver) do
     known = MapSet.new(models, & &1["slug"])
 

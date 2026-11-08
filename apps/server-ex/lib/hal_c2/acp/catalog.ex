@@ -171,6 +171,53 @@ defmodule HalC2.Acp.Catalog do
 
   defp executable(agent, dist, _path), do: install(agent, dist)
 
+  @doc """
+  Why an instance's registry agent (`config`) cannot run on this MC yet, or `:ok`.
+  A registry that cannot be read says nothing here: starting the agent says why.
+  """
+  def readiness(%{} = config) do
+    id = config["agentId"]
+
+    if is_binary(id) and String.trim(id) != "" do
+      case agent(id, false) do
+        {:ok, agent} ->
+          runnable(agent, config)
+
+        {:error, %{"reason" => "agent_not_found"}} ->
+          {:error, "ACP Registry does not contain agent '#{id}'."}
+
+        {:error, _} ->
+          :ok
+      end
+    else
+      {:error, "Select an ACP Registry agent before starting a thread."}
+    end
+  end
+
+  # An executable override runs whatever the registry publishes.
+  defp runnable(_agent, %{"commandPath" => path}) when is_binary(path) and path != "", do: :ok
+
+  defp runnable(agent, config) do
+    case distribution(agent, config["distribution"] || "auto") do
+      nil ->
+        {:error,
+         "ACP Registry agent '#{agent["id"]}' has no compatible distribution for this environment."}
+
+      # HAL-C2 installs an npx package with npm and a uvx one with uv.
+      %{kind: kind} when kind in ["npx", "uvx"] ->
+        manager = if kind == "npx", do: "npm", else: "uv"
+
+        if System.find_executable(manager),
+          do: :ok,
+          else:
+            {:error,
+             "ACP Registry agent '#{agent["id"]}' requires '#{manager}' on this environment's PATH."}
+
+      _ ->
+        :ok
+    end
+  end
+
   @doc "The registry entry's name and version, for an instance's provider snapshot."
   def describe(agent_id) do
     case agent(agent_id, false) do
