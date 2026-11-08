@@ -602,9 +602,16 @@ defmodule HalC2.Claude.ThreadRuntime do
         {:reply, :ok, state}
 
       # An MCP tool's elicitation: the answer is for this one request, and no
-      # session or standing grant is written for the next one.
+      # session or standing grant is written for the next one. A decision the card
+      # does not offer ("acceptForSession") declines.
       {{:elicitation, control_id, params}, requests} ->
-        decision = if response["dismissed"], do: "cancel", else: response["decision"] || "decline"
+        decision =
+          cond do
+            response["dismissed"] -> "cancel"
+            response["decision"] in ["accept", "decline", "cancel"] -> response["decision"]
+            true -> "decline"
+          end
+
         answer = HalC2.Codex.Elicitation.response(params, decision)
         Session.answer_elicitation(state.session, control_id, answer)
 

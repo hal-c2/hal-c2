@@ -236,6 +236,9 @@ for line in sys.stdin:
             send(stopped)
         elif sub == "interrupt" and not os.environ.get("FAKE_CLAUDE_HOLD_INTERRUPT"):
             send({"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": session})
+        # A stopped turn's elicitation is no longer waiting on its answer.
+        if sub == "interrupt":
+            pending_elicit = None
         continue
     if msg.get("type") != "user":
         continue
