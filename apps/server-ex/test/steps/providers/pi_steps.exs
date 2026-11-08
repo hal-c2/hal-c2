@@ -2680,7 +2680,7 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
-  step "the work log shows \"Pi provider request failed.\"", context do
+  step "the work log shows the failure \"Pi provider request failed.\"", context do
     assert [%{"failure" => %{"message" => "Pi provider request failed."}}] =
              items(context, "error")
 
