@@ -16,7 +16,8 @@ defmodule HalC2.ClaudeSessionPropTest do
   bypassing permissions off, and Auto mode with it, the MC can let go of the thread's
   runtime, as on a restart, and, with no Claude process up, Claude can lose what the
   session's transcript held (its messages, or the whole file), as when it went down
-  before saving a prompt.
+  before saving a prompt, or the thread can be left to resume it at a message Claude
+  cannot resume at (a subagent's).
 
   The promise: a turn on another selection (fast mode off and unset are one) while
   background work runs is refused, and the work and its Claude process are kept; any
@@ -36,8 +37,8 @@ defmodule HalC2.ClaudeSessionPropTest do
   refused for background work reaches Claude with the next turn's, before it; a
   `/compact` reaches Claude as the command alone, and leaves them for the turn after;
   a refused one is not passed on. A new process resumes the thread's session, unless
-  that session lost its transcript or its last prompt handed the thread over
-  unconfirmed: then it starts a new one, handed the whole thread, which the next
+  that session lost its transcript, Claude cannot resume it where the thread asks, or
+  its last prompt handed the thread over unconfirmed: then it starts a new one, handed the whole thread, which the next
   process resumes.
   """
 
@@ -197,7 +198,7 @@ defmodule HalC2.ClaudeSessionPropTest do
        {:call, __MODULE__, :held_turn,
         [n, oneof(@models), oneof([:unset, false, true]), oneof(@held_texts)]}},
       {2, {:call, __MODULE__, :let_go, []}},
-      {2, {:call, __MODULE__, :lose, [oneof([:messages, :file])]}}
+      {2, {:call, __MODULE__, :lose, [oneof([:messages, :file, :head])]}}
     ])
   end
 
@@ -617,7 +618,26 @@ defmodule HalC2.ClaudeSessionPropTest do
     end
   end
 
-  # Claude loses what the thread's session saved: its messages, or the transcript.
+  # Claude loses what the thread's session saved: its messages, or the transcript; or
+  # the thread resumes it at a message Claude cannot resume at, a subagent's, with the
+  # transcript kept.
+  def lose(:head) do
+    :ok =
+      HalC2.Streams.transact(@tid, :thread, fn stream ->
+        [id] = Map.keys(stream.entities["provider-thread"])
+        ref = HalC2.Orchestration.Entities.provider_ref("sub-uuid-1", "claudeAgent")
+
+        {[
+           Orchestration.upsert(
+             stream,
+             "provider-thread",
+             id,
+             &Map.put(&1, "nativeConversationHeadRef", ref)
+           )
+         ], :ok}
+      end)
+  end
+
   def lose(what) do
     path =
       HalC2.PortableSessions.claude_transcript(

@@ -447,7 +447,14 @@ defmodule HalC2.Claude.ThreadRuntime do
         {:reply, :ok, %{state | turn: nil, last_ids: last_ids}}
 
       {:ok, state, turn} ->
-        # A session Claude could not resume starts afresh with the whole thread.
+        # A session Claude could not resume starts afresh with the whole thread, in a
+        # conversation that holds no message of the old one: a turn stopped before
+        # Claude writes leaves it to be resumed whole (`kept_head/3`).
+        turn =
+          if Map.get(state, :fresh_start),
+            do: turn |> new_conversation() |> Map.delete(:resumed_at),
+            else: turn
+
         {state, turn} = HalC2.Orchestration.Handoff.fresh_start(state, turn)
         state = %{state | turn: turn}
 
@@ -1633,19 +1640,20 @@ defmodule HalC2.Claude.ThreadRuntime do
   # a prompt and Claude went down before writing it (Upstream #19637): it exits, and
   # every later turn would too. Such a session is replaced by a new one, handed the
   # whole thread (`HalC2.Orchestration.Handoff.fresh_start/2`). Its transcript tells,
-  # where this instance keeps them; a session whose transcript is not found there is
-  # opened, and replaced if Claude ends before it answers.
+  # where this instance keeps them. Any other session is opened, and replaced if
+  # Claude ends before it answers: its transcript may not be found here, or hold no
+  # message to resume at where the turn asks (a subagent's).
   defp ensure_session(state, turn) do
     Process.flag(:trap_exit, true)
 
     case saved_session(turn) do
-      :saved ->
+      :new ->
         start_session(state, turn)
 
       :gone ->
         start_session(Map.put(state, :fresh_start, true), new_conversation(turn))
 
-      :unknown ->
+      :resume ->
         with {:ok, state} <- start_session(state, turn) do
           if opened?(state.session),
             do: {:ok, state},
@@ -1659,18 +1667,18 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # A fork names its own session, and a carried one is checked as it opens (`open_session/2`).
-  defp saved_session(%{fork: %{}}), do: :saved
+  defp saved_session(%{fork: %{}}), do: :new
 
   defp saved_session(%{native_thread_id: id} = turn) when is_binary(id) do
     instance = Entities.instance(turn.ids)
 
     case HalC2.PortableSessions.claude_transcript(instance, id, turn.cwd) do
-      nil -> :unknown
-      path -> if saved_message?(path), do: :saved, else: :gone
+      nil -> :resume
+      path -> if saved_message?(path), do: :resume, else: :gone
     end
   end
 
-  defp saved_session(_turn), do: :saved
+  defp saved_session(_turn), do: :new
 
   defp saved_message?(path) do
     path
