@@ -393,6 +393,56 @@ defmodule HalC2.OpenShell.ClientTest do
       assert {:error, {:upload_failed, 2, "tar: not a tar archive\n"}} =
                Client.upload(conn, "box", "/sandbox", "garbage")
     end
+
+    @tag exec: :stalls, timeout: 10_000
+    test "a sandbox that stops reading times the upload out, and leaves the connection working",
+         %{conn: conn} do
+      {:ok, _} = Client.create_sandbox(conn, "box")
+      # More than the flow-control windows hold, so the archive's writer is left waiting.
+      tar = :binary.copy(<<0>>, 4_000_000)
+
+      assert {:error, :timeout} =
+               Client.upload(conn, "box", "/sandbox", tar, upload_timeout: 200)
+
+      # The gateway stopped the command, and nothing of it is left to the caller.
+      assert_receive {:handler, handler}
+      ref = Process.monitor(handler)
+      assert_receive {:DOWN, ^ref, :process, ^handler, _}
+      refute_received {:openshell_exec, _, _}
+
+      # A later command on the same connection still gets its stdin through.
+      {:ok, exec} = Client.exec(conn, "box", ["cat"])
+      assert :ok = Exec.send_stdin(exec, "still here")
+      assert :ok = Exec.close_stdin(exec)
+      assert {"still here", {:exit, 0}} = collect(exec)
+    end
+
+    @tag exec: :chatters, timeout: 10_000
+    test "the upload's deadline holds while the sandbox keeps talking", %{conn: conn} do
+      {:ok, _} = Client.create_sandbox(conn, "box")
+
+      assert {:error, :timeout} =
+               Client.upload(conn, "box", "/sandbox", "archive", upload_timeout: 300)
+
+      assert_receive {:handler, handler}
+      ref = Process.monitor(handler)
+      assert_receive {:DOWN, ^ref, :process, ^handler, _}
+    end
+
+    @tag exec: :untar
+    test "an archive that cannot be read is the upload's error, and its command is stopped", %{
+      conn: conn,
+      tmp_dir: dir
+    } do
+      {:ok, _} = Client.create_sandbox(conn, "box")
+
+      assert {:error, {:read, :enoent}} =
+               Client.upload(conn, "box", "/sandbox", {:file, Path.join(dir, "missing.tar")})
+
+      # Cancelled, so tar never saw the end of an archive.
+      refute_received {:command, _, _}
+      refute_received {:openshell_exec, _, _}
+    end
   end
 
   # What the fake gateway runs for a test's `@tag exec:`.
@@ -426,6 +476,36 @@ defmodule HalC2.OpenShell.ClientTest do
       read_all(io, [])
       io.stderr.("tar: not a tar archive\n")
       io.exit.(2)
+    end
+  end
+
+  # Takes the first command's stdin no further; any later command is `cat`.
+  defp handler(:stalls, test) do
+    fn
+      ["tar" | _], _io ->
+        send(test, {:handler, self()})
+
+        receive do: (:never -> :ok), after: (30_000 -> :ok)
+
+      _command, io ->
+        io.stdout.(read_all(io, []))
+        io.exit.(0)
+    end
+  end
+
+  # Takes the archive, then writes output for longer than the upload may take.
+  defp handler(:chatters, test) do
+    fn _command, io ->
+      read_all(io, [])
+      send(test, {:handler, self()})
+
+      # Until the stream is gone.
+      Enum.reduce_while(1..500, :ok, fn _, :ok ->
+        Process.sleep(10)
+        if io.stdout.(".") == :ok, do: {:cont, :ok}, else: {:halt, :closed}
+      end)
+
+      io.exit.(0)
     end
   end
 

@@ -12,7 +12,8 @@ defmodule HalC2.OpenShell.Exec do
       {:openshell_exec, exec, {:error, reason}}     # last: the stream failed or was cancelled
 
   Exactly one `:exit` or `:error` ends the stream, and the process stops after it.
-  It also stops, cancelling the stream, when its owner exits.
+  It also stops, cancelling the stream, when its owner exits. The connection it was
+  started on is its own, and it closes that when it stops.
 
   `send_stdin/2` returns once the gateway has taken the bytes, which is
   backpressure: the gateway takes no more than the command reads. It waits as long
@@ -126,7 +127,15 @@ defmodule HalC2.OpenShell.Exec do
     reader = spawn_link(fn -> read(stream, owner, me) end)
 
     {:ok,
-     %{stream: stream, owner: owner, monitor: monitor, reader: reader, done: false, stdin: :open}}
+     %{
+       channel: channel,
+       stream: stream,
+       owner: owner,
+       monitor: monitor,
+       reader: reader,
+       done: false,
+       stdin: :open
+     }}
   end
 
   # Forwards the gateway's output to the owner as it comes, and tells the server how
@@ -208,30 +217,32 @@ defmodule HalC2.OpenShell.Exec do
   def handle_info({:EXIT, _other, _reason}, state), do: {:noreply, state}
 
   # The process buffering the response is linked to this one but outlives a
-  # normal exit, so it is stopped here.
+  # normal exit, so it is stopped here. Closing the connection is what stops the
+  # command: the gateway drops the stream with it, and a write still queued for it
+  # goes too. (A reset alone leaves that write queued, and grpc 1.0.6's connection
+  # process crashes on it.)
   @impl true
-  def terminate(_reason, %{stream: %{payload: %{stream_response_pid: pid}}}) when is_pid(pid) do
-    GenServer.stop(pid, :normal, 1_000)
+  def terminate(_reason, state) do
+    with %{payload: %{stream_response_pid: pid}} when is_pid(pid) <- state.stream,
+         do: quietly(fn -> GenServer.stop(pid, :normal, 1_000) end)
+
+    quietly(fn -> GRPC.Stub.disconnect(state.channel) end)
+  end
+
+  defp quietly(fun) do
+    fun.()
+    :ok
   catch
     :exit, _ -> :ok
   end
 
-  def terminate(_reason, _state), do: :ok
-
-  # Cancels the stream the gateway still runs, and settles the owner once: the
-  # reader is stopped before it can report anything after this.
+  # Settles the owner once, before `terminate/2` closes the connection: the reader
+  # is stopped before it can report anything after this.
   defp stop_stream(%{done: true} = state), do: state
 
   defp stop_stream(state) do
     Process.unlink(state.reader)
     Process.exit(state.reader, :kill)
-
-    try do
-      GRPC.Stub.cancel(state.stream)
-    catch
-      :exit, _ -> :ok
-    end
-
     send(state.owner, {:openshell_exec, self(), {:error, :cancelled}})
     %{state | done: true}
   end

@@ -518,9 +518,15 @@ defmodule HalC2.Test.FakeOpenShell do
 
     defp event(event) do
       io = Process.get(:fake_io)
-      {:ok, conn} = chunk(io.conn, frame(Pb.ExecSandboxEvent.encode(event)))
-      Process.put(:fake_io, %{io | conn: conn})
-      :ok
+      # A stream the client already reset is an error, as a write to a closed pipe.
+      case chunk(io.conn, frame(Pb.ExecSandboxEvent.encode(event))) do
+        {:ok, conn} ->
+          Process.put(:fake_io, %{io | conn: conn})
+          :ok
+
+        error ->
+          error
+      end
     end
 
     # Reads until at least one whole gRPC message is buffered, or the request ends.
