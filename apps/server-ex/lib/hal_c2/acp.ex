@@ -436,6 +436,8 @@ defmodule HalC2.Acp do
     end
   end
 
+  defp overridden?(id), do: Map.has_key?(Application.get_env(:hal_c2, :acp_commands, %{}), id)
+
   # Whether the command that would start the instance's agent resolves, so a
   # test's `:acp_commands` override counts the same as the configured binary.
   defp found?(id) do
@@ -806,7 +808,9 @@ defmodule HalC2.Acp do
   # probe replaces the models outright, gateway models included.
   @grok_probe_warning "Grok CLI is installed but ACP initialize failed. Model options may be incomplete."
   defp read_agent(id, dir, "grok", entry) do
-    case check_version(id, "grok", entry) do
+    # A test's `:acp_commands` override is not a Grok CLI: it has no version
+    # to ask for, and the check must not reach a real `grok` on PATH instead.
+    case if(overridden?(id), do: :ok, else: check_version(id, "grok", entry)) do
       # A binary that can no longer run keeps the version it last reported,
       # so the entry stays listed (behind, updated by hand).
       {:error, _} = error ->
