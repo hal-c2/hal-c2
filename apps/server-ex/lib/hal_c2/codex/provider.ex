@@ -246,6 +246,11 @@ defmodule HalC2.Codex.Provider do
         {:error, reason} when reason in [:closed, :epipe] ->
           {:spawn, nil}
 
+        # What the spawner says when the program is not there is not Codex speaking.
+        {:error,
+         %{"message" => "Codex App Server process exited" <> _, "stderr" => "[spawner]" <> _}} ->
+          {:spawn, nil}
+
         {:error, %{"message" => "Codex App Server process exited" <> _ = exit, "stderr" => said}}
         when said != "" ->
           {:exited, "#{exit}. It said:\n#{said}"}
