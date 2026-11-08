@@ -11,7 +11,9 @@ defmodule HalC2.ClaudeWakePropTest do
   run has replayed its launch (Upstream #23561). A wake also leaves a command running
   that the thread waits on (`hal_c2_background_wait`), whose end Claude answers in a
   wake of its own, never answers, or the user's next turn comes first; until one of
-  those, the command holds the thread working.
+  those, the command holds the thread working. Or the user stops the thread, rewinds
+  it, or its CLI exits while the notice is held: the command still ends as Claude
+  reported it, and the next user turn starts a new process.
 
   The promise: every run ends once Claude has said all it will, with no run left
   running or queued, no subagent or command left running, and the runtime holding no
@@ -103,11 +105,11 @@ defmodule HalC2.ClaudeWakePropTest do
   # --- model ----------------------------------------------------------------------
 
   # runs: the thread's runs, every one ended. prompts: the user messages Claude got.
-  # n: the next message number.
-  def initial_state, do: %{runs: 0, prompts: 0, n: 1}
+  # n: the next message number. live: whether Claude has a process.
+  def initial_state, do: %{runs: 0, prompts: 0, n: 1, live: false}
 
-  # Claude wakes only once it has a process, which the first user turn starts.
-  def command(%{prompts: 0, n: n}), do: {:call, __MODULE__, :user_turn, [n]}
+  # Claude wakes only once it has a process, which a user turn starts.
+  def command(%{live: false, n: n}), do: {:call, __MODULE__, :user_turn, [n]}
 
   def command(%{n: n}) do
     frequency([
@@ -116,16 +118,17 @@ defmodule HalC2.ClaudeWakePropTest do
       {3,
        {:call, __MODULE__, :take_over, [n, oneof([:steer, :fold, :ended, :ended_with_subagent])]}},
       {2,
-       {:call, __MODULE__, :awaited_command, [n, oneof([:answered, :unanswered, :user_first])]}}
+       {:call, __MODULE__, :awaited_command,
+        [n, oneof([:answered, :unanswered, :user_first, :stopped, :rolled_back, :exited])]}}
     ])
   end
 
   # Shrinking keeps a wake behind the user turn that started Claude's process.
-  def precondition(%{prompts: 0}, {:call, _, fun, _args}), do: fun == :user_turn
+  def precondition(%{live: false}, {:call, _, fun, _args}), do: fun == :user_turn
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :user_turn, [_n]}),
-    do: %{state | runs: state.runs + 1, prompts: state.prompts + 1, n: state.n + 1}
+    do: %{state | runs: state.runs + 1, prompts: state.prompts + 1, n: state.n + 1, live: true}
 
   def next_state(state, _result, {:call, _, :wake, [_how]}), do: %{state | runs: state.runs + 1}
 
@@ -143,7 +146,16 @@ defmodule HalC2.ClaudeWakePropTest do
   def next_state(state, _result, {:call, _, :awaited_command, [_n, :user_first]}),
     do: %{state | runs: state.runs + 2, prompts: state.prompts + 1, n: state.n + 1}
 
+  # Stopped, rewound or exited: the wake's run only, and no process until a user turn.
+  def next_state(state, _result, {:call, _, :awaited_command, [_n, _gone]}),
+    do: %{state | runs: state.runs + 1, live: false}
+
   def postcondition(_state, {:call, _, :awaited_command, _}, %{held: false}), do: false
+
+  # The command ends as Claude reported it, whatever ended its hold.
+  def postcondition(_state, {:call, _, :awaited_command, _}, %{ended: ended})
+      when ended != {"completed", "Built"},
+      do: false
 
   def postcondition(state, call, seen) do
     next = next_state(state, seen, call)
@@ -262,7 +274,32 @@ defmodule HalC2.ClaudeWakePropTest do
       :user_first ->
         send_message(n, "hello")
         Map.put(settled(runs + 2), :held, held)
+
+      gone ->
+        case gone do
+          :stopped ->
+            :ok = HalC2.Claude.ThreadRuntime.interrupt(@tid, nil)
+
+          :rolled_back ->
+            {:ok, _} = HalC2.Claude.ThreadRuntime.rollback(@tid, %{head: nil})
+
+          :exited ->
+            Process.exit(:sys.get_state(runtime_pid()).session, :kill)
+        end
+
+        await(fn -> running_commands() == [] and :sys.get_state(runtime_pid()).session == nil end)
+        Map.put(settled(runs + 1), :held, held)
     end
+    |> Map.put(:ended, ended(tool))
+  end
+
+  # The status and output the command's item ended with.
+  defp ended(tool) do
+    current()
+    |> StreamState.list("turn-item")
+    |> Enum.find_value(fn item ->
+      if item["nativeItemRef"]["nativeId"] == tool, do: {item["status"], item["output"]}
+    end)
   end
 
   # --- the runtime ------------------------------------------------------------------

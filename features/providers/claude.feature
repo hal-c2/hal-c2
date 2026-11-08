@@ -2201,6 +2201,13 @@ Feature: Claude
     When the command finishes and Claude does not answer it
     Then the command ends and the thread settles
 
+  # Stopping, rewinding or losing the process ends the work still running, but not
+  # a command that already finished: its held notice is applied first.
+  Scenario: A command that finished before the user stopped the thread is recorded as completed
+    Given a Claude thread waiting on a background command
+    When the command finishes and the user stops the thread before Claude answers it
+    Then the command ends and the thread settles
+
   @priority-high
   Scenario: A Claude command the user stops is recorded as interrupted
     Given a Claude turn is running a command

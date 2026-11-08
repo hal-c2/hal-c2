@@ -5910,6 +5910,26 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # The notice is held for Claude's answer when the user stops the thread.
+  step "the command finishes and the user stops the thread before Claude answers it",
+       context do
+    id = World.thread_id(context, @thread)
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-build-1",
+      "tool_use_id" => "build-1",
+      "status" => "completed",
+      "summary" => "The build passed"
+    })
+
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, id)
+    assert [_] = :sys.get_state(pid).notices
+    stop_thread(context)
+    context
+  end
+
   step "the command ends and the thread settles", context do
     World.await_row(
       World.thread_id(context, @thread),

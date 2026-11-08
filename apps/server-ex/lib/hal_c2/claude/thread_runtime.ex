@@ -3966,7 +3966,9 @@ defmodule HalC2.Claude.ThreadRuntime do
     }
   end
 
-  # Ends the work `which` picks (all of it by default) with `status`.
+  # Ends the work `which` picks (all of it by default) with `status`. Held notices go
+  # first, so a command Claude already reported ended keeps its own status and summary
+  # when a stop, a rewind or the CLI's exit ends the rest.
   defp end_work(state, which \\ fn _ -> true end, status)
 
   defp end_work(state, which, status) when is_function(which) do
