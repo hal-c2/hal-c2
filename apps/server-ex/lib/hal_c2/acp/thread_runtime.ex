@@ -311,8 +311,7 @@ defmodule HalC2.Acp.ThreadRuntime do
       if restored.temp_dir, do: HalC2.Acp.Antigravity.SessionFiles.keep(restored.temp_dir)
 
       # A stop that was out when the MC went keeps its deadline.
-      if restored.interrupted and restored.turn != nil and
-           Antigravity.antigravity?(restored.agent) do
+      if restored.interrupted and restored.turn != nil and bounded_cancel?(restored) do
         Process.send_after(
           self(),
           {:antigravity_cancel_timeout, restored.turn.ids.run},
@@ -444,8 +443,9 @@ defmodule HalC2.Acp.ThreadRuntime do
     state = %{cancel_requests(state) | interrupted: true}
 
     # Antigravity gets fifteen seconds to confirm the stop; after that its
-    # process is stopped (`:antigravity_cancel_timeout`).
-    if Antigravity.antigravity?(state.agent) and state.answer == nil do
+    # process is stopped (`:antigravity_cancel_timeout`). So does any agent whose
+    # turn the store could not record: TurnWatch waits on that turn's end.
+    if bounded_cancel?(state) and state.answer == nil do
       Process.send_after(
         self(),
         {:antigravity_cancel_timeout, state.turn.ids.run},
@@ -975,7 +975,8 @@ defmodule HalC2.Acp.ThreadRuntime do
   def handle_info(:flush, state),
     do: {:noreply, Durable.flushed(state, flush(%{state | flush_timer: nil}, :timer))}
 
-  # Antigravity never confirmed a stopped turn: stop its process and say so.
+  # Antigravity, or an agent whose turn went unrecorded, never confirmed a stopped
+  # turn: stop its process and say so.
   def handle_info({:antigravity_cancel_timeout, run}, state) do
     if state.turn && state.turn.ids.run == run && state.interrupted && state.conn do
       Connection.stop(state.conn)
@@ -1010,6 +1011,9 @@ defmodule HalC2.Acp.ThreadRuntime do
         {:noreply, state}
     end
   end
+
+  defp bounded_cancel?(%{turn: %{ids: %{run: run}}} = state),
+    do: Antigravity.antigravity?(state.agent) or match?(%{unrecorded: %{run: ^run}}, state)
 
   # A turn the store fails to record fails, and stops (`HalC2.Orchestration.Unrecorded`).
   defoverridable handle_info: 2, handle_call: 3

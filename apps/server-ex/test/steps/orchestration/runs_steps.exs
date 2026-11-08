@@ -2384,6 +2384,79 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
+  # --- the same on an ACP agent (Grok), which never answers the MC's stop -------------
+
+  step "a Grok turn is running on a Grok that never answers the MC's stop", context do
+    turns = [
+      %{"match" => "a long task", "steps" => [%{"text" => "Working on it."}, %{"hang" => true}]}
+      | HalC2.Test.FakeAcp.turns()
+    ]
+
+    # The scripted agent, not the plain fake this feature's MC gives Grok.
+    World.put_app_env(
+      :acp_commands,
+      Map.delete(Application.get_env(:hal_c2, :acp_commands), "grok")
+    )
+
+    context =
+      context
+      |> HalC2.Test.FakeAcp.install("grok", %{"configOptions" => [], "turns" => turns},
+        enabled: true
+      )
+      |> HalC2.Test.FakeAcp.thread("Grok")
+      |> HalC2.Test.FakeAcp.send_message("a long task")
+
+    # Its text streams into the message as the turn goes.
+    World.await_stream(World.thread_id(context, "Grok"), fn state ->
+      Enum.any?(HalC2.StreamState.list(state, "message"), &(&1["role"] == "assistant"))
+    end)
+
+    [run] = World.entities(context, "Grok", "run")
+    Map.put(context, :running, run["id"])
+  end
+
+  step "Grok has half a second to answer a stop", context do
+    World.put_app_env(:antigravity_cancel_timeout_ms, 500)
+    context
+  end
+
+  # Grok's task list fails to record; the MC's stop of the turn reaches Grok, which
+  # never answers it, so the run's end waits on the turn's.
+  step "the MC fails to record the Grok turn's events", context do
+    context = refuse(context, 1)
+    [{pid, _}] = Registry.lookup(HalC2.Acp.Registry, World.thread_id(context, "Grok"))
+    %{conn: conn, session_id: session} = :sys.get_state(pid)
+    entry = %{"content" => "Save", "status" => "in_progress", "priority" => "medium"}
+    update = %{"sessionUpdate" => "plan", "entries" => [entry]}
+
+    params = %{"sessionId" => session, "update" => update}
+    send(pid, {:json_rpc, conn, {:notification, "session/update", params}})
+    assert %{unrecorded: %{run: run}, interrupted: true} = :sys.get_state(pid)
+    assert run == context.running
+    assert [%{"status" => "running"}] = World.entities(context, "Grok", "run")
+    context
+  end
+
+  step "the Grok run is failed because it could not be saved", context do
+    World.await_runs(context, "Grok", ["failed"])
+    [run] = World.entities(context, "Grok", "run")
+    assert run["failure"] =~ "The turn could not be saved"
+    context
+  end
+
+  step "the next message to Grok runs and its reply is recorded", context do
+    context = HalC2.Test.FakeAcp.send_message(context, "Next", "Grok")
+    World.await_runs(context, "Grok", ["failed", "completed"])
+    run = World.entities(context, "Grok", "run") |> Enum.max_by(& &1["ordinal"])
+
+    assert Enum.any?(
+             World.entities(context, "Grok", "message"),
+             &(&1["runId"] == run["id"] and &1["text"] =~ "Hello from the fake agent")
+           )
+
+    context
+  end
+
   # Muse refuses the user's stop, so the MC closes its host and ends the turn there.
   step "the user stops the Muse Code turn and Muse refuses", context do
     HalC2.Test.FakeAcp.configure(context, "muse", &Map.put(&1, "interruptFails", true))

@@ -338,6 +338,16 @@ Feature: Runs and turns
     Then the Muse Code run is failed because it could not be saved
     And the next message to Muse Code runs and its reply is recorded
 
+  # hal-c2#1398: an ACP agent other than Antigravity that never answered the MC's stop of a
+  # turn the store could not record had no deadline, and left the run running for good.
+  @mc
+  Scenario: A run whose events cannot be recorded ends when an ACP agent never answers its stop
+    Given a Grok turn is running on a Grok that never answers the MC's stop
+    And Grok has half a second to answer a stop
+    When the MC fails to record the Grok turn's events
+    Then the Grok run is failed because it could not be saved
+    And the next message to Grok runs and its reply is recorded
+
   @mc
   Scenario: A provider session that cannot be opened fails the run
     Given the provider's session cannot be opened while "t1" starts a turn
