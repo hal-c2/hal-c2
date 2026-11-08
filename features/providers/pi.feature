@@ -718,10 +718,10 @@ Feature: Pi
     Then the work log shows <shown>
 
     Examples:
-      | outcome                         | shown                                                            |
-      | Pi waits to try again           | the attempt number, the most attempts allowed and the wait      |
-      | Pi gives no reason for it       | "Pi provider request failed."                                    |
-      | every attempt fails             | the turn failing with Pi's last error, or "Pi auto-retry failed." |
+      | outcome                   | shown                                                             |
+      | Pi waits to try again     | the attempt number, the most attempts allowed and the wait        |
+      | Pi gives no reason for it | the failure "Pi provider request failed."                         |
+      | every attempt fails       | the turn failing with Pi's last error, or "Pi auto-retry failed." |
 
   Scenario Outline: A Pi failure without a reason gets a plain message
     When Pi <fails> without giving a reason
