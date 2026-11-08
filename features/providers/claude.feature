@@ -1208,7 +1208,7 @@ Feature: Claude
     Then the approval reads "Bash: npm test"
     And a longer summary is cut at 400 characters
   # Upstream #20145: a Bash approval showed Claude's one-line description instead of the command.
-  @backlog @mc @shared @priority-high
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-high
   Scenario: A Claude command approval shows the command, not Claude's description of it
     Given a Claude thread in supervised
     When Claude asks to run "printf done > marker.txt" and describes it as "Write the triage marker"
@@ -1225,7 +1225,7 @@ Feature: Claude
 
   # Upstream #27320: Claude withdrew a permission request it no longer needed (a hook had already
   # allowed it), and the thread kept saying "Approval needed" with a card that did nothing.
-  @backlog @shared @priority-high
+  @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-high
   Scenario: An approval Claude withdraws closes as cancelled
     Given a Claude thread waiting on a command approval
     When Claude withdraws the request before the user answers
@@ -1233,7 +1233,7 @@ Feature: Claude
     And the thread no longer says it needs approval
 
   # Upstream #27320
-  @backlog @priority-high
+  @priority-high
   Scenario: An approval the user answered stays answered when Claude's wait ends
     Given a Claude thread waiting on a command approval
     When the user allows it as Claude stops waiting for the answer
@@ -2196,7 +2196,7 @@ Feature: Claude
     Then both blocks show as collapsed thoughts with the tool calls
     And neither shows as text addressed to the user
 
-  @backlog @shared @priority-high
+  @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-high
   Scenario: Claude skill calls show the skill name
     When Claude calls a skill
     Then the row reads "Skill: <name>"

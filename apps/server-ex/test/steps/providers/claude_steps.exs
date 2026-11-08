@@ -3748,9 +3748,14 @@ defmodule HalC2.Steps.Providers.Claude do
   # --- approvals ------------------------------------------------------------------------
 
   # A permission request as the CLI sends it, straight to the runtime.
-  defp claude_asks(context, id, tool, input) do
+  defp claude_asks(context, id, tool, input, request_context \\ %{}) do
     [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
-    send(pid, {:claude, :sys.get_state(pid).session, {:permission, id, tool, input, %{}}})
+
+    send(
+      pid,
+      {:claude, :sys.get_state(pid).session, {:permission, id, tool, input, request_context}}
+    )
+
     context
   end
 
@@ -6849,6 +6854,90 @@ defmodule HalC2.Steps.Providers.Claude do
     end)
 
     Map.put(context, :ask_reason, reason)
+  end
+
+  # --- skill calls --------------------------------------------------------------------------------
+
+  defp skill_items(context) do
+    for item <- StreamState.list(World.stream(context, @thread), "turn-item"),
+        item["toolName"] == "Skill",
+        do: item
+  end
+
+  step "Claude calls a skill", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "call a skill")
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step ~S(the row reads "Skill: <name>"), context do
+    assert [%{"title" => "Skill: demo"}, %{"title" => "Skill: demo"}] = skill_items(context)
+    context
+  end
+
+  step "expanding it shows only the arguments as plain text", context do
+    assert [%{"input" => "with care"} | _] = skill_items(context)
+    context
+  end
+
+  step "a call with no arguments does not expand", context do
+    assert [_with_args, %{"input" => input}] = skill_items(context)
+    assert input in [nil, ""]
+    context
+  end
+
+  # --- what an approval reads -------------------------------------------------------------------
+
+  step "Claude asks to run {string} and describes it as {string}",
+       %{args: [command, description]} = context do
+    %{instance: instance, fields: fields} = context.pending_launch
+
+    context =
+      context
+      |> Map.delete(:pending_launch)
+      |> World.launch_on(@thread, instance, "wait for me", fields)
+
+    World.await_running(context, @thread)
+    World.await_provider_log(context, "claude", &(get_in(&1, ["in", "type"]) == "user"))
+
+    context
+    |> claude_asks("perm-descr-1", "Bash", %{"command" => command}, %{
+      "description" => description
+    })
+    |> Map.put(:described_as, description)
+  end
+
+  step "the approval shows the command {string} in full", %{args: [command]} = context do
+    World.await_value(context, @thread, fn state ->
+      Enum.any?(StreamState.list(state, "turn-item"), &(&1["type"] == "approval_request"))
+    end)
+
+    assert approval_prompt(context, "perm-descr-1") =~ command
+    context
+  end
+
+  step "Claude's description is shown only for a request that carries no command", context do
+    refute approval_prompt(context, "perm-descr-1") =~ context.described_as
+
+    # A request with nothing to run shows the description instead.
+    context =
+      claude_asks(context, "perm-descr-2", "NotebookEdit", %{"notebook_path" => "notes.ipynb"}, %{
+        "description" => context.described_as
+      })
+
+    World.await_value(context, @thread, fn state ->
+      Enum.any?(
+        StreamState.list(state, "turn-item"),
+        &(&1["id"] == "turn-item:approval:perm-descr-2")
+      )
+    end)
+
+    assert approval_prompt(context, "perm-descr-2") == context.described_as
+    context
   end
 
   step "the approval shows Claude's reason", context do

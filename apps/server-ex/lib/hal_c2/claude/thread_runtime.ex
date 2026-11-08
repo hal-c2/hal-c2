@@ -727,15 +727,42 @@ defmodule HalC2.Claude.ThreadRuntime do
         true -> "command"
       end
 
+    # The user approves what will actually run: a request carrying a command
+    # shows that command, and Claude's description of it only stands in when
+    # there is no command to show.
     prompt =
-      context["title"] || context["description"] || context["decision_reason"] ||
-        summarize_tool(tool, input)
+      context["title"] ||
+        if(command?(input),
+          do: summarize_tool(tool, input),
+          else:
+            context["description"] || context["decision_reason"] || summarize_tool(tool, input)
+        )
 
     {state, request_id} =
       open_request(flush(state), id, kind, prompt, nil, request_reason(state, prompt, context))
 
     request = {:permission, id, tool, context["permission_suggestions"]}
     {:noreply, %{state | requests: Map.put(state.requests, request_id, request)}}
+  end
+
+  # Claude stopped waiting for an answer (it withdrew the request): the prompt
+  # closes as cancelled. One the user already answered is no longer open, and
+  # stays answered.
+  def handle_info({:claude, _session, {:permission_cancelled, control_id}}, state) do
+    case Enum.find(state.requests, fn {_id, request} -> elem(request, 1) == control_id end) do
+      nil ->
+        {:noreply, state}
+
+      {request_id, request} ->
+        state = %{state | requests: Map.delete(state.requests, request_id)}
+
+        state =
+          if state.turn,
+            do: resolve_request(state, request_id, cancelled_decision(request), "cancelled"),
+            else: state
+
+        {:noreply, state}
+    end
   end
 
   def handle_info({:claude, session, {:dialog, id, _kind, _payload}}, %{turn: nil} = state) do
@@ -783,6 +810,12 @@ defmodule HalC2.Claude.ThreadRuntime do
     do: {:noreply, Durable.flushed(state, flush(%{state | flush_timer: nil}, :timer))}
 
   def handle_info(_other, state), do: {:noreply, state}
+
+  defp cancelled_decision({:permission, _id, _tool, _suggestions}), do: "cancel"
+  defp cancelled_decision(_request), do: %{"dismissed" => true}
+
+  defp command?(input),
+    do: Enum.any?(["command", "cmd", "script"], &(is_binary(input[&1]) and input[&1] != ""))
 
   # What an approval reads: the tool and what it would act on — its command or
   # its file, else its input — with the summary cut at 400 characters.
@@ -2865,6 +2898,16 @@ defmodule HalC2.Claude.ThreadRuntime do
 
       name in @web_tools ->
         {:web, %{"patterns" => Enum.filter([input["query"], input["url"]], &is_binary/1)}}
+
+      # A skill call reads by the skill it ran; expanding it shows only its
+      # arguments as plain text, and a call without arguments does not expand.
+      name == "Skill" and is_binary(input["skill"]) and input["skill"] != "" ->
+        {:tool,
+         %{
+           "toolName" => name,
+           "title" => "Skill: #{bounded(input["skill"], 160)}",
+           "input" => if(is_binary(input["args"]), do: input["args"], else: "")
+         }}
 
       true ->
         {:tool,

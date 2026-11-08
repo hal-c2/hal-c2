@@ -14,7 +14,8 @@
 # run: CMD" runs a subagent that asks permission for CMD and returns "ran CMD" when
 # allowed, "was not allowed to run CMD" otherwise. Rules a
 # permission answer adds for the session (updatedPermissions) let later matching
-# commands run without asking. Each turn's message text is appended to
+# commands run without asking; "call a skill" calls the demo skill twice, with
+# and without arguments. Each turn's message text is appended to
 # $FAKE_CLAUDE_LOG when it is set.
 import json, os, re, sys, uuid
 
@@ -442,6 +443,14 @@ for line in sys.stdin:
         continue
     if "where are we" in text:
         send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}w", "role": "assistant", "content": [{"type": "text", "text": f"resumed at {resume_at} fork {'--fork-session' in sys.argv} history {'<conversation_history>' in text}" + (f" earlier [{' | '.join(earlier)}]" if SESSIONS else "")}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
+    # "call a skill": two Skill calls, one with arguments and one without.
+    if text == "call a skill":
+        for tool, extra in [(f"skill-args-{turn}", {"args": "with care"}), (f"skill-bare-{turn}", {})]:
+            send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}{tool}", "role": "assistant", "content": [{"type": "tool_use", "id": tool, "name": "Skill", "input": {"skill": "demo", **extra}}]}})
+            send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool, "content": "skill ran", "is_error": False}]}})
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}u", "role": "assistant", "content": [{"type": "text", "text": "Ran the demo skill"}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
     if "approve" in text and mode == "auto":
