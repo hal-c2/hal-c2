@@ -3104,6 +3104,81 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
+  # --- a workspace's own skills and commands ---
+
+  # A project whose `.pi` folder holds a skill and a prompt template.
+  defp pi_workspace(context, project, skill, prompt \\ nil) do
+    context = World.create_project(context, project)
+    root = World.project(context, project).root
+    File.mkdir_p!(Path.join([root, ".pi", "skills", skill]))
+    File.write!(Path.join([root, ".pi", "skills", skill, "SKILL.md"]), "# #{skill}\n")
+
+    if prompt do
+      File.mkdir_p!(Path.join([root, ".pi", "prompts"]))
+      File.write!(Path.join([root, ".pi", "prompts", "#{prompt}.md"]), "Triage it.\n")
+    end
+
+    install(context)
+  end
+
+  # What a client's skill menu offers in a Pi thread of `project`: the workspace
+  # snapshot it asks for (`server.refreshProviders` with the thread's folder).
+  defp open_pi_menu(context, project) do
+    cwd = World.project(context, project).root
+    reply = HalC2.Environment.refresh_providers(%{"instanceId" => "pi", "cwd" => cwd})
+    {providers, context} = World.provider_list(context)
+
+    snapshot =
+      Enum.find(pi(%{providers: providers})["workspaceSnapshots"] || [], &(&1["cwd"] == cwd))
+
+    # Skills and commands both, as the Claude steps' "... are offered" reads them.
+    entries =
+      ((snapshot && snapshot["skills"]) || []) ++ ((snapshot && snapshot["slashCommands"]) || [])
+
+    Map.merge(context, %{
+      providers: providers,
+      slash_commands: entries,
+      offered: Enum.map(entries, & &1["name"]),
+      menu_reply: reply
+    })
+  end
+
+  step "the project {string} has its own Pi skill {string} and prompt template {string}",
+       %{args: [project, skill, prompt]} = context do
+    context |> pi_workspace(project, skill, prompt) |> Map.put(:pi_offered, [skill, prompt])
+  end
+
+  step "the user opens the skill menu in a Pi thread of {string}", %{args: [project]} = context do
+    open_pi_menu(context, project)
+  end
+
+  step "a Pi thread of another project does not offer them", context do
+    assert {:ok, _} = context.menu_reply
+    context = open_pi_menu(context, "shop")
+    assert {:ok, _} = context.menu_reply
+    for name <- context.pi_offered, do: refute(name in context.offered)
+    context
+  end
+
+  step "a Pi thread of {string} offered the skill {string}",
+       %{args: [project, skill]} = context do
+    context = context |> pi_workspace(project, skill) |> open_pi_menu(project)
+    assert skill in context.offered
+    Map.put(context, :pi_project, project)
+  end
+
+  step "finding the workspace's Pi commands fails", context do
+    context = FakeAcp.configure(context, &Map.put(&1, "failCommands", ["get_commands"]))
+    context = open_pi_menu(context, context.pi_project)
+    assert {:error, %{"operation" => "refresh"}} = context.menu_reply
+    context
+  end
+
+  step "{string} is still offered", %{args: [skill]} = context do
+    assert skill in context.offered
+    context
+  end
+
   # --- titles and short-lived Pi processes ---
 
   # The fake answers a title prompt with the JSON a title writer returns.

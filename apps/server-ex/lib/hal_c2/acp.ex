@@ -1508,6 +1508,12 @@ defmodule HalC2.Acp do
       })
 
     entry =
+      case HalC2.Pi.workspaces(id) do
+        [] -> entry
+        snapshots -> Map.put(entry, "workspaceSnapshots", snapshots)
+      end
+
+    entry =
       case HalC2.ProviderUpdates.executable("pi", id) do
         nil ->
           entry
@@ -2022,6 +2028,7 @@ defmodule HalC2.Acp do
           :config,
           :commands,
           :skills,
+          :workspaces,
           :pi_signed_out,
           :muse_signed_out
         ],

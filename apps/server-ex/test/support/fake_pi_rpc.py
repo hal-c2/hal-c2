@@ -302,6 +302,24 @@ def busy_prompt(msg):
         respond(msg, error=BUSY_ERROR)
 
 
+def workspace_commands():
+    """The skills (`.pi/skills/<name>/SKILL.md`) and prompt templates (`.pi/prompts/<name>.md`)
+    of the folder Pi runs in, as Pi lists them."""
+    found = []
+    skills = os.path.join(os.getcwd(), ".pi", "skills")
+    for name in sorted(os.listdir(skills)) if os.path.isdir(skills) else []:
+        path = os.path.join(skills, name, "SKILL.md")
+        if os.path.isfile(path):
+            found.append({"name": "skill:" + name, "source": "skill",
+                          "sourceInfo": {"path": path, "scope": "project"}})
+    prompts = os.path.join(os.getcwd(), ".pi", "prompts")
+    for name in sorted(os.listdir(prompts)) if os.path.isdir(prompts) else []:
+        if name.endswith(".md"):
+            found.append({"name": name[:-3], "source": "prompt",
+                          "sourceInfo": {"path": os.path.join(prompts, name), "scope": "project"}})
+    return found
+
+
 def respond(msg, data=None, error=None):
     out = {"type": "response", "command": msg.get("type"), "success": error is None}
     if msg.get("id") is not None:
@@ -623,7 +641,7 @@ def command(msg):
     elif kind == "get_available_models":
         respond(msg, {"models": models()})
     elif kind == "get_commands":
-        respond(msg, {"commands": cfg.get("commands", [])})
+        respond(msg, {"commands": cfg.get("commands", []) + workspace_commands()})
     elif kind == "switch_session":
         if cfg.get("cancelSwitch"):
             respond(msg, {"cancelled": True})

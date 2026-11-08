@@ -1091,7 +1091,7 @@ Feature: Pi
       | older than 0.99 | every HAL-C2 tool is offered directly                                                          |
 
   # Upstream #17190: Pi discovers workspace skills and commands
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: Pi offers the skills and commands of the thread's own workspace
     Given the project "web" has its own Pi skill "release" and prompt template "triage"
     When the user opens the skill menu in a Pi thread of "web"
@@ -1099,7 +1099,7 @@ Feature: Pi
     And a Pi thread of another project does not offer them
 
   # Upstream #17190: Pi discovers workspace skills and commands
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: A workspace whose Pi commands cannot be found keeps the ones it had
     Given a Pi thread of "web" offered the skill "release"
     When finding the workspace's Pi commands fails
