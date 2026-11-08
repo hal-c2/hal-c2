@@ -1414,7 +1414,7 @@ Feature: Codex
     And the 32 waiting requests are unaffected
 
   # Upstream #23234: each stop over a waiting approval held one of Codex's 32 request slots forever.
-  @backlog @mc @priority-high
+  @mc
   Scenario: Approvals still reach the user after many Codex turns were stopped while waiting
     Given 32 Codex turns on one Codex instance were stopped while an approval waited
     When a Codex turn in another thread asks for an approval

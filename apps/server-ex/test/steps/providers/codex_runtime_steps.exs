@@ -167,6 +167,48 @@ defmodule HalC2.Steps.Providers.CodexRuntime do
     context
   end
 
+  # --- stops over waiting approvals ------------------------------------------------------
+
+  # Upstream #23234: each stop over a waiting approval held one of Codex's 32 request
+  # slots. Here the MC's own count of waiting requests is what refuses the 33rd.
+  step "32 Codex turns on one Codex instance were stopped while an approval waited", context do
+    context = World.fake_providers(context)
+
+    Enum.reduce(1..32, context, fn i, context ->
+      context =
+        if i == 1,
+          do: World.launch_on(context, @thread, "codex", "approve"),
+          else: World.post_message(context, @thread, "approve")
+
+      World.await_request(context, @thread)
+      run = Enum.find(World.runs(context, @thread), &(&1["status"] == "running"))
+
+      {:ok, _} =
+        HalC2.Orchestration.dispatch(%{
+          "type" => "run.interrupt",
+          "threadId" => World.thread_id(context, @thread),
+          "runId" => run["id"]
+        })
+
+      World.await_runs(context, @thread, List.duplicate("interrupted", i))
+      context
+    end)
+  end
+
+  step "a Codex turn in another thread asks for an approval", context do
+    World.launch_on(context, "Other", "codex", "approve")
+  end
+
+  step "the approval is shown to the user", context do
+    assert %{"status" => "pending"} = World.await_request(context, "Other")
+    {_, runtime} = World.codex_runtime(context, @thread)
+    assert runtime.requests == %{}
+    requests = StreamState.list(World.stream(context, @thread), "runtime-request")
+    # The fake asks each time for the same item, so the 32 are one request, cancelled.
+    assert requests != [] and not Enum.any?(requests, &(&1["status"] == "pending"))
+    context
+  end
+
   # --- helpers ---------------------------------------------------------------------------
 
   # Kills the app-server by the pid its connection started (never found by name), and
