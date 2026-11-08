@@ -322,12 +322,12 @@ Feature: ACP registry agents
 
   # Upstream #21323: when an agent closed its output but kept running, the waiting request and every
   # later one hung.
-  @backlog @priority-high
+  @priority-high
   Scenario: A request to an agent fails soon after the agent closes its output while still running
     Given the MC is waiting on "acme" for an answer
     When "acme" closes its output and keeps running
     Then within a quarter of a second the request fails saying the agent's input ended
-    And later requests to "acme" fail the same way instead of waiting
+    And the next message to "acme" starts it afresh instead of waiting on the closed one
 
   Scenario: The next turn after a rollback starts a fresh agent session
     Given an "acme" thread with three turns
@@ -1212,14 +1212,13 @@ Feature: ACP registry agents
       | killed by "SIGKILL"      | by the signal "SIGKILL"    |
       | ended with exit code 3   | with exit code 3           |
 
-  @backlog
   Scenario: An agent that exits mid-turn fails the turn with its last error output
     Given a turn is running on "acme"
     When the agent process exits with an error
-    Then the turn fails naming the exit code and the last 4,096 characters the agent wrote to its error output
+    Then the turn fails naming the exit code and the end of what the agent wrote to its error output, 4,096 characters in all
     And requests still waiting on the agent fail instead of hanging
 
-  @backlog @priority-high
+  @priority-high
   Scenario Outline: An agent's error output is shown without secrets
     When the error output of "acme" contains <content>
     Then the failure shows <shown>
@@ -1231,7 +1230,7 @@ Feature: ACP registry agents
       | a bearer or basic authorization value                       | "[redacted]" in place of the value   |
       | an API key header or a token that looks like a provider key | "[redacted]" in place of the value   |
   # Upstream #24015: an "sk-" key with "_" in its body kept its body, or was not redacted at all.
-  @backlog @priority-high
+  @priority-high
   Scenario Outline: A provider key with underscores in an agent's error output is redacted whole
     When the error output of "acme" contains "<key>"
     Then the failure and the MC's log show "[redacted]" in place of the whole key

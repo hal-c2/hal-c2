@@ -870,6 +870,17 @@ defmodule HalC2.Acp.ThreadRuntime do
         {:error, %{"code" => -32003}} ->
           {"failed", "Grok usage limit reached. Try again later."}
 
+        # A registry agent's exit (`exits/1`), with what it last wrote to its error output.
+        # The log keeps all of it; the failure the end that fits beside the exit, in the
+        # 4,096 characters a thread keeps of one (`HalC2.Orchestration.UserFacingErrors`).
+        {:error, %{"message" => message, "stderr" => stderr}} ->
+          Logger.warning(
+            "#{HalC2.Acp.label(state.agent)} failed: #{message}\n#{HalC2.Acp.Stderr.sanitize(stderr)}"
+          )
+
+          room = HalC2.Acp.Stderr.max() - String.length(message) - 1
+          {"failed", String.trim("#{message}\n#{HalC2.Acp.Stderr.sanitize(stderr, room)}")}
+
         {:error, %{"message" => message} = error} ->
           {"failed", usage_limit(state, error) || message}
 
@@ -891,8 +902,24 @@ defmodule HalC2.Acp.ThreadRuntime do
     state = compacted(state, status)
     state = end_turn(state, status, failure)
     # A turn that did not complete takes its background work, and earlier turns', down.
-    {:noreply, if(status == "completed", do: state, else: stop_work(state, status))}
+    state = if status == "completed", do: state, else: stop_work(state, status)
+    {:noreply, if(ended?(result), do: dropped(state), else: state)}
   end
+
+  # The connection failed the call because the agent ended (`HalC2.JsonRpc.Connection`
+  # fails its calls without a JSON-RPC code then): it is on its way out, and the next
+  # message starts the agent afresh rather than waiting on it.
+  defp ended?({:error, :closed}), do: true
+  defp ended?({:error, %{"message" => _} = error}), do: not is_map_key(error, "code")
+  defp ended?(_result), do: false
+
+  # Its exit, when it comes, no longer matches `state.conn` and is ignored.
+  defp dropped(%{conn: conn} = state) when is_pid(conn) do
+    Process.unlink(conn)
+    released(%{state | conn: nil, session_id: nil, prompt: nil, server: nil})
+  end
+
+  defp dropped(state), do: state
 
   # OpenCode 2 names why a prompt failed (`data.errorName`): its quota, rate-limit and
   # plan-limit stops are usage limits, with no reset time it does not give. A Claude plan
@@ -1100,6 +1127,15 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # A registry agent's connection fails its calls with how the agent ended, in the ACP
+  # client's words ("ACP process exited with code 1", "ACP input stream ended."), and
+  # keeps its error output for the failure. Built-in agents keep their own wording.
+  defp exits(instance) do
+    if HalC2.Acp.driver(instance) == "acpRegistry",
+      do: [program: "ACP", stderr_tail: :whole, eof_grace: 100],
+      else: []
+  end
+
   # A new agent process for `instance` in the working directory of `context` (a turn,
   # or a rewind's plan), initialized; OpenCode's serves its HTTP API.
   defp launch(state, instance, mode, %{cwd: cwd} = context) do
@@ -1121,14 +1157,16 @@ defmodule HalC2.Acp.ThreadRuntime do
          env = subagents_off(instance, mcp, env),
          {:ok, conn} <-
            Connection.start_link(
-             cmd: command,
-             handler: self(),
-             cd: cwd,
-             env: env,
-             dialect: :v2,
-             log: state.thread_id,
-             durable: state.thread_id,
-             stderr_prefix: Antigravity.stderr_prefix(instance)
+             [
+               cmd: command,
+               handler: self(),
+               cd: cwd,
+               env: env,
+               dialect: :v2,
+               log: state.thread_id,
+               durable: state.thread_id,
+               stderr_prefix: Antigravity.stderr_prefix(instance)
+             ] ++ exits(instance)
            ),
          {:ok, init} <-
            Connection.call(conn, "initialize", %{

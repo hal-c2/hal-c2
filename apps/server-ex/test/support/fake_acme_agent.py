@@ -6,7 +6,7 @@
 # request is appended to DIR/NAME.log as JSON lines, written before the answer, so
 # a test reads it once the call it made has returned. A prompt's text picks what
 # the turn does (see `prompt` below).
-import base64, json, os, re, signal, sys
+import base64, json, os, re, signal, sys, time
 
 argv = sys.argv[1:]
 def opt(flag, default=None):
@@ -33,7 +33,7 @@ def log(entry):
     with open(os.path.join(DIR, NAME + ".log"), "a") as f:
         f.write(json.dumps(entry) + "\n")
 
-log({"event": "launch", "argv0": ARGV0, "args": ARGS, "cwd": os.getcwd(),
+log({"event": "launch", "pid": os.getpid(), "argv0": ARGV0, "args": ARGS, "cwd": os.getcwd(),
      "env": {k: os.environ[k] for k in LOG_ENV if k in os.environ}})
 
 def signed_in():
@@ -60,6 +60,15 @@ if "login" in ARGS:
         print("Signed in.")
         sys.exit(0)
     sys.exit(1)
+
+# SIGUSR1: writes DIR/NAME.stderr to the error output and exits with code 3, mid-turn.
+def crash(*_):
+    try:
+        sys.stderr.write(open(os.path.join(DIR, NAME + ".stderr")).read())
+        sys.stderr.flush()
+    finally:
+        os._exit(3)
+signal.signal(signal.SIGUSR1, crash)
 
 def send(msg):
     msg["jsonrpc"] = "2.0"
@@ -132,6 +141,19 @@ def title_json(text):
 
 def prompt(pid, sid, text):
     global held
+    # Closes its output and keeps running, deaf to its input (upstream #21323).
+    if "close output" in text and "<conversation_history>" not in text:
+        log({"event": "closed", "at": time.time()})
+        sys.stdout.close()
+        os.close(1)
+        signal.signal(signal.SIGTERM, lambda *_: (log({"event": "signalled", "signal": "TERM"}), sys.exit(143)))
+        time.sleep(60)
+        sys.exit(0)
+    # "crash": writes control's "stderr" to its error output and exits with "exitCode".
+    if "crash" in text:
+        sys.stderr.write(CONTROL.get("stderr", ""))
+        sys.stderr.flush()
+        os._exit(CONTROL.get("exitCode", 1))
     if "Return a JSON object" in text or "Return JSON with keys" in text:
         return finish(pid, sid, "Here it is: " + title_json(text))
     if "wait" in text:

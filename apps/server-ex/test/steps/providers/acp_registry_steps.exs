@@ -3161,4 +3161,169 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     assert context.url_action["elicitationId"] == String.duplicate("x", 256)
     context
   end
+
+  # --- how an agent ends -----------------------------------------------------------------
+
+  defp session_error(ctx) do
+    ctx
+    |> thread()
+    |> Acp.stream()
+    |> HalC2.StreamState.list("provider-session")
+    |> Enum.map(& &1["lastError"])
+    |> Enum.reject(&is_nil/1)
+    |> List.last()
+  end
+
+  defp logged_event(ctx, event) do
+    Acp.await_stream(thread(ctx), fn _ ->
+      Enum.find(Acp.log(ctx, "acme"), &(&1["event"] == event))
+    end)
+  end
+
+  step "the MC is waiting on {string} for an answer", %{args: [_]} = context do
+    ctx = context |> acme() |> run_on_acme("close output")
+    Acp.await_stream(thread(ctx), fn _ -> Acp.requests(ctx, "acme", "session/prompt") != [] end)
+    ctx
+  end
+
+  step "{string} closes its output and keeps running", %{args: [_]} = context do
+    # The fake sleeps on after closing it, deaf to its input, until it is signalled.
+    closed = logged_event(context, "closed")
+    Map.put(context, :closed_at, closed["at"])
+  end
+
+  step "within a quarter of a second the request fails saying the agent's input ended",
+       context do
+    assert [%{"status" => "failed", "completedAt" => at}] = Acp.await_runs(thread(context), 1)
+    {:ok, at, _} = DateTime.from_iso8601(at)
+    waited = DateTime.to_unix(at, :microsecond) / 1_000_000 - context.closed_at
+    assert waited < 0.25, "the request failed #{waited}s after the agent closed its output"
+    assert session_error(context) == "ACP input stream ended."
+    context
+  end
+
+  step "the next message to {string} starts it afresh instead of waiting on the closed one",
+       %{args: [_]} = context do
+    Acp.follow_up(context, context.thread, "hello")
+    assert [_, %{"status" => "completed"}] = Acp.await_runs(thread(context), 2)
+    assert length(Acp.launches(context, "acme")) == 2
+    context
+  end
+
+  step "the agent process exits with an error", context do
+    # 5,000 characters, the first line beyond the last 4,096.
+    lines = for n <- 1..250, do: "acme error line #{String.pad_leading("#{n}", 4, "0")}"
+    text = Enum.join(lines, "\n")
+    File.write!(Path.join(Acp.dir(context), "acme.stderr"), text)
+    [%{"pid" => pid} | _] = Acp.launches(context, "acme")
+    {_, 0} = System.cmd("kill", ["-USR1", "#{pid}"])
+    Map.put(context, :stderr, text)
+  end
+
+  step "the turn fails naming the exit code and the end of what the agent wrote to its error output, 4,096 characters in all",
+       context do
+    assert [%{"status" => "failed"}] = Acp.await_runs(thread(context), 1)
+    message = session_error(context)
+    exit = "ACP process exited with code 3\n"
+    assert String.length(message) == 4_096
+
+    tail =
+      String.slice(
+        context.stderr,
+        String.length(context.stderr) - 4_096 + String.length(exit),
+        4_096
+      )
+
+    assert message == exit <> tail
+    context
+  end
+
+  step "requests still waiting on the agent fail instead of hanging", context do
+    state = Acp.stream(thread(context))
+    refute Enum.any?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "running"))
+
+    refute Enum.any?(
+             HalC2.StreamState.list(state, "provider-session"),
+             &(&1["status"] == "running")
+           )
+
+    context
+  end
+
+  # The fake writes `text` to its error output and exits with code 1 on its turn.
+  defp crash_with(ctx, text) do
+    ctx = ctx |> World.capture_log() |> acme(%{"stderr" => text, "exitCode" => 1})
+    ctx = run_on_acme(ctx, "crash")
+    assert [%{"status" => "failed"}] = Acp.await_runs(thread(ctx), 1)
+    Map.put(ctx, :stderr, text)
+  end
+
+  defp home, do: System.get_env("HOME") || System.user_home()
+
+  step "the error output of {string} contains a path under the user's home directory",
+       %{args: [_]} = context do
+    crash_with(context, "cannot read #{home()}/work/acme/config.toml: permission denied")
+  end
+
+  step "the error output of {string} contains a HAL-C2 pairing link", %{args: [_]} = context do
+    crash_with(context, "pair with https://mc.example:3773/pair#token=pairsecret123 to go on")
+  end
+
+  step "the error output of {string} contains a bearer or basic authorization value",
+       %{args: [_]} = context do
+    crash_with(
+      context,
+      "request failed: Authorization: Bearer bearersecret.123\nAuthorization: Basic YmFzaWNzZWNyZXQ="
+    )
+  end
+
+  step "the error output of {string} contains an API key header or a token that looks like a provider key",
+       %{args: [_]} = context do
+    crash_with(
+      context,
+      "x-api-key: headersecret42\ntokens ghp_ghsecret42 and sk-abcdefgh12345 and xoxb-slack-secret"
+    )
+  end
+
+  step "the error output of {string} contains {string}", %{args: [_, key]} = context do
+    crash_with(context, "upstream refused the key #{key}: 401")
+  end
+
+  step "the failure shows the path starting at {string}", %{args: ["~"]} = context do
+    message = session_error(context)
+    assert message =~ "cannot read ~/work/acme/config.toml"
+    refute message =~ home()
+    context
+  end
+
+  step "the failure shows {string} in place of the link", %{args: [shown]} = context do
+    message = session_error(context)
+    assert message =~ shown
+    refute message =~ "pairsecret123"
+    context
+  end
+
+  step "the failure shows {string} in place of the value", %{args: [shown]} = context do
+    message = session_error(context)
+    assert message =~ shown
+
+    for secret <-
+          ~w(bearersecret YmFzaWNzZWNyZXQ headersecret42 ghsecret42 abcdefgh12345 slack-secret),
+        do: refute(message =~ secret)
+
+    context
+  end
+
+  step "the failure and the MC's log show {string} in place of the whole key",
+       %{args: [shown]} = context do
+    [_, key] = Regex.run(~r/the key (\S+):/, context.stderr)
+    [_, after_underscore] = String.split(key, "_", parts: 2)
+
+    for text <- [session_error(context), World.logged(context)] do
+      assert text =~ "the key #{shown}: 401"
+      refute text =~ after_underscore
+    end
+
+    context
+  end
 end

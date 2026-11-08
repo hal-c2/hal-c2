@@ -12,7 +12,11 @@ defmodule HalC2.JsonRpc.Connection do
   stderr lines starting with it reach the handler as `{:invalid, line}`, like a
   non-JSON stdout line, and are not logged; the rest of stderr is discarded. With
   `:stderr_tail` and `:program`, an exit also carries the last lines of stderr, as
-  `"stderr"` beside the message: why a program that died on start died.
+  `"stderr"` beside the message: why a program that died on start died; `:whole`
+  keeps every line of its last 4,096 bytes. With `:eof_grace` (ms) and `:program`, a
+  program whose output ends and that has not exited that long after is not waited
+  on: calls fail at once with `"<program> input stream ended."` (upstream #21323),
+  and the stop that follows ends it.
 
   With `:durable` (a thread id) the subprocess outlives the MC. After each batch of
   output the handler then gets `{:json_rpc, conn, {:checkpoint, checkpoint}}` to save
@@ -38,7 +42,8 @@ defmodule HalC2.JsonRpc.Connection do
           | {:env, [{String.t(), String.t()}]}
           | {:log, String.t() | nil}
           | {:stderr_prefix, String.t() | nil}
-          | {:stderr_tail, boolean}
+          | {:stderr_tail, boolean | :whole}
+          | {:eof_grace, non_neg_integer | nil}
           | {:program, String.t() | nil}
           | {:durable, String.t() | nil}
           | {:adopt, %{dir: String.t(), offset: non_neg_integer, channel: map}}
@@ -95,6 +100,8 @@ defmodule HalC2.JsonRpc.Connection do
            log: Keyword.get(opts, :log),
            program: Keyword.get(opts, :program),
            stderr_tail: Keyword.get(opts, :stderr_tail, false),
+           eof_grace: Keyword.get(opts, :eof_grace),
+           input_ended: false,
            exit_status: nil,
            stderr: ""
          }}
@@ -170,21 +177,7 @@ defmodule HalC2.JsonRpc.Connection do
     # The exit status is read here, while the subprocess can still be asked, so a
     # call left open fails with the exit rather than a bare close.
     state =
-      if state.program do
-        # Before the stop, which removes a durable program's dir and its stderr with it.
-        stderr = if state.stderr_tail, do: Subprocess.stderr_tail(state.sub), else: ""
-
-        status =
-          case state.exit_status || Subprocess.stop(state.sub, 1_000) do
-            {:ok, status} -> status
-            status when is_integer(status) -> status
-            _ -> nil
-          end
-
-        %{state | exit_status: status, stderr: stderr}
-      else
-        state
-      end
+      if state.program, do: ended(state, grace(state)), else: state
 
     {:stop, :normal, state}
   catch
@@ -201,10 +194,45 @@ defmodule HalC2.JsonRpc.Connection do
     end
   end
 
+  # Whether a program whose output ended is still running `:eof_grace` later.
+  defp grace(%{eof_grace: grace, exit_status: nil} = state) when is_integer(grace) do
+    case Subprocess.exited(state.sub, grace) do
+      {:ok, status} -> status
+      :running -> :running
+      :unknown -> nil
+    end
+  end
+
+  defp grace(state), do: state.exit_status
+
+  defp ended(state, :running), do: %{state | input_ended: true}
+
+  defp ended(state, status) do
+    # Before the stop, which removes a durable program's dir and its stderr with it.
+    stderr =
+      case state.stderr_tail do
+        :whole -> Subprocess.stderr_tail(state.sub, 1_000, :all)
+        true -> Subprocess.stderr_tail(state.sub)
+        _ -> ""
+      end
+
+    status =
+      case status || Subprocess.stop(state.sub, 1_000) do
+        {:ok, status} -> status
+        status when is_integer(status) -> status
+        _ -> nil
+      end
+
+    %{state | exit_status: status, stderr: stderr}
+  end
+
   @impl true
   def terminate(_reason, state) do
     error =
       case {state.program, state.exit_status} do
+        {program, _} when is_binary(program) and state.input_ended ->
+          %{"message" => "#{program} input stream ended."}
+
         {program, status} when is_binary(program) and is_integer(status) ->
           %{"message" => "#{program} process exited with code #{status}"}
           |> then(&if state.stderr != "", do: Map.put(&1, "stderr", state.stderr), else: &1)
@@ -233,6 +261,8 @@ defmodule HalC2.JsonRpc.Connection do
       |> Map.put_new(:exit_status, nil)
       |> Map.put_new(:stderr_tail, false)
       |> Map.put_new(:stderr, "")
+      |> Map.put_new(:eof_grace, nil)
+      |> Map.put_new(:input_ended, false)
       |> Map.put_new(:methods, %{})
       |> Map.put_new(:earlier, %{})
       |> Map.put_new(:offset, 0)
