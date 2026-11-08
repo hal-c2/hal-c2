@@ -1937,9 +1937,32 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # After a revert to the compaction's end, the next message resumes the
+  # conversation at the compaction itself.
+  defp continues_after_compact_revert(context) do
+    context = World.post_message(context, @thread, "where are we")
+    World.await_latest_run(context, @thread, "completed")
+
+    assert Enum.any?(
+             World.replies(context, @thread),
+             &String.starts_with?(&1, "resumed at compact-")
+           ),
+           inspect(World.replies(context, @thread))
+
+    context
+  end
+
   # The same Claude session takes the message: nothing is started again, or resumed
   # from before the compaction.
   step "Claude continues from the compacted conversation", context do
+    if context[:compact_reverted] do
+      continues_after_compact_revert(context)
+    else
+      continues_after_compaction(context)
+    end
+  end
+
+  defp continues_after_compaction(context) do
     log = World.provider_log(context, "claude")
     assert [%{"argv" => argv}] = Enum.filter(log, &Map.has_key?(&1, "argv"))
     refute "--resume" in argv
@@ -4620,6 +4643,46 @@ defmodule HalC2.Steps.Providers.Claude do
 
     refute "--resume" in argv
     assert "resumed at None fork False history False" in World.replies(context, @thread)
+    context
+  end
+
+  # --- reverting to the turn after a compaction ---------------------------------------------
+
+  step "a Claude thread with two turns, a {string} turn, and a turn that edited a file",
+       %{args: [compact]} = context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "first question")
+
+    World.await_runs(context, @thread, ["completed"])
+    context = World.post_message(context, @thread, "second question")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context = World.post_message(context, @thread, compact)
+
+    World.await_value(context, @thread, fn state ->
+      length(StreamState.list(state, "run")) == 3 and compactions(context) != []
+    end)
+
+    context = World.post_message(context, @thread, "edit a file")
+
+    World.await_value(context, @thread, fn state ->
+      Enum.map(StreamState.list(state, "run"), & &1["status"]) ==
+        ["completed", "completed", "completed", "completed"]
+    end)
+
+    context
+  end
+
+  step "the user reverts the thread to the end of the {string} turn",
+       %{args: [_compact]} = context do
+    context
+    |> World.rollback(@thread, 3, %{"restoreFiles" => false})
+    |> Map.put(:compact_reverted, true)
+  end
+
+  step "the revert succeeds", context do
+    assert {:ok, _} = context.reply
     context
   end
 

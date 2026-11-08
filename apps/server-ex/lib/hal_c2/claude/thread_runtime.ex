@@ -1930,6 +1930,19 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     # The usage above stands until a post-compaction request reports its own.
     state = put_in(state.turn[:last_usage], nil)
+
+    # The boundary is where this turn leaves the conversation: a turn Claude
+    # only compacted in has no assistant message to resume at, so without this
+    # a rollback to it has no recorded point and is refused.
+    state =
+      if is_binary(message["uuid"]),
+        do:
+          update_in(
+            state.turn,
+            &(&1 |> Map.put(:head, message["uuid"]) |> Map.delete(:resumed_at))
+          ),
+        else: state
+
     put_in(state.turn[:compacted], true)
   end
 

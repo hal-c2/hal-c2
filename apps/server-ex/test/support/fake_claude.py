@@ -15,7 +15,8 @@
 # allowed, "was not allowed to run CMD" otherwise. Rules a
 # permission answer adds for the session (updatedPermissions) let later matching
 # commands run without asking; "call a skill" calls the demo skill twice, with
-# and without arguments. Each turn's message text is appended to
+# and without arguments; "edit a file" writes edited.txt through a Write call.
+# Each turn's message text is appended to
 # $FAKE_CLAUDE_LOG when it is set.
 import json, os, re, sys, uuid
 
@@ -443,6 +444,14 @@ for line in sys.stdin:
         continue
     if "where are we" in text:
         send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}w", "role": "assistant", "content": [{"type": "text", "text": f"resumed at {resume_at} fork {'--fork-session' in sys.argv} history {'<conversation_history>' in text}" + (f" earlier [{' | '.join(earlier)}]" if SESSIONS else "")}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
+    # "edit a file": a Write tool call, and the file really is written.
+    if text == "edit a file":
+        send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}w", "role": "assistant", "content": [{"type": "tool_use", "id": f"write-{turn}", "name": "Write", "input": {"file_path": "edited.txt", "content": "edited by the turn\n"}}]}})
+        with open("edited.txt", "w") as f:
+            f.write("edited by the turn\n")
+        send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"write-{turn}", "content": "File created", "is_error": False}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
     # "call a skill": two Skill calls, one with arguments and one without.

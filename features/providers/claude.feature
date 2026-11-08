@@ -1649,7 +1649,7 @@ Feature: Claude
 
   # Upstream #27381: reverting to the turn after a /compact failed with "The provider could not
   # roll back this conversation", because the compaction turn left Claude no point to resume at.
-  @backlog @priority-high
+  @priority-high
   Scenario: A Claude thread reverts to the turn after a compaction
     Given a Claude thread with two turns, a "/compact" turn, and a turn that edited a file
     When the user reverts the thread to the end of the "/compact" turn
