@@ -731,6 +731,8 @@ defmodule HalC2.Orchestration do
         # restart (`HalC2.Orchestration.Effects`).
         HalC2.Orchestration.Effects.cancel_thread(thread_id)
         HalC2.Orchestration.Effects.drop_thread(thread_id)
+        # Browser tabs live in memory only, so there is nothing to record.
+        HalC2.Preview.close_thread(thread_id)
         HalC2.Orchestration.Effects.enqueue(thread_id, "terminal.cleanup", %{})
         HalC2.Orchestration.Effects.enqueue(thread_id, "attachment.cleanup", %{})
         # A page that asked this thread to work says it no longer is.
@@ -1594,9 +1596,9 @@ defmodule HalC2.Orchestration do
       reason = HalC2.Settings.provider_off(Map.get(turn, :project_id), turn.ids.instance) ->
         HalC2.Orchestration.TurnWriter.abandon(thread_id, turn.ids.run, "failed", off(reason))
 
-      # A bare `/compact` with nothing to compact (`new_run/5`) never reaches
-      # the provider.
-      refusal = Map.get(turn, :compact_refusal) ->
+      # A bare `/compact` with nothing to compact, or a goal command the provider
+      # cannot run (`new_run/5`), never reaches the provider.
+      refusal = Map.get(turn, :command_refusal) ->
         HalC2.Orchestration.TurnWriter.abandon(thread_id, turn.ids.run, "failed", refusal)
 
       refusal = Map.get(turn, :refusal) ->
@@ -1639,6 +1641,23 @@ defmodule HalC2.Orchestration do
         }
     end
   end
+
+  # Claude Code has no `/goal pause` or `/goal resume`: it reads them as new goals
+  # named "pause" and "resume" (Upstream #25426).
+  defp goal_refusal(%{"text" => text} = command, "claudeAgent") when is_binary(text) do
+    if (command["attachments"] || []) == [] and
+         Regex.match?(~r{^/goal\s+(pause|resume)$}i, String.trim(text)) do
+      %{
+        "class" => "provider_error",
+        "code" => "goal_unsupported",
+        "message" =>
+          "Claude goals cannot be paused or resumed. Send /goal clear to remove the goal.",
+        "retryable" => false
+      }
+    end
+  end
+
+  defp goal_refusal(_command, _driver), do: nil
 
   defp off(reason),
     do: %{
@@ -5630,9 +5649,11 @@ defmodule HalC2.Orchestration do
       ids: ids,
       # A run that left the queue (`start_failure/3`).
       queued: queued != nil,
-      # A bare `/compact` with nothing to compact fails before the provider
-      # starts (`begin_turn_now/2`).
-      compact_refusal: compact_refusal(state, ordinal, command, provider_thread, handoff),
+      # A bare `/compact` with nothing to compact, or a goal command the provider
+      # cannot run, fails before the provider starts (`begin_turn_now/2`).
+      command_refusal:
+        compact_refusal(state, ordinal, command, provider_thread, handoff) ||
+          goal_refusal(command, driver),
       run_ordinal: ordinal,
       started_ms: System.system_time(:millisecond),
       text: provider_text,

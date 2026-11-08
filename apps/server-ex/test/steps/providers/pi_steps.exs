@@ -1569,7 +1569,7 @@ defmodule HalC2.Steps.Providers.Pi do
     Map.put(context, :providers, providers)
   end
 
-  step "only {string} is offered", %{args: [kept]} = context do
+  step "Pi offers only {string}", %{args: [kept]} = context do
     assert Enum.map(pi(context)["models"], & &1["slug"]) == ["default", "fake/#{kept}"]
     context
   end
@@ -2437,7 +2437,7 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
-  step "the work log shows \"Pi provider request failed.\"", context do
+  step "the work log shows the failure \"Pi provider request failed.\"", context do
     assert [%{"failure" => %{"message" => "Pi provider request failed."}}] =
              items(context, "error")
 

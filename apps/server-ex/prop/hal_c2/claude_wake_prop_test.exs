@@ -6,11 +6,19 @@ defmodule HalC2.ClaudeWakePropTest do
   its run started), and a wake the user's next turn takes over, where Claude answers
   the user's message as a turn of its own after the wake's result ("steer"), or folds
   it into the wake turn so that one result answers both ("fold", Upstream #28010),
-  or had already ended the wake before the user's turn started.
+  or had already ended the wake before the user's turn started, where a subagent the
+  wake launched in the background may finish during the user's turn, before the wake's
+  run has replayed its launch (Upstream #23561). A wake also leaves a command running
+  that the thread waits on (`hal_c2_background_wait`), whose end Claude answers in a
+  wake of its own, never answers, or the user's next turn comes first; until one of
+  those, the command holds the thread working. Or the user stops the thread, rewinds
+  it, or its CLI exits while the notice is held: the command still ends as Claude
+  reported it, and the next user turn starts a new process.
 
   The promise: every run ends once Claude has said all it will, with no run left
-  running or queued and the runtime holding no turn and no wake; each user message
-  reaches Claude once, and a wake's run sends Claude nothing.
+  running or queued, no subagent or command left running, and the runtime holding no
+  turn, no wake and no notice; each user message reaches Claude once, and a wake's run
+  sends Claude nothing.
   """
 
   use ExUnit.Case, async: false
@@ -97,26 +105,30 @@ defmodule HalC2.ClaudeWakePropTest do
   # --- model ----------------------------------------------------------------------
 
   # runs: the thread's runs, every one ended. prompts: the user messages Claude got.
-  # n: the next message number.
-  def initial_state, do: %{runs: 0, prompts: 0, n: 1}
+  # n: the next message number. live: whether Claude has a process.
+  def initial_state, do: %{runs: 0, prompts: 0, n: 1, live: false}
 
-  # Claude wakes only once it has a process, which the first user turn starts.
-  def command(%{prompts: 0, n: n}), do: {:call, __MODULE__, :user_turn, [n]}
+  # Claude wakes only once it has a process, which a user turn starts.
+  def command(%{live: false, n: n}), do: {:call, __MODULE__, :user_turn, [n]}
 
   def command(%{n: n}) do
     frequency([
       {2, {:call, __MODULE__, :user_turn, [n]}},
       {2, {:call, __MODULE__, :wake, [oneof([:at_once, :after_its_run_started])]}},
-      {3, {:call, __MODULE__, :take_over, [n, oneof([:steer, :fold, :ended])]}}
+      {3,
+       {:call, __MODULE__, :take_over, [n, oneof([:steer, :fold, :ended, :ended_with_subagent])]}},
+      {2,
+       {:call, __MODULE__, :awaited_command,
+        [n, oneof([:answered, :unanswered, :user_first, :stopped, :rolled_back, :exited])]}}
     ])
   end
 
   # Shrinking keeps a wake behind the user turn that started Claude's process.
-  def precondition(%{prompts: 0}, {:call, _, fun, _args}), do: fun == :user_turn
+  def precondition(%{live: false}, {:call, _, fun, _args}), do: fun == :user_turn
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :user_turn, [_n]}),
-    do: %{state | runs: state.runs + 1, prompts: state.prompts + 1, n: state.n + 1}
+    do: %{state | runs: state.runs + 1, prompts: state.prompts + 1, n: state.n + 1, live: true}
 
   def next_state(state, _result, {:call, _, :wake, [_how]}), do: %{state | runs: state.runs + 1}
 
@@ -124,11 +136,32 @@ defmodule HalC2.ClaudeWakePropTest do
   def next_state(state, _result, {:call, _, :take_over, [_n, _how]}),
     do: %{state | runs: state.runs + 2, prompts: state.prompts + 1, n: state.n + 1}
 
+  # The wake that launched the command, then Claude's answer or the user's turn.
+  def next_state(state, _result, {:call, _, :awaited_command, [_n, :answered]}),
+    do: %{state | runs: state.runs + 2}
+
+  def next_state(state, _result, {:call, _, :awaited_command, [_n, :unanswered]}),
+    do: %{state | runs: state.runs + 1}
+
+  def next_state(state, _result, {:call, _, :awaited_command, [_n, :user_first]}),
+    do: %{state | runs: state.runs + 2, prompts: state.prompts + 1, n: state.n + 1}
+
+  # Stopped, rewound or exited: the wake's run only, and no process until a user turn.
+  def next_state(state, _result, {:call, _, :awaited_command, [_n, _gone]}),
+    do: %{state | runs: state.runs + 1, live: false}
+
+  def postcondition(_state, {:call, _, :awaited_command, _}, %{held: false}), do: false
+
+  # The command ends as Claude reported it, whatever ended its hold.
+  def postcondition(_state, {:call, _, :awaited_command, _}, %{ended: ended})
+      when ended != {"completed", "Built"},
+      do: false
+
   def postcondition(state, call, seen) do
     next = next_state(state, seen, call)
 
     seen.statuses == List.duplicate("completed", next.runs) and seen.prompts == next.prompts and
-      seen.runtime == {nil, nil}
+      seen.subagents == [] and seen.commands == [] and seen.runtime == {nil, nil, []}
   end
 
   # --- commands -------------------------------------------------------------------
@@ -155,23 +188,118 @@ defmodule HalC2.ClaudeWakePropTest do
 
   # Claude opens a wake while the runtime is held, and the user's message is sent
   # before it is let go: the user's run comes first and the wake's queues behind it.
-  # `:ended` ends the wake before the user's turn starts.
+  # `:ended` ends the wake before the user's turn starts; `:ended_with_subagent` also
+  # has the wake launch a subagent in the background, which finishes once the user's
+  # turn has started.
   def take_over(n, how) do
     runs = run_count()
     pid = runtime_pid()
     :ok = :sys.suspend(pid)
     claude_says(assistant("m-wake-#{runs}", "The build passed"))
+    agent = "agent-wake-#{runs}"
+    if how == :ended_with_subagent, do: Enum.each(launch(agent), &claude_says/1)
 
-    if how == :ended,
+    if how in [:ended, :ended_with_subagent],
       do: claude_says(%{"type" => "result", "subtype" => "success", "is_error" => false})
 
     text = if how == :fold, do: "fold this in", else: "hello"
+    # The runtime receiving the turn's start is traced, to send after it.
+    if how == :ended_with_subagent, do: :erlang.trace(pid, true, [:receive])
     # The send starts its turn inline, on the held runtime.
     send_task = Task.async(fn -> send_message(n, text) end)
     await(fn -> run_count() == runs + 1 end)
+
+    if how == :ended_with_subagent do
+      # Behind the turn's start in the runtime's mailbox, ahead of Claude's answer.
+      receive do
+        {:trace, ^pid, :receive, {:"$gen_call", _, {:start_turn, _}}} -> :ok
+      after
+        @wait_ms -> raise "the turn never started"
+      end
+
+      :erlang.trace(pid, false, [:receive])
+      flush_traces(pid)
+
+      claude_says(%{
+        "type" => "system",
+        "subtype" => "task_notification",
+        "task_id" => "task-#{agent}",
+        "tool_use_id" => agent,
+        "status" => "completed",
+        "summary" => "Done"
+      })
+    end
+
     :ok = :sys.resume(pid)
     Task.await(send_task, @wait_ms)
     settled(runs + 2)
+  end
+
+  # A wake launches a background command the thread then waits on, and Claude reports
+  # it ended: Claude answers that in a wake (`:answered`), never does and the hold runs
+  # out (its deadline's message is sent at once), or the user's turn starts first.
+  # `held` is whether the command still held the thread once the notice was in.
+  def awaited_command(n, how) do
+    runs = run_count()
+    tool = "bash-wake-#{runs}"
+    task = "task-#{tool}"
+    Enum.each(background_command(tool), &claude_says/1)
+    claude_says(%{"type" => "result", "subtype" => "success", "is_error" => false})
+    settled(runs + 1)
+    {:ok, [^task]} = HalC2.Claude.ThreadRuntime.await_background(@tid, [task], true)
+
+    claude_says(%{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => task,
+      "tool_use_id" => tool,
+      "status" => "completed",
+      "summary" => "Built"
+    })
+
+    _ = :sys.get_state(runtime_pid())
+    held = Enum.any?(running_commands(), &(&1["nativeItemRef"]["nativeId"] == tool))
+
+    case how do
+      :answered ->
+        claude_says(assistant("m-built-#{runs}", "It built"))
+        claude_says(%{"type" => "result", "subtype" => "success", "is_error" => false})
+        Map.put(settled(runs + 2), :held, held)
+
+      :unanswered ->
+        send(runtime_pid(), {:release_notices, task})
+        await(fn -> running_commands() == [] end)
+        Map.put(settled(runs + 1), :held, held)
+
+      :user_first ->
+        send_message(n, "hello")
+        Map.put(settled(runs + 2), :held, held)
+
+      gone ->
+        case gone do
+          :stopped ->
+            :ok = HalC2.Claude.ThreadRuntime.interrupt(@tid, nil)
+
+          :rolled_back ->
+            {:ok, _} = HalC2.Claude.ThreadRuntime.rollback(@tid, %{head: nil})
+
+          :exited ->
+            Process.exit(:sys.get_state(runtime_pid()).session, :kill)
+        end
+
+        await(fn -> running_commands() == [] and :sys.get_state(runtime_pid()).session == nil end)
+        Map.put(settled(runs + 1), :held, held)
+    end
+    |> Map.put(:ended, ended(tool))
+  end
+
+  # The status and output the command's item ended with.
+  defp ended(tool) do
+    current()
+    |> StreamState.list("turn-item")
+    |> Enum.find_value(fn item ->
+      if item["nativeItemRef"]["nativeId"] == tool, do: {item["status"], item["output"]}
+    end)
   end
 
   # --- the runtime ------------------------------------------------------------------
@@ -189,12 +317,15 @@ defmodule HalC2.ClaudeWakePropTest do
 
     runtime =
       case runtime_pid() do
-        nil -> {nil, nil}
-        pid -> pid |> :sys.get_state() |> then(&{&1.turn, &1.wake})
+        nil -> {nil, nil, []}
+        pid -> pid |> :sys.get_state() |> then(&{&1.turn, &1.wake, &1.notices})
       end
 
     %{
       statuses: current() |> StreamState.list("run") |> Enum.map(& &1["status"]),
+      subagents:
+        for(%{"status" => "running"} = sub <- StreamState.list(current(), "subagent"), do: sub),
+      commands: running_commands(),
       prompts: prompts(),
       runtime: runtime
     }
@@ -212,6 +343,96 @@ defmodule HalC2.ClaudeWakePropTest do
       "type" => "assistant",
       "message" => %{"id" => id, "content" => [%{"type" => "text", "text" => text}]}
     }
+
+  # Claude launching a subagent in the background, and registering its task.
+  defp launch(agent),
+    do: [
+      %{
+        "type" => "assistant",
+        "message" => %{
+          "id" => "m-#{agent}",
+          "content" => [
+            %{
+              "type" => "tool_use",
+              "id" => agent,
+              "name" => "Agent",
+              "input" => %{
+                "description" => "Check",
+                "prompt" => "Check",
+                "run_in_background" => true
+              }
+            }
+          ]
+        }
+      },
+      %{
+        "type" => "system",
+        "subtype" => "task_started",
+        "task_id" => "task-#{agent}",
+        "tool_use_id" => agent,
+        "description" => "Check",
+        "task_type" => "local_agent",
+        "is_backgrounded" => true
+      }
+    ]
+
+  # Claude launching a command in the background, and registering its task.
+  defp background_command(tool),
+    do: [
+      %{
+        "type" => "assistant",
+        "message" => %{
+          "id" => "m-#{tool}",
+          "content" => [
+            %{
+              "type" => "tool_use",
+              "id" => tool,
+              "name" => "Bash",
+              "input" => %{"command" => "npm run build", "run_in_background" => true}
+            }
+          ]
+        }
+      },
+      %{
+        "type" => "system",
+        "subtype" => "task_started",
+        "task_id" => "task-#{tool}",
+        "tool_use_id" => tool,
+        "description" => "Build",
+        "task_type" => "local_bash",
+        "is_backgrounded" => true
+      },
+      %{
+        "type" => "user",
+        "message" => %{
+          "role" => "user",
+          "content" => [
+            %{
+              "type" => "tool_result",
+              "tool_use_id" => tool,
+              "content" => "Command running in background with ID: task-#{tool}",
+              "is_error" => false
+            }
+          ]
+        }
+      }
+    ]
+
+  defp running_commands,
+    do:
+      for(
+        %{"type" => "command_execution", "status" => "running"} = item <-
+          StreamState.list(current(), "turn-item"),
+        do: item
+      )
+
+  defp flush_traces(pid) do
+    receive do
+      {:trace, ^pid, _, _} -> flush_traces(pid)
+    after
+      0 -> :ok
+    end
+  end
 
   defp claude_says(message) do
     pid = runtime_pid()

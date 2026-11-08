@@ -11,7 +11,12 @@ defmodule HalC2.ClaudeSubagentPropTest do
   The promise: whatever the order, the parent's turn shows exactly the parent's
   messages and commands, each subagent's thread exactly its own followed by its
   result (once: a result that repeats its last message with Claude's trailer adds
-  nothing), and a stray or late subagent message lands nowhere. An MCP call's tool use
+  nothing), and a stray or late subagent message lands nowhere. A subagent Claude
+  resumes with SendMessage though this runtime never saw it start is one like any
+  other, opened by the message it was sent; a SendMessage to an agent that never
+  becomes a task shows in the parent's turn as the tool call it is. A result for a
+  subagent's own launch call in its own stream (a foreground fork's opening note)
+  ends nothing. An MCP call's tool use
   is a subagent's (`ThreadRuntime.subagent_tool?/2`, which refuses it `delegate_task`)
   exactly while the subagent that made it runs, never Claude's own.
 
@@ -136,9 +141,10 @@ defmodule HalC2.ClaudeSubagentPropTest do
   #   streaming, or nil; commands: how many commands the parent ran;
   # agents: name -> %{done: whether its tool result came, said: its texts in order,
   #   commands: how many it ran}; calls: the id of each tool call left waiting -> the
-  #   agent that made it, or :parent; n: a counter for unique ids.
+  #   agent that made it, or :parent; sends: how many SendMessage calls the parent's
+  #   turn shows; n: a counter for unique ids.
   def initial_state,
-    do: %{parent: [], open: nil, commands: 0, agents: %{}, calls: %{}, n: 1}
+    do: %{parent: [], open: nil, commands: 0, agents: %{}, calls: %{}, sends: 0, n: 1}
 
   def command(%{agents: agents, calls: calls, n: n, open: open}) do
     running = for {a, %{done: false}} <- agents, do: a
@@ -151,12 +157,18 @@ defmodule HalC2.ClaudeSubagentPropTest do
       {1, {:call, __MODULE__, :parent_runs, [n]}},
       {1, {:call, __MODULE__, :stray, [n]}},
       {1, {:call, __MODULE__, :parent_calls, [n]}},
+      {1, {:call, __MODULE__, :send_nobody, [n]}},
       {3, {:call, __MODULE__, :owner, [oneof(["call-unknown" | Map.keys(calls)])]}},
       {2, {:call, __MODULE__, :check, []}}
     ]
     |> Kernel.++(if open, do: [{2, {:call, __MODULE__, :parent_closes, [open]}}], else: [])
     |> Kernel.++(
-      if fresh == [], do: [], else: [{2, {:call, __MODULE__, :start_agent, [oneof(fresh)]}}]
+      if fresh == [],
+        do: [],
+        else: [
+          {2, {:call, __MODULE__, :start_agent, [oneof(fresh)]}},
+          {1, {:call, __MODULE__, :resume_missed, [oneof(fresh)]}}
+        ]
     )
     |> Kernel.++(
       if running == [],
@@ -166,6 +178,7 @@ defmodule HalC2.ClaudeSubagentPropTest do
           {3, {:call, __MODULE__, :agent_streams, [oneof(running), n]}},
           {2, {:call, __MODULE__, :agent_runs, [oneof(running), n]}},
           {2, {:call, __MODULE__, :agent_calls, [oneof(running), n]}},
+          {1, {:call, __MODULE__, :fork_note, [oneof(running)]}},
           {1,
            oneof(
              for a <- running,
@@ -182,14 +195,15 @@ defmodule HalC2.ClaudeSubagentPropTest do
     |> frequency()
   end
 
-  def precondition(%{agents: agents}, {:call, _, :start_agent, [a]}),
-    do: not is_map_key(agents, a)
+  def precondition(%{agents: agents}, {:call, _, name, [a]})
+      when name in [:start_agent, :resume_missed],
+      do: not is_map_key(agents, a)
 
   def precondition(%{agents: agents}, {:call, _, :finish_agent, [a, repeat]}),
     do: match?(%{done: false}, agents[a]) and repeat in [nil | Enum.take(agents[a].said, -1)]
 
   def precondition(%{agents: agents}, {:call, _, name, [a | _]})
-      when name in [:agent_streams, :agent_runs, :agent_calls],
+      when name in [:agent_streams, :agent_runs, :agent_calls, :fork_note],
       do: match?(%{done: false}, agents[a])
 
   def precondition(%{agents: agents}, {:call, _, :agent_says, [a, _, _]}),
@@ -207,7 +221,9 @@ defmodule HalC2.ClaudeSubagentPropTest do
              :parent_says,
              :parent_runs,
              :parent_calls,
+             :send_nobody,
              :start_agent,
+             :resume_missed,
              :finish_agent,
              :check
            ],
@@ -230,8 +246,10 @@ defmodule HalC2.ClaudeSubagentPropTest do
 
   defp step(state, _call, :parent_runs), do: %{state | commands: state.commands + 1}
 
-  defp step(state, {_, _, _, [a]}, :start_agent),
+  defp step(state, {_, _, _, [a]}, name) when name in [:start_agent, :resume_missed],
     do: put_in(state.agents[a], %{done: false, said: [], commands: 0})
+
+  defp step(state, _call, :send_nobody), do: %{state | sends: state.sends + 1}
 
   defp step(state, {_, _, _, [a, n, _]}, :agent_says) do
     case state.agents[a] do
@@ -267,6 +285,7 @@ defmodule HalC2.ClaudeSubagentPropTest do
     %{
       parent: state.parent,
       commands: state.commands,
+      sends: state.sends,
       agents:
         Map.new(state.agents, fn {a, agent} ->
           {a, %{prompt: "Do #{a}", said: agent.said, commands: agent.commands}}
@@ -314,6 +333,53 @@ defmodule HalC2.ClaudeSubagentPropTest do
         "task_type" => "local_agent"
       },
       under(a, user("Do #{a}"))
+    ])
+  end
+
+  # Claude resumes, with SendMessage, an agent this runtime never saw start: the call's
+  # task makes it a subagent, its thread opened by what it was sent. The call has the
+  # agent's tool id, so its messages come under it like a started agent's.
+  def resume_missed(a) do
+    says([
+      assistant("send-#{a}", [
+        tool_use("agent-#{a}", "SendMessage", %{"to" => "task-#{a}", "message" => "Do #{a}"})
+      ]),
+      %{
+        "type" => "system",
+        "subtype" => "task_started",
+        "task_id" => "task-#{a}",
+        "tool_use_id" => "agent-#{a}",
+        "description" => "Resumed #{a}",
+        "task_type" => "local_agent",
+        "is_backgrounded" => false
+      },
+      under(a, user("Do #{a}"))
+    ])
+  end
+
+  # A SendMessage to an agent that is no task (a teammate, say): its result shows it.
+  def send_nobody(n) do
+    says([
+      assistant("m-send-#{n}", [
+        tool_use("send-#{n}", "SendMessage", %{"to" => "teammate", "message" => "Hi #{n}"})
+      ]),
+      user([%{"type" => "tool_result", "tool_use_id" => "send-#{n}", "content" => "Sent"}])
+    ])
+  end
+
+  # A foreground fork's stream opens with a placeholder result for its own launch call.
+  def fork_note(a) do
+    says([
+      under(
+        a,
+        user([
+          %{
+            "type" => "tool_result",
+            "tool_use_id" => "agent-#{a}",
+            "content" => "Fork started — that fork is you."
+          }
+        ])
+      )
     ])
   end
 
@@ -395,6 +461,7 @@ defmodule HalC2.ClaudeSubagentPropTest do
           do: item["text"]
         ),
       commands: Enum.count(items, &(&1["type"] == "command_execution")),
+      sends: Enum.count(items, &(&1["toolName"] == "SendMessage")),
       agents: agents
     }
   end

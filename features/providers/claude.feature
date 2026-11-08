@@ -313,7 +313,6 @@ Feature: Claude
     And the conversation continues in the same Claude session
 
   # Upstream #20849: an explicit effort is kept for a Claude model the catalog does not know.
-  @backlog
   Scenario: A chosen effort is kept for a Claude model HAL-C2 does not know yet
     Given a Claude thread uses a model that is not in HAL-C2's model list
     When the user chooses "high" effort and sends a message
@@ -382,7 +381,6 @@ Feature: Claude
       | WebFetch  | web            |
 
   # Upstream #22130: a notebook edit was named "NotebookEdit result" instead of the notebook.
-  @backlog
   Scenario: A Claude notebook edit names the notebook it changed
     When Claude edits the notebook "analysis.ipynb" with its NotebookEdit tool
     Then the timeline shows a file change to "analysis.ipynb"
@@ -447,7 +445,6 @@ Feature: Claude
 
   # Upstream #18662: the fork looked for the conversation in the server's Claude home; it now
   # looks in the instance's own home.
-  @backlog
   Scenario: Forking works on a Claude instance with its own home
     Given a Claude instance "claude-work" with its own home
     And a thread on "claude-work" with three turns
@@ -649,7 +646,6 @@ Feature: Claude
     Then the user can compact and continue, keep the full history, or never be asked again
 
   # Upstream #23481: answering the resume dialog left a failed question tool row behind.
-  @backlog
   Scenario: Answering Claude's offer to compact on resume leaves no failed tool call
     Given Claude asked whether to compact a long conversation before resuming it
     When the user answers and the turn completes
@@ -774,7 +770,7 @@ Feature: Claude
 
   # Upstream #26459: a fork Claude started in the foreground showed as finished a second after it
   # started, with "Fork started — that fork is you." as its result.
-  @backlog @mc
+  @mc
   Scenario: A Claude fork in the foreground keeps working until it ends
     When Claude starts a fork of itself in the foreground
     Then the fork shows as working until it ends
@@ -912,7 +908,6 @@ Feature: Claude
       | 529    |
 
   # Upstream #19136: Claude's final-result text starting "API Error:" is kept as the failure, cut to 500 characters.
-  @backlog
   Scenario: A Claude turn that ends on an API error shows Claude's own message
     Given Claude ends a turn on an API error with the result "API Error: Request timed out while streaming"
     Then the thread's failure reads "API Error: Request timed out while streaming"
@@ -1001,7 +996,6 @@ Feature: Claude
 
   # Upstream #30051: a custom model outside the catalog had a meter with no limit, though Claude
   # reports the window it compacts against.
-  @backlog
   Scenario: The Claude context meter of a custom model uses the window Claude reports
     Given the user added the custom Claude model "MiniMax-M78", which is not in the catalog
     When a Claude turn runs on it and Claude reports a context window of 204,800 tokens
@@ -1010,7 +1004,7 @@ Feature: Claude
 
   # Upstream #18332: the context meter says Claude compacts at about the configured threshold.
   # Upstream #22654: Claude compacts 33,000 tokens before the size set, so the meter says that.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: The Claude context meter names where Claude compacts for the size the user set
     Given Claude is set to compact the conversation at 650,000 tokens on a model with a larger window
     When the user looks at the context meter
@@ -1047,7 +1041,6 @@ Feature: Claude
 
   # Upstream #19416: context usage follows the usage Claude streams for the latest request,
   # including counts that arrive only at the end of a message; a compaction resets it.
-  @backlog
   Scenario: The Claude context meter counts usage reported at the end of a message
     Given Claude runs through a gateway that reports zero tokens when a message starts
     When the gateway reports the real counts as the message ends
@@ -1283,20 +1276,20 @@ Feature: Claude
     Then the run fails with "<message>"
 
     Examples:
-      | reason                                         | message                                                                        |
-      | it kept getting API errors                     | Claude gave up after repeated API errors.                                      |
-      | its tool calls kept coming out malformed       | Claude gave up after repeated malformed tool calls.                            |
-      | the turn's token budget ran out                | Claude stopped: the turn's token budget was exhausted.                         |
-      | it could not produce the structured output     | Claude could not produce the requested structured output.                      |
-      | a deferred tool is no longer available         | Claude could not resume a deferred tool call: the tool is no longer available. |
-      | the turn could not be set up                   | Claude could not start the turn.                                               |
-      | a usage limit blocked the request              | Claude stopped: a usage limit blocked the request.                             |
-      | the context refilled straight after compaction | Claude stopped: the context refilled too quickly after compaction.             |
-      | the prompt is larger than the context window   | Claude stopped: the prompt exceeds the model's context window.                 |
-      | an image could not be processed                | Claude stopped: an image in the conversation could not be processed.           |
-      | the model returned an error                    | Claude stopped: the model returned an error.                                   |
-      | the API was overloaded                         | Claude API is overloaded (529). Try again shortly.                             |
-      | the API rate limit was reached                 | Claude API rate limit reached. Try again later.                                |
+      | reason                                            | message                                                                          |
+      | it kept getting API errors                        | Claude gave up after repeated API errors.                                        |
+      | its tool calls kept coming out malformed          | Claude gave up after repeated malformed tool calls.                              |
+      | the turn's token budget ran out                   | Claude stopped: the turn's token budget was exhausted.                           |
+      | it could not produce the structured output        | Claude could not produce the requested structured output.                        |
+      | a deferred tool is no longer available            | Claude could not resume a deferred tool call: the tool is no longer available.   |
+      | the turn could not be set up                      | Claude could not start the turn.                                                 |
+      | a blocking limit came with no rate-limit evidence | Claude's context window is full. Run /compact or start a new thread to continue. |
+      | the context refilled straight after compaction    | Claude stopped: the context refilled too quickly after compaction.               |
+      | the prompt is larger than the context window      | Claude stopped: the prompt exceeds the model's context window.                   |
+      | an image could not be processed                   | Claude stopped: an image in the conversation could not be processed.             |
+      | the model returned an error                       | Claude stopped: the model returned an error.                                     |
+      | the API was overloaded                            | Claude API is overloaded (529). Try again shortly.                               |
+      | the API rate limit was reached                    | Claude API rate limit reached. Try again later.                                  |
 
   @mc
   Scenario: A failed Claude turn does not show Claude's internal diagnostics
@@ -1331,7 +1324,7 @@ Feature: Claude
 
   # Upstream #21231: a hook's notice that is above info level is shown as a notice, once; the
   # same text repeated as the turn's result is not shown again as Claude's answer.
-  @backlog
+  @mc
   Scenario: A Claude hook that blocks a prompt shows its reason once
     Given a Claude hook blocks prompts that mention "production" with the reason "Prompts about production need a ticket"
     When the user sends "deploy to production"
@@ -1392,7 +1385,6 @@ Feature: Claude
     Then the thread is marked as limited without a reset time
 
   # Upstream #18616: Claude does not repeat an unchanged limit event, so a quick retry lost the reset.
-  @backlog
   Scenario: A quick retry after a Claude usage limit keeps the reset time
     Given a Claude turn was refused by a limit that resets at 14:00
     When the user retries at once and Claude refuses it with the same limit
@@ -1400,7 +1392,6 @@ Feature: Claude
 
   # Upstream #19848: a blocking limit is a usage limit only with rate-limit evidence (a 429, a
   # rejected rate-limit event, a rate-limit error); otherwise the context window is full.
-  @backlog
   Scenario: A Claude turn that fills the context window is not a usage limit
     Given Claude's latest rate-limit report allows requests
     When Claude ends a turn because the prompt is too long for the context window
@@ -1465,7 +1456,6 @@ Feature: Claude
     Then Claude receives "Unit tests, Docs" as the answer
 
   # Upstream #21762: a Claude question option without a description no longer fails the run
-  @backlog
   Scenario: A Claude question whose choices have no description can still be answered
     Given Claude asks a question with a choice "Skip" that has a blank description
     When the user picks "Skip"
@@ -1497,7 +1487,6 @@ Feature: Claude
     Then the thread's task list is unchanged
 
   # Upstream #18398: a Claude task list survives an MC restart
-  @backlog
   Scenario: Claude's task list keeps its earlier tasks after the MC restarts
     Given Claude's task list has three tasks
     And the MC restarted
@@ -1537,7 +1526,6 @@ Feature: Claude
 
   # Upstream #19464: a background subagent stayed running after Claude's process exited without
   # reporting it; the exit now settles it.
-  @backlog
   Scenario Outline: A Claude background subagent is settled when Claude's process ends
     Given Claude launched a subagent in the background and the launching turn completed
     When Claude's process <ends> without reporting the subagent finished
@@ -1550,7 +1538,7 @@ Feature: Claude
 
   # Upstream #28356: a Stop that closed a Claude process still running a background subagent,
   # followed by a new turn before the old process exited, left the subagent running for good.
-  @backlog @priority-high
+  @priority-high
   Scenario: A background subagent of a stopped Claude process ends when that process exits
     Given Claude launched a subagent in the background
     And the user stopped the turn
@@ -1561,7 +1549,7 @@ Feature: Claude
 
   # Upstream #23561: a nested subagent's completion that arrived during a user turn, before its
   # start was registered, was lost when the start was replayed later.
-  @backlog @priority-high
+  @priority-high
   Scenario: A nested Claude subagent that finished during a user turn stays finished
     Given a background Claude subagent launched a subagent of its own while the thread was idle
     And the nested subagent finished during a later user turn
@@ -1815,9 +1803,10 @@ Feature: Claude
     And later messages in the thread do not fail with "No conversation found"
 
     Examples:
-      | transcript     |
-      | without it     |
-      | nowhere at all |
+      | transcript              |
+      | without it              |
+      | with only its metadata  |
+      | nowhere at all          |
 
   @mc
   Scenario: A Claude instance with its own config directory still finds its saved login on macOS
@@ -2210,11 +2199,25 @@ Feature: Claude
     And expanding it shows only the arguments as plain text
     And a call with no arguments does not expand
 
-  @backlog @mc @priority-high
+  @priority-high
   Scenario: A thread stays working while Claude starts a wake turn
     Given a Claude thread waiting on a background command
     When the command finishes and Claude begins reacting
     Then the thread never leaves working in between
+
+  # The hold above ends: a Claude that never answers the command does not leave the
+  # thread working for good.
+  Scenario: A command Claude never answers still ends
+    Given a Claude thread waiting on a background command
+    When the command finishes and Claude does not answer it
+    Then the command ends and the thread settles
+
+  # Stopping, rewinding or losing the process ends the work still running, but not
+  # a command that already finished: its held notice is applied first.
+  Scenario: A command that finished before the user stopped the thread is recorded as completed
+    Given a Claude thread waiting on a background command
+    When the command finishes and the user stops the thread before Claude answers it
+    Then the command ends and the thread settles
 
   @priority-high
   Scenario: A Claude command the user stops is recorded as interrupted
@@ -2251,22 +2254,35 @@ Feature: Claude
     Then the follow-up is accepted and the background command keeps running
     And a real model or settings change is still refused while that command runs
 
-  @backlog @mc @plugin-claude @priority-high
-  Scenario: Child completion notices wait for Claude's pending tools
-    Given Claude has tool calls pending
-    When a delegated task finishes, or a scheduled prompt comes due
+  # A message Claude takes mid-turn cancels the tool calls it has pending (Upstream
+  # #15892): the notices of work that ended wait for the run, and only the user's own
+  # steer goes in at once.
+  @priority-high
+  Scenario Outline: Child completion notices wait for Claude's pending tools
+    Given Claude has a tool call pending
+    When <notice> while the run is active
     Then the notice is queued and delivered after the active run ends
-    And a tool call Claude did not execute shows as cancelled, not as denied permission
-    And the user's own steering still goes in at once
 
-  @backlog @mc @shared @plugin-claude
+    Examples:
+      | notice                       |
+      | a delegated task finishes    |
+      | a scheduled prompt comes due |
+
+  @priority-high
+  Scenario: The user's own steer still goes in at once and cancels Claude's pending tool
+    Given Claude has a tool call pending
+    When the user steers the run
+    Then the steer goes in at once
+    And the tool call Claude did not run shows as cancelled, not as denied permission
+
+  @mc @shared @plugin-claude @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: Claude's goal shows as a work state
     When the user sends "/goal" with an objective in a Claude thread
     Then the goal's state and the number of checks show in the thread
     And the goal shows complete only when Claude ends the turn normally
 
   # Upstream #16598: a /goal read as complete while a background subagent still ran.
-  @backlog @shared @priority-high
+  @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-high
   Scenario: A Claude goal is not complete while a background subagent still runs
     Given a Claude thread is working on a "/goal" objective
     And Claude has a subagent running in the background
@@ -2275,7 +2291,7 @@ Feature: Claude
     And it shows complete only after a later turn ends normally with no subagent running
 
   # Upstream #25426: Claude Code has no /goal pause or resume and read them as new goals.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario Outline: Pausing or resuming a Claude goal is refused
     When the user sends "<command>" in a Claude thread
     Then the command is refused, saying Claude cannot pause or resume a goal
@@ -2319,7 +2335,7 @@ Feature: Claude
       | "auto:0" | "auto:0"   |
       | "auto:100" | "auto:100" |
 
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: A Claude 5 task list reaches the thread's tasks
     Given the Claude instance turns on Claude's task tools in its environment variables
     When a Claude 5 model creates tasks, updates one to in progress and lists them
@@ -2333,7 +2349,7 @@ Feature: Claude
     And the offer to continue with less context still counts those tokens
 
   # Upstream #16287: a turn refused because Claude is still busy with background work.
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: A Claude turn refused for background work keeps the session
     Given a Claude thread whose background subagent is still working
     And Claude refuses the user's next turn because of that work
@@ -2369,7 +2385,6 @@ Feature: Claude
     And not all at once when Claude wakes the parent
 
   # Upstream #21805: Full access sent bypass flags Claude had disabled, leaving its fallback unapproved.
-  @backlog
   Scenario Outline: Full access on a Claude without bypass falls back to what it allows
     Given Claude has bypass turned off and <auto>
     When a Claude thread runs in Full access
@@ -2382,7 +2397,7 @@ Feature: Claude
 
   # Upstream #21932: option previews were dropped; the MC now keeps them on the question.
   # Showing them was reverted from the clients (#22229), so only the MC owes this.
-  @backlog @mc
+  @mc
   Scenario: A Claude question keeps its options' previews
     When Claude asks a question whose option "Postgres" has a preview
     Then the question the clients receive carries the preview of "Postgres"
@@ -2394,7 +2409,7 @@ Feature: Claude
     Then the composer and settings show thinking On for Claude Haiku 4.5
 
   # Upstream #19485: earlier skills only the user may invoke were refused when one prompt named several.
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: Every skill the user names in one message reaches Claude
     Given the project has the Claude skills "review" and "deploy", which only the user may invoke
     When the user sends "$review the diff, then $deploy it" to Claude
@@ -2429,7 +2444,7 @@ Feature: Claude
     And it can be resumed when the limit resets
 
   # Upstream #18362: a subagent resumed after its launch was missed showed "Thread unavailable".
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: A Claude subagent the MC missed launching still gets its thread
     Given the MC missed the launch of a Claude subagent
     When Claude resumes that subagent
@@ -2461,7 +2476,7 @@ Feature: Claude
     And the next turn reads the settings again
 
   # Upstream #20985: subagents' task changes did not reach the parent's task list.
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: A Claude subagent's task changes reach the thread's task list
     Given a Claude thread has a task list
     When a Claude subagent adds a task and finishes another
@@ -2622,7 +2637,7 @@ Feature: Claude
 
   # Upstream #22546: when Claude forbids remembering the answer, the approval offers only decline
   # and approve.
-  @backlog @mc @shared @plugin-claude
+  @mc @shared @plugin-claude @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A Claude approval that may not be remembered offers no "always allow"
     Given a Claude thread in Full access
     When Claude's safety check asks to run a command and forbids an always-allow rule
@@ -2630,14 +2645,14 @@ Feature: Claude
     And there is no way to always allow it for the session
 
   # Upstream #22546: an agent reading the thread over MCP sees the approval's reason too.
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: An agent reading a thread sees why Claude asked for approval
     Given a Claude thread in Full access is waiting on an approval Claude's safety check raised
     When an agent reads the thread
     Then the pending approval includes Claude's reason
 
   # Upstream #22546: an ordinary approval outside Full access looks as before.
-  @backlog @shared @plugin-claude
+  @shared @plugin-claude @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A Claude approval in Supervised mode carries no Full access explanation
     Given a Claude thread in Supervised mode
     When Claude asks to run "touch notes.txt"
@@ -2663,7 +2678,7 @@ Feature: Claude
     Then the turn fails saying "notes/missing.md" could not be read
 
   # Upstream #15662: skills from enabled installed Claude plugins were missing from the picker.
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: Skills from enabled Claude plugins are offered by their plugin's name
     Given the Claude plugin "acme" is installed and enabled and has the skill "lint"
     When the user opens the skill list in a Claude thread
@@ -2680,7 +2695,7 @@ Feature: Claude
     Then the task list is no longer shown
 
   # Upstream #15836: a failed or signed-out Claude usage reading was kept as if it were current.
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: A Claude usage reading that failed is read again next time
     Given reading Claude's usage limits failed or found Claude signed out
     When the user opens the usage limits again

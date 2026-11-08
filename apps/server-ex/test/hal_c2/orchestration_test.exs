@@ -3161,6 +3161,31 @@ defmodule HalC2.OrchestrationTest do
   end
 
   describe "Claude" do
+    # A history put before it would make the command a message Claude only reads.
+    test "a /compact reaches Claude alone, and what it missed goes with the next turn",
+         %{tmp_dir: dir} do
+      log = Path.join(dir, "claude-input.log")
+      System.put_env("FAKE_CLAUDE_INPUT_LOG", log)
+      on_exit(fn -> System.delete_env("FAKE_CLAUDE_INPUT_LOG") end)
+      claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "haiku"}}
+      codex = %{"modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"}}
+
+      thread_id = launch("hello", "claudeAgent")
+      _ = await_statuses(thread_id, ["completed"])
+      {:ok, _} = send_message(thread_id, "msg-codex", "list the files", codex)
+      _ = await_statuses(thread_id, ["completed", "completed"])
+      {:ok, _} = send_message(thread_id, "msg-compact", "/compact", claude)
+      _ = await_statuses(thread_id, ["completed", "completed", "completed"])
+      {:ok, _} = send_message(thread_id, "msg-next", "hello again", claude)
+      _ = await_statuses(thread_id, ["completed", "completed", "completed", "completed"])
+
+      assert ["hello", "/compact", next] =
+               log |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
+
+      assert next =~ "list the files"
+      assert String.ends_with?(next, "\n\nhello again")
+    end
+
     test "a message runs a Claude turn: thinking, a Bash call, and a streamed answer" do
       thread_id = launch("list the files", "claudeAgent")
       state = await_run(thread_id, "completed")
@@ -3279,11 +3304,12 @@ defmodule HalC2.OrchestrationTest do
 
       await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
 
-      assert ["interrupted", "interrupted"] =
+      # Claude reports a task it stopped as cancelled; a command it stopped is interrupted.
+      assert [{"subagent", "cancelled"}, {"command_execution", "interrupted"}] =
                current(thread_id)
                |> StreamState.list("turn-item")
                |> Enum.filter(&(&1["type"] in ["subagent", "command_execution"]))
-               |> Enum.map(& &1["status"])
+               |> Enum.map(&{&1["type"], &1["status"]})
 
       # With nothing left to stop, a second stop is refused as before.
       assert {:error, _} =
@@ -3583,14 +3609,24 @@ defmodule HalC2.OrchestrationTest do
       _ = await_run(thread_id, "completed")
       await_shell_row(thread_id, &(length(&1["runningBackgroundTasks"] || []) == 1))
 
-      # The SendMessage call itself is done; the subagent it resumed runs on.
-      assert [%{"status" => "completed"}] =
+      # The MC never saw task-old start, so the message that resumed it opens its
+      # subagent, which runs on after the call.
+      subagent = fn ->
+        current(thread_id)
+        |> StreamState.list("turn-item")
+        |> Enum.filter(&(&1["type"] == "subagent"))
+      end
+
+      assert [%{"prompt" => "Carry on", "status" => "running"}] = subagent.()
+
+      assert [] =
                current(thread_id)
                |> StreamState.list("turn-item")
                |> Enum.filter(&(&1["toolName"] == "SendMessage"))
 
       claude_says(thread_id, notification("task-old", "send-1", "completed", "Done"))
       await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
+      assert [%{"status" => "completed"}] = subagent.()
     end
 
     test "after an upgrade, the progress of a subagent it never recorded records it" do

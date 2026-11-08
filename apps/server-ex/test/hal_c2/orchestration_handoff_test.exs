@@ -142,6 +142,20 @@ defmodule HalC2.Orchestration.HandoffTest do
              "## Run 2\n\nUser: hi\n\nAssistant: hello"
   end
 
+  # Found by the Claude goal property: a refused `/goal resume` handed "User: /goal
+  # resume" to the thread's next turn, which Claude then got wrapped in that history.
+  test "a goal control is not handed over as conversation, a goal's objective is" do
+    state =
+      state(
+        turn(1, "/goal resume", "") ++
+          turn(2, "/goal", "Goal active: ship it") ++
+          turn(3, "/goal Clear", "") ++ turn(4, "/goal ship it", "Working on it")
+      )
+
+    assert Handoff.transcript(state, 5) ==
+             "## Run 2\n\nAssistant: Goal active: ship it\n\n## Run 4\n\nUser: /goal ship it\n\nAssistant: Working on it"
+  end
+
   test "a failed command with no exit code is handed over as failed" do
     command = %{"input" => "mix test", "status" => "failed", "output" => "1 failure\n"}
 
@@ -822,5 +836,45 @@ defmodule HalC2.Orchestration.HandoffTest do
       assert Handoff.room(HalC2.StreamState.new(), nil, %{text: "", attachments: files}).message ==
                100 * 100
     end
+  end
+
+  # A turn the provider refused before reading it (Claude's `unsent/2`) leaves the
+  # provider thread's `lastRunOrdinal` before it, so the next turn hands it over.
+  test "an own run refused before it was read is handed to the next turn, one read is not" do
+    run = fn n, status ->
+      [
+        {"run",
+         %{"id" => "run-#{n}", "ordinal" => n, "status" => status, "providerThreadId" => "pt"}},
+        {"message",
+         %{
+           "id" => "user-#{n}",
+           "runId" => "run-#{n}",
+           "role" => "user",
+           "text" => "message #{n}",
+           "createdAt" => "2026-10-01T10:0#{n}:00Z"
+         }}
+      ]
+    end
+
+    thread = fn seen ->
+      [
+        {"thread", %{"id" => "t"}},
+        {"provider-thread",
+         %{
+           "id" => "pt",
+           "appThreadId" => "t",
+           "lastRunOrdinal" => seen,
+           "nativeThreadRef" => %{"driver" => "claudeAgent", "nativeId" => "n"}
+         }}
+      ]
+    end
+
+    assert plan(state(thread.(0) ++ run.(1, "failed")), "message:user-2").context =~ "message 1"
+
+    refute (plan(state(thread.(1) ++ run.(1, "failed")), "message:user-2").context || "") =~
+             "message 1"
+
+    refute (plan(state(thread.(0) ++ run.(1, "completed")), "message:user-2").context || "") =~
+             "message 1"
   end
 end
