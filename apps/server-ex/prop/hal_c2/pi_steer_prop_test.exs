@@ -1985,6 +1985,9 @@ defmodule HalC2.PiSteerPropTest do
       Path.join(dir, "config.json"),
       JSON.encode!(%{
         "turns" => @turns,
+        # Pi reports how full its conversation is after every turn, so a later one
+        # resumes it rather than a new one taking the whole thread.
+        "usage" => %{"totalTokens" => 1_050, "input" => 1_000, "output" => 50},
         "compactDelaySec" => 30,
         "handledCommands" => ["/stats"],
         # `send_rewound/3` names where each rewind goes.

@@ -407,6 +407,9 @@ def assistant(text, usage=None):
 
 
 def matching_turn(cfg, text):
+    # A message handed the thread's history is matched on what follows it, as the
+    # history may name other turns.
+    text = text.rsplit("</conversation_history>\n\n", 1)[-1]
     for turn in cfg.get("turns") or []:
         if turn.get("match", "") in text:
             return turn
@@ -728,7 +731,8 @@ def command(msg):
         start = ids.index(since) + 1 if since in ids else 0
         respond(msg, {"entries": session.entries[start:], "leafId": session.leaf()})
     elif kind == "get_session_stats":
-        usage = state["usage"] or {}
+        # A config's "usage" is what Pi reports when no turn's step reported any.
+        usage = state["usage"] or config().get("usage") or {}
         window = (current_model() or {}).get("contextWindow")
         respond(msg, {"contextUsage": {"tokens": usage.get("totalTokens"), "contextWindow": window},
                       "tokens": {"input": usage.get("input"), "output": usage.get("output"),
