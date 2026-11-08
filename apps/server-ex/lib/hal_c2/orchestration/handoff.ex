@@ -615,13 +615,18 @@ defmodule HalC2.Orchestration.Handoff do
       latest = for {_entry, index} <- newest_pair |> Enum.reject(&is_nil/1), do: index
 
       # The first request outranks the rest of a cut newest message, so its room
-      # is held back while the newest are cut to fit.
+      # is held back while the newest are cut to fit, unless it could never fit
+      # even alone, when holding room back would only cost the newest their end.
       first_user = Enum.find(indexed, role.(:user))
 
       reserve =
         case first_user do
-          {{_role, text}, index} -> if index in latest, do: 0, else: String.length(text) + 2
-          nil -> 0
+          {{_role, text}, index} ->
+            cost = String.length(text) + 2
+            if index in latest or cost > max_chars - @omitted_note, do: 0, else: cost
+
+          nil ->
+            0
         end
 
       {kept, _left, cut} =
