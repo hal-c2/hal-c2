@@ -2485,4 +2485,33 @@ defmodule HalC2.Steps.Providers.Cursor do
     assert servers == ["hal-c2", "plugin-tools", "project-tools", "user-tools"]
     context
   end
+
+  # --- subagent effort -----------------------------------------------------------------------
+
+  step "Cursor starts a subagent with high reasoning effort", context do
+    ctx = ready_cursor(context)
+
+    ctx =
+      Acp.launch(ctx, "Cursor", "cursor", "hand a task to a subagent",
+        model: "gpt-5",
+        options: [%{"id" => "reasoning_effort", "value" => "high"}]
+      )
+
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    ctx
+  end
+
+  step "the user looks at the subagent's card", context do
+    child = subagent_of(context, "Cursor")["childThreadId"]
+    thread = HalC2.StreamState.get(Acp.stream(child), "thread")[child]
+    Map.put(context, :subagent_card, thread["modelSelection"])
+  end
+
+  step "the card reads the effort {string}", %{args: [label]} = context do
+    assert %{"id" => "reasoning_effort", "value" => value} =
+             Enum.find(context.subagent_card["options"] || [], &(&1["id"] == "reasoning_effort"))
+
+    assert String.capitalize(value) == label
+    context
+  end
 end

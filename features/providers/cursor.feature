@@ -654,7 +654,7 @@ Feature: Cursor
 
 
   # Upstream #17419: subagent cards show Cursor's reasoning effort.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A Cursor subagent's card names its reasoning effort
     Given Cursor starts a subagent with high reasoning effort
     When the user looks at the subagent's card

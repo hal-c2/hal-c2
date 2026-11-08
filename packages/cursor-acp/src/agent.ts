@@ -108,8 +108,6 @@ interface Session {
   /** Cursor's conversation mode for the next run: the client's plan toggle sets it. */
   mode: "agent" | "plan";
   run: CursorRun | undefined;
-  /** The MCP servers the client named when it opened the session, by name. */
-  readonly mcpServers: Record<string, McpServerConfig>;
   /** Whether the no-sandbox-on-Windows warning was already shown in this session. */
   warnedNoSandbox: boolean;
 }
@@ -331,7 +329,6 @@ export function makeCursorAcp(input: {
       model,
       mode: "agent",
       run: undefined,
-      mcpServers: servers,
       warnedNoSandbox: false,
     });
     return {
@@ -410,7 +407,9 @@ export function makeCursorAcp(input: {
       current.agent.send(message, {
         model: current.model,
         mode: current.mode,
-        ...(Object.keys(current.mcpServers).length === 0 ? {} : { mcpServers: current.mcpServers }),
+        // No servers on a send: the SDK turns a send's into an override that
+        // replaces the user's own. HAL-C2's ride at creation and resume
+        // instead, where they merge with the settings' servers.
         onDelta: ({ update }) => updates(update),
       }),
     );

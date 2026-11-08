@@ -389,7 +389,11 @@ defmodule HalC2.Test.AcpFixtures do
         "threadId" => thread_id,
         "projectId" => project.id,
         "title" => title,
-        "modelSelection" => %{"instanceId" => instance, "model" => opts[:model] || "default"},
+        "modelSelection" =>
+          %{"instanceId" => instance, "model" => opts[:model] || "default"}
+          |> then(fn selection ->
+            if opts[:options], do: Map.put(selection, "options", opts[:options]), else: selection
+          end),
         "runtimeMode" => opts[:mode] || "full-access",
         "interactionMode" => opts[:interaction] || "default",
         "workspaceStrategy" =>

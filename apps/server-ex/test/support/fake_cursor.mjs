@@ -131,13 +131,12 @@ const makeAgent = (options, resumed) => {
           mimeType: image.mimeType ?? null,
           bytes: typeof image.data === "string" ? image.data.length : 0,
         })),
-        mcpServers: [
-          ...new Set([
-            ...settingsServers,
-            ...createdServers,
-            ...Object.keys(sendOptions.mcpServers ?? {}),
-          ]),
-        ].sort(),
+        // The SDK turns a send's own servers into an override: they replace
+        // the settings' servers instead of joining them.
+        mcpServers: (sendOptions.mcpServers !== undefined
+          ? Object.keys(sendOptions.mcpServers)
+          : [...new Set([...settingsServers, ...createdServers])]
+        ).sort(),
       });
       let cancel;
       const cancelled = new Promise((resolve) => (cancel = resolve));

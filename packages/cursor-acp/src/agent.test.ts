@@ -308,7 +308,7 @@ describe("Cursor over ACP", () => {
   });
 
   it("names every setting source and passes HAL-C2's MCP servers at creation", async () => {
-    const { sdk } = fakeSdk([]);
+    const { sdk, sent } = fakeSdk([]);
     await sdk.store.save(credentials);
     const created: Array<AgentOptions> = [];
     const counting: CursorSdk = {
@@ -335,6 +335,15 @@ describe("Cursor over ACP", () => {
       "plugins",
     ]);
     expect(Object.keys(created[0]?.mcpServers ?? {})).toEqual(["hal-c2"]);
+
+    // A send names no servers: the SDK would turn them into an override
+    // replacing the settings' own instead of joining them.
+    await call("session/prompt", {
+      sessionId: "agent-1",
+      prompt: [{ type: "text", text: "hello" }],
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.options.mcpServers).toBeUndefined();
   });
 
   it("reads the account only for a probe, and refuses it before any agent exists", async () => {
