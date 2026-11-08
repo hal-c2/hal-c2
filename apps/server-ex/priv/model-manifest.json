@@ -627,7 +627,7 @@
           "name": "Claude Opus 5.5",
           "aliases": ["opus-5.5", "claude-opus-5.5"],
           "status": "current",
-          "badge": "new",
+          "releasedAt": "2026-11-07",
           "profile": "opus-5-5",
           "adapter": { "claudeCode": { "minVersion": "2.1.280" } }
         },

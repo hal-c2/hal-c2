@@ -499,10 +499,11 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then "gpt-6" is marked as new
 
   # Upstream #25609: the new mark comes from the model's release date and lasts seven days.
-  @backlog @mc @desktop
+  # The MC derives the mark for the providers whose models come from the model manifest.
+  @mc @desktop @backlog-desktop
   Scenario Outline: A model is marked new for seven days after its release
-    Given "gpt-6" was released <age>
-    When the user looks through Codex's models
+    Given "gpt-6" was released <age> in the model manifest
+    When the user looks through the manifest's models
     Then "gpt-6" <mark>
 
     Examples:
@@ -739,8 +740,9 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the picker keeps one height while the user moves between providers
 
   # Upstream #28409: Grok listed its levels from strongest to weakest.
-  @backlog @shared @priority-low
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
   Scenario: Grok's efforts are listed from lowest to highest
+    Given Grok advertises a model's efforts from the strongest to the weakest
     When the user opens the model control on a Grok model
     Then its efforts run from the lowest to the highest
 

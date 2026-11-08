@@ -42,7 +42,9 @@ defmodule HalC2.Claude.Provider do
   # A fetched manifest may leave Claude out; the release's own catalog then stands.
   defp catalog do
     HalC2.ModelManifest.catalog("claudeAgent") ||
-      get_in(HalC2.ModelManifest.bundled(), ["providers", "claudeAgent"]) ||
+      HalC2.ModelManifest.badged(
+        get_in(HalC2.ModelManifest.bundled(), ["providers", "claudeAgent"])
+      ) ||
       %{"defaults" => %{}, "profiles" => %{}, "models" => []}
   end
 
