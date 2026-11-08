@@ -328,11 +328,14 @@ Feature: Changing model and provider mid-thread
     Then Codex receives the earlier conversation in front of the message
     And the turn runs
 
+  # A bare /compact hands nothing over, so the new agent has no conversation of its own
+  # to compact, and the run says so rather than run it on an empty one.
   @mc
   Scenario: A handoff waits when the first message after a switch asks to compact
     Given the user switched "t1" to "claudeAgent"
     When the user sends "/compact" to "t1"
     Then the conversation is not handed over with that message
+    And the run says the agent has nothing to compact until the conversation goes over
     And it is handed over with the next ordinary message
 
   # #1342: a slash command that starts work, such as `/goal` or a skill, needs the

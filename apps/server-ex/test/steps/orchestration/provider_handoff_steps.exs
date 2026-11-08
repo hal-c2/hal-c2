@@ -933,10 +933,23 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     context
   end
 
-  # A command in front of which history would hide it from Claude.
+  # A command in front of which history would hide it from Claude: nothing is handed
+  # over, and Claude is not started on a conversation with nothing to compact.
   step "the conversation is not handed over with that message", context do
-    World.await_latest_run(context, context.thread, "completed")
-    assert List.last(World.claude_prompts(context)) == "/compact"
+    World.await_latest_run(context, context.thread, "failed")
+    assert World.claude_prompts(context) == []
+    context
+  end
+
+  step "the run says the agent has nothing to compact until the conversation goes over",
+       context do
+    error =
+      Enum.find(
+        World.entities(context, context.thread, "turn-item"),
+        &(&1["type"] == "error" and &1["title"] == "Nothing to compact yet")
+      )
+
+    assert error["failure"]["message"] =~ "goes over to it with the next message"
     context
   end
 

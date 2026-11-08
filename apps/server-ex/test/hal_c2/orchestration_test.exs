@@ -3439,6 +3439,7 @@ defmodule HalC2.OrchestrationTest do
 
     # provider-handoff.feature: a handoff waits when the first message after a switch
     # asks to compact.
+    # Nothing is handed over with it, so Claude would have nothing to compact.
     test "a /compact that is Claude's first run in the thread waits for the next message",
          %{tmp_dir: dir} do
       log = Path.join(dir, "prompts.jsonl")
@@ -3449,11 +3450,18 @@ defmodule HalC2.OrchestrationTest do
       thread_id = launch("codex was here")
       _ = await_run(thread_id, "completed")
       assert {:ok, _} = send_message(thread_id, "m2", "/compact", selection.("claudeAgent"))
-      _ = await_statuses(thread_id, ~w(completed completed))
-      assert {:ok, _} = send_message(thread_id, "m3", "and now", selection.("claudeAgent"))
-      _ = await_statuses(thread_id, ~w(completed completed completed))
+      state = await_statuses(thread_id, ~w(completed failed))
 
-      assert ["/compact", next] =
+      assert Enum.any?(
+               StreamState.list(state, "turn-item"),
+               &(&1["type"] == "error" and &1["title"] == "Nothing to compact yet")
+             )
+
+      refute File.exists?(log)
+      assert {:ok, _} = send_message(thread_id, "m3", "and now", selection.("claudeAgent"))
+      _ = await_statuses(thread_id, ~w(completed failed completed))
+
+      assert [next] =
                log |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
 
       assert next =~ "codex was here"

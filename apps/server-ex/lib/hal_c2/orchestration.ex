@@ -1586,21 +1586,36 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # The failure of a bare `/compact` on a thread with no conversation yet: no
-  # provider conversation to compact, no fork to continue and no history handed
-  # over. Its error item is titled from the code (`TurnWriter`).
-  defp compact_refusal(command, provider_thread, handoff) do
+  # The failure of a bare `/compact` with no provider conversation to compact: no fork
+  # to continue and no history handed over. A thread whose conversation is another
+  # agent's has one, which goes over with the next message (a bare `/compact` hands
+  # nothing over, #1342); its own fails as empty. The error item is titled from the
+  # code (`TurnWriter`).
+  defp compact_refusal(state, ordinal, command, provider_thread, handoff) do
     fresh =
       provider_thread == nil or get_in(provider_thread, ["nativeThreadRef", "nativeId"]) == nil
 
-    if maintenance(command) == "/compact" and fresh and handoff.fork == nil and
-         handoff.context in [nil, ""] do
-      %{
-        "class" => "provider_error",
-        "code" => "compact_empty_thread",
-        "message" => "Start a conversation before compacting this thread.",
-        "retryable" => false
-      }
+    cond do
+      maintenance(command) != "/compact" or not fresh or handoff.fork != nil or
+          handoff.context not in [nil, ""] ->
+        nil
+
+      HalC2.Orchestration.Handoff.transcript(state, ordinal) in [nil, ""] ->
+        %{
+          "class" => "provider_error",
+          "code" => "compact_empty_thread",
+          "message" => "Start a conversation before compacting this thread.",
+          "retryable" => false
+        }
+
+      true ->
+        %{
+          "class" => "provider_error",
+          "code" => "compact_before_handoff",
+          "message" =>
+            "This agent has no conversation of its own to compact yet. The thread's conversation goes over to it with the next message.",
+          "retryable" => false
+        }
     end
   end
 
@@ -5572,7 +5587,7 @@ defmodule HalC2.Orchestration do
       queued: queued != nil,
       # A bare `/compact` with nothing to compact fails before the provider
       # starts (`begin_turn_now/2`).
-      compact_refusal: compact_refusal(command, provider_thread, handoff),
+      compact_refusal: compact_refusal(state, ordinal, command, provider_thread, handoff),
       run_ordinal: ordinal,
       started_ms: System.system_time(:millisecond),
       text: provider_text,
