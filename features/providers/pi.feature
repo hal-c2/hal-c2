@@ -579,6 +579,11 @@ Feature: Pi
     When the user sends "slow start" to a Pi thread
     Then that turn waits for Pi's agent and runs to its end
 
+  Scenario: A Pi prompt template its extensions take a while to start on is not ended as idle
+    Given Pi's extensions work for a few seconds before Pi's agent starts on the prompt template "/review"
+    When the user sends "/review the cart" to a Pi thread
+    Then that turn waits for Pi's agent and runs to its end
+
   Scenario: Pi going silent after a message stops the session
     Given Pi accepted a message but never reports whether it is working
     When three checks of Pi's state fail

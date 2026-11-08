@@ -19,8 +19,8 @@ defmodule HalC2.PiSteerPropTest do
   the abandonment, and the next compaction must still show; send a message while the
   abandoned compaction still runs, which Pi starts only once it ends and shows nothing
   for until then (the turn watchdog must not settle it as idle); send a message Pi's
-  extensions take a few seconds to start on, reading idle all the while (it must not
-  be settled as idle either); interrupt it.
+  extensions take a few seconds to start on, plainly or through a prompt template,
+  reading idle all the while (it must not be settled as idle either); interrupt it.
 
   Turns run on the fake `pi --mode rpc` in `test/support/fake_pi_rpc.py`. The model
   checks that each turn ends once, with the status it should, that every steer's
@@ -235,7 +235,7 @@ defmodule HalC2.PiSteerPropTest do
       {5, {:call, __MODULE__, :send, [id(next), oneof([:joins, :ends, :pair, :aborts])]}},
       {1, {:call, __MODULE__, :send_handled, [id(next)]}},
       {1, {:call, __MODULE__, :send_silent, [id(next)]}},
-      {1, {:call, __MODULE__, :send_slow, [id(next)]}}
+      {1, {:call, __MODULE__, :send_slow, [id(next), oneof(["", "/review "])]}}
     ])
   end
 
@@ -334,7 +334,7 @@ defmodule HalC2.PiSteerPropTest do
 
   # Pi reads idle for a few seconds before its agent starts: the turn is
   # not settled as idle, and once started it works as a "joins" turn.
-  def next_state(state, _result, {:call, _, :send_slow, [msg]}) do
+  def next_state(state, _result, {:call, _, :send_slow, [msg, _prefix]}) do
     runs = state.runs ++ [{msg, "running"}]
     %{state | next: state.next + 1, runs: runs, turn: msg, how: :joins}
   end
@@ -573,11 +573,12 @@ defmodule HalC2.PiSteerPropTest do
     {answer(result), settled(unfinished_runs(), System.monotonic_time(:millisecond) + @wait_ms)}
   end
 
-  # A message whose agent starts late: the projection is taken once it is
-  # running and has said "Working on it." (settled as idle, it would have
-  # completed first).
-  def send_slow(msg) do
-    reply(Orchestration.dispatch(message(msg, "slow #{msg}", "queue_after_active", "auto")), [])
+  # A message whose agent starts late, plain or through a prompt template
+  # (`prefix`): the projection is taken once it is running and has said
+  # "Working on it." (settled as idle, it would have completed first).
+  def send_slow(msg, prefix) do
+    text = "#{prefix}slow #{msg}"
+    reply(Orchestration.dispatch(message(msg, text, "queue_after_active", "auto")), [])
   end
 
   # A prompt Pi answers and then never reports on, with its state checks
@@ -789,6 +790,12 @@ defmodule HalC2.PiSteerPropTest do
         "turns" => @turns,
         "compactDelaySec" => 30,
         "handledCommands" => ["/stats"],
+        # Only an extension's command settles after two idle checks; a
+        # prompt template expands into an agent prompt like any message.
+        "commands" => [
+          %{"name" => "stats", "source" => "extension"},
+          %{"name" => "review", "source" => "prompt"}
+        ],
         "silentCommands" => ["silent"]
       })
     )

@@ -344,6 +344,18 @@ defmodule HalC2.Pi do
     end)
   end
 
+  @doc """
+  The names of the extension commands in Pi's `get_commands` answer: the
+  commands an extension may handle without starting the agent (prompt
+  templates and skills expand into agent prompts instead).
+  """
+  def extension_commands(data) do
+    for %{"source" => "extension", "name" => name} <-
+          (is_map(data) && List.wrap(data["commands"])) || [],
+        is_binary(name),
+        do: name
+  end
+
   defp scope(nil), do: nil
 
   defp scope(scope) do

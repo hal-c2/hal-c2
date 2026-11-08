@@ -26,7 +26,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   alias HalC2.Orchestration
   alias HalC2.Orchestration.Entities
 
-  @state_version 9
+  @state_version 10
   # Extension failures queued between turns: only the newest are kept, so an
   # extension failing on a timer while idle cannot grow state without bound.
   @queued_extension_errors 20
@@ -47,11 +47,12 @@ defmodule HalC2.Pi.ThreadRuntime do
   # either. Three failed checks in a row stop the session.
   @turn_watchdog_ms 4_000
   @turn_watchdog_failures 3
-  # Idle checks in a row that settle a turn. A `/` command an extension
-  # handles settles after two; an ordinary message only after about a
-  # minute, since Pi also reads idle while its extensions' `input` and
-  # `before_agent_start` hooks (or a provider's auth refresh) run before its
-  # agent starts.
+  # Idle checks in a row that settle a turn. A command of an extension's,
+  # which Pi may handle without its agent, settles after two; anything else
+  # only after about a minute, since Pi also reads idle while its extensions'
+  # `input` and `before_agent_start` hooks (or a provider's auth refresh) run
+  # before its agent starts, and a prompt template or `/skill:` expands into
+  # an agent prompt that runs those hooks too.
   @turn_idle_command 2
   @turn_idle_message 15
   # The grace a stopped compaction gets to end on the abort before Pi is
@@ -178,6 +179,9 @@ defmodule HalC2.Pi.ThreadRuntime do
        # The session's last entry when the turn started: `get_entries` since it.
        leaf: nil,
        skills: [],
+       # The names of the session's extension commands (from `get_commands`;
+       # `nil` while unknown): only these settle quickly (`idle_checks/2`).
+       extension_commands: nil,
        turn: nil,
        # A `/compact` runs as a call rather than a prompt. One steered into a
        # running turn also holds its caller until the compaction answers.
@@ -615,7 +619,7 @@ defmodule HalC2.Pi.ThreadRuntime do
         state
 
       {:ok, false} ->
-        if idle + 1 >= idle_checks(state.turn) do
+        if idle + 1 >= idle_checks(state.turn, state.extension_commands) do
           settle(state)
         else
           Process.send_after(self(), {:turn_watchdog, run, 0, idle + 1}, turn_watchdog_ms())
@@ -631,8 +635,13 @@ defmodule HalC2.Pi.ThreadRuntime do
     end
   end
 
-  defp idle_checks(%{text: "/" <> _}), do: @turn_idle_command
-  defp idle_checks(_turn), do: @turn_idle_message
+  defp idle_checks(%{text: "/" <> command}, extension_commands)
+       when is_list(extension_commands) do
+    [name | _] = String.split(command, [" ", "\n"], parts: 2)
+    if name in extension_commands, do: @turn_idle_command, else: @turn_idle_message
+  end
+
+  defp idle_checks(_turn, _extension_commands), do: @turn_idle_message
 
   # Whether Pi is busy right now: streaming or compacting by its own
   # account, or finishing a compaction this runtime knows is still out. Pi
@@ -675,6 +684,9 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   defp migrate(%{v: 1} = state),
     do: state |> Map.merge(%{v: 2, steers: :gen_server.reqids_new(), settled: false}) |> migrate()
+
+  defp migrate(%{v: 9} = state),
+    do: state |> Map.merge(%{v: 10, extension_commands: nil}) |> migrate()
 
   defp migrate(%{v: 8} = state),
     do: state |> Map.merge(%{v: 9, compacting: false}) |> migrate()
@@ -831,13 +843,14 @@ defmodule HalC2.Pi.ThreadRuntime do
       # The session's skills are given a few seconds: a Pi that cannot list them
       # in time does not hold up the thread, and the lookup is retried the first
       # time a message mentions a skill (`prompt_skills/2`). Unknown is `nil`.
-      skills =
+      {skills, extension_commands} =
         case pi_call_within(conn, "get_commands", %{}, skills_ms()) do
-          {:ok, data} -> data |> HalC2.Pi.parse_commands() |> elem(1) |> Enum.map(& &1["name"])
-          _ -> nil
+          {:ok, data} -> {skill_names(data), HalC2.Pi.extension_commands(data)}
+          _ -> {nil, nil}
         end
 
-      switch(%{state | skills: skills}, turn.native_thread_id)
+      state = %{state | skills: skills, extension_commands: extension_commands}
+      switch(state, turn.native_thread_id)
     end
   end
 
@@ -1089,19 +1102,24 @@ defmodule HalC2.Pi.ThreadRuntime do
   # when the lookup at session start could not finish (`open/2`).
   defp prompt_skills(%{skills: nil} = state, text) do
     if is_binary(text) and String.contains?(text, "$") do
-      skills =
-        case pi_call_within(state.conn, "get_commands", %{}, skills_ms()) do
-          {:ok, data} -> data |> HalC2.Pi.parse_commands() |> elem(1) |> Enum.map(& &1["name"])
-          _ -> []
-        end
+      case pi_call_within(state.conn, "get_commands", %{}, skills_ms()) do
+        {:ok, data} ->
+          skills = skill_names(data)
+          commands = HalC2.Pi.extension_commands(data)
+          {%{state | skills: skills, extension_commands: commands}, skills}
 
-      {%{state | skills: skills}, skills}
+        _ ->
+          {%{state | skills: []}, []}
+      end
     else
       {state, []}
     end
   end
 
   defp prompt_skills(state, _text), do: {state, state.skills || []}
+
+  defp skill_names(data),
+    do: data |> HalC2.Pi.parse_commands() |> elem(1) |> Enum.map(& &1["name"])
 
   defp skills_ms, do: Application.get_env(:hal_c2, :pi_skills_ms, 4_000)
 

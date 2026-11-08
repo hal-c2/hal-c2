@@ -2950,9 +2950,11 @@ defmodule HalC2.Steps.Providers.Pi do
 
   step "a Pi extension handles {string} without starting agent work",
        %{args: [command]} = context do
+    listed = %{"name" => String.trim_leading(command, "/"), "source" => "extension"}
+
     context
     |> quick_watchdog()
-    |> install(%{"handledCommands" => [command]})
+    |> install(%{"handledCommands" => [command], "commands" => [listed]})
   end
 
   step "the turn finishes once Pi is idle", context do
@@ -2978,6 +2980,27 @@ defmodule HalC2.Steps.Providers.Pi do
     context
     |> quick_watchdog()
     |> with_turns([turn])
+  end
+
+  # A prompt template expands into an agent prompt, so its hooks run as an
+  # ordinary message's do; Pi also lists an extension command, which would
+  # settle quickly.
+  step "Pi's extensions work for a few seconds before Pi's agent starts on the prompt template {string}",
+       %{args: [template]} = context do
+    turn = %{
+      "match" => template,
+      "startDelaySec" => 1.5,
+      "steps" => [%{"text" => "Started late."}]
+    }
+
+    commands = [
+      %{"name" => String.trim_leading(template, "/"), "source" => "prompt"},
+      %{"name" => "stats", "source" => "extension"}
+    ]
+
+    context
+    |> quick_watchdog()
+    |> install(%{"turns" => [turn | FakeAcp.pi_turns()], "commands" => commands})
   end
 
   step "that turn waits for Pi's agent and runs to its end", context do
