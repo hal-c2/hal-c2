@@ -25,13 +25,15 @@ defmodule HalC2.ProviderUpdates do
     "codex" => "@openai/codex",
     "claudeAgent" => "@anthropic-ai/claude-code",
     "opencode" => "opencode-ai",
-    "grok" => "@xai-official/grok"
+    "grok" => "@xai-official/grok",
+    "pi" => "@earendil-works/pi-coding-agent"
   }
   @names %{
     "codex" => "Codex",
     "claudeAgent" => "Claude",
     "opencode" => "OpenCode",
-    "grok" => "Grok"
+    "grok" => "Grok",
+    "pi" => "Pi"
   }
   @ttl :timer.hours(1)
 
@@ -637,13 +639,20 @@ defmodule HalC2.ProviderUpdates do
     end
   end
 
+  def executable("pi", instance) do
+    case HalC2.Acp.binary_path(instance) do
+      nil -> nil
+      path -> System.find_executable(path)
+    end
+  end
+
   def executable(_driver, _instance), do: nil
 
   # Provider entries cache the version of each executable; an update makes the
   # updated one's stale, and only that one is read again. OpenCode's is read again from
   # a throwaway session of the CLI on disk; its running sessions keep the version they
   # started with.
-  defp forget_version(driver, instance, _path) when driver in ["opencode", "grok"],
+  defp forget_version(driver, instance, _path) when driver in ["opencode", "grok", "pi"],
     do: HalC2.Acp.reload(instance)
 
   defp forget_version(driver, _instance, path) do

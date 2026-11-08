@@ -88,6 +88,17 @@ defmodule HalC2.JsonRpc.Connection do
   @spec notify(GenServer.server(), String.t(), term) :: :ok
   def notify(conn, method, params), do: GenServer.cast(conn, {:notify, method, params})
 
+  @doc """
+  Writes a notification and says whether it reached the subprocess's stdin: `notify/3`
+  for a message the caller must not lose (an answer it would otherwise drop).
+  """
+  @spec deliver(GenServer.server(), String.t(), term) :: :ok | {:error, term}
+  def deliver(conn, method, params) do
+    GenServer.call(conn, {:deliver, method, params})
+  catch
+    :exit, _ -> {:error, :closed}
+  end
+
   @spec respond(GenServer.server(), JsonRpc.id(), {:ok, term} | {:error, map}) :: :ok
   def respond(conn, id, reply), do: GenServer.cast(conn, {:respond, id, reply})
 
@@ -181,6 +192,11 @@ defmodule HalC2.JsonRpc.Connection do
         state = write_failed(reason, state)
         {:noreply, %{state | pending: Map.put(state.pending, {:unwritten, id}, from)}}
     end
+  end
+
+  def handle_call({:deliver, method, params}, _from, state) do
+    reply = Subprocess.write_line(state.sub, JsonRpc.notification(state.dialect, method, params))
+    {:reply, reply, checkpoint(state)}
   end
 
   def handle_call(:os_pid, _from, state), do: {:reply, Subprocess.os_pid(state.sub), state}

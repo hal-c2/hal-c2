@@ -692,6 +692,180 @@ defmodule HalC2.Steps.Providers.Pi do
     end)
   end
 
+  # An extension's `/rewind` moves Pi's leaf back to the end of the first turn
+  # (`navigateTree`), with no agent: the turn settles as a command does.
+  step "a Pi extension rewinds Pi's session to the end of the first turn", context do
+    context
+    |> quick_watchdog()
+    |> FakeAcp.configure(&Map.put(&1, "rewindCommands", %{"/rewind" => 1}))
+    |> turn("/rewind")
+  end
+
+  step "the thread no longer counts the second and third turns as Pi's history", context do
+    runs = context |> state() |> StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+    assert Enum.map(runs, & &1["status"]) == ~w(completed rolled_back rolled_back completed)
+    assert kept_replies(context) == ["Reply to first after []"]
+    context
+  end
+
+  # The second and third turns' checkpoints are gone from the revert choices; the
+  # first's still rewinds, with no fork, since Pi already stands there.
+  step "reverting the thread afterwards only offers turns Pi still has", context do
+    ready =
+      for checkpoint <- context |> state() |> StreamState.list("checkpoint"),
+          checkpoint["status"] == "ready",
+          do: checkpoint["appRunOrdinal"]
+
+    assert 1 in ready and 2 not in ready and 3 not in ready
+
+    assert {:error, _} =
+             World.rollback(context, context.thread, 2, %{"restoreFiles" => false}).reply
+
+    context = World.rollback(context, context.thread, 1, %{"restoreFiles" => false})
+    assert {:ok, _} = context.reply
+    assert FakeAcp.received_type(context, "fork") == []
+
+    context = turn(context, "where are we")
+    assert List.last(replies(context)) == "Reply to where are we after [first]"
+    context
+  end
+
+  # --- Pi's own subagents ---
+
+  # Pi's example subagent extension: one `subagent` tool call hands out tasks and
+  # reports each in its result's details, with what the subagent said last.
+  defp subagent_task(n, fields \\ %{}) do
+    Map.merge(
+      %{
+        "agent" => "scout-#{n}",
+        "task" => "Look into part #{n}",
+        "model" => "fake-model",
+        "exitCode" => 0,
+        "messages" => [
+          %{
+            "role" => "assistant",
+            "content" => [%{"type" => "text", "text" => "Part #{n} found"}]
+          }
+        ]
+      },
+      fields
+    )
+  end
+
+  defp subagent_steps(running, ended, after_update \\ []) do
+    call = %{"toolCallId" => "call-subagent", "toolName" => "subagent"}
+    args = %{"tasks" => Enum.map(running, &Map.take(&1, ["agent", "task"]))}
+
+    [
+      %{"event" => Map.merge(call, %{"type" => "tool_execution_start", "args" => args})},
+      %{
+        "event" =>
+          Map.merge(call, %{
+            "type" => "tool_execution_update",
+            "args" => args,
+            "partialResult" => %{"content" => [], "details" => %{"results" => running}}
+          })
+      }
+    ] ++
+      after_update ++
+      [
+        %{
+          "event" =>
+            Map.merge(call, %{
+              "type" => "tool_execution_end",
+              "result" => %{
+                "content" => [%{"type" => "text", "text" => "All done"}],
+                "details" => %{"results" => ended}
+              },
+              "isError" => false
+            })
+        },
+        %{"text" => "Done."}
+      ]
+  end
+
+  defp said(text),
+    do: [%{"role" => "assistant", "content" => [%{"type" => "text", "text" => text}]}]
+
+  step("Pi has its subagent extension", context, do: context)
+
+  step "Pi hands three tasks to its own subagents", context do
+    running =
+      for n <- 1..3,
+          do: subagent_task(n, %{"exitCode" => -1, "messages" => said("Reading part #{n}")})
+
+    ended = for n <- 1..3, do: subagent_task(n)
+    event_thread(context, subagent_steps(running, ended), "split the work")
+  end
+
+  step "the thread shows one entry per task with its progress and result", context do
+    entries = items(context, "subagent")
+
+    assert Enum.map(entries, &{&1["title"], &1["prompt"], &1["progress"], &1["result"]}) ==
+             for(
+               n <- 1..3,
+               do: {"scout-#{n}", "Look into part #{n}", "Reading part #{n}", "Part #{n} found"}
+             )
+
+    assert Enum.all?(
+             entries,
+             &(&1["status"] == "completed" and &1["origin"] == "provider_native")
+           )
+
+    context
+  end
+
+  step "no child thread is created for them", context do
+    assert Enum.all?(items(context, "subagent"), &(&1["childThreadId"] == nil))
+    assert context |> state() |> StreamState.list("subagent") == []
+    context
+  end
+
+  step("Pi handed a task to one of its own subagents", context, do: context)
+
+  # How the subagent's task reads in the result Pi reports once the tool ended,
+  # or, for one that has not finished, in its last update while the tool runs on.
+  step ~r/^Pi's subagent (?<ends>has not finished|finishes|is aborted|exits with a code other than zero|stops on an error)$/,
+       %{args: [ends]} = context do
+    running = [subagent_task(1, %{"exitCode" => -1, "messages" => said("Reading")})]
+
+    ended =
+      case ends do
+        "finishes" -> %{}
+        "is aborted" -> %{"stopReason" => "aborted", "errorMessage" => "Aborted"}
+        "exits with a code other than zero" -> %{"exitCode" => 1, "stderr" => "scout crashed"}
+        "stops on an error" -> %{"stopReason" => "error", "errorMessage" => "model overloaded"}
+        "has not finished" -> nil
+      end
+
+    if ended do
+      context =
+        event_thread(context, subagent_steps(running, [subagent_task(1, ended)]), "hand it off")
+
+      [entry] = items(context, "subagent")
+      Map.put(context, :subagent_status, entry["status"])
+    else
+      steps = subagent_steps(running, [subagent_task(1)], [%{"until" => "release"}])
+      context = event_thread(context, steps, "hand it off", :running)
+
+      entry =
+        World.await_stream(World.thread_id(context, context.thread), fn state ->
+          Enum.find(
+            StreamState.list(state, "turn-item"),
+            &(&1["type"] == "subagent" and &1["progress"] == "Reading")
+          )
+        end)
+
+      File.touch!(Path.join(FakeAcp.fake(context, "pi").dir, "release"))
+      Map.put(context, :subagent_status, entry["status"])
+    end
+  end
+
+  step "its entry is shown as {word}", %{args: [status]} = context do
+    assert context.subagent_status == status
+    context
+  end
+
   # --- skills ---
 
   step "Pi loads the project skill {string}", %{args: [name]} = context do
@@ -1973,6 +2147,70 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
+  # Pi stopped reading before it asked (the fake's `deaf` dialog), so no answer reaches it.
+  step "a Pi extension asked the user a question", context do
+    ui = %{"method" => "input", "title" => "Your words"}
+    context = dialog_thread(context, %{"ui" => ui, "deaf" => true}, "ask me something")
+    request = FakeAcp.await_request(context)
+    [question] = await_question(context)["questions"]
+    Map.merge(context, %{pending_request: request, question: question})
+  end
+
+  defp answer_pending(context, value) do
+    HalC2.Orchestration.dispatch(%{
+      "type" => "runtime-request.respond",
+      "commandId" => "cmd-#{System.unique_integer([:positive])}",
+      "threadId" => World.thread_id(context, context.thread),
+      "requestId" => context.pending_request["id"],
+      "answers" => %{context.question["id"] => value}
+    })
+  end
+
+  step "the user's answer cannot be delivered to Pi", context do
+    assert {:error, message} = answer_pending(context, "nap")
+    assert message =~ "Pi did not get the answer"
+    context
+  end
+
+  # Still waiting in the thread, and a second answer is tried rather than refused.
+  step "the question stays open for another answer", context do
+    item = await_question(context)
+    assert item["requestId"] == context.pending_request["id"]
+    assert {:error, message} = answer_pending(context, "nap again")
+    refute message =~ "No pending"
+    context
+  end
+
+  @editor_prefill "  def run do\n    :ok\n  end\n\n" <> String.duplicate("# note\n", 400)
+
+  step "a Pi extension asks the user to edit a text that already has content", context do
+    ui = %{"method" => "editor", "title" => "Edit it", "prefill" => @editor_prefill}
+    context = dialog_thread(context, %{"ui" => ui, "say" => "Got: "}, "ask me something")
+    Map.put(context, :pending_request, FakeAcp.await_request(context))
+  end
+
+  # Longer than the 2,000 characters quoted in the question: the composer gets it all.
+  step "the whole text fills the answer composer, ready to edit", context do
+    [question] = await_question(context)["questions"]
+    assert String.length(@editor_prefill) > 2_000
+    assert question["initialAnswer"] == @editor_prefill
+    Map.put(context, :question, question)
+  end
+
+  step "the answer goes back to the extension with its spaces and line breaks as typed",
+       context do
+    typed = "  def run do\n    :edited\n  end\n\n"
+
+    context =
+      FakeAcp.respond(context, context.pending_request["id"], %{
+        "answers" => %{context.question["id"] => typed}
+      })
+
+    FakeAcp.await_run(context, "completed")
+    assert [%{"value" => ^typed}] = for(%{"ui_answer" => a} <- FakeAcp.log(context), do: a)
+    context
+  end
+
   step ~r/^a Pi extension (?<asks>asks the user to pick from a list|asks the user to edit a text|asks for a line of text with no placeholder) titled "(?<title>[^"]+)" with nothing else to say$/,
        %{args: [asks, title]} = context do
     ui =
@@ -2227,9 +2465,14 @@ defmodule HalC2.Steps.Providers.Pi do
     turns = [%{"match" => prompt, "steps" => steps}]
     context = context |> with_turns(turns) |> FakeAcp.thread()
 
-    if await == :running,
-      do: FakeAcp.send_message(context, prompt),
-      else: turn(context, prompt, await)
+    # A running turn is one Pi has: a steer sent before it is not steering it.
+    if await == :running do
+      context = FakeAcp.send_message(context, prompt)
+      FakeAcp.await_run(context, "running")
+      context
+    else
+      turn(context, prompt, await)
+    end
   end
 
   defp last_error(context, title \\ nil) do
@@ -2845,6 +3088,278 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
+  # --- work Pi starts by itself (wakes) ---
+
+  # Turns whose second ("second") wakes Pi once it settled, running `wake` by itself.
+  defp waking(context, wake) do
+    context
+    |> install(%{
+      "turns" => [
+        %{"match" => "second", "steps" => [%{"text" => "Second done."}], "wake" => wake}
+        | FakeAcp.pi_turns()
+      ]
+    })
+    |> FakeAcp.thread()
+    |> turn("first")
+  end
+
+  defp run_replies(context, ordinal) do
+    state = state(context)
+    run = StreamState.list(state, "run") |> Enum.find(&(&1["ordinal"] == ordinal))
+
+    for m <- StreamState.list(state, "message") |> Enum.sort_by(& &1["createdAt"]),
+        m["role"] == "assistant" and m["runId"] == run["id"],
+        do: m["text"]
+  end
+
+  # The replies of the runs a rollback kept.
+  defp kept_replies(context) do
+    state = state(context)
+
+    kept =
+      for run <- StreamState.list(state, "run"),
+          run["status"] != "rolled_back",
+          into: MapSet.new(),
+          do: run["id"]
+
+    for m <- StreamState.list(state, "message") |> Enum.sort_by(& &1["createdAt"]),
+        m["role"] == "assistant" and MapSet.member?(kept, m["runId"]),
+        do: m["text"]
+  end
+
+  defp run_status(context, ordinal),
+    do: Enum.find(StreamState.list(state(context), "run"), &(&1["ordinal"] == ordinal))["status"]
+
+  # Holds each wake's message until the scenario lets it go (`release_wake/1`).
+  def hold_wake(test, _command) do
+    send(test, {:wake_held, self()})
+
+    receive do
+      :go -> :ok
+    after
+      30_000 -> :ok
+    end
+  end
+
+  defp hold_wakes(context) do
+    World.put_app_env(:wake_hook, {__MODULE__, :hold_wake, [self()]})
+    context
+  end
+
+  defp held_wake(context) do
+    receive do
+      {:wake_held, pid} ->
+        ExUnit.Callbacks.on_exit(fn -> send(pid, :go) end)
+        Map.put(context, :held_wake, pid)
+    after
+      @turn_ms -> flunk("Pi's wake never asked the thread for a run")
+    end
+  end
+
+  defp release_wake(context) do
+    send(context.held_wake, :go)
+    context
+  end
+
+  step "Pi has resumed extension work before HAL-C2 heard that it woke", context do
+    context
+    |> waking(%{
+      "text" => "Resume the extension's work.",
+      "quiet" => true,
+      "steps" => [%{"text" => "Resumed the extension's work."}]
+    })
+    |> turn("second")
+  end
+
+  step "the user sends a message in the Pi thread", context do
+    turn(context, "hello Pi")
+  end
+
+  step "Pi takes the message after its current work", context do
+    log = FakeAcp.log(context)
+    assert Enum.any?(log, &match?(%{"busy" => "hello Pi"}, &1))
+    assert Enum.any?(log, &match?(%{"accepted" => "hello Pi", "followUp" => true}, &1))
+
+    assert [work, reply] = run_replies(context, 3)
+    assert work == "Resumed the extension's work."
+    assert reply =~ "hello Pi"
+    context
+  end
+
+  step "the turn does not fail with {string}", %{args: [error]} = context do
+    assert run_status(context, 3) == "completed"
+
+    refute Enum.any?(
+             StreamState.list(state(context), "turn-item"),
+             &(is_binary(&1["message"]) and &1["message"] =~ error)
+           )
+
+    context
+  end
+
+  step "a Pi thread whose last turn has finished", context do
+    waking(context, %{
+      "text" => "Carry on with the extension's work.",
+      "steps" => [%{"text" => "Finished the extension's work."}]
+    })
+  end
+
+  step "a Pi extension wakes Pi to continue on its own", context do
+    context = turn(context, "second")
+    FakeAcp.await_runs(context, 3)
+    context
+  end
+
+  step "the thread gets a new turn that shows Pi's work", context do
+    assert run_status(context, 3) == "completed"
+    assert run_replies(context, 3) == ["Finished the extension's work."]
+    context
+  end
+
+  step "Pi is not prompted a second time for it", context do
+    assert Enum.map(FakeAcp.received_type(context, "prompt"), & &1["message"]) == [
+             "first",
+             "second"
+           ]
+
+    context
+  end
+
+  # The wake runs until the file "release" exists, or a message follows it.
+  step "a Pi extension has woken Pi after the last turn", context do
+    context
+    |> hold_wakes()
+    |> waking(%{
+      "text" => "Carry on with the extension's work.",
+      "steps" => [
+        %{"text" => "Working on the extension's task."},
+        %{"until" => "release"},
+        %{"text" => " Done with it."}
+      ]
+    })
+    |> turn("second")
+    |> held_wake()
+  end
+
+  step "the user sends a message to the Pi thread before the wake's turn starts", context do
+    context |> turn("hello Pi") |> release_wake()
+  end
+
+  step "the message's turn shows the extension's work and the reply to the message",
+       context do
+    assert [work, reply] = run_replies(context, 3)
+    assert work == "Working on the extension's task. Done with it."
+    assert reply =~ "hello Pi"
+
+    # The wake's own run, once it comes, has nothing left to show.
+    FakeAcp.await_runs(context, 4)
+    assert run_status(context, 4) == "completed"
+    assert run_replies(context, 4) == []
+    context
+  end
+
+  step "the user reverts the Pi thread to an earlier turn", context do
+    World.rollback(context, context.thread, 1, %{"restoreFiles" => false})
+  end
+
+  step "the revert is refused until the woken work is settled or stopped", context do
+    assert {:error, reason} = context.reply
+    assert reason =~ "Pi is still working on its own"
+
+    File.touch!(Path.join(FakeAcp.fake(context, "pi").dir, "release"))
+    context = release_wake(context)
+    FakeAcp.await_runs(context, 3)
+    assert run_replies(context, 3) == ["Working on the extension's task. Done with it."]
+
+    context = World.rollback(context, context.thread, 1, %{"restoreFiles" => false})
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  step "nothing from the discarded conversation appears in the thread afterwards", context do
+    context = turn(context, "after the revert")
+
+    live = kept_replies(context)
+    refute Enum.any?(live, &(&1 =~ "extension"))
+    assert List.last(live) =~ "after the revert"
+    context
+  end
+
+  # --- a workspace's own skills and commands ---
+
+  # A project whose `.pi` folder holds a skill and a prompt template.
+  defp pi_workspace(context, project, skill, prompt \\ nil) do
+    context = World.create_project(context, project)
+    root = World.project(context, project).root
+    File.mkdir_p!(Path.join([root, ".pi", "skills", skill]))
+    File.write!(Path.join([root, ".pi", "skills", skill, "SKILL.md"]), "# #{skill}\n")
+
+    if prompt do
+      File.mkdir_p!(Path.join([root, ".pi", "prompts"]))
+      File.write!(Path.join([root, ".pi", "prompts", "#{prompt}.md"]), "Triage it.\n")
+    end
+
+    install(context)
+  end
+
+  # What a client's skill menu offers in a Pi thread of `project`: the workspace
+  # snapshot it asks for (`server.refreshProviders` with the thread's folder).
+  defp open_pi_menu(context, project) do
+    cwd = World.project(context, project).root
+    reply = HalC2.Environment.refresh_providers(%{"instanceId" => "pi", "cwd" => cwd})
+    {providers, context} = World.provider_list(context)
+
+    snapshot =
+      Enum.find(pi(%{providers: providers})["workspaceSnapshots"] || [], &(&1["cwd"] == cwd))
+
+    # Skills and commands both, as the Claude steps' "... are offered" reads them.
+    entries =
+      ((snapshot && snapshot["skills"]) || []) ++ ((snapshot && snapshot["slashCommands"]) || [])
+
+    Map.merge(context, %{
+      providers: providers,
+      slash_commands: entries,
+      offered: Enum.map(entries, & &1["name"]),
+      menu_reply: reply
+    })
+  end
+
+  step "the project {string} has its own Pi skill {string} and prompt template {string}",
+       %{args: [project, skill, prompt]} = context do
+    context |> pi_workspace(project, skill, prompt) |> Map.put(:pi_offered, [skill, prompt])
+  end
+
+  step "the user opens the skill menu in a Pi thread of {string}", %{args: [project]} = context do
+    open_pi_menu(context, project)
+  end
+
+  step "a Pi thread of another project does not offer them", context do
+    assert {:ok, _} = context.menu_reply
+    context = open_pi_menu(context, "shop")
+    assert {:ok, _} = context.menu_reply
+    for name <- context.pi_offered, do: refute(name in context.offered)
+    context
+  end
+
+  step "a Pi thread of {string} offered the skill {string}",
+       %{args: [project, skill]} = context do
+    context = context |> pi_workspace(project, skill) |> open_pi_menu(project)
+    assert skill in context.offered
+    Map.put(context, :pi_project, project)
+  end
+
+  step "finding the workspace's Pi commands fails", context do
+    context = FakeAcp.configure(context, &Map.put(&1, "failCommands", ["get_commands"]))
+    context = open_pi_menu(context, context.pi_project)
+    assert {:error, %{"operation" => "refresh"}} = context.menu_reply
+    context
+  end
+
+  step "{string} is still offered", %{args: [skill]} = context do
+    assert skill in context.offered
+    context
+  end
+
   # --- titles and short-lived Pi processes ---
 
   # The fake answers a title prompt with the JSON a title writer returns.
@@ -2866,6 +3381,98 @@ defmodule HalC2.Steps.Providers.Pi do
 
     result = HalC2.TextGeneration.thread_title(World.project(context).root, "Fix the login form")
     Map.put(context, :title_result, result)
+  end
+
+  # The fake answers a prompt regenerating a thread's title like a first title.
+  defp regenerated_title,
+    do: [%{"match" => "Thread contents:", "steps" => hd(title_turns())["steps"]}]
+
+  # A thread's linked pull request, as GitHub answers for it.
+  @pull_request %{
+    "title" => "Stop the login redirect loop",
+    "body" => "Sessions now survive the redirect."
+  }
+
+  step "a Pi thread is linked to a pull request", context do
+    context =
+      context
+      |> install(%{"turns" => title_turns(regenerated_title()) ++ FakeAcp.pi_turns()})
+      |> FakeAcp.thread()
+      |> turn("Look at the login page")
+
+    log = HalC2.Test.Mc.tmp_dir(context.mc, "gh") |> Path.join("calls.jsonl")
+    rules = Path.join(Path.dirname(log), "rules.json")
+    File.write!(log, "")
+
+    File.write!(
+      rules,
+      JSON.encode!([%{"args" => ["repos/acme/shop/issues/42"], "stdout" => @pull_request}])
+    )
+
+    System.put_env("FAKE_GH_LOG", log)
+    System.put_env("FAKE_GH_RULES", rules)
+    World.put_app_env(:gh_command, Path.expand("../../support/fake_gh.py", __DIR__))
+
+    ExUnit.Callbacks.on_exit(fn ->
+      System.delete_env("FAKE_GH_LOG")
+      System.delete_env("FAKE_GH_RULES")
+    end)
+
+    id = World.thread_id(context, context.thread)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.pull-request.link",
+        "threadId" => id,
+        "host" => "github.com",
+        "repository" => "acme/shop",
+        "number" => 42,
+        "url" => "https://github.com/acme/shop/pull/42",
+        "source" => "manual"
+      })
+
+    World.await_row(id, &(&1["pullRequests"] not in [nil, []]))
+    context
+  end
+
+  step "Pi writes the thread's title", context do
+    FakeAcp.settings(
+      &Map.put(&1, "textGenerationModelSelection", %{"instanceId" => "pi", "model" => "default"})
+    )
+
+    id = World.thread_id(context, context.thread)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.metadata.update",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => id,
+        "regenerateTitle" => true
+      })
+
+    World.await_stream(
+      id,
+      fn state ->
+        StreamState.get(state, "thread")[id]["title"] == "Login form fix"
+      end,
+      @turn_ms
+    )
+
+    context
+  end
+
+  step "the pull request's context is part of what Pi is asked", context do
+    asked =
+      for %{"message" => message} <- FakeAcp.received_type(context, "prompt"),
+          message =~ "Thread contents:",
+          do: message
+
+    assert [prompt] = asked
+    assert prompt =~ "https://github.com/acme/shop/pull/42\n"
+    assert prompt =~ JSON.encode!(@pull_request["title"])
+    assert prompt =~ JSON.encode!(@pull_request["body"])
+
+    context
   end
 
   step "Pi's launch arguments name an extension and a tool list", context do
@@ -3337,6 +3944,121 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
+  # --- messages sent while Pi compacts ---
+
+  # Pi 1.4 rejects every prompt while it compacts: the fake does too, and logs the
+  # prompts it takes up (`accepted`) and its compaction's start and end.
+  @compaction_turns [
+    %{"match" => "compact after", "compactAfter" => 2, "steps" => [%{"text" => "Done."}]},
+    %{
+      "match" => "compact within",
+      "steps" => [%{"text" => "Working on it."}, %{"compactFor" => 2}, %{"waitAbort" => true}]
+    }
+  ]
+
+  step ~r/^Pi is compacting the conversation (?<when>after a finished turn|inside the running turn)$/,
+       %{args: [compacting]} = context do
+    config = %{
+      "turns" => @compaction_turns ++ FakeAcp.pi_turns(),
+      "rejectWhileCompacting" => true
+    }
+
+    context = context |> install(config) |> FakeAcp.thread()
+    compacting(Map.put(context, :compacting, compacting), "")
+  end
+
+  # A turn that leaves Pi compacting once it settled, or one compacting as it runs.
+  # Pi sends `compaction_start` before it settles the turn's last checks, so by the
+  # turn's end the MC has heard it.
+  defp compacting(%{compacting: "after a finished turn"} = context, again),
+    do: turn(context, "compact after this#{again}")
+
+  defp compacting(context, again) do
+    before = length(items(context, "compaction"))
+    context = FakeAcp.send_message(context, "compact within this#{again}")
+
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      running =
+        state
+        |> StreamState.list("turn-item")
+        |> Enum.filter(&(&1["type"] == "compaction"))
+
+      length(running) > before and List.last(running)["title"] == "Compacting context..."
+    end)
+
+    context
+  end
+
+  step ~r/^the user (?<how>sends|steers the turn with) "(?<text>[^"]+)" while it does$/,
+       %{args: [how, text]} = context do
+    if how == "sends" do
+      turn(context, text)
+    else
+      assert {:ok, _} = steer(context, text)
+      FakeAcp.await_run(context, "completed")
+      context
+    end
+  end
+
+  step "Pi receives {string} once, after the compaction ends", %{args: [text]} = context do
+    log = Enum.with_index(FakeAcp.log(context))
+    assert [at] = for({%{"accepted" => ^text}, i} <- log, do: i)
+    assert [_ | _] = for({%{"compaction" => "end"}, i} <- log, i < at, do: i)
+    assert for({%{"rejected" => ^text}, _} <- log, do: :rejected) == []
+    context
+  end
+
+  # A second compaction like the first: a message sent meanwhile is stopped, and
+  # one sent after it still runs, so Pi was free to take the stopped one by then.
+  step "Pi never gets a message whose turn the user stops before then", context do
+    stopped = "the stopped message"
+    context = compacting(context, " again")
+    thread_id = World.thread_id(context, context.thread)
+
+    context =
+      if context.compacting == "after a finished turn" do
+        context = FakeAcp.send_message(context, stopped)
+        FakeAcp.await_run(context, "running")
+        context
+      else
+        steering = Task.async(fn -> steer(context, stopped) end)
+        await_held_steer(thread_id)
+        Map.put(context, :steering, steering)
+      end
+
+    {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+    if context[:steering], do: assert({:ok, _} = Task.await(context.steering))
+    FakeAcp.await_run(context, "interrupted")
+    context = turn(context, "after the stop")
+
+    assert for(
+             %{"recv" => %{"type" => "prompt", "message" => ^stopped}} <- FakeAcp.log(context),
+             do: :sent
+           ) == []
+
+    context
+  end
+
+  # The runtime holds the steer while Pi compacts; nothing outside it says so yet.
+  defp await_held_steer(thread_id, deadline \\ nil) do
+    deadline = deadline || System.monotonic_time(:millisecond) + 10_000
+    [{pid, _}] = Registry.lookup(HalC2.Pi.Registry, thread_id)
+
+    cond do
+      :sys.get_state(pid).held_steers != [] ->
+        :ok
+
+      System.monotonic_time(:millisecond) > deadline ->
+        flunk("the steer was never held")
+
+      true ->
+        receive do
+        after
+          20 -> await_held_steer(thread_id, deadline)
+        end
+    end
+  end
+
   # --- stopping while Pi compacts, and long texts ---
 
   # A `/compact` turn whose compaction is still running (the fake answers
@@ -3397,7 +4119,7 @@ defmodule HalC2.Steps.Providers.Pi do
   # Each long text arrives its own way; `kept` is what the thread shows of
   # it and `cut_original` what Pi sent, taken from the fake's own log or the
   # script, so the limit is checked against Pi's text, not the MC's copy.
-  step ~r/^Pi sends (?<text>the input of a tool awaiting approval|the reason a compaction failed|the detail of an extension's failure|the current value of a text edit) longer than its limit$/,
+  step ~r/^Pi sends (?<text>the input of a tool awaiting approval|the reason a compaction failed|the detail of an extension's failure|the current value of a text edit|the progress line of one of its subagents|the result of one of its subagents) longer than its limit$/,
        %{args: [text]} = context do
     {original, kept} =
       case text do
@@ -3480,6 +4202,23 @@ defmodule HalC2.Steps.Providers.Pi do
           [question] = await_question(context)["questions"]
           [_, kept] = String.split(question["question"], "Current value:\n", parts: 2)
           {prefill, kept}
+
+        "the progress line of one of its subagents" ->
+          line = String.duplicate("g", 5_000)
+          running = [subagent_task(1, %{"exitCode" => -1, "messages" => said(line)})]
+
+          context =
+            event_thread(context, subagent_steps(running, [subagent_task(1)]), "hand it off")
+
+          [entry] = items(context, "subagent")
+          {line, entry["progress"]}
+
+        "the result of one of its subagents" ->
+          result = String.duplicate("s", 20_000)
+          ended = [subagent_task(1, %{"messages" => said(result)})]
+          context = event_thread(context, subagent_steps(ended, ended), "hand it off")
+          [entry] = items(context, "subagent")
+          {result, entry["result"]}
       end
 
     Map.merge(context, %{cut_original: original, cut_kept: kept})
@@ -3922,4 +4661,227 @@ defmodule HalC2.Steps.Providers.Pi do
     assert last_prompt(context) =~ "/skill:deploy"
     context
   end
+
+  # --- updates ---
+
+  # The latest Pi release, as if already read from the registry.
+  @pi_latest "0.81.0"
+
+  defp pi_latest(context) do
+    :persistent_term.put(
+      {HalC2.ProviderUpdates, "pi"},
+      {@pi_latest, System.monotonic_time(:millisecond)}
+    )
+
+    ExUnit.Callbacks.on_exit(fn ->
+      for key <- [
+            {HalC2.ProviderUpdates, "pi"},
+            {HalC2.ProviderUpdates, "pi", :state},
+            {HalC2.ProviderUpdates, "pi", :offered}
+          ],
+          do: :persistent_term.erase(key)
+    end)
+
+    context
+  end
+
+  # A global npm prefix: `bin/pi` links into `lib/node_modules`, and its npm logs
+  # what it was asked and makes the fake report the latest version.
+  step "the pi command on the MC was installed with npm", context do
+    prefix = HalC2.Test.Mc.Host.path(context, "/usr/local")
+    real = Path.join(prefix, "lib/node_modules/@earendil-works/pi-coding-agent/dist/pi")
+    link = Path.join(prefix, "bin/pi")
+    context = context |> pi_latest() |> install(%{}, path: real)
+    %{dir: dir} = FakeAcp.fake(context)
+    File.mkdir_p!(Path.dirname(link))
+    File.ln_s!(real, link)
+    FakeAcp.settings(&put_in(&1, ["providers", "pi", "binaryPath"], link))
+    npm = Path.join(prefix, "bin/npm")
+    config = Path.join(dir, "config.json")
+
+    File.write!(npm, """
+    #!/bin/sh
+    echo "$@" >> '#{Path.join(prefix, "npm.log")}'
+    python3 -c 'import json,sys; p=sys.argv[1]; c=json.load(open(p)); c["version"]="#{@pi_latest}"; json.dump(c,open(p,"w"))' '#{config}'
+    """)
+
+    File.chmod!(npm, 0o755)
+    Map.put(context, :npm_prefix, prefix)
+  end
+
+  step "the user updates Pi from HAL-C2", context do
+    {reply, context} =
+      World.call_keeping(context, "server.updateProvider", %{"provider" => "pi"})
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "the Pi package is updated by npm", context do
+    prefix = context.npm_prefix
+
+    assert File.read!(Path.join(prefix, "npm.log")) ==
+             "install -g --prefix #{prefix} @earendil-works/pi-coding-agent@latest\n"
+
+    assert {:ok, %{"providers" => providers}} = context.reply
+    pi = FakeAcp.find(providers, "pi")
+    assert %{"version" => @pi_latest, "updateState" => %{"status" => "succeeded"}} = pi
+    assert pi["versionAdvisory"]["status"] == "current"
+    context
+  end
+
+  # A pi of its own (here the fake's plain script) is shown behind with no update
+  # to run, and asking for one is refused.
+  step "a Pi that npm does not own can only be updated by hand", context do
+    context = install(context)
+
+    {reply, context} =
+      World.call_keeping(context, "server.updateProvider", %{"provider" => "pi"})
+
+    assert {:error, "This installation cannot be updated from here.", _} = reply
+    input = %{"instanceId" => "pi", "refreshModels" => true}
+
+    {{:ok, %{"providers" => providers}}, context} =
+      World.call_keeping(context, "server.refreshProviders", input, "default", 60_000)
+
+    advisory = FakeAcp.find(providers, "pi")["versionAdvisory"]
+    assert %{"status" => "behind_latest", "canUpdate" => false, "updateCommand" => nil} = advisory
+    context
+  end
+
+  # --- tool images ---
+
+  # A 1x1 PNG.
+  @screenshot "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+  @screenshot_details %{"url" => "http://localhost:3000/", "viewport" => %{"width" => 1280}}
+
+  step "a Pi tool returns a screenshot alongside structured results", context do
+    content = [
+      %{"type" => "text", "text" => "Took a screenshot."},
+      %{"type" => "image", "data" => @screenshot, "mimeType" => "image/png"}
+    ]
+
+    step = %{
+      "tool" => "screenshot",
+      "args" => %{"url" => "http://localhost:3000/"},
+      "content" => content,
+      "details" => @screenshot_details
+    }
+
+    event_thread(context, [step, %{"text" => "Done."}], "take a screenshot")
+  end
+
+  step "the tool call shows the screenshot as an image, not as text", context do
+    assert [%{"toolName" => "screenshot"} = tool] = items(context, "dynamic_tool")
+    assert tool["output"] == "Took a screenshot."
+    assert [%{"type" => "image", "mimeType" => "image/png"} = image] = tool["attachments"]
+    assert File.read!(HalC2.Attachments.path(image)) == Base.decode64!(@screenshot)
+    assert image["sizeBytes"] == byte_size(Base.decode64!(@screenshot))
+    context
+  end
+
+  step "its structured results are kept in the tool's details", context do
+    assert [%{"details" => @screenshot_details}] = items(context, "dynamic_tool")
+    context
+  end
+
+  # The extension HAL-C2 writes for Pi, run under bun with a stand-in Pi API.
+  @extension_harness Path.expand("../../support/pi_extension_harness.ts", __DIR__)
+
+  # --- a folder Pi does not trust ---
+
+  # HAL-C2's extension, run on the project's folder, says what Pi skipped there;
+  # the fake Pi then says it as it starts, as Pi does at `session_start`.
+  step "Pi has not trusted the project's folder", context do
+    root = World.project(context).root
+    File.mkdir_p!(Path.join(root, ".pi/extensions"))
+    File.write!(Path.join(root, ".pi/settings.json"), "{}")
+    File.mkdir_p!(Path.join(root, ".agents/skills/review"))
+
+    event = JSON.encode!(%{"type" => "session_start", "reason" => "startup"})
+    ctx = %{"cwd" => root, "trusted" => false}
+    {_, notices} = extension_event("session_start", event, ctx)
+    assert [notice] = Enum.filter(notices, &(&1["message"] =~ "trust"))
+    ui = %{"method" => "notify", "message" => notice["message"], "notifyType" => notice["type"]}
+    context |> install(%{"startupUi" => [ui]}) |> FakeAcp.thread() |> Map.put(:untrusted, root)
+  end
+
+  # A first turn of a new thread and of one Pi resumes (a new access mode starts
+  # a new Pi on the thread's session), each after a turn Pi was already running.
+  step "a Pi thread runs its first turn, new or resumed", context do
+    context = context |> turn("hello Pi") |> turn("and again")
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.runtime-mode.set",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, context.thread),
+        "runtimeMode" => "approval-required"
+      })
+
+    turn(context, "hello again")
+  end
+
+  step "the thread shows one notice naming the folder and what Pi skipped", context do
+    assert [_, _] = thread_starts(context)
+    runs = context |> state() |> StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+    assert [first, _, resumed] = runs
+    notices = items(context, "system_notice")
+    assert Enum.map(notices, & &1["runId"]) == [first["id"], resumed["id"]]
+
+    for %{"message" => message} <- notices do
+      assert message =~ "Pi does not trust #{context.untrusted}"
+      assert message =~ "skipped the folder's settings, extensions and skills"
+    end
+
+    context
+  end
+
+  step "the notice says how to trust the folder with {string} in Pi's terminal app",
+       %{args: [command]} = context do
+    for %{"message" => message} <- items(context, "system_notice") do
+      assert message =~ ~s(run "#{command}" in Pi's terminal app)
+    end
+
+    context
+  end
+
+  # --- OpenRouter output cap ---
+
+  # The cap is the extension's `before_provider_request` handler.
+
+  step ~r/^a Pi thread uses an? (?<model>OpenRouter model|model from another provider)$/,
+       %{args: [model]} = context do
+    provider = if model == "OpenRouter model", do: "openrouter", else: "anthropic"
+    Map.put(context, :pi_model, %{"provider" => provider, "id" => "some/model"})
+  end
+
+  step ~r/^Pi asks the model for up to (?<asked>[\d,]+) output tokens$/,
+       %{args: [asked]} = context do
+    payload = %{"model" => "some/model", "max_tokens" => tokens(asked)}
+    event = JSON.encode!(%{"type" => "before_provider_request", "payload" => payload})
+    ctx = %{"model" => context.pi_model}
+    {sent, _notices} = extension_event("before_provider_request", event, ctx)
+    Map.put(context, :sent, sent || payload)
+  end
+
+  step ~r/^the request goes out asking for (?<sent>[\d,]+)$/, %{args: [sent]} = context do
+    assert context.sent["max_tokens"] == tokens(sent)
+    assert context.sent["model"] == "some/model"
+    context
+  end
+
+  # Runs the extension's handlers for one event (`event` JSON, `ctx` a map) under
+  # bun: their result and the notices they showed.
+  defp extension_event(name, event, ctx) do
+    args = [@extension_harness, HalC2.Pi.extension_path(), name, event, JSON.encode!(ctx)]
+    env = [{"HAL_C2_MCP_URL", nil}, {"HAL_C2_MCP_BEARER_TOKEN", nil}]
+    {out, 0} = System.cmd("bun", args, env: env, stderr_to_stdout: true)
+
+    %{"result" => result, "notices" => notices} =
+      out |> String.split("\n", trim: true) |> List.last() |> JSON.decode!()
+
+    {result, notices}
+  end
+
+  defp tokens(text), do: text |> String.replace(",", "") |> String.to_integer()
 end

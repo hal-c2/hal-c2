@@ -105,6 +105,10 @@ MODE_FILE = os.path.join(DIR, NAME + ".mode")
 if CONTROL.get("keepMode") and os.path.exists(MODE_FILE):
     mode = open(MODE_FILE).read()
 
+# "legacyModes": older ACP session modes (`modes`, set by session/set_mode).
+legacy_modes = CONTROL.get("legacyModes", [])
+legacy_mode = legacy_modes[0] if legacy_modes else None
+
 # "sessionOptions": more configOptions, as given; a set one keeps its new value.
 extra_options = [dict(o) for o in CONTROL.get("sessionOptions", [])]
 
@@ -144,6 +148,13 @@ asked = {}           # our request id -> (kind, prompt id, session)
 answers = {}         # replies collected for a "read file" turn
 authenticating = None
 
+def mode_entry(m):
+    # `modeDescriptions` may hold null, as some agents send.
+    entry = {"id": m, "name": m.capitalize()}
+    if m in CONTROL.get("modeDescriptions", {}):
+        entry["description"] = CONTROL["modeDescriptions"][m]
+    return entry
+
 def finish(pid, sid, text, reason="end_turn"):
     if text:
         say(sid, text, "msg-%d-%s" % (os.getpid(), pid))
@@ -155,7 +166,7 @@ def title_json(text):
     return json.dumps({k: (False if k == "needsRefinement" else "%s %s" % (NAME, k)) for k in keys})
 
 def prompt(pid, sid, text):
-    global held
+    global held, legacy_mode
     # Closes its output and keeps running, deaf to its input (upstream #21323).
     if "close output" in text and "<conversation_history>" not in text:
         log({"event": "closed", "at": time.time()})
@@ -182,6 +193,15 @@ def prompt(pid, sid, text):
         os._exit(CONTROL.get("exitCode", 1))
     if "Return a JSON object" in text or "Return JSON with keys" in text:
         return finish(pid, sid, "Here it is: " + title_json(text))
+    # "switch yourself to MODE": changes its older session mode on its own, as an agent
+    # leaving plan mode does, and says so. "say your mode" names the mode it is in.
+    m = re.search(r"switch yourself to (\S+)", text)
+    if m and legacy_modes and "<conversation_history>" not in text:
+        legacy_mode = m.group(1)
+        update(sid, {"sessionUpdate": "current_mode_update", "currentModeId": legacy_mode})
+        return finish(pid, sid, "mode: " + legacy_mode)
+    if "say your mode" in text:
+        return finish(pid, sid, "mode: %s" % legacy_mode)
     # "start a helper": runs a helper that exits at once, so its pid is free for reuse.
     if "start a helper" in text and "<conversation_history>" not in text:
         helper = subprocess.Popen(["true"])
@@ -227,6 +247,25 @@ def prompt(pid, sid, text):
         send({"id": "url-" + m.group(1), "method": "elicitation/create", "params": {"mode": "url",
               "url": "https://acme.test/" + m.group(1), "elicitationId": m.group(1), "message": "Sign in to Acme"}})
         return finish(pid, sid, "asked for " + m.group(1))
+    # "say N characters": one text update that long.
+    m = re.search(r"say (\d+) characters", text)
+    if m and "<conversation_history>" not in text:
+        say(sid, "x" * int(m.group(1)), "long-%s" % pid)
+        return finish(pid, sid, "")
+    # "updates [...]": sends each session update as given, then ends the turn.
+    m = re.search(r"updates (\[.*\])", text)
+    if m and "<conversation_history>" not in text:
+        for u in json.loads(m.group(1)):
+            # "_session" sends the update for another session of the agent's.
+            update(u.pop("_session", sid), u)
+        return finish(pid, sid, "")
+    m = re.search(r"ask (\S+) (\{.*\})", text)
+    if m:
+        # One client request; the turn ends with its answer.
+        asked["ask-%s" % pid] = ("ask", pid, sid)
+        send({"id": "ask-%s" % pid, "method": m.group(1),
+              "params": dict(json.loads(m.group(2)), sessionId=sid)})
+        return
     if "read file" in text:
         # A file outside the workspace, and a terminal.
         answers[pid] = {}
@@ -294,11 +333,12 @@ def prompt(pid, sid, text):
     finish(pid, sid, "Hello from %s" % NAME)
 
 def initialize_result():
-    caps = {"loadSession": True, "sessionCapabilities": {"resume": {}, "list": {}, "delete": {}},
-            "providers": {}}
+    caps = {"loadSession": True, "sessionCapabilities": {"resume": {}, "list": {}, "delete": {}}}
+    if CONTROL.get("providerConfig", True):
+        caps["providers"] = {}
     if CONTROL.get("logout", True):
         caps["auth"] = {"logout": {}}
-    return {"protocolVersion": 1, "agentInfo": {"name": NAME, "version": CONTROL.get("version", "1.2.3")},
+    return {"protocolVersion": CONTROL.get("protocolVersion", 1), "agentInfo": {"name": NAME, "version": CONTROL.get("version", "1.2.3")},
             "authMethods": CONTROL.get("methods", []), "agentCapabilities": caps}
 
 for line in sys.stdin:
@@ -306,6 +346,13 @@ for line in sys.stdin:
     method, params, mid = msg.get("method"), msg.get("params") or {}, msg.get("id")
     log({"event": "request" if method else "response", "method": method, "id": mid,
          "params": params, "result": msg.get("result"), "error": msg.get("error")})
+
+    # Requests left unanswered, or answered with an error.
+    if method in CONTROL.get("silent", []):
+        continue
+    if method in CONTROL.get("fail", []):
+        send({"id": mid, "error": {"code": -32603, "message": "acme could not do " + method}})
+        continue
 
     if method is None:
         kind, pid, sid = asked.pop(mid, (None, None, None))
@@ -318,6 +365,8 @@ for line in sys.stdin:
         elif kind == "permission":
             allowed = msg["result"]["outcome"].get("optionId") == "allow"
             finish(pid, sid, "allowed" if allowed else "denied")
+        elif kind == "ask":
+            finish(pid, sid, "answer: %s" % json.dumps(msg.get("result") or msg.get("error")))
         elif kind == "read":
             say(sid, "read: %s\n\n" % json.dumps(msg.get("result") or msg.get("error")), "read-%s" % pid)
         elif kind in ("fs", "terminal"):
@@ -355,9 +404,15 @@ for line in sys.stdin:
         if CONTROL.get("legacyModels") and not (method != "session/new" and CONTROL.get("resumeWithoutModels")):
             result["models"] = {"currentModelId": model,
                                 "availableModels": [{"modelId": v, "name": n} for v, n in models]}
+        if legacy_modes:
+            result["modes"] = {"currentModeId": legacy_mode,
+                               "availableModes": [mode_entry(m) for m in legacy_modes]}
         if method == "session/new":
             result["sessionId"] = sid
         send({"id": mid, "result": result})
+    elif method == "session/set_mode" and legacy_modes:
+        legacy_mode = params["modeId"]
+        send({"id": mid, "result": {}})
     elif method == "session/set_config_option":
         if CONTROL.get("legacyModels") and params.get("configId") == "model":
             send({"id": mid, "error": {"code": -32601, "message": "Use session/set_model"}})
@@ -382,7 +437,13 @@ for line in sys.stdin:
             send({"id": held[0], "result": {"stopReason": "cancelled"}})
             held = None
     elif method == "session/list":
-        send({"id": mid, "result": {"nextCursor": None, "sessions": []}})
+        # `sessions`, `pageSize` at a time; the cursor is where the next page starts.
+        listed = CONTROL.get("sessions", [])
+        start = int(params.get("cursor") or 0)
+        size = CONTROL.get("pageSize", len(listed) or 1)
+        more = start + size < len(listed)
+        send({"id": mid, "result": {"nextCursor": str(start + size) if more else None,
+                                    "sessions": listed[start:start + size]}})
     elif method == "session/delete":
         send({"id": mid, "result": {}})
     elif method == "providers/list":
