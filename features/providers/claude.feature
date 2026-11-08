@@ -833,16 +833,14 @@ Feature: Claude
     Then "review" and "/init" are offered
 
   # Upstream #20167: skills from folders added in Claude's launch arguments are offered.
-  @backlog
   Scenario: Skills from a folder added in Claude's launch arguments are offered
     Given Claude's launch arguments add the folder "/work/tools"
     And "/work/tools" has the skill "demo"
     When the user types "$" in a Claude thread's composer
-    Then "demo" is offered
+    Then "demo" is offered to Claude
     And a message mentioning "$demo" runs it as Claude's skill
 
   # Upstream #23281: every --add-dir directory reaches Claude, not only the last one.
-  @backlog
   Scenario Outline: Every folder Claude's launch arguments add is in its reach and offers its skills
     Given Claude's launch arguments are <arguments>
     When a Claude session starts
@@ -857,7 +855,7 @@ Feature: Claude
 
   # Upstream #27485: an escaped space at the end of the last argument was dropped, leaving a path
   # that ended in a backslash.
-  @backlog @priority-low
+  @priority-low
   Scenario: An escaped space at the end of Claude's launch arguments is kept
     Given Claude's launch arguments are "--add-dir /work/project\ "
     When a Claude session starts
@@ -1068,7 +1066,6 @@ Feature: Claude
 
   # Upstream #22864: a --settings launch argument was replaced by the settings T3 built, so
   # the user's settings never reached Claude.
-  @backlog
   Scenario Outline: Claude's --settings launch argument is merged with HAL-C2's settings
     Given the Claude instance has the launch argument "--settings <value>"
     When the user sends a message to Claude
@@ -1082,7 +1079,6 @@ Feature: Claude
 
   # Upstream #22864: a missing value, bad JSON or an unreadable file fails the turn before
   # Claude opens, without showing the settings' values.
-  @backlog
   Scenario: A --settings launch argument that cannot be read fails the turn
     Given the Claude instance has the launch argument "--settings" with JSON that does not parse
     When the user sends a message to Claude
@@ -1090,7 +1086,6 @@ Feature: Claude
     And the error and the logs name no value from those settings
 
   # Upstream #22864: full access and auto read the switches that turn them off from --settings too.
-  @backlog
   Scenario: Settings in Claude's launch arguments that turn off bypass are respected
     Given the Claude instance's --settings launch argument turns off bypassing permissions
     And a Claude thread in full access
@@ -1098,7 +1093,6 @@ Feature: Claude
     Then the thread says full access is not available and runs in the mode Claude allows
 
   # Upstream #24402: a managed policy that set disableBypassPermissionsMode to false was unreadable and blocked full access.
-  @backlog
   Scenario: A managed policy that explicitly allows bypassing permissions keeps full access
     Given Claude's managed settings set "permissions.disableBypassPermissionsMode" to false
     And a Claude thread in full access
@@ -1765,7 +1759,7 @@ Feature: Claude
 
   # Upstream #28410: Claude reported the SDK's default, or a value inherited from the host, as the
   # program that started it.
-  @backlog @priority-low
+  @priority-low
   Scenario Outline: Claude started by the MC names HAL-C2 as the program that started it
     Given <setting>
     When the MC starts Claude for a turn, a status check or a thread title
@@ -1779,7 +1773,6 @@ Feature: Claude
 
   # Upstream #29169: an MC started from inside a Claude Code session passed that session's
   # variables to every Claude it ran, so each acted as part of a session it did not belong to.
-  @backlog
   Scenario: Claude started by an MC launched from a Claude Code session does not join that session
     Given the MC was started from inside a Claude Code session
     And the Claude instance's environment sets "CLAUDE_CODE_SHELL"
@@ -2636,7 +2629,7 @@ Feature: Claude
     Then the approval reads as an ordinary approval with no explanation of why Full access asked
 
   # Upstream #20413: --append-system-prompt launch arguments were lost to HAL-C2's own instructions.
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario Outline: Instructions appended in Claude's launch arguments reach the model
     Given the Claude instance has the launch argument <argument>
     When a Claude turn starts
@@ -2648,7 +2641,7 @@ Feature: Claude
       | --append-system-prompt-file notes/rules.md     | the contents of rules.md in the thread's folder |
 
   # Upstream #20413: a missing --append-system-prompt-file stops the turn with a reason.
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: A missing appended instructions file stops the turn with a reason
     Given the Claude instance has the launch argument "--append-system-prompt-file notes/missing.md"
     When a Claude turn starts

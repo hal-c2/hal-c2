@@ -2026,6 +2026,7 @@ defmodule HalC2.Steps.Providers.Claude do
              "CLAUDE_CONFIG_DIR" => context.router_config,
              "HOME" => System.user_home!(),
              "ANTHROPIC_BASE_URL" => "https://openrouter.test/api",
+             "CLAUDE_CODE_ENTRYPOINT" => "hal-c2",
              "ANTHROPIC_AUTH_TOKEN" => "sk-or-secret"
            }
 
@@ -2314,7 +2315,16 @@ defmodule HalC2.Steps.Providers.Claude do
 
   step "a Claude turn starts", context do
     context = World.launch_on(context, @thread, "claudeAgent", "hello")
-    World.await_runs(context, @thread, ["completed"])
+
+    # A turn that fails to start (a launch argument that could not be read)
+    # still started, and failed.
+    World.await_value(context, @thread, fn state ->
+      match?(
+        [%{"status" => status}] when status in ["completed", "failed"],
+        StreamState.list(state, "run")
+      )
+    end)
+
     context
   end
 
@@ -4979,6 +4989,19 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   defp launch_args(context, text) do
+    # A `--settings <file>` launch argument names a file in the thread's
+    # folder; the scenario's is written there (its `includeCoAuthoredBy` is
+    # the user's, its `showThinkingSummaries` collides with HAL-C2's own).
+    case Regex.run(~r/--settings[= ]([^\s'"]+\.json)/, text) do
+      [_, file] ->
+        path = Path.join(World.project(context).root, file)
+        File.mkdir_p!(Path.dirname(path))
+        File.write!(path, ~s({"includeCoAuthoredBy": false, "showThinkingSummaries": false}))
+
+      _ ->
+        :ok
+    end
+
     World.put_settings(context, %{"providers" => %{"claudeAgent" => %{"launchArgs" => text}}})
     World.reset_provider_caches()
     context
@@ -5115,17 +5138,321 @@ defmodule HalC2.Steps.Providers.Claude do
   step "Claude is started with those arguments", context do
     argv = last_argv(context)
     assert "--verbose" in argv
-
-    assert Enum.any?(
-             Enum.chunk_every(argv, 2, 1, :discard),
-             &match?(["--append-system-prompt", "be brief"], &1)
-           )
-
+    # The user's appended instruction rides in HAL-C2's one appended prompt.
+    assert Enum.count(argv, &(&1 == "--append-system-prompt")) == 1
+    assert flag_value(argv, "--append-system-prompt") =~ "be brief"
     context
   end
 
   step "the Claude instance has the launch argument {string}", %{args: [argument]} = context do
     context |> World.fake_providers() |> launch_args(argument)
+  end
+
+  # --- launch arguments: --settings, appended instructions, --add-dir ------------------
+
+  step "Claude runs with the user's settings and HAL-C2's settings together", context do
+    merged = settings(Map.put(context, :argv, last_argv(context)))
+    assert merged["includeCoAuthoredBy"] == false
+    assert merged["showThinkingSummaries"] == true
+    assert Enum.count(last_argv(context), &(&1 == "--settings")) == 1
+    context
+  end
+
+  step "where both set the same key, HAL-C2's value is used", context do
+    merged = settings(Map.put(context, :argv, last_argv(context)))
+    assert merged["showThinkingSummaries"] == true
+    context
+  end
+
+  # The outline's inline-JSON row: its quotes sit inside the Gherkin string.
+  step ~r/^the Claude instance has the launch argument "--settings '(?<json>.+)'"$/,
+       %{args: [json]} = context do
+    context |> World.fake_providers() |> launch_args("--settings '#{json}'")
+  end
+
+  step "the Claude instance has the launch argument \"--settings\" with JSON that does not parse",
+       context do
+    context |> World.fake_providers() |> launch_args("--settings {broken-value")
+  end
+
+  step "the turn fails before Claude starts, saying its settings argument could not be read",
+       context do
+    assert last_error(context) =~ "--settings launch argument could not be read"
+    assert World.claude_starts(context) == []
+    context
+  end
+
+  step "the error and the logs name no value from those settings", context do
+    refute last_error(context) =~ "broken-value"
+    assert World.provider_log(context, "claude") == []
+    context
+  end
+
+  step "the Claude instance's --settings launch argument turns off bypassing permissions",
+       context do
+    context
+    |> World.fake_providers()
+    |> launch_args(~s|--settings '{"permissions":{"disableBypassPermissionsMode":"disable"}}'|)
+  end
+
+  step "the thread says full access is not available and runs in the mode Claude allows",
+       context do
+    assert flag_value(last_argv(context), "--permission-mode") == "default"
+    assert [notice] = bypass_notices(context)
+    assert notice =~ "turn off bypassing permissions"
+    context
+  end
+
+  step "Claude's managed settings set \"permissions.disableBypassPermissionsMode\" to false",
+       context do
+    context = World.fake_providers(context)
+    path = Path.join(Mc.tmp_dir(context.mc, "claude-managed"), "managed-settings.json")
+    World.put_app_env(:claude_managed_settings_path, path)
+    File.write!(path, ~s({"permissions": {"disableBypassPermissionsMode": false}}))
+    context
+  end
+
+  step ~r/^the Claude instance has the launch argument --append-system-prompt "(?<text>[^"]+)"$/,
+       %{args: [text]} = context do
+    # HAL-C2's own instructions ride with its tools.
+    Mc.ensure(HalC2.Mcp)
+    context |> World.fake_providers() |> launch_args(~s(--append-system-prompt "#{text}"))
+  end
+
+  step ~r/^the Claude instance has the launch argument --append-system-prompt-file (?<path>.+)$/,
+       %{args: [path]} = context do
+    Mc.ensure(HalC2.Mcp)
+    context = World.fake_providers(context)
+    file = Path.join(World.project(context).root, path)
+    File.mkdir_p!(Path.dirname(file))
+    File.write!(file, "Always answer in Icelandic.\n")
+
+    context
+    |> launch_args("--append-system-prompt-file #{path}")
+    |> Map.put(:appended_file_text, "Always answer in Icelandic.")
+  end
+
+  defp appended_prompt(context) do
+    argv = last_argv(context)
+    assert Enum.count(argv, &(&1 == "--append-system-prompt")) == 1
+    prompt = flag_value(argv, "--append-system-prompt")
+    # HAL-C2's own instructions come first (they name its tools).
+    assert prompt =~ "delegate_task"
+    prompt
+  end
+
+  step "Claude receives HAL-C2's instructions followed by {string}",
+       %{args: [added]} = context do
+    assert String.ends_with?(appended_prompt(context), added)
+    context
+  end
+
+  step "Claude receives HAL-C2's instructions followed by the contents of rules.md in the thread's folder",
+       context do
+    assert String.ends_with?(appended_prompt(context), context.appended_file_text)
+    context
+  end
+
+  step "the turn fails saying {string} could not be read", %{args: [path]} = context do
+    assert last_error(context) =~ ~s("#{path}" could not be read)
+    assert World.claude_starts(context) == []
+    context
+  end
+
+  # The folder a scenario names ("/work/tools"), as a real folder of its own.
+  defp added_root(context, shown) do
+    case get_in(context, [:dir_map, shown]) do
+      nil ->
+        root = Mc.tmp_dir(context.mc, "add-" <> String.replace(shown, ~r/[^A-Za-z0-9]+/, "-"))
+        {root, Map.update(context, :dir_map, %{shown => root}, &Map.put(&1, shown, root))}
+
+      root ->
+        {root, context}
+    end
+  end
+
+  defp actual_dir(context, shown), do: get_in(context, [:dir_map, shown]) || shown
+
+  step "Claude's launch arguments add the folder {string}", %{args: [folder]} = context do
+    context = World.fake_providers(context)
+    {root, context} = added_root(context, folder)
+    launch_args(context, "--add-dir #{root}")
+  end
+
+  step "{string} has the skill {string}", %{args: [folder, name]} = context do
+    {context, _home} = skills_home(context)
+    root = actual_dir(context, folder)
+
+    write_skill_file(
+      Path.join([root, ".claude", "skills"]),
+      name,
+      "---\ndescription: Demo\n---\nDo it.\n"
+    )
+
+    context
+  end
+
+  step "the user types \"$\" in a Claude thread's composer", context do
+    open_skill_list(context)
+  end
+
+  step "a message mentioning \"$demo\" runs it as Claude's skill", context do
+    context = World.launch_on(context, @thread, "claudeAgent", "Please $demo this")
+    World.await_runs(context, @thread, ["completed"])
+    assert List.last(last_user_texts(context)) =~ ~r{^/demo(\s|$)}
+    context
+  end
+
+  step "Claude's launch arguments are {string}", %{args: [text]} = context do
+    context = World.fake_providers(context)
+    {context, _home} = skills_home(context)
+
+    # The two folders the outline names, each with a skill of its own.
+    {text, context} =
+      Enum.reduce(["/work/apps", "/work/lib"], {text, context}, fn shown, {text, context} ->
+        if String.contains?(text, shown) do
+          {root, context} = added_root(context, shown)
+          skill = if shown =~ "apps", do: "apps-skill", else: "lib-skill"
+
+          write_skill_file(
+            Path.join([root, ".claude", "skills"]),
+            skill,
+            "---\ndescription: From #{shown}\n---\nDo it.\n"
+          )
+
+          {String.replace(text, shown, root), context}
+        else
+          {text, context}
+        end
+      end)
+
+    launch_args(context, text)
+  end
+
+  step "a Claude session starts", context do
+    context = World.launch_on(context, @thread, "claudeAgent", "hello")
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "Claude may work in {string} and {string} without asking",
+       %{args: [first, second]} = context do
+    dirs = HalC2.Claude.Provider.add_dirs(last_argv(context))
+    assert actual_dir(context, first) in dirs
+    assert actual_dir(context, second) in dirs
+    context
+  end
+
+  step "Claude may work in {string} without asking", %{args: [folder]} = context do
+    dirs = HalC2.Claude.Provider.add_dirs(last_argv(context))
+    assert actual_dir(context, folder) in dirs
+    context
+  end
+
+  step "skills under both folders are offered", context do
+    context = open_skill_list(context)
+    assert offered(context, "apps-skill")
+    assert offered(context, "lib-skill")
+    context
+  end
+
+  # --- who started Claude, and the session it must not join ----------------------------
+
+  step "the MC was started from inside a Claude Code session", context do
+    World.put_os_env("CLAUDECODE", "1")
+    World.put_os_env("CLAUDE_CODE_ENTRYPOINT", "cli")
+    World.put_os_env("CLAUDE_CODE_SESSION_ID", "the-session-that-started-the-mc")
+    World.fake_providers(context)
+  end
+
+  step "the Claude instance's environment names {string} as the entrypoint",
+       %{args: [name]} = context do
+    context
+    |> World.fake_providers()
+    |> instance_env(%{"CLAUDE_CODE_ENTRYPOINT" => name})
+  end
+
+  step "Claude's settings file and the instance's environment both name one", context do
+    context = World.fake_providers(context)
+    {context, home} = skills_home(context)
+
+    File.write!(
+      Path.join(home, "settings.json"),
+      JSON.encode!(%{"env" => %{"CLAUDE_CODE_ENTRYPOINT" => "settings-bot"}})
+    )
+
+    context
+    |> instance_env(%{"CLAUDE_CODE_ENTRYPOINT" => "instance-bot"})
+    |> Map.put(:settings_entrypoint, "settings-bot")
+  end
+
+  step "the MC starts Claude for a turn, a status check or a thread title", context do
+    context = World.text_writers(context, [:claude])
+
+    World.merge_settings(%{
+      "textGenerationModelSelection" => %{"instanceId" => "claudeAgent", "model" => "haiku"}
+    })
+
+    :ok = HalC2.Claude.Provider.load()
+    context = World.launch_on(context, @thread, "claudeAgent", "hello")
+    World.await_runs(context, @thread, ["completed"])
+
+    assert {:ok, %{"title" => _}} =
+             HalC2.TextGeneration.thread_title(World.project(context).root, "Fix the login form")
+
+    context
+  end
+
+  step "the MC starts Claude for a turn", context do
+    context = World.launch_on(context, @thread, "claudeAgent", "hello")
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  defp start_envs(context) do
+    for %{"argv" => _argv, "env" => env} <- World.provider_log(context, "claude"), do: env
+  end
+
+  step "Claude names HAL-C2 as the program that started it", context do
+    for env <- start_envs(context), do: assert(env["CLAUDE_CODE_ENTRYPOINT"] == "hal-c2")
+    for call <- World.text_calls(context), do: assert(call["entrypoint"] == "hal-c2")
+    context
+  end
+
+  step "Claude names {string} as the program that started it", %{args: [name]} = context do
+    for env <- start_envs(context), do: assert(env["CLAUDE_CODE_ENTRYPOINT"] == name)
+    for call <- World.text_calls(context), do: assert(call["entrypoint"] == name)
+    context
+  end
+
+  step "Claude names the one in Claude's settings file as the program that started it",
+       context do
+    for env <- start_envs(context),
+        do: assert(env["CLAUDE_CODE_ENTRYPOINT"] == context.settings_entrypoint)
+
+    for call <- World.text_calls(context),
+        do: assert(call["entrypoint"] == context.settings_entrypoint)
+
+    context
+  end
+
+  step "the Claude instance's environment sets \"CLAUDE_CODE_SHELL\"", context do
+    context
+    |> World.fake_providers()
+    |> instance_env(%{"CLAUDE_CODE_SHELL" => "/bin/the-instance-shell"})
+  end
+
+  step "Claude is not part of the Claude Code session that started the MC", context do
+    env = context |> start_envs() |> List.last()
+    refute Map.has_key?(env, "CLAUDECODE")
+    refute Map.has_key?(env, "CLAUDE_CODE_SESSION_ID")
+    context
+  end
+
+  step "Claude gets the instance's \"CLAUDE_CODE_SHELL\"", context do
+    env = context |> start_envs() |> List.last()
+    assert env["CLAUDE_CODE_SHELL"] == "/bin/the-instance-shell"
+    context
   end
 
   # A run confined to reading: a message dispatched with `readOnly`, the way an
@@ -6424,7 +6751,12 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   defp bypass_notices(context) do
-    for item <- StreamState.list(World.stream(context, @thread), "turn-item"),
+    title =
+      if (context[:threads] || %{})[@thread],
+        do: @thread,
+        else: World.current_thread(context)
+
+    for item <- StreamState.list(World.stream(context, title), "turn-item"),
         item["type"] == "system_notice",
         get_in(item, ["nativeItemRef", "nativeId"])
         |> to_string()

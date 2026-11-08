@@ -366,7 +366,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       turn.model
       |> Provider.launch(Map.get(turn, :options, %{}), Entities.instance(ids))
       |> auto_compact(Entities.instance(ids))
-      |> with_launch_args(Entities.instance(ids))
+      |> with_launch_args(Entities.instance(ids), Map.get(turn, :cwd))
       |> Map.put(:mcp, HalC2.Mcp.for_agent(state.thread_id, Entities.instance(ids)))
       |> then(&Map.put(&1, :disallowed_tools, disallowed_tools(&1.mcp)))
       |> Map.put(:instance, Entities.instance(ids))
@@ -1017,35 +1017,150 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
-  # The instance's configured launch arguments reach the CLI, less the permission
-  # flags among them: a `--permission-mode` (or `--dangerously-skip-permissions`)
-  # there wins over the thread's mode instead of going to the CLI twice. Claude
-  # is asked for summaries of its thinking unless thinking is off or the launch
-  # arguments already say how thinking is shown.
-  defp with_launch_args(launch, instance) do
+  # The instance's configured launch arguments reach the CLI, less the ones
+  # HAL-C2 sets itself: a permission flag there wins over the thread's mode
+  # instead of going to the CLI twice (below), `--settings` is merged under
+  # HAL-C2's settings (HAL-C2's value wins where both set a key), and
+  # `--append-system-prompt[-file]` follows HAL-C2's own instructions in the
+  # one flag the CLI reads. A settings or instructions value that cannot be
+  # read fails the turn before Claude starts, naming no value from it. Claude
+  # is asked for summaries of its thinking unless thinking is off or the
+  # launch arguments already say how thinking is shown.
+  defp with_launch_args(launch, instance, cwd) do
     case Provider.launch_args(instance) do
       {:ok, args} ->
         {override, rest} = take_permission_flag(args)
 
-        summaries? =
-          launch.settings["alwaysThinkingEnabled"] != false and
-            not Enum.any?(rest, &String.starts_with?(&1, "--thinking-display"))
+        with {:ok, user_settings, rest} <- take_settings(rest, cwd),
+             {:ok, appended, rest} <- take_appended(rest, cwd) do
+          summaries? =
+            launch.settings["alwaysThinkingEnabled"] != false and
+              not Enum.any?(rest, &String.starts_with?(&1, "--thinking-display"))
 
-        settings =
-          if summaries?,
-            do: Map.put(launch.settings, "showThinkingSummaries", true),
-            else: launch.settings
+          own =
+            if summaries?,
+              do: Map.put(launch.settings, "showThinkingSummaries", true),
+              else: launch.settings
 
-        launch
-        |> Map.put(:settings, settings)
-        |> Map.put(:extra_args, rest)
-        |> Map.put(:permission_override, override)
-        |> Map.put(:thinking_summaries, summaries?)
+          launch
+          |> Map.put(:settings, deep_merge(user_settings, own))
+          |> Map.put(:extra_args, rest)
+          |> Map.put(:appended, appended)
+          |> Map.put(:permission_override, override)
+          |> Map.put(:thinking_summaries, summaries?)
+        else
+          {:error, message} ->
+            launch
+            |> Map.put(:extra_args, [])
+            |> Map.put(:appended, [])
+            |> Map.put(:launch_error, message)
+        end
 
       {:error, message} ->
         launch
         |> Map.put(:extra_args, [])
+        |> Map.put(:appended, [])
         |> Map.put(:launch_error, "Claude could not start: #{message}")
+    end
+  end
+
+  defp deep_merge(left, right) do
+    Map.merge(left, right, fn _key, a, b ->
+      if is_map(a) and is_map(b), do: deep_merge(a, b), else: b
+    end)
+  end
+
+  # Every `--settings` value in `args`, read and merged in order: a value
+  # starting with `{` is JSON, any other names a settings file (relative to
+  # the thread's folder). The flags leave `args`; HAL-C2's own `--settings`
+  # carries the merged result.
+  defp take_settings(args, cwd), do: take_settings(args, cwd, %{}, [])
+
+  defp take_settings([], _cwd, settings, kept), do: {:ok, settings, Enum.reverse(kept)}
+
+  defp take_settings(["--settings", value | rest], cwd, settings, kept),
+    do: merge_settings_value(value, rest, cwd, settings, kept)
+
+  defp take_settings(["--settings=" <> value | rest], cwd, settings, kept),
+    do: merge_settings_value(value, rest, cwd, settings, kept)
+
+  defp take_settings(["--settings"], _cwd, _settings, _kept),
+    do: {:error, settings_error()}
+
+  defp take_settings([arg | rest], cwd, settings, kept),
+    do: take_settings(rest, cwd, settings, [arg | kept])
+
+  defp merge_settings_value(value, rest, cwd, settings, kept) do
+    case read_settings_value(value, cwd) do
+      {:ok, decoded} -> take_settings(rest, cwd, deep_merge(settings, decoded), kept)
+      :error -> {:error, settings_error()}
+    end
+  end
+
+  defp settings_error,
+    do: "Claude could not start: its --settings launch argument could not be read."
+
+  # A file the user's own launch arguments name, in the thread's folder: the
+  # same file Claude itself would read for --settings.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp read_settings_value(value, cwd) do
+    if String.starts_with?(String.trim(value), "{") do
+      case JSON.decode(value) do
+        {:ok, %{} = settings} -> {:ok, settings}
+        _ -> :error
+      end
+    else
+      with path when is_binary(path) <- cwd && Path.absname(value, cwd),
+           {:ok, text} <- File.read(path),
+           {:ok, %{} = settings} <- HalC2.Claude.Skills.decode_lenient(text) do
+        {:ok, settings}
+      else
+        _ -> :error
+      end
+    end
+  end
+
+  # Every `--append-system-prompt[-file]` value in `args`, in order; a file is
+  # read from the thread's folder, and one that cannot be read stops the turn
+  # saying which.
+  defp take_appended(args, cwd), do: take_appended(args, cwd, [], [])
+
+  defp take_appended([], _cwd, appended, kept),
+    do: {:ok, Enum.reverse(appended), Enum.reverse(kept)}
+
+  defp take_appended(["--append-system-prompt", text | rest], cwd, appended, kept),
+    do: take_appended(rest, cwd, [text | appended], kept)
+
+  defp take_appended(["--append-system-prompt=" <> text | rest], cwd, appended, kept),
+    do: take_appended(rest, cwd, [text | appended], kept)
+
+  defp take_appended(["--append-system-prompt"], _cwd, _appended, _kept),
+    do:
+      {:error,
+       "Claude could not start: its --append-system-prompt launch argument could not be read."}
+
+  defp take_appended(["--append-system-prompt-file", path | rest], cwd, appended, kept),
+    do: read_appended_file(path, rest, cwd, appended, kept)
+
+  defp take_appended(["--append-system-prompt-file=" <> path | rest], cwd, appended, kept),
+    do: read_appended_file(path, rest, cwd, appended, kept)
+
+  defp take_appended(["--append-system-prompt-file"], _cwd, _appended, _kept),
+    do:
+      {:error,
+       "Claude could not start: its --append-system-prompt-file launch argument could not be read."}
+
+  defp take_appended([arg | rest], cwd, appended, kept),
+    do: take_appended(rest, cwd, appended, [arg | kept])
+
+  # As above: a file the user's launch arguments name, in the thread's folder.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp read_appended_file(path, rest, cwd, appended, kept) do
+    with true <- is_binary(cwd),
+         {:ok, text} <- File.read(Path.absname(path, cwd)) do
+      take_appended(rest, cwd, [text | appended], kept)
+    else
+      _ -> {:error, ~s(Claude could not start: "#{path}" could not be read.)}
     end
   end
 
@@ -1093,9 +1208,17 @@ defmodule HalC2.Claude.ThreadRuntime do
       instance = Entities.instance(turn.ids)
       config_dir = HalC2.Claude.Provider.config_dir(instance, turn.cwd)
 
-      case HalC2.Claude.Skills.bypass_permissions(config_dir, turn.cwd) do
-        :allowed -> turn
-        limited -> Map.put(turn, :bypass_limited, limited)
+      # The switches that turn bypass off are read from the `--settings` launch
+      # argument too: it is merged into the settings the session runs with.
+      cond do
+        HalC2.Claude.Skills.bypass_disabled_in?(turn.launch.settings) ->
+          Map.put(turn, :bypass_limited, :disabled)
+
+        true ->
+          case HalC2.Claude.Skills.bypass_permissions(config_dir, turn.cwd) do
+            :allowed -> turn
+            limited -> Map.put(turn, :bypass_limited, limited)
+          end
       end
     else
       turn
@@ -1310,6 +1433,7 @@ defmodule HalC2.Claude.ThreadRuntime do
           do: HalC2.Mcp.Tools.read_only_allowed()
         ),
       disallowed_tools: Map.get(turn.launch, :disallowed_tools, []),
+      appended: Map.get(turn.launch, :appended, []),
       extra_args: Map.get(turn.launch, :extra_args, []),
       # The instance's variables in settings (such as CLAUDE_CONFIG_DIR) reach Claude,
       # over the project's environment when the project loads it.
@@ -1343,21 +1467,26 @@ defmodule HalC2.Claude.ThreadRuntime do
         path -> [{"CLAUDE_CONFIG_DIR", HalC2.Claude.Provider.expand_home(path)}]
       end
 
-    Enum.to_list(HalC2.Settings.instance_env(instance)) ++
-      home ++
-      if(turn.launch.mcp,
-        do: [{"MCP_TOOL_TIMEOUT", to_string(HalC2.Mcp.tool_timeout_ms())}],
-        else: []
-      )
+    (Enum.to_list(HalC2.Settings.instance_env(instance)) ++
+       home ++
+       if(turn.launch.mcp,
+         do: [{"MCP_TOOL_TIMEOUT", to_string(HalC2.Mcp.tool_timeout_ms())}],
+         else: []
+       ))
+    |> then(&HalC2.Claude.Provider.spawn_env(instance, &1))
   end
 
   # The `claude` the turn's instance runs: its binary path in settings, else the one on PATH.
+  # Session variables of a Claude session the MC was started from do not reach it.
   defp command(turn) do
-    Entities.instance(turn.ids)
+    instance = Entities.instance(turn.ids)
+
+    instance
     |> HalC2.Settings.instance_command(
       Application.get_env(:hal_c2, :claude_command) || ["claude"]
     )
     |> HalC2.Claude.Provider.resolve_command()
+    |> HalC2.Claude.Provider.scrubbed_command(instance)
   end
 
   # A fork's first turn resumes the source session at the fork point, as a new session.

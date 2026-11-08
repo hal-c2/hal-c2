@@ -131,7 +131,7 @@ if sys.argv[1:] == ["auth", "status"]:
                       "email": ACCOUNT_EMAIL}))
     sys.exit(0)
 # The start also traces where it was pointed: its config directory, its account and any router.
-trace({"argv": sys.argv[1:], "account": ACCOUNT_EMAIL, "env": {k: v for k, v in os.environ.items() if k.startswith("ANTHROPIC_") or k in ("CLAUDE_CONFIG_DIR", "HOME")}})
+trace({"argv": sys.argv[1:], "account": ACCOUNT_EMAIL, "env": {k: v for k, v in os.environ.items() if k.startswith("ANTHROPIC_") or k in ("CLAUDE_CONFIG_DIR", "HOME", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_TOOL_USE_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SHELL")}})
 for line in sys.stdin:
     msg = json.loads(line)
     trace({"in": msg})

@@ -72,7 +72,9 @@ defmodule HalC2.ProviderUpdates do
   defp latest_for(driver, _update, _instance), do: latest(driver)
 
   # The channel a native Claude install follows, from the `autoUpdatesChannel`
-  # of the instance's Claude settings; `latest` when it does not say.
+  # of the instance's Claude settings; `latest` when it does not say. Only that
+  # fixed file under the instance's config directory is read.
+  # sobelow_skip ["Traversal.FileModule"]
   defp claude_channel(instance) do
     path =
       Path.join(HalC2.Claude.Provider.config_dir(instance || "claudeAgent"), "settings.json")

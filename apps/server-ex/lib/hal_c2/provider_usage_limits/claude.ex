@@ -145,15 +145,22 @@ defmodule HalC2.ProviderUsageLimits.Claude do
     opts = [
       handler: self(),
       command:
-        command(instance) ++ ["--settings", ~s({"disableAllHooks":true}), "--strict-mcp-config"],
+        HalC2.Claude.Provider.scrubbed_command(
+          command(instance) ++
+            ["--settings", ~s({"disableAllHooks":true}), "--strict-mcp-config"],
+          instance
+        ),
       persist_session: false,
       env:
-        Enum.to_list(HalC2.Settings.instance_env(instance)) ++
-          [
-            {"ENABLE_CLAUDEAI_MCP_SERVERS", "false"},
-            {"CLAUDE_CODE_AUTO_CONNECT_IDE", "0"},
-            {"CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL", "1"}
-          ]
+        HalC2.Claude.Provider.spawn_env(
+          instance,
+          Enum.to_list(HalC2.Settings.instance_env(instance)) ++
+            [
+              {"ENABLE_CLAUDEAI_MCP_SERVERS", "false"},
+              {"CLAUDE_CODE_AUTO_CONNECT_IDE", "0"},
+              {"CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL", "1"}
+            ]
+        )
     ]
 
     with {:ok, session} <- Session.start_link(opts) do

@@ -20,9 +20,24 @@ defmodule HalC2.Claude.Skills do
     config_dir = config_dir || Provider.config_dir(instance, cwd)
     overrides = skill_overrides(config_dir, cwd)
 
+    # Folders the instance's launch arguments add (`--add-dir`) are in Claude's
+    # reach, and their `.claude/skills` are offered with the project's.
+    added =
+      case Provider.launch_args(instance) do
+        {:ok, args} ->
+          for dir <- Provider.add_dirs(args) do
+            root = if cwd, do: Path.absname(dir, cwd), else: dir
+            {Path.join([root, ".claude", "skills"]), "project"}
+          end
+
+        _ ->
+          []
+      end
+
     roots =
       [{Path.join(config_dir, "skills"), "user"}] ++
-        if(cwd, do: [{Path.join([cwd, ".claude", "skills"]), "project"}], else: [])
+        if(cwd, do: [{Path.join([cwd, ".claude", "skills"]), "project"}], else: []) ++
+        added
 
     roots
     |> Enum.flat_map(fn {root, scope} -> read_root(root, scope, overrides) end)
@@ -314,6 +329,11 @@ defmodule HalC2.Claude.Skills do
     end)
   end
 
+  @doc "Whether a decoded Claude settings map turns bypassing permissions off."
+  @spec bypass_disabled_in?(term) :: boolean
+  def bypass_disabled_in?(settings),
+    do: get_in(settings || %{}, ["permissions", "disableBypassPermissionsMode"]) == "disable"
+
   # Reads only Claude's own settings files: fixed names under its config dir and
   # the project's root, never a path a client sent.
   # sobelow_skip ["Traversal.FileModule"]
@@ -321,10 +341,7 @@ defmodule HalC2.Claude.Skills do
     with {:ok, text} <- File.read(path),
          false <- String.trim(text) == "",
          {:ok, settings} when is_map(settings) <- decode_lenient(text) do
-      case settings["permissions"] do
-        %{"disableBypassPermissionsMode" => "disable"} -> :disabled
-        _ -> :allowed
-      end
+      if bypass_disabled_in?(settings), do: :disabled, else: :allowed
     else
       {:error, :enoent} -> :allowed
       {:error, :enotdir} -> :allowed

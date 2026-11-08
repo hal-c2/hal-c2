@@ -266,17 +266,90 @@ defmodule HalC2.Claude.Provider do
   end
 
   # The `env` object of the instance's Claude settings file, keyed as written.
-  defp settings_env(instance) do
+  # Only that fixed file under the instance's config directory is read.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp settings_env(instance, keys \\ @auth_env_keys) do
     path = Path.join(config_dir(instance), "settings.json")
 
     with {:ok, text} <- File.read(path),
          {:ok, %{"env" => env}} when is_map(env) <- HalC2.Claude.Skills.decode_lenient(text) do
       Map.new(env, fn {key, value} -> {to_string(key), to_string(value)} end)
-      |> Map.take(@auth_env_keys)
+      |> Map.take(keys)
     else
       _ -> %{}
     end
   end
+
+  # The variables that say a process runs inside someone else's Claude Code
+  # session. An MC started from inside one inherits them; a Claude the MC
+  # starts must not act as part of that session.
+  @session_env_keys ~w(CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_TOOL_USE_ID CLAUDE_CODE_CHILD_SESSION)
+
+  @doc """
+  The program a Claude the MC starts names as the one that started it
+  (`CLAUDE_CODE_ENTRYPOINT`): Claude's settings file wins, then the instance's
+  variables, else HAL-C2 itself — never the entrypoint of a Claude session
+  the MC happened to be started from.
+  """
+  @spec entrypoint(String.t()) :: String.t()
+  def entrypoint(instance \\ "claudeAgent") do
+    trim(settings_env(instance, ["CLAUDE_CODE_ENTRYPOINT"])["CLAUDE_CODE_ENTRYPOINT"]) ||
+      trim(HalC2.Settings.instance_env(instance)["CLAUDE_CODE_ENTRYPOINT"]) ||
+      "hal-c2"
+  end
+
+  @doc """
+  `pairs` with the session's entrypoint naming (`entrypoint/1`) applied, for
+  every `claude` the MC spawns. Session-identity variables the MC inherited
+  are a command problem, not an env one: see `scrubbed_command/2`.
+  """
+  @spec spawn_env(String.t(), [{String.t(), String.t()}]) :: [{String.t(), String.t()}]
+  def spawn_env(instance, pairs) do
+    pairs
+    |> Enum.reject(fn {key, _} -> key == "CLAUDE_CODE_ENTRYPOINT" end)
+    |> Kernel.++([{"CLAUDE_CODE_ENTRYPOINT", entrypoint(instance)}])
+  end
+
+  @doc """
+  `command` wrapped so the Claude Code session variables the MC inherited do
+  not reach the Claude it starts (`env -u`, as other adapters remove an
+  inherited key). A variable the instance itself sets is kept. Unchanged on
+  Windows, whose launchers `resolve_command/1` already unwrapped.
+  """
+  @spec scrubbed_command([String.t()], String.t()) :: [String.t()]
+  def scrubbed_command(command, instance \\ "claudeAgent") do
+    own = HalC2.Settings.instance_env(instance)
+
+    unset =
+      for key <- @session_env_keys,
+          System.get_env(key) != nil,
+          not Map.has_key?(own, key),
+          do: key
+
+    if unset == [] or elem(Application.get_env(:hal_c2, :os_type, :os.type()), 0) == :win32 do
+      command
+    else
+      ["env"] ++ Enum.flat_map(unset, &["-u", &1]) ++ command
+    end
+  end
+
+  @doc """
+  The folders launch `args` add with `--add-dir`, in every spelling Claude
+  takes: `--add-dir a b` (variadic, until the next flag), repeated
+  `--add-dir`, and `--add-dir=a`.
+  """
+  @spec add_dirs([String.t()]) :: [String.t()]
+  def add_dirs(args), do: add_dirs(args, [])
+
+  defp add_dirs([], dirs), do: Enum.reverse(dirs)
+  defp add_dirs(["--add-dir=" <> dir | rest], dirs), do: add_dirs(rest, [dir | dirs])
+
+  defp add_dirs(["--add-dir" | rest], dirs) do
+    {taken, rest} = Enum.split_while(rest, &(not String.starts_with?(&1, "--")))
+    add_dirs(rest, Enum.reverse(taken, dirs))
+  end
+
+  defp add_dirs([_arg | rest], dirs), do: add_dirs(rest, dirs)
 
   # How instance `id` is signed in, before any turn runs: a key, token or cloud
   # backend in its environment signs it in without the CLI's word; else
@@ -361,6 +434,8 @@ defmodule HalC2.Claude.Provider do
     result
   end
 
+  # `path` is the instance's resolved claude executable, as every spawn runs it.
+  # sobelow_skip ["CI.System"]
   defp run_auth_status(id, path) do
     home =
       case home_path(id) do
@@ -590,16 +665,23 @@ defmodule HalC2.Claude.Provider do
 
     opts = [
       handler: self(),
-      command: command(id) ++ ["--settings", ~s({"disableAllHooks":true}), "--strict-mcp-config"],
+      command:
+        scrubbed_command(
+          command(id) ++ ["--settings", ~s({"disableAllHooks":true}), "--strict-mcp-config"],
+          id
+        ),
       persist_session: false,
       env:
-        Enum.to_list(HalC2.Settings.instance_env(id)) ++
-          home ++
-          [
-            {"ENABLE_CLAUDEAI_MCP_SERVERS", "false"},
-            {"CLAUDE_CODE_AUTO_CONNECT_IDE", "0"},
-            {"CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL", "1"}
-          ]
+        spawn_env(
+          id,
+          Enum.to_list(HalC2.Settings.instance_env(id)) ++
+            home ++
+            [
+              {"ENABLE_CLAUDEAI_MCP_SERVERS", "false"},
+              {"CLAUDE_CODE_AUTO_CONNECT_IDE", "0"},
+              {"CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL", "1"}
+            ]
+        )
     ]
 
     case Session.start_link(opts) do
