@@ -308,17 +308,27 @@ defmodule HalC2.Acp.Auth do
   @reason_chars 500
 
   # What a sign-in failure never shows: an address with a scheme, a scheme-less host/path
-  # that looks like a login page (`github.com/login/device`), or a device code (two groups
-  # of four letters or digits, either case, holding both: `WXYZ-9876`; `HTTP-502` and
-  # `SHA-256` have no such shape).
+  # that looks like a login page (`github.com/login/device`), or a device code: two groups
+  # of 4-5 characters. RFC 8628 §6.1 recommends upper-case letters (`WDJB-MJHT`), so any
+  # all-upper-case letters/digits pair is one (`AB12C-DE34F`, `WXYZ-9876`). In lower case
+  # only a pair with an all-digit group beside a group holding a letter is (`wxyz-9876`):
+  # `gpt4-mini` has no all-digit group, and `HTTP-502`/`SHA-256` have a group under 4.
   @sign_in_address ~r/https?:\/\/|\b[a-z0-9-]+(?:\.[a-z0-9-]+)+\/\S*(?:login|device|oauth|auth|activate|verify)/i
-  @device_code ~r/\b[a-z0-9]{4}-[a-z0-9]{4}\b/i
+  @device_code ~r/\b[a-z0-9]{4,5}-[a-z0-9]{4,5}\b/i
 
   defp sign_in_secret?(said) do
     said =~ @sign_in_address or
-      Enum.any?(Regex.scan(@device_code, said), fn [code] ->
-        code =~ ~r/\d/ and code =~ ~r/[a-z]/i
-      end)
+      Enum.any?(Regex.scan(@device_code, said), fn [code] -> device_code?(code) end)
+  end
+
+  defp device_code?(code) do
+    groups = String.split(code, "-")
+
+    cond do
+      code =~ ~r/\A[A-Z0-9]+-[A-Z0-9]+\z/ -> true
+      code =~ ~r/[A-Z]/ -> false
+      true -> Enum.any?(groups, &(&1 =~ ~r/\A\d+\z/)) and code =~ ~r/[a-z]/
+    end
   end
 
   defp refused(message, reason) do
