@@ -24,6 +24,13 @@
 #                      session/new answers (a catalog still settling)
 #   availableCommands  sent as an `available_commands_update` when a session opens
 #   googleAuth         Antigravity's Google sign-in (see fake_google_auth.py)
+#   versionDelayMs / versionHang / versionExit
+#                      how a `--version` invocation answers (Grok's health probe)
+#   updatedVersion     an `update` invocation installs this version; with
+#                      updateRequiresAllowScripts it does so only when
+#                      npm_config_allow_scripts names the Grok package
+#   delaysMs           {method: ms} a method is answered only after the delay
+#   failInitializeTimes  the first N initialize calls (across processes) fail
 #
 # Turn steps: {"text": s}, {"thought": s}, {"update": sessionUpdate[, "sessionId": child's
 # session, else the prompt's]}, {"request": {method,
@@ -72,7 +79,26 @@ def update(sid, u):
 
 log({"start": {"argv": sys.argv, "cwd": os.getcwd(), "pid": os.getpid(),
                "env": {k: v for k, v in os.environ.items()
-                       if k.startswith(ENV_PREFIXES) or k == "TMPDIR"}}})
+                       if k.startswith(ENV_PREFIXES) or k in (
+                           "TMPDIR", "npm_config_allow_scripts")}}})
+
+if len(sys.argv) > 1 and sys.argv[1] == "--version":
+    import time
+    cfg = config()
+    if cfg.get("versionHang"):
+        time.sleep(3600)
+    time.sleep((cfg.get("versionDelayMs") or 0) / 1000.0)
+    print("grok %s" % cfg.get("version", "1.0.0"))
+    sys.exit(cfg.get("versionExit") or 0)
+
+if len(sys.argv) > 1 and sys.argv[1] == "update":
+    cfg = config()
+    allowed = os.environ.get("npm_config_allow_scripts") == "@xai-official/grok"
+    if cfg.get("updatedVersion") and (allowed or not cfg.get("updateRequiresAllowScripts")):
+        cfg["version"] = cfg["updatedVersion"]
+        with open(CONFIG, "w") as f:
+            json.dump(cfg, f)
+    sys.exit(0)
 
 cancelled = False
 
@@ -229,6 +255,23 @@ while True:
         sys.dont_write_bytecode = True  # no __pycache__ in the source tree
         import fake_google_auth
         if fake_google_auth.handle(msg, cfg, send):
+            continue
+    delay = (cfg.get("delaysMs") or {}).get(method)
+    if delay:
+        import time
+        time.sleep(delay / 1000.0)
+    if method == "initialize" and cfg.get("failInitializeTimes"):
+        marker = os.path.join(DIR, "init-failures")
+        try:
+            with open(marker) as f:
+                seen = int(f.read().strip() or 0)
+        except OSError:
+            seen = 0
+        if seen < cfg["failInitializeTimes"]:
+            with open(marker, "w") as f:
+                f.write(str(seen + 1))
+            send({"id": mid, "error": cfg.get("initError") or
+                  {"code": -32002, "message": "initialize failed"}})
             continue
     if method == "initialize" and cfg.get("initError"):
         send({"id": mid, "error": cfg["initError"]})
