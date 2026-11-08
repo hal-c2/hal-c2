@@ -2,7 +2,7 @@ defmodule HalC2.PiSteerPropTest do
   @moduledoc """
   A state machine over one Pi thread (`HalC2.Pi.ThreadRuntime`) driven through the
   orchestration commands a client sends: send a message whose turn works until it is
-  steered or stopped, either taking the steer into its running work or settling just
+  steered or stopped (or Pi aborts it itself, which reads as interrupted), either taking the steer into its running work or settling just
   before the steer lands (so Pi answers it in a run of its own), or just before two
   steers sent at once land; steer the running turn, with a message Pi takes, one it
   refuses, one it refuses only once the run settled (which finds the turn over, so it
@@ -12,12 +12,21 @@ defmodule HalC2.PiSteerPropTest do
   steer it twice at once, including a declined steer held behind one Pi never answers
   (in either order); steer it twice staggered, the second dispatched while the first
   is still in flight, so a held refusal outlives the first steer's own answer budget;
-  interrupt it.
+  steer `/compact` and stop the turn while the compaction runs, then run a turn
+  during which the abandoned compaction's late events land (Pi's `abort` does not
+  stop a compaction) followed by that turn's own compaction; or stop it while a
+  compaction that fails without any events runs, so only the task's own reply ends
+  the abandonment, and the next compaction must still show; send a message while the
+  abandoned compaction still runs, which Pi starts only once it ends and shows nothing
+  for until then (the turn watchdog must not settle it as idle); send a message Pi's
+  extensions take a few seconds to start on, plainly or through a prompt template,
+  reading idle all the while (it must not be settled as idle either); interrupt it.
 
   Turns run on the fake `pi --mode rpc` in `test/support/fake_pi_rpc.py`. The model
   checks that each turn ends once, with the status it should, that every steer's
-  answer is recorded in the thread, whichever way Pi ran it, and that a steer Pi refused
-  is an error for its sender that leaves the turn running. Messages resent on their own
+  answer is recorded in the thread, whichever way Pi ran it, that a steer Pi refused
+  is an error for its sender that leaves the turn running, and that no compaction
+  shows in a turn except that turn's own. Messages resent on their own
   at once may run in either order, so runs and replies compare as sets. After each command the test
   waits on the thread's stream until the runs it ended have ended and a running turn
   began saying "Working on it.".
@@ -38,7 +47,91 @@ defmodule HalC2.PiSteerPropTest do
   @turns [
     %{"match" => "joins", "steps" => [%{"text" => "Working on it."}, %{"waitAbort" => true}]},
     %{"match" => "ends", "steps" => [%{"text" => "Working on it."}, %{"settleOnSteer" => 1}]},
-    %{"match" => "pair", "steps" => [%{"text" => "Working on it."}, %{"settleOnSteer" => 2}]}
+    %{"match" => "pair", "steps" => [%{"text" => "Working on it."}, %{"settleOnSteer" => 2}]},
+    # The abandoned compaction's late events land in this turn while its
+    # task is still out (the fake's 30-second answer never arrives), followed
+    # by a compaction of this turn's own: both are dropped while it is out.
+    %{
+      "match" => "late",
+      "steps" => [
+        %{"text" => "Working on it."},
+        %{"event" => %{"type" => "compaction_start", "reason" => "manual"}},
+        %{
+          "event" => %{
+            "type" => "compaction_end",
+            "aborted" => false,
+            "result" => %{
+              "summary" => "The stopped compaction.",
+              "tokensBefore" => 1000,
+              "estimatedTokensAfter" => 200
+            }
+          }
+        },
+        %{"event" => %{"type" => "compaction_start", "reason" => "manual"}},
+        %{
+          "event" => %{
+            "type" => "compaction_end",
+            "aborted" => false,
+            "result" => %{
+              "summary" => "This turn's compaction.",
+              "tokensBefore" => 1000,
+              "estimatedTokensAfter" => 200
+            }
+          }
+        },
+        %{"text" => "Done."}
+      ]
+    },
+    # A turn Pi starts only once the compaction it is still finishing ends:
+    # until then it shows nothing and calls itself neither streaming nor
+    # (by `isStreaming`) busy, only `isCompacting`.
+    %{
+      "match" => "behind",
+      "afterCompaction" => true,
+      "steps" => [%{"text" => "Working on it."}, %{"waitAbort" => true}]
+    },
+    # A turn whose agent starts only after its extensions' hooks ran for a
+    # while (2.5 s: over two of the watchdog's 1 s idle checks), then works
+    # as a "joins" turn does.
+    %{
+      "match" => "slow",
+      "startDelaySec" => 2.5,
+      "steps" => [%{"text" => "Working on it."}, %{"waitAbort" => true}]
+    },
+    # A turn Pi aborts itself (an extension, a compaction, a session swap):
+    # it reads as interrupted though nobody stopped it.
+    %{
+      "match" => "aborts",
+      "steps" => [
+        %{"text" => "Working on it."},
+        %{
+          "event" => %{
+            "type" => "message_end",
+            "message" => %{"role" => "assistant", "stopReason" => "aborted"}
+          }
+        }
+      ]
+    },
+    # A turn that compacts on its own (an auto-compaction): its compaction shows.
+    %{
+      "match" => "own",
+      "steps" => [
+        %{"text" => "Working on it."},
+        %{"event" => %{"type" => "compaction_start", "reason" => "threshold"}},
+        %{
+          "event" => %{
+            "type" => "compaction_end",
+            "aborted" => false,
+            "result" => %{
+              "summary" => "This turn's compaction.",
+              "tokensBefore" => 1000,
+              "estimatedTokensAfter" => 200
+            }
+          }
+        },
+        %{"text" => "Done."}
+      ]
+    }
   ]
   @finished ~w(completed failed interrupted cancelled)
   @active ~w(preparing starting running waiting)
@@ -79,6 +172,9 @@ defmodule HalC2.PiSteerPropTest do
 
         HalC2.Acp.forget("pi")
         Application.put_env(:hal_c2, :pi_steer_answer_ms, @answer_ms)
+        # Long enough that a working turn's first event always lands first:
+        # the fake calls itself idle whenever it is asked.
+        Application.put_env(:hal_c2, :pi_turn_watchdog_ms, 1_000)
 
         {:ok, _} =
           HalC2.Settings.put(
@@ -87,11 +183,14 @@ defmodule HalC2.PiSteerPropTest do
           )
 
         create(work)
+        Application.put_env(:hal_c2, :pi_prop_fake_dir, Path.join(home, "fake-pi"))
         :ok = HalC2.Streams.subscribe(@tid, self(), nil)
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
         HalC2.Acp.forget("pi")
         Application.delete_env(:hal_c2, :pi_steer_answer_ms)
+        Application.delete_env(:hal_c2, :pi_turn_watchdog_ms)
+        Application.delete_env(:hal_c2, :pi_prop_fake_dir)
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -104,11 +203,45 @@ defmodule HalC2.PiSteerPropTest do
 
   # runs: [{msg, status}] in the order they were made; turn: the running turn's msg;
   # how: whether its work takes a steer in, settles as one lands, or as two land;
-  # replies: the steers answered, in order.
-  def initial_state, do: %{runs: [], turn: nil, how: nil, replies: [], next: 1}
+  # replies: the steers answered, in order; abandoned: a stopped steered compaction
+  # still out (`:events`: Pi will finish it and its events land in a later turn;
+  # `:replied`: Pi answered it with a failure and no events, so the task's reply
+  # alone ended the abandonment and nothing is left to drop);
+  # compactions: the compaction summaries shown, in order.
+  def initial_state,
+    do: %{runs: [], turn: nil, how: nil, replies: [], next: 1, abandoned: :none, compactions: []}
 
-  def command(%{turn: nil, next: next}),
-    do: {:call, __MODULE__, :send, [id(next), oneof([:joins, :ends, :pair])]}
+  # With an abandoned compaction still out (its task has not answered),
+  # the next turn may be the one its late events land in.
+  def command(%{turn: nil, abandoned: :events, next: next}) do
+    frequency([
+      {2, {:call, __MODULE__, :send_late, [id(next)]}},
+      {2, {:call, __MODULE__, :send_behind, [id(next)]}},
+      {1, {:call, __MODULE__, :send, [id(next), oneof([:joins, :ends, :pair, :aborts])]}}
+    ])
+  end
+
+  # With an abandoned compaction answered and gone, the next turn may be one
+  # that compacts on its own: that compaction must show.
+  def command(%{turn: nil, abandoned: :replied, next: next}) do
+    frequency([
+      {2, {:call, __MODULE__, :send_own, [id(next)]}},
+      {1, {:call, __MODULE__, :send, [id(next), oneof([:joins, :ends, :pair, :aborts])]}}
+    ])
+  end
+
+  def command(%{turn: nil, next: next}) do
+    frequency([
+      {5, {:call, __MODULE__, :send, [id(next), oneof([:joins, :ends, :pair, :aborts])]}},
+      {1, {:call, __MODULE__, :send_handled, [id(next)]}},
+      {1, {:call, __MODULE__, :send_silent, [id(next)]}},
+      {1, {:call, __MODULE__, :send_slow, [id(next), oneof(["", "/review "])]}}
+    ])
+  end
+
+  # A turn waiting behind the abandoned compaction takes no steer: Pi has
+  # not started it. It can only be stopped.
+  def command(%{how: :behind}), do: {:call, __MODULE__, :interrupt, []}
 
   # A turn that settles as two steers land waits for both: it is steered twice at once,
   # or with a message Pi refuses before it waits on.
@@ -143,6 +276,8 @@ defmodule HalC2.PiSteerPropTest do
       {1, {:call, __MODULE__, :steer, [id(next), :declined]}},
       {1, {:call, __MODULE__, :steer, [id(next), :vanishes]}},
       {1, {:call, __MODULE__, :steer, [id(next), :ignored]}},
+      {3, {:call, __MODULE__, :steer_compact_stop, [id(next)]}},
+      {1, {:call, __MODULE__, :steer_compact_stop_fail, [id(next)]}},
       {1, {:call, __MODULE__, :interrupt, []}}
     ])
   end
@@ -151,17 +286,97 @@ defmodule HalC2.PiSteerPropTest do
   defp id(n), do: "m" <> String.pad_leading(Integer.to_string(n), 3, "0")
 
   def precondition(%{turn: turn}, {:call, _, :send, _}), do: turn == nil
+  def precondition(%{turn: turn}, {:call, _, :send_handled, _}), do: turn == nil
+  def precondition(%{turn: turn}, {:call, _, :send_slow, _}), do: turn == nil
+
+  # A silent turn stops the session, which also ends any abandonment; keep it
+  # to when none is out, like a stopped steered compaction.
+  def precondition(state, {:call, _, :send_silent, _}),
+    do: state.turn == nil and state.abandoned == :none
+
+  def precondition(state, {:call, _, :send_late, _}),
+    do: state.turn == nil and state.abandoned == :events
+
+  def precondition(state, {:call, _, :send_behind, _}),
+    do: state.turn == nil and state.abandoned == :events
+
+  def precondition(%{how: :behind}, {:call, _, call, _}), do: call == :interrupt
+
+  def precondition(state, {:call, _, :send_own, _}),
+    do: state.turn == nil and state.abandoned == :replied
+
   def precondition(%{how: how}, {:call, _, :steer_pair, _}), do: how == :pair
   def precondition(%{how: how}, {:call, _, :steer_staggered, _}), do: how == :pair
+
+  # A steered compaction stopped mid-flight needs a turn still working, and
+  # no earlier abandoned compaction still out (its late events come first).
+  def precondition(state, {:call, _, :steer_compact_stop, _}),
+    do: state.how == :joins and state.abandoned == :none
+
+  def precondition(state, {:call, _, :steer_compact_stop_fail, _}),
+    do: state.how == :joins and state.abandoned == :none
 
   def precondition(%{how: :pair}, {:call, _, :steer, [_, kind]}), do: kind == :refused
   # A turn taking a steer in answers it; one that settled as it landed never does.
   def precondition(%{how: how}, {:call, _, :steer, [_, :ignored]}), do: how == :ends
   def precondition(%{turn: turn}, {:call, _, _, _}), do: turn != nil
 
+  # Pi aborts this turn itself: it ends interrupted at once.
+  def next_state(state, _result, {:call, _, :send, [msg, :aborts]}) do
+    %{state | next: state.next + 1, runs: state.runs ++ [{msg, "interrupted"}]}
+  end
+
+  # An extension command Pi handles without the agent: no work ever shows,
+  # Pi reports idle, and the turn completes.
+  def next_state(state, _result, {:call, _, :send_handled, [msg]}) do
+    %{state | next: state.next + 1, runs: state.runs ++ [{msg, "completed"}]}
+  end
+
+  # Pi reads idle for a few seconds before its agent starts: the turn is
+  # not settled as idle, and once started it works as a "joins" turn.
+  def next_state(state, _result, {:call, _, :send_slow, [msg, _prefix]}) do
+    runs = state.runs ++ [{msg, "running"}]
+    %{state | next: state.next + 1, runs: runs, turn: msg, how: :joins}
+  end
+
+  # Pi never reports work and stops answering checks: the session is
+  # stopped and the turn fails (the next send starts a fresh Pi).
+  def next_state(state, _result, {:call, _, :send_silent, [msg]}) do
+    %{state | next: state.next + 1, runs: state.runs ++ [{msg, "failed"}], abandoned: :none}
+  end
+
   def next_state(state, _result, {:call, _, :send, [msg, how]}) do
     runs = state.runs ++ [{msg, "running"}]
     %{state | next: state.next + 1, runs: runs, turn: msg, how: how}
+  end
+
+  # The abandoned compaction's events land in this turn while its task is
+  # still out, so they show nothing — and neither does a compaction of this
+  # turn's own right after them: only the task's reply (or Pi going away)
+  # ends the abandonment, and this one's reply never lands. The turn itself
+  # runs to its end.
+  def next_state(state, _result, {:call, _, :send_late, [msg]}) do
+    %{state | next: state.next + 1, runs: state.runs ++ [{msg, "completed"}]}
+  end
+
+  # Pi shows nothing for this turn while it finishes the abandoned
+  # compaction, which outlasts the test: the turn runs on, not settled as
+  # idle. Stopped, Pi drops it before it starts; the compaction runs on.
+  def next_state(state, _result, {:call, _, :send_behind, [msg]}) do
+    runs = state.runs ++ [{msg, "running"}]
+    %{state | next: state.next + 1, runs: runs, turn: msg, how: :behind}
+  end
+
+  # The abandoned compaction is already answered and gone, so this turn's
+  # own compaction shows as it would have. The turn runs to its end.
+  def next_state(state, _result, {:call, _, :send_own, [msg]}) do
+    %{
+      state
+      | next: state.next + 1,
+        runs: state.runs ++ [{msg, "completed"}],
+        abandoned: :none,
+        compactions: state.compactions ++ ["This turn's compaction."]
+    }
   end
 
   # Staggered or at once, the pair's outcomes are the same.
@@ -211,8 +426,9 @@ defmodule HalC2.PiSteerPropTest do
     do: end_turn(%{state | next: state.next + 1}, "completed")
 
   # Pi exits with the steer unanswered: the turn fails, and the message runs on its own.
+  # The dead Pi also takes any abandoned compaction with it: its events never land.
   def next_state(state, _result, {:call, _, :steer, [msg, :vanishes]}) do
-    state = end_turn(state, "failed")
+    state = end_turn(%{state | abandoned: :none}, "failed")
 
     %{
       state
@@ -242,6 +458,18 @@ defmodule HalC2.PiSteerPropTest do
     end_turn(state, "completed")
   end
 
+  # The steered compaction's caller is answered as a stopped turn's steer is,
+  # and the turn ends interrupted; Pi goes on compacting, so its events are
+  # still to land in a later turn, where they must show nothing.
+  def next_state(state, _result, {:call, _, :steer_compact_stop, _}),
+    do: end_turn(%{state | next: state.next + 1, abandoned: :events}, "interrupted")
+
+  # As above, but Pi answers the abandoned compaction with a failure and no
+  # events: the task's reply alone ends the abandonment, and a later turn's
+  # own compaction must show as it would have.
+  def next_state(state, _result, {:call, _, :steer_compact_stop_fail, _}),
+    do: end_turn(%{state | next: state.next + 1, abandoned: :replied}, "interrupted")
+
   def next_state(state, _result, {:call, _, :interrupt, _}), do: end_turn(state, "interrupted")
 
   defp end_turn(%{turn: turn} = state, status) do
@@ -263,7 +491,8 @@ defmodule HalC2.PiSteerPropTest do
 
     replied? and
       Enum.sort(projection.runs) == Enum.sort(model.runs) and
-      Enum.sort(projection.replies) == Enum.sort(model.replies)
+      Enum.sort(projection.replies) == Enum.sort(model.replies) and
+      projection.compactions == model.compactions
   end
 
   # --- commands ---------------------------------------------------------------------
@@ -284,7 +513,90 @@ defmodule HalC2.PiSteerPropTest do
 
   # `how`: whether the turn's work takes a steer in (:joins) or settles as it lands (:ends).
   def send(msg, how) do
-    reply(Orchestration.dispatch(message(msg, "#{how} #{msg}", "queue_after_active", "auto")), [])
+    result = Orchestration.dispatch(message(msg, "#{how} #{msg}", "queue_after_active", "auto"))
+    # A turn Pi aborts itself runs to its end; the others work on.
+    reply(result, if(how == :aborts, do: unfinished_runs(), else: []))
+  end
+
+  # A turn the abandoned compaction's late events land in while its task is
+  # still out (the "late" script sends them, then this turn's own compaction:
+  # both are dropped). It runs to its end, so the projection is taken once
+  # its run finished and its items are recorded.
+  def send_late(msg) do
+    result = Orchestration.dispatch(message(msg, "late #{msg}", "queue_after_active", "auto"))
+    {answer(result), settled(unfinished_runs(), System.monotonic_time(:millisecond) + @wait_ms)}
+  end
+
+  # A turn the fake starts only once the abandoned compaction ends. It shows
+  # nothing until then, so the projection is taken once the watchdog has
+  # checked Pi four times since the prompt: past the two idle checks that
+  # would settle it (and the one a fresh session's opening makes).
+  def send_behind(msg) do
+    checks = state_checks()
+    result = Orchestration.dispatch(message(msg, "behind #{msg}", "queue_after_active", "auto"))
+    {answer(result), behind(msg, checks + 4, System.monotonic_time(:millisecond) + @wait_ms)}
+  end
+
+  defp behind(msg, checks, deadline) do
+    state = current()
+    run = Enum.find(runs(state), &(&1["userMessageId"] == msg))
+
+    cond do
+      (run && run["status"] not in ~w(preparing starting)) and state_checks() >= checks ->
+        projection(state)
+
+      System.monotonic_time(:millisecond) > deadline ->
+        {:timeout, projection(state)}
+
+      true ->
+        receive do
+        after
+          20 -> behind(msg, checks, deadline)
+        end
+    end
+  end
+
+  # How many `get_state` checks the fake has received.
+  defp state_checks do
+    log = Path.join(Application.get_env(:hal_c2, :pi_prop_fake_dir), "log.jsonl")
+
+    case File.read(log) do
+      {:ok, text} -> text |> String.split(~s("type": "get_state")) |> length() |> Kernel.-(1)
+      _ -> 0
+    end
+  end
+
+  # An extension command the fake answers without agent work: the turn
+  # completes once the watchdog hears Pi is idle.
+  def send_handled(msg) do
+    result = Orchestration.dispatch(message(msg, "/stats #{msg}", "queue_after_active", "auto"))
+    {answer(result), settled(unfinished_runs(), System.monotonic_time(:millisecond) + @wait_ms)}
+  end
+
+  # A message whose agent starts late, plain or through a prompt template
+  # (`prefix`): the projection is taken once it is running and has said
+  # "Working on it." (settled as idle, it would have completed first).
+  def send_slow(msg, prefix) do
+    text = "#{prefix}slow #{msg}"
+    reply(Orchestration.dispatch(message(msg, text, "queue_after_active", "auto")), [])
+  end
+
+  # A prompt Pi answers and then never reports on, with its state checks
+  # failing: the watchdog stops the session and the turn fails. The checks
+  # are made to fail only for this turn (its session is already open).
+  def send_silent(msg) do
+    fake_config(&Map.put(&1, "failCommands", ["get_state"]))
+    result = Orchestration.dispatch(message(msg, "silent #{msg}", "queue_after_active", "auto"))
+    projection = settled(unfinished_runs(), System.monotonic_time(:millisecond) + @wait_ms)
+    fake_config(&Map.delete(&1, "failCommands"))
+    {answer(result), projection}
+  end
+
+  # A turn that compacts on its own (the "own") after an abandoned compaction
+  # was answered with a failure: its compaction must show.
+  def send_own(msg) do
+    result = Orchestration.dispatch(message(msg, "own #{msg}", "queue_after_active", "auto"))
+    {answer(result), settled(unfinished_runs(), System.monotonic_time(:millisecond) + @wait_ms)}
   end
 
   # `kind`: whether Pi takes the steer (:taken), which ends the turn, refuses it, refuses
@@ -350,6 +662,109 @@ defmodule HalC2.PiSteerPropTest do
     reply(Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => @tid}), ending)
   end
 
+  # Steers `/compact` at a Pi whose compaction outlasts the test, then stops
+  # the turn while it runs: the steer is answered and no compaction state may
+  # leak into whatever turn comes next.
+  def steer_compact_stop(msg) do
+    ending = active_runs()
+    before = compact_count()
+
+    steered =
+      Task.async(fn ->
+        Orchestration.dispatch(message(msg, "/compact", "start_immediately", "steer"))
+      end)
+
+    await_compact(before + 1, System.monotonic_time(:millisecond) + @wait_ms)
+    {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => @tid})
+
+    result =
+      case Task.yield(steered, @wait_ms) || Task.shutdown(steered, :brutal_kill) do
+        {:ok, reply} -> reply
+        _ -> {:error, "steered compact never answered"}
+      end
+
+    {answer(result), settled(ending, System.monotonic_time(:millisecond) + @wait_ms)}
+  end
+
+  # As `steer_compact_stop/1`, but Pi's delayed answer is a failure with no
+  # compaction events: only the compaction task's own reply can end the
+  # abandonment. Waits until that answer is on the wire (the fake logs it),
+  # then puts the fake's slow compaction back.
+  def steer_compact_stop_fail(msg) do
+    ending = active_runs()
+    before = compact_count()
+    answered = answered_count()
+
+    fake_config(&Map.merge(&1, %{"compactDelaySec" => 1, "compactError" => "nothing to compact"}))
+
+    steered =
+      Task.async(fn ->
+        Orchestration.dispatch(message(msg, "/compact", "start_immediately", "steer"))
+      end)
+
+    await_compact(before + 1, System.monotonic_time(:millisecond) + @wait_ms)
+    {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => @tid})
+
+    result =
+      case Task.yield(steered, @wait_ms) || Task.shutdown(steered, :brutal_kill) do
+        {:ok, reply} -> reply
+        _ -> {:error, "steered compact never answered"}
+      end
+
+    await_answered(answered + 1, System.monotonic_time(:millisecond) + @wait_ms)
+
+    fake_config(fn cfg ->
+      cfg |> Map.delete("compactError") |> Map.put("compactDelaySec", 30)
+    end)
+
+    {answer(result), settled(ending, System.monotonic_time(:millisecond) + @wait_ms)}
+  end
+
+  # The fake logged Pi's `compact`, so the runtime's compaction task is out.
+  defp compact_count do
+    log = Path.join(Application.get_env(:hal_c2, :pi_prop_fake_dir), "log.jsonl")
+
+    case File.read(log) do
+      {:ok, text} -> text |> String.split(~s("type": "compact")) |> length() |> Kernel.-(1)
+      _ -> 0
+    end
+  end
+
+  defp await_compact(count, deadline) do
+    if compact_count() < count and System.monotonic_time(:millisecond) < deadline do
+      receive do
+      after
+        20 -> await_compact(count, deadline)
+      end
+    end
+  end
+
+  # How many delayed compactions the fake has answered (it logs each answer
+  # once it is on the wire).
+  defp answered_count do
+    log = Path.join(Application.get_env(:hal_c2, :pi_prop_fake_dir), "log.jsonl")
+
+    case File.read(log) do
+      {:ok, text} -> text |> String.split("compact_answered") |> length() |> Kernel.-(1)
+      _ -> 0
+    end
+  end
+
+  defp await_answered(count, deadline) do
+    if answered_count() < count and System.monotonic_time(:millisecond) < deadline do
+      receive do
+      after
+        20 -> await_answered(count, deadline)
+      end
+    end
+  end
+
+  # Rewrites the fake's config; the fake reads it again on every command.
+  defp fake_config(fun) do
+    path = Path.join(Application.get_env(:hal_c2, :pi_prop_fake_dir), "config.json")
+    File.write!(path, JSON.encode!(fun.(JSON.decode!(File.read!(path)))))
+  end
+
   defp message(msg, text, mode, intent) do
     %{
       "type" => "message.dispatch",
@@ -368,7 +783,23 @@ defmodule HalC2.PiSteerPropTest do
   defp install_fake(home) do
     dir = Path.join(home, "fake-pi")
     File.mkdir_p!(dir)
-    File.write!(Path.join(dir, "config.json"), JSON.encode!(%{"turns" => @turns}))
+
+    File.write!(
+      Path.join(dir, "config.json"),
+      JSON.encode!(%{
+        "turns" => @turns,
+        "compactDelaySec" => 30,
+        "handledCommands" => ["/stats"],
+        # Only an extension's command settles after two idle checks; a
+        # prompt template expands into an agent prompt like any message.
+        "commands" => [
+          %{"name" => "stats", "source" => "extension"},
+          %{"name" => "review", "source" => "prompt"}
+        ],
+        "silentCommands" => ["silent"]
+      })
+    )
+
     bin = Path.join([dir, "bin", "pi"])
     File.mkdir_p!(Path.dirname(bin))
 
@@ -439,6 +870,12 @@ defmodule HalC2.PiSteerPropTest do
   defp projection(state) do
     %{
       runs: for(run <- runs(state), do: {run["userMessageId"], run["status"]}),
+      compactions:
+        for(
+          item <- state |> StreamState.list("turn-item") |> Enum.sort_by(& &1["ordinal"]),
+          item["type"] == "compaction",
+          do: item["summary"]
+        ),
       # Pi answers a steer it took in "steered: <text>", and one it ran on its own
       # "Reply to <text> after [...]".
       replies:

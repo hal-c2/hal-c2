@@ -39,6 +39,10 @@ Item {
     // until it is resumed.
     readonly property bool queueHeld: shown && turn.queueHeld === true
     readonly property bool queueResuming: shown && turn.queueResuming === true
+    // A queue action the MC has not answered: the rest wait for it.
+    readonly property bool queueBusy: shown && turn.queueBusy === true
+    // Why the queued messages cannot be edited now (an open question), else "".
+    readonly property string queueEditBlocked: shown ? turn.queueEditBlocked ?? "" : ""
     property int approvalIndex: 0
     readonly property var approval: approvals.length > 0 ? approvals[Math.min(approvalIndex, approvals.length - 1)] : null
     readonly property var question: questions.length > 0 ? questions[0] : null
@@ -1044,62 +1048,111 @@ Item {
 
                                 required property var modelData
                                 readonly property var attachments: modelData.attachments ?? []
+                                readonly property bool pending: modelData.pending === true
+                                readonly property bool editing: !pending && requests.composerModel?.editingQueuedRunId === modelData.runId
+                                readonly property bool actionable: !pending && !editing
 
                                 Layout.fillWidth: true
                                 spacing: 0
 
+                                // Send now first, then edit and remove, as the web has it
+                                // (no reordering). One still being saved, or one being
+                                // edited, offers nothing else.
                                 RowLayout {
+                                    objectName: "queueRow-" + (queued.pending ? queued.modelData.messageId : queued.modelData.runId)
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 32
                                     Layout.leftMargin: 12
                                     Layout.rightMargin: Theme.space.sm
                                     spacing: Theme.space.sm
 
+                                    ShellIcon {
+                                        objectName: "queueSaving-" + queued.modelData.messageId
+                                        visible: queued.pending
+                                        name: "clock"
+                                        size: 12
+                                        color: requests.muted
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: qsTr("Saving queued message")
+                                    }
+
                                     Text {
-                                        objectName: "queueText-" + queued.modelData.runId
+                                        objectName: "queueText-" + (queued.pending ? queued.modelData.messageId : queued.modelData.runId)
                                         Layout.fillWidth: true
                                         // An attachment-only message says what it carries.
-                                        text: queued.modelData.text.length > 0 || queued.attachments.length === 0 ? queued.modelData.text : qsTr("%n attachment(s)", "", queued.attachments.length)
+                                        // A quoted reply reads as its words (the controller's `shown`).
+                                        text: queued.modelData.text.length > 0 || queued.attachments.length === 0 ? (queued.modelData.shown ?? queued.modelData.text) : qsTr("%n attachment(s)", "", queued.attachments.length)
                                         textFormat: Text.PlainText
-                                        color: queued.modelData.text.length > 0 ? requests.foreground : requests.muted
+                                        color: queued.modelData.text.length > 0 && !queued.pending ? requests.foreground : requests.muted
                                         font.family: requests.uiFont
                                         font.pixelSize: Theme.type.meta.size
+                                        font.italic: queued.editing
                                         elide: Text.ElideRight
                                         maximumLineCount: 1
+                                        Accessible.description: queued.editing ? qsTr("Editing queued message") : queued.pending ? qsTr("Saving queued message") : ""
+                                    }
+
+                                    // Steers the running turn; on a stopped thread its own turn
+                                    // starts with it, ahead of the rest.
+                                    ShellButton {
+                                        objectName: "queueSendNow-" + queued.modelData.runId
+                                        visible: queued.actionable
+                                        implicitHeight: 24
+                                        subtle: true
+                                        iconName: "arrow-up"
+                                        text: qsTr("Send now")
+                                        enabled: !requests.queueBusy
+                                        onClicked: Shell.dispatch("composer.queue.steer", {
+                                            runId: queued.modelData.runId
+                                        })
+                                    }
+
+                                    Rectangle {
+                                        visible: queued.actionable
+                                        Layout.preferredWidth: 1
+                                        Layout.preferredHeight: 14
+                                        color: Qt.alpha(requests.foreground, 0.12)
                                     }
 
                                     // Editing puts the message in the composer; sending saves it.
                                     ShellButton {
                                         objectName: "queueEdit-" + queued.modelData.runId
+                                        visible: queued.actionable
                                         implicitHeight: 24
+                                        implicitWidth: implicitHeight
                                         subtle: true
-                                        text: requests.composerModel?.editingQueuedRunId === queued.modelData.runId ? qsTr("Editing") : qsTr("Edit")
-                                        enabled: requests.composerModel?.editingQueuedRunId !== queued.modelData.runId
+                                        iconName: "pencil"
+                                        enabled: !requests.queueBusy && requests.queueEditBlocked.length === 0
+                                        Accessible.name: qsTr("Edit queued message")
+                                        Accessible.description: requests.queueEditBlocked
+                                        toolTip: requests.queueEditBlocked.length > 0 ? requests.queueEditBlocked : qsTr("Edit in the composer")
                                         onClicked: Shell.dispatch("composer.queue.edit", {
                                             runId: queued.modelData.runId
                                         })
                                     }
 
                                     ShellButton {
-                                        objectName: "queueSteer-" + queued.modelData.runId
+                                        objectName: "queueRemove-" + queued.modelData.runId
+                                        visible: queued.actionable
                                         implicitHeight: 24
                                         subtle: true
-                                        text: qsTr("Steer")
-                                        onClicked: Shell.dispatch("composer.queue.steer", {
+                                        iconName: "x"
+                                        implicitWidth: implicitHeight
+                                        enabled: !requests.queueBusy
+                                        Accessible.name: qsTr("Remove from the queue")
+                                        onClicked: Shell.dispatch("composer.queue.remove", {
                                             runId: queued.modelData.runId
                                         })
                                     }
 
                                     ShellButton {
-                                        objectName: "queueRemove-" + queued.modelData.runId
+                                        objectName: "queueEditCancel-" + queued.modelData.runId
+                                        visible: queued.editing
                                         implicitHeight: 24
                                         subtle: true
-                                        iconName: "x"
-                                        implicitWidth: implicitHeight
-                                        Accessible.name: qsTr("Remove from the queue")
-                                        onClicked: Shell.dispatch("composer.queue.remove", {
-                                            runId: queued.modelData.runId
-                                        })
+                                        text: qsTr("Cancel")
+                                        Accessible.name: qsTr("Cancel editing queued message")
+                                        onClicked: Shell.dispatch("composer.queue.edit.cancel", {})
                                     }
                                 }
 
@@ -1107,7 +1160,8 @@ Item {
                                 // either opens large in the attachment viewer.
                                 Flow {
                                     objectName: "queueAttachments-" + queued.modelData.runId
-                                    visible: queued.attachments.length > 0
+                                    // Opened once the MC has them.
+                                    visible: queued.attachments.length > 0 && !queued.pending
                                     Layout.fillWidth: true
                                     Layout.leftMargin: 12
                                     Layout.rightMargin: Theme.space.sm

@@ -567,7 +567,19 @@ Rectangle {
             singleLine: { "": "foreground", [mod]: composer.model.isRunning ? "alternate" : "background" }
         };
         const intents = /[\r\n]/.test(input.text) ? table.multiline ?? table.singleLine : table.singleLine;
-        return intents[held.join("+")] ?? "";
+        const intent = intents[held.join("+")] ?? "";
+        // A shifted chord that sends is a window shortcut too (mod+Shift+Enter
+        // sends the first queued message): with nothing to send it stays theirs.
+        if (intent !== "" && held.includes("shift") && !composer.hasMessage())
+            return "";
+        return intent;
+    }
+
+    // Whether there is something to send: the controller's canSend counts every
+    // chip (excerpts, review comments, context, citations) and the open queued
+    // edit, but lags this input by the debounce, so local text and attachments count too.
+    function hasMessage() {
+        return composer.model.canSend || input.text.trim().length > 0 || composer.attachments.length > 0 || (composer.model.editingQueuedRunId ?? null) !== null;
     }
 
     function submit(intent) {
@@ -577,7 +589,7 @@ Rectangle {
         // canSend reflects the text the controller has seen, which lags this
         // input by the debounce; with local text, let the controller validate
         // the send (it echoes the prompt back if it declines).
-        if (!composer.model.canSend && input.text.trim().length === 0 && composer.attachments.length === 0 && (composer.model.editingQueuedRunId ?? null) === null) {
+        if (!composer.hasMessage()) {
             return;
         }
         textDebounce.stop();
@@ -1716,14 +1728,20 @@ Rectangle {
                             Accessible.role: Accessible.Button
                             // With a plan offered, sending implements it, or refines it with what was typed.
                             readonly property string planAction: composer.model?.planAction ?? ""
-                            // What the button does, which is also its accessible name.
+                            // What the button does, in a word (the phone shows it).
                             readonly property string label: stopMode ? qsTr("Stop")
                                 : editing ? qsTr("Update queued message")
                                 // With no connection the message waits on this device to be sent.
                                 : composer.model?.waitsForConnection === true ? qsTr("Queue")
                                 : followUp === "steer" ? qsTr("Steer") : followUp === "queue" ? qsTr("Queue")
                                 : planAction === "refine" ? qsTr("Refine") : planAction === "implement" ? qsTr("Implement") : qsTr("Send")
-                            Accessible.name: label
+                            // Its accessible name, upstream's: what sending will do to the message.
+                            readonly property string name: stopMode ? qsTr("Stop generation")
+                                : editing ? qsTr("Update queued message")
+                                : composer.model?.waitsForConnection === true || followUp === "queue" ? qsTr("Queue message")
+                                : followUp === "steer" ? qsTr("Steer message")
+                                : planAction.length > 0 ? label : qsTr("Submit message")
+                            Accessible.name: name
                             ToolTip.visible: hovered && followUp.length > 0
                             ToolTip.delay: 400
                             ToolTip.text: followUp === "steer"

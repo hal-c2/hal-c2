@@ -344,11 +344,11 @@ Item {
             compare(lastAction().action, "composer.plan.implement");
         }
 
-        function test_queuedMessageIsSteeredOrRemoved() {
+        function test_queuedMessageIsSentNowOrRemoved() {
             const requests = createTemporaryObject(requestsComponent, root);
             Shell.publishTurn({ queue: [{ runId: "run-2", text: "check the logs" }, { runId: "run-3", text: "update the docs" }] });
             waitForRendering(root);
-            mouseClick(findChild(requests, "queueSteer-run-3"));
+            mouseClick(findChild(requests, "queueSendNow-run-3"));
             compare(lastAction().action, "composer.queue.steer");
             compare(lastAction().payload.runId, "run-3");
             mouseClick(findChild(requests, "queueRemove-run-2"));

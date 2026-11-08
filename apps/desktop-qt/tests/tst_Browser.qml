@@ -29,7 +29,10 @@ TestCase {
             { tag: "blank", input: "   " },
             { tag: "file", input: "file:///etc/passwd" },
             { tag: "javascript", input: "javascript://alert(1)" },
-            { tag: "spaces", input: "not an address" }
+            { tag: "spaces", input: "not an address" },
+            { tag: "mailto", input: "mailto:alice@example.com" },
+            { tag: "javascript without slashes", input: "javascript:alert(1)" },
+            { tag: "no host", input: "http://" }
         ];
     }
 
@@ -39,9 +42,22 @@ TestCase {
         verify(result.error.length > 0);
     }
 
-    function test_otherSchemesAreNamed() {
-        compare(BrowserJs.normalizeAddress("file:///etc/passwd").error, "Only http and https pages open here.");
-        compare(BrowserJs.normalizeAddress("ftp://example.com").error, "Only http and https pages open here.");
+    // Upstream #23577: a refusal says what to type instead.
+    function test_refusalsSayWhatToType_data() {
+        return [
+            { tag: "file", input: "file:///etc/passwd", error: "Only http and https pages open here. Enter an http or https URL, such as https://example.com." },
+            { tag: "ftp", input: "ftp://example.com", error: "Only http and https pages open here. Enter an http or https URL, such as https://example.com." },
+            { tag: "mailto", input: "mailto:alice@example.com", error: "mailto: addresses do not open here. Enter an http or https URL, such as https://example.com." },
+            { tag: "no host", input: "http://", error: "\"http://\" is not a web address. Enter an http or https URL, such as https://example.com." }
+        ];
+    }
+
+    function test_refusalsSayWhatToType(data) {
+        compare(BrowserJs.normalizeAddress(data.input).error, data.error);
+    }
+
+    function test_aPortIsNotAScheme() {
+        compare(BrowserJs.normalizeAddress("example.com:8443/a").url, "https://example.com:8443/a");
     }
 
     function test_zoomSteps_data() {

@@ -66,20 +66,20 @@ Feature: Moving through a thread and following links
     And the user is looking at a long thread in "shop"
 
   # TUI: apps/tui/qml/HalC2/Tui/Timeline.qml
-  @shared @backlog-desktop @priority-high
+  @shared @priority-high
   Scenario: The view follows new output while the user is at the end
     Given the user is at the end of the thread
     When the agent writes more of its reply
     Then the new text stays in view
 
-  @shared @backlog-desktop @priority-high
+  @shared @priority-high
   Scenario: The end of the thread holds still while nothing new is written
     Given the user is at the end of the thread
     And a reply with a table sits just above the end
     When nothing new is written
     Then the view does not move
 
-  @shared @backlog-desktop @priority-high
+  @shared @priority-high
   Scenario: Scrolling away stops the view from following
     Given the agent is writing its reply
     When the user scrolls up to an earlier message
@@ -94,7 +94,7 @@ Feature: Moving through a thread and following links
     When the user scrolls up with the pointer over the page
     Then the view stays where the user scrolled while the reply grows
 
-  @shared @backlog-desktop @priority-high
+  @shared @priority-high
   Scenario: The user returns to the end of the thread
     Given the user has scrolled away from the end while the agent writes
     When the user scrolls to the end
