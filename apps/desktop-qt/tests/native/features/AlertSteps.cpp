@@ -544,3 +544,7 @@ QStringList systemNotifications(World& world) {
 bool clickSystemNotification(World& world, const QString& key) {
   return alerts(world).openThread(key);
 }
+
+void finishTurnInBackground(World& world, const QString& title) {
+  completesInBackground(world, title);
+}

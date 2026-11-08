@@ -42,6 +42,41 @@ const char* const kRuntime = R"JS(
     if (textField(el)) return !el.disabled && !el.readOnly;
     return !!el.isContentEditable;
   }
+  // What password fields hold, and the text of anything the page draws as
+  // dots, so no snapshot says it; `print` changes when any of it does.
+  function dotted(el) {
+    var style = getComputedStyle(el);
+    return (style.webkitTextSecurity || style.getPropertyValue("-webkit-text-security") || "none") !== "none";
+  }
+  function password(el) {
+    return el.tagName === "INPUT" && (el.getAttribute("type") || "").toLowerCase() === "password";
+  }
+  function secrets() {
+    var texts = [], print = [], hash = 5381;
+    if (document.body) {
+      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+      for (var el = walker.currentNode; el; el = walker.nextNode()) {
+        var field = password(el) || (textField(el) && dotted(el));
+        if (!field && (/^(SCRIPT|STYLE|TEMPLATE|INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || !dotted(el))) continue;
+        var text = field ? el.value : el.innerText;
+        print.push(el.tagName + ":" + (el.getAttribute("type") || "") + ":" + text);
+        if (text && text.length > 1) texts.push(text);
+      }
+    }
+    var all = print.join("\u0000");
+    for (var i = 0; i < all.length; i++) hash = ((hash << 5) + hash + all.charCodeAt(i)) | 0;
+    texts.sort(function (a, b) { return b.length - a.length; });
+    return { texts: texts, print: print.length + ":" + hash };
+  }
+  var hidden = [];
+  function scrub(s) {
+    s = String(s);
+    for (var i = 0; i < hidden.length; i++) {
+      if (s.indexOf(hidden[i]) >= 0) s = s.split(hidden[i]).join(new Array(Math.min(hidden[i].length, 12) + 1).join("\u2022"));
+    }
+    return s;
+  }
+  function secret(el) { return password(el) || dotted(el); }
   function esc(s) { return window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/[^\w-]/g, "\\$&"); }
   function quoted(s) { return '"' + String(s).replace(/["\\]/g, "\\$&") + '"'; }
   function selectorFor(el) {
@@ -102,7 +137,7 @@ const char* const kRuntime = R"JS(
     if (!name && tag === "img") name = norm(el.getAttribute("alt"));
     if (!name && tag !== "input" && tag !== "textarea" && tag !== "select") name = norm(el.innerText);
     if (!name) name = norm(el.getAttribute("title")) || norm(el.getAttribute("name"));
-    return name.slice(0, MAX_NAME);
+    return scrub(name).slice(0, MAX_NAME);
   }
   function describe(el) {
     var r = el.getBoundingClientRect();
@@ -130,7 +165,7 @@ const char* const kRuntime = R"JS(
       }
       return out;
     }
-    return { role: "document", name: norm(document.title), children: document.body ? walk(document.body, 0) : [] };
+    return { role: "document", name: scrub(norm(document.title)), children: document.body ? walk(document.body, 0) : [] };
   }
 
   // Locators.
@@ -311,6 +346,8 @@ const char* const kRuntime = R"JS(
 
   var ops = {
     snapshot: function () {
+      var found = secrets();
+      hidden = found.texts;
       var els = Array.prototype.slice.call(document.querySelectorAll(INTERACTIVE)).filter(shown);
       var failed = [];
       try {
@@ -323,11 +360,14 @@ const char* const kRuntime = R"JS(
           }
         });
       } catch (e) {}
-      return { url: location.href, title: document.title, loading: document.readyState !== "complete",
-        visibleText: (document.body ? document.body.innerText : "").slice(0, MAX_TEXT),
+      return { url: location.href, title: scrub(document.title), loading: document.readyState !== "complete",
+        visibleText: scrub(document.body ? document.body.innerText : "").slice(0, MAX_TEXT),
         interactiveElements: els.slice(0, MAX_ELEMENTS).map(describe), accessibilityTree: tree(),
-        networkEntries: failed, viewport: { width: innerWidth, height: innerHeight } };
+        networkEntries: failed, viewport: { width: innerWidth, height: innerHeight }, secrets: found.print };
     },
+    // What snapshot's `secrets` says, now: a snapshot whose secrets changed
+    // while it was taken cannot say it hid them.
+    secrets: function () { return { print: secrets().print }; },
     // Scrolls the click's target to the middle of the view and listens for the click.
     clickTarget: function (a) {
       if (a.x !== undefined) {
@@ -335,6 +375,7 @@ const char* const kRuntime = R"JS(
         return { x: a.x, y: a.y, scrolled: false };
       }
       var el = find(a, true);
+      hidden = secrets().texts;
       var at = centre(el);
       armClick(el);
       state.target = el;
@@ -372,8 +413,9 @@ const char* const kRuntime = R"JS(
         if (textField(el)) setValue(el, (a.clear ? "" : el.value) + a.text);
         else { if (a.clear) el.textContent = ""; el.textContent += a.text; el.dispatchEvent(new Event("input", { bubbles: true })); }
       }
+      hidden = secrets().texts;
       var r = el.getBoundingClientRect();
-      return { value: valueOf(el).slice(0, 2000), x: r.left + r.width / 2, y: r.top + r.height / 2, label: nameOf(el) };
+      return { value: secret(el) ? "" : scrub(valueOf(el)).slice(0, 2000), x: r.left + r.width / 2, y: r.top + r.height / 2, label: nameOf(el) };
     },
     armKey: function () {
       state.key = null;

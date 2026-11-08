@@ -1451,10 +1451,10 @@ defmodule HalC2.Test.Mc.World do
   Like `call/4`, but frames the MC pushed before the reply (a `config.providers`
   after a refresh, rows a command wrote) stay in the socket's inbox to be received.
   """
-  def call_keeping(context, method, payload \\ %{}, name \\ "default") do
+  def call_keeping(context, method, payload \\ %{}, name \\ "default", timeout \\ 5_000) do
     id = System.unique_integer([:positive])
     client = Mc.rpc(client(context, name), context.mc.environment, id, method, payload)
-    {frame, skipped, client} = HalC2.Test.WsClient.recv_until(client, Mc.reply?(id))
+    {frame, skipped, client} = HalC2.Test.WsClient.recv_until(client, Mc.reply?(id), timeout)
     client = %{client | inbox: skipped ++ client.inbox}
 
     reply =
