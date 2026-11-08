@@ -253,7 +253,10 @@ for line in sys.stdin:
         else:
             images = sum(1 for b in content if b.get("type") == "image")
             steer_text = "".join(b.get("text", "") for b in content) + f" (+{images} image)"
-        send({"type": "result", "subtype": "error_during_execution", "is_error": True, "terminal_reason": "aborted_streaming", "session_id": session})
+        # A steer saying "fold" is folded into the running turn instead: no result
+        # cuts that turn short, and the one result answers both.
+        if "fold" not in steer_text:
+            send({"type": "result", "subtype": "error_during_execution", "is_error": True, "terminal_reason": "aborted_streaming", "session_id": session})
         send({"type": "assistant", "session_id": session, "message": {"id": "m-steer", "role": "assistant", "content": [{"type": "text", "text": "steered: " + steer_text}]}})
         # The answer names only the steer's prompt, not the one the turn started with.
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session,

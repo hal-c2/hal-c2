@@ -4614,6 +4614,68 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # Claude opens a wake while the runtime is held, and the user's message is sent
+  # before it is let go: the wake's run then queues behind the user's, and the user's
+  # turn starts while the wake is open, so it takes the wake over (a steer). Claude
+  # folds the steer into the wake turn ("fold"): one result answers both.
+  step "a background command finished and Claude opened a wake turn", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "claudeAgent", "hello")
+
+    World.await_runs(context, @thread, ["completed"])
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    :ok = :sys.suspend(pid)
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "bash-1",
+      "status" => "completed",
+      "summary" => "Build finished"
+    })
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-wake",
+        "content" => [%{"type" => "text", "text" => "The build passed"}]
+      }
+    })
+
+    Map.put(context, :held_runtime, pid)
+  end
+
+  step "the user's queued message started and Claude folded it into the wake turn", context do
+    # The send starts its turn inline, on the held runtime: it goes in a task, and the
+    # runtime is let go once the user's run is on the stream, ahead of the wake's.
+    send_task = Task.async(fn -> World.post_message(context, @thread, "fold this in") end)
+    World.await_value(context, @thread, fn _ -> length(World.runs(context, @thread)) == 2 end)
+    :ok = :sys.resume(context.held_runtime)
+    Task.await(send_task)
+  end
+
+  step "the queued wake run starts after the user turn ended", context do
+    World.await_runs(context, @thread, ["completed", "completed", "completed"])
+    context
+  end
+
+  step "the wake run ends without waiting for Claude", context do
+    [_, user, wake] = World.runs(context, @thread)
+    messages = World.stream(context, @thread) |> StreamState.get("message")
+    assert messages[user["userMessageId"]]["text"] == "fold this in"
+    assert messages[wake["userMessageId"]]["creationSource"] == "provider"
+    assert "steered: fold this in" in World.replies(context, @thread)
+    assert length(user_messages(context)) == 2
+    context
+  end
+
+  step "the thread stops showing working", context do
+    refute Enum.any?(World.runs(context, @thread), &(&1["status"] in ["running", "starting"]))
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    assert %{turn: nil, wake: nil} = :sys.get_state(pid)
+    context
+  end
+
   # A wake Claude opens hits the usage limit; an empty task notice and its own empty
   # `result` follow it while its run waits to start.
   step "a Claude turn hits a usage limit", context do

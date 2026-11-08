@@ -2402,7 +2402,7 @@ Feature: Claude
 
   # Upstream #28010: a user message Claude folded into a wake turn took that turn's result, and the
   # queued wake run later waited forever on a turn that had already ended.
-  @backlog @priority-high
+  @priority-high
   Scenario: A Claude wake run whose wake a user turn absorbed ends
     Given a background command finished and Claude opened a wake turn
     And the user's queued message started and Claude folded it into the wake turn

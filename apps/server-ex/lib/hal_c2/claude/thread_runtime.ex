@@ -1623,10 +1623,21 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # The result of the wake a user's turn took over; the user's own follows it. An
-  # interrupt ends the user's turn with the first.
-  defp receive_message(%{"type" => "result"}, %{wake: %{open: true}} = state)
-       when not state.interrupted,
-       do: %{state | wake: nil}
+  # interrupt ends the user's turn with the first. A result naming the user's prompt
+  # is Claude folding that prompt into the wake turn: the one result ends both, and
+  # no other follows (Upstream #28010).
+  defp receive_message(%{"type" => "result"} = result, %{wake: %{open: true}} = state)
+       when not state.interrupted do
+    state = %{state | wake: nil}
+
+    case state.turn do
+      %{prompt: %{} = prompt} ->
+        if echoes_prompt?(result, prompt), do: message(result, state), else: state
+
+      _ ->
+        state
+    end
+  end
 
   # A result for a turn Claude ran by itself while the prompt waited (a resumed process
   # reporting work the last one left, a peer's message) does not end the user's turn:
@@ -1657,6 +1668,11 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   defp result?(message), do: match?(%{"type" => "result"}, message)
+
+  defp echoes_prompt?(result, prompt) do
+    echoed = List.wrap(result["user_message_uuids"]) ++ List.wrap(result["user_message_uuid"])
+    Enum.any?([prompt.uuid | Map.get(prompt, :steers, [])], &(&1 in echoed))
+  end
 
   defp wake?(%{"type" => type}) when type in ~w(assistant user stream_event), do: true
   defp wake?(_message), do: false
