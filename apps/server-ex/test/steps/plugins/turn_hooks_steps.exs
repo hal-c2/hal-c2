@@ -70,6 +70,10 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
     run(context, "Claude", ["first", "second"])
   end
 
+  step "a Claude thread that ran three turns", context do
+    run(context, "Claude", ["first", "second", "third"])
+  end
+
   step "a Claude thread whose turn ended", context do
     run(context, "Claude", ["hello"])
   end
@@ -210,6 +214,25 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
 
   step "the plugin reads the thread's turns", context do
     call(context, %{"call" => "history", "threadId" => World.thread_id(context, @thread)})
+  end
+
+  step "the plugin reads one turn from before the thread's last turn", context do
+    last = context |> World.runs(@thread) |> List.last()
+
+    call(context, %{
+      "call" => "history",
+      "threadId" => World.thread_id(context, @thread),
+      "before" => last["id"],
+      "limit" => 1
+    })
+  end
+
+  step "it gets the thread's second turn, which ran on Claude", context do
+    assert {:ok, [turn]} = context.reply
+    assert [_first, second, _third] = World.runs(context, @thread)
+    assert %{"runId" => id, "provider" => "claudeAgent"} = turn
+    assert id == second["id"]
+    context
   end
 
   step "it gets both turns, oldest first, each with its tool calls", context do
@@ -581,8 +604,10 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
              do: {:ok, %{"out" => out, "usage" => usage}}
       end
 
-      def call("host", %{"call" => "history"} = input, _context),
-        do: Host.history(@id, input["threadId"])
+      def call("host", %{"call" => "history"} = input, _context) do
+        opts = [before: input["before"], limit: input["limit"]]
+        Host.history(@id, input["threadId"], Enum.reject(opts, &(elem(&1, 1) == nil)))
+      end
 
       def call(method, _input, _context), do: {:error, "no method " <> method}
 

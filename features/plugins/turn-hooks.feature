@@ -7,7 +7,7 @@
 #   apps/server-ex/lib/hal_c2/orchestration/run_shape.ex (a conversation's shape, kept on its provider thread, a native fork's inherited)
 #   apps/server-ex/lib/hal_c2/orchestration/handoff.ex (a native fork carries its source's shape; fresh_start/2: a resume that started afresh is a new conversation)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (new_run: another instance with the same home takes over the conversation and its shape)
-#   apps/server-ex/lib/hal_c2/plugins/host.ex (Host.steer, Host.notice, Host.generate, Host.history)
+#   apps/server-ex/lib/hal_c2/plugins/host.ex (Host.steer, Host.notice, Host.generate, Host.history: the provider each turn ran on, the turns before one)
 #   apps/server-ex/lib/hal_c2/text_generation.ex (for_plugin/2: the text model, with what it used)
 #   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (--disallowedTools), apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (features off at thread/start)
 #   packages/contracts/src/orchestrationV2.ts (system_notice pluginId and actions, providerToolName)
@@ -58,6 +58,13 @@ Feature: Plugins that watch and shape turns
     And a Claude thread that ran two turns
     When the plugin reads the thread's turns
     Then it gets both turns, oldest first, each with its tool calls
+
+  @mc
+  Scenario: A plugin that hears of a turn late reads the turns before it, with the provider each ran on
+    Given a plugin that hears turns
+    And a Claude thread that ran three turns
+    When the plugin reads one turn from before the thread's last turn
+    Then it gets the thread's second turn, which ran on Claude
 
   @mc
   Scenario: A plugin adds context to a new conversation and turns a tool off for all of it

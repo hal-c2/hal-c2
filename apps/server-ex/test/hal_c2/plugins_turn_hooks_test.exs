@@ -318,6 +318,7 @@ defmodule HalC2.PluginsTurnHooksTest do
     await_statuses(thread_id, ["completed", "completed"])
 
     assert {:ok, [one, two]} = Host.history("listener", thread_id)
+    assert one["provider"] == "codex"
     assert %{"usedTokens" => 1000} = one["tokenUsage"]
     assert %{"usedTokens" => 2000} = two["tokenUsage"]
     assert Enum.any?(one["items"], &(&1["itemType"] == "file_change"))
@@ -400,6 +401,30 @@ defmodule HalC2.PluginsTurnHooksTest do
 
     assert {:ok, [^two]} = Host.history("reader", thread_id, limit: 1)
     assert {:error, _} = Host.history("reader", "thread-none")
+  end
+
+  test "a plugin reads each turn with the provider it ran on, and the turns before one it heard of late",
+       %{thread_id: thread_id} do
+    grant(%{"reader" => ["turns:observe"]})
+
+    {:ok, _} = send_message(thread_id, "m1", "one")
+    await_statuses(thread_id, ["completed"])
+    {:ok, _} = send_message(thread_id, "m2", "two")
+    await_statuses(thread_id, ["completed", "completed"])
+    {:ok, _} = send_message(thread_id, "m3", "wait m3")
+    [first, second, working] = await_statuses(thread_id, ["completed", "completed", "running"])
+
+    assert {:ok, [one, two]} = Host.history("reader", thread_id, before: working["id"])
+    assert one["runId"] == first["id"] and two["runId"] == second["id"]
+    assert one["provider"] == "claudeAgent" and two["provider"] == "claudeAgent"
+
+    # The cutoff comes before the limit: the turn before `second`, not the newest.
+    assert {:ok, [^one]} = Host.history("reader", thread_id, before: second["id"], limit: 1)
+    assert {:ok, []} = Host.history("reader", thread_id, before: first["id"])
+    assert {:ok, [^one, ^two]} = Host.history("reader", thread_id, before: "run:none")
+
+    :ok = HalC2.Claude.ThreadRuntime.interrupt(thread_id, working["id"])
+    await_statuses(thread_id, ["completed", "completed", "interrupted"])
   end
 
   test "text generation for a plugin reports what the provider said it used, or an estimate" do
