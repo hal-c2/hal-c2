@@ -673,6 +673,25 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
       assert saved["kept"] == ["Workflow"]
     end
+
+    test "a call whose input is not an object, or names its project or provider with no string, answers an error" do
+      p = project()
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = observe(state, started("a", %{"projectId" => p}))
+
+      inputs =
+        ["x", [], 5, true] ++
+          [%{"projectId" => 5}, %{"projectId" => p, "provider" => ["claudeAgent"]}]
+
+      for action <- [:state, :apply, :restore], input <- inputs do
+        assert {:reply, {:error, _}, ^state} =
+                 TokenEconomizer.handle_call({:toolprune, action, input}, nil, state)
+      end
+
+      # An empty one is still the state of every project held.
+      assert {:reply, {:ok, %{"projects" => [%{"projectId" => ^p}]}}, _} =
+               TokenEconomizer.handle_call({:toolprune, :state, %{}}, nil, state)
+    end
   end
 
   describe "the envelope" do

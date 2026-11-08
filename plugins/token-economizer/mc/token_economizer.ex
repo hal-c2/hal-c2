@@ -377,6 +377,19 @@ defmodule HalC2Plugins.TokenEconomizer do
     end
   end
 
+  # A call's input comes from any client: one that is not an object, or names its
+  # project or provider with something other than a string, is refused rather than
+  # read, so a bad call answers an error and the plugin keeps its state.
+  defp prune_call(state, _action, input) when not is_map(input),
+    do: {{:error, "Give toolPrune an object, with projectId, provider and tools."}, state}
+
+  defp prune_call(state, _action, %{"projectId" => id}) when id != nil and not is_binary(id),
+    do: {{:error, "Name the project by its id."}, state}
+
+  defp prune_call(state, _action, %{"provider" => provider})
+       when provider != nil and not is_binary(provider),
+       do: {{:error, "Name the provider by its name."}, state}
+
   defp prune_call(state, action, input) do
     cfg = prune_cfg(state)
     # No tools means the whole proposal, or everything off: a malformed list is
