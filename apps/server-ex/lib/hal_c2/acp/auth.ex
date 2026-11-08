@@ -32,8 +32,11 @@ defmodule HalC2.Acp.Auth do
              is_binary(id) and is_binary(name) and byte_size(id) <= 128 do
            %{
              "id" => id,
-             "name" => name,
-             "description" => method["description"],
+             "name" => String.slice(name, 0, 128),
+             "description" =>
+               if(is_binary(method["description"]),
+                 do: String.slice(method["description"], 0, 1024)
+               ),
              "type" =>
                case method["type"] do
                  "terminal" -> "terminal"
@@ -306,7 +309,7 @@ defmodule HalC2.Acp.Auth do
     said = message(reason)
 
     # Redacted whole, then its start kept: the start of an error page says what it is.
-    case said |> HalC2.Acp.Stderr.sanitize(String.length(said)) |> String.trim() do
+    case said |> HalC2.Acp.Stderr.redact() |> String.trim() do
       "" ->
         fail(message)
 

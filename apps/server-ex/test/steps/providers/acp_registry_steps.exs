@@ -3863,7 +3863,10 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
 
   # A status check of the scenario's instance, as a provider refresh runs it.
   step "the MC checks the instance", context do
-    Map.put(context, :entry, Acp.check(context[:auth_instance] || "acme"))
+    case context[:check_instance] do
+      check when is_function(check, 1) -> check.(context)
+      nil -> Map.put(context, :entry, Acp.check(context[:auth_instance] || "acme"))
+    end
   end
 
   step "the instance is ready and its version is unknown", context do
@@ -4199,6 +4202,63 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
 
     assert [same, same] = sessions
     assert is_binary(same)
+    context
+  end
+
+  # --- What an agent advertises is bounded ---------------------------------------------
+
+  step "{string} advertises hundreds of sign-in methods, models and commands",
+       %{args: [_]} = context do
+    long = String.duplicate("x", 2000)
+
+    methods =
+      for i <- 1..40,
+          do: %{"id" => "m#{i}", "name" => "Method #{i} #{long}", "description" => long}
+
+    models = for i <- 1..300, do: ["acme/m#{i}", "Model #{i} #{long}"]
+
+    commands =
+      [%{"name" => "Review", "description" => "first"}, %{"name" => "review"}] ++
+        for i <- 1..200, do: %{"name" => "c#{i}#{long}", "description" => long}
+
+    context
+    |> acme(%{"methods" => methods, "models" => models, "commands" => commands})
+    |> Map.put(:check_instance, &check_bounded/1)
+  end
+
+  defp check_bounded(context) do
+    {:ok, methods} = HalC2.Acp.Auth.methods("acme")
+    models = Acp.check("acme")["models"]
+    ctx = context |> watch_providers() |> run_on_acme("offer commands")
+    {entry, ctx} = await_acme(ctx, &(&1["slashCommands"] != []))
+
+    Map.merge(ctx, %{
+      bounded: %{methods: methods, models: models, commands: entry["slashCommands"]}
+    })
+  end
+
+  step "at most 32 sign-in methods, 256 models and 128 commands are kept", context do
+    %{methods: methods, models: models, commands: commands} = context.bounded
+    assert length(methods) == 32
+    assert length(models) == 256
+    assert length(commands) == 128
+    context
+  end
+
+  step "commands that differ only in letter case are listed once", context do
+    assert [%{"name" => "Review", "description" => "first"}] =
+             Enum.filter(context.bounded.commands, &(String.downcase(&1["name"]) == "review"))
+
+    context
+  end
+
+  step "over-long names and descriptions are cut", context do
+    %{methods: methods, models: models, commands: commands} = context.bounded
+    names = Enum.map(methods ++ models ++ commands, & &1["name"])
+    descriptions = for item <- methods ++ commands, d = item["description"], d != nil, do: d
+    assert Enum.all?(names, &(String.length(&1) <= 128))
+    assert Enum.all?(descriptions, &(String.length(&1) <= 1024))
+    assert Enum.any?(descriptions, &(String.length(&1) == 1024))
     context
   end
 end

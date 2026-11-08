@@ -939,6 +939,13 @@ Feature: ACP registry agents
       | its sign-in                           | The ACP agent could not complete sign-in.              |
       | the session it is asked for afterward | The provider could not create a session after sign-in. |
 
+  # Review of hal-c2#1309: the reason was cut to its own length after redaction, which lengthens
+  # it, so a key early in a short reason took the reason's start with it.
+  Scenario: A secret early in a short reason is redacted and the reason keeps its start
+    Given "acme" answers its sign-in with the error "Bearer abc123 rejected by the proxy"
+    When the user signs in to "acme"
+    Then the user is told "The ACP agent could not complete sign-in. Bearer [redacted] rejected by the proxy."
+
   # Upstream #30295: a proxy's HTML error page would otherwise fill the sign-in panel.
   @priority-low
   Scenario: A very long reason from the agent is cut at 500 characters
@@ -1038,7 +1045,6 @@ Feature: ACP registry agents
     When the user lists its model providers
     Then the first 64 are listed
 
-  @backlog
   Scenario: What an agent advertises is bounded
     Given "acme" advertises hundreds of sign-in methods, models and commands
     When the MC checks the instance

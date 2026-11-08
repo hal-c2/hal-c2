@@ -26,14 +26,22 @@ defmodule HalC2.Acp.Stderr do
   def sanitize(text, max \\ @max)
   def sanitize(nil, _max), do: ""
 
-  def sanitize(text, max) do
+  def sanitize(text, max), do: text |> redact() |> last(max) |> String.trim()
+
+  @doc """
+  `text` with the home directory shortened and secrets replaced, none of it cut.
+  Redaction can lengthen the text, so a caller keeping its start cuts after this.
+  """
+  @spec redact(String.t() | nil) :: String.t()
+  def redact(nil), do: ""
+
+  def redact(text) do
     text = text |> String.replace_invalid() |> String.replace("\0", "")
     text = Enum.reduce(homes(), text, &String.replace(&2, &1, "~"))
 
-    @patterns
-    |> Enum.reduce(text, fn {pattern, with}, text -> Regex.replace(pattern, text, with) end)
-    |> last(max)
-    |> String.trim()
+    Enum.reduce(@patterns, text, fn {pattern, with}, text ->
+      Regex.replace(pattern, text, with)
+    end)
   end
 
   defp last(text, count) do

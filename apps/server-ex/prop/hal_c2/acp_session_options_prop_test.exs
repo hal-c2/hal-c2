@@ -1,6 +1,6 @@
 defmodule HalC2.AcpSessionOptionsPropTest do
   @moduledoc """
-  `HalC2.Acp.session_options/1` and `check_option/3`: whatever `configOptions` a
+  `HalC2.Acp.session_options/1`, `taken/2` and `check_option/3`: whatever `configOptions` a
   registry agent reports, what is offered stays within its bounds, offers neither the
   model nor a planning mode, and every value offered is accepted while a value not
   offered, or of the wrong kind, is refused.
@@ -82,6 +82,35 @@ defmodule HalC2.AcpSessionOptionsPropTest do
           Enum.all?(values, &(Acp.check_option(offered, id, &1) == :ok)) and
             (picked in values or match?({:error, _}, Acp.check_option(offered, id, picked)))
       end) and Acp.check_option(offered, "not-offered", picked) == :skip
+    end
+  end
+
+  # A registry model's own descriptors (its `_meta.parameters`), ids drawn from the
+  # same pool as the session's options so they collide.
+  defp model do
+    let ids <- list(oneof(["thinking", "agent", "o1", "web", "effort"])) do
+      %{
+        "slug" => "acme/m",
+        "capabilities" => %{
+          "optionDescriptors" =>
+            for(id <- Enum.uniq(ids), do: %{"id" => id, "type" => "select", "options" => []})
+        }
+      }
+    end
+  end
+
+  property "an id the model's own descriptors use is the model's, never checked as the session's" do
+    forall {config, model, picked} <-
+             {config(), oneof([nil, model()]), oneof([value(), boolean()])} do
+      offered = Acp.session_options(config)
+      taken = Acp.taken(offered, model)
+
+      own =
+        for %{"id" => id} <- get_in(model || %{}, ["capabilities", "optionDescriptors"]) || [],
+            do: id
+
+      Enum.all?(own, &(Acp.check_option(taken, &1, picked) == :skip)) and
+        taken == Enum.reject(offered, &(&1["id"] in own))
     end
   end
 end

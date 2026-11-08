@@ -1622,14 +1622,17 @@ defmodule HalC2.Acp.ThreadRuntime do
   # The options picked for a registry agent's model that are its session's own
   # (`HalC2.Acp.session_options/1`): a value it does not offer is refused before
   # the turn reaches the agent, one it already has is not sent again, and an option
-  # its session does not offer is skipped.
+  # its session does not offer is skipped. An id the model's own descriptors share is
+  # the model's, as `HalC2.Acp.taken/2` offers it.
   defp set_session_options(%{agent: agent} = state, turn) when agent != nil do
     options = Map.get(turn, :options) || %{}
 
     if options == %{} or HalC2.Acp.driver(agent) != "acpRegistry" do
       {:ok, state}
     else
-      offered = HalC2.Acp.session_options(agent)
+      model = Enum.find(state.options || [], &(&1["slug"] == state.model))
+      own = get_in(model || %{}, ["capabilities", "optionDescriptors"]) || []
+      offered = agent |> HalC2.Acp.session_options() |> HalC2.Acp.taken(model)
 
       options
       |> Enum.sort()
@@ -1638,8 +1641,14 @@ defmodule HalC2.Acp.ThreadRuntime do
           :ok ->
             {:cont, {:ok, set_config(state, id, value)}}
 
+          # The model's own option (its `_meta.parameters`) is not the session's to set.
           :skip ->
-            Logger.warning("#{agent}: skipped the option #{id}, which its session does not offer")
+            if Enum.any?(own, &(&1["id"] == id)),
+              do: Logger.debug("#{agent}: the option #{id} is the model's, not its session's"),
+              else:
+                Logger.warning(
+                  "#{agent}: skipped the option #{id}, which its session does not offer"
+                )
 
             {:cont, {:ok, state}}
 

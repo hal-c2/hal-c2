@@ -1,6 +1,6 @@
 defmodule HalC2.AcpStderrPropTest do
   @moduledoc """
-  `HalC2.Acp.Stderr.sanitize/2`: whatever an agent wrote around a secret, the shown
+  `HalC2.Acp.Stderr.sanitize/2` and `redact/1`: whatever an agent wrote around a secret, the shown
   error output keeps none of the secret's body and fits in the room it is given.
   """
   use ExUnit.Case, async: true
@@ -43,6 +43,15 @@ defmodule HalC2.AcpStderrPropTest do
              {filler(), secret(), filler(), integer(1, 4_096)} do
       shown = Stderr.sanitize("#{before} #{secret} #{rest}", room)
       not String.contains?(shown, body) and String.length(shown) <= room
+    end
+  end
+
+  property "redacting keeps the text around a secret whole" do
+    forall {before, {secret, body}, rest} <- {filler(), secret(), filler()} do
+      shown = Stderr.redact("#{before} #{secret} #{rest}")
+
+      not String.contains?(shown, body) and String.starts_with?(shown, before <> " ") and
+        String.ends_with?(shown, " " <> rest)
     end
   end
 

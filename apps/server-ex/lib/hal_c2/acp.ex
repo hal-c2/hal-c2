@@ -1210,10 +1210,14 @@ defmodule HalC2.Acp do
     [compact | Enum.reject(offered, &(&1["name"] == "compact"))]
   end
 
+  @max_name 128
+  @max_description 1024
+
+  # A description an agent advertises, trimmed and cut to `@max_description` characters.
   defp put_text(map, key, value) when is_binary(value) do
     case String.trim(value) do
       "" -> map
-      text -> Map.put(map, key, text)
+      text -> Map.put(map, key, String.slice(text, 0, @max_description))
     end
   end
 
@@ -1608,14 +1612,22 @@ defmodule HalC2.Acp do
   defp with_options(models, options) do
     Enum.map(models, fn model ->
       own = get_in(model, ["capabilities", "optionDescriptors"]) || []
-      ids = MapSet.new(own, & &1["id"])
-      extra = Enum.reject(options, &MapSet.member?(ids, &1["id"]))
-
-      Map.put(model, "capabilities", %{"optionDescriptors" => own ++ extra})
+      Map.put(model, "capabilities", %{"optionDescriptors" => own ++ taken(options, model)})
     end)
   end
 
-  @max_commands 200
+  @doc """
+  Of a registry agent's session options (`session_options/1`), those offered with
+  `model` (a model map, or nil): a descriptor of the model's own wins on a shared id.
+  """
+  def taken(options, model) do
+    own =
+      MapSet.new(get_in(model || %{}, ["capabilities", "optionDescriptors"]) || [], & &1["id"])
+
+    Enum.reject(options, &MapSet.member?(own, &1["id"]))
+  end
+
+  @max_commands 128
 
   @doc """
   Replaces a registry instance's commands with those its session advertises (ACP's
@@ -1626,7 +1638,9 @@ defmodule HalC2.Acp do
     if driver(id) == "acpRegistry" do
       offered =
         for(%{"name" => name} = command when is_binary(name) <- commands, do: command)
-        |> Enum.map(&Map.put(&1, "name", String.trim(&1["name"])))
+        |> Enum.map(
+          &Map.put(&1, "name", &1["name"] |> String.trim() |> String.slice(0, @max_name))
+        )
         |> Enum.reject(&(&1["name"] in ["", "$"]))
         |> Enum.uniq_by(&String.downcase(&1["name"]))
         |> Enum.take(@max_commands)
@@ -1833,6 +1847,8 @@ defmodule HalC2.Acp do
 
   defp text(_value), do: nil
 
+  @max_models 256
+
   # "Hugging Face/DeepSeek V3" is the model "DeepSeek V3" of the provider "Hugging Face".
   defp models(session) do
     option =
@@ -1841,9 +1857,9 @@ defmodule HalC2.Acp do
 
     current = option["currentValue"]
 
-    for %{"value" => slug} = model <- option["options"] || [] do
+    for %{"value" => slug} = model <- Enum.take(option["options"] || [], @max_models) do
       {sub, name} =
-        case String.split(model["name"] || slug, "/", parts: 2) do
+        case String.split(String.slice(model["name"] || slug, 0, @max_name), "/", parts: 2) do
           [sub, name] -> {sub, name}
           [name] -> {nil, name}
         end
