@@ -785,6 +785,76 @@ defmodule HalC2.Steps.Providers.Pi do
     Map.put(context, :steered, text)
   end
 
+  # A working turn on a Pi whose compaction takes far longer than the test:
+  # a steered `/compact` is still running when the turn is stopped.
+  step "a Pi turn that is still working while Pi compacts slowly", context do
+    turns = [
+      %{
+        "match" => "a steered task",
+        "steps" => [%{"text" => "Working on it."}, %{"waitAbort" => true}]
+      }
+    ]
+
+    context =
+      context
+      |> install(%{"turns" => turns ++ FakeAcp.pi_turns(), "compactDelaySec" => 30})
+      |> FakeAcp.thread()
+      |> FakeAcp.send_message("please do a steered task")
+
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      Enum.any?(StreamState.list(state, "turn-item"), &(&1["type"] == "assistant_message"))
+    end)
+
+    context
+  end
+
+  step "the user steers the thread with {string} and stops the turn before Pi finishes compacting",
+       %{args: [text]} = context do
+    steered = Task.async(fn -> steer(context, text) end)
+    await_compact_sent(context)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, context.thread)
+      })
+
+    Map.put(context, :compact_steer, steered)
+  end
+
+  # The fake received Pi's `compact`, so the runtime's compaction task is out.
+  defp await_compact_sent(context, deadline \\ nil) do
+    deadline = deadline || System.monotonic_time(:millisecond) + 10_000
+
+    cond do
+      FakeAcp.received_type(context, "compact") != [] ->
+        :ok
+
+      System.monotonic_time(:millisecond) > deadline ->
+        flunk("Pi was never sent the steered compact")
+
+      true ->
+        receive do
+        after
+          20 -> await_compact_sent(context, deadline)
+        end
+    end
+  end
+
+  step "the steer is answered and the turn is stopped", context do
+    FakeAcp.await_run(context, "interrupted")
+
+    assert {:ok, {:ok, _}} =
+             Task.yield(context.compact_steer, 5_000) ||
+               Task.shutdown(context.compact_steer, :brutal_kill)
+
+    context
+  end
+
+  step "the next Pi turn finishes", context do
+    turn(context, "hello after the stop")
+  end
+
   defp steer(context, text) do
     HalC2.Orchestration.dispatch(%{
       "type" => "message.dispatch",
@@ -1255,6 +1325,69 @@ defmodule HalC2.Steps.Providers.Pi do
 
   defp last_prompt(context) do
     context |> FakeAcp.received_type("prompt") |> List.last() |> Map.get("message")
+  end
+
+  # An uploaded file attached to the next message; with `stored?: false` its
+  # saved copy never landed, so the turn's attachment has no path.
+  defp upload_pdf(name, stored?) do
+    body = "%PDF-1.4 notes"
+
+    {:ok, %{"attachmentId" => id, "relativeUrl" => "/api/attachments/upload/" <> token}} =
+      HalC2.Attachments.create_upload_url(%{
+        "type" => "file",
+        "name" => name,
+        "mimeType" => "application/pdf",
+        "sizeBytes" => byte_size(body)
+      })
+
+    if stored?, do: :ok = HalC2.Attachments.store(token, body)
+
+    {%{
+       "type" => "file",
+       "id" => id,
+       "name" => name,
+       "mimeType" => "application/pdf",
+       "sizeBytes" => byte_size(body)
+     }, id}
+  end
+
+  defp send_with(context, text, attachment) do
+    context = FakeAcp.send_message(context, text, nil, %{"attachments" => [attachment]})
+    FakeAcp.await_runs(context, 1)
+    context
+  end
+
+  step "the user attaches a PDF to a Pi message", context do
+    context = context |> install() |> FakeAcp.thread()
+    {attachment, _id} = upload_pdf("notes.pdf", true)
+    context = send_with(context, "please read this", attachment)
+    Map.put(context, :sent_text, "please read this")
+  end
+
+  step "Pi receives the line {string} followed by the file's path",
+       %{args: [line]} = context do
+    assert last_prompt(context) =~ line
+    assert [_, path] = Regex.run(~r/\[Attachment saved at ([^\]]+)\]/, last_prompt(context))
+    assert File.exists?(path)
+    context
+  end
+
+  step "the saved copy of {string} attached to a Pi message cannot be found",
+       %{args: [name]} = context do
+    context = context |> install() |> FakeAcp.thread()
+    {attachment, _id} = upload_pdf(name, false)
+    # A claimed attachment (not a pending upload, which dispatch refuses
+    # outright) whose saved file is gone: its path resolves to nothing.
+    Map.put(context, :attachment, Map.put(attachment, "id", "claimed-gone-#{name}"))
+  end
+
+  step "the message reaches Pi", context do
+    send_with(context, "please read this", context.attachment)
+  end
+
+  step "Pi is told {string} is unavailable", %{args: [name]} = context do
+    assert last_prompt(context) =~ ~s([Attachment "#{name}" is unavailable])
+    context
   end
 
   step "Pi loads both {string} and {string}", %{args: [a, b]} = context do
@@ -2715,7 +2848,7 @@ defmodule HalC2.Steps.Providers.Pi do
     context |> FakeAcp.thread() |> turn("first") |> turn("second")
   end
 
-  step "the user forks the thread", context do
+  step "the user forks the Pi thread", context do
     source = World.thread_id(context, context.thread)
     run = state(context) |> StreamState.list("run") |> Enum.find(&(&1["ordinal"] == 1))
     id = "th-pi-plain-fork-#{System.unique_integer([:positive])}"

@@ -1547,7 +1547,32 @@ defmodule HalC2.Pi.ThreadRuntime do
     state = state |> flush() |> close_open_items(status) |> cancel_requests()
     finish(state, status, failure)
     state = refusals(state)
-    %{state | turn: nil, items: %{}, steers: unanswered(state.steers, status), settled: false}
+    state = answer_compact_steer(state, status)
+
+    %{
+      state
+      | turn: nil,
+        items: %{},
+        steers: unanswered(state.steers, status),
+        settled: false,
+        compact: nil,
+        compact_steer: nil
+    }
+  end
+
+  # A steered compaction still running when its turn ends (Pi's `abort` does
+  # not stop a compaction): its caller hears what an unanswered steer hears,
+  # and the task's late result falls into the catch-all, so neither it nor
+  # its caller leaks into the next turn.
+  defp answer_compact_steer(%{compact_steer: nil} = state, _status), do: state
+
+  defp answer_compact_steer(state, status) do
+    GenServer.reply(
+      state.compact_steer,
+      if(status == "interrupted", do: :ok, else: {:error, "the turn ended"})
+    )
+
+    state
   end
 
   # Steers whose turn ended before Pi answered them: their callers hear the turn is

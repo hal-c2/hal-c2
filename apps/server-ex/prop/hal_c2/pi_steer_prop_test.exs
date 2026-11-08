@@ -87,11 +87,13 @@ defmodule HalC2.PiSteerPropTest do
           )
 
         create(work)
+        Application.put_env(:hal_c2, :pi_prop_fake_dir, Path.join(home, "fake-pi"))
         :ok = HalC2.Streams.subscribe(@tid, self(), nil)
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
         HalC2.Acp.forget("pi")
         Application.delete_env(:hal_c2, :pi_steer_answer_ms)
+        Application.delete_env(:hal_c2, :pi_prop_fake_dir)
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -143,6 +145,7 @@ defmodule HalC2.PiSteerPropTest do
       {1, {:call, __MODULE__, :steer, [id(next), :declined]}},
       {1, {:call, __MODULE__, :steer, [id(next), :vanishes]}},
       {1, {:call, __MODULE__, :steer, [id(next), :ignored]}},
+      {1, {:call, __MODULE__, :steer_compact_stop, [id(next)]}},
       {1, {:call, __MODULE__, :interrupt, []}}
     ])
   end
@@ -153,6 +156,9 @@ defmodule HalC2.PiSteerPropTest do
   def precondition(%{turn: turn}, {:call, _, :send, _}), do: turn == nil
   def precondition(%{how: how}, {:call, _, :steer_pair, _}), do: how == :pair
   def precondition(%{how: how}, {:call, _, :steer_staggered, _}), do: how == :pair
+
+  # A steered compaction stopped mid-flight needs a turn still working.
+  def precondition(%{how: how}, {:call, _, :steer_compact_stop, _}), do: how == :joins
 
   def precondition(%{how: :pair}, {:call, _, :steer, [_, kind]}), do: kind == :refused
   # A turn taking a steer in answers it; one that settled as it landed never does.
@@ -241,6 +247,11 @@ defmodule HalC2.PiSteerPropTest do
     state = %{state | next: state.next + 1, replies: state.replies ++ [msg]}
     end_turn(state, "completed")
   end
+
+  # The steered compaction's caller is answered as a stopped turn's steer is,
+  # and the turn ends interrupted; the late compaction changes nothing.
+  def next_state(state, _result, {:call, _, :steer_compact_stop, _}),
+    do: end_turn(%{state | next: state.next + 1}, "interrupted")
 
   def next_state(state, _result, {:call, _, :interrupt, _}), do: end_turn(state, "interrupted")
 
@@ -350,6 +361,49 @@ defmodule HalC2.PiSteerPropTest do
     reply(Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => @tid}), ending)
   end
 
+  # Steers `/compact` at a Pi whose compaction outlasts the test, then stops
+  # the turn while it runs: the steer is answered and no compaction state may
+  # leak into whatever turn comes next.
+  def steer_compact_stop(msg) do
+    ending = active_runs()
+    before = compact_count()
+
+    steered =
+      Task.async(fn ->
+        Orchestration.dispatch(message(msg, "/compact", "start_immediately", "steer"))
+      end)
+
+    await_compact(before + 1, System.monotonic_time(:millisecond) + @wait_ms)
+    {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => @tid})
+
+    result =
+      case Task.yield(steered, @wait_ms) || Task.shutdown(steered, :brutal_kill) do
+        {:ok, reply} -> reply
+        _ -> {:error, "steered compact never answered"}
+      end
+
+    {answer(result), settled(ending, System.monotonic_time(:millisecond) + @wait_ms)}
+  end
+
+  # The fake logged Pi's `compact`, so the runtime's compaction task is out.
+  defp compact_count do
+    log = Path.join(Application.get_env(:hal_c2, :pi_prop_fake_dir), "log.jsonl")
+
+    case File.read(log) do
+      {:ok, text} -> text |> String.split(~s("type": "compact")) |> length() |> Kernel.-(1)
+      _ -> 0
+    end
+  end
+
+  defp await_compact(count, deadline) do
+    if compact_count() < count and System.monotonic_time(:millisecond) < deadline do
+      receive do
+      after
+        20 -> await_compact(count, deadline)
+      end
+    end
+  end
+
   defp message(msg, text, mode, intent) do
     %{
       "type" => "message.dispatch",
@@ -368,7 +422,12 @@ defmodule HalC2.PiSteerPropTest do
   defp install_fake(home) do
     dir = Path.join(home, "fake-pi")
     File.mkdir_p!(dir)
-    File.write!(Path.join(dir, "config.json"), JSON.encode!(%{"turns" => @turns}))
+
+    File.write!(
+      Path.join(dir, "config.json"),
+      JSON.encode!(%{"turns" => @turns, "compactDelaySec" => 30})
+    )
+
     bin = Path.join([dir, "bin", "pi"])
     File.mkdir_p!(Path.dirname(bin))
 

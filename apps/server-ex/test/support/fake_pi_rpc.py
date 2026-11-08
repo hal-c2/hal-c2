@@ -505,6 +505,19 @@ def command(msg):
     elif kind == "compact":
         if "compactError" in cfg:
             respond(msg, error=cfg["compactError"])
+        elif cfg.get("compactDelaySec"):
+            # A compaction Pi is slow to finish: it answers later, in its own
+            # thread, while other commands (an abort included) still land.
+            def later():
+                time.sleep(float(cfg["compactDelaySec"]))
+                if cfg.get("compactEvents", True):
+                    send({"type": "compaction_start", "reason": "manual"})
+                    send({"type": "compaction_end", "aborted": False,
+                          "result": {"summary": "Compacted.", "tokensBefore": 1000,
+                                     "estimatedTokensAfter": 200}})
+                respond(msg, {"summary": "Compacted.", "tokensBefore": 1000})
+
+            threading.Thread(target=later, daemon=True).start()
         else:
             if cfg.get("compactEvents", True):
                 send({"type": "compaction_start", "reason": "manual"})

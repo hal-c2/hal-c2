@@ -736,13 +736,12 @@ Feature: Pi
     Then Pi's session is named "Fix flaky login test"
     And Pi's own session list shows it under that name
 
-  @backlog
   Scenario: A file Pi cannot take as an image is handed over as a saved path
     When the user attaches a PDF to a Pi message
     Then Pi receives the line "[Attachment saved at" followed by the file's path
 
   # Upstream #21356: Pi silently skipped an attachment whose saved copy could not be found.
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: Pi is told when an attachment's saved copy cannot be found
     Given the saved copy of "notes.pdf" attached to a Pi message cannot be found
     When the message reaches Pi
@@ -805,6 +804,12 @@ Feature: Pi
     When the user steers the thread with "/compact"
     Then Pi compacts its conversation
     And "/compact" is not sent to the model as a message
+
+  Scenario: Stopping a turn while a steered compaction runs does not hold up the next turn
+    Given a Pi turn that is still working while Pi compacts slowly
+    When the user steers the thread with "/compact" and stops the turn before Pi finishes compacting
+    Then the steer is answered and the turn is stopped
+    And the next Pi turn finishes
 
   Scenario: A message that only starts with /compact is an ordinary message
     When the user sends "/compacted logs look wrong" to a Pi thread
@@ -881,7 +886,7 @@ Feature: Pi
 
   Scenario: Forking a Pi thread does not run the user's extensions or tools
     Given a Pi thread whose installation has extensions
-    When the user forks the thread
+    When the user forks the Pi thread
     Then the copy of Pi's conversation is made with extensions and tools turned off
 
   @backlog
