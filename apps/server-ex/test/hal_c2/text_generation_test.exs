@@ -214,6 +214,38 @@ defmodule HalC2.TextGenerationTest do
       assert after_flag(argv, "--model") == "claude-haiku-5-5"
     end
 
+    test "a Codex that cannot list its MCP servers runs in a home with only the login", %{
+      repo: repo,
+      log: log,
+      tmp_dir: dir
+    } do
+      install([:codex])
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex", "model" => "gpt-text"}
+      })
+
+      home = Path.join(dir, "user-codex")
+      File.mkdir_p!(home)
+      File.write!(Path.join(home, "auth.json"), ~s({"token":"t"}))
+      File.write!(Path.join(home, "config.toml"), "[mcp_servers.augmenter]\ncommand = \"x\"\n")
+
+      System.put_env("CODEX_HOME", home)
+      System.put_env("FAKE_CODEX_MCP_FAIL", "1")
+
+      on_exit(fn ->
+        System.delete_env("CODEX_HOME")
+        System.delete_env("FAKE_CODEX_MCP_FAIL")
+      end)
+
+      assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
+
+      assert [%{"codexHome" => scratch, "codexFiles" => files}] = calls(log)
+      assert scratch != home
+      assert files == %{"auth.json" => ~s({"token":"t"}), "config.toml" => ""}
+      refute File.exists?(scratch)
+    end
+
     test "a writer whose check only warned keeps generating", %{repo: repo} do
       install([:claude, :codex])
 

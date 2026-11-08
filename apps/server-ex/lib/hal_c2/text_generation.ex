@@ -617,10 +617,12 @@ defmodule HalC2.TextGeneration do
           {:error, _} -> []
         end
 
+      {isolation, env, scratch_home} = codex_isolation(selection["instanceId"], launch, cwd)
+
       args =
         ["exec"] ++
           launch ++
-          codex_isolation(selection["instanceId"], launch, cwd) ++
+          isolation ++
           ~w(--ephemeral --skip-git-repo-check -s read-only) ++
           ["--model", model] ++
           if(is_binary(effort),
@@ -631,35 +633,64 @@ defmodule HalC2.TextGeneration do
           ["--output-schema", schema_path, "--output-last-message", output_path] ++
           Enum.flat_map(images, &["--image", &1]) ++ ["-"]
 
-      cli = [label: "Codex", unexpected: unexpected(opts)]
+      cli = [label: "Codex", unexpected: unexpected(opts), env: env]
 
-      with {:ok, _} <- run_cli([codex_command(selection["instanceId"]) | args], cwd, prompt, cli),
-           {:ok, text} <- File.read(output_path),
-           {:ok, %{} = result} <- JSON.decode(text) do
-        {:ok, result}
-      else
-        {:error, reason} when is_binary(reason) -> {:error, reason}
-        _ -> {:error, "Codex returned invalid structured output."}
+      try do
+        with {:ok, _} <-
+               run_cli([codex_command(selection["instanceId"]) | args], cwd, prompt, cli),
+             {:ok, text} <- File.read(output_path),
+             {:ok, %{} = result} <- JSON.decode(text) do
+          {:ok, result}
+        else
+          {:error, reason} when is_binary(reason) -> {:error, reason}
+          _ -> {:error, "Codex returned invalid structured output."}
+        end
+      after
+        remove_scratch(scratch_home)
       end
     end)
   end
 
   # What keeps the user's tools out of a Codex that only writes text: each MCP server its
   # configuration enables is switched off, and plugins and apps are disabled. The servers
-  # come from `codex mcp list`; when it cannot answer, the run goes ahead without that part.
+  # come from `codex mcp list`. When it cannot answer, the run gets a scratch Codex home
+  # with the account's login and no configuration, so no MCP server is enabled at all.
+  # Returns `{args, env, scratch_home}`; the caller removes `scratch_home` (nil when none).
   defp codex_isolation(instance, launch, cwd) do
     list = [codex_command(instance) | launch] ++ ["mcp", "list", "--json"]
 
-    servers =
-      with {:ok, out} <- run_cli(list, cwd, "", label: "Codex", timeout: 10_000),
-           {:ok, entries} when is_list(entries) <- JSON.decode(out) do
+    with {:ok, out} <- run_cli(list, cwd, "", label: "Codex", timeout: 10_000),
+         {:ok, entries} when is_list(entries) <- JSON.decode(out) do
+      servers =
         for %{"name" => name} when is_binary(name) <- entries,
             do: ["--config", "mcp_servers.#{toml_key(name)}.enabled=false"]
-      else
-        _ -> []
-      end
 
-    List.flatten(servers) ++ ~w(--disable plugins --disable apps)
+      {List.flatten(servers) ++ ~w(--disable plugins --disable apps), [], nil}
+    else
+      _ ->
+        home = bare_codex_home(instance)
+        {~w(--disable plugins --disable apps), [{"CODEX_HOME", home}], home}
+    end
+  end
+
+  defp remove_scratch(nil), do: :ok
+
+  # The folder is one `bare_codex_home/1` made.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp remove_scratch(dir), do: File.rm_rf(dir)
+
+  # A Codex home holding only the instance's login (`auth.json`) and an empty config.
+  # The paths are the instance's own home setting and a fresh scratch folder.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp bare_codex_home(instance) do
+    source =
+      HalC2.Codex.Home.shared(instance) || System.get_env("CODEX_HOME") ||
+        Path.join(HalC2.Paths.user_home(), ".codex")
+
+    home = HalC2.Scratch.dir("hal-c2-codex-home")
+    File.write!(Path.join(home, "config.toml"), "")
+    _ = File.cp(Path.join(source, "auth.json"), Path.join(home, "auth.json"))
+    home
   end
 
   defp toml_key(name),

@@ -211,7 +211,7 @@ Feature: Generated titles, branch names and source control text
     Given the user's Codex configuration enables the MCP server "augmenter"
     When "codex" writes a branch name for a prompt that asks to call "augmenter"
     Then "augmenter" is not started and nothing reaches it
-    And the branch name is still written when Codex cannot list its MCP servers
+    And the branch name is still written, in a Codex home with no MCP servers, when Codex cannot list them
 
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.test.ts ("runs Claude text generation with the configured CLAUDE_CONFIG_DIR")
   @mc @priority-high

@@ -209,11 +209,14 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     context
   end
 
-  step "the branch name is still written when Codex cannot list its MCP servers", context do
+  step "the branch name is still written, in a Codex home with no MCP servers, when Codex cannot list them",
+       context do
     World.put_env("FAKE_CODEX_MCP_FAIL", "1")
     context = reply(context, TextGeneration.branch_name(root(context), "Add a login page"))
     assert {:ok, _} = context.reply
-    refute Enum.any?(List.last(calls(context))["argv"], &String.starts_with?(&1, "mcp_servers."))
+    call = List.last(calls(context))
+    refute Enum.any?(call["argv"], &String.starts_with?(&1, "mcp_servers."))
+    assert call["codexFiles"]["config.toml"] == ""
     context
   end
 

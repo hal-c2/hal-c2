@@ -33,6 +33,11 @@ log = os.environ.get("FAKE_TEXT_LOG")
 if log:
     with open(log, "a") as f:
         f.write(json.dumps({"argv": args, "cwd": os.getcwd(), "prompt": prompt, "pid": os.getpid(),
+                            "codexHome": os.environ.get("CODEX_HOME"),
+                            "codexFiles": {n: open(os.path.join(os.environ["CODEX_HOME"], n)).read()
+                                           for n in ("config.toml", "auth.json")
+                                           if os.environ.get("CODEX_HOME")
+                                           and os.path.exists(os.path.join(os.environ["CODEX_HOME"], n))},
                             "claudeConfigDir": os.environ.get("CLAUDE_CONFIG_DIR"),
                             "entrypoint": os.environ.get("CLAUDE_CODE_ENTRYPOINT"),
                             "claudecode": os.environ.get("CLAUDECODE")}) + "\n")
