@@ -14,6 +14,8 @@
 #   thinkingLevel    get_state's level (default "medium")
 #   commands         get_commands
 #   turns            [{"match": substring, "steps": [...]}], first match wins
+#                    (a turn may also set "afterCompaction": true, to start only once a
+#                    running compaction ends, or "startDelaySec": n, to start its agent late)
 #
 # Turn steps: {"text": s[, "usage": {...}]}, {"thinking": s}, {"tool": name, "args": {},
 # "output": s} (HAL-C2's extension gate first: see `allowed`), {"select": {"title",
@@ -26,7 +28,7 @@
 # but not answered while the turn waits (its next model call never comes); one saying "decline" is rejected,
 # and one saying "ignore" never answered, only once it reaches Pi after the run settled.
 # Without a match the reply names the conversation so far.
-import json, os, sys, threading, time, urllib.request, uuid
+import json, os, select, sys, threading, time, urllib.request, uuid
 
 DIR = os.environ["FAKE_DIR"]
 LOG = os.path.join(DIR, "log.jsonl")
@@ -52,8 +54,22 @@ def config():
 
 SEND_LOCK = threading.Lock()
 
+# While a compaction runs, `get_state` calls Pi compacting: between the
+# compaction events a turn scripts, or while a slow `/compact` is out (from
+# its call to its answer, counted apart so scripted events do not end it).
+compacting = [False]
+compacts_out = [0]
+
+
+def is_compacting():
+    return compacting[0] or compacts_out[0] > 0
+
 
 def send(msg):
+    if msg.get("type") == "compaction_start":
+        compacting[0] = True
+    elif msg.get("type") == "compaction_end":
+        compacting[0] = False
     # Unescaped, as Pi writes UTF-8: a U+2028 in a text travels literally.
     with SEND_LOCK:
         sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
@@ -268,6 +284,25 @@ def assistant(text, usage=None):
     return msg
 
 
+def matching_turn(cfg, text):
+    for turn in cfg.get("turns") or []:
+        if turn.get("match", "") in text:
+            return turn
+    return {}
+
+
+def serve_while(busy):
+    # Commands keep landing (and get answered) while Pi is not yet at work
+    # on a prompt; an abort ends the wait.
+    while busy() and not aborted[0]:
+        if backlog or select.select([sys.stdin], [], [], 0.05)[0]:
+            msg = read()
+            if msg.get("type") == "abort":
+                aborted[0] = True
+            else:
+                command(msg)
+
+
 def run_turn(text):
     aborted[0] = False
     cfg = config()
@@ -279,6 +314,16 @@ def run_turn(text):
     session.append("user", text)
     if steps is None:
         steps = [{"text": reply_to(session, text)}]
+    turn = matching_turn(cfg, text)
+    if turn.get("afterCompaction"):
+        # Pi starts a prompt sent while it compacts only once the compaction
+        # is over: until then it shows nothing for it, and answers checks.
+        serve_while(is_compacting)
+    if "startDelaySec" in turn:
+        # Extension hooks that run before Pi's agent starts: nothing shows,
+        # and Pi reads idle, for this long.
+        until = time.monotonic() + float(turn["startDelaySec"])
+        serve_while(lambda: time.monotonic() < until)
     send({"type": "agent_start"})
     send({"type": "message_start", "message": {"role": "assistant"}})
     said = []
@@ -441,7 +486,8 @@ def command(msg):
         respond(msg, {"sessionFile": None if cfg.get("noSessionFile") else session.path,
                       "sessionName": session.name,
                       "thinkingLevel": state["thinking"],
-                      "model": model, "isStreaming": False})
+                      "model": model, "isStreaming": False,
+                      "isCompacting": is_compacting()})
     elif kind == "get_available_models":
         respond(msg, {"models": models()})
     elif kind == "get_commands":
@@ -507,9 +553,12 @@ def command(msg):
             # A compaction Pi is slow to finish: it answers later, in its own
             # thread, while other commands (an abort included) still land. A
             # delayed failure answers with the error and sends no events.
+            compacts_out[0] += 1
+
             def later():
                 time.sleep(float(cfg["compactDelaySec"]))
                 if "compactError" in cfg:
+                    compacts_out[0] -= 1
                     respond(msg, error=cfg["compactError"])
                     log({"compact_answered": True})
                     return
@@ -518,6 +567,7 @@ def command(msg):
                     send({"type": "compaction_end", "aborted": False,
                           "result": {"summary": "Compacted.", "tokensBefore": 1000,
                                      "estimatedTokensAfter": 200}})
+                compacts_out[0] -= 1
                 respond(msg, {"summary": "Compacted.", "tokensBefore": 1000})
                 log({"compact_answered": False})
 

@@ -574,6 +574,11 @@ Feature: Pi
     Then the turn finishes once Pi is idle
     And the Pi turn is not left running
 
+  Scenario: A message Pi's extensions take a while to start on is not ended as idle
+    Given Pi's extensions work for a few seconds before Pi's agent starts on "slow start"
+    When the user sends "slow start" to a Pi thread
+    Then that turn waits for Pi's agent and runs to its end
+
   Scenario: Pi going silent after a message stops the session
     Given Pi accepted a message but never reports whether it is working
     When three checks of Pi's state fail
@@ -668,7 +673,6 @@ Feature: Pi
       | fails                  | Context compaction failed | it carries Pi's reason, or "Pi context compaction failed."     |
       | is stopped by the user | Context compaction stopped | it is shown as stopped, not failed                            |
 
-  @backlog
   Scenario: Stopping a Pi thread while it compacts restarts Pi
     Given Pi is compacting the conversation
     When the user stops the turn
@@ -811,6 +815,13 @@ Feature: Pi
     When the next Pi turn runs while Pi finishes the stopped compaction and then compacts again
     Then the next turn shows only its own compaction
 
+  Scenario: A turn sent while a stopped compaction finishes waits for it instead of settling as idle
+    Given a Pi turn that is still working while Pi compacts for a few seconds
+    When the user steers the thread with "/compact" and stops the turn before Pi finishes compacting
+    Then the steer is answered and the turn is stopped
+    When the user sends a message Pi starts only once the stopped compaction ends
+    Then that turn waits for the compaction and runs to its end
+
   Scenario: A stopped steered compaction that fails without an end does not hide the next compaction
     Given a Pi turn that is still working while Pi's compaction fails slowly without an end event
     When the user steers the thread with "/compact" and stops the turn before Pi finishes compacting
@@ -843,7 +854,6 @@ Feature: Pi
     When the user stops the turn
     Then the command shows as interrupted, not failed
 
-  @backlog
   Scenario Outline: Long Pi texts are cut to a limit
     When Pi sends <text> longer than its limit
     Then the thread keeps its first <limit> characters
@@ -854,6 +864,14 @@ Feature: Pi
       | the reason a compaction failed         | 1,000  |
       | the detail of an extension's failure   | 2,000  |
       | the current value of a text edit       | 2,000  |
+
+  @backlog
+  Scenario Outline: Long texts from Pi's own subagents are cut to a limit
+    When Pi sends <text> longer than its limit
+    Then the thread keeps its first <limit> characters
+
+    Examples:
+      | text                                   | limit  |
       | the progress line of one of its subagents | 200 |
       | the result of one of its subagents     | 10,000 |
 

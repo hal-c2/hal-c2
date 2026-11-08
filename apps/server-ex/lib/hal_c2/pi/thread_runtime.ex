@@ -26,7 +26,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   alias HalC2.Orchestration
   alias HalC2.Orchestration.Entities
 
-  @state_version 8
+  @state_version 9
   # Extension failures queued between turns: only the newest are kept, so an
   # extension failing on a timer while idle cannot grow state without bound.
   @queued_extension_errors 20
@@ -47,6 +47,17 @@ defmodule HalC2.Pi.ThreadRuntime do
   # either. Three failed checks in a row stop the session.
   @turn_watchdog_ms 4_000
   @turn_watchdog_failures 3
+  # Idle checks in a row that settle a turn. A `/` command an extension
+  # handles settles after two; an ordinary message only after about a
+  # minute, since Pi also reads idle while its extensions' `input` and
+  # `before_agent_start` hooks (or a provider's auth refresh) run before its
+  # agent starts.
+  @turn_idle_command 2
+  @turn_idle_message 15
+  # The grace a stopped compaction gets to end on the abort before Pi is
+  # restarted: `abort` does not stop a compaction, so a turn stopped while
+  # Pi compacts would otherwise never end (`compact_restart/1`).
+  @compact_restart_ms 2_000
 
   @spec start_turn(String.t(), map) :: :ok
   def start_turn(thread_id, turn),
@@ -92,6 +103,9 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   defp turn_watchdog_ms,
     do: Application.get_env(:hal_c2, :pi_turn_watchdog_ms, @turn_watchdog_ms)
+
+  defp compact_restart_ms,
+    do: Application.get_env(:hal_c2, :pi_compact_restart_ms, @compact_restart_ms)
 
   @spec respond(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def respond(thread_id, request_id, response) do
@@ -185,6 +199,9 @@ defmodule HalC2.Pi.ThreadRuntime do
        # Whether Pi has shown any work for this turn yet; until it does, the
        # turn watchdog asks whether it is working at all (`turn_watchdog/2`).
        turn_active: false,
+       # Whether Pi is compacting right now, between its compaction events:
+       # a stop then restarts Pi once the grace runs out (`compact_restart/2`).
+       compacting: false,
        failure: nil,
        message: 0,
        compactions: 0,
@@ -293,6 +310,15 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   def handle_call(:interrupt, _from, %{turn: turn} = state) when turn != nil do
     Connection.notify(state.conn, "abort", %{})
+
+    # `abort` does not stop a compaction: a turn that IS the compaction, one
+    # Pi is compacting through, or one waiting behind an abandoned compaction
+    # only ends once it ends. Give it the grace to stop, then restart Pi
+    # (`handle_info` for `:compact_restart`).
+    if compaction_out?(state) do
+      Process.send_after(self(), {:compact_restart, turn.ids.run}, compact_restart_ms())
+    end
+
     {:reply, :ok, %{cancel_requests(state) | interrupted: true}}
   end
 
@@ -507,7 +533,14 @@ defmodule HalC2.Pi.ThreadRuntime do
     if state.compact_steer, do: GenServer.reply(state.compact_steer, {:error, "Pi exited"})
 
     {:noreply,
-     %{state | conn: nil, compact: nil, compact_steer: nil, abandoned_compacts: MapSet.new()}}
+     %{
+       state
+       | conn: nil,
+         compact: nil,
+         compact_steer: nil,
+         abandoned_compacts: MapSet.new(),
+         compacting: false
+     }}
   end
 
   def handle_info(:flush, state),
@@ -516,17 +549,31 @@ defmodule HalC2.Pi.ThreadRuntime do
   def handle_info({:steer_timeout, from}, state), do: {:noreply, steer_timeout(state, from)}
 
   # A turn that has shown no work since its prompt: ask Pi whether it is
-  # working. Idle twice in a row means an extension handled the prompt
-  # without the agent, so the turn settles (twice, so work Pi sent while a
-  # check was out is read in between and counts as activity); streaming
-  # means work is on its way, so ask again later; three checks Pi does not
-  # answer stop the session and fail it.
+  # working. Idle checks in a row (`idle_checks/1`; at least two, so work Pi
+  # sent while a check was out is read in between and counts as activity)
+  # mean an extension handled the prompt without the agent, so the turn
+  # settles; busy means work is on its way, so ask again later; three checks
+  # Pi does not answer stop the session and fail it.
+  def handle_info({:turn_watchdog, run, failures, idle}, state) when is_boolean(idle),
+    do: handle_info({:turn_watchdog, run, failures, if(idle, do: 1, else: 0)}, state)
+
   def handle_info({:turn_watchdog, run, failures, idle}, state) do
     if state.turn && state.turn.ids.run == run && !state.turn_active && state.conn do
       {:noreply, turn_watchdog(state, run, failures, idle)}
     else
       {:noreply, state}
     end
+  end
+
+  # The grace after a stop while Pi compacted: if the stopped turn is still
+  # open behind a compaction (Pi's abort does not stop one), end it and
+  # restart Pi, so the thread takes its next message on a fresh process. A
+  # turn that ended in the grace leaves Pi alone, and an abandoned
+  # compaction with it, to finish in the background.
+  def handle_info({:compact_restart, run}, state) do
+    if state.turn && state.turn.ids.run == run && state.conn && compaction_out?(state),
+      do: {:noreply, state |> end_turn("interrupted", nil) |> stop_session()},
+      else: {:noreply, state}
   end
 
   def handle_info(message, state) do
@@ -562,16 +609,16 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp forget_abandoned(state, _message), do: state
 
   defp turn_watchdog(state, run, failures, idle) do
-    case pi_streaming(state) do
+    case pi_working(state) do
       {:ok, true} ->
-        Process.send_after(self(), {:turn_watchdog, run, 0, false}, turn_watchdog_ms())
+        Process.send_after(self(), {:turn_watchdog, run, 0, 0}, turn_watchdog_ms())
         state
 
       {:ok, false} ->
-        if idle do
+        if idle + 1 >= idle_checks(state.turn) do
           settle(state)
         else
-          Process.send_after(self(), {:turn_watchdog, run, 0, true}, turn_watchdog_ms())
+          Process.send_after(self(), {:turn_watchdog, run, 0, idle + 1}, turn_watchdog_ms())
           state
         end
 
@@ -579,22 +626,39 @@ defmodule HalC2.Pi.ThreadRuntime do
         state |> end_turn("failed", "Pi stopped answering.") |> stop_session()
 
       :error ->
-        Process.send_after(self(), {:turn_watchdog, run, failures + 1, false}, turn_watchdog_ms())
+        Process.send_after(self(), {:turn_watchdog, run, failures + 1, 0}, turn_watchdog_ms())
         state
     end
   end
 
-  # Whether Pi says it is working right now; a check Pi does not answer
-  # (an error, a timeout, a dead connection) is a failed check.
-  defp pi_streaming(state) do
+  defp idle_checks(%{text: "/" <> _}), do: @turn_idle_command
+  defp idle_checks(_turn), do: @turn_idle_message
+
+  # Whether Pi is busy right now: streaming or compacting by its own
+  # account, or finishing a compaction this runtime knows is still out. Pi
+  # reports `isStreaming: false` while a prompt waits behind a compaction,
+  # so that is work the turn queues behind, not idleness. A check Pi does
+  # not answer (an error, a timeout, a dead connection) is a failed check.
+  defp pi_working(state) do
     case Connection.call(state.conn, "get_state", %{}, @stats_ms) do
-      {:ok, %{"isStreaming" => streaming}} when is_boolean(streaming) -> {:ok, streaming}
-      {:ok, _} -> {:ok, false}
-      _ -> :error
+      {:ok, pi} when is_map(pi) ->
+        {:ok, pi["isStreaming"] == true or pi["isCompacting"] == true or compaction_out?(state)}
+
+      {:ok, _} ->
+        {:ok, compaction_out?(state)}
+
+      _ ->
+        :error
     end
   catch
     :exit, _ -> :error
   end
+
+  # Whether a compaction is still running in Pi as far as this runtime
+  # knows: a `/compact` task out (the turn's or a steer's), one Pi started
+  # in this turn and has not ended, or one a stopped turn abandoned.
+  defp compaction_out?(state),
+    do: state.compact != nil or state.compacting or MapSet.size(state.abandoned_compacts) > 0
 
   @impl true
   def terminate(_reason, state) do
@@ -611,6 +675,9 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   defp migrate(%{v: 1} = state),
     do: state |> Map.merge(%{v: 2, steers: :gen_server.reqids_new(), settled: false}) |> migrate()
+
+  defp migrate(%{v: 8} = state),
+    do: state |> Map.merge(%{v: 9, compacting: false}) |> migrate()
 
   defp migrate(%{v: 7} = state),
     do: state |> Map.merge(%{v: 8, turn_active: false}) |> migrate()
@@ -669,7 +736,8 @@ defmodule HalC2.Pi.ThreadRuntime do
         session_name: nil,
         compact: nil,
         compact_steer: nil,
-        abandoned_compacts: MapSet.new()
+        abandoned_compacts: MapSet.new(),
+        compacting: false
     }
   end
 
@@ -951,7 +1019,7 @@ defmodule HalC2.Pi.ThreadRuntime do
       :error ->
         {state, payload} = prompt_payload(state, turn.text, Map.get(turn, :attachments, []))
         Connection.notify(state.conn, "prompt", payload)
-        Process.send_after(self(), {:turn_watchdog, turn.ids.run, 0, false}, turn_watchdog_ms())
+        Process.send_after(self(), {:turn_watchdog, turn.ids.run, 0, 0}, turn_watchdog_ms())
         state
     end
   end
@@ -1153,10 +1221,13 @@ defmodule HalC2.Pi.ThreadRuntime do
     state
     |> flush()
     |> Map.put(:compactions, n)
+    |> Map.put(:compacting, true)
     |> ensure_item(native, :compaction, %{"driver" => "pi", "title" => "Compacting context..."})
   end
 
   defp event("compaction_end", event, state) do
+    state = %{state | compacting: false}
+
     # An overflow can surface as a model error before Pi compacts and tries
     # again: that failure clears only when Pi says the compaction will retry.
     state = if event["willRetry"] == true, do: %{state | failure: nil}, else: state
@@ -1690,6 +1761,10 @@ defmodule HalC2.Pi.ThreadRuntime do
         settled: false,
         compact: nil,
         compact_steer: nil,
+        # A compaction this turn saw start is over or abandoned with it: its
+        # late end lands between turns or is dropped, and must not keep
+        # the next turn's checks thinking Pi still compacts.
+        compacting: false,
         # A compaction still out when its turn ends is abandoned: Pi
         # finishes it anyway, and its late events are dropped on arrival
         # (`handle_info` for notifications) while its task is out, so they

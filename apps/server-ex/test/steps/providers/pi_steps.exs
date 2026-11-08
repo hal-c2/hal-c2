@@ -924,6 +924,38 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
+  # Pi starts a prompt sent while it still finishes the stopped compaction
+  # only once that compaction is over, and shows nothing for it until then
+  # (`isStreaming` stays false): the watchdog, checking every 200 ms through
+  # the couple of seconds left, must not read that as an idle Pi.
+  step "the user sends a message Pi starts only once the stopped compaction ends", context do
+    context = quick_watchdog(context)
+
+    behind = %{
+      "match" => "after the stop",
+      "afterCompaction" => true,
+      "steps" => [%{"text" => "Done after the compaction."}]
+    }
+
+    context
+    |> FakeAcp.configure(fn cfg -> Map.update(cfg, "turns", [behind], &[behind | &1]) end)
+    |> turn("hello after the stop")
+  end
+
+  # Settled as idle, the turn would have completed with nothing in it, and
+  # Pi's answer would have found no turn to land in.
+  step "that turn waits for the compaction and runs to its end", context do
+    assert Enum.any?(FakeAcp.log(context), &Map.has_key?(&1, "compact_answered"))
+
+    assert "Done after the compaction." in for(
+             item <- items(context, "assistant_message"),
+             do: item["text"]
+           )
+
+    assert items(context, "compaction") == []
+    context
+  end
+
   step "the next turn shows only its own compaction", context do
     assert [%{"title" => "Context compacted", "summary" => "Compacted."}] =
              items(context, "compaction")
@@ -2936,6 +2968,24 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
+  # Pi reads idle while its extensions' hooks run before its agent starts:
+  # with checks every 200 ms, the two idle checks that settle a `/` command
+  # come well inside the 1.5 s, the ordinary message's fifteen do not.
+  step "Pi's extensions work for a few seconds before Pi's agent starts on {string}",
+       %{args: [text]} = context do
+    turn = %{"match" => text, "startDelaySec" => 1.5, "steps" => [%{"text" => "Started late."}]}
+
+    context
+    |> quick_watchdog()
+    |> with_turns([turn])
+  end
+
+  step "that turn waits for Pi's agent and runs to its end", context do
+    assert List.last(replies(context)) == "Started late."
+    assert [%{"status" => "completed"}] = StreamState.list(state(context), "run")
+    context
+  end
+
   step "Pi accepted a message but never reports whether it is working", context do
     context =
       context
@@ -3026,6 +3076,161 @@ defmodule HalC2.Steps.Providers.Pi do
 
     assert Enum.all?(results, fn {_task, outcome} -> match?({:ok, {:error, _}}, outcome) end)
     assert elapsed < 10_000
+    context
+  end
+
+  # --- stopping while Pi compacts, and long texts ---
+
+  # A `/compact` turn whose compaction is still running (the fake answers
+  # it in half a minute). The restart grace is shortened the same way the
+  # watchdog's is.
+  step "Pi is compacting the conversation", context do
+    Application.put_env(:hal_c2, :pi_compact_restart_ms, 200)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :pi_compact_restart_ms) end)
+
+    context =
+      context
+      |> install(%{"compactDelaySec" => 30})
+      |> FakeAcp.thread()
+      |> FakeAcp.send_message("/compact")
+
+    await_compact_sent(context)
+    context
+  end
+
+  step "Pi is given 2 seconds to stop the compaction and is then restarted", context do
+    # Pi was asked to stop first (the abort), then restarted: the process
+    # that was compacting is gone. Its next turn (below) runs a new one.
+    assert FakeAcp.received_type(context, "abort") != []
+    assert [%{"pid" => pid} | _] = thread_starts(context)
+    deadline = System.monotonic_time(:millisecond) + 10_000
+
+    await = fn await ->
+      alive? =
+        match?({_, 0}, System.cmd("kill", ["-0", Integer.to_string(pid)], stderr_to_stdout: true))
+
+      cond do
+        not alive? ->
+          :ok
+
+        System.monotonic_time(:millisecond) > deadline ->
+          flunk("the compacting Pi (pid #{pid}) was not restarted")
+
+        true ->
+          receive do
+          after
+            50 -> await.(await)
+          end
+      end
+    end
+
+    await.(await)
+    FakeAcp.await_run(context, "interrupted")
+    context
+  end
+
+  step "the thread can take the next message", context do
+    context = turn(context, "hello again")
+    assert length(thread_starts(context)) >= 2
+    context
+  end
+
+  # Each long text arrives its own way; `kept` is what the thread shows of
+  # it and `cut_original` what Pi sent, taken from the fake's own log or the
+  # script, so the limit is checked against Pi's text, not the MC's copy.
+  step ~r/^Pi sends (?<text>the input of a tool awaiting approval|the reason a compaction failed|the detail of an extension's failure|the current value of a text edit) longer than its limit$/,
+       %{args: [text]} = context do
+    {original, kept} =
+      case text do
+        "the input of a tool awaiting approval" ->
+          command = String.duplicate("a", 5_000)
+
+          turns = [
+            %{
+              "match" => "use your tool",
+              "steps" => [
+                %{"tool" => "bash", "args" => %{"command" => command}, "output" => "done"},
+                %{"text" => "Done."}
+              ]
+            }
+          ]
+
+          context =
+            context
+            |> with_turns(turns)
+            |> FakeAcp.thread("Work", "approval-required")
+            |> FakeAcp.send_message("please use your tool")
+
+          {_request, item} = await_approval(context)
+          %{"message" => sent} = Enum.find(FakeAcp.log(context), & &1["ui"])["ui"]
+          {sent, item["prompt"]}
+
+        "the reason a compaction failed" ->
+          reason = String.duplicate("r", 5_000)
+
+          steps = [
+            %{"event" => %{"type" => "compaction_start", "reason" => "threshold"}},
+            %{
+              "event" => %{
+                "type" => "compaction_end",
+                "aborted" => false,
+                "result" => nil,
+                "errorMessage" => reason
+              }
+            },
+            %{"text" => "Done."}
+          ]
+
+          context = event_thread(context, steps, "compact please")
+          [%{"summary" => kept}] = items(context, "compaction")
+          {reason, kept}
+
+        "the detail of an extension's failure" ->
+          detail = String.duplicate("e", 5_000)
+
+          steps = [
+            %{
+              "event" => %{
+                "type" => "extension_error",
+                "extensionPath" => "/extensions/auto-lint.ts",
+                "event" => "tool_result",
+                "error" => detail
+              }
+            },
+            %{"text" => "Done."}
+          ]
+
+          context = event_thread(context, steps, "fail please")
+          [%{"failure" => %{"message" => message}}] = items(context, "error")
+          prefix = "auto-lint failed during tool_result.\n\n"
+          {detail, String.replace_prefix(message, prefix, "")}
+
+        "the current value of a text edit" ->
+          prefill = String.duplicate("p", 5_000)
+
+          context =
+            dialog_thread(
+              context,
+              %{
+                "ui" => %{"method" => "editor", "title" => "Edit it", "prefill" => prefill},
+                "say" => "Got: "
+              },
+              "ask me something"
+            )
+
+          [question] = await_question(context)["questions"]
+          [_, kept] = String.split(question["question"], "Current value:\n", parts: 2)
+          {prefill, kept}
+      end
+
+    Map.merge(context, %{cut_original: original, cut_kept: kept})
+  end
+
+  step ~r/^the thread keeps its first (?<limit>[\d,]+) characters$/,
+       %{args: [limit]} = context do
+    limit = limit |> String.replace(",", "") |> String.to_integer()
+    assert context.cut_kept == String.slice(context.cut_original, 0, limit)
+    assert String.length(context.cut_kept) == limit
     context
   end
 
