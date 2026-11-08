@@ -302,10 +302,11 @@ Item {
                 modelPicker: codexAndClaude(),
                 workspace: {
                     environments: [
-                        { environmentId: "here", key: "here", label: "This machine" },
-                        { environmentId: "there", key: "there", label: "Build box" }
+                        { environmentId: "here", key: "here", label: "This machine", current: true },
+                        { environmentId: "there", key: "there", label: "Build box", current: false }
                     ],
                     activeEnvironmentId: "here",
+                    environmentShown: true,
                     environmentChangeable: true,
                     envMode: "local",
                     envModeLabel: "Current checkout",

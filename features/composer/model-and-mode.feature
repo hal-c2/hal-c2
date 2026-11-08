@@ -299,7 +299,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And only a phone-width composer folds the machine and workspace into one control
 
   # Upstream #21404: the phone could inherit new-worktree mode for a plain folder and then
-  # refuse to start on a branch that cannot exist.
+  # refuse to start on a branch that cannot exist. The TUI half is #1345.
   @shared @backlog-mobile @backlog-tui
   Scenario: A project that is not a Git repository starts its thread in its folder
     Given the project is a plain folder with no Git repository
@@ -366,7 +366,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
   # Waits for a maintainer decision: HAL-C2's MC places a balanced thread when its first
   # message is sent (settings/load-balancing.feature, "The MC chooses, not the client"), so
   # the composer has no checking, failing or "no room" state to show before the send.
-  # Carrying this means asking the MC while the draft is open and holding the send on it.
+  # Carrying this means asking the MC while the draft is open and holding the send on it (#1344).
   @backlog @desktop @priority-low @blocked
   Scenario: Auto balance says when it cannot check the machines
     Given the user chose "Auto balance" for a new thread
@@ -383,7 +383,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
   # Waits for a maintainer decision: HAL-C2's MC places a balanced thread when its first
   # message is sent (settings/load-balancing.feature, "The MC chooses, not the client"), so
   # the composer has no checking, failing or "no room" state to show before the send.
-  # Carrying this means asking the MC while the draft is open and holding the send on it.
+  # Carrying this means asking the MC while the draft is open and holding the send on it (#1344).
   @backlog @desktop @priority-low @blocked
   Scenario: Auto balance says it is checking until a machine is picked
     Given the user chose "Auto balance" for a new thread
@@ -393,7 +393,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
   # Waits for a maintainer decision: HAL-C2's MC places a balanced thread when its first
   # message is sent (settings/load-balancing.feature, "The MC chooses, not the client"), so
   # the composer has no checking, failing or "no room" state to show before the send.
-  # Carrying this means asking the MC while the draft is open and holding the send on it.
+  # Carrying this means asking the MC while the draft is open and holding the send on it (#1344).
   @backlog @desktop @blocked
   Scenario Outline: A first message waits for Auto balance to pick a machine
     Given the user chose "Auto balance" for a new thread
@@ -450,7 +450,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then no machine is shown
 
   # Waits for a maintainer decision with the Auto balance scenarios above, and for each
-  # machine's update status to reach the composer.
+  # machine's update status to reach the composer (#1344).
   @backlog @desktop @priority-low @blocked
   Scenario Outline: Updates for every balanced machine are gathered in one notice
     Given the user chose "Auto balance" for a new thread
