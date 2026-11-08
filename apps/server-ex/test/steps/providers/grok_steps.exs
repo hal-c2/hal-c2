@@ -1811,10 +1811,12 @@ defmodule HalC2.Steps.Providers.Grok do
   end
 
   step "it finishes when Grok reports the subagent's result", context do
+    # A plain "completed." counts as success although the result that
+    # follows mentions errors: only the outcome sentence decides.
     context =
       subagent_says(
         context,
-        ~s[Background subagent "#{@child_session}" (type: "general") completed successfully.]
+        ~s[Background subagent "#{@child_session}" (type: "general") completed. It fixed 2 errors along the way.]
       )
 
     World.await_stream(World.thread_id(context, context.thread), fn state ->

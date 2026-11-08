@@ -2633,16 +2633,31 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp subagent_ended(state, %{"content" => %{"text" => text}}) do
     [_, session, rest] = Regex.run(~r/Background subagent\s+["']?(#{@uuid})["']?(.*)/is, text)
 
-    # The notice may name the subagent by its task ("fix failed tests"), so a
-    # success it states outright wins over failure words in the name.
+    # Only the outcome sentence after the id says how it ended: the quoted
+    # name ("fix failed tests", "handle cancel errors"), the parenthesised
+    # type, and any result text after that sentence may all carry failure
+    # words of their own.
+    outcome =
+      rest
+      |> notice_sentence()
+      |> String.split(".", parts: 2)
+      |> hd()
+
     status =
-      cond do
-        rest =~ ~r/completed successfully/i -> "completed"
-        rest =~ ~r/\b(fail|crash|cancel|interrupt|error|timed?\s*out)/i -> "failed"
-        true -> "completed"
-      end
+      if outcome =~ ~r/\b(fail|crash|cancel|interrupt|error|timed?\s*out)/i,
+        do: "failed",
+        else: "completed"
 
     end_task(state, session, status)
+  end
+
+  # What follows the notice's id with its leading parenthesised and quoted
+  # parts (the subagent's name, its type) stripped off.
+  defp notice_sentence(rest) do
+    stripped =
+      Regex.replace(~r/^\s*(?:\([^)]*\)|"[^"]*"|'[^']*')/s, rest, "")
+
+    if stripped == rest, do: rest, else: notice_sentence(stripped)
   end
 
   # How a background task Grok reports ended is shown: its reported status
