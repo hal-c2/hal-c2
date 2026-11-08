@@ -580,14 +580,33 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
 
   # "acme" signs in in a terminal; a Cursor instance in the browser.
   step "the user signs in to {string}", %{args: [id]} = context do
-    if id == "acme" do
-      ctx = start_sign_in(context, "acme-terminal")
-      {state, ctx} = await_phase(ctx, "waiting", terminal_shows?("Paste code: "))
-      Map.put(ctx, :interaction, state["interaction"])
-    else
-      HalC2.Steps.Providers.Cursor.sign_in_to(context, id)
+    cond do
+      context[:refused_sign_in] ->
+        ctx = start_sign_in(context, "acme-login")
+        # The browser step, where there is one: the session after it is refused.
+        ctx = accept_browser(ctx)
+        {state, ctx} = await_phase(ctx, "failed")
+        Map.put(ctx, :told, state["message"])
+
+      id == "acme" ->
+        ctx = start_sign_in(context, "acme-terminal")
+        {state, ctx} = await_phase(ctx, "waiting", terminal_shows?("Paste code: "))
+        Map.put(ctx, :interaction, state["interaction"])
+
+      true ->
+        HalC2.Steps.Providers.Cursor.sign_in_to(context, id)
     end
   end
+
+  # Accepts the browser sign-in the agent asks for; a sign-in it refuses asks none.
+  defp accept_browser(%{refused_sign_in: :session} = ctx) do
+    {state, ctx} =
+      await_phase(ctx, "waiting", &(get_in(&1, ["interaction", "type"]) == "browser"))
+
+    respond(ctx, state["interaction"], %{"type" => "browser", "action" => "accept"})
+  end
+
+  defp accept_browser(ctx), do: ctx
 
   step "the agent's login runs in a terminal on the MC that the user can type into",
        context do
@@ -3602,6 +3621,584 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     assert [_, _, %{"status" => status}] = Acp.await_runs(thread(context), 3)
     assert status in ["interrupted", "cancelled"]
     assert [_] = Acp.requests(context, "copilot", "session/cancel")
+    context
+  end
+
+  # --- Stopping only what the agent started ---------------------------------------------
+
+  # Started outside the session, in a session of its own and without the agent's mark,
+  # it notes each signal it gets in `log`. No pid can be made to reuse another, so it
+  # stands for the program that took the exited helper's pid: what spares it is that
+  # the MC signals only the agent's own group and the processes carrying its mark.
+  @unrelated ~S"""
+  import signal, sys, time
+  log = sys.argv[1]
+  def note(n, _):
+      open(log, "a").write("%d\n" % n)
+  for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT, signal.SIGUSR1, signal.SIGUSR2):
+      signal.signal(s, note)
+  open(log, "a").close()
+  open(sys.argv[2], "w").write("ready\n")
+  while True:
+      time.sleep(1)
+  """
+
+  defp pgid(pid) do
+    [_, rest] = String.split(File.read!("/proc/#{pid}/stat"), ") ", parts: 2)
+    rest |> String.split(" ") |> Enum.at(2) |> String.to_integer()
+  end
+
+  defp end_session(context) do
+    :ok = HalC2.Orchestration.release_session(thread(context))
+    context
+  end
+
+  step "a helper of {string} exited and its process id was reused by an unrelated program",
+       context do
+    ctx = context |> acme() |> Acp.launch("Helper", "acme", "start a helper")
+    ctx = Map.merge(ctx, %{thread: "Helper", end_session: &end_session/1})
+    assert [%{"status" => "completed"}] = Acp.await_runs(thread(ctx), 1)
+    [helper] = Enum.filter(Acp.log(ctx, "acme"), &(&1["event"] == "helper"))
+    refute File.exists?("/proc/#{helper["pid"]}")
+
+    script = Path.join(Acp.dir(ctx), "unrelated.py")
+    log = Path.join(Acp.dir(ctx), "unrelated.signals")
+    File.write!(script, @unrelated)
+
+    ready = Path.join(Acp.dir(ctx), "unrelated.ready")
+    File.rm(ready)
+
+    # The fifo's read returns once the program's handlers are in place.
+    {out, 0} =
+      System.cmd("sh", [
+        "-c",
+        ~S(mkfifo "$2" && { setsid python3 "$0" "$1" "$2" </dev/null >/dev/null 2>&1 & echo $!; } && read _ < "$2"),
+        script,
+        log,
+        ready
+      ])
+
+    unrelated = out |> String.trim() |> String.to_integer()
+    on_exit_kill(unrelated)
+    Map.merge(ctx, %{helper: helper, unrelated: unrelated, unrelated_log: log})
+  end
+
+  defp on_exit_kill(pid) do
+    ExUnit.Callbacks.on_exit(fn ->
+      System.cmd("kill", ["-KILL", "#{pid}"], stderr_to_stdout: true)
+    end)
+  end
+
+  step "the unrelated program is not signalled", context do
+    [%{"pid" => agent}] = Acp.launches(context, "acme")
+    refute File.exists?("/proc/#{agent}")
+    assert File.exists?("/proc/#{context.unrelated}")
+    assert File.read!(context.unrelated_log) == ""
+    context
+  end
+
+  step "neither the MC's own processes nor the system's first process are ever signalled",
+       context do
+    # The stop signals the agent's group and the processes carrying its mark: a group
+    # that were the MC's own, or 1, would take the MC or the whole machine with it.
+    group = context.helper["pgid"]
+    refute group in [1, pgid(System.pid()), String.to_integer(System.pid())]
+    System.cmd("kill", ["-KILL", "#{context.unrelated}"])
+    context
+  end
+
+  # --- what an agent reports --------------------------------------------------------------
+
+  step "{string} reports more than 64 model providers", %{args: [_]} = context do
+    providers =
+      for i <- 1..70,
+          do: %{
+            "providerId" => "p#{i}",
+            "supported" => ["openai"],
+            "required" => false,
+            "current" => %{"apiType" => "openai", "baseUrl" => "https://p#{i}.acme.test/v1"}
+          }
+
+    acme(context, %{"providers" => providers})
+  end
+
+  step "the user lists its model providers", context do
+    {providers, ctx} = model_providers(context)
+    Map.put(ctx, :listed, providers)
+  end
+
+  step "the first 64 are listed", context do
+    assert Enum.map(context.listed, & &1["providerId"]) == for(i <- 1..64, do: "p#{i}")
+    context
+  end
+
+  defp offering_review(context, control \\ %{}) do
+    ctx =
+      context
+      |> acme(
+        Map.merge(
+          %{"commands" => [%{"name" => "review", "description" => "Review the changes"}]},
+          control
+        )
+      )
+      |> watch_providers()
+      |> run_on_acme("offer commands")
+
+    {entry, ctx} = await_acme(ctx, &(&1["slashCommands"] != []))
+    Map.put(ctx, :entry, entry)
+  end
+
+  step "a running {string} session offered the command {string}", %{args: [_, _]} = context do
+    context |> offering_review() |> Map.put(:no_longer_offered, &command_withdrawn/2)
+  end
+
+  step "{string} reports that it now offers no commands", %{args: [_]} = context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => thread(context)
+      })
+
+    Acp.await_runs(thread(context), 1)
+    Acp.follow_up(context, context.thread, "withdraw commands")
+  end
+
+  # Through the shared step "{string} is no longer offered".
+  defp command_withdrawn(context, "/" <> _) do
+    {_entry, ctx} = await_acme(context, &(&1["slashCommands"] == []))
+    assert [_, %{"status" => "completed"}] = Acp.await_runs(thread(ctx), 2)
+    ctx
+  end
+
+  step "a running {string} session reported its commands and options", %{args: [_]} = context do
+    offering_review(context, %{"modes" => ["ask", "code"]})
+  end
+
+  step "another client connects", context do
+    asked = length(Acp.log(context, "acme"))
+    sub = 3000 + System.unique_integer([:positive])
+
+    client =
+      context.mc
+      |> Mc.connect()
+      |> Mc.sub(sub, %{"type" => "config", "mc" => Atom.to_string(node())})
+
+    {frame, client} = Mc.await(client, &(&1["t"] == "config" and &1["id"] == sub))
+
+    context
+    |> World.put_client("late", client)
+    |> Map.merge(%{late_providers: frame["config"]["providers"], asked: asked})
+  end
+
+  step "that client is given the same commands and options without waiting for the agent to report again",
+       context do
+    late = Enum.find(context.late_providers, &(&1["instanceId"] == "acme"))
+    assert late["slashCommands"] == context.entry["slashCommands"]
+    assert [%{"name" => "review"}] = late["slashCommands"]
+    assert late["models"] == context.entry["models"]
+    assert length(Acp.log(context, "acme")) == context.asked
+    context
+  end
+
+  step "the registry agent {string} is installed", %{args: [_]} = context do
+    ctx = acme(context)
+    assert Acp.check("acme")["installed"] == true
+    ctx
+  end
+
+  step "no update is offered for {string}", %{args: [id]} = context do
+    entry = Enum.find(context.providers, &(&1["instanceId"] == id))
+    assert entry
+    refute entry["versionAdvisory"]["canUpdate"] == true
+    refute entry["versionAdvisory"]["status"] == "behind_latest"
+    refute Map.has_key?(entry, "updateState")
+    context
+  end
+
+  step "the session of {string} already uses the model {string}", %{args: [_, model]} = context do
+    ctx = acme(context, %{"models" => [[model, "Large"], ["acme-small", "Small"]]})
+    ctx = run_on_acme(ctx, "which model", model: model)
+    assert [%{"status" => "completed"}] = Acp.await_runs(thread(ctx), 1)
+    Map.put(ctx, :model, model)
+  end
+
+  step "the user picks {string} again", %{args: [model]} = context do
+    Acp.follow_up(context, context.thread, "which model", %{
+      "modelSelection" => %{"instanceId" => "acme", "model" => model}
+    })
+
+    assert [_, %{"status" => "completed"}] = Acp.await_runs(thread(context), 2)
+    context
+  end
+
+  step "{string} is not asked to change its model", %{args: [_]} = context do
+    assert Acp.assistant_text(thread(context)) =~ "model: #{context.model}"
+
+    refute Enum.any?(
+             Acp.requests(context, "acme", "session/set_config_option"),
+             &(&1["params"]["configId"] == "model")
+           )
+
+    refute Acp.requests(context, "acme", "session/set_model") != []
+    context
+  end
+
+  # --- installing and checking ----------------------------------------------------------
+
+  step "the registry entry for {string} names a command path that leaves the install folder",
+       %{args: [id]} = context do
+    context
+    |> Acp.serve_registry()
+    |> with_cmd(id, "../bin/acme")
+    |> Map.put(:nothing_downloaded, &no_archive_fetched/1)
+  end
+
+  # Through the shared step "nothing is downloaded".
+  defp no_archive_fetched(context) do
+    assert {:error, _, _} = context.reply
+    refute Enum.any?(Acp.registry_requests(context), &String.ends_with?(&1, ".tar.gz"))
+    context
+  end
+
+  # A status check of the scenario's instance, as a provider refresh runs it.
+  step "the MC checks the instance", context do
+    Map.put(context, :entry, Acp.check(context[:auth_instance] || "acme"))
+  end
+
+  step "the instance is ready and its version is unknown", context do
+    assert %{"status" => "ready", "version" => nil} = context.entry
+    # Not even once the agent has run and named its own.
+    assert Acp.provider("acme")["version"] == nil
+    context
+  end
+
+  # --- sign-in the agent refuses --------------------------------------------------------
+
+  defp refusing(context, step, error) do
+    control =
+      case step do
+        :sign_in -> %{"authenticateError" => error}
+        :session -> %{"sessionError" => error}
+      end
+
+    context
+    |> acme(Map.merge(%{"auth" => "file", "methods" => [@browser]}, control))
+    |> Map.put(:refused_sign_in, step)
+  end
+
+  step "{string} answers its sign-in with the error {string}", %{args: [_, error]} = context do
+    refusing(context, :sign_in, error)
+  end
+
+  step "{string} answers the session it is asked for afterward with the error {string}",
+       %{args: [_, error]} = context do
+    refusing(context, :session, error)
+  end
+
+  step "{string} answers its sign-in with an error of 4,000 characters", %{args: [_]} = context do
+    refusing(context, :sign_in, String.duplicate("proxy error page ", 250))
+  end
+
+  step "the reason shown after the generic message is cut to 500 characters", context do
+    generic = "The ACP agent could not complete sign-in. "
+    assert String.starts_with?(context.told, generic)
+    reason = context.told |> String.replace_prefix(generic, "") |> String.trim_trailing(".")
+    assert String.length(reason) == 500
+    assert String.starts_with?(reason, "proxy error page")
+    context
+  end
+
+  # --- session options -------------------------------------------------------------------
+
+  defp select_option(id, name, values, extra \\ %{}) do
+    Map.merge(
+      %{
+        "id" => id,
+        "name" => name,
+        "type" => "select",
+        "currentValue" => hd(values),
+        "options" => for(v <- values, do: %{"value" => v, "name" => v})
+      },
+      extra
+    )
+  end
+
+  defp with_session_options(context, options, control \\ %{}) do
+    ctx = acme(context, Map.put(control, "sessionOptions", options))
+    assert Acp.check("acme")["status"] == "ready"
+    ctx
+  end
+
+  # The options offered with the first of the instance's models.
+  defp model_options(_ctx \\ nil) do
+    model = hd(Acp.provider("acme")["models"])
+    get_in(model, ["capabilities", "optionDescriptors"]) || []
+  end
+
+  defp descriptor(options, id), do: Enum.find(options, &(&1["id"] == id))
+
+  # Sends a turn to "acme" with `options` picked for its model; the thread is started
+  # the first time, so the session exists before the options are checked.
+  defp send_with_options(ctx, options) do
+    selection = %{
+      "instanceId" => "acme",
+      "model" => "default",
+      "options" => for({id, value} <- options, do: %{"id" => id, "value" => value})
+    }
+
+    ctx =
+      if ctx.threads["Acme"] do
+        ctx
+      else
+        ctx = run_on_acme(ctx, "hello")
+        Acp.await_runs(ctx.threads["Acme"], 1)
+        ctx
+      end
+
+    count = length(Acp.stream(ctx.threads["Acme"]) |> HalC2.StreamState.list("run"))
+    ctx = Acp.follow_up(ctx, "Acme", "hello", %{"modelSelection" => selection})
+    runs = Acp.await_runs(ctx.threads["Acme"], count + 1)
+    Map.merge(ctx, %{last_run: List.last(runs), refused_with: &option_refused/2})
+  end
+
+  defp config_sets(ctx, id) do
+    for %{"params" => %{"configId" => ^id} = params} <-
+          Acp.requests(ctx, "acme", "session/set_config_option"),
+        do: params["value"]
+  end
+
+  step "{string} offers a session option {string} with the choices low and high",
+       %{args: [_, name]} = context do
+    with_session_options(
+      context,
+      [select_option(String.downcase(name), name, ["low", "high"])],
+      %{"modes" => ["code", "plan"]}
+    )
+  end
+
+  step "the user opens the options of an {string} model", %{args: [_]} = context do
+    Map.put(context, :descriptors, model_options())
+  end
+
+  step "{string} is offered with low and high", %{args: [name]} = context do
+    assert %{"label" => ^name, "type" => "select", "options" => choices} =
+             Enum.find(context.descriptors, &(&1["label"] == name))
+
+    assert Enum.map(choices, & &1["id"]) == ["low", "high"]
+    context
+  end
+
+  step "the agent's own model and plan-mode options are not repeated there", context do
+    ids = Enum.map(context.descriptors, & &1["id"])
+    refute "model" in ids
+    refute "mode" in ids
+    context
+  end
+
+  step "{string} offers more than 16 session options, one of them with more than 64 choices",
+       %{args: [_]} = context do
+    big =
+      select_option("big", "Big", ["a", "", "a"] ++ for(n <- 1..80, do: "c#{n}"), %{
+        "currentValue" => "a"
+      })
+
+    others = for n <- 1..20, do: select_option("o#{n}", "Option #{n}", ["x", "y"])
+    with_session_options(context, [big | others])
+  end
+
+  step "the MC reads the options", context do
+    Map.put(context, :descriptors, model_options())
+  end
+
+  step "16 options are kept, each with at most 64 choices", context do
+    assert length(context.descriptors) == 16
+    assert Enum.all?(context.descriptors, &(length(&1["options"]) <= 64))
+    assert length(descriptor(context.descriptors, "big")["options"]) == 64
+    context
+  end
+
+  step "duplicate choices, and empty ones that are not the default, are dropped", context do
+    ids = Enum.map(descriptor(context.descriptors, "big")["options"], & &1["id"])
+    assert ids == Enum.uniq(ids)
+    refute "" in ids
+    assert hd(ids) == "a"
+    context
+  end
+
+  step "{string} offers the option {string} whose default choice {string} has the value \"\"",
+       %{args: [_, name, choice]} = context do
+    option = %{
+      "id" => "agent",
+      "name" => name,
+      "type" => "select",
+      "currentValue" => "",
+      "options" => [
+        %{"value" => "", "name" => choice},
+        %{"value" => "reviewer", "name" => "Reviewer"},
+        %{"value" => "planner", "name" => "Planner"}
+      ]
+    }
+
+    with_session_options(context, [option])
+  end
+
+  step "{string} offers {string}, selected, alongside the custom agents",
+       %{args: [name, choice]} = context do
+    option = Enum.find(context.descriptors, &(&1["label"] == name))
+    assert option["currentValue"] == ""
+
+    assert [%{"id" => "", "label" => ^choice, "isDefault" => true}, %{"id" => "reviewer"}, _] =
+             option["options"]
+
+    context
+  end
+
+  step "picking {string} sends \"\" to {string}", %{args: [_, _]} = context do
+    ctx = send_with_options(context, %{"agent" => "reviewer"})
+    assert %{"status" => "completed"} = ctx.last_run
+    ctx = send_with_options(ctx, %{"agent" => ""})
+    assert %{"status" => "completed"} = ctx.last_run
+    assert config_sets(ctx, "agent") == ["reviewer", ""]
+    ctx
+  end
+
+  step "{string} offers the option {string} with the choices low and high",
+       %{args: [_, id]} = context do
+    with_session_options(context, [select_option(id, "Thinking", ["low", "high"])])
+  end
+
+  step "a client sets {string} to {string}", %{args: [id, value]} = context do
+    send_with_options(context, %{id => value})
+  end
+
+  # "it is refused with {string}" (`HalC2.Steps.SourceControl.StackedPullRequests`).
+  defp option_refused(context, message) do
+    assert %{"status" => "failed"} = context.last_run
+    assert session_error_of(context.threads["Acme"]) == message
+    # Refused before it reached the agent.
+    assert config_sets(context, "thinking") == []
+    assert config_sets(context, "web") == []
+    context
+  end
+
+  step "{string} offers a session option whose choices are arranged in groups",
+       %{args: [_]} = context do
+    grouped = %{
+      "id" => "persona",
+      "name" => "Persona",
+      "type" => "select",
+      "currentValue" => "terse",
+      "options" => [
+        %{"group" => "short", "name" => "Short", "options" => [%{"value" => "terse"}]},
+        %{
+          "group" => "long",
+          "name" => "Long",
+          "options" => [%{"value" => "chatty"}, %{"value" => "verbose"}]
+        }
+      ]
+    }
+
+    empty = %{"id" => "nothing", "name" => "Nothing", "type" => "select", "options" => []}
+    with_session_options(context, [grouped, empty])
+  end
+
+  step "the option offers every choice of every group in one list", context do
+    choices = descriptor(context.descriptors, "persona")["options"]
+    assert Enum.map(choices, & &1["id"]) == ["terse", "chatty", "verbose"]
+    context
+  end
+
+  step "an option left without a usable choice is not offered at all", context do
+    refute descriptor(context.descriptors, "nothing")
+    context
+  end
+
+  step "{string} offers the on\\/off option {string}", %{args: [_, id]} = context do
+    option = %{"id" => id, "name" => "Web", "type" => "boolean", "currentValue" => false}
+    context |> with_session_options([option]) |> Map.put(:option_id, id)
+  end
+
+  step "{string} offers the option {string} with named choices", %{args: [_, id]} = context do
+    context
+    |> with_session_options([select_option(id, "Thinking", ["low", "high"])])
+    |> Map.put(:option_id, id)
+  end
+
+  step "a client sets it to the text {string}", %{args: [value]} = context do
+    send_with_options(context, %{context.option_id => value})
+  end
+
+  step "a client sets it to on", context do
+    send_with_options(context, %{context.option_id => true})
+  end
+
+  step "the thread asks for a reasoning effort that the session of {string} does not offer",
+       %{args: [_]} = context do
+    context
+    |> with_session_options([select_option("thinking", "Thinking", ["low", "high"])])
+    |> Map.put(:turn_options, %{"effort" => "high"})
+  end
+
+  step "a turn starts", context do
+    {ctx, log} =
+      ExUnit.CaptureLog.with_log(fn -> send_with_options(context, context.turn_options) end)
+
+    Map.put(ctx, :log, log)
+  end
+
+  step "the turn runs with the agent's own default for it", context do
+    assert %{"status" => "completed"} = context.last_run
+    assert config_sets(context, "effort") == []
+    context
+  end
+
+  step "the MC logs which option was skipped", context do
+    assert context.log =~ "skipped the option effort"
+    context
+  end
+
+  step "the thread's model is {string}", %{args: [_]} = context do
+    acme(context)
+  end
+
+  step "a turn starts on {string}", %{args: [_]} = context do
+    ctx = run_on_acme(context, "hello", model: "default")
+    assert [%{"status" => "completed"}] = Acp.await_runs(ctx.threads["Acme"], 1)
+    ctx
+  end
+
+  step "the MC does not ask {string} to change its model", %{args: [_]} = context do
+    assert config_sets(context, "model") == []
+    assert Acp.requests(context, "acme", "session/set_model") == []
+    context
+  end
+
+  # --- an agent's own error without a code ------------------------------------------------
+
+  step "an {string} turn the agent answers with an error that has no code",
+       %{args: [_]} = context do
+    ctx = context |> acme() |> run_on_acme("fail without a code")
+    assert [%{"status" => "failed"}] = Acp.await_runs(thread(ctx), 1)
+    ctx
+  end
+
+  step "the user sends a second message to {string}", %{args: [_]} = context do
+    Acp.follow_up(context, context.thread, "hello")
+    assert [_, %{"status" => "completed"}] = Acp.await_runs(thread(context), 2)
+    context
+  end
+
+  step "it runs on the same {string} process", %{args: [_]} = context do
+    # The fake's session ids name its process: one session is one process, still asked.
+    sessions =
+      for %{"params" => %{"prompt" => prompt} = params} <-
+            Acp.requests(context, "acme", "session/prompt"),
+          not Enum.any?(prompt, &((&1["text"] || "") =~ "Return a JSON object")),
+          do: params["sessionId"]
+
+    assert [same, same] = sessions
+    assert is_binary(same)
     context
   end
 end

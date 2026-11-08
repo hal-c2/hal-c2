@@ -82,7 +82,7 @@ defmodule HalC2.JsonRpc.ConnectionTest do
       )
 
     assert {:error, error} = Connection.call(conn, "start", %{})
-    assert error == %{"message" => "Peer process exited with code 1"}
+    assert error == %{"message" => "Peer process exited with code 1", "ended" => true}
   end
 
   # Reads the call, closes its output and sleeps on without answering.

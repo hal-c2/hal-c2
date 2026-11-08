@@ -226,15 +226,17 @@ defmodule HalC2.JsonRpc.Connection do
     %{state | exit_status: status, stderr: stderr}
   end
 
+  # The calls still waiting fail with `:closed`, or with an error the program's end
+  # names, marked `"ended" => true`: an error reply of the program's own never is.
   @impl true
   def terminate(_reason, state) do
     error =
       case {state.program, state.exit_status} do
         {program, _} when is_binary(program) and state.input_ended ->
-          %{"message" => "#{program} input stream ended."}
+          %{"message" => "#{program} input stream ended.", "ended" => true}
 
         {program, status} when is_binary(program) and is_integer(status) ->
-          %{"message" => "#{program} process exited with code #{status}"}
+          %{"message" => "#{program} process exited with code #{status}", "ended" => true}
           |> then(&if state.stderr != "", do: Map.put(&1, "stderr", state.stderr), else: &1)
 
         _ ->

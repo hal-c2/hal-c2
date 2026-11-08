@@ -297,6 +297,7 @@ defmodule HalC2.Acp.ThreadRuntime do
          {:ok, state} <- check_model(state, driver, turn.model),
          {:ok, state} <- select_model(state, turn.model),
          state = set_options(state, turn),
+         {:ok, state} <- set_session_options(state, turn),
          state = set_parameters(state, turn) do
       # A run that ended while the session opened never reaches the agent.
       case started(state) do
@@ -308,6 +309,11 @@ defmodule HalC2.Acp.ThreadRuntime do
         {:reply, :ok, sign_out(state)}
 
       {:error, message} when is_binary(message) ->
+        finish(state, "failed", message)
+        {:reply, :ok, %{state | turn: nil}}
+
+      # Refused before the agent heard of it, in words that need no agent's name.
+      {:refused, message, state} ->
         finish(state, "failed", message)
         {:reply, :ok, %{state | turn: nil}}
 
@@ -907,10 +913,11 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   # The connection failed the call because the agent ended (`HalC2.JsonRpc.Connection`
-  # fails its calls without a JSON-RPC code then): it is on its way out, and the next
-  # message starts the agent afresh rather than waiting on it.
+  # marks those errors `"ended"`): it is on its way out, and the next message starts
+  # the agent afresh rather than waiting on it. An error the agent answers itself,
+  # with or without a code, leaves it running.
   defp ended?({:error, :closed}), do: true
-  defp ended?({:error, %{"message" => _} = error}), do: not is_map_key(error, "code")
+  defp ended?({:error, %{"ended" => true}}), do: true
   defp ended?(_result), do: false
 
   # Its exit, when it comes, no longer matches `state.conn` and is ignored.
@@ -1477,6 +1484,8 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp remember_config(state, %{"configOptions" => [_ | _] = options}) do
+    HalC2.Acp.put_config(state.agent, options)
+
     %{
       state
       | config: Map.new(options, &{&1["id"], &1["currentValue"]}),
@@ -1610,6 +1619,39 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # The options picked for a registry agent's model that are its session's own
+  # (`HalC2.Acp.session_options/1`): a value it does not offer is refused before
+  # the turn reaches the agent, one it already has is not sent again, and an option
+  # its session does not offer is skipped.
+  defp set_session_options(%{agent: agent} = state, turn) when agent != nil do
+    options = Map.get(turn, :options) || %{}
+
+    if options == %{} or HalC2.Acp.driver(agent) != "acpRegistry" do
+      {:ok, state}
+    else
+      offered = HalC2.Acp.session_options(agent)
+
+      options
+      |> Enum.sort()
+      |> Enum.reduce_while({:ok, state}, fn {id, value}, {:ok, state} ->
+        case HalC2.Acp.check_option(offered, id, value) do
+          :ok ->
+            {:cont, {:ok, set_config(state, id, value)}}
+
+          :skip ->
+            Logger.warning("#{agent}: skipped the option #{id}, which its session does not offer")
+
+            {:cont, {:ok, state}}
+
+          {:error, message} ->
+            {:halt, {:refused, message, state}}
+        end
+      end)
+    end
+  end
+
+  defp set_session_options(state, _turn), do: {:ok, state}
+
   # The choice of a select option (flat or grouped) that plans, if it has one.
   defp plan_choice(option) do
     option["options"]
@@ -1619,15 +1661,16 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp set_config(state, id, value)
-       when is_binary(value) and is_map_key(state.config, id) do
+       when (is_binary(value) or is_boolean(value)) and is_map_key(state.config, id) do
     if state.config[id] == value do
       state
     else
-      case Connection.call(state.conn, "session/set_config_option", %{
-             "sessionId" => state.session_id,
-             "configId" => id,
-             "value" => value
-           }) do
+      case Connection.call(
+             state.conn,
+             "session/set_config_option",
+             %{"sessionId" => state.session_id, "configId" => id, "value" => value}
+             |> then(&if(is_boolean(value), do: Map.put(&1, "type", "boolean"), else: &1))
+           ) do
         {:ok, result} ->
           state = remember_config(state, result || %{})
           %{state | config: Map.put(state.config, id, value)}

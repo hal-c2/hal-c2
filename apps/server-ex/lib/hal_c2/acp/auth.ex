@@ -9,8 +9,11 @@ defmodule HalC2.Acp.Auth do
   variables set on the instance, so there is nothing to run. Every method ends by
   opening a session, which only works once the agent is signed in.
 
-  Failures reach clients as fixed messages; what the agent said goes to the log only,
-  since it can hold a device code or a sign-in URL.
+  Failures reach clients as fixed messages. One the agent refused, its sign-in or the
+  session after it, also names the agent's reason (upstream #30295), redacted as its
+  error output is (`HalC2.Acp.Stderr`) and cut to 500 characters, so a proxy's error
+  page cannot fill the panel. What else the agent said goes to the log only, since it
+  can hold a device code or a sign-in URL.
   """
 
   alias HalC2.JsonRpc.Connection
@@ -105,7 +108,7 @@ defmodule HalC2.Acp.Auth do
 
         case result do
           {:ok, _} -> :ok
-          {:error, reason} -> fail("The ACP agent could not complete sign-in.", reason)
+          {:error, reason} -> refused("The ACP agent could not complete sign-in.", reason)
         end
 
       {:json_rpc, ^conn, {:request, id, "elicitation/create", params}} ->
@@ -284,7 +287,7 @@ defmodule HalC2.Acp.Auth do
         :ok
 
       {:error, reason} ->
-        fail("The provider could not create a session after sign-in.", reason)
+        refused("The provider could not create a session after sign-in.", reason)
     end
   end
 
@@ -293,6 +296,24 @@ defmodule HalC2.Acp.Auth do
   defp fail(message, reason) do
     Logger.warning("ACP sign-in failed: #{message} #{message(reason)}")
     fail(message)
+  end
+
+  @reason_chars 500
+
+  defp refused(message, reason) do
+    Logger.warning("ACP sign-in failed: #{message} #{message(reason)}")
+
+    said = message(reason)
+
+    # Redacted whole, then its start kept: the start of an error page says what it is.
+    case said |> HalC2.Acp.Stderr.sanitize(String.length(said)) |> String.trim() do
+      "" ->
+        fail(message)
+
+      said ->
+        said = String.slice(said, 0, @reason_chars)
+        fail(message <> " " <> if(said =~ ~r/[.!?]$/, do: said, else: said <> "."))
+    end
   end
 
   defp message(%{"message" => message}) when is_binary(message), do: message

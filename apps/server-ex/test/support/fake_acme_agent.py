@@ -6,6 +6,7 @@
 # request is appended to DIR/NAME.log as JSON lines, written before the answer, so
 # a test reads it once the call it made has returned. A prompt's text picks what
 # the turn does (see `prompt` below).
+import subprocess
 import base64, json, os, re, signal, sys, time
 
 argv = sys.argv[1:]
@@ -104,6 +105,9 @@ MODE_FILE = os.path.join(DIR, NAME + ".mode")
 if CONTROL.get("keepMode") and os.path.exists(MODE_FILE):
     mode = open(MODE_FILE).read()
 
+# "sessionOptions": more configOptions, as given; a set one keeps its new value.
+extra_options = [dict(o) for o in CONTROL.get("sessionOptions", [])]
+
 def config_options():
     options = []
     if models and not CONTROL.get("legacyModels"):
@@ -112,7 +116,7 @@ def config_options():
     if modes:
         options.append({"id": "mode", "name": "Mode", "category": "mode", "type": "select",
                         "currentValue": mode, "options": [{"value": v, "name": v} for v in modes]})
-    return options
+    return options + extra_options
 
 def providers():
     try:
@@ -160,6 +164,9 @@ def prompt(pid, sid, text):
         signal.signal(signal.SIGTERM, lambda *_: (log({"event": "signalled", "signal": "TERM"}), sys.exit(143)))
         time.sleep(60)
         sys.exit(0)
+    # "fail without a code": answers the prompt with an error that has no JSON-RPC code.
+    if "fail without a code" in text:
+        return send({"id": pid, "error": {"message": "Prompt refused"}})
     # "crash": writes control's "stderr" to its error output and exits with "exitCode".
     if "crash" in text:
         sys.stderr.write(CONTROL.get("stderr", ""))
@@ -167,6 +174,13 @@ def prompt(pid, sid, text):
         os._exit(CONTROL.get("exitCode", 1))
     if "Return a JSON object" in text or "Return JSON with keys" in text:
         return finish(pid, sid, "Here it is: " + title_json(text))
+    # "start a helper": runs a helper that exits at once, so its pid is free for reuse.
+    if "start a helper" in text and "<conversation_history>" not in text:
+        helper = subprocess.Popen(["true"])
+        helper.wait()
+        log({"event": "helper", "pid": helper.pid, "pgid": os.getpgrp()})
+        finish(pid, sid, "helper done")
+        return
     # "start a background agent": one works on, holding the prompt until SIGUSR2.
     if "start a background agent" in text and "<conversation_history>" not in text:
         update(sid, {"sessionUpdate": "tool_call", "toolCallId": "bg-1", "title": "Background agent",
@@ -236,6 +250,9 @@ def prompt(pid, sid, text):
         update(sid, {"sessionUpdate": "terminal_output_chunk", "terminalId": "term-1", "data": b64("1 failed\n")})
         update(sid, {"sessionUpdate": "terminal_update", "terminalId": "term-1", "exitStatus": {"exitCode": 1}})
         return finish(pid, sid, "ran it")
+    if "withdraw commands" in text and "<conversation_history>" not in text:
+        update(sid, {"sessionUpdate": "available_commands_update", "availableCommands": []})
+        return finish(pid, sid, "no commands")
     if "offer commands" in text:
         update(sid, {"sessionUpdate": "available_commands_update", "availableCommands": CONTROL.get("commands", [])})
         held = (pid, sid)
@@ -315,6 +332,8 @@ for line in sys.stdin:
                   "url": "https://acme.test/login", "elicitationId": "login-1", "message": "Sign in to Acme"}})
     elif method in ("session/new", "session/resume", "session/load") and not signed_in():
         send({"id": mid, "error": {"code": -32000, "message": "Authentication required"}})
+    elif method == "session/new" and CONTROL.get("sessionError"):
+        send({"id": mid, "error": {"code": -32000, "message": CONTROL["sessionError"]}})
     elif method in ("session/resume", "session/load") and lost and params.get("sessionId") not in mine:
         send({"id": mid, "error": {"code": -32002, "message": "Session not found"}})
     elif method in ("session/new", "session/resume", "session/load"):
@@ -338,6 +357,9 @@ for line in sys.stdin:
             mode = params["value"]
             if CONTROL.get("keepMode"):
                 open(MODE_FILE, "w").write(mode)
+        for option in extra_options:
+            if option.get("id") == params.get("configId"):
+                option["currentValue"] = params["value"]
         send({"id": mid, "result": {"configOptions": config_options()}})
     elif method == "session/set_model" and CONTROL.get("legacyModels"):
         model = params["modelId"]

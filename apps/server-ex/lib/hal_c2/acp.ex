@@ -345,9 +345,11 @@ defmodule HalC2.Acp do
   def cursor_credentials(id),
     do: Path.join([HalC2.Paths.data_dir(), "provider-auth", id, "cursor.json"])
 
-  # A registry agent is installed when first used, so it counts as available.
+  # A registry agent is installed when first used, so it counts as available. One run
+  # from an executable override is a local copy of no known version.
   defp base_entry(id, @registry, instance) do
     agent_id = get_in(instance, ["config", "agentId"])
+    override? = get_in(instance, ["config", "commandPath"]) not in [nil, ""]
 
     case HalC2.Acp.Catalog.describe(agent_id) do
       nil ->
@@ -358,7 +360,11 @@ defmodule HalC2.Acp do
          %{
            "displayName" => instance["displayName"] || agent.name,
            "iconUrl" => "https://cdn.agentclientprotocol.com/registry/v1/latest/#{agent_id}.svg",
-           "version" => :persistent_term.get({__MODULE__, id, :version}, agent.version)
+           "version" =>
+             if(override?,
+               do: nil,
+               else: :persistent_term.get({__MODULE__, id, :version}, agent.version)
+             )
          }
          |> then(
            &if(agent.website,
@@ -1032,12 +1038,17 @@ defmodule HalC2.Acp do
   defp driver_fields(entry, "cursor", _id, _instance),
     do: Map.put(entry, "showInteractionModeToggle", true)
 
-  # What a registry agent's running session advertises (`put_commands/2`).
+  # What a registry agent's running session advertises (`put_commands/2`), and its
+  # session options with every model (`session_options/1`).
   defp driver_fields(entry, "acpRegistry", id, _instance) do
-    Map.merge(entry, %{
+    options = session_options(id)
+
+    entry
+    |> Map.merge(%{
       "slashCommands" => :persistent_term.get({__MODULE__, id, :commands}, []),
       "skills" => :persistent_term.get({__MODULE__, id, :skills}, [])
     })
+    |> Map.update!("models", &with_options(&1, options))
   end
 
   defp driver_fields(entry, _driver, _id, _instance), do: entry
@@ -1449,6 +1460,159 @@ defmodule HalC2.Acp do
     end
 
     :ok
+  end
+
+  @doc """
+  Keeps the `configOptions` a registry agent's session reports, as `put_models/2`
+  keeps its models, so its session options follow what it last offered.
+  """
+  def put_config(id, config_options) when is_list(config_options) do
+    if driver(id) == "acpRegistry" and
+         :persistent_term.get({__MODULE__, id, :config}, nil) != config_options do
+      locked(id, fn -> :persistent_term.put({__MODULE__, id, :config}, config_options) end)
+      HalC2.Settings.notify_providers()
+    end
+
+    :ok
+  end
+
+  def put_config(_id, _config_options), do: :ok
+
+  @max_options 16
+  @max_choices 64
+
+  @doc """
+  The session options (ACP `configOptions`) a registry instance offers with each of
+  its models, as option descriptors: at most #{@max_options}, each with at most
+  #{@max_choices} choices, grouped choices in one list, duplicate choices and empty
+  ones that are not the default dropped. The model option is the model picker's and
+  a mode option offering `plan` or `architect` is the plan toggle's
+  (`HalC2.Acp.ThreadRuntime`), so neither is offered here.
+  """
+  def session_options(id) when is_binary(id),
+    do: id |> then(&:persistent_term.get({__MODULE__, &1, :config}, [])) |> session_options()
+
+  # An option the agent names twice is the one it named first, whether or not that one
+  # is offered.
+  def session_options(config) when is_list(config) do
+    config
+    |> Enum.filter(&is_map/1)
+    |> Enum.uniq_by(& &1["id"])
+    |> Enum.reject(&(&1["id"] == "model" or &1["category"] == "model" or plan_option?(&1)))
+    |> Enum.flat_map(&option_descriptor/1)
+    |> Enum.take(@max_options)
+  end
+
+  def session_options(_config), do: []
+
+  @doc """
+  Checks a value a client picked for a registry session option against the option
+  `session_options/1` offers: `:ok`, `:skip` for an option the session does not
+  offer, or `{:error, message}`.
+  """
+  def check_option(options, id, value) do
+    case Enum.find(options, &(&1["id"] == id)) do
+      nil ->
+        :skip
+
+      %{"type" => "boolean"} when is_boolean(value) ->
+        :ok
+
+      %{"type" => "boolean"} ->
+        {:error, invalid_option(id, value, "boolean")}
+
+      %{"options" => choices} when is_binary(value) ->
+        values = Enum.map(choices, & &1["id"])
+
+        if value in values,
+          do: :ok,
+          else: {:error, invalid_option(id, value, "one of " <> Enum.join(values, ", "))}
+
+      _ ->
+        {:error, invalid_option(id, value, "string")}
+    end
+  end
+
+  defp invalid_option(id, value, expected),
+    do:
+      "Invalid value #{Jason.encode!(value)} for session config option #{Jason.encode!(id)}: expected #{expected}"
+
+  defp plan_option?(%{"category" => category} = option)
+       when category in ["mode", "collaboration_mode"] do
+    option
+    |> choices()
+    |> Enum.any?(&(&1["value"] in ["plan", "architect"]))
+  end
+
+  defp plan_option?(_option), do: false
+
+  # A select's choices, those of its groups included.
+  defp choices(option) do
+    option["options"]
+    |> List.wrap()
+    |> Enum.filter(&is_map/1)
+    |> Enum.flat_map(&if(is_list(&1["options"]), do: &1["options"], else: [&1]))
+    |> Enum.filter(&is_map/1)
+  end
+
+  defp option_descriptor(%{"id" => id, "type" => "boolean"} = option)
+       when is_binary(id) and id != "" do
+    [
+      %{"id" => id, "label" => option_label(option), "type" => "boolean"}
+      |> then(
+        &if(is_boolean(option["currentValue"]),
+          do: Map.put(&1, "currentValue", option["currentValue"]),
+          else: &1
+        )
+      )
+    ]
+  end
+
+  defp option_descriptor(%{"id" => id} = option) when is_binary(id) and id != "" do
+    current = option["currentValue"]
+    listed = choices(option)
+    # An empty value is a choice only as the default: the current one, or the first
+    # listed (Copilot's default agent, "", upstream #19330).
+    default = if current == "" or match?([%{"value" => ""} | _], listed), do: ""
+
+    choices =
+      for %{"value" => value} = choice when is_binary(value) <- listed,
+          value != "" or value == default do
+        %{"id" => value, "label" => text(choice["name"]) || value}
+        |> then(&if(value == current, do: Map.put(&1, "isDefault", true), else: &1))
+      end
+      |> Enum.uniq_by(& &1["id"])
+      |> Enum.take(@max_choices)
+
+    if choices == [] do
+      []
+    else
+      [
+        %{"id" => id, "label" => option_label(option), "type" => "select", "options" => choices}
+        |> then(
+          &if(is_binary(current) and Enum.any?(choices, fn c -> c["id"] == current end),
+            do: Map.put(&1, "currentValue", current),
+            else: &1
+          )
+        )
+      ]
+    end
+  end
+
+  defp option_descriptor(_option), do: []
+
+  defp option_label(option), do: text(option["name"]) || option["id"]
+
+  defp with_options(models, []), do: models
+
+  defp with_options(models, options) do
+    Enum.map(models, fn model ->
+      own = get_in(model, ["capabilities", "optionDescriptors"]) || []
+      ids = MapSet.new(own, & &1["id"])
+      extra = Enum.reject(options, &MapSet.member?(ids, &1["id"]))
+
+      Map.put(model, "capabilities", %{"optionDescriptors" => own ++ extra})
+    end)
   end
 
   @max_commands 200
