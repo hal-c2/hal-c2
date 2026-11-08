@@ -35,9 +35,10 @@ defmodule HalC2Plugins.TokenEconomizer do
   `microSkills` topic carries the same listing, published as facts change.
 
   A turn whose start the plugin missed is not watched. Missed events (`"dropped"`) mark
-  the turns under way as partial, and a partial turn does not teach the envelope. The
-  micro-skills read a partial turn back from the thread (`Host.history/3`) so a missed
-  event in the middle of it teaches nothing half-seen; a turn never folded twice.
+  the turns under way as partial, and the turns heard over the next full feed queue
+  too, and a partial turn does not teach the envelope. The micro-skills read a
+  partial turn back from the thread (`Host.history/3`) so a missed event in the
+  middle of it teaches nothing half-seen; a turn never folded twice.
 
   The topic `loopGuard` carries `status/1`: counts since the MC started and the latest
   redirects and stop offers. It is published when a turn ends and when the guard acts,
@@ -169,6 +170,8 @@ defmodule HalC2Plugins.TokenEconomizer do
        settings: settings,
        # thread id => %{run, project, guard, partial}, the turn under way
        turns: %{},
+       # Events still to hear that the feed may have queued before ones it missed.
+       missing: 0,
        # {project id, provider} => tracker
        trackers: %{},
        # project id => micro-skills state, loaded on first use
@@ -241,7 +244,7 @@ defmodule HalC2Plugins.TokenEconomizer do
   def handle_call({:observe, event}, _from, state) do
     state =
       if on?(state) or micro_on?(state) do
-        state |> missed(event["dropped"]) |> hear(event)
+        state |> missed(event["dropped"]) |> hear(event) |> suspect(event)
       else
         state
       end
@@ -292,10 +295,27 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   # --- turns ------------------------------------------------------------------------------
 
-  defp missed(state, n) when is_integer(n) and n > 0,
-    do: %{state | turns: Map.new(state.turns, fn {id, turn} -> {id, %{turn | partial: true}} end)}
+  # The feed says what it missed on the next event it delivers, which it queued before
+  # the missed ones: up to a full queue of events still to come were too, and a turn
+  # that starts in them may have lost what was missed. So the turns under way are
+  # partial, and so is each turn heard until that queue has been heard.
+  defp missed(state, n) when is_integer(n) and n > 0 do
+    turns = Map.new(state.turns, fn {id, turn} -> {id, %{turn | partial: true}} end)
+    %{state | turns: turns, missing: HalC2.Plugins.Feed.max_queue()}
+  end
 
   defp missed(state, _), do: state
+
+  defp suspect(%{missing: 0} = state, _event), do: state
+
+  defp suspect(state, event) do
+    state = %{state | missing: state.missing - 1}
+
+    case state.turns[event["threadId"]] do
+      nil -> state
+      _turn -> put_in(state.turns[event["threadId"]].partial, true)
+    end
+  end
 
   defp hear(
          state,
@@ -758,16 +778,25 @@ defmodule HalC2Plugins.TokenEconomizer do
     end
   end
 
+  # A write that fails (a full disk, a data directory gone read-only) costs one turn's
+  # lesson, which the tracker in memory still holds: never the plugin and every turn
+  # it is guarding.
   defp save_tracker({project_id, provider} = project, tracker) do
     path = envelope_path(project)
-    File.mkdir_p!(Path.dirname(path))
+    tmp = path <> ".tmp"
 
     saved =
       Map.merge(Envelope.dump(tracker), %{"projectId" => project_id, "provider" => provider})
 
-    tmp = path <> ".tmp"
-    File.write!(tmp, JSON.encode!(saved))
-    File.rename!(tmp, path)
+    with :ok <- File.mkdir_p(Path.dirname(path)),
+         :ok <- File.write(tmp, JSON.encode!(saved)),
+         :ok <- File.rename(tmp, path) do
+      :ok
+    else
+      {:error, reason} ->
+        Logger.warning("token-economizer: envelope not saved to #{path}: #{inspect(reason)}")
+        :error
+    end
   end
 
   # --- what a call was ------------------------------------------------------------------

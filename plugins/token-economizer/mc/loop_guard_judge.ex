@@ -74,6 +74,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Judge do
           "stuck" => nil,
           "confidence" => 0.0,
           "reason" => String.slice("error:#{message}", 0, 60),
+          "_failed" => true,
           "_tokens" => 0
         }
     end

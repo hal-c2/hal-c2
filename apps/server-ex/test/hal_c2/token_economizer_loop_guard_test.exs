@@ -283,6 +283,28 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
     end)
   end
 
+  # Folds a stuck turn's calls until the guard hands out a judge job.
+  defp until_job(g, opts) do
+    Enum.reduce_while(1..80, {g, nil}, fn i, {g, nil} ->
+      {g, nil, job} =
+        if rem(i, 2) == 0,
+          do: edit(g, opts),
+          else:
+            Turn.fold(
+              g,
+              "Bash",
+              %{"command" => "pytest -q"},
+              "FAILED t - AssertionError",
+              1,
+              opts
+            )
+
+      if job, do: {:halt, {g, job}}, else: {:cont, {g, nil}}
+    end)
+  end
+
+  defp edit(g, opts), do: Turn.fold(g, "Edit", %{"file_path" => "/r/a.py"}, "ok", nil, opts)
+
   describe "a stuck turn" do
     test "is not acted on before the project has an envelope" do
       {g, decisions} = stuck_turn(Turn.new("t"), 60, thr: Rules.defaults())
@@ -368,6 +390,27 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert g.segment == 1 and g.st.turns == 0 and g.judge_pending == nil
     end
 
+    test "a judge that could not answer is no judge, so the aggressive level does not redirect on it" do
+      opts = [
+        envelope: 200.0,
+        thr: Map.put(Rules.scaled_thresholds("aggressive"), "gate_over_envelope", false),
+        judge: true,
+        nudge_budget: 1,
+        now: 0
+      ]
+
+      {g, job} = until_job(Turn.new("t"), opts)
+      failed = Judge.stuck_judge(job["digest"], fn _, _ -> {:error, "no textGeneration"} end)
+      unsure = %{"stuck" => nil, "confidence" => 0.4, "reason" => "unsure", "_tokens" => 0}
+
+      # Within the envelope the rule without a judge spares the turn; an answer that is
+      # really unsure still redirects it on this level.
+      assert {_, nil, nil} = edit(Turn.verdict(g, job["id"], failed), opts)
+
+      assert {_, {:nudge, "ambiguous-past-envelope"}, nil} =
+               edit(Turn.verdict(g, job["id"], unsure), opts)
+    end
+
     test "a judge job that never answers stops blocking the next one" do
       opts = [envelope: 30.0, thr: Rules.defaults(), judge: true, now: 0]
       {g, _} = stuck_turn(Turn.new("t"), 30, opts)
@@ -375,6 +418,39 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       later = Keyword.put(opts, :now, Turn.judge_stale_s() + 1)
       {g, _} = stuck_turn(g, 12, later)
       assert g.judge_calls >= 2
+    end
+  end
+
+  describe "missed events" do
+    defp observe(state, event) do
+      {:reply, :ok, state} = TokenEconomizer.handle_call({:observe, event}, nil, state)
+      state
+    end
+
+    defp started(thread, extra \\ %{}) do
+      Map.merge(
+        %{
+          "type" => "turn.started",
+          "threadId" => thread,
+          "runId" => "run-" <> thread,
+          "projectId" => "p",
+          "provider" => "claudeAgent"
+        },
+        extra
+      )
+    end
+
+    test "mark partial the turns under way and those heard before the feed's queue drains" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = observe(state, started("a"))
+      # Reported on an event queued before the missed ones: "b" may have lost them.
+      state = state |> observe(started("b", %{"dropped" => 3})) |> observe(started("c"))
+      assert state.turns["a"].partial and state.turns["b"].partial and state.turns["c"].partial
+
+      queued = HalC2.Plugins.Feed.max_queue() - 2
+      state = Enum.reduce(1..queued, state, fn _, s -> observe(s, %{"type" => "noop"}) end)
+      state = observe(state, started("d"))
+      refute state.turns["d"].partial
     end
   end
 
