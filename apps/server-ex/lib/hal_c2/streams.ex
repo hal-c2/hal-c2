@@ -8,6 +8,8 @@ defmodule HalC2.Streams do
 
   use Supervisor
 
+  require Logger
+
   alias HalC2.StreamState
   alias HalC2.Streams.Server
 
@@ -107,21 +109,34 @@ defmodule HalC2.Streams do
 
   @doc """
   See `HalC2.Streams.Server.transact/3`. Inside `unrecorded/2` for the stream, `fun`
-  decides against the stream as it stands and its changes are dropped.
+  decides against the stream as it stands and its changes are dropped; for another
+  stream, changes the store refuses are dropped the same way.
   """
   def transact(stream_id, stream_kind, fun) do
     if unrecorded?(stream_id) do
-      {_changes, reply} = fun.(state(stream_id))
-      reply
+      dry_transact(stream_id, fun)
     else
       with_server(stream_id, &Server.transact(&1, stream_kind, fun))
     end
+  rescue
+    error in HalC2.Streams.Unrecorded ->
+      if dry?(),
+        do: refused(stream_id, error, fn -> dry_transact(stream_id, fun) end),
+        else: reraise(error, __STACKTRACE__)
+  end
+
+  defp dry_transact(stream_id, fun) do
+    {_changes, reply} = fun.(state(stream_id))
+    reply
   end
 
   @doc """
   Runs `fun` with this process's commits to `stream_id` dropped, not recorded: for a
   provider runtime whose turn the store failed to record (`HalC2.Orchestration.Unrecorded`),
-  which goes on driving the turn to its end while what ends it is recorded apart.
+  which goes on driving the turn to its end while what ends it is recorded apart. A
+  commit to another stream (a subagent's thread) the store refuses meanwhile is dropped
+  too, alone, so it cannot keep the runtime from stopping the turn or handing over its
+  end.
   """
   def unrecorded(stream_id, fun) do
     previous = Process.put(:hal_c2_unrecorded_stream, stream_id)
@@ -136,6 +151,12 @@ defmodule HalC2.Streams do
   end
 
   defp unrecorded?(stream_id), do: Process.get(:hal_c2_unrecorded_stream) == stream_id
+  defp dry?, do: Process.get(:hal_c2_unrecorded_stream) != nil
+
+  defp refused(stream_id, error, dropped) do
+    Logger.warning("dropped changes to #{stream_id} the store refused: #{error.message}")
+    dropped.()
+  end
 
   @doc """
   The stream's current state, started if needed. What walks its cold rows (a whole
@@ -168,5 +189,10 @@ defmodule HalC2.Streams do
     if unrecorded?(stream_id),
       do: {:ok, sequence(stream_id)},
       else: with_server(stream_id, &Server.commit(&1, stream_kind, changes))
+  rescue
+    error in HalC2.Streams.Unrecorded ->
+      if dry?(),
+        do: refused(stream_id, error, fn -> {:ok, sequence(stream_id)} end),
+        else: reraise(error, __STACKTRACE__)
   end
 end
