@@ -8,7 +8,8 @@ defmodule HalC2.Orchestration.RunShape do
   prompt cache (Claude relaunches with `--resume` when its launch changes). A
   conversation the provider starts afresh because the one to resume was gone
   (`HalC2.Orchestration.Handoff.fresh_start/2`) gets the kept context again without
-  asking.
+  asking. A provider thread that carries on another's conversation (a native fork's,
+  or another Claude instance's in the same home) keeps that conversation's shape.
 
   What `deniedTools` names depends on the provider (`tool_unit/1`): Claude's tool names,
   Codex's capabilities (`HalC2.Codex.ThreadRuntime`), and nothing for the others, which
@@ -46,7 +47,10 @@ defmodule HalC2.Orchestration.RunShape do
       |> with_shape(shape)
       |> Map.update!(:text, &Handoff.prompt(shape && shape["context"], &1))
     else
-      with_shape(turn, stored)
+      # A native fork's first run continues the source's conversation and its shape.
+      inherited = (Map.get(turn, :fork) || %{})[:shape]
+      if id && stored == nil && inherited, do: keep(thread_id, id, inherited)
+      with_shape(turn, stored || inherited)
     end
   end
 
