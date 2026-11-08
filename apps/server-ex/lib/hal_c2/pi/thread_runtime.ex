@@ -26,7 +26,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   alias HalC2.Orchestration
   alias HalC2.Orchestration.Entities
 
-  @state_version 10
+  @state_version 11
   # Extension failures queued between turns: only the newest are kept, so an
   # extension failing on a timer while idle cannot grow state without bound.
   @queued_extension_errors 20
@@ -206,6 +206,13 @@ defmodule HalC2.Pi.ThreadRuntime do
        # Whether Pi is compacting right now, between its compaction events:
        # a stop then restarts Pi once the grace runs out (`compact_restart/2`).
        compacting: false,
+       # Pi takes no prompt while it compacts (it rejects one, steers included):
+       # the turn's prompt and steers sent meanwhile wait here, the steers as
+       # `{caller, steer}`, until the compaction ends (`release_held/1`). The
+       # prompt is `:unsent`, or `:rejected` when Pi turned it back (its turn's
+       # watchdog already runs).
+       prompt_held: false,
+       held_steers: [],
        failure: nil,
        message: 0,
        compactions: 0,
@@ -313,8 +320,16 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   def handle_call({:interrupt, _run_id}, from, state), do: handle_call(:interrupt, from, state)
 
+  # A turn whose prompt still waits on a compaction has not reached Pi: it
+  # ends here, and its prompt is never sent.
+  def handle_call(:interrupt, _from, %{turn: turn, prompt_held: held} = state)
+      when turn != nil and held != false,
+      do: {:reply, :ok, end_turn(%{state | interrupted: true}, "interrupted", nil)}
+
   def handle_call(:interrupt, _from, %{turn: turn} = state) when turn != nil do
     Connection.notify(state.conn, "abort", %{})
+    # Steers still waiting on a compaction stay in the stopped turn, unsent.
+    state = answer_held_steers(state, :ok)
 
     # `abort` does not stop a compaction: a turn that IS the compaction, one
     # Pi is compacting through, or one waiting behind an abandoned compaction
@@ -344,12 +359,11 @@ defmodule HalC2.Pi.ThreadRuntime do
         task = Task.async(fn -> Connection.call(conn, "compact", params, :infinity) end)
         {:noreply, %{state | compact: task.ref, compact_steer: from}}
 
+      :error when state.compacting ->
+        {:noreply, %{state | held_steers: state.held_steers ++ [{from, steer}]}}
+
       :error ->
-        {state, payload} = prompt_payload(state, steer.text, steer.attachments)
-        params = Map.put(payload, "streamingBehavior", "steer")
-        label = {from, Process.send_after(self(), {:steer_timeout, from}, steer_answer_ms())}
-        steers = Connection.request(state.conn, "prompt", params, label, state.steers)
-        {:noreply, %{state | steers: steers}}
+        {:noreply, send_steer(state, from, steer)}
     end
   end
 
@@ -472,7 +486,13 @@ defmodule HalC2.Pi.ThreadRuntime do
         # Anything but the prompt's own acknowledgement is Pi at work on the
         # turn; the watchdog only watches a turn that has shown none.
         state = if type == "response", do: state, else: %{state | turn_active: true}
-        {:noreply, event(type, event, state)}
+        state = event(type, event, state)
+        {:noreply, if(type == "compaction_end", do: release_held(state), else: state)}
+
+      # A compaction between turns (an extension's, or Pi's own after a turn
+      # settled) shows in no turn, but the next prompt waits for it.
+      type in ["compaction_start", "compaction_end"] ->
+        {:noreply, %{state | compacting: type == "compaction_start"}}
 
       # An extension that fails between turns is shown on the next turn.
       type == "extension_error" ->
@@ -590,9 +610,9 @@ defmodule HalC2.Pi.ThreadRuntime do
     state = forget_abandoned(state, message)
 
     case :gen_server.check_response(message, state.steers, true) do
-      {reply, {from, timer}, steers} ->
+      {reply, {from, timer, steer}, steers} ->
         Process.cancel_timer(timer)
-        {:noreply, steered(%{state | steers: steers}, from, reply)}
+        {:noreply, steered(%{state | steers: steers}, from, reply, steer)}
 
       _ ->
         {:noreply, state}
@@ -604,17 +624,22 @@ defmodule HalC2.Pi.ThreadRuntime do
   # delivers that notification before the task can forward the reply, so by
   # now its events have been dropped and nothing of it is still out. This is
   # also the only end a compaction that fails (or sends no events) ever gets.
+  # A prompt Pi rejected while it finished one waits on that answer too.
   defp forget_abandoned(state, {ref, _result}) when is_reference(ref) do
     if MapSet.member?(state.abandoned_compacts, ref) do
       Process.demonitor(ref, [:flush])
-      %{state | abandoned_compacts: MapSet.delete(state.abandoned_compacts, ref)}
+      release_held(%{state | abandoned_compacts: MapSet.delete(state.abandoned_compacts, ref)})
     else
       state
     end
   end
 
-  defp forget_abandoned(state, {:DOWN, ref, :process, _pid, _reason}),
-    do: %{state | abandoned_compacts: MapSet.delete(state.abandoned_compacts, ref)}
+  defp forget_abandoned(state, {:DOWN, ref, :process, _pid, _reason}) do
+    if MapSet.member?(state.abandoned_compacts, ref),
+      do:
+        release_held(%{state | abandoned_compacts: MapSet.delete(state.abandoned_compacts, ref)}),
+      else: state
+  end
 
   defp forget_abandoned(state, _message), do: state
 
@@ -687,6 +712,18 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   # Every older state shape migrates forward here.
   defp migrate(%{v: @state_version} = state), do: state
+
+  # Steers out at the upgrade are labelled with no steer: one Pi rejects is not resent.
+  defp migrate(%{v: 10} = state) do
+    steers =
+      for {request, {from, timer}} <- :gen_server.reqids_to_list(state.steers),
+          reduce: :gen_server.reqids_new(),
+          do: (steers -> :gen_server.reqids_add(request, {from, timer, nil}, steers))
+
+    state
+    |> Map.merge(%{v: 11, steers: steers, prompt_held: false, held_steers: []})
+    |> migrate()
+  end
 
   defp migrate(%{v: 1} = state),
     do: state |> Map.merge(%{v: 2, steers: :gen_server.reqids_new(), settled: false}) |> migrate()
@@ -1061,19 +1098,76 @@ defmodule HalC2.Pi.ThreadRuntime do
     end
   end
 
-  defp send_prompt(state, turn) do
+  defp send_prompt(state, turn, watchdog? \\ true) do
     case compact_command(turn.text) do
       {:ok, params} ->
         conn = state.conn
         task = Task.async(fn -> Connection.call(conn, "compact", params, :infinity) end)
         %{state | compact: task.ref}
 
+      :error when state.compacting ->
+        %{state | prompt_held: :unsent}
+
       :error ->
         {state, payload} = prompt_payload(state, turn.text, Map.get(turn, :attachments, []))
         Connection.notify(state.conn, "prompt", payload)
-        Process.send_after(self(), {:turn_watchdog, turn.ids.run, 0, 0}, turn_watchdog_ms())
+
+        if watchdog?,
+          do: Process.send_after(self(), {:turn_watchdog, turn.ids.run, 0, 0}, turn_watchdog_ms())
+
         state
     end
+  end
+
+  defp send_steer(state, from, steer) do
+    {state, payload} = prompt_payload(state, steer.text, steer.attachments)
+    params = Map.put(payload, "streamingBehavior", "steer")
+    timer = Process.send_after(self(), {:steer_timeout, from}, steer_answer_ms())
+    steers = Connection.request(state.conn, "prompt", params, {from, timer, steer}, state.steers)
+    %{state | steers: steers}
+  end
+
+  # Pi 1.4 rejects any prompt while it compacts. One that raced a compaction
+  # Pi had already started waits for it like one sent knowing it ran.
+  @compacting_rejection "Cannot submit a prompt while compaction is in progress"
+
+  defp compaction_rejection?(reason) when is_binary(reason),
+    do: String.starts_with?(reason, @compacting_rejection)
+
+  defp compaction_rejection?(%{"message" => message}), do: compaction_rejection?(message)
+  defp compaction_rejection?(_reason), do: false
+
+  # Holds what the rejection turned back until the compaction ends. Pi sent
+  # `compaction_start` before rejecting, so it is known here — unless it was
+  # an abandoned compaction's (dropped), whose task's answer then releases it.
+  defp hold_rejected(state) do
+    if MapSet.size(state.abandoned_compacts) > 0,
+      do: state,
+      else: %{state | compacting: true}
+  end
+
+  # Once Pi is done compacting, the held prompt and steers go out, in the
+  # order they were sent. A stopped turn's held steers were already answered.
+  defp release_held(state) do
+    if state.turn == nil or state.conn == nil or state.compacting or
+         MapSet.size(state.abandoned_compacts) > 0 do
+      state
+    else
+      state =
+        if state.prompt_held,
+          do:
+            send_prompt(%{state | prompt_held: false}, state.turn, state.prompt_held == :unsent),
+          else: state
+
+      Enum.reduce(state.held_steers, %{state | held_steers: []}, fn {from, steer}, state ->
+        send_steer(state, from, steer)
+      end)
+    end
+  end
+
+  defp answer_held_steers(state, answer) do
+    for {from, _steer} <- state.held_steers, do: GenServer.reply(from, answer)
+    %{state | held_steers: []}
   end
 
   # A `/compact` message (a message that only starts with it is an ordinary one),
@@ -1209,8 +1303,20 @@ defmodule HalC2.Pi.ThreadRuntime do
   # --- events --------------------------------------------------------------------
 
   # The prompt's acknowledgement: a refused prompt ends the turn.
-  defp event("response", %{"command" => "prompt", "success" => false} = event, state),
-    do: end_turn(state, "failed", detail(nonblank(event["error"]) || "Pi rejected the prompt."))
+  # The turn's prompt, turned back by a compaction: sent again once it ends, or
+  # never, if the user stopped the turn meanwhile.
+  defp event("response", %{"command" => "prompt", "success" => false} = event, state) do
+    cond do
+      not compaction_rejection?(event["error"]) ->
+        end_turn(state, "failed", detail(nonblank(event["error"]) || "Pi rejected the prompt."))
+
+      state.interrupted ->
+        end_turn(state, "interrupted", nil)
+
+      true ->
+        hold_rejected(%{state | prompt_held: :rejected})
+    end
+  end
 
   defp event("message_start", %{"message" => %{"role" => "assistant"}}, state),
     do: %{state | message: state.message + 1}
@@ -1301,8 +1407,6 @@ defmodule HalC2.Pi.ThreadRuntime do
   end
 
   defp event("compaction_end", event, state) do
-    state = %{state | compacting: false}
-
     # An overflow can surface as a model error before Pi compacts and tries
     # again: that failure clears only when Pi says the compaction will retry.
     state = if event["willRetry"] == true, do: %{state | failure: nil}, else: state
@@ -1315,6 +1419,8 @@ defmodule HalC2.Pi.ThreadRuntime do
          do: state,
          else: event("compaction_start", event, state)
 
+    # Pi is done compacting, also when it started before this turn did.
+    state = %{state | compacting: false}
     native = "compaction:#{state.turn.ids.provider_turn}:#{state.compactions}"
     result = if is_map(event["result"]), do: event["result"], else: %{}
 
@@ -1396,9 +1502,10 @@ defmodule HalC2.Pi.ThreadRuntime do
   # A steer Pi has not answered may have reached it after this settle, and start new
   # work: the turn waits for the answer (`steered/3`). An interrupted turn ends here.
   defp event("agent_settled", _event, %{compact: nil} = state) do
-    if state.interrupted or :gen_server.reqids_size(state.steers) == 0,
-      do: settle(state),
-      else: %{state | settled: true}
+    if state.interrupted or
+         (:gen_server.reqids_size(state.steers) == 0 and state.held_steers == []),
+       do: settle(state),
+       else: %{state | settled: true}
   end
 
   defp event(_type, _event, state), do: state
@@ -1681,6 +1788,24 @@ defmodule HalC2.Pi.ThreadRuntime do
   # finds the turn over and sends the message on its own (`HalC2.Orchestration`). A
   # refusal while the settle waits on other steers is held until they are answered, and
   # a steer Pi exited without answering until its exit ends the turn (`:EXIT`).
+  # A steer Pi turned back for a compaction waits for it to end, then goes again;
+  # in a stopped turn it stays unsent, in that turn.
+  defp steered(state, from, {:reply, {:error, reason}} = reply, steer) do
+    cond do
+      steer == nil or state.turn == nil or not compaction_rejection?(reason) ->
+        steered(state, from, reply)
+
+      state.interrupted ->
+        GenServer.reply(from, :ok)
+        state
+
+      true ->
+        hold_rejected(%{state | held_steers: state.held_steers ++ [{from, steer}]})
+    end
+  end
+
+  defp steered(state, from, reply, _steer), do: steered(state, from, reply)
+
   defp steered(state, from, reply) do
     {answer, gone?} =
       case reply do
@@ -1733,7 +1858,7 @@ defmodule HalC2.Pi.ThreadRuntime do
     {late, others} =
       state.steers
       |> :gen_server.reqids_to_list()
-      |> Enum.split_with(&match?({_, {^from, _}}, &1))
+      |> Enum.split_with(&match?({_, {^from, _, _}}, &1))
 
     if late == [] do
       state
@@ -1750,9 +1875,10 @@ defmodule HalC2.Pi.ThreadRuntime do
   end
 
   defp settle_held(state) do
-    if state.turn != nil and state.settled and :gen_server.reqids_size(state.steers) == 0,
-      do: settle(state),
-      else: state
+    if state.turn != nil and state.settled and :gen_server.reqids_size(state.steers) == 0 and
+         state.held_steers == [],
+       do: settle(state),
+       else: state
   end
 
   # The held refusals' callers hear them, once the turn ended or runs on — except
@@ -1854,12 +1980,19 @@ defmodule HalC2.Pi.ThreadRuntime do
     state = refusals(state)
     state = answer_compact_steer(state, status)
 
+    state =
+      answer_held_steers(
+        state,
+        if(status == "interrupted", do: :ok, else: {:error, "the turn ended"})
+      )
+
     %{
       state
       | turn: nil,
         items: %{},
         steers: unanswered(state.steers, status),
         settled: false,
+        prompt_held: false,
         compact: nil,
         compact_steer: nil,
         # A compaction this turn saw start is over or abandoned with it: its
@@ -1904,7 +2037,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp unanswered(steers, status) do
     answer = if status == "interrupted", do: :ok, else: {:error, "the turn ended"}
 
-    for {_request, {from, timer}} <- :gen_server.reqids_to_list(steers) do
+    for {_request, {from, timer, _steer}} <- :gen_server.reqids_to_list(steers) do
       Process.cancel_timer(timer)
       GenServer.reply(from, answer)
     end

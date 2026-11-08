@@ -704,17 +704,17 @@ Feature: Pi
     And the thread can take the next message
 
   # Upstream #24388: a message sent while Pi compacted its context could be rejected and lost.
-  @backlog
+  # Pi 1.4 rejects every prompt, steers included, while it compacts.
   Scenario Outline: A message sent while Pi compacts is delivered once compaction ends
-    Given Pi is compacting the conversation after a finished turn
-    When the user <sends> "now add the tests"
+    Given Pi is compacting the conversation <when>
+    When the user <sends> "now add the tests" while it does
     Then Pi receives "now add the tests" once, after the compaction ends
-    And a message whose turn the user stops before then is not sent
+    And Pi never gets a message whose turn the user stops before then
 
     Examples:
-      | sends               |
-      | sends               |
-      | steers the turn with |
+      | when                    | sends                |
+      | after a finished turn   | sends                |
+      | inside the running turn | steers the turn with |
 
   Scenario Outline: A Pi retry shows its attempt and how it ended
     When Pi's request to the model fails and <outcome>

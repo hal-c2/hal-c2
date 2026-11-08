@@ -2284,9 +2284,14 @@ defmodule HalC2.Steps.Providers.Pi do
     turns = [%{"match" => prompt, "steps" => steps}]
     context = context |> with_turns(turns) |> FakeAcp.thread()
 
-    if await == :running,
-      do: FakeAcp.send_message(context, prompt),
-      else: turn(context, prompt, await)
+    # A running turn is one Pi has: a steer sent before it is not steering it.
+    if await == :running do
+      context = FakeAcp.send_message(context, prompt)
+      FakeAcp.await_run(context, "running")
+      context
+    else
+      turn(context, prompt, await)
+    end
   end
 
   defp last_error(context, title \\ nil) do
@@ -3392,6 +3397,121 @@ defmodule HalC2.Steps.Providers.Pi do
     assert Enum.all?(results, fn {_task, outcome} -> match?({:ok, {:error, _}}, outcome) end)
     assert elapsed < 10_000
     context
+  end
+
+  # --- messages sent while Pi compacts ---
+
+  # Pi 1.4 rejects every prompt while it compacts: the fake does too, and logs the
+  # prompts it takes up (`accepted`) and its compaction's start and end.
+  @compaction_turns [
+    %{"match" => "compact after", "compactAfter" => 2, "steps" => [%{"text" => "Done."}]},
+    %{
+      "match" => "compact within",
+      "steps" => [%{"text" => "Working on it."}, %{"compactFor" => 2}, %{"waitAbort" => true}]
+    }
+  ]
+
+  step ~r/^Pi is compacting the conversation (?<when>after a finished turn|inside the running turn)$/,
+       %{args: [compacting]} = context do
+    config = %{
+      "turns" => @compaction_turns ++ FakeAcp.pi_turns(),
+      "rejectWhileCompacting" => true
+    }
+
+    context = context |> install(config) |> FakeAcp.thread()
+    compacting(Map.put(context, :compacting, compacting), "")
+  end
+
+  # A turn that leaves Pi compacting once it settled, or one compacting as it runs.
+  # Pi sends `compaction_start` before it settles the turn's last checks, so by the
+  # turn's end the MC has heard it.
+  defp compacting(%{compacting: "after a finished turn"} = context, again),
+    do: turn(context, "compact after this#{again}")
+
+  defp compacting(context, again) do
+    before = length(items(context, "compaction"))
+    context = FakeAcp.send_message(context, "compact within this#{again}")
+
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      running =
+        state
+        |> StreamState.list("turn-item")
+        |> Enum.filter(&(&1["type"] == "compaction"))
+
+      length(running) > before and List.last(running)["title"] == "Compacting context..."
+    end)
+
+    context
+  end
+
+  step ~r/^the user (?<how>sends|steers the turn with) "(?<text>[^"]+)" while it does$/,
+       %{args: [how, text]} = context do
+    if how == "sends" do
+      turn(context, text)
+    else
+      assert {:ok, _} = steer(context, text)
+      FakeAcp.await_run(context, "completed")
+      context
+    end
+  end
+
+  step "Pi receives {string} once, after the compaction ends", %{args: [text]} = context do
+    log = Enum.with_index(FakeAcp.log(context))
+    assert [at] = for({%{"accepted" => ^text}, i} <- log, do: i)
+    assert [_ | _] = for({%{"compaction" => "end"}, i} <- log, i < at, do: i)
+    assert for({%{"rejected" => ^text}, _} <- log, do: :rejected) == []
+    context
+  end
+
+  # A second compaction like the first: a message sent meanwhile is stopped, and
+  # one sent after it still runs, so Pi was free to take the stopped one by then.
+  step "Pi never gets a message whose turn the user stops before then", context do
+    stopped = "the stopped message"
+    context = compacting(context, " again")
+    thread_id = World.thread_id(context, context.thread)
+
+    context =
+      if context.compacting == "after a finished turn" do
+        context = FakeAcp.send_message(context, stopped)
+        FakeAcp.await_run(context, "running")
+        context
+      else
+        steering = Task.async(fn -> steer(context, stopped) end)
+        await_held_steer(thread_id)
+        Map.put(context, :steering, steering)
+      end
+
+    {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+    if context[:steering], do: assert({:ok, _} = Task.await(context.steering))
+    FakeAcp.await_run(context, "interrupted")
+    context = turn(context, "after the stop")
+
+    assert for(
+             %{"recv" => %{"type" => "prompt", "message" => ^stopped}} <- FakeAcp.log(context),
+             do: :sent
+           ) == []
+
+    context
+  end
+
+  # The runtime holds the steer while Pi compacts; nothing outside it says so yet.
+  defp await_held_steer(thread_id, deadline \\ nil) do
+    deadline = deadline || System.monotonic_time(:millisecond) + 10_000
+    [{pid, _}] = Registry.lookup(HalC2.Pi.Registry, thread_id)
+
+    cond do
+      :sys.get_state(pid).held_steers != [] ->
+        :ok
+
+      System.monotonic_time(:millisecond) > deadline ->
+        flunk("the steer was never held")
+
+      true ->
+        receive do
+        after
+          20 -> await_held_steer(thread_id, deadline)
+        end
+    end
   end
 
   # --- stopping while Pi compacts, and long texts ---

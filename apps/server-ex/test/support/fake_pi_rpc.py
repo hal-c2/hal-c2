@@ -15,9 +15,15 @@
 #   commands         get_commands
 #   turns            [{"match": substring, "steps": [...]}], first match wins
 #                    (a turn may also set "afterCompaction": true, to start only once a
-#                    running compaction ends, or "startDelaySec": n, to start its agent late)
+#                    running compaction ends, "startDelaySec": n, to start its agent late,
+#                    or "compactAfter": n, to compact for n seconds once it settled)
+#   rejectWhileCompacting  as Pi 1.4: every prompt, steers included, sent while Pi
+#                    compacts is rejected (logged as `rejected`); a prompt Pi takes up
+#                    is logged as `accepted`, and compaction events as `compaction`
 #
-# Turn steps: {"text": s[, "usage": {...}]}, {"thinking": s}, {"tool": name, "args": {},
+# Turn steps: {"compactFor": n} (a compaction of n seconds, taking aborts and rejecting
+# every prompt as Pi 1.4 does),
+# {"text": s[, "usage": {...}]}, {"thinking": s}, {"tool": name, "args": {},
 # "output": s} (HAL-C2's extension gate first: see `allowed`), {"select": {"title",
 # "options"}} (waits for the answer, then says it), {"event": {...}} (sent as is),
 # {"mcp": {"name", "arguments"}} (a HAL-C2 MCP tool call), {"waitAbort": true} (until an
@@ -65,11 +71,17 @@ def is_compacting():
     return compacting[0] or compacts_out[0] > 0
 
 
+COMPACTING_ERROR = ("Cannot submit a prompt while compaction is in progress. "
+                    "Wait for compaction to finish and retry.")
+
+
 def send(msg):
     if msg.get("type") == "compaction_start":
         compacting[0] = True
+        log({"compaction": "start"})
     elif msg.get("type") == "compaction_end":
         compacting[0] = False
+        log({"compaction": "end"})
     # Unescaped, as Pi writes UTF-8: a U+2028 in a text travels literally.
     with SEND_LOCK:
         sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
@@ -215,6 +227,16 @@ def read():
     return msg
 
 
+def rejected(msg, compacting=False):
+    """Pi 1.4 turns a prompt back while it compacts (`compacting`: it is, mid-turn)."""
+    if msg.get("type") == "prompt" and (compacting or (
+            config().get("rejectWhileCompacting") and is_compacting())):
+        log({"rejected": msg.get("message")})
+        respond(msg, error=COMPACTING_ERROR)
+        return True
+    return False
+
+
 def wait_for(pred):
     """Reads until `pred(msg)`: dialog answers and aborts are noted, other commands answered."""
     while True:
@@ -224,6 +246,8 @@ def wait_for(pred):
             aborted[0] = True
         elif kind == "extension_ui_response":
             ui_answers[msg.get("id")] = msg
+        elif rejected(msg):
+            continue
         elif kind != "prompt":
             command(msg)
         elif steer(msg) and "refuse" in msg.get("message", ""):
@@ -435,6 +459,7 @@ def run_turn(text):
                 if steer(msg):
                     # Pi hands the steer to the model's next call, which answers it. Its
                     # session keeps what was said before, then the steer as a user message.
+                    log({"accepted": msg["message"]})
                     respond(msg)
                     session.append("assistant", "".join(said))
                     session.append("user", msg["message"])
@@ -453,6 +478,21 @@ def run_turn(text):
             backlog.extend(sorted(steers, key=lambda m: m.get("message", "")))
             if steers:
                 break
+        elif "compactFor" in step:
+            # Pi compacts mid-turn: an abort is noted (it does not stop the
+            # compaction), and a prompt is answered as Pi answers one then.
+            send({"type": "compaction_start", "reason": "threshold"})
+            until = time.monotonic() + float(step["compactFor"])
+            while time.monotonic() < until:
+                if backlog or select.select([sys.stdin], [], [], 0.05)[0]:
+                    msg = read()
+                    if msg.get("type") == "abort":
+                        aborted[0] = True
+                    elif not rejected(msg, compacting=True):
+                        command(msg)
+            send({"type": "compaction_end", "aborted": False,
+                  "result": {"summary": "Compacted mid-turn.", "tokensBefore": 1000,
+                             "estimatedTokensAfter": 200}})
         elif "hang" in step:
             # Never answers, aborts included, until the process is stopped.
             time.sleep(3600)
@@ -468,6 +508,17 @@ def run_turn(text):
     send({"type": "agent_settled"})
     # Events Pi sends once a turn has settled (an extension waking or failing
     # between turns), once per process.
+    if "compactAfter" in turn:
+        # Pi compacts once the turn settled: its events come between turns.
+        send({"type": "compaction_start", "reason": "threshold"})
+
+        def later():
+            time.sleep(float(turn["compactAfter"]))
+            send({"type": "compaction_end", "aborted": False,
+                  "result": {"summary": "Compacted after the turn.", "tokensBefore": 1000,
+                             "estimatedTokensAfter": 200}})
+
+        threading.Thread(target=later, daemon=True).start()
     global settled_sent
     if not settled_sent:
         settled_sent = True
@@ -597,6 +648,8 @@ def command(msg):
                       "result": {"summary": "Compacted.", "tokensBefore": 1000,
                                  "estimatedTokensAfter": 200}})
             respond(msg, {"summary": "Compacted.", "tokensBefore": 1000})
+    elif rejected(msg):
+        pass
     elif kind == "prompt" and steer(msg) and "decline" in msg.get("message", ""):
         # A steer saying "decline" that reaches Pi once its run settled is rejected.
         # One also saying "after stop" is rejected only once the abort reaches Pi.
@@ -615,6 +668,7 @@ def command(msg):
     elif kind == "prompt" and "promptError" in cfg:
         respond(msg, error=cfg["promptError"])
     elif kind == "prompt":
+        log({"accepted": msg.get("message")})
         respond(msg)
         run_turn(msg.get("message", ""))
     elif kind in ("abort", "extension_ui_response"):
