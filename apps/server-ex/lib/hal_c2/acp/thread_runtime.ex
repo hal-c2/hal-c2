@@ -1499,6 +1499,8 @@ defmodule HalC2.Acp.ThreadRuntime do
 
         case result do
           {:ok, result} -> {:ok, native, opened(state, result || %{}, turn)}
+          # A fresh session needs a live connection; this one is gone.
+          {:error, :closed} -> {:error, :closed, state}
           {:error, _} -> fresh_session(state, turn)
         end
 
@@ -1527,6 +1529,12 @@ defmodule HalC2.Acp.ThreadRuntime do
       {:json_rpc, ^conn, _} = message ->
         {:noreply, state} = handle_info(message, state)
         await_load(state, tag, deadline)
+
+      # A connection killed without a goodbye ends the wait at once; the exit goes back
+      # to the mailbox so `handle_info({:EXIT, ...})` still ends the turn and the work.
+      {:EXIT, ^conn, _} = exit ->
+        send(self(), exit)
+        {{:error, :closed}, %{state | replaying: false}}
     after
       max(deadline - System.monotonic_time(:millisecond), 0) ->
         {{:error, :timeout}, %{state | replaying: false}}
