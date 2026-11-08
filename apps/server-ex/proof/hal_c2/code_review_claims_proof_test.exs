@@ -78,6 +78,10 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview handle_call {:budget, _, _, _}" => @limit,
       "HalC2Plugins.CodeReview.starts/0" => @limit,
       "HalC2Plugins.CodeReview.neutral/1" => @agent,
+      "HalC2Plugins.CodeReview.closed/1" =>
+        "closes the code fences the agent's prose leaves open; text, no claim or run state",
+      "HalC2Plugins.CodeReview.comment_body/2" =>
+        "the text of an inline comment as posted; no claim or run state",
       "HalC2Plugins.CodeReview handle_call {:discard, _}" => @user,
       "HalC2Plugins.CodeReview handle_call {:settings, _}" =>
         "a save applies from the next step: the model looks at any time, starts a queued review in the step that queues it and has no display",
