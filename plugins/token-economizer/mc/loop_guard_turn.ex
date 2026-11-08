@@ -5,8 +5,10 @@
 # not a file between hook processes; `fold/6` returns the judge job to start instead of
 # starting it, and a verdict comes back through `verdict/3` instead of a result file; the
 # sampled (in-line) judge and the redirect writer are not ported, since the plugin runs
-# only the background judge, which writes the redirect with its verdict; and nothing
-# holds a decision for a later call, since the MC hears every call as it ends.
+# only the background judge, which writes the redirect with its verdict; nothing holds a
+# decision for a later call, since the MC hears every call as it ends; `mix features`,
+# `mix prop` and `mix proof` are test runs too; and nothing is decided while the turn's
+# checks pass after its last edit.
 
 defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   @moduledoc """
@@ -38,7 +40,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # `State.test_run_re/0` (the Python vocabulary the thresholds were tuned on); used only
   # for the ended-green proxy, never to change what `State` counts. A runner is often
   # named by path (`python tests/runtests.py`, `.venv/bin/pytest`).
-  @verify ~r/\A(?:^|[\s;&|(])(?:(?:~?\/)?(?:[\w.\-]+\/)*python\d?(?:\.\d+)?\s+)?(?:~?\/)?(?:[\w.\-]+\/)*(?:pytest|py\.test|tox|nox|python\d?(?:\.\d+)?\s+-m\s+(?:pytest|unittest)|manage\.py\s+test|runtests(?:\.py)?|jest|vitest|mocha|ava|playwright\s+test|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test|go\s+test|cargo\s+(?:test|nextest)|(?:mvn|mvnw|\.\/mvnw)\s+(?:\S+\s+)*test|(?:gradle|gradlew|\.\/gradlew)\s+(?:\S+\s+)*test|make\s+(?:test|check)|ctest|rspec|phpunit|dotnet\s+test|swift\s+test|mix\s+test|deno\s+test|node\s+--test|bazel\s+test|(?:\.\/)?bin\/test)(?![\w.\-\/])/i
+  @verify ~r/\A(?:^|[\s;&|(])(?:(?:~?\/)?(?:[\w.\-]+\/)*python\d?(?:\.\d+)?\s+)?(?:~?\/)?(?:[\w.\-]+\/)*(?:pytest|py\.test|tox|nox|python\d?(?:\.\d+)?\s+-m\s+(?:pytest|unittest)|manage\.py\s+test|runtests(?:\.py)?|jest|vitest|mocha|ava|playwright\s+test|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test|go\s+test|cargo\s+(?:test|nextest)|(?:mvn|mvnw|\.\/mvnw)\s+(?:\S+\s+)*test|(?:gradle|gradlew|\.\/gradlew)\s+(?:\S+\s+)*test|make\s+(?:test|check)|ctest|rspec|phpunit|dotnet\s+test|swift\s+test|mix\s+(?:test|features|prop|proof)|deno\s+test|node\s+--test|bazel\s+test|(?:\.\/)?bin\/test)(?![\w.\-\/])/i
 
   # A command line's exit status is its last command's, so it may not be the test run's:
   # `npm test 2>&1 | tail -n 8` exits with `tail`'s status, `npm test || true` with 0.
@@ -167,9 +169,10 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
 
   # `cmd` as its commands and the separators between them (`[cmd, sep, cmd, ...]`), with
   # quoted text masked, and whether `pipefail` is on as each command runs. A command
-  # recorded as `bash -lc '<script>'` (Codex) is split by its script.
+  # recorded as `bash -lc '<script>'` (Codex) is split by its script, and a heredoc's
+  # lines are the input of the command that reads them, not commands of their own.
   defp pieces(cmd) do
-    cmd = ShellEdits.script(cmd)
+    {cmd, _} = cmd |> ShellEdits.script() |> ShellEdits.split_heredocs()
     masked = Regex.replace(~r/[(){}]/, Regex.replace(@quoted, cmd, "Q"), " ")
     pieces = masked |> then(&Regex.split(@sep, &1, include_captures: true)) |> drop_trailing()
     {pieces, pipefail(pieces)}
@@ -237,8 +240,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
     if String.trim(cmd) == "" do
       false
     else
-      {shell, _} = ShellEdits.split_heredocs(cmd)
-      {pieces, pipefail} = pieces(shell)
+      {pieces, pipefail} = pieces(cmd)
 
       pieces
       |> after_each(pipefail)
@@ -318,10 +320,19 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
         verifies = status_of_tests(cmd) != nil
 
         g =
-          if shell_edits != [],
+          cond do
+            shell_edits == [] ->
+              g
+
+            # `sed -i 's/x/y/' missing.py` failed and, as a failed edit tool's does, changed
+            # nothing to verify. A failed run after a write is the run's failure.
+            exit_code not in [nil, 0] and not verifies ->
+              g
+
             # `sed -i ... && pytest`: the edit comes first, so the run verifies it.
-            do: %{g | last_edit: g.cum_turns - if(verifies, do: 1, else: 0), edits: g.edits + 1},
-            else: g
+            true ->
+              %{g | last_edit: g.cum_turns - if(verifies, do: 1, else: 0), edits: g.edits + 1}
+          end
 
         if verifies do
           failed =
@@ -510,11 +521,16 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
     g = track(g, name, args, result, exit_code, shell_edits)
 
     # While a redirect is on its way the calls are the ones the agent made before it, so
-    # nothing is decided on them.
-    if g.aborted or g.redirecting,
+    # nothing is decided on them. While the turn's checks pass after its last edit, it is
+    # not stuck however it got there: the errors and repeated edits it counts are the work
+    # those checks just verified (a passing run after six failing ones at the backstop).
+    if g.aborted or g.redirecting or verified?(g),
       do: {g, nil, nil},
       else: decide(g, envelope, thr, budget, opts)
   end
+
+  defp verified?(g),
+    do: g.verifications > 0 and not g.last_verify_failed and g.last_verify > g.last_edit
 
   defp decide(g, envelope, thr, budget, opts) do
     backstop =

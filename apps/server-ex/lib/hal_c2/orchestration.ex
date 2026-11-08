@@ -4593,13 +4593,13 @@ defmodule HalC2.Orchestration do
       reason = handoff_refusal(state, thread, command) ->
         {[], {:error, reason}}
 
-      get_in(command, ["dispatchMode", "type"]) == "defer_start" ->
-        prepare_run(state, thread, runs, command)
-
       # A steer or restart aimed at a run that is not the active one is a
       # delivery no provider can make as asked.
       untargeted = untargeted_delivery(runs, command) ->
         {[], {:error, untargeted}}
+
+      get_in(command, ["dispatchMode", "type"]) == "defer_start" ->
+        prepare_run(state, thread, runs, command)
 
       active = Enum.find(runs, &(&1["status"] in @active_statuses)) ->
         intent = command["deliveryIntent"]
@@ -4792,19 +4792,28 @@ defmodule HalC2.Orchestration do
   end
 
   # A steer or restart naming a run other than the active one (or naming one
-  # when nothing runs) cannot be delivered as asked, whatever the provider.
+  # when nothing runs) cannot be delivered as asked, whatever the provider. A steer
+  # meant only for its run (`steerOnly`) that names none has no run to go to: it
+  # neither steers whatever runs nor starts a turn.
   defp untargeted_delivery(runs, command) do
     mode = get_in(command, ["dispatchMode", "type"])
     target = get_in(command, ["dispatchMode", "targetRunId"])
     active = Enum.find(runs, &(&1["status"] in @active_statuses))
 
-    if mode in ["steer_active", "restart_active"] and is_binary(target) and
-         (active == nil or active["id"] != target) do
-      instance =
-        get_in(command, ["modelSelection", "instanceId"]) ||
-          (active && active["providerInstanceId"]) || "codex"
+    cond do
+      command["steerOnly"] == true and not is_binary(target) ->
+        "A steer meant only for its run must name the run."
 
-      HalC2.Orchestration.UserFacingErrors.unsupported_delivery_message(instance)
+      mode in ["steer_active", "restart_active"] and is_binary(target) and
+          (active == nil or active["id"] != target) ->
+        instance =
+          get_in(command, ["modelSelection", "instanceId"]) ||
+            (active && active["providerInstanceId"]) || "codex"
+
+        HalC2.Orchestration.UserFacingErrors.unsupported_delivery_message(instance)
+
+      true ->
+        nil
     end
   end
 

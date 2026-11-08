@@ -892,17 +892,23 @@ defmodule HalC2.Orchestration.TurnWriter do
     ] ++ held_queue(stream, status, failure) ++ stopped_limit(stream, ids, status, failure)
   end
 
-  # A provider that reports the context's usage on its provider thread alone (Codex,
-  # ACP) leaves its turn the report the turn ended with: what reads the turn later (a
-  # plugin's `HalC2.Plugins.Host.history/2`) gets what plugins heard as it ended.
-  defp with_usage(stream, ids, done) do
+  @doc """
+  `done`, the changes that settle the provider turn `ids.provider_turn`, with the usage
+  the turn ended with. A provider that reports the context's usage on its provider
+  thread alone (Codex, ACP) leaves its turn the report the turn ended with: what reads
+  the turn later (a plugin's `HalC2.Plugins.Host.history/3`) gets what plugins heard as
+  it ended. Those reports carry no time, which a turn's usage must
+  (`OrchestrationV2ProviderTurnTokenUsage`): it is stamped with the turn's end. A Codex
+  goal settles each of its turns this way before its run ends.
+  """
+  def with_usage(stream, ids, done) do
     with %{} = turn <- StreamState.get(stream, "provider-turn")[ids.provider_turn],
          nil <- turn["tokenUsage"],
          %{} = usage <-
            (StreamState.get(stream, "provider-thread")[ids[:provider_thread]] || %{})[
              "contextUsage"
            ] do
-      Map.put(done, "tokenUsage", usage)
+      Map.put(done, "tokenUsage", Map.put_new(usage, "updatedAt", done["completedAt"]))
     else
       _ -> done
     end
@@ -1056,13 +1062,19 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   # Plugins that hear turns hear this one end, from the process that drove it, after
   # its items, with the run's place in its thread (`Host.history/3`'s ordinals). The
-  # usage is the provider's last report of the conversation's context, as the turn
-  # keeps it (`with_usage/3`).
+  # usage is the provider's last report of the conversation's context, as the run's
+  # last provider turn keeps it (`with_usage/3`): a Codex goal's run that ends between
+  # Codex's turns has settled that turn already, and names it on its attempt.
   defp observe_finished(state, status) do
     if HalC2.Plugins.observing?() do
       ids = state.turn.ids
       stream = HalC2.Streams.state(state.thread_id)
-      provider_turn = StreamState.get(stream, "provider-turn")[ids[:provider_turn]] || %{}
+
+      last =
+        ids[:provider_turn] ||
+          (StreamState.get(stream, "run-attempt")[ids[:attempt]] || %{})["providerTurnId"]
+
+      provider_turn = StreamState.get(stream, "provider-turn")[last] || %{}
 
       HalC2.Plugins.observe(%{
         "type" => "turn.finished",

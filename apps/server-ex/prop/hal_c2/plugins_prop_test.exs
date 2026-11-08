@@ -19,7 +19,8 @@ defmodule HalC2.PluginsPropTest do
   a run (`shape_run/1`: version 2 of a package answers from the settings it runs with,
   so a save it takes live must reach that too), ask from a process that does not trap
   exits while one of them raises, dies with a process it linked, or answers what is not
-  JSON (it is left out, and the asker lives), kill the process a plugin hears turns in
+  JSON (it is left out, and the asker lives), ask while the supervisor shapes are asked
+  under restarts (none is asked, and the asker lives), kill the process a plugin hears turns in
   (it starts again with the settings saved last), install and turn on a package that hears Slack, hand the running plugins Slack events (`slack_event/2`, in one series, as the Slack
   courier does) that each plugin holds until the test releases it, check that a
   package's code compiles without enabling it (`plugins.compile`: what runs and is
@@ -200,8 +201,14 @@ defmodule HalC2.PluginsPropTest do
           ]
         end ++
         case hooked(state, :shape, "runs:shape") do
-          [] -> []
-          shaping -> [{3, {:call, __MODULE__, :shape_failing, [oneof(shaping), failure()]}}]
+          [] ->
+            []
+
+          shaping ->
+            [
+              {3, {:call, __MODULE__, :shape_failing, [oneof(shaping), failure()]}},
+              {1, {:call, __MODULE__, :shape_restarting, []}}
+            ]
         end
     )
   end
@@ -451,6 +458,9 @@ defmodule HalC2.PluginsPropTest do
   # A plugin that fails as it is asked is left out, and the asker lives.
   defp act(s, {:call, _, :shape_failing, [id, _how]}),
     do: {s, shape_of(s, hooked(s, :shape, "runs:shape") -- [id])}
+
+  # No plugin can be asked: the conversation goes unshaped, and the asker lives.
+  defp act(s, {:call, _, :shape_restarting, []}), do: {s, {:exactly, nil}}
 
   # Its supervisor starts it again, as it does a crashed worker.
   defp act(s, {:call, _, :kill_feed, [id]}), do: {update_in(s.held[id].crashes, &(&1 + 1)), :ok}
@@ -1274,6 +1284,24 @@ defmodule HalC2.PluginsPropTest do
 
     Process.demonitor(ref, [:flush])
     Application.delete_env(:hal_c2, Packages.failing())
+    {reply, observe()}
+  end
+
+  # A shape asked from a process that does not trap exits while the supervisor the
+  # plugins' shapes run under is down, as it is while it restarts.
+  def shape_restarting do
+    :ok = Supervisor.terminate_child(HalC2.Plugins.Supervisor, HalC2.Plugins.Shapes)
+    probe = self()
+    {asker, ref} = spawn_monitor(fn -> send(probe, {:shaped, self(), shaped()}) end)
+
+    reply =
+      receive do
+        {:shaped, ^asker, reply} -> reply
+        {:DOWN, ^ref, _, _, reason} -> {:asker_died, reason}
+      end
+
+    Process.demonitor(ref, [:flush])
+    {:ok, _} = Supervisor.restart_child(HalC2.Plugins.Supervisor, HalC2.Plugins.Shapes)
     {reply, observe()}
   end
 

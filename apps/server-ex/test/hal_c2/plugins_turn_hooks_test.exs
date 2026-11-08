@@ -242,6 +242,41 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert shape["plugins"] == ["good"]
   end
 
+  test "a plugin that missed events hears how many, and how many were still waiting then" do
+    grant(%{"slow" => ["turns:observe"]})
+    feed("slow", nil, nil, true)
+    [{_, %{dropped: dropped}}] = Feed.lookup(:observe)
+
+    HalC2.Plugins.observe(%{"type" => "turn.started", "n" => 1})
+    assert_receive {:holding, busy}, 5_000
+    HalC2.Plugins.observe(%{"type" => "turn.item", "n" => 2})
+    HalC2.Plugins.observe(%{"type" => "turn.item", "n" => 3})
+    # As a sender that found the queue full does.
+    :counters.add(dropped, 1, 2)
+
+    send(busy, :release)
+    assert_receive {:observed, %{"n" => 1} = first}, 5_000
+    refute Map.has_key?(first, "dropped")
+    assert_receive {:holding, ^busy}, 5_000
+    send(busy, :release)
+    assert_receive {:observed, %{"n" => 2, "dropped" => 2, "waiting" => 1}}, 5_000
+    assert_receive {:holding, ^busy}, 5_000
+    send(busy, :release)
+    assert_receive {:observed, %{"n" => 3} = last}, 5_000
+    refute Map.has_key?(last, "dropped")
+  end
+
+  test "a conversation is left unshaped, and the asker lives, while the plugins' shapes cannot be asked" do
+    grant(%{"good" => ["runs:shape"]})
+    feed("good", nil, %{"context" => "Keep answers short."})
+    # The supervisor shapes are asked under is restarting.
+    :ok = stop_supervised(HalC2.Plugins.Shapes)
+
+    {pid, ref} = spawn_monitor(fn -> exit({:shaped, HalC2.Plugins.shape_run(%{})}) end)
+
+    assert_receive {:DOWN, ^ref, :process, ^pid, {:shaped, nil}}, 10_000
+  end
+
   test "a plugin hears turns with the settings saved last, after its feed restarts, and is asked to shape with them while its feed is busy" do
     grant(%{"tuned" => ["turns:observe", "runs:shape"]}, %{"tuned" => %{"mode" => "b"}})
     feed("tuned", nil, :mode, true)
@@ -322,7 +357,36 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert one["provider"] == "codex"
     assert %{"usedTokens" => 1000} = one["tokenUsage"]
     assert %{"usedTokens" => 2000} = two["tokenUsage"]
+    # A turn's usage carries its time, as the contract has it; Codex's report has none.
+    assert two["tokenUsage"]["updatedAt"] == two["completedAt"]
+    assert is_binary(finished["tokenUsage"]["updatedAt"])
     assert Enum.any?(one["items"], &(&1["itemType"] == "file_change"))
+  end
+
+  test "a plugin hears and reads the usage a Codex goal's run ended with between Codex's turns",
+       %{work: work} do
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+    # Codex does not go on with the goal, so the run ends after the goal's first turn,
+    # once the grace is over, with no turn of its own.
+    System.put_env("FAKE_CODEX_GOAL_STALL", "1")
+    Application.put_env(:hal_c2, :codex_goal_grace_ms, 0)
+
+    on_exit(fn ->
+      System.delete_env("FAKE_CODEX_GOAL_STALL")
+      Application.delete_env(:hal_c2, :codex_goal_grace_ms)
+    end)
+
+    thread_id = create_thread(work, "codex", "gpt-5.4")
+    {:ok, _} = send_message(thread_id, "m1", "/goal report usage 1500")
+
+    assert_receive {:observed, %{"type" => "turn.finished"} = finished}, 5_000
+    assert %{"usedTokens" => 1500, "updatedAt" => at} = finished["tokenUsage"]
+    assert is_binary(at)
+    await_statuses(thread_id, ["completed"])
+
+    assert {:ok, [turn]} = Host.history("listener", thread_id)
+    assert %{"usedTokens" => 1500} = turn["tokenUsage"]
   end
 
   test "a plugin hears what a Claude edit changed and what a web call searched for" do
@@ -350,6 +414,36 @@ defmodule HalC2.PluginsTurnHooksTest do
     # Neither queued for a later turn nor kept as a message.
     assert ["completed"] = statuses(thread_id)
     refute Enum.any?(messages(thread_id), &(&1["text"] == "too late"))
+  end
+
+  test "a steer that names no run is refused, steering nothing and starting no turn",
+       %{thread_id: thread_id} do
+    grant(%{"steerer" => ["threads:steer"]})
+
+    # Nothing runs: neither a turn started nor a message kept.
+    assert {:error, _} = Host.steer("steerer", thread_id, nil, "unnamed")
+
+    unnamed = %{
+      "type" => "message.dispatch",
+      "threadId" => thread_id,
+      "text" => "unnamed",
+      "attachments" => [],
+      "createdBy" => "system",
+      "creationSource" => "server",
+      "deliveryIntent" => "steer",
+      "dispatchMode" => %{"type" => "steer_active"},
+      "steerOnly" => true
+    }
+
+    assert {:error, _} = Orchestration.dispatch(Map.put(unnamed, "commandId", "c1"))
+    assert [] = statuses(thread_id)
+
+    # A turn runs: it is not steered.
+    {:ok, _} = send_message(thread_id, "m1", "wait m1")
+    [_running] = await_statuses(thread_id, ["running"])
+    assert {:error, _} = Orchestration.dispatch(Map.put(unnamed, "commandId", "c2"))
+    assert ["running"] = statuses(thread_id)
+    refute Enum.any?(messages(thread_id), &(&1["text"] == "unnamed"))
   end
 
   test "steering a thread without threads:steer is refused", %{thread_id: thread_id} do
@@ -402,6 +496,42 @@ defmodule HalC2.PluginsTurnHooksTest do
 
     assert {:ok, [^two]} = Host.history("reader", thread_id, limit: 1)
     assert {:error, _} = Host.history("reader", "thread-none")
+  end
+
+  test "a plugin reads an older turn's calls after they went cold" do
+    grant(%{"reader" => ["turns:observe"]})
+    Application.put_env(:hal_c2, :stream_hot_items, 2)
+    on_exit(fn -> Application.delete_env(:hal_c2, :stream_hot_items) end)
+
+    {:ok, _} = HalC2.Streams.commit("th-cold", :thread, [{"thread", "th-cold", %{"s" => %{}}}])
+
+    for i <- 1..6 do
+      run = "r#{i}"
+
+      item =
+        &{"turn-item", "#{run}-i#{&1}",
+         %{"s" => %{"runId" => run, "ordinal" => &1, "type" => "command_execution"}}}
+
+      {:ok, _} =
+        HalC2.Streams.commit("th-cold", :thread, [
+          {"run", run, %{"s" => %{"id" => run, "ordinal" => i, "status" => "running"}}},
+          item.(1),
+          item.(2)
+        ])
+
+      {:ok, _} =
+        HalC2.Streams.commit("th-cold", :thread, [
+          {"run", run, %{"s" => %{"status" => "completed"}}}
+        ])
+    end
+
+    stream = HalC2.Streams.state("th-cold")
+    refute HalC2.StreamState.get(stream, "turn-item")["r1-i1"]
+
+    assert {:ok, turns} = Host.history("reader", "th-cold")
+    assert Enum.map(turns, &length(&1["items"])) == [2, 2, 2, 2, 2, 2]
+    assert {:ok, [first]} = Host.history("reader", "th-cold", before: "r2")
+    assert [%{"itemType" => "command_execution"}, _] = first["items"]
   end
 
   test "a plugin reads each turn with the provider it ran on, and the turns before one it heard of late",

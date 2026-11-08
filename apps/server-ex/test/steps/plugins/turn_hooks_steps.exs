@@ -86,6 +86,11 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
     run(context, provider, ["hello"])
   end
 
+  step "a Codex thread works toward the goal {string}, then runs a turn",
+       %{args: [objective]} = context do
+    run(context, "Codex", ["/goal #{objective}", "next"])
+  end
+
   step "a Codex thread that ran a turn", context do
     run(context, "Codex", ["hello"])
   end
@@ -269,6 +274,22 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
     context
   end
 
+  step "Codex is asked to work toward {string} after {string}",
+       %{args: [objective, text]} = context do
+    [first | _] = prompts(context, "Codex")
+    {ahead, _} = :binary.match(first, text)
+    {at, _} = :binary.match(first, HalC2.Codex.Goals.first_prompt(objective))
+    assert ahead < at
+    context
+  end
+
+  step "the turn after the goal comes without {string}", %{args: [text]} = context do
+    assert [_goal, next] = prompts(context, "Codex")
+    assert next =~ "next"
+    refute next =~ text
+    context
+  end
+
   step "Claude ran both turns without {string}", %{args: [tool]} = context do
     launches = claude_launches(context)
     assert launches != []
@@ -364,6 +385,11 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
 
   step "the plugin steers that turn with {string}", %{args: [text]} = context do
     call(context, %{"call" => "steer", "text" => text} |> Map.merge(ids(context)))
+  end
+
+  step "the plugin steers the thread with {string}, naming no turn", %{args: [text]} = context do
+    input = %{"call" => "steer", "text" => text, "threadId" => World.thread_id(context, @thread)}
+    call(context, input)
   end
 
   step "Claude gets {string} in that turn", %{args: [text]} = context do

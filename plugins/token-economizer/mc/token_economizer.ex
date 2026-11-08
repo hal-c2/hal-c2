@@ -26,8 +26,8 @@ defmodule HalC2Plugins.TokenEconomizer do
   delivery once the mode no longer delivers.
 
   A turn whose start the plugin missed is not watched. Missed events (`"dropped"`) mark
-  the turns under way as partial, and the turns heard over the next full feed queue
-  too, and a partial turn does not teach the envelope.
+  the turns under way as partial, and the turns heard until the events that were still
+  waiting (`"waiting"`) have been, and a partial turn does not teach the envelope.
 
   The topic `loopGuard` carries `status/1`: counts since the MC started and the latest
   redirects and stop offers. It is published when a turn ends and when the guard acts,
@@ -270,7 +270,7 @@ defmodule HalC2Plugins.TokenEconomizer do
   end
 
   def handle_call({:observe, event}, _from, state) do
-    state = state |> missed(event["dropped"]) |> hear_prune(event)
+    state = state |> missed(event) |> hear_prune(event)
     state = if on?(state), do: hear(state, event), else: state
     {:reply, :ok, suspect(state, event)}
   end
@@ -804,21 +804,23 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   # --- turns ------------------------------------------------------------------------------
 
-  # The feed says what it missed on the next event it delivers, which it queued before
-  # the missed ones: up to a full queue of events still to come were too, and a turn
-  # that starts in them may have lost what was missed. So the turns and conversations
-  # under way are partial, and so is each one heard until that queue has been heard.
+  # The feed says what it missed on the next event it delivers, and how many events were
+  # waiting behind that one then: those and it may have been sent before the missed
+  # ones, and a turn that starts in them may have lost what was missed. So the turns
+  # and conversations under way are partial, and so is each one heard until they have
+  # been heard.
   #
   # A partial turn teaches the envelope nothing. In a partial conversation what was
   # used still counts, but nothing may grow an unused streak (a missed item may be the
   # very use that would have reset it), and it stops counting as active: a missed turn
   # end would otherwise hold its project active, and `auto` stalled, until its next turn.
-  defp missed(state, n) when is_integer(n) and n > 0 do
+  defp missed(state, %{"dropped" => n, "waiting" => waiting})
+       when is_integer(n) and n > 0 and is_integer(waiting) do
     %{
       state
       | turns: Map.new(state.turns, fn {id, turn} -> {id, %{turn | partial: true}} end),
         convs: Map.new(state.convs, fn {id, conv} -> {id, suspect_conv(conv)} end),
-        missing: HalC2.Plugins.Feed.max_queue()
+        missing: max(state.missing, waiting + 1)
     }
   end
 
