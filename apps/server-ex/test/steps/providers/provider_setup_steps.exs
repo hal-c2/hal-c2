@@ -2,7 +2,7 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
   @moduledoc """
   Steps for `features/providers/provider-setup.feature`: status checks that never
   set anything up, updates run by the installer that owns a provider, and ACP
-  sign-in (`provider.auth.*`) shared by every client of the MC.
+  sign-in (`provider.auth.*`), which belongs to the client that started it.
 
   The ACP agent that signs in is Grok run as the fake agent of
   `HalC2.Test.AcpFixtures`; it asks the user to open a sign-in page
@@ -215,6 +215,17 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
 
   # The title is the client's label for the status the MC reports.
   step "the provider shows {string}", %{args: [title]} = context do
+    if context[:compatibility],
+      do: compatibility_shown(context, title),
+      else: auth_shown(context, title)
+  end
+
+  defp auth_shown(context, message) do
+    assert context.shown["message"] == message
+    context
+  end
+
+  defp compatibility_shown(context, title) do
     status = context.compatibility
     assert {status, title} in Map.values(@compatibility)
     codex = Enum.find(context.providers, &(&1["instanceId"] == "codex"))
@@ -391,68 +402,334 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
   step "the user starts signing in to an ACP agent on one client", context do
     ctx = signed_out_grok(context)
     {_, ctx} = Acp.watch_auth(ctx, "grok", "first")
-    {_, ctx} = Acp.watch_auth(ctx, "grok", "second")
+    {_, ctx} = ctx |> paired("second") |> Acp.watch_auth("grok", "second")
     {%{"flowId" => flow_id}, ctx} = start_sign_in(ctx, "first")
     {state, ctx} = Acp.await_auth(ctx, "grok", waiting?(flow_id), "first")
     Map.put(ctx, :sign_in, state)
   end
 
-  # Also used by acp-registry.feature, whose agent is `context.auth_instance`.
+  # Also used by acp-registry.feature, whose agent is `context.auth_instance`. The
+  # other client sees that it runs, but not where to sign in.
   step "the other client shows the same sign-in in progress", context do
-    %{"flowId" => flow_id, "interaction" => interaction} = context.sign_in
     instance = context[:auth_instance] || "grok"
-    {state, ctx} = Acp.await_auth(context, instance, waiting?(flow_id), "second")
-    assert state["interaction"] == interaction
-    assert interaction["url"] == "https://acme.test/login"
+    {state, ctx} = Acp.await_auth(context, instance, &(&1["phase"] == "waiting"), "second")
+    assert_redacted(state)
     ctx
   end
 
-  step "either client can finish or cancel it", context do
-    flow_id = context.sign_in["flowId"]
+  step "both clients see it finish when the client that started it completes it", context do
+    %{"flowId" => flow_id, "interaction" => interaction} = context.sign_in
+    ctx = accept(context, flow_id, interaction, "first")
 
-    # The second client cancels what the first started; both see it end.
-    {cancelled, ctx} =
-      World.call!(
+    Enum.reduce(["first", "second"], ctx, fn name, ctx ->
+      {state, ctx} = Acp.await_auth(ctx, "grok", &(&1["phase"] == "succeeded"), name)
+      assert state["message"] == "Sign-in complete."
+      ctx
+    end)
+  end
+
+  step "the user started a sign-in for an ACP agent on one client", context do
+    ctx = signed_out_grok(context)
+    {_, ctx} = Acp.watch_auth(ctx, "grok", "first")
+    {_, ctx} = ctx |> paired("second") |> Acp.watch_auth("grok", "second")
+    {%{"flowId" => flow_id}, ctx} = start_sign_in(ctx, "first")
+    {state, ctx} = Acp.await_auth(ctx, "grok", waiting?(flow_id), "first")
+    Map.put(ctx, :sign_in, state)
+  end
+
+  step "another client looks at that provider", context do
+    {state, ctx} = Acp.await_auth(context, "grok", &(&1["phase"] == "waiting"), "second")
+    Map.put(ctx, :seen, state)
+  end
+
+  step "it shows {string}", %{args: [message]} = context do
+    assert context.seen["message"] == message
+    context
+  end
+
+  step "it shows no sign-in address or interaction", context do
+    assert_redacted(context.seen)
+    refute JSON.encode!(context.seen) =~ "acme.test"
+    context
+  end
+
+  # Both refusals must say the same; `context.reply` is the last.
+  step "another client answers or cancels that sign-in", context do
+    %{"flowId" => flow_id, "interaction" => interaction} = context.sign_in
+
+    {answered, ctx} =
+      World.call(
         context,
+        "provider.auth.respond",
+        %{
+          "instanceId" => "grok",
+          "flowId" => flow_id,
+          "interactionId" => interaction["id"],
+          "response" => %{"type" => "browser", "action" => "accept"}
+        },
+        "second"
+      )
+
+    {cancelled, ctx} =
+      World.call(
+        ctx,
         "provider.auth.cancel",
         %{"instanceId" => "grok", "flowId" => flow_id},
         "second"
       )
 
-    assert %{"phase" => "cancelled", "message" => "Sign-in cancelled."} = cancelled
+    assert refusal(answered) =~ "This sign-in is no longer active in this client."
+    Map.put(ctx, :reply, cancelled)
+  end
 
-    {_, ctx} =
-      Acp.await_auth(
-        ctx,
-        "grok",
-        &(&1["flowId"] == flow_id and &1["phase"] == "cancelled"),
-        "first"
+  # The client that started it still has it, waiting for the user, and can finish it.
+  step "the sign-in keeps running", context do
+    %{"flowId" => flow_id, "interaction" => interaction} = context.sign_in
+    {state, ctx} = start_sign_in(context, "first")
+    assert %{"flowId" => ^flow_id, "phase" => "waiting"} = state
+    ctx = accept(ctx, flow_id, interaction, "first")
+    {_, ctx} = Acp.await_auth(ctx, "grok", &(&1["phase"] == "succeeded"), "first")
+    ctx
+  end
+
+  step "the first sign-in keeps running", context do
+    flow_id = context.sign_in["flowId"]
+    {state, ctx} = start_sign_in(context, "first")
+    assert %{"flowId" => ^flow_id, "phase" => "waiting"} = state
+    assert [_] = Acp.requests(ctx, "grok", "authenticate")
+    ctx
+  end
+
+  step "another client starts a sign-in for the same instance", context do
+    {reply, ctx} =
+      World.call(
+        paired(context, "second"),
+        "provider.auth.start",
+        %{"instanceId" => "grok", "methodId" => "acme-login"},
+        "second"
       )
 
-    # The second client starts again, and the first finishes it.
-    {%{"flowId" => again}, ctx} = start_sign_in(ctx, "second")
-    {%{"interaction" => interaction}, ctx} = Acp.await_auth(ctx, "grok", waiting?(again), "first")
+    Map.put(ctx, :reply, reply)
+  end
 
+  # The flow's timer, five minutes after it started, fired.
+  step "a sign-in for an ACP agent expired after five minutes", context do
+    ctx = signed_out_grok(context)
+    {_, ctx} = Acp.watch_auth(ctx, "grok")
+    {%{"flowId" => flow_id}, ctx} = start_sign_in(ctx)
+    {state, ctx} = Acp.await_auth(ctx, "grok", waiting?(flow_id))
+    send(Acp.auth_server("grok"), {:expire, flow_id})
+    {_, ctx} = Acp.await_auth(ctx, "grok", &(&1["phase"] == "failed"))
+    Map.put(ctx, :sign_in, state)
+  end
+
+  step "the user answers the expired sign-in", context do
+    %{"flowId" => flow_id, "interaction" => interaction} = context.sign_in
+
+    {reply, ctx} =
+      World.call(context, "provider.auth.respond", %{
+        "instanceId" => "grok",
+        "flowId" => flow_id,
+        "interactionId" => interaction["id"],
+        "response" => %{"type" => "browser", "action" => "accept"}
+      })
+
+    Map.put(ctx, :reply, reply)
+  end
+
+  step "the user starts a sign-in with a method the provider did not advertise", context do
+    ctx = signed_out_grok(context)
+    {_, ctx} = Acp.watch_auth(ctx, "grok")
+
+    {reply, ctx} =
+      World.call(ctx, "provider.auth.start", %{"instanceId" => "grok", "methodId" => "made-up"})
+
+    Map.put(ctx, :reply, reply)
+  end
+
+  step "the user started a sign-in for an ACP agent", context do
+    ctx = signed_out_grok(context)
+    {_, ctx} = Acp.watch_auth(ctx, "grok")
+    {state, ctx} = start_sign_in(ctx)
+    Map.merge(ctx, %{sign_in: state, shown: state})
+  end
+
+  step "the provider has been asked to start", context do
+    # What `provider.auth.start` answered.
+    context
+  end
+
+  step "the provider waits for the user to finish", context do
+    {state, ctx} = Acp.await_auth(context, "grok", waiting?(context.sign_in["flowId"]))
+    Map.put(ctx, :shown, state)
+  end
+
+  step "the provider is checking the finished sign-in", context do
+    flow_id = context.sign_in["flowId"]
+    {%{"interaction" => interaction}, ctx} = Acp.await_auth(context, "grok", waiting?(flow_id))
+    ctx = accept(ctx, flow_id, interaction, "default")
+    {state, ctx} = Acp.await_auth(ctx, "grok", &(&1["phase"] == "verifying"))
+    Map.put(ctx, :shown, state)
+  end
+
+  step "the user cancels the sign-in", context do
+    {state, ctx} =
+      World.call!(context, "provider.auth.cancel", %{
+        "instanceId" => "grok",
+        "flowId" => context.sign_in["flowId"]
+      })
+
+    Map.put(ctx, :shown, state)
+  end
+
+  # The sign-in's worker goes down with a reason no step of it gives.
+  step "the sign-in fails for no known reason", context do
+    {_, ctx} = Acp.await_auth(context, "grok", waiting?(context.sign_in["flowId"]))
+    Process.exit(:sys.get_state(Acp.auth_server("grok")).flow.worker, :crashed)
+    {state, ctx} = Acp.await_auth(ctx, "grok", &(&1["phase"] == "failed"))
+    Map.put(ctx, :shown, state)
+  end
+
+  step "five minutes pass with no answer from the user", context do
+    flow_id = context.sign_in["flowId"]
+    {_, ctx} = Acp.await_auth(context, "grok", waiting?(flow_id))
+    send(Acp.auth_server("grok"), {:expire, flow_id})
+    {state, ctx} = Acp.await_auth(ctx, "grok", &(&1["phase"] == "failed"))
+    Map.put(ctx, :shown, state)
+  end
+
+  step "the sign-in shows {string}", %{args: [message]} = context do
+    assert context.shown["message"] == message
+    context
+  end
+
+  step "an ACP agent's sign-in methods were listed", context do
+    ctx = signed_out_grok(context)
+    {state, ctx} = Acp.watch_auth(ctx, "grok")
+    assert [%{"id" => "acme-login"}] = state["methods"]
+    Map.put(ctx, :listed, state["methods"])
+  end
+
+  # The agent no longer starts, and the user refreshes its provider.
+  step "the MC cannot refresh them", context do
+    Acp.control(context, "grok", %{"initializeError" => "agent is broken"})
+
+    {_, ctx} =
+      World.call!(context, "server.refreshProviders", %{"instanceId" => "grok"})
+
+    {state, ctx} = Acp.await_auth(ctx, "grok", &(&1["message"] != nil))
+    Map.put(ctx, :refreshed, state)
+  end
+
+  step "the earlier methods stay listed", context do
+    assert context.refreshed["methods"] == context.listed
+    context
+  end
+
+  step "the user is told why they could not be refreshed", context do
+    assert context.refreshed["message"] == "Could not discover this agent's sign-in methods."
+    context
+  end
+
+  # Grok's agent holds its sign-out until the pipe it waits on gets a line; a shell
+  # opens the pipe to write, which waits until the agent opened it to read, and says
+  # so. The MC's own sign-out runs off this process.
+  step "the provider is signing out", context do
+    ctx = signed_out_grok(context)
+    File.write!(Path.join(Acp.dir(ctx), "grok.auth"), "signed in")
+    hold = Path.join(Acp.dir(ctx), "logout.hold")
+    {_, 0} = System.cmd("mkfifo", [hold])
+    Acp.control(ctx, "grok", %{"logoutHold" => hold})
+    test = self()
+
+    spawn(fn ->
+      send(test, {:signed_out, HalC2.ProviderAuth.logout(%{"instanceId" => "grok"})})
+    end)
+
+    port =
+      Port.open({:spawn_executable, System.find_executable("sh")}, [
+        :binary,
+        :exit_status,
+        args: ["-c", "exec 3>#{hold}; echo holding; read line; echo go >&3"]
+      ])
+
+    assert_receive {^port, {:data, "holding\n"}}, 30_000
+    Map.put(ctx, :logout_hold, port)
+  end
+
+  step "the user starts a sign-in", context do
+    {reply, ctx} =
+      World.call(context, "provider.auth.start", %{
+        "instanceId" => "grok",
+        "methodId" => "acme-login"
+      })
+
+    # The sign-out then finishes.
+    port = ctx.logout_hold
+    Port.command(port, "\n")
+    assert_receive {^port, {:exit_status, 0}}, 30_000
+    assert_receive {:signed_out, {:ok, %{"message" => "Signed out."}}}, 30_000
+    Map.put(ctx, :reply, reply)
+  end
+
+  # --- sign-out ------------------------------------------------------------------------
+
+  step "the user signs out and it succeeds", context do
+    {_, ctx} = Acp.watch_auth(context, "grok")
+    {state, ctx} = World.call!(ctx, "provider.auth.logout", %{"instanceId" => "grok"})
+    Map.put(ctx, :shown, state)
+  end
+
+  # The calling client's frames before the reply are skipped, so another client watches.
+  step "the user signs out and it fails", context do
+    Acp.control(context, "grok", %{"logoutError" => "token store is locked"})
+    {_, ctx} = Acp.watch_auth(context, "grok", "watcher")
+    {reply, ctx} = World.call(ctx, "provider.auth.logout", %{"instanceId" => "grok"})
+    assert refusal(reply) =~ "Could not sign out. Try again."
+    refute refusal(reply) =~ "token store"
+    {state, ctx} = Acp.await_auth(ctx, "grok", &(&1["phase"] == "failed"), "watcher")
+    Map.put(ctx, :shown, state)
+  end
+
+  # The client `name`, reconnected as another paired device: the MC's own token's sockets
+  # (`two clients are connected to the MC`) are all one client, which sees its sign-ins
+  # whole on each of them.
+  def paired(ctx, name) do
+    if name in (ctx[:paired] || []),
+      do: ctx,
+      else:
+        ctx
+        |> World.put_client(name, Mc.connect_as(ctx.mc, Mc.pair()))
+        |> Map.update(:paired, [name], &[name | &1])
+  end
+
+  defp assert_redacted(state) do
+    assert %{
+             "flowId" => nil,
+             "authorizationUrl" => nil,
+             "interaction" => nil,
+             "expiresAt" => nil,
+             "message" => "Sign-in is in progress in another client."
+           } = state
+
+    refute Map.has_key?(state, "_owner")
+  end
+
+  defp accept(ctx, flow_id, interaction, name) do
     {_, ctx} =
       World.call!(
         ctx,
         "provider.auth.respond",
         %{
           "instanceId" => "grok",
-          "flowId" => again,
+          "flowId" => flow_id,
           "interactionId" => interaction["id"],
           "response" => %{"type" => "browser", "action" => "accept"}
         },
-        "first"
+        name
       )
 
-    Enum.reduce(["first", "second"], ctx, fn name, ctx ->
-      {state, ctx} =
-        Acp.await_auth(ctx, "grok", &(&1["flowId"] == again and &1["phase"] == "succeeded"), name)
-
-      assert state["message"] == "Sign-in complete."
-      ctx
-    end)
+    ctx
   end
 
   step "a sign-in is in progress for an ACP agent", context do
@@ -484,16 +761,27 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
     ]
 
     ctx = signed_out_grok(context, %{"methods" => terminal})
-    {_, ctx} = Acp.watch_auth(ctx, "grok")
+    # Started on the mobile app, the only client that may answer it.
+    {_, ctx} = Acp.watch_auth(ctx, "grok", "mobile")
 
     {%{"flowId" => flow_id}, ctx} =
-      World.call!(ctx, "provider.auth.start", %{"instanceId" => "grok", "methodId" => "cli"})
+      World.call!(
+        ctx,
+        "provider.auth.start",
+        %{"instanceId" => "grok", "methodId" => "cli"},
+        "mobile"
+      )
 
     {state, ctx} =
-      Acp.await_auth(ctx, "grok", fn state ->
-        waiting?(flow_id).(state) and state["interaction"]["type"] == "terminal" and
-          state["interaction"]["output"] =~ "Paste code"
-      end)
+      Acp.await_auth(
+        ctx,
+        "grok",
+        fn state ->
+          waiting?(flow_id).(state) and state["interaction"]["type"] == "terminal" and
+            state["interaction"]["output"] =~ "Paste code"
+        end,
+        "mobile"
+      )
 
     Map.put(ctx, :sign_in, state)
   end
@@ -522,13 +810,23 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
     flow_id = context.sign_in["flowId"]
 
     {_, ctx} =
-      Acp.await_auth(context, "grok", fn state ->
-        state["flowId"] == flow_id and state["interaction"]["type"] == "terminal" and
-          state["interaction"]["output"] =~ "Signed in."
-      end)
+      Acp.await_auth(
+        context,
+        "grok",
+        fn state ->
+          state["flowId"] == flow_id and state["interaction"]["type"] == "terminal" and
+            state["interaction"]["output"] =~ "Signed in."
+        end,
+        "mobile"
+      )
 
     {_, ctx} =
-      Acp.await_auth(ctx, "grok", &(&1["flowId"] == flow_id and &1["phase"] == "succeeded"))
+      Acp.await_auth(
+        ctx,
+        "grok",
+        &(&1["flowId"] == flow_id and &1["phase"] == "succeeded"),
+        "mobile"
+      )
 
     ctx
   end

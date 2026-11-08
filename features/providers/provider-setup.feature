@@ -314,11 +314,13 @@ Feature: Provider setup, updates and sign-in
     When the user tries to sign in to Codex from HAL-C2
     Then the user is told this provider does not sign in here
 
-  Scenario: A sign-in is shared by every client of the MC
+  # ProviderAuthFlow.ts (upstream beaeeff) keeps a running sign-in private to the client
+  # that started it; every client sees its progress, only that one sees where to sign in.
+  Scenario: Every client of the MC sees a sign-in's progress
     Given two clients are connected to the MC
     When the user starts signing in to an ACP agent on one client
     Then the other client shows the same sign-in in progress
-    And either client can finish or cancel it
+    And both clients see it finish when the client that started it completes it
 
   Scenario: Only one sign-in runs per provider instance
     Given a sign-in is in progress for an ACP agent
@@ -334,34 +336,28 @@ Feature: Provider setup, updates and sign-in
     When a sign-in fails
     Then the error shown to the user contains no sign-in code or return address
 
-  # ProviderAuthFlow.ts keeps a running sign-in private to the client that started it. This
-  # differs from "A sign-in is shared by every client of the MC" above; see the audit report.
-  @backlog @mc
   Scenario: Another client sees that a sign-in is running but not its address or code
     Given the user started a sign-in for an ACP agent on one client
     When another client looks at that provider
     Then it shows "Sign-in is in progress in another client."
     And it shows no sign-in address or interaction
 
-  @backlog @mc @priority-high
+  @priority-high
   Scenario: Only the client that started a sign-in can answer or cancel it
     Given the user started a sign-in for an ACP agent on one client
     When another client answers or cancels that sign-in
     Then the user is told "This sign-in is no longer active in this client."
     And the sign-in keeps running
 
-  @backlog @mc
   Scenario: A sign-in that expired cannot be answered
     Given a sign-in for an ACP agent expired after five minutes
-    When the user answers it
+    When the user answers the expired sign-in
     Then the user is told "This sign-in is no longer active in this client."
 
-  @backlog @mc
   Scenario: A sign-in method the provider does not offer is refused
     When the user starts a sign-in with a method the provider did not advertise
     Then the user is told "The provider did not advertise this sign-in method."
 
-  @backlog @mc
   Scenario Outline: A sign-in tells the user where it is
     Given the user started a sign-in for an ACP agent
     When <event>
@@ -374,9 +370,8 @@ Feature: Provider setup, updates and sign-in
       | the provider is checking the finished sign-in  | Checking provider sign-in.      |
       | the user cancels the sign-in                   | Sign-in cancelled.              |
       | the sign-in fails for no known reason          | Sign-in failed. Start again.    |
-      | five minutes pass without an answer            | Sign-in expired. Start again.   |
+      | five minutes pass with no answer from the user | Sign-in expired. Start again.   |
 
-  @backlog @mc
   Scenario: Signing out says whether it worked
     Given the user is signed in to an ACP agent
     When the user signs out and it succeeds
@@ -384,20 +379,17 @@ Feature: Provider setup, updates and sign-in
     When the user signs out and it fails
     Then the provider shows "Could not sign out. Try again."
 
-  @backlog @mc
   Scenario: Sign-in methods already known stay listed when a refresh fails
     Given an ACP agent's sign-in methods were listed
     When the MC cannot refresh them
     Then the earlier methods stay listed
     And the user is told why they could not be refreshed
 
-  @backlog @mc
   Scenario: A sign-in cannot start while the provider is signing out
     Given the provider is signing out
     When the user starts a sign-in
     Then the user is told "Provider setup is already in progress."
 
-  @backlog @mc
   Scenario: A second client cannot start a sign-in while another client's runs
     Given the user started a sign-in for an ACP agent on one client
     When another client starts a sign-in for the same instance

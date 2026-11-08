@@ -506,6 +506,8 @@ defmodule HalC2.Web.Socket do
   end
 
   @session_methods HalC2.Rpc.session_methods()
+  @provider_auth_methods ~w(provider.auth.start provider.auth.respond provider.auth.cancel
+                            provider.auth.logout provider.auth.complete)
   @session_elsewhere %{
     "_tag" => "EnvironmentOperationForbiddenError",
     "code" => "operation_forbidden",
@@ -554,6 +556,10 @@ defmodule HalC2.Web.Socket do
 
         method in @session_methods ->
           {HalC2.Rpc, :handle, [method, payload || %{}, state.session]}
+
+        # A sign-in belongs to the client that started it (`HalC2.ProviderAuth`).
+        method in @provider_auth_methods ->
+          {HalC2.ProviderAuth, :handle, [method, payload || %{}, auth_owner(state)]}
 
         # A desktop app update this socket asks for is cancelled when it goes.
         method == "server.updateServer" and mc == node() ->
@@ -1987,8 +1993,15 @@ defmodule HalC2.Web.Socket do
       {{:space_presence, space, page}, "spacePresence",
        %{"viewers" => space_viewers(view, device_key(state))}}
 
-  defp watched_frame({:hal_c2_provider_auth, instance, auth}, _state),
-    do: {{:provider_auth, instance}, "providerAuth", %{"state" => auth}}
+  defp watched_frame({:hal_c2_provider_auth, instance, auth}, state),
+    do:
+      {{:provider_auth, instance}, "providerAuth",
+       %{"state" => HalC2.ProviderAuth.view(auth, auth_owner(state))}}
+
+  # Whose sign-ins a socket acts on and sees whole: its paired session's, so a device's
+  # sockets are one client; the local tools on the MC's own token are one client too.
+  defp auth_owner(%{session: nil}), do: "local"
+  defp auth_owner(%{session: session}), do: session
 
   # This socket's device on a page: its session's, or for the MC's own token, itself.
   defp device(state) do
