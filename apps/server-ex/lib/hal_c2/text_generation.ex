@@ -1215,7 +1215,13 @@ defmodule HalC2.TextGeneration do
   # The CLI an instance writes text with: its binary path in settings, else the one on PATH.
   defp claude_command(instance), do: cli(instance, :text_claude_command, "claude")
   @doc false
-  def codex_command(instance), do: cli(instance, :text_codex_command, "codex")
+  def codex_command(instance),
+    do:
+      hd(
+        HalC2.Codex.Installation.command(instance, [
+          Application.get_env(:hal_c2, :text_codex_command, "codex")
+        ])
+      )
 
   defp cli(instance, key, default),
     do:

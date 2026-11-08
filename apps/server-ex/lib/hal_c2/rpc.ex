@@ -260,13 +260,9 @@ defmodule HalC2.Rpc do
   def handle("provider.auth.logout", input), do: HalC2.ProviderAuth.logout(input)
   def handle("provider.auth.complete", input), do: HalC2.ProviderAuth.complete(input)
   def handle("provider.chatgpt.move", input), do: HalC2.Codex.ChatGpt.move(input)
-  def handle("provider.install.start", input), do: HalC2.Acp.Antigravity.Installation.start(input)
-
-  def handle("provider.install.cancel", input),
-    do: HalC2.Acp.Antigravity.Installation.cancel(input)
-
-  def handle("provider.install.remove", input),
-    do: HalC2.Acp.Antigravity.Installation.remove(input)
+  def handle("provider.install.start", input), do: installer(input).start(input)
+  def handle("provider.install.cancel", input), do: installer(input).cancel(input)
+  def handle("provider.install.remove", input), do: installer(input).remove(input)
 
   def handle("agentSessions.scan", input), do: HalC2.AgentSessions.scan(input)
   def handle("agentSessions.import", input), do: HalC2.AgentSessions.import_project(input)
@@ -392,6 +388,15 @@ defmodule HalC2.Rpc do
       {:error, {:tailscale, message}} -> {:error, message}
     end
   end
+
+  # The managed installer of the instance's driver.
+  defp installer(%{"instanceId" => instance}) do
+    if HalC2.Codex.Installation.instance?(instance),
+      do: HalC2.Codex.Installation,
+      else: HalC2.Acp.Antigravity.Installation
+  end
+
+  defp installer(_input), do: HalC2.Acp.Antigravity.Installation
 
   defp cluster({:ok, _} = ok), do: ok
 

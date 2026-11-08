@@ -691,14 +691,14 @@ Feature: Codex
     And the last model list Codex gave is still offered
 
   # Upstream #19154: a bare Codex binary passed its probes while every Code Mode call failed.
-  @backlog @priority-low
+  @priority-low
   Scenario: A Codex on the path without its Code Mode host is passed over for the managed install
     Given the codex command on the MC's path has no "codex-code-mode-host" beside it
     When the MC picks the Codex to run
     Then it runs the managed Codex installation instead
 
   # Upstream #22308: a failed managed Codex download was reported as a disk problem.
-  @backlog @priority-low
+  @priority-low
   Scenario Outline: A managed Codex download that fails over the network says to check the connection
     Given the MC is installing its managed Codex
     When the download <failure>
@@ -713,7 +713,7 @@ Feature: Codex
 
   # Upstream #30004: a raised managed Codex pin never reached existing installs, and the old
   # Codex compacted after every tool call on a model its catalog did not know.
-  @backlog @priority-high
+  @priority-high
   Scenario: A managed Codex older than the MC's pinned version is updated in the background
     Given the managed Codex installed is older than the version the MC pins
     When the MC starts

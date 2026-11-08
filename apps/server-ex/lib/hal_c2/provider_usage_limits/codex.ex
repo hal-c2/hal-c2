@@ -16,12 +16,7 @@ defmodule HalC2.ProviderUsageLimits.Codex do
   @week 7 * 24 * 60
   @month 30 * 24 * 60
 
-  def command(instance \\ "codex"),
-    do:
-      HalC2.Settings.instance_command(
-        instance,
-        Application.get_env(:hal_c2, :codex_command, ["codex", "app-server"])
-      )
+  def command(instance \\ "codex"), do: HalC2.Codex.Installation.command(instance)
 
   def installed?(instance \\ "codex") do
     case command(instance) do
