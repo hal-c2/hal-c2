@@ -218,16 +218,22 @@ export async function pressKey(ctx: World, spelled: string): Promise<void> {
 
 /**
  * Hold a key past the terminal's repeat delay: one press, then `repeats`
- * auto-repeat events (what kitty-protocol terminals report while a key is held).
+ * auto-repeat events (what kitty-protocol terminals report while a key is held),
+ * with `modifiers` held down too.
  */
-export async function holdKey(ctx: World, name: string, repeats = 2): Promise<void> {
+export async function holdKey(
+  ctx: World,
+  name: string,
+  repeats = 2,
+  modifiers: { readonly ctrl?: boolean; readonly meta?: boolean; readonly shift?: boolean } = {},
+): Promise<void> {
   const app = await boot(ctx);
   const event = (eventType: "press" | "repeat") =>
     new KeyEvent({
       name,
-      ctrl: false,
-      meta: false,
-      shift: false,
+      ctrl: modifiers.ctrl ?? false,
+      meta: modifiers.meta ?? false,
+      shift: modifiers.shift ?? false,
       option: false,
       sequence: name === "escape" ? "\x1b" : name,
       number: false,

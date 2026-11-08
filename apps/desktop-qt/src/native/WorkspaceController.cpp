@@ -14,6 +14,8 @@
 #include "NavigationController.h"
 #include "McClient.h"
 #include "ProjectScripts.h"
+#include "EnvironmentCatalog.h"
+#include "SavedEnvironmentsController.h"
 #include "ComposerController.h"
 #include "ProjectActionsController.h"
 #include "SettingsController.h"
@@ -142,13 +144,10 @@ QString localBranchOf(const QString& remoteRef) {
   return remoteRef.mid(slash + 1);
 }
 
-// BranchToolbar.logic: the machine's own name, unless it is a generic one.
-QString primaryLabel(const QString& label) {
+// "local" says nothing of which machine it is.
+bool genericLabel(const QString& label) {
   const QString lowered = label.trimmed().toLower();
-  if (lowered.isEmpty() || lowered == QLatin1String("local") || lowered == QLatin1String("local environment")) {
-    return QStringLiteral("This device");
-  }
-  return label.trimmed();
+  return lowered.isEmpty() || lowered == QLatin1String("local") || lowered == QLatin1String("local environment");
 }
 
 }  // namespace
@@ -219,7 +218,7 @@ WorkspaceController::Launch WorkspaceController::launch(const QString& draftId) 
   const bool moved = !checkout.environmentId.isEmpty();
   launch.environmentId = moved ? checkout.environmentId : draft->environmentId;
   launch.projectId = moved ? checkout.projectId : draft->projectId;
-  launch.tied = moved || checkout.branch || checkout.worktreePath;
+  launch.tied = moved || checkout.manual || checkout.branch || checkout.worktreePath;
   // The checkout's status is known only for the draft the window shows.
   const bool shown = m_place && m_place->draftId == draftId;
   const bool repo = !(shown && m_git && !m_git->local.value(QLatin1String("isRepo")).toBool(true));
@@ -585,17 +584,22 @@ bool WorkspaceController::locked() const {
 // server thread that has not started yet.
 QString WorkspaceController::envMode() const {
   if (!m_place) return QStringLiteral("local");
+  // A plain folder has no worktree to make, whatever the draft asked for (upstream #21404).
+  if (!repository()) return QStringLiteral("local");
   if (!m_place->draftId.isEmpty()) {
     if (!m_place->worktreePath.isEmpty()) return QStringLiteral("local");
     return m_checkouts.value(m_place->draftId).envMode;
   }
   if (!m_place->worktreePath.isEmpty()) return QStringLiteral("worktree");
+  // The MC holds a run "preparing" only while it checks out the thread's new
+  // worktree, whose path the row gets once it is done (upstream #13590).
+  if (text(threadRow(), "status") == QLatin1String("preparing")) return QStringLiteral("worktree");
   if (!locked() && m_pending.contains(m_place->threadKey())) return m_pending.value(m_place->threadKey()).envMode;
   return QStringLiteral("local");
 }
 
 bool WorkspaceController::envModeChangeable() const {
-  if (!m_place) return false;
+  if (!m_place || !repository()) return false;
   if (!m_place->draftId.isEmpty()) return !eachModelGetsWorktree();
   return !locked() && m_place->worktreePath.isEmpty();
 }
@@ -608,8 +612,15 @@ bool WorkspaceController::eachModelGetsWorktree() const {
   return composer && composer->choseSeveralModels(m_place->draftId);
 }
 
+// Whether the place is in a Git checkout: a worktree always is, a folder until
+// its status says otherwise.
+bool WorkspaceController::repository() const {
+  if (m_place && !m_place->worktreePath.isEmpty()) return true;
+  return !m_git || m_git->local.value(QLatin1String("isRepo")).toBool(true);
+}
+
 QString WorkspaceController::currentBranch() const {
-  if (!m_git || !m_git->local.value(QLatin1String("isRepo")).toBool(true)) return {};
+  if (!m_git || !repository()) return {};
   return text(m_git->local, "refName");
 }
 
@@ -692,7 +703,7 @@ QString WorkspaceController::preferredEditor(const QJsonArray& editors) const {
 // BranchToolbar.logic's environment options: this project's checkout on each
 // machine (projects sharing its repository), the MC's own first. A draft may
 // also move to any project on a machine without a checkout.
-QVariantList WorkspaceController::environmentChoices() const {
+QVariantList WorkspaceController::environmentChoices(bool* severalMachines) const {
   if (!m_place) return {};
   const QString own = m_client->environment();
   const QJsonObject project = m_store->projectRow(m_place->environmentId, m_place->projectId);
@@ -707,10 +718,8 @@ QVariantList WorkspaceController::environmentChoices() const {
   QList<Choice> checkouts;
   QList<Choice> elsewhere;
   for (const QString& environmentId : m_store->environments()) {
-    const QJsonObject descriptor = m_store->environment(environmentId);
     const bool primary = environmentId == own;
-    const QString label = primary ? primaryLabel(text(descriptor, "label"))
-                                  : (text(descriptor, "label").isEmpty() ? environmentId : text(descriptor, "label"));
+    const QString label = machineLabel(environmentId);
     QList<QJsonObject> projects = m_store->projectRows(environmentId);
     std::sort(projects.begin(), projects.end(),
               [](const QJsonObject& a, const QJsonObject& b) { return text(a, "title") < text(b, "title"); });
@@ -733,17 +742,88 @@ QVariantList WorkspaceController::environmentChoices() const {
     if (a.primary != b.primary) return a.primary;
     return a.label.localeAwareCompare(b.label) < 0;
   });
+  if (severalMachines) *severalMachines = checkouts.size() + elsewhere.size() > 1;
+  // A started thread stays on its machine: that is the one choice it has (upstream #19900).
+  if (m_place->draftId.isEmpty()) {
+    checkouts.removeIf([&](const Choice& choice) { return choice.environmentId != m_place->environmentId; });
+    elsewhere.clear();
+  }
+  const bool balanced = autoBalanced();
+  const QString current = m_place->environmentId + QLatin1Char(':') + m_place->projectId;
   QVariantList result;
+  if (autoBalanceOffered()) {
+    result.append(QVariantMap{{QStringLiteral("environmentId"), QString()},
+                              {QStringLiteral("key"), QStringLiteral("auto")},
+                              {QStringLiteral("label"), QStringLiteral("Auto balance")},
+                              {QStringLiteral("current"), balanced}});
+  }
   for (const QList<Choice>* list : {&checkouts, &elsewhere}) {
     for (const Choice& choice : *list) {
       result.append(QVariantMap{
           {QStringLiteral("environmentId"), choice.environmentId},
           {QStringLiteral("key"), choice.key},
           {QStringLiteral("label"), choice.label},
+          {QStringLiteral("current"), !balanced && choice.key == current},
       });
     }
   }
   return result;
+}
+
+// This machine by its own name, else the one the user saved it under, unless
+// either is a generic "local"; another machine by its own name, else the saved one.
+QString WorkspaceController::machineLabel(const QString& environmentId) const {
+  const QString own = text(m_store->environment(environmentId), "label").trimmed();
+  QString saved;
+  if (auto* environments = NativeShell::of(this)->controller<SavedEnvironmentsController>()) {
+    if (const auto record = environments->catalog() ? environments->catalog()->find(environmentId) : std::nullopt) {
+      saved = record->label.trimmed();
+    }
+  }
+  if (environmentId == m_client->environment()) {
+    if (!genericLabel(own)) return own;
+    return genericLabel(saved) ? QStringLiteral("This device") : saved;
+  }
+  if (!own.isEmpty()) return own;
+  return saved.isEmpty() ? environmentId : saved;
+}
+
+bool WorkspaceController::autoBalanceOffered() const {
+  if (!m_place || m_place->draftId.isEmpty()) return false;
+  QStringList machines = m_store->environments();
+  machines.removeDuplicates();
+  if (machines.size() < 2) return false;
+  const auto* settings = NativeShell::of(this)->controller<SettingsController>();
+  return settings && settings->settings().value(QLatin1String("loadBalancingEnabled")).toBool();
+}
+
+bool WorkspaceController::autoBalanced() const {
+  if (!autoBalanceOffered()) return false;
+  const auto* composer = NativeShell::of(this)->controller<ComposerController>();
+  if (composer && composer->holdsFiles(m_place->draftId)) return false;
+  const Checkout checkout = m_checkouts.value(m_place->draftId);
+  return checkout.environmentId.isEmpty() && !checkout.manual && !checkout.branch && !checkout.worktreePath;
+}
+
+// useDraftEnvironmentRouting onAutoEnvironment: refused while files are
+// attached, since they went to the machine the draft is on.
+void WorkspaceController::autoBalance() {
+  if (!m_place || m_place->draftId.isEmpty()) return;
+  const auto* composer = NativeShell::of(this)->controller<ComposerController>();
+  if (composer && composer->holdsFiles(m_place->draftId)) {
+    NativeShell::of(this)->controller<ToastController>()->show(
+        QStringLiteral("warning"), QStringLiteral("Keep attachments on this machine"),
+        QStringLiteral("Remove attachments before choosing automatic routing, then attach them on the selected machine."));
+    return;
+  }
+  if (!autoBalanceOffered()) return;
+  updateCheckout([](Checkout& checkout) {
+    checkout.environmentId.clear();
+    checkout.projectId.clear();
+    checkout.manual = false;
+    checkout.branch.reset();
+    checkout.worktreePath.reset();
+  });
 }
 
 QVariantMap WorkspaceController::build() const {
@@ -773,6 +853,7 @@ QVariantMap WorkspaceController::build() const {
     branch = !current.isEmpty() ? std::optional(current) : threadBranch;
   }
   if (m_optimisticBranch) branch = m_optimisticBranch;
+  if (!repository()) branch.reset();
 
   QVariant git = QVariant::fromValue(nullptr);
   bool canOpenPullRequest = false;
@@ -798,6 +879,8 @@ QVariantMap WorkspaceController::build() const {
     };
   }
 
+  bool severalMachines = false;
+  const QVariantList machines = environmentChoices(&severalMachines);
   const QJsonArray editorList = editors();
   const QString projectKey = place.environmentId + QLatin1Char(':') + place.projectId;
   QString lastScript = m_lastScript.value(projectKey);
@@ -827,8 +910,10 @@ QVariantMap WorkspaceController::build() const {
       {QStringLiteral("envMode"), mode},
       {QStringLiteral("envModeLabel"),
        eachModel    ? QStringLiteral("New worktree")
-       : changeable ? (mode == QLatin1String("worktree") ? QStringLiteral("New worktree") : currentWorkspace)
-                    : (place.worktreePath.isEmpty() ? QStringLiteral("Local checkout") : QStringLiteral("Worktree"))},
+       : changeable                          ? (mode == QLatin1String("worktree") ? QStringLiteral("New worktree") : currentWorkspace)
+       : !place.worktreePath.isEmpty()       ? QStringLiteral("Worktree")
+       : mode == QLatin1String("worktree")   ? QStringLiteral("New worktree")
+                                             : QStringLiteral("Local checkout")},
       {QStringLiteral("currentWorkspaceLabel"), currentWorkspace},
       {QStringLiteral("envModeHint"), eachModel ? QStringLiteral("Each model starts in its own worktree.") : QString()},
       {QStringLiteral("envModeChangeable"), changeable},
@@ -844,18 +929,21 @@ QVariantMap WorkspaceController::build() const {
       {QStringLiteral("revealLabel"), revealLabel(m_store->environment(place.environmentId))},
       {QStringLiteral("scripts"), place.scripts.toVariantList()},
       {QStringLiteral("preferredScriptId"), known ? QVariant(lastScript) : QVariant::fromValue(nullptr)},
-      {QStringLiteral("environments"), environmentChoices()},
+      {QStringLiteral("environments"), machines},
+      // BranchToolbar.logic shouldShowEnvironmentIndicator: the project is on
+      // several machines, or on one that is not this one.
+      {QStringLiteral("environmentShown"), severalMachines || !thisMachine::hosts(*m_store, *m_client, place.environmentId)},
       {QStringLiteral("activeEnvironmentId"), place.environmentId},
       // The MC serving it is out of reach (a cluster member asleep).
       {QStringLiteral("offline"), !m_store->environmentOnline(place.environmentId)},
-      {QStringLiteral("environmentChangeable"), draft},
+      {QStringLiteral("environmentChangeable"), draft && machines.size() > 1},
       {QStringLiteral("renameRequestId"), m_renameRequestId},
       {QStringLiteral("branchQuery"), m_query},
       {QStringLiteral("branches"), branches},
       {QStringLiteral("branchesTotal"), std::max(m_refsTotal, int(m_refs.size()))},
       {QStringLiteral("branchesLoading"), m_refsLoading},
       {QStringLiteral("branchSwitchPending"), m_switching},
-      {QStringLiteral("branchChangeable"), !place.cwd().isEmpty()},
+      {QStringLiteral("branchChangeable"), !place.cwd().isEmpty() && repository()},
       {QStringLiteral("previousWorktree"), previous},
   };
 }
@@ -973,7 +1061,11 @@ bool WorkspaceController::handle(const QString& action, const QVariant& payload)
         }
       }
     }
-    setEnvironment(key);
+    if (key == QLatin1String("auto")) {
+      autoBalance();
+    } else {
+      setEnvironment(key);
+    }
   }
   return true;
 }
@@ -1148,10 +1240,15 @@ void WorkspaceController::setEnvironment(const QString& key) {
   const QString environmentId = key.left(colon);
   const QString projectId = key.mid(colon + 1);
   if (m_store->projectRow(environmentId, projectId).isEmpty()) return;
-  if (environmentId == m_place->environmentId && projectId == m_place->projectId) return;
+  if (environmentId == m_place->environmentId && projectId == m_place->projectId) {
+    // Its own machine, picked over Auto balance: the thread stays there.
+    if (!m_checkouts.value(m_place->draftId).manual) updateCheckout([](Checkout& checkout) { checkout.manual = true; });
+    return;
+  }
   updateCheckout([&](Checkout& checkout) {
     checkout.environmentId = environmentId;
     checkout.projectId = projectId;
+    checkout.manual = true;
     checkout.branch.reset();
     checkout.worktreePath.reset();
   });

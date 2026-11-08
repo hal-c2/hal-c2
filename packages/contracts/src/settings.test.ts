@@ -364,6 +364,22 @@ describe("ClientSettings default diff file state", () => {
   });
 });
 
+describe("ClientSettings effort display", () => {
+  it("names the effort for settings saved without a choice", () => {
+    expect(decodeClientSettings({}).effortDisplay).toBe("label");
+  });
+
+  it.each(["label", "bars"])("round-trips %s", (effortDisplay) => {
+    const settings = decodeClientSettings({ effortDisplay });
+    expect(encodeClientSettings(settings).effortDisplay).toBe(effortDisplay);
+    expect(decodeClientSettingsPatch({ effortDisplay }).effortDisplay).toBe(effortDisplay);
+  });
+
+  it("rejects other displays", () => {
+    expect(() => decodeClientSettings({ effortDisplay: "dots" })).toThrow();
+  });
+});
+
 describe("ClientSettings diff colors", () => {
   it("keeps red and green for existing settings without a saved palette", () => {
     expect(decodeClientSettings({}).diffColorScheme).toBe("red-green");
