@@ -4,11 +4,14 @@ defmodule HalC2.AcpReadsPropTest do
   instance is read by reloads (`reload/1`, as Refresh does), boot reads (`load/0`),
   and the read a listing (`entry/1`) starts when nothing is known or being read, and
   forgotten by settings changes and `forget/1`. Each read's agent is held until the
-  case releases it, to answer with models, refuse, say it is signed out, or send
-  what makes the read raise. Whatever order they finish in, the instance shows what
-  the most recently asked-for read that nothing overtook answered; a listing starts
-  no read while one is under way, and does once the current read raised (#438); and
-  a reload returns with its own answer in place (#459).
+  case releases it, to answer with models, refuse, say it is signed out, die before
+  answering (a binary macOS refuses), close its stdin before the read's next call
+  (one still dying), or send what makes the read raise. Whatever
+  order they finish in, the instance shows what the most recently asked-for read
+  that nothing overtook answered; a listing starts
+  no read while one is under way, and does once the current read raised (#438); an
+  agent that dies leaves its read's failure, never an unchecked instance; and a
+  reload returns with its own answer in place (#459).
 
   A live session's writers (`put_models/2`, `put_commands/2`,
   `put_unauthenticated/1`) land at any point between: they stand until a forget or a
@@ -133,7 +136,14 @@ defmodule HalC2.AcpReadsPropTest do
         print(json.dumps({"jsonrpc": "2.0", **message}), flush=True)
     def answer(request, result):
         send({"id": request["id"], "result": result})
+    if outcome == "dies":
+        sys.exit(137)
+    if outcome == "hangs_up":
+        os.close(0)
     answer(request, {"protocolVersion": 1, "agentInfo": {"version": "1.0.0"}, "agentCapabilities": {}})
+    if outcome == "hangs_up":
+        case.recv(1)
+        sys.exit(137)
     model = {"id": "model", "currentValue": label, "options": [{"value": label, "name": label}]}
     if #{if name == :b, do: "True", else: "False"}:
         session = {"sessionId": "s", "models": {"currentModelId": label, "availableModels": [{"modelId": label, "name": label}]}}
@@ -189,7 +199,14 @@ defmodule HalC2.AcpReadsPropTest do
            {:call, __MODULE__, :release,
             [
               oneof(Enum.map(state.reads, & &1.n)),
-              frequency([{3, :answers}, {3, :raises}, {1, :refuses}, {1, :signed_out}])
+              frequency([
+                {3, :answers},
+                {3, :raises},
+                {1, :refuses},
+                {1, :signed_out},
+                {1, :dies},
+                {1, :hangs_up}
+              ])
             ]}}
         ]
 
@@ -271,6 +288,8 @@ defmodule HalC2.AcpReadsPropTest do
     do: %{state | shown: label(n), failure: nil, signed_out: false}
 
   defp answered(state, n, :refuses), do: %{state | failure: label(n) <> " refused"}
+  defp answered(state, _n, :dies), do: %{state | failure: :closed}
+  defp answered(state, _n, :hangs_up), do: %{state | failure: :closed}
   defp answered(state, _n, :signed_out), do: %{state | failure: :signed_out, signed_out: true}
   defp answered(state, _n, :raises), do: %{state | loading: false}
 
@@ -372,6 +391,7 @@ defmodule HalC2.AcpReadsPropTest do
   # A refusal says the agent's message; a sign-out says the MC's own.
   defp failure(nil), do: nil
   defp failure("r" <> _ = message), do: message
+  defp failure(":closed"), do: :closed
   defp failure(_message), do: :signed_out
 
   def configure(agent) do

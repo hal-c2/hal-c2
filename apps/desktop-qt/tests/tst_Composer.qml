@@ -278,6 +278,25 @@ Item {
             verify(again !== null);
         }
 
+        // A locked effort, folded, says why above its greyed rows.
+        function test_aFoldedLockedEffortSaysWhy() {
+            const reason = "Your prompt contains \"ultrathink\" in the text. Remove it to change this option.";
+            const state = crowded();
+            state.composer.options[0] = Object.assign({}, state.composer.options[0], { lockedReason: reason });
+            Shell.state = state;
+            let composer = createTemporaryObject(composerComponent, root, { width: 260, y: 350, height: 350 });
+            waitForRendering(composer);
+            verify(composer.folded.some(chip => chip.objectName === "effortPicker"));
+            composer.openOverflow(null);
+            const effort = overflowRow(composer.overflowMenu, "composerOverflow:effortPicker").subMenu;
+            compare(effort.count, 3);
+            const note = effort.itemAt(0);
+            compare(note.objectName, "composerOverflowNote");
+            compare(note.reason, reason);
+            verify(!note.enabled);
+            verify(!effort.itemAt(1).enabled && !effort.itemAt(2).enabled, "the efforts are greyed");
+        }
+
         // Plan, folded, is a row of the menu that asks for plan mode.
         function test_planFoldedIntoTheMenuSwitchesMode() {
             Shell.state = crowded();
