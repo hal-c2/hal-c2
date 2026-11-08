@@ -46,5 +46,5 @@ From `apps/server-ex`:
 - a state machine of one turn's guard: `mise exec -- mix prop prop/hal_c2/token_economizer_prop_test.exs`;
 - a state machine of the micro-skills' lifecycle laws: `mise exec -- mix prop prop/hal_c2/token_economizer_micro_skills_prop_test.exs`;
 - a Maude model of the plugin hearing a thread's turns, with a feed that may miss
-  events, late or lost verdicts and redirects delivered late:
+  events, late or lost verdicts and redirects delivered late or refused:
   `mise exec -- mix proof proof/hal_c2/token_economizer_loop_guard_proof_test.exs`.

@@ -7,15 +7,17 @@ defmodule HalC2.TokenEconomizerPropTest do
   TokenEconomizer's loop guard (`plugins/token-economizer/mc`), its pure parts:
 
   - a state machine of one turn's guard (`LoopGuard.Turn`), fed tool calls, judge
-    verdicts and the clock in any order, as the plugin feeds it. Whatever the order: a
-    project with no envelope is never acted on and never judged; no more redirects than
-    the budget; the stop offer comes only once the redirects are spent, at most once,
-    and nothing is decided after it; a judge job starts only when none is out, or the
-    one out has gone stale; a verdict for a job that is not out changes nothing but
-    the spend; every call is counted;
+    verdicts, the clock and whether a redirect reached the agent, in any order, as the
+    plugin feeds it. Whatever the order: a project with no envelope is never acted on
+    and never judged; no more redirects than the budget; the stop offer comes only once
+    the redirects are spent, at most once, and nothing is decided after it; nothing is
+    decided or judged while a redirect is on its way; only a redirect that landed starts
+    a fresh segment, and one refused leaves the segment as it was; a judge job starts
+    only when none is out, or the one out has gone stale; a verdict for a job that is
+    not out changes nothing but the spend; every call is counted;
   - what the envelope learns: from any run of turns, exactly the ones that ended
     green, no envelope before enough of them, and the signal thresholds never below
-    the level's.
+    the level's; an edit that failed does not make a failing check look old.
 
   The plugin's process, the MC's turns and the delivery of redirects and notices are
   covered by `features/plugins/token-economizer-loop-guard.feature`.
@@ -93,7 +95,7 @@ defmodule HalC2.TokenEconomizerPropTest do
       stops: 0,
       jobs: 0,
       # The judge job out, `{id, started at}`, until its verdict is delivered or a
-      # redirect starts a new segment.
+      # redirect that landed starts a new segment.
       out: nil
     }
   end
@@ -107,12 +109,14 @@ defmodule HalC2.TokenEconomizerPropTest do
       {8, {:call, __MODULE__, :tools, [resize(6, non_empty(list(kind())))]}},
       {1,
        {:call, __MODULE__, :verdict, [elements([:out, :other]), boolean(), elements([0.4, 0.95])]}},
-      {1, {:call, __MODULE__, :tick, [elements([0, 60, @stale])]}}
+      {1, {:call, __MODULE__, :tick, [elements([0, 60, @stale])]}},
+      {1, {:call, __MODULE__, :landed, [boolean()]}}
     ])
   end
 
   # Mostly the loop the guard is for, with now and then a sign of progress.
-  defp kind, do: frequency([{4, "edit"}, {5, "fail"}, {1, "pass"}, {1, "read"}])
+  defp kind,
+    do: frequency([{4, "edit"}, {5, "fail"}, {1, "pass"}, {1, "read"}, {1, "bad_edit"}])
 
   def precondition(_state, _call), do: true
 
@@ -124,7 +128,7 @@ defmodule HalC2.TokenEconomizerPropTest do
   # Tool calls folded one by one as the plugin folds them; what each did.
   def tools(kinds), do: Enum.map(kinds, &tool/1)
 
-  # A nudge's redirect is taken and its segment restarted, a job is put out.
+  # A nudge's redirect is sent (whether it lands is `landed/1`), a job is put out.
   defp tool(kind) do
     run = Process.get(:guard)
     {name, args, result, code} = call(kind)
@@ -142,7 +146,7 @@ defmodule HalC2.TokenEconomizerPropTest do
       case decision do
         {:nudge, _} ->
           {text, guard} = Turn.nudge_body(guard)
-          {text, Turn.after_nudge(guard)}
+          {text, Turn.redirect(guard)}
 
         _ ->
           {nil, guard}
@@ -154,12 +158,7 @@ defmodule HalC2.TokenEconomizerPropTest do
         nudges: run.nudges + if(match?({:nudge, _}, decision), do: 1, else: 0),
         stops: run.stops + if(match?({:abort, _}, decision), do: 1, else: 0),
         jobs: run.jobs + if(job, do: 1, else: 0),
-        out:
-          cond do
-            job -> {job["id"], run.now}
-            match?({:nudge, _}, decision) -> nil
-            true -> run.out
-          end
+        out: if(job, do: {job["id"], run.now}, else: run.out)
     }
 
     Process.put(:guard, after_run)
@@ -183,6 +182,23 @@ defmodule HalC2.TokenEconomizerPropTest do
     %{before: run, after: after_run, id: id}
   end
 
+  # The redirect on its way reached the agent, or was refused; nothing when none is.
+  def landed(landed) do
+    run = Process.get(:guard)
+
+    after_run =
+      if run.guard.redirecting,
+        do: %{
+          run
+          | guard: Turn.redirected(run.guard, landed),
+            out: if(landed, do: nil, else: run.out)
+        },
+        else: run
+
+    Process.put(:guard, after_run)
+    %{before: run, after: after_run, landed: landed}
+  end
+
   def tick(seconds) do
     run = Process.get(:guard)
     Process.put(:guard, %{run | now: run.now + seconds})
@@ -198,6 +214,7 @@ defmodule HalC2.TokenEconomizerPropTest do
 
   defp call("pass"), do: {"Bash", %{"command" => "pytest -q test_a.py"}, "1 passed in 0.02s", 0}
   defp call("read"), do: {"Bash", %{"command" => "cat a.py"}, "x = 1", 0}
+  defp call("bad_edit"), do: {"Edit", %{"path" => "a.py"}, "String to replace not found", 1}
 
   def postcondition(state, {:call, _, :tools, _}, steps) do
     steps
@@ -214,6 +231,25 @@ defmodule HalC2.TokenEconomizerPropTest do
       (out? or unchanged == before.guard)
   end
 
+  def postcondition(_state, {:call, _, :landed, _}, %{before: before, after: run} = r) do
+    g = before.guard
+
+    cond do
+      not g.redirecting ->
+        run == before
+
+      # Landed: the next segment starts afresh, and the old one's job is forgotten.
+      r.landed ->
+        not run.guard.redirecting and run.guard.segment == g.segment + 1 and
+          run.guard.redirects == g.redirects + 1 and run.guard.st.turns == 0 and
+          run.guard.judge_pending == nil and run.guard.nudges_done == g.nudges_done
+
+      # Refused: the segment goes on as it was.
+      true ->
+        run.guard == %{g | redirecting: false}
+    end
+  end
+
   def postcondition(_state, {:call, _, :tick, _}, :ok), do: true
 
   defp lawful?(state, %{before: before, after: run} = r, calls) do
@@ -223,7 +259,9 @@ defmodule HalC2.TokenEconomizerPropTest do
     # The budget, then one stop offer, then nothing.
     # A redirect has words in it.
     # One judge job out at a time, unless the one out went stale.
+    # Nothing decided or judged while a redirect is on its way.
     (state.learned or (not acted and r.job == nil)) and
+      (not before.guard.redirecting or (not acted and r.job == nil)) and
       run.nudges <= state.budget and
       run.stops <= 1 and
       (not match?({:abort, _}, r.decision) or before.nudges == state.budget) and
@@ -238,7 +276,12 @@ defmodule HalC2.TokenEconomizerPropTest do
   property "the envelope learns exactly the turns that ended green",
     numtests: HalC2.Prop.numtests(200) do
     forall turns <-
-             resize(12, list({integer(1, 6), elements(~w(green failing stopped guard_stopped))})) do
+             resize(
+               12,
+               list(
+                 {integer(1, 6), elements(~w(green failing failed_edit stopped guard_stopped))}
+               )
+             ) do
       tracker =
         Enum.reduce(turns, Envelope.new(), fn {calls, outcome}, tracker ->
           Envelope.record_turn(tracker, guard(calls, outcome), outcome != "stopped")
@@ -261,11 +304,13 @@ defmodule HalC2.TokenEconomizerPropTest do
   end
 
   # A turn of `calls` tool calls: it read and checked green, or its last check after an
-  # edit failed, or the agent did not stop on its own, or the guard stopped it.
+  # edit failed (and an edit after that did not apply), or the agent did not stop on its
+  # own, or the guard stopped it.
   defp guard(calls, outcome) do
     kinds =
       case outcome do
         "failing" -> List.duplicate("read", calls - 1) ++ ["edit", "fail"]
+        "failed_edit" -> List.duplicate("read", calls - 1) ++ ["edit", "fail", "bad_edit"]
         _ -> List.duplicate("pass", calls)
       end
 

@@ -89,11 +89,14 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Judge do
       @nudge_writer_system <>
         "\n\nRecent process digest:\n" <> digest <> "\n\nWrite the redirect."
 
-    with {:ok, %{"text" => text}, usage} when is_binary(text) <- generate.(prompt, @writer_schema),
-         text when text != "" <- String.trim(text) do
-      %{"text" => String.slice(text, 0, 1200), "_tokens" => tokens(usage)}
-    else
-      _ -> %{"text" => "", "_tokens" => 0}
+    # A reply with no words is still paid for; the redirect falls back to the template.
+    case generate.(prompt, @writer_schema) do
+      {:ok, out, usage} ->
+        text = if is_map(out) and is_binary(out["text"]), do: String.trim(out["text"]), else: ""
+        %{"text" => String.slice(text, 0, 1200), "_tokens" => tokens(usage)}
+
+      _ ->
+        %{"text" => "", "_tokens" => 0}
     end
   end
 
@@ -116,13 +119,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Judge do
     end
   end
 
+  # `cachedInputTokens` is a part of `inputTokens` (`Host.generate/3`), not more of them.
   defp tokens(usage) when is_map(usage),
-    do:
-      Enum.sum(
-        for key <- ~w(inputTokens cachedInputTokens outputTokens),
-            is_number(usage[key]),
-            do: usage[key]
-      )
+    do: Enum.sum(for key <- ~w(inputTokens outputTokens), is_number(usage[key]), do: usage[key])
 
   defp tokens(_), do: 0
 end

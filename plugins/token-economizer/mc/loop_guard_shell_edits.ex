@@ -19,6 +19,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   alias HalC2Plugins.TokenEconomizer.LoopGuard.State
 
+  @shells ~w(sh bash zsh dash ksh)
   @heredoc_start ~r/<<-?\s*(['"]?)([A-Za-z_]\w*)\1/
   @ops ["&&", "||", ";", ";;", "|", "|&", "&", "\n", "(", ")"]
   # Redirects that write their operand.
@@ -36,8 +37,13 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   # Codex's patch format, as `apply_patch <<'PATCH'` takes it on stdin.
   @patch_file ~r/^\*\*\* (?:Update|Add|Delete) File:\s*(.+?)\s*$/m
 
-  @doc "Basenames of the files a shell command writes, in order, without repeats."
+  @doc """
+  Basenames of the files a shell command writes, in order, without repeats; of the script
+  for one run as `bash -lc '<script>'`.
+  """
   def targets(cmd) when is_binary(cmd) do
+    cmd = script(cmd)
+
     if String.trim(cmd) == "" do
       []
     else
@@ -71,6 +77,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   them as edits only for a file the turn edited.
   """
   def revert_targets(cmd) when is_binary(cmd) do
+    cmd = script(cmd)
+
     if String.trim(cmd) == "" do
       []
     else
@@ -297,6 +305,65 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
     end)
     |> Enum.reject(&(&1 == []))
   end
+
+  @doc """
+  The script of a command recorded as `bash -lc '<script>'` (as Codex records them), else
+  the command itself.
+  """
+  def script(cmd) when is_binary(cmd) do
+    case posix_split(cmd) do
+      [shell, "-" <> flags, script | _] ->
+        if State.basename(shell) in @shells and String.contains?(flags, "c"),
+          do: script,
+          else: cmd
+
+      _ ->
+        cmd
+    end
+  end
+
+  def script(cmd), do: cmd
+
+  # ---- Python's shlex.split (POSIX, no comments): only the first words matter, to find
+  # `bash -lc '<script>'`. [] when the quotes do not balance, as shlex raises.
+
+  defp posix_split(text) do
+    case psplit(String.to_charlist(text), :space, [], false, []) do
+      :error -> []
+      words -> words
+    end
+  end
+
+  @ws ~c" \t\r\n"
+
+  defp psplit([], {:quote, _}, _, _, _), do: :error
+  defp psplit([], _, tok, quoted, acc), do: Enum.reverse(pemit(tok, quoted, acc))
+
+  defp psplit([c | rest], state, tok, quoted, acc) when state in [:space, :word] do
+    cond do
+      c in @ws -> psplit(rest, :space, [], false, pemit(tok, quoted, acc))
+      c in [?', ?"] -> psplit(rest, {:quote, c}, tok, true, acc)
+      c == ?\\ -> pescape(rest, :word, tok, quoted, acc)
+      true -> psplit(rest, :word, [c | tok], quoted, acc)
+    end
+  end
+
+  defp psplit([q | rest], {:quote, q}, tok, quoted, acc),
+    do: psplit(rest, :word, tok, quoted, acc)
+
+  defp psplit([?\\, c | rest], {:quote, ?"} = state, tok, quoted, acc) when c in [?", ?\\],
+    do: psplit(rest, state, [c | tok], quoted, acc)
+
+  defp psplit([c | rest], {:quote, _} = state, tok, quoted, acc),
+    do: psplit(rest, state, [c | tok], quoted, acc)
+
+  defp pescape([], _, _, _, _), do: :error
+
+  defp pescape([c | rest], state, tok, quoted, acc),
+    do: psplit(rest, state, [c | tok], quoted, acc)
+
+  defp pemit([], false, acc), do: acc
+  defp pemit(tok, _, acc), do: [tok |> Enum.reverse() |> List.to_string() | acc]
 
   # ---- Python's shlex.shlex(text, posix=False, punctuation_chars="();<>|&\n"), with
   # whitespace " \t\r" and whitespace_split: shell words and operators. Quotes stay on
