@@ -15,7 +15,10 @@
 # allowed, "was not allowed to run CMD" otherwise. Rules a
 # permission answer adds for the session (updatedPermissions) let later matching
 # commands run without asking; "call a skill" calls the demo skill twice, with
-# and without arguments; "edit a file" writes edited.txt through a Write call.
+# and without arguments; "edit a file" writes edited.txt through a Write call. "mcp
+# confirm" is an MCP tool eliciting a yes or no (twice over when it says so), answered
+# "elicitation ACTION"; "mcp sign in", "mcp form" and "mcp undescribed" elicit a web
+# sign-in, form values, and input no schema describes.
 # Each turn's message text is appended to
 # $FAKE_CLAUDE_LOG when it is set.
 import json, os, re, sys, time, uuid
@@ -88,6 +91,7 @@ turn = 0
 session_rules = []  # Bash commands the session allows without asking
 asked_before_plan = False  # a "question first" turn waiting on its answer
 asking_subagent = None  # (Agent tool id, command) of a subagent waiting on its permission answer
+pending_elicit = None  # (request id, asks again after an accept) of an MCP elicitation waiting on its answer
 dialogs = []  # the dialog kinds the host said it can show (initialize)
 # FAKE_CLAUDE_ORPHANED names a background task the previous process left running. A
 # resumed process queues its first message behind a turn of its own that reports the
@@ -142,6 +146,16 @@ for line in sys.stdin:
         # A cancelled approval interrupts the turn (the reply's interrupt flag).
         if reply.get("interrupt"):
             send({"type": "result", "subtype": "error_during_execution", "is_error": True, "terminal_reason": "aborted_tools", "session_id": session})
+            continue
+        if pending_elicit and "action" in reply:
+            elicit_id, again = pending_elicit
+            if again and reply["action"] == "accept":
+                pending_elicit = ("elicit-2", False)
+                send({"type": "control_request", "request_id": "elicit-2", "request": {"subtype": "elicitation", "mcp_server_name": "demo", "message": "Delete the file for sure?", "mode": "form", "requested_schema": {"type": "object", "properties": {}}}})
+                continue
+            pending_elicit = None
+            send({"type": "assistant", "session_id": session, "message": {"id": "m-elicit", "role": "assistant", "content": [{"type": "text", "text": "elicitation " + reply["action"]}]}})
+            send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
             continue
         if reply["behavior"] in ("completed", "cancelled"):
             send({"type": "assistant", "session_id": session, "message": {"id": "m-dialog", "role": "assistant", "content": [{"type": "text", "text": "resume " + reply.get("result", "cancelled")}]}})
@@ -450,6 +464,26 @@ for line in sys.stdin:
         send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "error": "authentication_failed", "message": {"id": f"m{turn}x", "role": "assistant", "content": [{"type": "text", "text": "Invalid API key · Please run /login"}]}})
         send({"type": "result", "subtype": "success", "is_error": True, "result": "Invalid API key · Please run /login", "session_id": session})
         continue
+    # MCP elicitations: a tool asking the user mid-turn. The answer's action is
+    # what the tool is told ("elicitation ACTION"), and the turn ends on it.
+    if text.startswith("mcp "):
+        ask = text[len("mcp "):]
+        base = {"type": "control_request", "request_id": "elicit-1", "request": {"subtype": "elicitation", "mcp_server_name": "demo"}}
+        if ask.startswith("confirm"):
+            pending_elicit = ("elicit-1", "twice" in ask)
+            base["request"].update({"message": "Delete the file?", "mode": "form", "requested_schema": {"type": "object", "properties": {}}})
+        elif ask == "sign in":
+            pending_elicit = ("elicit-1", False)
+            base["request"].update({"message": "Sign in to continue", "mode": "url", "url": "https://example.com/login", "elicitation_id": "login-1"})
+        elif ask == "form":
+            pending_elicit = ("elicit-1", False)
+            base["request"].update({"message": "Name the file", "mode": "form", "requested_schema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}})
+        elif ask == "undescribed":
+            pending_elicit = ("elicit-1", False)
+            base["request"].update({"message": "The tool needs input", "mode": "form"})
+        if pending_elicit:
+            send(base)
+            continue
     if "where are we" in text:
         send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}w", "role": "assistant", "content": [{"type": "text", "text": f"resumed at {resume_at} fork {'--fork-session' in sys.argv} history {'<conversation_history>' in text}" + (f" earlier [{' | '.join(earlier)}]" if SESSIONS else "")}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})

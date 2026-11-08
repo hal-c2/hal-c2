@@ -6879,6 +6879,156 @@ defmodule HalC2.Steps.Providers.Claude do
         do: {if(item["toolName"] =~ "scrape", do: "mcp-scrape", else: "mcp-map"), item}
   end
 
+  # --- MCP elicitation -----------------------------------------------------------------
+
+  # The fake's MCP tool elicits mid-turn ("mcp confirm" and friends); the tool
+  # is told the answer's action and says "elicitation ACTION" before the turn ends.
+  step "a Claude thread is running", context do
+    context
+    |> World.fake_providers()
+    |> World.launch_on(@thread, "claudeAgent", "hello")
+    |> Map.put(:thread, @thread)
+    |> tap(&World.await_runs(&1, @thread, ["completed"]))
+  end
+
+  step "an MCP tool asks the user to confirm what it is about to do", context do
+    context = World.post_message(context, @thread, "mcp confirm")
+    Map.put(context, :request, World.await_request(context, @thread))
+  end
+
+  step "the user is asked to approve, decline or cancel", context do
+    assert %{"kind" => "mcp-elicitation", "status" => "pending"} = context.request
+
+    item =
+      Enum.find(
+        World.entities(context, @thread, "turn-item"),
+        &(&1["requestId"] == context.request["id"])
+      )
+
+    assert %{"prompt" => "Delete the file?", "appName" => "demo", "options" => options} = item
+
+    assert options ==
+             [
+               %{"decision" => "cancel", "label" => "Cancel"},
+               %{"decision" => "decline", "label" => "Decline"},
+               %{"decision" => "accept", "label" => "Approve"}
+             ]
+
+    context
+  end
+
+  step "the tool waits for the user's answer", context do
+    assert [%{"status" => "completed"}, %{"status" => "running"}] =
+             World.runs(context, @thread)
+
+    refute Enum.any?(World.replies(context, @thread), &(&1 =~ "elicitation"))
+    context
+  end
+
+  step "an MCP tool on Claude asked the user to confirm what it is about to do", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "mcp confirm twice")
+      |> Map.put(:thread, @thread)
+
+    Map.put(context, :request, World.await_request(context, @thread))
+  end
+
+  step "the user approves", context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => context.request["id"],
+        "decision" => "accept"
+      })
+
+    context
+  end
+
+  step "the tool goes on with that request", context do
+    # The tool was told accept: it asks its second question instead of ending denied.
+    request = World.await_request(context, @thread)
+    assert %{"kind" => "mcp-elicitation", "status" => "pending"} = request
+    Map.put(context, :request2, request)
+  end
+
+  step "the next request from that tool asks the user again", context do
+    assert context.request2["createdAt"] >= context.request["createdAt"]
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => context.request2["id"],
+        "decision" => "accept"
+      })
+
+    World.await_runs(context, @thread, ["completed"])
+    assert Enum.any?(World.replies(context, @thread), &(&1 == "elicitation accept"))
+    context
+  end
+
+  step ~r/^an MCP tool on Claude asks the user for (?<request>.+)$/,
+       %{args: [request]} = context do
+    text =
+      case request do
+        "a sign-in at a web address" -> "mcp sign in"
+        "values to fill in a form" -> "mcp form"
+        "input it does not describe" -> "mcp undescribed"
+      end
+
+    context
+    |> World.fake_providers()
+    |> World.launch_on(@thread, "claudeAgent", text)
+    |> Map.put(:thread, @thread)
+  end
+
+  step "Claude declines it without asking the user", context do
+    World.await_runs(context, @thread, ["completed"])
+    assert Enum.any?(World.replies(context, @thread), &(&1 == "elicitation decline"))
+    assert World.entities(context, @thread, "runtime-request") == []
+    context
+  end
+
+  step "an MCP tool on Claude is waiting for the user to confirm", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "mcp confirm")
+      |> Map.put(:thread, @thread)
+
+    Map.put(context, :request, World.await_request(context, @thread))
+  end
+
+  step "the Claude session stops", context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, @thread)
+      })
+
+    World.await_runs(context, @thread, ["interrupted"])
+    context
+  end
+
+  step "the request is cancelled", context do
+    assert [%{"status" => "cancelled"}] = World.entities(context, @thread, "runtime-request")
+    context
+  end
+
+  step "answering it afterwards fails as no longer pending", context do
+    assert {:error, _} =
+             HalC2.Claude.ThreadRuntime.respond(
+               World.thread_id(context, @thread),
+               context.request["id"],
+               %{"decision" => "accept"}
+             )
+
+    context
+  end
+
   # --- Full access and Claude's own permission settings ------------------------------
 
   step "the project's or the managed Claude settings restrict bypassing permissions",

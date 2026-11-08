@@ -189,6 +189,10 @@ defmodule HalC2.Claude.Protocol do
   def dialog_reply(request_id, :cancelled),
     do: control_success(request_id, %{"behavior" => "cancelled"})
 
+  @doc "The reply to an MCP `elicitation`: its action (`accept`, `decline` or `cancel`) and content."
+  @spec elicitation_reply(String.t(), map) :: iodata
+  def elicitation_reply(request_id, answer), do: control_success(request_id, answer)
+
   @spec control_success(String.t(), map) :: iodata
   def control_success(request_id, body),
     do:

@@ -43,6 +43,11 @@ defmodule HalC2.Claude.Session do
   def answer_permission(session, request_id, decision),
     do: GenServer.cast(session, {:answer_permission, request_id, decision})
 
+  @doc "Answers an MCP elicitation with its action and content."
+  @spec answer_elicitation(GenServer.server(), String.t(), map) :: :ok
+  def answer_elicitation(session, request_id, answer),
+    do: GenServer.cast(session, {:answer_elicitation, request_id, answer})
+
   @doc "Answers a dialog with the user's choice, or `:cancelled` for the dialog's default."
   @spec answer_dialog(GenServer.server(), String.t(), {:completed, term} | :cancelled) :: :ok
   def answer_dialog(session, request_id, result),
@@ -155,6 +160,11 @@ defmodule HalC2.Claude.Session do
     end
   end
 
+  def handle_cast({:answer_elicitation, id, answer}, state) do
+    :ok = Subprocess.write_line(state.sub, Protocol.elicitation_reply(id, answer))
+    {:noreply, checkpoint(state)}
+  end
+
   def handle_cast({:answer_dialog, id, result}, state) do
     :ok = Subprocess.write_line(state.sub, Protocol.dialog_reply(id, result))
     {:noreply, checkpoint(state)}
@@ -244,6 +254,10 @@ defmodule HalC2.Claude.Session do
       {:control_request, id, %{"subtype" => "request_user_dialog", "dialog_kind" => kind} = r}
       when kind in @dialog_kinds ->
         notify(state, {:dialog, id, kind, r["payload"] || %{}})
+        state
+
+      {:control_request, id, %{"subtype" => "elicitation"} = request} ->
+        notify(state, {:elicitation, id, request})
         state
 
       {:control_request, id, request} ->

@@ -2067,7 +2067,7 @@ Feature: Claude
     And the raw name like "Mcp__server__tool" is not shown
 
   # Upstream #21903: an MCP tool asking Claude's user to confirm was declined without asking.
-  @backlog @shared @priority-high
+  @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-high
   Scenario: An MCP tool on Claude asks the user before it goes on
     Given a Claude thread is running
     When an MCP tool asks the user to confirm what it is about to do
@@ -2075,7 +2075,6 @@ Feature: Claude
     And the tool waits for the user's answer
 
   # Upstream #21903: approval is for that one request; no session or standing grant is written.
-  @backlog
   Scenario: Approving an MCP tool's request on Claude allows that request only
     Given an MCP tool on Claude asked the user to confirm what it is about to do
     When the user approves
@@ -2083,10 +2082,9 @@ Feature: Claude
     And the next request from that tool asks the user again
 
   # Upstream #21903: requests the approval card cannot answer are declined without asking.
-  @backlog
   Scenario Outline: An MCP tool's request on Claude that needs more than a yes or no is declined
     When an MCP tool on Claude asks the user for <request>
-    Then the request is declined without asking the user
+    Then Claude declines it without asking the user
 
     Examples:
       | request                        |
@@ -2095,7 +2093,6 @@ Feature: Claude
       | input it does not describe     |
 
   # Upstream #21903: a session that stops while the request waits cancels it.
-  @backlog
   Scenario: An MCP tool's request on Claude is cancelled when the session stops
     Given an MCP tool on Claude is waiting for the user to confirm
     When the Claude session stops
