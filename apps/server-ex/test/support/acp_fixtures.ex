@@ -30,7 +30,8 @@ defmodule HalC2.Test.AcpFixtures do
     :acp_registry_url,
     :text_codex_command,
     :text_claude_command,
-    :provider_update_checks
+    :provider_update_checks,
+    :acp_session_timeout_ms
   ]
   @os_keys ["HAL_C2_NODE_COMMAND", "PATH", "FAKE_TEXT_LOG"]
 

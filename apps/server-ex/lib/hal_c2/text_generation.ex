@@ -239,6 +239,8 @@ defmodule HalC2.TextGeneration do
     cond do
       kind == :writer and is_map(writer) and usable?(settings, writer) -> writer
       usable?(settings, text) -> text
+      # Never written by another provider in its place; `usable_selection/2` says why.
+      registry?(text) -> text
       true -> fallback(settings) || text
     end
   end
@@ -332,6 +334,9 @@ defmodule HalC2.TextGeneration do
       usable?(settings, selection) ->
         {:ok, selection}
 
+      registry?(selection) ->
+        {:error, "ACP Registry instances do not provide application text generation."}
+
       message = missing_cli(settings, selection) ->
         {:error, message}
 
@@ -376,6 +381,10 @@ defmodule HalC2.TextGeneration do
     unless executable?(command),
       do: "#{label} CLI (`#{command}`) is required but not available on PATH."
   end
+
+  # A registry agent only runs threads (`HalC2.Acp`'s `supportsTextGeneration`).
+  defp registry?(%{"instanceId" => id}) when is_binary(id), do: driver(id) == "acpRegistry"
+  defp registry?(_selection), do: false
 
   # --- running ----------------------------------------------------------------------
 

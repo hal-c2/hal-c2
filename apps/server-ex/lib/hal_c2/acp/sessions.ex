@@ -29,7 +29,7 @@ defmodule HalC2.Acp.Sessions do
            for(
              %{"sessionId" => id, "cwd" => cwd} = session <-
                Enum.take(result["sessions"] || [], 256),
-             is_binary(id) and is_binary(cwd),
+             usable?(id) and usable?(cwd),
              do: session_row(instance, session)
            ),
          "nextCursor" => text(result["nextCursor"], 2048),
@@ -39,6 +39,9 @@ defmodule HalC2.Acp.Sessions do
        }}
     end
   end
+
+  # An id or folder that is empty or padded cannot be imported as it was listed.
+  defp usable?(text), do: is_binary(text) and text != "" and String.trim(text) == text
 
   defp session_row(instance, session) do
     thread_id = thread_id(instance, session["sessionId"])
@@ -146,7 +149,7 @@ defmodule HalC2.Acp.Sessions do
   @doc "`server.listAcpRegistryProviders`: the model providers the agent can use."
   def providers(%{"instanceId" => instance, "projectId" => project_id}) do
     with {:ok, root} <- project_root(project_id),
-         {:ok, {result, _}} <- call(instance, root, "providers/list", %{}, :providers) do
+         {:ok, {result, _}} <- call(instance, root, "providers/list", %{}, :providers_list) do
       {:ok,
        %{
          "providers" =>
@@ -162,7 +165,7 @@ defmodule HalC2.Acp.Sessions do
                "current" =>
                  if(
                    is_map(current) and is_binary(current["apiType"]) and
-                     is_binary(current["baseUrl"]),
+                     web_address?(current["baseUrl"]),
                    do: Map.take(current, ["apiType", "baseUrl"])
                  )
              }
@@ -177,11 +180,21 @@ defmodule HalC2.Acp.Sessions do
 
     with :ok <- headers(params["headers"]),
          {:ok, root} <- project_root(project_id),
-         {:ok, _} <- call(instance, root, "providers/set", params, :providers) do
+         {:ok, _} <- call(instance, root, "providers/set", params, :providers_set) do
       HalC2.Acp.forget(instance)
       {:ok, %{"configured" => true}}
     end
   end
+
+  defp web_address?(url) when is_binary(url),
+    do:
+      match?(
+        %URI{scheme: scheme, host: host}
+        when scheme in ["http", "https"] and host not in [nil, ""],
+        URI.parse(url)
+      )
+
+  defp web_address?(_), do: false
 
   # Headers are a JSON object of strings (the contract's `Record<string, string>`).
   defp headers(nil), do: :ok
@@ -203,7 +216,13 @@ defmodule HalC2.Acp.Sessions do
   def disable_provider(%{"instanceId" => instance, "projectId" => project_id} = input) do
     with {:ok, root} <- project_root(project_id),
          {:ok, _} <-
-           call(instance, root, "providers/disable", Map.take(input, ["providerId"]), :providers) do
+           call(
+             instance,
+             root,
+             "providers/disable",
+             Map.take(input, ["providerId"]),
+             :providers_disable
+           ) do
       HalC2.Acp.forget(instance)
       {:ok, %{"disabled" => true}}
     end
@@ -260,37 +279,83 @@ defmodule HalC2.Acp.Sessions do
     end
   end
 
-  # The capability each operation needs, and the failure it reports.
+  # What each operation needs of the agent, and what the user is told when it does not
+  # have it, does not answer in time, or fails: `{capability, {unsupported reason,
+  # message}, failed reason, what timed out, what could not be done}`. A `nil` message
+  # passes on the agent's own.
+  @providers ["providers"]
+  @no_providers "The ACP agent does not advertise provider configuration."
+  @provider_update "Could not update the ACP provider configuration."
   @needs %{
-    list: {["sessionCapabilities", "list"], "session_list_unsupported", "session_import_failed"},
+    list:
+      {["sessionCapabilities", "list"], {"session_list_unsupported", nil},
+       "session_import_failed", "session list", nil},
     delete:
-      {["sessionCapabilities", "delete"], "session_delete_unsupported", "session_delete_failed"},
-    providers: {["providers"], "providers_unsupported", "provider_configuration_failed"},
-    logout: {["auth", "logout"], "logout_unsupported", "logout_failed"}
+      {["sessionCapabilities", "delete"], {"session_delete_unsupported", nil},
+       "session_delete_failed", "session delete", "Could not delete the ACP session."},
+    providers_list:
+      {@providers, {"providers_unsupported", @no_providers}, "providers_list_failed",
+       "provider list", "Could not list ACP providers."},
+    providers_set:
+      {@providers, {"providers_unsupported", @no_providers}, "provider_configuration_failed",
+       "provider configuration", @provider_update},
+    providers_disable:
+      {@providers, {"providers_unsupported", @no_providers}, "provider_configuration_failed",
+       "provider disable", @provider_update},
+    logout:
+      {["auth", "logout"], {"logout_unsupported", "The ACP agent does not advertise logout."},
+       "logout_failed", "logout", nil}
   }
 
+  # Tests shorten the minute with `:acp_session_timeout_ms`.
+  defp timeout, do: Application.get_env(:hal_c2, :acp_session_timeout_ms, @timeout)
+
   defp call(instance, cwd, method, params, op) do
-    {path, unsupported, failed} = @needs[op]
+    {path, {unsupported, unsupported_message}, failed, request, could_not} = @needs[op]
 
     result =
       HalC2.Acp.with_agent(instance, cwd, fn conn, init ->
         caps = init["agentCapabilities"] || %{}
 
         if is_map(get_in(caps, path)) do
-          with {:ok, result} <- Connection.call(conn, method, params, @timeout),
+          with {:ok, result} <- call_in_time(conn, method, params),
                do: {:ok, {result || %{}, caps}}
         else
-          {:unsupported, "The ACP agent does not support #{method}."}
+          {:unsupported, unsupported_message || "The ACP agent does not support #{method}."}
         end
       end)
 
     case result do
-      {:ok, _} = ok -> ok
-      {:unsupported, message} -> error(unsupported, message)
-      {:error, %{"_tag" => _} = detail} -> {:error, detail}
-      {:error, reason} -> error(reason_for(reason, failed), message(reason))
+      {:ok, _} = ok ->
+        ok
+
+      {:unsupported, message} ->
+        error(unsupported, message)
+
+      :timeout ->
+        error(failed, "The ACP #{request} request timed out.")
+
+      {:error, %{"_tag" => _} = detail} ->
+        {:error, detail}
+
+      {:error, reason} ->
+        case reason_for(reason, failed) do
+          ^failed when is_binary(could_not) -> error(failed, could_not, cause(reason))
+          tag -> error(tag, message(reason))
+        end
     end
   end
+
+  # The call's reply arrives at a process alias, so one given up on leaves nothing behind.
+  defp call_in_time(conn, method, params) do
+    Connection.call(conn, method, params, timeout())
+  catch
+    :exit, {:timeout, _} -> :timeout
+  end
+
+  # What the agent said, kept with the failure for the curious, its secrets redacted.
+  defp cause(reason),
+    do: reason |> message() |> HalC2.Acp.Stderr.redact() |> String.slice(0, 1_000)
 
   # ACP reports a missing sign-in as error -32000.
   defp reason_for(%{"code" => -32000}, _failed), do: "authentication_failed"
@@ -306,4 +371,14 @@ defmodule HalC2.Acp.Sessions do
   defp error(reason, message),
     do:
       {:error, %{"_tag" => "AcpRegistryOperationError", "reason" => reason, "message" => message}}
+
+  defp error(reason, message, cause),
+    do:
+      {:error,
+       %{
+         "_tag" => "AcpRegistryOperationError",
+         "reason" => reason,
+         "message" => message,
+         "cause" => cause
+       }}
 end
