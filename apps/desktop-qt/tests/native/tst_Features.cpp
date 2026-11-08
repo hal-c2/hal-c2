@@ -121,6 +121,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/queue-and-steer.feature:A queued message offers to send it now*"),
     QStringLiteral("composer/queue-and-steer.feature:A queued message on a stopped thread*"),
     QStringLiteral("composer/queue-and-steer.feature:One queue action at a time"),
+    QStringLiteral("composer/queue-and-steer.feature:Sending with Mod+Enter during a turn*"),
+    QStringLiteral("composer/queue-and-steer.feature:An unchanged edit whose message starts running closes quietly"),
     QStringLiteral("composer/queue-and-steer.feature:A queued message is listed before the MC confirms it"),
     QStringLiteral("composer/queue-and-steer.feature:A queued message cannot be edited while a question is open"),
     QStringLiteral("composer/queue-and-steer.feature:A queued message being edited is marked*"),

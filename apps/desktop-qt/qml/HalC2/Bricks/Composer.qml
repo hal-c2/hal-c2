@@ -558,7 +558,12 @@ Rectangle {
             singleLine: { "": "foreground", [mod]: composer.model.isRunning ? "alternate" : "background" }
         };
         const intents = /[\r\n]/.test(input.text) ? table.multiline ?? table.singleLine : table.singleLine;
-        return intents[held.join("+")] ?? "";
+        const intent = intents[held.join("+")] ?? "";
+        // A shifted chord that sends is a window shortcut too (mod+Shift+Enter
+        // sends the first queued message): with nothing to send it stays theirs.
+        if (intent !== "" && held.includes("shift") && input.text.trim().length === 0 && composer.attachments.length === 0)
+            return "";
+        return intent;
     }
 
     function submit(intent) {

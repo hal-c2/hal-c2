@@ -5,7 +5,8 @@
 // attachments only when they changed, and then names what the composer showed:
 // the ones kept and the ones added. The queue card lists what each queued
 // message carries, as the MC holds it. A save the MC refused leaves the edit
-// open, and saving again stores none of its images a second time.
+// open, and saving again stores none of its images a second time. Saves go
+// one at a time, and of those made while one is unanswered only the newest goes.
 
 #include <algorithm>
 
@@ -221,6 +222,15 @@ struct Sut {
   QVariantMap composer() const { return bridge->state()->value(QStringLiteral("composer")).toMap(); }
   QVariantList queue() const { return bridge->state()->value(QStringLiteral("turn")).toMap().value(QStringLiteral("queue")).toList(); }
 
+  int revision = 0;
+  void type(const QString& text) {
+    bridge->dispatch(QStringLiteral("composer.text.set"), QVariantMap{{QStringLiteral("target"), kKey},
+                                                                    {QStringLiteral("edit"), QVariantMap{{QStringLiteral("clientId"), QStringLiteral("qml")},
+                                                                                                         {QStringLiteral("revision"), ++revision}}},
+                                                                    {QStringLiteral("text"), text},
+                                                                    {QStringLiteral("cursor"), text.size()}});
+  }
+
   QList<QJsonObject> edits() const {
     QList<QJsonObject> found;
     for (const QJsonObject& command : mc.commands) {
@@ -419,6 +429,41 @@ struct SaveRefused : Command {
   void show(std::ostream& os) const override { os << "SaveRefused"; }
 };
 
+// Saves made while the first is unanswered (the MC is slow, then answers or
+// refuses it): none is sent until it is answered, then only the newest goes,
+// and its answer ends the edit.
+struct SaveWhileSaving : Command {
+  int more = *rc::gen::inRange(1, 3);
+  bool refused = *rc::gen::arbitrary<bool>();
+  // Text alone: what a save stores is SaveRefused's to prove.
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.editing && !m.sentChanged && m.added.isEmpty()); }
+  void apply(Model& m) const override {
+    m.edits += 2;
+    m.end();
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.mc.hold(QStringLiteral("answers"));
+    if (refused) sut.mc.refusals.insert(QStringLiteral("queued-run.edit"), QStringLiteral("The queue changed."));
+    sut.type(QStringLiteral("save 0"));
+    sut.bridge->dispatch(QStringLiteral("composer.submit"), QVariantMap());
+    RC_ASSERT(prop::until([&] { return sut.edits().size() == m0.edits + 1; }));
+    for (int i = 1; i <= more; ++i) {
+      sut.type(QStringLiteral("save %1").arg(i));
+      sut.bridge->dispatch(QStringLiteral("composer.submit"), QVariantMap());
+    }
+    sut.barrier();
+    // Still one: the rest wait for its answer.
+    RC_ASSERT(sut.edits().size() == m0.edits + 1);
+    sut.mc.refusals.remove(QStringLiteral("queued-run.edit"));
+    sut.mc.answerHeld();
+    RC_ASSERT(prop::until([&] { return sut.edits().size() == m0.edits + 2; }));
+    verify(nextState(m0), sut);
+    RC_ASSERT(sut.edits().constLast().value(QLatin1String("text")).toString() == QStringLiteral("save %1").arg(more));
+    RC_ASSERT(sut.edits().constLast().value(QLatin1String("runId")).toString() == *m0.editing);
+  }
+  void show(std::ostream& os) const override { os << "SaveWhileSaving(" << more << (refused ? ", refused" : "") << ")"; }
+};
+
 // The first queued run starts: an edit of it ends, and the composer keeps what was added.
 struct Leave : Command {
   void checkPreconditions(const Model& m) const override { RC_PRE(!m.queue.isEmpty()); }
@@ -445,7 +490,7 @@ private slots:
       Model model;
       verify(model, sut);
       const auto commands = *rc::gen::scale(
-          0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Enqueue, Enqueue, Attach, AttachFile, Edit, Edit, RemoveSent, Cancel, Save, SaveRefused, Leave>()));
+          0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Enqueue, Enqueue, Attach, AttachFile, Edit, Edit, RemoveSent, Cancel, Save, SaveRefused, SaveWhileSaving, Leave>()));
       rc::state::runAll(commands, model, sut);
     }));
   }

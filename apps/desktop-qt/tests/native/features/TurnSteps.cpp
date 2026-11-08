@@ -1058,6 +1058,12 @@ const Steps steps([] {
                !message.contains(QLatin1String("deliveryIntent")),
            QStringLiteral("the MC was sent %1").arg(show(message.toVariantMap())));
   });
+  step(QStringLiteral("the user presses (\\S+) with %1 typed during a turn").arg(q), [](World& world, const Captures& c, const Table&) {
+    typeInComposer(world, c[1]);
+    expect(pressInComposer(world, c[0]), QStringLiteral("the composer did not take %1").arg(c[0]));
+    world.waitFor([&] { return lastMessage(world).value(QLatin1String("text")) == c[1]; },
+                  [&] { return QStringLiteral("a send; the MC has %1").arg(world.describeCommands()); });
+  });
   step(QStringLiteral("%1 steers the running turn").arg(q), [](World& world, const Captures& c, const Table&) {
     const QJsonObject message = lastMessage(world);
     expect(message.value(QLatin1String("text")) == c[0] && message.value(QLatin1String("deliveryIntent")) == QLatin1String("steer") &&
@@ -1198,6 +1204,17 @@ const Steps steps([] {
     const auto shown = [&world] { return world.state(QStringLiteral("composer")).toMap(); };
     world.waitFor([&] { return shown().value(QStringLiteral("text")) == c[0]; },
                   [&] { return QStringLiteral("the composer shows %1").arg(show(shown())); });
+  });
+  step(QStringLiteral("the edit has ended"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("editingQueuedRunId")).isNull(); },
+                  [&] { return QStringLiteral("the composer is %1").arg(show(world.state(QStringLiteral("composer")))); });
+  });
+  step(QStringLiteral("no message about the edit is shown"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    for (const QVariant& toast : toasts(world)) {
+      expect(toast.toMap().value(QStringLiteral("title")) != QLatin1String("Queued message is no longer queued"),
+             QStringLiteral("the toast is %1").arg(show(toast)));
+    }
   });
   step(QStringLiteral("the queued run of %1 starts").arg(q), [](World& world, const Captures& c, const Table&) {
     set(world, QStringLiteral("run"), QStringLiteral("run-queued-") + c[0], {{QStringLiteral("status"), QStringLiteral("running")}});

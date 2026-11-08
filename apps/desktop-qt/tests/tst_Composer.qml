@@ -9,11 +9,11 @@ Item {
     width: 900
     height: 700
 
-    // The keymap arrives as window shortcuts (ShellWindow), mod+Enter
-    // and mod+alt+Enter among them.
+    // The keymap arrives as window shortcuts (ShellWindow), mod+Enter,
+    // mod+alt+Enter and mod+Shift+Enter among them.
     property int stolenChords: 0
     Shortcut {
-        sequences: ["Ctrl+Alt+Return", "Ctrl+Return", "Meta+Return"]
+        sequences: ["Ctrl+Alt+Return", "Ctrl+Return", "Meta+Return", "Ctrl+Shift+Return", "Meta+Shift+Return"]
         context: Qt.WindowShortcut
         onActivated: root.stolenChords++
     }
@@ -549,6 +549,25 @@ Item {
             compare(sent.action, "composer.submit");
             compare(sent.payload.intent, "alternate");
             compare(root.stolenChords, 0);
+
+            // mod+Shift+Enter sends the other way with words typed; with none
+            // it is the window's (send the first queued message).
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, {
+                    enterIntents: { singleLine: { "": "foreground", "ctrl+shift": "alternate" } }
+                })
+            });
+            input.text = "tweak";
+            keyClick(Qt.Key_Return, ctrl | Qt.ShiftModifier);
+            sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
+            compare(sent.action, "composer.submit");
+            compare(sent.payload.intent, "alternate");
+            input.text = "";
+            const empty = Shell.dispatchCount;
+            const stolen = root.stolenChords;
+            keyClick(Qt.Key_Return, ctrl | Qt.ShiftModifier);
+            verify(Shell.dispatchedActions.slice(empty).every(entry => entry.action !== "composer.submit"));
+            compare(root.stolenChords, stolen + 1);
         }
 
         function test_terminalExcerptChipNamesItsLinesAndRemovesIt() {

@@ -27,6 +27,12 @@ namespace {
 
 const QStringList kDefaultGlobs{
     QStringLiteral("composer/question-answers.feature"),
+    QStringLiteral("composer/queue-and-steer.feature:The phone sends a follow-up the other way*"),
+    QStringLiteral("composer/queue-and-steer.feature:A queued message can be removed on the phone"),
+    QStringLiteral("composer/queue-and-steer.feature:A queued message cannot be edited while a question is open"),
+    QStringLiteral("composer/queue-and-steer.feature:A queued message offers to send it now*"),
+    QStringLiteral("composer/queue-and-steer.feature:A queued message on a stopped thread*"),
+    QStringLiteral("composer/queue-and-steer.feature:A second save of a queued message*"),
     QStringLiteral("composer/model-and-mode.feature:The composer names the permissions only when they differ*"),
     QStringLiteral("composer/model-and-mode.feature:A new thread says which permissions*"),
     QStringLiteral("composer/model-and-mode.feature:The phone's back leaves the permissions menu*"),

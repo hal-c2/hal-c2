@@ -95,7 +95,7 @@ Feature: Follow-ups while the agent is working
 
   # Upstream #20929: when sending needs Mod+Enter, Mod+Enter follows the follow-up setting
   # and Mod+Shift+Enter sends the opposite way.
-  @backlog @desktop
+  @desktop
   Scenario Outline: Sending with Mod+Enter during a turn follows the follow-up setting
     Given the send shortcut setting is "Mod+Enter"
     And the follow-up behaviour setting is "<setting>"
@@ -109,7 +109,7 @@ Feature: Follow-ups while the agent is working
       | queue   | Mod+Enter       | is queued               |
       | queue   | Mod+Shift+Enter | steers the running turn |
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: The phone sends a follow-up the other way than its setting
     Given the follow-up behaviour setting is "queue"
     When the user sends "tweak" the opposite way from the phone
@@ -266,7 +266,7 @@ Feature: Follow-ups while the agent is working
 
   # Upstream #25169: starting or ending an edit let a second save go out while the first was
   # still on its way, and the older one could land last.
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-tui @priority-high
   Scenario: A second save of a queued message waits for the first
     Given "fix typo" is queued
     And the user saved "fix all typos" over it and the MC has not answered yet
@@ -367,7 +367,7 @@ Feature: Follow-ups while the agent is working
 
   # Upstream #25468: an unchanged edit whose run starts closes without a message.
   # Upstream #25232: the phone discards an untouched queued edit when its run starts.
-  @backlog @desktop @mobile @priority-low
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: An unchanged edit whose message starts running closes quietly
     Given "fix typo" is queued
     When the user starts editing the last queued message from the start of the composer
@@ -383,7 +383,7 @@ Feature: Follow-ups while the agent is working
     Then the edit has ended
 
   # Upstream #25593: editing a queued message is unavailable while the agent's question is open.
-  @desktop @mobile @backlog-mobile @priority-high
+  @desktop @mobile @priority-high
   Scenario: A queued message cannot be edited while a question is open
     Given "fix typo" is queued
     And the agent has asked the user a question
@@ -465,7 +465,7 @@ Feature: Follow-ups while the agent is working
 
   # Upstream #25846: a queued message offers Send now first, then edit and remove; no position
   # numbers and no way to reorder it.
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-tui @priority-high
   Scenario: A queued message offers to send it now, edit it or remove it
     Given "a" and "b" are queued
     When the user looks at "b" in the queue
@@ -533,7 +533,7 @@ Feature: Follow-ups while the agent is working
 
   # Upstream #22790: a stopped thread offers Send now on a held queued message instead of a
   # disabled Steer; a running thread keeps Steer.
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-tui @priority-high
   Scenario: A queued message on a stopped thread is offered to send now
     Given "a", "b" and "c" are queued and held, and the turn is no longer running
     When the user looks at "b" in the queue
@@ -660,7 +660,7 @@ Feature: Follow-ups while the agent is working
     And the thread stays on Claude
 
   # Upstream #15417: removing a queued message on mobile is tappable
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A queued message can be removed on the phone
     When the user removes a queued message on the phone
     Then the queued message is cancelled

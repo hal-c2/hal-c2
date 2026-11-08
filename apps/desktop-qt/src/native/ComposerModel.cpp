@@ -724,7 +724,15 @@ QVariantMap enterIntents(const QList<keybindings::Binding>& bindings, bool mac, 
       if (meta) held.append(QStringLiteral("meta"));
       if (alt) held.append(QStringLiteral("alt"));
       if (shift) held.append(QStringLiteral("shift"));
-      const QString command = commandFor(bindings, mac, context, QStringLiteral("enter"), ctrl, meta, alt, shift);
+      QString command = commandFor(bindings, mac, context, QStringLiteral("enter"), ctrl, meta, alt, shift);
+      if (needsModifier && (ctrl || meta) && !alt) {
+        // When sending takes the modifier, mod+Enter sends the way the
+        // follow-up setting says and mod+Shift+Enter the other, over any
+        // window binding of it (the composer gives that back while empty).
+        const QString plain = commandFor(bindings, mac, context, QStringLiteral("enter"), ctrl, meta, alt, false);
+        if (plain == QLatin1String("composer.sendAlternate") && (!shift || !command.startsWith(QLatin1String("composer."))))
+          command = shift ? plain : QString();
+      }
       QString intent;
       if (command == QLatin1String("composer.sendAlternate") && running) {
         intent = QStringLiteral("alternate");
