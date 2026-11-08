@@ -175,6 +175,12 @@ defmodule HalC2.Test.FakeOpenShell do
 
   def sandboxes(%{store: store}), do: Agent.get(store, & &1.sandboxes)
 
+  @doc "Puts a provider in the fake's store as if someone had created it."
+  def put_provider(%{store: store}, name, labels) do
+    entry = %{type: "openai", credentials: %{}, labels: labels}
+    Agent.update(store, &put_in(&1, [:providers, name], entry))
+  end
+
   @doc "The providers in the fake's store, by name: `%{type, credentials, labels}`."
   def providers(%{store: store}), do: Agent.get(store, & &1.providers)
 

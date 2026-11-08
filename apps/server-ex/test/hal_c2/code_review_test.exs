@@ -1040,6 +1040,21 @@ defmodule HalC2.CodeReviewTest do
       assert FakeOpenShell.sandboxes(g) == %{}
     end
 
+    @tag sandbox: [reports: 2]
+    test "takes one report of the two its agent sends at once", _context do
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+      assert_receive {:sandbox_reported, first, one}, 15_000
+      assert_receive {:sandbox_reported, second, other}, 15_000
+
+      taken =
+        for {200, body} <- [{first, one}, {second, other}],
+            get_in(JSON.decode!(body), ["result", "structuredContent", "reported"]) == true,
+            do: body
+
+      assert length(taken) == 1
+      assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+    end
+
     @tag sandbox: [report: nil, tokens: 1_000]
     test "a review past its token budget fails, saying so", _context do
       save_settings(%{"sandboxTokens" => 500})

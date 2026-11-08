@@ -165,11 +165,24 @@ defmodule HalC2.OpenShell.ReviewTest do
     assert_gone(g)
   end
 
+  test "a stop before the sandbox is made leaves none made", %{gateway: g, repo: repo} do
+    :ok = Review.close(@thread, "stopped")
+
+    assert {:error, "The review was stopped before its sandbox was made."} =
+             Review.open(spec(repo))
+
+    refute_received {:openshell_request, "CreateProvider", _}
+    assert_gone(g)
+  end
+
   test "a lease is reaped once it has ended, with or without the MC", %{gateway: g} do
     now = System.os_time(:second)
     FakeOpenShell.put_sandbox(g, "review-old", owned(Review.labels("old", now - 1)))
     FakeOpenShell.put_sandbox(g, "review-new", owned(Review.labels("new", now + 600)))
     FakeOpenShell.put_sandbox(g, "other", owned(%{"halc2.github.io/role" => "workspace"}))
+    # A provider whose sandbox never came, the MC gone between the two.
+    FakeOpenShell.put_provider(g, "review-orphan", owned(Review.labels("orphan", now - 1)))
+    FakeOpenShell.put_provider(g, "review-new", owned(Review.labels("new", now + 600)))
 
     # What the reaper's timer runs, the MC up or not.
     assert {:ok, "Deleted review sandboxes past their time: review-old"} =
@@ -177,6 +190,7 @@ defmodule HalC2.OpenShell.ReviewTest do
 
     assert {:ok, "No review sandbox is past its time."} = OpenShell.Command.command(["reap"])
     assert Map.keys(FakeOpenShell.sandboxes(g)) |> Enum.sort() == ["other", "review-new"]
+    assert Map.keys(FakeOpenShell.providers(g)) == ["review-new"]
   end
 
   @tag before: [&__MODULE__.left_behind/1]

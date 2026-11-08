@@ -1,5 +1,6 @@
 # Sources:
 #   plugins/code-review/plugin.json (settings, permissions, pages, thread kinds)
+#   apps/server-ex/lib/hal_c2/open_shell/review.ex, broker.ex (review sandboxes, their lease and the report broker)
 #   plugins/code-review/mc/code_review.ex (watching, triggers, review runs, findings, publishing, claims across machines)
 #   plugins/code-review/ui/ReviewsPage.qml, ReviewHeader.qml, ReviewRowMark.qml, ReviewSettings.qml
 #   apps/server-ex/lib/hal_c2/pull_requests.ex (list, detail, submitReview through gh)
@@ -292,6 +293,68 @@ Feature: Agent code review
       When #12 is reviewed
       Then its thread works in a checkout of the head of #12
       And the user's own checkout of "api" is not touched
+
+  Rule: An untrusted pull request is reviewed in a sandbox
+
+    The agent reviewing a pull request HAL-C2 does not trust runs in an OpenShell
+    sandbox: a checkout of the pull request made from a bundle, a home of its own, no
+    credential in its environment, and a network that reaches only the model's API and
+    the one tool it reports with. Until trusted pull requests can be named, no pull
+    request is trusted.
+
+    @mc
+    Scenario: An untrusted pull request is reviewed in a sandbox, deleted once the agent reports
+      Given pull requests are not trusted and OpenShell is installed
+      When #12 is reviewed
+      Then its agent runs in a sandbox, in a checkout of the head of #12, with no credential in its environment
+      And the review of #12 is finished with the agent's verdict
+      And its sandbox and the sandbox's provider are deleted
+
+    @mc
+    Scenario: With "Sandbox every review" on, a trusted pull request is reviewed in a sandbox too
+      Given pull requests are trusted and OpenShell is installed
+      And "code-review" sandboxes every review
+      When #12 is reviewed
+      Then its agent runs in a sandbox, in a checkout of the head of #12, with no credential in its environment
+
+    @mc
+    Scenario: An untrusted pull request on an MC without OpenShell is not reviewed, saying how to set it up
+      Given pull requests are not trusted
+      When the user starts a review of #12
+      Then the review of #12 is failed saying "Run `hal-c2-service openshell install`."
+
+    @mc
+    Scenario: A sandboxed review takes one report, however many its agent sends
+      Given pull requests are not trusted and OpenShell is installed
+      And the sandboxed agent sends its report twice at once
+      When #12 is reviewed
+      Then one report is taken and the other refused
+      And its sandbox and the sandbox's provider are deleted
+
+    @mc
+    Scenario: A sandboxed review past its token budget fails and loses its sandbox
+      Given pull requests are not trusted and OpenShell is installed
+      And sandboxed reviews may use 500 tokens
+      And the sandboxed agent uses 1000 tokens without reporting
+      When #12 is reviewed
+      Then the review of #12 is failed saying it used up its token budget
+      And its sandbox and the sandbox's provider are deleted
+
+    @mc
+    Scenario: Stopping a sandboxed review deletes its sandbox
+      Given pull requests are not trusted and OpenShell is installed
+      And the sandboxed agent works until it is stopped
+      And #12 is being reviewed in a sandbox
+      When the user stops the review of #12
+      Then the review of #12 is failed saying "Stopped."
+      And its sandbox and the sandbox's provider are deleted
+
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
+    Scenario: A sandboxed review says so, and offers to stop it
+      Given a review of #12 is running in a sandbox
+      When the user opens the review's thread
+      Then its header and its row in the thread list say it runs in a sandbox
+      And the header offers to stop it and delete the sandbox
 
   Rule: What the agent finds is structured
 

@@ -12,7 +12,8 @@ defmodule HalC2.Test.FakeSandbox do
     `opts[:tokens]` tokens used (0), and finish the turn. With `hang: true` Codex's
     turn runs on, after `{:sandbox_turn, pid}` to `test`, until it is interrupted.
 
-  `test` hears `{:sandbox_exec, argv, %{workdir, environment}}` for every command, and
+  `opts` may be a function giving them, asked again for each command. `test` hears
+  `{:sandbox_exec, argv, %{workdir, environment}}` for every command, and
   `{:sandbox_reported, status, body}` for each answer the broker gave the agent. With
   `hold: program`, a command of `program` waits to start for `:release`, sent to the
   pid of `{:sandbox_held, pid}`.
@@ -34,6 +35,8 @@ defmodule HalC2.Test.FakeSandbox do
 
   def exec(root, test, opts \\ []) do
     fn command, io, start ->
+      opts = if is_function(opts, 0), do: opts.(), else: opts
+
       send(
         test,
         {:sandbox_exec, command, %{workdir: start.workdir, environment: start.environment}}
@@ -241,15 +244,19 @@ defmodule HalC2.Test.FakeSandbox do
     arguments = Map.get(opts, :report, @report)
 
     if arguments && s[:mcp] do
-      {status, body} =
-        post(s.mcp, %{
-          "jsonrpc" => "2.0",
-          "id" => 1,
-          "method" => "tools/call",
-          "params" => %{"name" => "code_review_report", "arguments" => arguments}
-        })
+      request = %{
+        "jsonrpc" => "2.0",
+        "id" => 1,
+        "method" => "tools/call",
+        "params" => %{"name" => "code_review_report", "arguments" => arguments}
+      }
 
-      send(s.test, {:sandbox_reported, status, body})
+      # `reports: n` sends the report n times at once.
+      1..Map.get(opts, :reports, 1)
+      |> Task.async_stream(fn _ -> post(s.mcp, request) end, timeout: 30_000)
+      |> Enum.each(fn {:ok, {status, body}} ->
+        send(s.test, {:sandbox_reported, status, body})
+      end)
     end
   end
 

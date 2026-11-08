@@ -87,7 +87,7 @@ defmodule HalC2.OpenShell.Broker do
   def issue(%{thread_id: thread_id} = grant) do
     revoke(thread_id)
     token = Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
-    :ets.insert(@table, {hash(token), thread_id, grant})
+    :ets.insert(@table, {hash(token), thread_id, grant, false})
     :ets.insert(@table, {{:thread, thread_id}, hash(token)})
     token
   end
@@ -107,7 +107,7 @@ defmodule HalC2.OpenShell.Broker do
   @doc "The grant of a live `token`, or nil."
   def grant(token) when is_binary(token) do
     with true <- :ets.whereis(@table) != :undefined,
-         [{_, _thread_id, grant}] <- :ets.lookup(@table, hash(token)),
+         [{_, _thread_id, grant, _taking}] <- :ets.lookup(@table, hash(token)),
          true <- grant.deadline > System.os_time(:second) do
       grant
     else
@@ -116,6 +116,15 @@ defmodule HalC2.OpenShell.Broker do
   end
 
   defp hash(token), do: :crypto.hash(:sha256, token)
+
+  # A token takes one report at a time: `taking/2` flips its flag in one step, so of
+  # two reports sent at once only one reaches the tool. A token revoked meanwhile is
+  # gone, and nothing puts it back.
+  defp taking(token, from) do
+    key = hash(token)
+    spec = [{{key, :"$1", :"$2", from}, [], [{{{:const, key}, :"$1", :"$2", not from}}]}]
+    :ets.select_replace(@table, spec) == 1
+  end
 
   @doc false
   # Made by `HalC2.OpenShell.Review`, which outlives every token. Public so the
@@ -214,7 +223,19 @@ defmodule HalC2.OpenShell.Broker do
     reported =
       case HalC2.OpenShell.Review.binding(grant.thread_id) do
         %{commit: commit} when commit == grant.commit ->
-          HalC2.Plugins.call_tool(tool, arguments, grant.thread_id)
+          if taking(grant.token, false) do
+            case HalC2.Plugins.call_tool(tool, arguments, grant.thread_id) do
+              {:ok, _} = ok ->
+                ok
+
+              # Not taken: the agent may correct its report and send it again.
+              other ->
+                taking(grant.token, true)
+                other
+            end
+          else
+            {:error, "report_in_progress", "A report of this review is being taken."}
+          end
 
         _ ->
           {:error, "sandbox_closed", "The review's sandbox is closed."}

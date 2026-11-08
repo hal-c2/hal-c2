@@ -400,6 +400,12 @@ defmodule HalC2.OpenShell.Client do
 
   @doc "The names of this MC's providers that carry every label in `labels`."
   def list_providers(%__MODULE__{} = conn, labels \\ %{}, opts \\ []) do
+    with {:ok, providers} <- providers(conn, labels, opts),
+         do: {:ok, Enum.map(providers, & &1.name)}
+  end
+
+  @doc "As `list_providers/3`, each provider as `%{name, labels}`."
+  def providers(%__MODULE__{} = conn, labels \\ %{}, opts \\ []) do
     with {:ok, labels} <- owned_labels(labels) do
       selector = labels |> Enum.sort() |> Enum.map_join(",", fn {k, v} -> "#{k}=#{v}" end)
       provider_pages(conn, selector, "", [], opts)
@@ -418,12 +424,12 @@ defmodule HalC2.OpenShell.Client do
            call(conn, :list_providers, request, opts) do
       owner = OpenShell.owner()
 
-      names =
+      owned =
         for %{metadata: %{name: name, labels: labels}} <- page,
             labels[OpenShell.owner_label()] == owner,
-            do: name
+            do: %{name: name, labels: labels}
 
-      acc = acc ++ names
+      acc = acc ++ owned
       if next in [nil, ""], do: {:ok, acc}, else: provider_pages(conn, selector, next, acc, opts)
     end
   end

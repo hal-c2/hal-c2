@@ -280,13 +280,16 @@ defmodule HalC2.OpenShell.Review do
 
   @doc """
   Deletes this MC's review sandboxes whose lease ended by `now` (unix seconds), with
-  their providers, over `conn`. Run by `hal-c2-service openshell reap` without the MC.
-  `{:ok, names}` deleted.
+  their providers, over `conn`, and any provider past its lease whose sandbox never
+  came. Run by `hal-c2-service openshell reap` without the MC. `{:ok, names}` of the
+  sandboxes deleted.
   """
   def reap(conn, now) do
-    with {:ok, sandboxes} <- Client.list_sandboxes(conn, %{@role_label => "review"}) do
-      names = for sandbox <- expired(sandboxes, now), do: sandbox.name
-      Enum.each(names, &remove(conn, &1))
+    with {:ok, sandboxes} <- Client.list_sandboxes(conn, %{@role_label => "review"}),
+         names = for(sandbox <- expired(sandboxes, now), do: sandbox.name),
+         :ok <- Enum.each(names, &remove(conn, &1)),
+         {:ok, providers} <- Client.providers(conn, %{@role_label => "review"}) do
+      for %{name: name} <- expired(providers, now), do: Client.delete_provider(conn, name)
       {:ok, names}
     end
   end
@@ -352,11 +355,12 @@ defmodule HalC2.OpenShell.Review do
 
   def handle_call(:broker, _from, state), do: {:reply, {:ok, state.broker}, state}
 
-  # A thread opened again is not ended; one closed while its sandbox was being made
-  # (its review stopped) gets none.
+  # Each run has a thread of its own, so a thread closed before or while its sandbox
+  # is made (its review stopped) gets none.
   def handle_call({:opening, thread_id}, _from, state) do
-    :ets.delete(@table, {:ended, thread_id})
-    {:reply, :ok, state}
+    if :ets.member(@table, {:ended, thread_id}),
+      do: {:reply, {:error, "The review was stopped before its sandbox was made."}, state},
+      else: {:reply, :ok, state}
   end
 
   def handle_call({:bind, binding}, _from, state) do

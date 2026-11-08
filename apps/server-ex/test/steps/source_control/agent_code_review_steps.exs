@@ -16,6 +16,8 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   alias HalC2.Steps.Plugins.Fixtures
   alias HalC2.Steps.SourceControl.Shared
+  alias HalC2.OpenShell
+  alias HalC2.Test.{FakeOpenShell, FakeSandbox}
   alias HalC2.Test.Machines
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
@@ -524,6 +526,107 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   step "the user's own checkout of {string} is not touched", context do
     assert checkout_state(context.root) == context.untouched
+    context
+  end
+
+  # --- sandboxes (#1412) -----------------------------------------------------------------------
+  # The fake gateway's sandbox is a directory here (`HalC2.Test.FakeSandbox`), whose Codex
+  # reports through the broker as the scenario's `sandbox` options say.
+
+  step "pull requests are not trusted and OpenShell is installed", context do
+    context |> trust(false) |> gateway()
+  end
+
+  step "pull requests are trusted and OpenShell is installed", context do
+    context |> trust(true) |> gateway()
+  end
+
+  step "pull requests are not trusted", context do
+    trust(context, false)
+  end
+
+  step "{string} sandboxes every review", %{args: [@id]} = context do
+    save(context, %{"sandboxEveryReview" => true})
+  end
+
+  step "sandboxed reviews may use {int} tokens", %{args: [tokens]} = context do
+    save(context, %{"sandboxTokens" => tokens})
+  end
+
+  step "the sandboxed agent sends its report twice at once", context do
+    sandbox(context, reports: 2)
+  end
+
+  step "the sandboxed agent uses {int} tokens without reporting", %{args: [tokens]} = context do
+    sandbox(context, report: nil, tokens: tokens)
+  end
+
+  step "the sandboxed agent works until it is stopped", context do
+    sandbox(context, hang: true)
+  end
+
+  step "the user starts a review of \#{int}", %{args: [number]} = context do
+    context |> open(number) |> start(number)
+  end
+
+  step "\#{int} is being reviewed in a sandbox", %{args: [number]} = context do
+    context = running(context, number)
+    assert_receive {:sandbox_turn, _}, 15_000
+    context
+  end
+
+  step "the user stops the review of \#{int}", %{args: [number]} = context do
+    {review, context} = await_review(context, number, & &1)
+    {reply, context} = plugin(context, "stop", %{"key" => review["key"]})
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "its agent runs in a sandbox, in a checkout of the head of \#{int}, with no credential in its environment",
+       %{args: [number]} = context do
+    assert_receive {:sandbox_exec, ["codex", "app-server"],
+                    %{workdir: "/sandbox/review", environment: env}},
+                   15_000
+
+    refute Enum.any?(Map.keys(env), &(&1 =~ ~r/KEY|TOKEN|SECRET/))
+    refute Map.has_key?(env, "PATH")
+    assert env["HOME"] == "/sandbox/home"
+    checkout = Path.join(context.sandbox_root, "review")
+    assert World.git!(checkout, ~w(rev-parse HEAD)) == context.heads[number]
+    assert World.git!(checkout, ~w(remote)) == ""
+    context
+  end
+
+  step "the review of \#{int} is finished with the agent's verdict",
+       %{args: [number]} = context do
+    {review, context} = await_review(context, number, &(&1["verdict"] != nil))
+    assert %{"verdict" => "approve", "sandboxed" => true} = review
+    context
+  end
+
+  step "one report is taken and the other refused", context do
+    answers =
+      for _ <- 1..2 do
+        assert_receive {:sandbox_reported, status, body}, 15_000
+        status == 200 and get_in(JSON.decode!(body), ["result", "structuredContent", "reported"])
+      end
+
+    assert Enum.count(answers, &(&1 == true)) == 1
+    context
+  end
+
+  step "the review of \#{int} is failed saying it used up its token budget",
+       %{args: [number]} = context do
+    {review, context} = await_review(context, number, &(&1["status"] == "failed"))
+    assert review["error"] =~ "used up its token budget"
+    context
+  end
+
+  step "its sandbox and the sandbox's provider are deleted", context do
+    assert_receive {:openshell_request, "DeleteSandbox", %{name: "review-" <> _ = name}}, 15_000
+    assert_receive {:openshell_request, "DeleteProvider", %{name: ^name}}, 15_000
+    refute Map.has_key?(FakeOpenShell.sandboxes(context.gateway), name)
+    refute Map.has_key?(FakeOpenShell.providers(context.gateway), name)
     context
   end
 
@@ -1791,6 +1894,39 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
           flunk("#{context.peer}'s review of ##{number} never came to it: #{inspect(review)}")
       end
     end
+  end
+
+  # Whether this MC trusts pull requests; the scenarios' MC does unless one says not.
+  defp trust(context, trusted) do
+    FakeOpenShell.put_env(
+      code_review_trust_all: trusted,
+      openshell_broker: [host: "127.0.0.1", bind: "127.0.0.1", ips: ["127.0.0.1"]]
+    )
+
+    Mc.ensure(OpenShell.Review)
+    context
+  end
+
+  # OpenShell installed: the fake gateway, its sandbox's agent playing `sandbox/2`'s
+  # options, and the model's API key on the MC, for its provider and never the sandbox.
+  defp gateway(context) do
+    World.put_env("OPENAI_API_KEY", "sk-test-openai")
+    {:ok, options} = Agent.start_link(fn -> [] end)
+    root = FakeSandbox.root()
+
+    gateway =
+      FakeOpenShell.start(OpenShell.pki_dir(),
+        notify: self(),
+        exec: FakeSandbox.exec(root, self(), fn -> Agent.get(options, & &1) end)
+      )
+
+    File.write!(OpenShell.state_path(), JSON.encode!(%{"endpoint" => gateway.endpoint}))
+    Map.merge(context, %{gateway: gateway, sandbox_root: root, sandbox_options: options})
+  end
+
+  defp sandbox(context, options) do
+    Agent.update(context.sandbox_options, &Keyword.merge(&1, options))
+    context
   end
 
   defp plugin(context, method, input) do
