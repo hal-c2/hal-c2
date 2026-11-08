@@ -445,7 +445,6 @@ Feature: Claude
 
   # Upstream #18662: the fork looked for the conversation in the server's Claude home; it now
   # looks in the instance's own home.
-  @backlog
   Scenario: Forking works on a Claude instance with its own home
     Given a Claude instance "claude-work" with its own home
     And a thread on "claude-work" with three turns
@@ -647,7 +646,6 @@ Feature: Claude
     Then the user can compact and continue, keep the full history, or never be asked again
 
   # Upstream #23481: answering the resume dialog left a failed question tool row behind.
-  @backlog
   Scenario: Answering Claude's offer to compact on resume leaves no failed tool call
     Given Claude asked whether to compact a long conversation before resuming it
     When the user answers and the turn completes
@@ -1006,7 +1004,7 @@ Feature: Claude
 
   # Upstream #18332: the context meter says Claude compacts at about the configured threshold.
   # Upstream #22654: Claude compacts 33,000 tokens before the size set, so the meter says that.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: The Claude context meter names where Claude compacts for the size the user set
     Given Claude is set to compact the conversation at 650,000 tokens on a model with a larger window
     When the user looks at the context meter

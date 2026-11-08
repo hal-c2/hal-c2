@@ -2187,6 +2187,32 @@ defmodule HalC2.Steps.Providers.Claude do
     |> Map.get("tokenUsage")
   end
 
+  # Opus 5.5 always runs with a 1M window.
+  step ~r/^Claude is set to compact the conversation at (?<size>[\d,]+) tokens on a model with a larger window$/,
+       %{args: [size]} = context do
+    context
+    |> World.fake_providers(claude_version: "999.0.0")
+    |> World.put_settings(%{
+      "providers" => %{"claudeAgent" => %{"autoCompactWindow" => String.replace(size, ",", "")}}
+    })
+    |> Map.put(:model, "claude-opus-5-5")
+  end
+
+  step "the user looks at the context meter", context do
+    context
+    |> World.launch_on(@thread, "claudeAgent", "report your usage", %{
+      "modelSelection" => %{"instanceId" => "claudeAgent", "model" => context.model}
+    })
+    |> tap(&World.await_runs(&1, @thread, ["completed"]))
+  end
+
+  step ~r/^it says the conversation compacts at about (?<size>[\d,]+) tokens$/,
+       %{args: [size]} = context do
+    assert %{"maxTokens" => 1_000_000, "autoCompactThreshold" => at} = context_usage(context)
+    assert at == size |> String.replace(",", "") |> String.to_integer()
+    context
+  end
+
   step "the Claude instance compacts after 200000 tokens", context do
     context
     |> World.fake_providers()
@@ -2634,6 +2660,41 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  step "Claude asked whether to compact a long conversation before resuming it", context do
+    context = context |> World.providers() |> World.launch_on(@thread, "claudeAgent", "hello")
+    World.await_runs(context, @thread, ["completed"])
+    :ok = HalC2.Orchestration.release_session(World.thread_id(context, @thread))
+    context = World.send_turn(context, @thread, "long session")
+    Map.put(context, :request, World.await_request(context, @thread))
+  end
+
+  step "the user answers and the turn completes", context do
+    [%{"questions" => [question]}] =
+      for i <- StreamState.list(World.stream(context, @thread), "turn-item"),
+          i["type"] == "user_input_request",
+          do: i
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => context.request["id"],
+        "answers" => %{question["id"] => "Compact and continue"}
+      })
+
+    World.await_runs(context, @thread, ["completed", "completed"])
+    assert "resume compact" in World.replies(context, @thread)
+    context
+  end
+
+  step "the turn's work shows no failed tool call for the question", context do
+    items = StreamState.list(World.stream(context, @thread), "turn-item")
+    assert [] = for(i <- items, i["status"] == "failed", do: {i["type"], i["toolName"]})
+    assert [%{"status" => status}] = for(i <- items, i["type"] == "user_input_request", do: i)
+    refute status == "waiting"
+    context
+  end
+
   step "the project allows the HAL-C2 tools", context do
     context = World.fake_providers(context)
     Mc.ensure(HalC2.Mcp)
@@ -2856,7 +2917,45 @@ defmodule HalC2.Steps.Providers.Claude do
       )
     end)
 
-    assert "resumed at uuid-2 fork True history False" in World.replies(context, "fork")
+    # With transcripts kept (`FAKE_SESSIONS`), the reply goes on to list them.
+    assert Enum.any?(
+             World.replies(context, "fork"),
+             &String.starts_with?(&1, "resumed at uuid-2 fork True history False")
+           )
+
+    context
+  end
+
+  # The fake keeps transcripts in the config directory it runs with, so a fork resumed
+  # from any other finds no conversation.
+  step "a Claude instance {string} with its own home", %{args: [instance]} = context do
+    context = World.fake_providers(context)
+    own = Mc.tmp_dir(context.mc, "claude-mc-home")
+    home = Mc.tmp_dir(context.mc, "claude-instance-home")
+    World.put_os_env("CLAUDE_CONFIG_DIR", own)
+    World.put_os_env("FAKE_SESSIONS", "1")
+
+    context =
+      write_settings(context, fn settings ->
+        put_in(settings, [Access.key("providerInstances", %{}), instance], %{
+          "driver" => "claudeAgent",
+          "enabled" => true,
+          "config" => %{"homePath" => home}
+        })
+      end)
+
+    Map.put(context, :claude_homes, %{own: own, instance: home})
+  end
+
+  step "a thread on {string} with three turns", %{args: [instance]} = context do
+    World.run_turns(context, @thread, instance, ["hello", "hello again", "one more"])
+  end
+
+  step "the MC's own Claude home is left as it was", context do
+    assert File.ls!(context.claude_homes.own) == []
+
+    # The source's session and the fork's, both in the instance's home.
+    assert [_, _] = Path.wildcard(Path.join(context.claude_homes.instance, "projects/*/*.jsonl"))
     context
   end
 

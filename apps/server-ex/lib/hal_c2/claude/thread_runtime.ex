@@ -2773,15 +2773,20 @@ defmodule HalC2.Claude.ThreadRuntime do
       count.("input_tokens") + count.("cache_creation_input_tokens") +
         count.("cache_read_input_tokens")
 
-    token_usage = %{
-      "usedTokens" => input + count.("output_tokens"),
-      "maxTokens" => window || state.turn.launch.context_window,
-      "inputTokens" => input,
-      "cachedInputTokens" => count.("cache_read_input_tokens"),
-      "outputTokens" => count.("output_tokens"),
-      "reasoningOutputTokens" => 0,
-      "updatedAt" => Entities.now()
-    }
+    max = window || state.turn.launch.context_window
+
+    token_usage =
+      %{
+        "usedTokens" => input + count.("output_tokens"),
+        "maxTokens" => max,
+        "autoCompactThreshold" => compacts_at(state.turn.launch.settings, max),
+        "inputTokens" => input,
+        "cachedInputTokens" => count.("cache_read_input_tokens"),
+        "outputTokens" => count.("output_tokens"),
+        "reasoningOutputTokens" => 0,
+        "updatedAt" => Entities.now()
+      }
+      |> Map.reject(fn {_, value} -> value == nil end)
 
     commit(state, fn stream ->
       [
@@ -4003,6 +4008,16 @@ defmodule HalC2.Claude.ThreadRuntime do
         tasks: Map.new(state.tasks, fn {task, t} -> {task, if(t != tool, do: t)} end)
     }
   end
+
+  # Where Claude compacts on its own, for the meter: 33,000 tokens before an
+  # `autoCompactWindow` smaller than the model's window (Upstream #22654). Unset, or
+  # at least the window, Claude compacts where it would for the model.
+  @compact_buffer 33_000
+  defp compacts_at(%{"autoCompactWindow" => size}, max)
+       when is_integer(size) and is_integer(max) and size < max,
+       do: size - @compact_buffer
+
+  defp compacts_at(_settings, _max), do: nil
 
   # The ids work joins: the running turn's, or between turns the latest one's.
   # The instance's `autoCompactWindow` (the tokens after which Claude compacts by

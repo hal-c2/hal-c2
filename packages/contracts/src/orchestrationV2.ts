@@ -794,6 +794,8 @@ export type OrchestrationV2ContextHandoff = typeof OrchestrationV2ContextHandoff
 export const OrchestrationV2ProviderTurnTokenUsage = Schema.Struct({
   usedTokens: NonNegativeInt,
   maxTokens: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  /** Where the provider compacts on its own, when that is before `maxTokens`. */
+  autoCompactThreshold: Schema.optional(PositiveInt),
   inputTokens: Schema.optional(NonNegativeInt),
   cachedInputTokens: Schema.optional(NonNegativeInt),
   outputTokens: Schema.optional(NonNegativeInt),
