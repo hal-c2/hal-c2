@@ -2181,6 +2181,26 @@ defmodule HalC2.OrchestrationTest do
       refute HalC2.Attachments.path(old)
     end
 
+    # The desktop's edit of a queued long message loads the folded text with its file
+    # listed; taking the file off and keeping the text drops the file.
+    test "an edit that keeps a folded message's text but not its file drops the file" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", String.duplicate("y", 130_000))
+      [_, second] = runs(await_statuses(thread_id, ["running", "queued"]))
+      message = StreamState.get(current(thread_id), "message")["m2"]
+      [old] = message["attachments"]
+
+      {:ok, _} =
+        queue_command("queued-run.edit", thread_id, second["id"], %{
+          "text" => message["text"],
+          "attachments" => []
+        })
+
+      assert StreamState.get(current(thread_id), "message")["m2"]["attachments"] in [nil, []]
+      refute HalC2.Attachments.path(old)
+    end
+
     test "a long message sent without an id keeps the file it was folded into" do
       thread_id = launch("wait for it")
       _ = await_run(thread_id, "running")

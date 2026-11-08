@@ -3382,18 +3382,28 @@ defmodule HalC2.Orchestration do
   # An edit that names no attachments keeps the message's, which a text too long to send
   # whole is folded beside. The file the message's old text was folded into holds that
   # text, not the edit's, so it is not kept, and goes once the edit lands, unless the
-  # edit is of the folded text and still names it (`Attachments.left_behind/3`). With
+  # edit is of the folded text and still names it among the attachments it keeps
+  # (`Attachments.left_behind/4`). With
   # the uploads it claimed from, and the files to drop unless the message names them.
   defp edit_claims(thread_id, state, run_id, command) do
     message_id = StreamState.get(state, "run")[run_id]["userMessageId"]
     message = StreamState.get(state, "message")[message_id] || %{}
 
-    stale =
-      HalC2.Attachments.left_behind(
-        message["text"],
-        command["text"],
-        message["attachments"] || []
-      )
+    had = message["attachments"] || []
+
+    # An edit that lists its attachments keeps only those, so a folded file it leaves
+    # out goes even when its text still carries the cut mark.
+    kept =
+      case command["attachments"] do
+        attachments when is_list(attachments) ->
+          listed = MapSet.new(attachments, & &1["id"])
+          Enum.filter(had, &MapSet.member?(listed, &1["id"]))
+
+        _ ->
+          had
+      end
+
+    stale = HalC2.Attachments.left_behind(message["text"], command["text"], had, kept)
 
     stale_ids = Enum.map(stale, & &1["id"])
     unstale = &Enum.reject(&1, fn a -> a["id"] in stale_ids end)
@@ -3408,7 +3418,7 @@ defmodule HalC2.Orchestration do
              do: {:ok, uploads, command, (command["attachments"] -- claimed) ++ stale}
 
       _ ->
-        kept = unstale.(message["attachments"] || [])
+        kept = unstale.(had)
 
         case HalC2.Attachments.fold_long_text(thread_id, command["text"], kept) do
           {:ok, _text, ^kept} when stale == [] ->
