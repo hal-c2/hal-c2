@@ -726,8 +726,15 @@ defmodule HalC2.Codex.ThreadRuntime do
     {:noreply, state}
   end
 
-  def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
+  def handle_info({:EXIT, conn, reason}, %{conn: conn} = state) do
     state = %{state | conn: nil}
+
+    # A connection that could no longer write to the app-server says why.
+    message =
+      case reason do
+        {:shutdown, {:write_failed, %{"message" => message}}} -> message
+        _ -> "Codex exited unexpectedly"
+      end
 
     # A stream the MC itself ends while shutting down is not the provider failing the
     # turn: the run stays as it is for the next boot's recovery to settle. With no
@@ -739,7 +746,7 @@ defmodule HalC2.Codex.ThreadRuntime do
           state
 
         state.turn ->
-          end_turn(state, "failed", "Codex exited unexpectedly", :ended)
+          end_turn(state, "failed", message, :ended)
 
         true ->
           finish_subagents(state, "failed")

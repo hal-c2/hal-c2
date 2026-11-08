@@ -373,7 +373,6 @@ Feature: Codex
 
   # Upstream #27924: when a write to the app-server failed while its output stayed open, pending
   # and later requests waited forever and the session was never retired.
-  @backlog @priority-high
   Scenario: Codex requests fail at once when the app-server stops taking input
     Given a Codex turn is running
     When the Codex app-server stops accepting input but keeps its output open
@@ -1461,14 +1460,12 @@ Feature: Codex
     Then the request fails with "Codex App Server process exited with code 1"
 
   # Upstream #23938: Codex exiting before it started showed only its exit code.
-  @backlog @priority-high
   Scenario: Codex that exits before it starts says why
     Given the Codex command exits with code 1 after printing "Error: Missing optional dependency @openai/codex-darwin-arm64"
     When the MC checks Codex or starts a turn with it
     Then the provider status and the failed turn both end with "Error: Missing optional dependency @openai/codex-darwin-arm64"
 
   # Upstream #24600: requests hung when Codex closed its output but kept running.
-  @backlog @priority-high
   Scenario: A request to Codex fails soon after Codex closes its output while still running
     Given the MC is waiting on Codex for an answer
     When Codex closes its output and keeps running

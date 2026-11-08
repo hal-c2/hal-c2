@@ -7,6 +7,7 @@ defmodule HalC2.Steps.Providers.CodexRuntime do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
+  alias HalC2.JsonRpc.Connection
   alias HalC2.StreamState
   alias HalC2.Test.Mc.World
 
@@ -65,6 +66,104 @@ defmodule HalC2.Steps.Providers.CodexRuntime do
     World.await_runs(context, title, statuses, 10_000)
     {_, runtime} = World.codex_runtime(context, title)
     assert is_pid(runtime.conn) and runtime.conn != context.killed_conn
+    context
+  end
+
+  # --- an app-server that stops taking input ---------------------------------------------
+
+  step "the Codex app-server stops accepting input but keeps its output open", context do
+    {_, runtime} = World.codex_runtime(context, @thread)
+    conn = runtime.conn
+    open = Task.async(fn -> Connection.call(conn, "test/hang", %{}, 30_000) end)
+    World.await_provider_log(context, "codex", &(get_in(&1, ["in", "method"]) == "test/hang"))
+    {:ok, _} = Connection.call(conn, "test/deaf", %{})
+    # The next thing written to it, as a steer or an answer would be.
+    later = Task.async(fn -> Connection.call(conn, "test/hang", %{}, 30_000) end)
+    Map.merge(context, %{open_call: open, later_call: later, killed_conn: conn})
+  end
+
+  step "the turn fails with the write error instead of waiting", context do
+    assert {:error, %{"message" => message}} = Task.await(context.later_call, 5_000)
+    assert message =~ "stopped taking input"
+    state = World.await_runs(context, @thread, ["failed"])
+    assert Enum.any?(StreamState.list(state, "provider-session"), &(&1["lastError"] == message))
+    Map.put(context, :write_error, message)
+  end
+
+  step "later requests to that app-server fail with the same error", context do
+    assert {:error, %{"message" => message}} = Task.await(context.open_call, 5_000)
+    assert message == context.write_error
+    {pid, _} = World.codex_runtime(context, @thread)
+    await_runtime(pid, &(&1.conn == nil))
+    context
+  end
+
+  # --- an app-server that closes its output ----------------------------------------------
+
+  step "Codex closes its output and keeps running", context do
+    {_, runtime} = World.codex_runtime(context, @thread)
+    Connection.notify(runtime.conn, "test/mute", nil)
+    Map.put(context, :muted_at, System.monotonic_time(:millisecond))
+  end
+
+  # Not waiting the second a program's stop is given, and not its exit code once
+  # that stop killed it.
+  step "within a quarter of a second the request fails saying Codex's input ended", context do
+    assert {:error, %{"message" => message}} = Task.await(context.pending_call, 5_000)
+    assert message == "Input from Codex App Server ended while it was still running"
+    assert System.monotonic_time(:millisecond) - context.muted_at < 1_000
+    context
+  end
+
+  step "an exit Codex reports within that time keeps its code", context do
+    fake = Path.join(File.cwd!(), "test/support/fake_codex.py")
+
+    {:ok, conn} =
+      GenServer.start(Connection,
+        cmd: ["python3", "-u", fake],
+        handler: self(),
+        program: "Codex App Server"
+      )
+
+    open = Task.async(fn -> Connection.call(conn, "test/hang", %{}, 30_000) end)
+    Connection.notify(conn, "test/mute-exit", nil)
+
+    assert Task.await(open, 5_000) ==
+             {:error, %{"message" => "Codex App Server process exited with code 3"}}
+
+    context
+  end
+
+  # --- a Codex that exits before it starts -----------------------------------------------
+
+  step "the Codex command exits with code 1 after printing {string}",
+       %{args: [said]} = context do
+    context = World.fake_providers(context)
+    script = Path.join(context.fakes.dir, "dying-codex")
+    File.write!(script, "#!/bin/sh\nprintf '%s\\n' #{inspect(said)} >&2\nexit 1\n")
+    File.chmod!(script, 0o755)
+    World.put_app_env(:codex_command, [script])
+    Map.put(context, :codex_said, said)
+  end
+
+  step "the MC checks Codex or starts a turn with it", context do
+    HalC2.Codex.Provider.load()
+    {providers, context} = World.provider_list(context)
+
+    context =
+      context |> Map.put(:providers, providers) |> World.launch_on(@thread, "codex", "hello")
+
+    World.await_runs(context, @thread, ["failed"])
+    context
+  end
+
+  step "the provider status and the failed turn both end with {string}",
+       %{args: [said]} = context do
+    status = Enum.find(context.providers, &(&1["instanceId"] == "codex"))
+    assert String.ends_with?(status["message"], said)
+    state = World.stream(context, @thread)
+    errors = state |> StreamState.list("provider-session") |> Enum.map(& &1["lastError"])
+    assert Enum.any?(errors, &(is_binary(&1) and String.ends_with?(&1, said))), inspect(errors)
     context
   end
 

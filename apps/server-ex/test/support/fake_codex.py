@@ -218,6 +218,23 @@ for line in sys.stdin:
         sys.stdout.write("this is not a protocol message\n")
         sys.stdout.flush()
         continue
+    # "test/deaf" closes stdin and keeps stdout open, as an app-server that stopped
+    # reading does: the MC's next write fails. Its answer comes once stdin is closed.
+    if method == "test/deaf":
+        os.close(0)
+        if mid is not None:
+            send({"id": mid, "result": {}})
+        while True:
+            time.sleep(1)
+    # "test/mute" closes stdout and runs on; "test/mute-exit" closes it and exits with
+    # code 3 a moment later, as a dying app-server does.
+    if method in ("test/mute", "test/mute-exit"):
+        os.close(1)
+        if method == "test/mute-exit":
+            time.sleep(0.05)
+            os._exit(3)
+        while True:
+            time.sleep(1)
     if method == "test/flood":
         sys.stderr.write("x" * 300_000 + "\n")
         sys.stderr.flush()
