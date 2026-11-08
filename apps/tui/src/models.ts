@@ -380,7 +380,7 @@ export function ultrathinkInWords(text: string): boolean {
 
 /** The prompt without its "Ultrathink:" prefix. */
 export function withoutUltrathinkPrefix(text: string): string {
-  return text.replace(/^\s*Ultrathink:\s*/i, "");
+  return text.replace(/^\s*Ultrathink:\s*/, "");
 }
 
 /**

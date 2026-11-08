@@ -249,6 +249,7 @@ describe("steppedEffort", () => {
     });
     expect(choices?.choices.map((choice) => choice.id)).toEqual(["low", "medium", "high"]);
     expect(withoutUltrathinkPrefix("Ultrathink: design the cache")).toBe("design the cache");
+    expect(withoutUltrathinkPrefix("ultrathink: fix it")).toBe("ultrathink: fix it");
   });
 
   it("steps from the model's default when the current level is not one it lists", () => {
@@ -261,6 +262,7 @@ describe("steppedEffort", () => {
     const read = (text: string) => promptEffort([effortModel()], selection, text);
     expect(read("please ultrathink about it")).toEqual({ value: "ultrathink", locked: true });
     expect(read("Ultrathink: design the cache")).toEqual({ value: "ultrathink", locked: false });
+    expect(read("ultrathink: fix it")).toEqual({ value: "ultrathink", locked: true });
     expect(read("design the cache")).toBeNull();
     expect(ultrathinkInWords("Ultrathink: ultrathinking")).toBe(false);
   });
