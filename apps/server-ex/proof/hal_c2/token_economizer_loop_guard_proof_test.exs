@@ -55,8 +55,9 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
   #     next stuck call is offered a stop before the redirect has reached the agent (and
   #     a refused redirect would have spent the segment). Until the task says, the guard
   #     decides nothing, and a refused redirect leaves the segment as it was.
-  #   - Leaving a judge job asked when its turn ends, or when a redirect starts the next
-  #     segment: the judge is paid for a verdict nobody reads. Its jobs are stopped.
+  #   - Leaving a judge job asked when its turn ends, when a redirect starts the next
+  #     segment, or when it went stale and a new job replaces it: the judge is paid for
+  #     a verdict nobody reads. Its jobs are stopped.
   @model "the turn the plugin hears; the MC's side of it is the model's environment"
   @judge "what the judge is told and how its verdict is read, below the model's stuck or productive"
   @text "the words of a redirect or a notice; the model delivers them, whatever they say"
