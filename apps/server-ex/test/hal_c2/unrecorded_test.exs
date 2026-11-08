@@ -66,4 +66,17 @@ defmodule HalC2.UnrecordedTest do
     assert_received {:seen, {nil, false}}
     refute Map.has_key?(next, :unrecorded)
   end
+
+  test "a call whose write to another stream the store refuses replies an error and keeps the turn" do
+    handle = fn :interrupt, _from, _state ->
+      raise HalC2.Streams.Unrecorded.of(%RuntimeError{message: "disk full"})
+    end
+
+    state = state("run-1")
+
+    assert {:reply, {:error, "The turn could not be saved: disk full"}, ^state} =
+             Unrecorded.handle_call(:interrupt, nil, state, handle)
+
+    assert Process.get(:hal_c2_unrecorded_stream) == nil
+  end
 end

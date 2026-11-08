@@ -23,9 +23,10 @@ defmodule HalC2.Orchestration.Unrecorded do
 
   The runtime's state keeps the failure (`:unrecorded`) while its turn runs, and only
   for that turn: a call can end it too (a stop the provider refuses), and the marker
-  goes with it, so the thread's next run records as usual. A failed write outside a
-  turn, or inside a call while the turn still records, raises as before; a call's
-  crash is TurnWatch's to end.
+  goes with it, so the thread's next run records as usual. While the turn goes
+  unrecorded, another stream's failed write loses only the message or call that made
+  it (a call replies `{:error, _}`). A failed write outside a turn, or inside a call
+  while the turn still records, raises as before; a call's crash is TurnWatch's to end.
   """
 
   alias HalC2.Orchestration.{Entities, TurnWatch}
@@ -61,9 +62,9 @@ defmodule HalC2.Orchestration.Unrecorded do
   def handle_call(request, from, state, handle) do
     case marked(state) do
       {:dry, state} ->
-        state.thread_id
-        |> Streams.unrecorded(fn -> handle.(request, from, state) end)
-        |> map_state(&unmark(&1, state.unrecorded.run))
+        dry(state, fn -> handle.(request, from, state) end, fn error ->
+          {:reply, {:error, "The turn could not be saved: #{error.message}"}, state}
+        end)
 
       {:wet, state} ->
         handle.(request, from, state)
@@ -95,14 +96,16 @@ defmodule HalC2.Orchestration.Unrecorded do
     end)
   end
 
-  # Another stream's write failing here (a subagent's thread) loses that message
-  # alone. The turn's end, once handed over, takes the runtime out of dry mode.
-  defp dry(state, fun) do
+  # Another stream's write failing here (a subagent's thread) loses that message, or
+  # that call with an error reply, alone. The turn's end, once handed over, takes the
+  # runtime out of dry mode.
+  defp dry(state, fun, refused \\ :noreply) do
     state.thread_id
     |> Streams.unrecorded(fun)
     |> map_state(&unmark(&1, state.unrecorded.run))
   rescue
-    Streams.Unrecorded -> {:noreply, state}
+    error in Streams.Unrecorded ->
+      if refused == :noreply, do: {:noreply, state}, else: refused.(error)
   end
 
   # A marker whose turn is no longer the runtime's is gone, however that turn ended.
