@@ -264,7 +264,11 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
         agent(ctx, "elsewhere", "Elsewhere", elsewhere())
       ])
 
-    {reply, ctx} = World.call(ctx, "server.searchAcpRegistry", %{"query" => ""}, "ops")
+    {reply, ctx} =
+      Acp.with_runners(ctx, fn ->
+        World.call(ctx, "server.searchAcpRegistry", %{"query" => ""}, "ops")
+      end)
+
     Map.put(ctx, :reply, reply)
   end
 
@@ -314,7 +318,12 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
 
   step "the user searches the registry for {string}", %{args: [query]} = context do
     ctx = ops(context)
-    {reply, ctx} = World.call(ctx, "server.searchAcpRegistry", %{"query" => query}, "ops")
+
+    {reply, ctx} =
+      Acp.with_runners(ctx, fn ->
+        World.call(ctx, "server.searchAcpRegistry", %{"query" => query}, "ops")
+      end)
+
     Map.put(ctx, :reply, reply)
   end
 
@@ -387,7 +396,7 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     File.mkdir_p!(empty)
     System.put_env("PATH", empty)
     assert System.find_executable("npm") == nil
-    context
+    Map.put(context, :runners_removed, true)
   end
 
   step "the user is told to install npm to use this agent", context do
@@ -1659,7 +1668,12 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
 
   defp search_acme(ctx) do
     ctx = ops(ctx)
-    {reply, ctx} = World.call(ctx, "server.searchAcpRegistry", %{"query" => "acme"}, "ops")
+
+    {reply, ctx} =
+      Acp.with_runners(ctx, fn ->
+        World.call(ctx, "server.searchAcpRegistry", %{"query" => "acme"}, "ops")
+      end)
+
     Map.put(ctx, :reply, reply)
   end
 
@@ -1769,7 +1783,7 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     File.mkdir_p!(empty)
     System.put_env("PATH", empty)
     assert System.find_executable("uv") == nil
-    context
+    Map.put(context, :runners_removed, true)
   end
 
   step "the instance of {string} is set to run through uvx", %{args: [id]} = context do
@@ -1906,11 +1920,13 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
 
   step "two clients search the registry at the same moment", context do
     searches =
-      [
-        Task.async(fn -> HalC2.Acp.Catalog.search(%{"query" => "acme"}) end),
-        Task.async(fn -> HalC2.Acp.Catalog.search(%{"query" => "acme"}) end)
-      ]
-      |> Enum.map(&Task.await(&1, 30_000))
+      Acp.with_runners(context, fn ->
+        [
+          Task.async(fn -> HalC2.Acp.Catalog.search(%{"query" => "acme"}) end),
+          Task.async(fn -> HalC2.Acp.Catalog.search(%{"query" => "acme"}) end)
+        ]
+        |> Enum.map(&Task.await(&1, 30_000))
+      end)
 
     Map.put(context, :searches, searches)
   end

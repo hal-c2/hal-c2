@@ -1269,7 +1269,12 @@ defmodule HalC2.Steps.Common do
         for(n <- 1..24, do: agent.("agent-#{n}", "Agent #{n}", %{"description" => "writes code"}))
 
     ctx = Acp.publish(ctx, agents)
-    {reply, ctx} = World.call(ctx, "server.searchAcpRegistry", %{"query" => query})
+
+    {reply, ctx} =
+      Acp.with_runners(ctx, fn ->
+        World.call(ctx, "server.searchAcpRegistry", %{"query" => query})
+      end)
+
     Map.merge(ctx, %{reply: reply, query: query})
   end
 
@@ -1300,7 +1305,10 @@ defmodule HalC2.Steps.Common do
         ])
       end
 
-    {reply, ctx} = World.call(context, "server.searchAcpRegistry", %{"query" => "acme"})
+    {reply, ctx} =
+      HalC2.Test.AcpFixtures.with_runners(context, fn ->
+        World.call(context, "server.searchAcpRegistry", %{"query" => "acme"})
+      end)
 
     listing =
       case reply do
