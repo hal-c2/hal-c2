@@ -93,6 +93,48 @@ defmodule HalC2.ThreadArchiveTest do
     assert ThreadArchive.local_thread("th-cart") == nil
   end
 
+  # A review thread from before code-review's manifest said its threads stay carries a
+  # plugin mark without "stays" (as does its fork, which copies the mark: see the scenario
+  # in threads/moving-between-machines.feature). The installed manifest keeps it anyway,
+  # with the plugin off, and an export refuses it like a move does.
+  test "a thread from before its plugin declared its threads stay is kept by the plugin's manifest",
+       %{context: context, tmp_dir: dir} do
+    context = World.create_thread(context, "Review")
+    mark = %{"id" => "code-review", "kind" => "review", "listed" => false}
+    context = World.patch_thread(context, "Review", %{"plugin" => mark})
+    review = World.thread(context, "Review")
+
+    # Not installed: ordinary threads.
+    assert ThreadArchive.stays(review) == :ok
+
+    manifest = fn extra ->
+      package = Path.join(HalC2.Paths.data_dir(), "plugins/code-review")
+      File.mkdir_p!(package)
+
+      File.write!(
+        Path.join(package, "plugin.json"),
+        JSON.encode!(Map.merge(%{"id" => "code-review"}, extra))
+      )
+    end
+
+    manifest.(%{})
+    assert ThreadArchive.stays(review) == :ok
+
+    manifest.(%{"threadsStay" => true})
+    refute HalC2.Plugins.running?("code-review")
+    kept = {:error, "Review was started by code-review, which keeps it on this machine."}
+    assert ThreadArchive.stays(review) == kept
+
+    assert ThreadArchive.export_file("Review", Path.join(dir, "review.hal-c2-thread")) ==
+             {:error, "Review was started by code-review, which keeps it on this machine."}
+
+    refute File.exists?(Path.join(dir, "review.hal-c2-thread"))
+
+    # A thread that names a path rather than a plugin reads nothing outside the plugins.
+    escape = %{"id" => "../code-review", "kind" => "review"}
+    assert ThreadArchive.stays(%{"title" => "X", "plugin" => escape}) == :ok
+  end
+
   test "a failed import takes back the worktree branch it made", %{context: context, root: root} do
     {bundle, carried} = feature_bundle(context, root)
     branches = World.git!(root, ~w(for-each-ref refs/heads))

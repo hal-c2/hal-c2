@@ -170,10 +170,7 @@ defmodule HalC2.Steps.Plugins.Packages do
         do: {:ok, JSON.decode!(File.read!(Path.join(Host.data_dir(@id), "note.json")))}
 
       def call("threads.start", input, _context) do
-        with {:ok, _} <- Host.launch_thread(@id, input["kind"], input["thread"],
-                 listed: input["listed"],
-                 stays: input["stays"] == true
-               ),
+        with {:ok, _} <- Host.launch_thread(@id, input["kind"], input["thread"], listed: input["listed"]),
              do: {:ok, %{"threadId" => input["thread"]["threadId"]}}
       end
 
@@ -1093,9 +1090,13 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     context |> Packages.ensure(id) |> enable(id) |> start_thread(id, kind, false)
   end
 
-  step "{string} starts a {string} thread that stays on its machine",
-       %{args: [id, kind]} = context do
-    context |> Packages.ensure(id) |> enable(id) |> start_thread(id, kind, true, stays: true)
+  step "{string} declares that its threads stay on their machine",
+       %{args: [id]} = context do
+    Packages.install(context, id, manifest: %{"threadsStay" => true})
+  end
+
+  step "{string} starts a {string} thread", %{args: [id, kind]} = context do
+    context |> Packages.ensure(id) |> enable(id) |> start_thread(id, kind, true)
   end
 
   step "the thread is marked as staying on its machine", context do
@@ -1303,7 +1304,7 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     }
   end
 
-  defp start_thread(context, id, kind, listed, extra \\ []) do
+  defp start_thread(context, id, kind, listed) do
     context =
       if context[:projects] in [nil, %{}], do: World.create_project(context, "api"), else: context
 
@@ -1311,7 +1312,6 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
       thread_input(context)
       |> Map.put("kind", kind)
       |> Map.put("listed", listed)
-      |> Map.put("stays", extra[:stays] == true)
 
     {{:ok, %{"threadId" => thread_id}}, context} = call(context, id, "threads.start", input)
     World.await_row(thread_id, & &1)

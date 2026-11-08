@@ -13,6 +13,8 @@ defmodule HalC2.Prop.ThreadMoveCluster do
   @support Path.expand("../../test/support", __DIR__)
   # The plugin each machine has installed, off until a case turns it on (`plugin/1`).
   @plugin "prop-mover"
+  # A package that declares its threads stay (`"threadsStay"`), installed and never run.
+  @keeper "prop-keeper"
 
   @doc """
   Starts a machine for each label; returns `%{label => %{mc, peer, home}}`. A peer stops
@@ -187,10 +189,9 @@ defmodule HalC2.Prop.ThreadMoveCluster do
 
   @doc """
   A thread the plugin started (`HalC2.Plugins.Host.launch_thread/4`, unlisted, as a
-  review plugin starts its threads), with the history of `create_thread/3`. `stays: true`
-  is a thread its plugin keeps on the machine.
+  review plugin starts its threads), with the history of `create_thread/3`.
   """
-  def create_plugin_thread(id, project, title, opts \\ []) do
+  def create_plugin_thread(id, project, title) do
     {:ok, _} =
       HalC2.Plugins.Host.launch_thread(
         @plugin,
@@ -201,10 +202,26 @@ defmodule HalC2.Prop.ThreadMoveCluster do
           "title" => title,
           "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"}
         },
-        [listed: false] ++ opts
+        listed: false
       )
 
     history(id, title)
+  end
+
+  @doc """
+  A thread carrying the plugin mark `mark`, as one an earlier MC or a plugin since
+  removed left: `create_thread/3` with the mark put on it.
+  """
+  def create_marked_thread(id, project, title, mark) do
+    :ok = create_thread(id, project, title)
+
+    :ok =
+      HalC2.Streams.transact(id, :thread, fn state ->
+        {[HalC2.Orchestration.upsert(state, "thread", id, &Map.put(&1, "plugin", mark))], :ok}
+      end)
+
+    HalC2.Streams.flush_shell(id)
+    :ok
   end
 
   defp history(id, title) do
@@ -263,6 +280,21 @@ defmodule HalC2.Prop.ThreadMoveCluster do
       def call(_method, _input, _context), do: {:error, "nothing to call"}
     end
     """)
+
+    keeper = Path.join(dir, @keeper)
+    File.mkdir_p!(keeper)
+
+    File.write!(
+      Path.join(keeper, "plugin.json"),
+      JSON.encode!(%{
+        "id" => @keeper,
+        "name" => "Keeper",
+        "version" => "1.0.0",
+        "apiVersion" => 1,
+        "description" => "Keeps its threads on the machine.",
+        "threadsStay" => true
+      })
+    )
 
     {:ok, _} = HalC2.Plugins.handle("rescan", %{})
     :ok

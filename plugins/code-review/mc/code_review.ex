@@ -1500,9 +1500,7 @@ defmodule HalC2Plugins.CodeReview do
               "attachments" => []
             }
           },
-          listed: listed?(settings),
-          # Its sandbox, credential and checkout of untrusted code stay on this machine.
-          stays: true
+          listed: listed?(settings)
         )
       end
 

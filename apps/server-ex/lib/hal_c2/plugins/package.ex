@@ -56,7 +56,8 @@ defmodule HalC2.Plugins.Package do
             "permissions" => {:list, {:map, %{"id" => :text, "reason" => :text}, %{}}},
             "settings" =>
               {:list, {:map, %{"key" => :text}, %{"label" => :text, "description" => :string}}},
-            "contributes" => @contributes
+            "contributes" => @contributes,
+            "threadsStay" => :bool
           }}
   # `PackagePath`'s pattern: never absolute, never `..`.
   @path ~r/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[\w.\/-]+$/
@@ -95,6 +96,25 @@ defmodule HalC2.Plugins.Package do
         {:error, message, hash}
     end
   end
+
+  @doc """
+  Whether the package `id` installed here declares that its threads never leave the
+  machine (`"threadsStay"` in its `plugin.json`). It is read from the package on disk,
+  so it holds with the plugin off and with no plugin host running (an export from the
+  command line); a plugin that is not installed declares nothing.
+  """
+  def threads_stay?(id) when is_binary(id) do
+    with true <- Regex.match?(~r/\A[\w.-]+\z/, id) and id not in [".", ".."],
+         {:ok, text} <-
+           File.read(Path.join([HalC2.Paths.data_dir(), "plugins", id, "plugin.json"])),
+         {:ok, %{"threadsStay" => stay}} <- JSON.decode(text) do
+      stay == true
+    else
+      _ -> false
+    end
+  end
+
+  def threads_stay?(_id), do: false
 
   @doc """
   A file of the package at `dir` as `PluginFileResult` fields, or an error when the
@@ -246,6 +266,8 @@ defmodule HalC2.Plugins.Package do
 
   defp misshapen(value, :string, _at) when is_binary(value), do: nil
   defp misshapen(value, :int, _at) when is_integer(value), do: nil
+  defp misshapen(value, :bool, _at) when is_boolean(value), do: nil
+  defp misshapen(_value, :bool, at), do: "#{at} must be true or false"
   defp misshapen(_value, {:map, _, _}, at), do: "#{at} must be an object"
   defp misshapen(_value, {:list, _}, at), do: "#{at} must be a list"
   defp misshapen(_value, :int, at), do: "#{at} must be a whole number"

@@ -112,16 +112,18 @@ a review, you are told why and the review keeps waiting with its comments.
 
 Changing this moves the review threads there already are, not only new ones.
 
-A review thread stays on the machine that ran the review. The agent works in a
-checkout of the pull request's code, with that machine's credentials and
-sandbox, so the thread cannot be moved or exported to another machine, and
-HAL-C2 says so when you try. A fork of it stays there too.
 When a review is done — reported, published or failed — its thread is settled,
 so finished reviews leave your active list on their own. Unsettle one to bring
 it back; writing in it brings it back too. Settled reviews stay off the
 **Settled** shelf so they do not bury your own threads; search and the Reviews
 page still find them. Turn on **Show plugin threads in Settled** in Settings →
 General (or from the command palette in the terminal client) to list them there.
+
+A review thread stays on the machine that ran the review. The agent works in a
+checkout of the pull request's code, with that machine's credentials and
+sandbox, so the thread cannot be moved or exported to another machine, and
+HAL-C2 says so when you try. This holds for reviews started before this was the
+rule, and for forks of a review, even while Code Review is turned off.
 
 The **Reviews** page is a tab next to **Threads** with every review by state, and
 the picked one's verdict, summary and comments. Publish, retry, dismiss comments

@@ -335,13 +335,13 @@ Feature: Plugin packages
       Then the user is told the thread stays on this machine while "code-review" runs
       And once "code-review" is removed, the move is no longer refused for it
 
-    # A plugin declares it when it starts the thread (`stays` in HalC2.Plugins.Host.launch_thread/4);
-    # "code-review" does, as its sandbox and checkout of untrusted code do not travel. The mark is
-    # on the thread, so the refusal outlives the plugin and a fork carries it
-    # (threads/moving-between-machines.feature).
+    # A plugin declares it in its manifest (`"threadsStay": true`); "code-review" does, as its sandbox
+    # and checkout of untrusted code do not travel. Threads it starts afterwards carry the mark, so
+    # the refusal outlives the plugin, and a fork carries it too (threads/moving-between-machines.feature).
     @mc
-    Scenario: A plugin can declare that its thread never moves
-      When "code-review" starts a "review" thread that stays on its machine
+    Scenario: A plugin can declare that its threads never move
+      Given "code-review" declares that its threads stay on their machine
+      When "code-review" starts a "review" thread
       Then the thread is marked as staying on its machine
       When the user moves the thread to another machine
       Then the user is told the thread stays on this machine

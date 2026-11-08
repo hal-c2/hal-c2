@@ -1135,6 +1135,28 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     World.patch_thread(context, title, %{"plugin" => mark})
   end
 
+  # A thread from before the manifest said so: its mark has no `"stays"`.
+  step "{string} was started by the plugin {string} before it kept its threads on the machine",
+       %{args: [title, plugin]} = context do
+    mark = %{"id" => plugin, "kind" => "review", "listed" => false}
+    World.patch_thread(context, title, %{"plugin" => mark})
+  end
+
+  step "the plugin {string} is installed on {string} and keeps its threads there, but is turned off",
+       %{args: [plugin, machine]} = context do
+    assert Machines.machine(context, machine) == :local
+    dir = Path.join([HalC2.Paths.data_dir(), "plugins", plugin])
+    File.mkdir_p!(dir)
+
+    File.write!(
+      Path.join(dir, "plugin.json"),
+      JSON.encode!(%{"id" => plugin, "name" => plugin, "threadsStay" => true})
+    )
+
+    refute HalC2.Plugins.running?(plugin)
+    context
+  end
+
   step "the user asks which machines {string} could move to", %{args: [title]} = context do
     result = HalC2.ThreadMove.destinations(World.thread_id(context, title))
     assert {:error, %{"code" => "thread_not_movable", "message" => message}} = result

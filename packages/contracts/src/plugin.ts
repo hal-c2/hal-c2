@@ -204,6 +204,12 @@ export const PluginManifest = Schema.Struct({
   permissions: Schema.optionalKey(Schema.Array(PluginPermissionRequest)),
   settings: Schema.optionalKey(Schema.Array(PluginSettingField)),
   contributes: Schema.optionalKey(PluginContributions),
+  /**
+   * The plugin's threads never leave the machine they were started on: what it keeps
+   * around them (a sandbox, a credential, a checkout) does not travel. They are refused
+   * a move and an export for as long as the plugin is installed, running or not.
+   */
+  threadsStay: Schema.optionalKey(Schema.Boolean),
 });
 export type PluginManifest = typeof PluginManifest.Type;
 

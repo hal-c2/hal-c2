@@ -15,7 +15,9 @@ defmodule HalC2.ThreadMovePropTest do
 
   Some threads are started by a plugin (`HalC2.Plugins.Host.launch_thread/4`), which
   each machine has installed and a case turns on and off (or whose manager restarts).
-  Some of those the plugin keeps on the machine (`stays: true`).
+  Some of those are kept on the machine: by the mark the plugin put on them (`"stays"`, of
+  a plugin that may since have been removed), or by the manifest of an installed plugin
+  that was never run, on a thread from before the mark (`HalC2.Plugins.Package.threads_stay?/1`).
 
   The promises checked after every step: once a move settles, a thread lives on exactly
   one machine (the model's) with all its history and its attachment intact, the machines
@@ -44,9 +46,11 @@ defmodule HalC2.ThreadMovePropTest do
   # waits this long has found a move that never does.
   @settle 15_000
   # How `HalC2.Plugins.Host` marks the threads the plugin starts, and those it keeps on
-  # the machine (`stays: true`).
+  # the machine (`"stays"`); and the mark, with no `"stays"`, of a thread started before
+  # the plugin declared its threads stay.
   @mark %{"id" => "prop-mover", "kind" => "review", "listed" => false}
   @stays_mark Map.put(@mark, "stays", true)
+  @legacy_mark %{"id" => "prop-keeper", "kind" => "review", "listed" => false}
   # Stages at which the destination has the thread: the move completes from there.
   @taken [:accepted, :letting_go]
 
@@ -82,7 +86,8 @@ defmodule HalC2.ThreadMovePropTest do
 
   # threads: name => %{at: mc, title: title, made: title it was created with,
   #   plugin: whether it still has the mark of the plugin that started it (false, true,
-  #   or :stays for a thread the plugin keeps on the machine)}
+  #   :stays for a thread marked as kept on the machine, or :legacy for one kept by its
+  #   plugin's manifest alone)}
   # held: nil or %{t, from, to, stage, ids, killed, source_restarted, at, let_go}, where
   #   at is where the thread lives once the destination has it (it may move on from
   #   there), and let_go whether the source has let go of it already
@@ -104,6 +109,10 @@ defmodule HalC2.ThreadMovePropTest do
       ] ++
         if(fresh != [] and state.running != [],
           do: [{2, {:call, __MODULE__, :create_staying, [oneof(fresh), oneof(state.running)]}}],
+          else: []
+        ) ++
+        if(fresh != [],
+          do: [{2, {:call, __MODULE__, :create_legacy, [oneof(fresh), oneof(@mcs)]}}],
           else: []
         ) ++
         for(
@@ -214,6 +223,9 @@ defmodule HalC2.ThreadMovePropTest do
   def precondition(state, {:call, _, :create_staying, [t, mc]}),
     do: not is_map_key(state.threads, t) and mc in state.running
 
+  def precondition(state, {:call, _, :create_legacy, [t, _]}),
+    do: not is_map_key(state.threads, t)
+
   def precondition(state, {:call, _, :destinations, [t, at]}),
     do: t in staying(state) and state.threads[t].at == at
 
@@ -249,6 +261,9 @@ defmodule HalC2.ThreadMovePropTest do
 
   def next_state(state, _result, {:call, _, :create_staying, [t, mc]}),
     do: put_in(state.threads[t], %{at: mc, title: t, made: t, plugin: :stays})
+
+  def next_state(state, _result, {:call, _, :create_legacy, [t, mc]}),
+    do: put_in(state.threads[t], %{at: mc, title: t, made: t, plugin: :legacy})
 
   def next_state(state, _result, {:call, _, :destinations, _}), do: state
 
@@ -327,10 +342,12 @@ defmodule HalC2.ThreadMovePropTest do
 
   # Whether `t` is a plugin's thread whose plugin runs on `mc`, or one the plugin keeps.
   defp pinned?(state, t, mc),
-    do: state.threads[t].plugin == :stays or (state.threads[t].plugin and mc in state.running)
+    do: kept?(state.threads[t]) or (state.threads[t].plugin and mc in state.running)
+
+  defp kept?(thread), do: thread.plugin in [:stays, :legacy]
 
   # The threads its plugin keeps on the machine.
-  defp staying(state), do: for({t, %{plugin: :stays}} <- state.threads, do: t)
+  defp staying(state), do: for({t, thread} <- state.threads, kept?(thread), do: t)
 
   # A thread that arrives is an ordinary one: the plugin's mark stays behind.
   defp arrive(state, t, to),
@@ -352,7 +369,7 @@ defmodule HalC2.ThreadMovePropTest do
     do: not released?(held) and (held.stage in @taken or how == :go)
 
   def postcondition(state, {:call, _, fun, _} = call, {result, world})
-      when fun in [:create, :create_plugin, :create_staying],
+      when fun in [:create, :create_plugin, :create_staying, :create_legacy],
       do: result == :ok and settled?(next_state(state, nil, call), world, held(state))
 
   def postcondition(state, {:call, _, :plugin, [_, running]} = call, {result, world}),
@@ -368,7 +385,7 @@ defmodule HalC2.ThreadMovePropTest do
           moves?(state, t, from, to)
 
         {:error, %{"code" => "thread_not_movable", "message" => message}} when plugin? ->
-          if state.threads[t].plugin == :stays,
+          if kept?(state.threads[t]),
             do: message =~ "keeps it on this machine",
             else: message =~ "stays on this machine while"
 
@@ -481,6 +498,7 @@ defmodule HalC2.ThreadMovePropTest do
     mark =
       case thread.plugin do
         :stays -> @stays_mark
+        :legacy -> @legacy_mark
         true -> @mark
         false -> nil
       end
@@ -501,9 +519,20 @@ defmodule HalC2.ThreadMovePropTest do
     {result, world()}
   end
 
-  # The plugin running on `mc` starts `t` there and keeps it on the machine.
+  # `t` on `mc`, marked as one its plugin keeps on the machine.
   def create_staying(t, mc) do
-    result = Cluster.on(mcs()[mc], :create_plugin_thread, [id(t), "proj-#{mc}", t, [stays: true]])
+    result =
+      Cluster.on(mcs()[mc], :create_marked_thread, [id(t), "proj-#{mc}", t, @stays_mark])
+
+    {result, world()}
+  end
+
+  # `t` on `mc`, started before its plugin declared its threads stay: the plugin's
+  # installed manifest keeps it, and its mark does not.
+  def create_legacy(t, mc) do
+    result =
+      Cluster.on(mcs()[mc], :create_marked_thread, [id(t), "proj-#{mc}", t, @legacy_mark])
+
     {result, world()}
   end
 

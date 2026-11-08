@@ -98,37 +98,43 @@ defmodule HalC2.ThreadArchive do
   """
   def describe(%{"movedTo" => %{}} = thread), do: {:error, moved_message(thread)}
 
-  def describe(%{"plugin" => %{"stays" => true}} = thread), do: stays(thread)
-
   def describe(%{"id" => id} = thread) do
-    project = project(thread["projectId"]) || %{}
-    root = project["workspaceRoot"]
+    with :ok <- stays(thread) do
+      project = project(thread["projectId"]) || %{}
+      root = project["workspaceRoot"]
 
-    {:ok,
-     %{
-       "id" => id,
-       "title" => thread["title"],
-       "projectId" => thread["projectId"],
-       "projectTitle" => project["title"],
-       "projectRoot" => root,
-       "repository" => repository(root),
-       "worktreePath" => thread["worktreePath"],
-       "branch" => thread["branch"],
-       "instanceId" =>
-         get_in(thread, ["modelSelection", "instanceId"]) || thread["providerInstanceId"],
-       "machine" => label()
-     }}
+      {:ok,
+       %{
+         "id" => id,
+         "title" => thread["title"],
+         "projectId" => thread["projectId"],
+         "projectTitle" => project["title"],
+         "projectRoot" => root,
+         "repository" => repository(root),
+         "worktreePath" => thread["worktreePath"],
+         "branch" => thread["branch"],
+         "instanceId" =>
+           get_in(thread, ["modelSelection", "instanceId"]) || thread["providerInstanceId"],
+         "machine" => label()
+       }}
+    end
   end
 
   @doc """
-  The refusal for a thread its plugin keeps on this machine
-  (`HalC2.Plugins.Host.launch_thread/4` with `stays: true`), which no client moves,
+  The refusal for a thread its plugin keeps on this machine, which no client moves,
   exports or is offered a destination for: what such a plugin keeps around the thread
   (a sandbox, a credential, a checkout) does not travel, so the thread would arrive
-  unprotected. A fork of the thread carries the mark, so it stays too.
+  unprotected. A thread is kept when its mark says so (`"stays"`, set by
+  `HalC2.Plugins.Host.launch_thread/4` for a plugin whose manifest has `threadsStay`;
+  a fork copies it), or when its plugin's installed manifest has `threadsStay`
+  (`HalC2.Plugins.Package.threads_stay?/1`), which covers a thread started before the manifest
+  said so, and its forks, whether or not the plugin runs.
   """
-  def stays(%{"plugin" => %{"stays" => true, "id" => owner}} = thread),
-    do: {:error, "#{thread["title"]} was started by #{owner}, which keeps it on this machine."}
+  def stays(%{"plugin" => %{"id" => owner} = mark} = thread) do
+    if mark["stays"] == true or HalC2.Plugins.Package.threads_stay?(owner),
+      do: {:error, "#{thread["title"]} was started by #{owner}, which keeps it on this machine."},
+      else: :ok
+  end
 
   def stays(_thread), do: :ok
 
