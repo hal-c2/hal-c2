@@ -1,5 +1,7 @@
 #include "ShellBridge.h"
 
+#include "native/PagePermissions.h"
+
 #include <algorithm>
 
 #include <QBuffer>
@@ -67,6 +69,11 @@ bool ShellBridge::openExternal(const QUrl& url) {
       scheme != QStringLiteral("mailto")) {
     return false;
   }
+  return m_openUrl ? m_openUrl(url) : QDesktopServices::openUrl(url);
+}
+
+bool ShellBridge::openApp(const QUrl& url) {
+  if (!url.isValid() || url.scheme().isEmpty() || PagePermissions::engineScheme(url.scheme())) return false;
   return m_openUrl ? m_openUrl(url) : QDesktopServices::openUrl(url);
 }
 

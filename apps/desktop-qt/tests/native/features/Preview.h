@@ -47,5 +47,7 @@ ThreadPreviews& model(World& world);
 QString describe(World& world);
 // Looks at the thread with its Previews tab showing, as mod+shift+j does.
 void showPreviews(World& world);
+// Looks at the thread on the second MC.
+void lookAtPeerThread(World& world);
 
 }  // namespace preview
