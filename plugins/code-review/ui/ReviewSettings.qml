@@ -583,6 +583,36 @@ ColumnLayout {
             }
         }
 
+        Toggle {
+            key: "sandboxEveryReview"
+            label: qsTr("Sandbox every review")
+            hint: qsTr("Run every review in an OpenShell sandbox, not only those of pull requests HAL-C2 does not trust. Until trusted pull requests can be named, every review runs in one. Needs OpenShell on this MC, and Claude or Codex with an API key.")
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 24
+
+            Field {
+                Layout.fillWidth: false
+                label: qsTr("Sandboxed review time limit (minutes)")
+
+                Count {
+                    key: "sandboxMinutes"
+                }
+            }
+
+            Field {
+                Layout.fillWidth: false
+                label: qsTr("Sandboxed review token budget")
+                hint: qsTr("0 for no limit.")
+
+                Count {
+                    key: "sandboxTokens"
+                }
+            }
+        }
+
         RowLayout {
             Layout.fillWidth: true
             spacing: 24

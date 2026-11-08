@@ -22,6 +22,7 @@ Rectangle {
     property int watching: -1
     property string followed: ""
     property bool publishing: false
+    property bool stopping: false
     // Why the last publish from here failed, until the review changes.
     property string refusal: ""
 
@@ -45,6 +46,16 @@ Rectangle {
             if (error)
                 header.refusal = error;
         });
+    }
+
+    function stop() {
+        header.stopping = true;
+        header.refusal = "";
+        header.plugin.call("stop", { key: header.review.key }, (result, error) => {
+            header.stopping = false;
+            if (error)
+                header.refusal = error;
+        }, header.thread?.environmentId || undefined);
     }
 
     function statusText() {
@@ -137,6 +148,14 @@ Rectangle {
             }
 
             ShellButton {
+                objectName: "codeReviewStop"
+                visible: header.status === "running"
+                enabled: !header.stopping
+                text: header.review?.sandboxed ? qsTr("Stop and delete the sandbox") : qsTr("Stop")
+                onClicked: header.stop()
+            }
+
+            ShellButton {
                 subtle: true
                 visible: (header.review?.url ?? "").length > 0
                 text: qsTr("Open on GitHub")
@@ -151,7 +170,8 @@ Rectangle {
                 if (review === null)
                     return "";
                 const where = review.headBranch && review.baseBranch ? qsTr("%1 into %2").arg(review.headBranch).arg(review.baseBranch) : "";
-                return [review.repository, where, header.statusText()].filter(part => part && part.length > 0).join(" · ");
+                const sandbox = review.sandboxed ? qsTr("in a sandbox") : "";
+                return [review.repository, where, header.statusText(), sandbox].filter(part => part && part.length > 0).join(" · ");
             }
             color: header.muted
             elide: Text.ElideRight

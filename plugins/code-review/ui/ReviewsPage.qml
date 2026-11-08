@@ -412,6 +412,8 @@ Item {
                                 Layout.fillWidth: true
                                 text: {
                                     const parts = [row.modelData.repository, row.modelData.author];
+                                    if (row.modelData.sandboxed)
+                                        parts.push(qsTr("In a sandbox"));
                                     if (page.several)
                                         parts.push(page.environmentLabel(row.modelData.environment));
                                     return parts.filter(part => part).join(" · ");
@@ -532,6 +534,15 @@ Item {
                             font.weight: Font.DemiBold
                         }
 
+                        // The agent of an untrusted pull request runs in an OpenShell sandbox.
+                        Text {
+                            objectName: "codeReviewSandboxed"
+                            visible: findings.review?.sandboxed === true
+                            text: qsTr("In a sandbox")
+                            color: page.muted
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                        }
+
                         Item {
                             Layout.fillWidth: true
                         }
@@ -548,6 +559,14 @@ Item {
                             enabled: page.busy === 0
                             text: qsTr("Publish to GitHub")
                             onClicked: page.ask("publish", { key: findings.review.key }, findings.review.environment)
+                        }
+
+                        ShellButton {
+                            objectName: "codeReviewStop"
+                            visible: findings.status === "running"
+                            enabled: page.busy === 0
+                            text: findings.review?.sandboxed ? qsTr("Stop and delete the sandbox") : qsTr("Stop")
+                            onClicked: page.ask("stop", { key: findings.review.key }, findings.review.environment)
                         }
 
                         ShellButton {
