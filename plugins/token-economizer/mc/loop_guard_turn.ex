@@ -55,6 +55,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # `dotenv -e .env.local -- npx vitest run`, `mise exec -- mix test`.
   @prefix ~r/^\s*(?:(?:\w+=\S*|time|nice|nohup|command|env|timeout(?:\s+(?:-\S+|[A-Z]+|\d\S*))+|(?:(?:uv|poetry|pipenv|pdm|hatch|rye)\s+run|npx|bunx|(?:npm|pnpm|yarn)\s+(?:exec|dlx)|bundle\s+exec|xvfb-run)(?:\s+-\S+)*|(?:dotenv|mise\s+(?:exec|x))(?:\s+(?!--(?:\s|$))\S+)*\s+--)\s+)*/
   # What only reports on the run before it: `echo "exit=$?"`, `true`, `exit 0`.
+  @pipefail_on ~r/^set\s(?:.*\s)?-[a-zA-Z]*o\s+pipefail\b/
+  @pipefail_off ~r/^set\s(?:.*\s)?\+[a-zA-Z]*o\s+pipefail\b/
   @report ~r/^\s*(?:echo|printf|true|:|exit)(?:\s|$)/
   @rank %{"own" => 0, "hidden" => 1, "mixed" => 2}
 
@@ -164,13 +166,38 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # ---- commands and their exit status --------------------------------------------------
 
   # `cmd` as its commands and the separators between them (`[cmd, sep, cmd, ...]`), with
-  # quoted text masked, and whether it sets `pipefail`. A command recorded as
-  # `bash -lc '<script>'` (Codex) is split by its script.
+  # quoted text masked, and whether `pipefail` is on as each command runs. A command
+  # recorded as `bash -lc '<script>'` (Codex) is split by its script.
   defp pieces(cmd) do
     cmd = ShellEdits.script(cmd)
     masked = Regex.replace(~r/[(){}]/, Regex.replace(@quoted, cmd, "Q"), " ")
-    pieces = Regex.split(@sep, masked, include_captures: true)
-    {drop_trailing(pieces), String.contains?(cmd, "pipefail")}
+    pieces = masked |> then(&Regex.split(@sep, &1, include_captures: true)) |> drop_trailing()
+    {pieces, pipefail(pieces)}
+  end
+
+  # `set -o pipefail` (or `-eo`, `-euo`) turns it on for the commands after it, and
+  # `set +o pipefail` off again.
+  defp pipefail(pieces) do
+    pieces
+    |> Enum.take_every(2)
+    |> Enum.map_reduce(false, fn stage, on ->
+      stage = String.trim(stage)
+
+      cond do
+        Regex.match?(@pipefail_on, stage) -> {on, true}
+        Regex.match?(@pipefail_off, stage) -> {on, false}
+        true -> {on, on}
+      end
+    end)
+    |> elem(0)
+  end
+
+  # Each separator, `{before, sep, after, pipefail}`: the commands either side of it and
+  # whether `pipefail` was on as they ran.
+  defp after_each(pieces, pipefail) do
+    stages = Enum.take_every(pieces, 2)
+    seps = pieces |> Enum.drop(1) |> Enum.take_every(2)
+    Enum.zip([stages, seps, Enum.drop(stages, 1), pipefail])
   end
 
   # A trailing `;` or newline.
@@ -214,9 +241,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       {pieces, pipefail} = pieces(shell)
 
       pieces
-      |> Enum.drop(-1)
-      |> Enum.chunk_every(2)
-      |> Enum.all?(fn [stage, sep] ->
+      |> after_each(pipefail)
+      |> Enum.all?(fn {stage, sep, _, pipefail} ->
         sep == "&&" or (pipefail and sep in ["|", "|&"]) or quiet?(stage)
       end)
     end
@@ -237,7 +263,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
     Enum.reduce(stages, nil, fn {stage, i}, found ->
       if Regex.match?(@verify, Regex.replace(@prefix, stage, "")) and
            not Regex.match?(@not_a_run, stage) do
-        status = after_run(pieces |> Enum.drop(i + 1) |> Enum.chunk_every(2), pipefail)
+        rest = pieces |> after_each(pipefail) |> Enum.drop(div(i, 2))
+        status = after_run(rest)
         if found == nil or @rank[status] > @rank[found], do: status, else: found
       else
         found
@@ -247,11 +274,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
 
   def status_of_tests(_), do: nil
 
-  defp after_run(rest, pipefail) do
+  defp after_run(rest) do
     Enum.reduce_while(rest, "own", fn
-      [sep | then], status ->
-        then = List.first(then) || ""
-
+      {_, sep, then, pipefail}, status ->
         cond do
           sep == "&&" or (pipefail and sep in ["|", "|&"]) -> {:cont, status}
           sep in ["|", "|&", "||"] -> {:halt, "hidden"}
@@ -370,7 +395,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # The judge in the background: a verdict is taken whenever one has come back, a new job
   # starts under the rate limit, and while one is out the judge answers nothing, which
   # the rules read as throttled, the same as a call the rate limit skipped.
-  defp ask_judge(g, digest, now) do
+  defp ask_judge(g, digest, now, budget) do
     case g.judge_arrived do
       {:ok, v} ->
         g = %{g | judge_pending: nil, judge_arrived: nil}
@@ -391,7 +416,13 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
           true ->
             calls = g.judge_calls + 1
             id = "#{g.turn_key}:#{g.segment}:#{calls}"
-            job = %{"id" => id, "digest" => live_digest(g, digest), "segment" => g.segment}
+            # Past the budget a stuck verdict is offered as a stop, which needs no redirect.
+            job = %{
+              "id" => id,
+              "digest" => live_digest(g, digest),
+              "segment" => g.segment,
+              "redirect" => g.nudges_done < budget
+            }
 
             {%{
                g
@@ -417,7 +448,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   @doc """
   Folds one completed call: `{guard, decision, job}`, where `decision` is nil,
   `{:nudge, reason}` or `{:abort, reason}`, and `job` is nil or a judge job to start,
-  `%{"id", "digest", "segment"}`, whose verdict goes back through `verdict/3`.
+  `%{"id", "digest", "segment", "redirect"}` (`redirect`: whether a stuck verdict could
+  still be answered with a redirect, so one is worth writing), whose verdict goes back
+  through `verdict/3`.
 
   `opts`: `envelope` (nil before the project has one), `thr`, `judge` (whether a judge
   is wired), `nudge_budget` (1) and `now` (seconds, for a judge job gone stale).
@@ -535,7 +568,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
 
       true ->
         digest = State.recent_digest(g.st, 24, envelope)
-        {g, verdict, job} = ask_judge(g, digest, opts[:now] || 0)
+        budget = Keyword.get(opts, :nudge_budget, 1)
+        {g, verdict, job} = ask_judge(g, digest, opts[:now] || 0, budget)
 
         # A judge that could not answer (no textGeneration, the model down) is no judge:
         # read as unsure, it would let the aggressive level redirect a healthy turn.

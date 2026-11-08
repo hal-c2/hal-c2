@@ -1,19 +1,9 @@
 # The plugin's MC modules are compiled when the plugin starts, not with the MC: compiled
 # here to beams of their own, which keep the docs and source the coverage reads.
-beams = Path.join(Mix.Project.build_path(), "plugins/token-economizer")
-File.rm_rf!(beams)
-File.mkdir_p!(beams)
-docs = Code.get_compiler_option(:docs)
-Code.put_compiler_option(:docs, true)
-
-{:ok, _, _} =
-  "../../../../plugins/token-economizer/mc/*.ex"
-  |> Path.expand(__DIR__)
-  |> Path.wildcard()
-  |> Kernel.ParallelCompiler.compile_to_path(beams, return_diagnostics: true)
-
-Code.put_compiler_option(:docs, docs)
-Code.prepend_path(beams)
+"../../../../plugins/token-economizer/mc/*.ex"
+|> Path.expand(__DIR__)
+|> Path.wildcard()
+|> HalC2.Proof.compile_plugin(Path.join(Mix.Project.build_path(), "plugins/token-economizer"))
 
 defmodule HalC2.TokenEconomizerLoopGuardProofTest do
   # TokenEconomizer's loop guard: one thread's turns, heard by the plugin through a feed
@@ -55,8 +45,9 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
   #     next stuck call is offered a stop before the redirect has reached the agent (and
   #     a refused redirect would have spent the segment). Until the task says, the guard
   #     decides nothing, and a refused redirect leaves the segment as it was.
-  #   - Leaving a judge job asked when its turn ends, or when a redirect starts the next
-  #     segment: the judge is paid for a verdict nobody reads. Its jobs are stopped.
+  #   - Leaving a judge job asked when its turn ends, when a redirect starts the next
+  #     segment, or when it went stale and a new job replaces it: the judge is paid for
+  #     a verdict nobody reads. Its jobs are stopped.
   @model "the turn the plugin hears; the MC's side of it is the model's environment"
   @judge "what the judge is told and how its verdict is read, below the model's stuck or productive"
   @text "the words of a redirect or a notice; the model delivers them, whatever they say"

@@ -13,7 +13,8 @@ defmodule HalC2.TokenEconomizerPropTest do
     the redirects are spent, at most once, and nothing is decided after it; nothing is
     decided or judged while a redirect is on its way; only a redirect that landed starts
     a fresh segment, and one refused leaves the segment as it was; a judge job starts
-    only when none is out, or the one out has gone stale; a verdict for a job that is
+    only when none is out, or the one out has gone stale, and asks for a redirect only
+    while one can still be sent; a verdict for a job that is
     not out changes nothing but the spend; every call is counted;
   - what the envelope learns: from any run of turns, exactly the ones that ended
     green, no envelope before enough of them, and the signal thresholds never below
@@ -259,6 +260,7 @@ defmodule HalC2.TokenEconomizerPropTest do
     # The budget, then one stop offer, then nothing.
     # A redirect has words in it.
     # One judge job out at a time, unless the one out went stale.
+    # A job asks for a redirect to be written only while one can still be sent.
     # Nothing decided or judged while a redirect is on its way.
     (state.learned or (not acted and r.job == nil)) and
       (not before.guard.redirecting or (not acted and r.job == nil)) and
@@ -268,6 +270,7 @@ defmodule HalC2.TokenEconomizerPropTest do
       (before.stops == 0 or not acted) and
       (r.text == nil or String.trim(r.text) != "") and
       (r.job == nil or before.out == nil or before.now - elem(before.out, 1) >= @stale) and
+      (r.job == nil or r.job["redirect"] == before.guard.nudges_done < state.budget) and
       run.guard.cum_turns == calls
   end
 
