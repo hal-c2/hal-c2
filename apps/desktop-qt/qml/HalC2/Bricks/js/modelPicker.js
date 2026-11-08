@@ -37,10 +37,6 @@ function scoreSubsequenceMatch(value, query) {
     return null;
 }
 
-function lengthPenalty(value, query) {
-    return Math.min(64, Math.max(0, value.length - query.length));
-}
-
 function findBoundaryMatchIndex(value, query) {
     var markers = [" ", "-", "_", "/"];
     var bestIndex = null;
@@ -56,20 +52,22 @@ function findBoundaryMatchIndex(value, query) {
 }
 
 // scoreQueryMatch with the model picker's tiers: exact, prefix, word
-// boundary, substring, then (for 3+ characters) a subsequence.
+// boundary, substring, then (for 3+ characters) a subsequence. Within a
+// tier the catalogue's order stands (a provider lists newest first), so a
+// shorter name does not jump ahead of a newer model.
 function scoreToken(value, token, base) {
     if (!value || !token)
         return null;
     if (value === token)
         return base;
     if (value.indexOf(token) === 0)
-        return base + 2 + lengthPenalty(value, token);
+        return base + 2;
     var boundaryIndex = findBoundaryMatchIndex(value, token);
     if (boundaryIndex !== null)
-        return base + 4 + boundaryIndex * 2 + lengthPenalty(value, token);
+        return base + 4 + boundaryIndex * 2;
     var includesIndex = value.indexOf(token);
     if (includesIndex !== -1)
-        return base + 6 + includesIndex * 2 + lengthPenalty(value, token);
+        return base + 6 + includesIndex * 2;
     if (token.length >= 3) {
         var fuzzy = scoreSubsequenceMatch(value, token);
         if (fuzzy !== null)
@@ -123,9 +121,66 @@ function stripLeadingQualifier(value, qualifier) {
     return value.replace(pattern, "").trim() || value;
 }
 
-function displayName(model, preferShortName) {
-    var name = preferShortName && model.shortName ? model.shortName : model.name;
-    return stripLeadingQualifier(name, model.subProvider);
+// The name the user would say, worked out when the manifest gives no short
+// name (upstream modelShortName): a vendor prefix goes, then the family
+// prefix the provider's icon already says — on its native provider when the
+// rest names more than a version, elsewhere only when the rest still names
+// a model rather than a variant.
+var FAMILY_PREFIXES = ["Claude ", "GPT-", "GPT ", "Gemini ", "Muse ", "Grok "];
+var NATIVE_FAMILIES = {
+    "codex": ["GPT-", "GPT "],
+    "claudeAgent": ["Claude "],
+    "claude": ["Claude "],
+    "antigravity": ["Gemini "],
+    "cursor": ["Grok "],
+    "grok": ["Grok "],
+    "muse": ["Muse "]
+};
+var VARIANT_WORDS = ["pro", "flash", "mini", "max", "lite", "nano", "ultra", "plus", "fast", "turbo", "preview", "latest", "thinking", "reasoning", "build", "code", "image", "vision", "audio", "live", "custom", "tools", "exp", "experimental", "chat", "tts", "stt", "non", "transcribe"];
+
+function nonVersionWords(text) {
+    return text.replace(/\(.*?\)/g, " ").split(/[\s-]+/).filter(function (word) {
+        return word.length > 0 && !/^v?\d+(\.\d+)*[a-z]?$/i.test(word);
+    });
+}
+
+function namesModel(text) {
+    return nonVersionWords(text).some(function (word) {
+        return VARIANT_WORDS.indexOf(word.toLowerCase()) === -1;
+    });
+}
+
+function modelShortName(name, driverKind) {
+    var unprefixed = name.replace(/^[A-Z][\w.&\-\x20]{0,24}: (?=\S)/, "");
+    var prefix = null;
+    for (var i = 0; i < FAMILY_PREFIXES.length; i += 1) {
+        if (unprefixed.indexOf(FAMILY_PREFIXES[i]) === 0) {
+            prefix = FAMILY_PREFIXES[i];
+            break;
+        }
+    }
+    var short = null;
+    if (prefix !== null) {
+        var rest = unprefixed.slice(prefix.length).trim();
+        var native = (NATIVE_FAMILIES[driverKind] || []).indexOf(prefix) !== -1;
+        var keep = native ? nonVersionWords(rest).length > 0 : namesModel(rest);
+        if (keep)
+            short = /\s/.test(rest) ? rest : rest.replace(/-/g, " ");
+    }
+    if (short === null)
+        short = namesModel(unprefixed) ? unprefixed : name;
+    return short === name ? null : short;
+}
+
+function displayName(model, preferShortName, instance) {
+    if (preferShortName && model.shortName)
+        return stripLeadingQualifier(model.shortName, model.subProvider);
+    if (preferShortName) {
+        var worked = modelShortName(model.name, instance ? instance.driverKind : null);
+        if (worked !== null)
+            return stripLeadingQualifier(worked, model.subProvider);
+    }
+    return stripLeadingQualifier(model.name, model.subProvider);
 }
 
 function providerLabel(model, instance) {
@@ -159,12 +214,13 @@ function hasFavorites(instances) {
 }
 
 // The rail entry the picker opens on: favourites when there are any, unless
-// the thread's instance is only reachable through its current model;
-// otherwise the thread's instance.
-function initialView(instances, selectedInstanceId) {
+// the thread already ran a turn (then its own provider) or the thread's
+// instance is only reachable through its current model; otherwise the
+// thread's instance.
+function initialView(instances, selectedInstanceId, locked) {
     var active = findInstance(instances, selectedInstanceId);
     var activeNeedsFocus = active !== null && active.isAvailable && active.unavailableReason !== null;
-    if (!activeNeedsFocus && hasFavorites(instances))
+    if (!locked && !activeNeedsFocus && hasFavorites(instances))
         return FAVORITES;
     if (active !== null)
         return active.instanceId;
@@ -206,15 +262,17 @@ function rows(instances, view, query, expandedLegacy) {
     var result = [];
     if (normalize(query).length > 0) {
         var ranked = [];
+        var order = 0;
         instances.forEach(function (instance) {
             instance.models.forEach(function (model) {
+                var at = order++;
                 var score = scoreSearch(model, instance, query);
                 if (score !== null) {
                     ranked.push({
                         row: modelRow(instance, model),
                         score: score,
                         isFavorite: model.isFavorite,
-                        tieBreaker: searchText(model, instance)
+                        order: at
                     });
                 }
             });
@@ -224,7 +282,7 @@ function rows(instances, view, query, expandedLegacy) {
                 return a.score - b.score;
             if (a.isFavorite !== b.isFavorite)
                 return a.isFavorite ? -1 : 1;
-            return a.tieBreaker.localeCompare(b.tieBreaker);
+            return a.order - b.order;
         });
         result = ranked.map(function (entry) {
             return entry.row;
@@ -242,7 +300,8 @@ function rows(instances, view, query, expandedLegacy) {
             var current = [];
             var legacy = [];
             instance.models.forEach(function (model) {
-                (model.isLegacy ? legacy : current).push(modelRow(instance, model));
+                // A favourite older model stands with the current ones.
+                (model.isLegacy && !model.isFavorite ? legacy : current).push(modelRow(instance, model));
             });
             result = current;
             if (legacy.length > 0) {
