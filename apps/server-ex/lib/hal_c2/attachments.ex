@@ -262,6 +262,9 @@ defmodule HalC2.Attachments do
   which providers are given as a path). The thread shows what the agent was sent, and
   the file goes wherever the thread does. Shorter text passes through.
   """
+  # The file is the attachments folder, a thread segment of `[a-z0-9_-]` and a fresh
+  # uuid, never a path a client or an agent names.
+  # sobelow_skip ["Traversal.FileModule"]
   def fold_long_text(thread_id, text, attachments) when is_binary(text) do
     chars = String.length(text)
 
@@ -352,6 +355,9 @@ defmodule HalC2.Attachments do
   deleted. Each is a hard link where the disk allows one. An attachment whose file is
   not on this MC, or goes while it is copied, passes through.
   """
+  # The source comes from `path/1` (a `safe_id?` id inside the attachments folder) and
+  # the target is that folder, a thread segment and a fresh uuid.
+  # sobelow_skip ["Traversal.FileModule"]
   def copy_into(thread_id, attachments) when is_list(attachments) do
     Enum.map(attachments, fn attachment ->
       with source when is_binary(source) <- match?(%{"id" => _}, attachment) && path(attachment),

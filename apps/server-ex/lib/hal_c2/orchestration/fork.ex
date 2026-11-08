@@ -78,7 +78,7 @@ defmodule HalC2.Orchestration.Fork do
           {:error, "Thread #{source_id} was deleted."}
         end
 
-      unless result == :ok, do: Enum.each(copies(history, target_id), &File.rm/1)
+      unless result == :ok, do: drop_copies(history, target_id)
       result
     end
   end
@@ -327,6 +327,11 @@ defmodule HalC2.Orchestration.Fork do
   end
 
   # The files `own_files/2` made for the target's messages: theirs by name.
+  # The files come from `HalC2.Attachments.path/1`: `safe_id?` ids inside the
+  # attachments folder.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp drop_copies(history, target_id), do: Enum.each(copies(history, target_id), &File.rm/1)
+
   defp copies(history, target_id) do
     prefix = HalC2.Attachments.thread_segment(target_id) <> "-"
 

@@ -3460,6 +3460,9 @@ defmodule HalC2.Orchestration do
   # message already (a resend folds again), and nothing else names the file.
   defp drop_unnamed(_thread_id, _message_id, []), do: :ok
 
+  # The file comes from `HalC2.Attachments.path/1`: a `safe_id?` id inside the
+  # attachments folder.
+  # sobelow_skip ["Traversal.FileModule"]
   defp drop_unnamed(thread_id, message_id, files) do
     message = StreamState.fetch(HalC2.Streams.state(thread_id), "message", message_id) || %{}
     named = for %{"id" => id} <- List.wrap(message["attachments"]), do: id
