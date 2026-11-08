@@ -149,6 +149,18 @@ defmodule HalC2.OpenShell.ClientTest do
   end
 
   describe "sandboxes" do
+    # A connection outlives `connect/0`'s check: another environment may arrive after it.
+    test "a connection made before another environment arrived makes no sandbox there", %{
+      conn: conn,
+      gateway: g
+    } do
+      FakeOpenShell.put_sandbox(g, "theirs", %{OpenShell.owner_label() => "env-b"})
+
+      assert {:error, {:shared_gateway, ["env-b"]}} = Client.create_sandbox(conn, "mine")
+      refute_received {:openshell_request, "CreateSandbox", _}
+      assert Map.keys(FakeOpenShell.sandboxes(g)) == ["theirs"]
+    end
+
     test "the workspace is created once", %{conn: conn} do
       assert :ok = Client.ensure_workspace(conn)
       assert_received {:openshell_request, "CreateWorkspace", "hal-c2"}
@@ -203,10 +215,13 @@ defmodule HalC2.OpenShell.ClientTest do
     @tag gateway: [ignore_selector: true]
     test "listing returns only this MC's sandboxes, even when the gateway returns more",
          %{conn: conn, gateway: g} do
-      FakeOpenShell.put_sandbox(g, "theirs", %{OpenShell.owner_label() => "another-mc"})
-      FakeOpenShell.put_sandbox(g, "unlabelled", %{})
       {:ok, _} = Client.create_sandbox(conn, "mine-1", labels: %{"halc2.github.io/review" => "1"})
       {:ok, _} = Client.create_sandbox(conn, "mine-2", labels: %{"halc2.github.io/review" => "2"})
+      # Each create first looked for other environments' sandboxes, in every workspace.
+      assert_received {:openshell_request, "ListSandboxes", %{label_selector: ""}}
+      assert_received {:openshell_request, "ListSandboxes", %{label_selector: ""}}
+      FakeOpenShell.put_sandbox(g, "theirs", %{OpenShell.owner_label() => "another-mc"})
+      FakeOpenShell.put_sandbox(g, "unlabelled", %{})
 
       assert {:ok, all} = Client.list_sandboxes(conn)
       assert Enum.map(all, & &1.name) == ["mine-1", "mine-2"]

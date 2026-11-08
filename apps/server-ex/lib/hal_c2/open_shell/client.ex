@@ -55,18 +55,22 @@ defmodule HalC2.OpenShell.Client do
   """
   def connect do
     with {:ok, conn} <- connect_unchecked() do
-      case other_environments(conn) do
-        {:ok, []} ->
+      case alone(conn) do
+        :ok ->
           {:ok, conn}
-
-        {:ok, others} ->
-          disconnect(conn)
-          {:error, {:shared_gateway, others}}
 
         error ->
           disconnect(conn)
           error
       end
+    end
+  end
+
+  defp alone(conn, opts \\ []) do
+    case other_environments(conn, opts) do
+      {:ok, []} -> :ok
+      {:ok, others} -> {:error, {:shared_gateway, others}}
+      error -> error
     end
   end
 
@@ -246,9 +250,14 @@ defmodule HalC2.OpenShell.Client do
     * `:environment` - a map of variables
     * `:command` - the main process, a list (the image's otherwise)
     * `:providers` - provider names to attach
+
+  `{:error, {:shared_gateway, environments}}`, and nothing made, once the gateway
+  holds another HAL-C2 environment's sandboxes, even on a connection made before
+  they came.
   """
   def create_sandbox(%__MODULE__{} = conn, name, opts \\ []) do
-    with {:ok, labels} <- owned_labels(Keyword.get(opts, :labels, %{})) do
+    with {:ok, labels} <- owned_labels(Keyword.get(opts, :labels, %{})),
+         :ok <- alone(conn, opts) do
       template = %Pb.SandboxTemplate{
         image: Keyword.get(opts, :image, ""),
         resources: resources(Keyword.get(opts, :limits))

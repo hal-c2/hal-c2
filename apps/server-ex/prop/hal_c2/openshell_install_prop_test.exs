@@ -25,7 +25,8 @@ defmodule HalC2.OpenShellInstallPropTest do
       owner-only, and nothing is left in staging;
     * a user's gateway that holds another environment's sandboxes is refused and the
       MC keeps what it used; one that comes to hold them is reported by `status` and
-      refused by `connect`; the MC never creates or deletes a sandbox there, and
+      refused by `connect`, and by a connection made before it came, when that one
+      is asked for a sandbox; the MC never creates or deletes a sandbox there, and
       never touches the other environment's.
   """
 
@@ -84,6 +85,7 @@ defmodule HalC2.OpenShellInstallPropTest do
             run_commands(__MODULE__, cmds)
           after
             Logger.configure(level: level)
+            drop_retained()
             stop_gateways()
             for key <- @env, do: Application.delete_env(:hal_c2, key)
             File.rm_rf!(home)
@@ -125,6 +127,8 @@ defmodule HalC2.OpenShellInstallPropTest do
       servers: [],
       current: nil,
       foreign: [],
+      # The connection `connect` kept, if any.
+      retained: nil,
       seq: 0
     })
   end
@@ -135,8 +139,9 @@ defmodule HalC2.OpenShellInstallPropTest do
   # certificates on disk, or nil; db: what the database holds; next_gen: the
   # generation the next install, rotation or user's gateway would be issued;
   # shared: whether the user's gateway the MC records holds another environment's
-  # sandboxes.
-  def initial_state, do: %{installed: nil, pki: nil, db: nil, next_gen: 0, shared: false}
+  # sandboxes; retained: whether the MC keeps a connection to it.
+  def initial_state,
+    do: %{installed: nil, pki: nil, db: nil, next_gen: 0, shared: false, retained: false}
 
   def command(state) do
     frequency(
@@ -159,6 +164,10 @@ defmodule HalC2.OpenShellInstallPropTest do
             {2, {:call, __MODULE__, :status, []}}
           ],
           else: []
+        ) ++
+        if(external?(state) and state.retained,
+          do: [{2, {:call, __MODULE__, :create_retained, []}}],
+          else: []
         )
     )
   end
@@ -173,6 +182,9 @@ defmodule HalC2.OpenShellInstallPropTest do
   def precondition(state, {:call, _, name, _})
       when name in [:other_environment_arrives, :connect, :status],
       do: external?(state)
+
+  def precondition(state, {:call, _, :create_retained, _}),
+    do: external?(state) and state.retained
 
   def precondition(_state, _call), do: true
 
@@ -227,7 +239,7 @@ defmodule HalC2.OpenShellInstallPropTest do
     do: seen(state, :not_installed)
 
   defp step(state, {:call, _, :uninstall, []}),
-    do: seen(%{state | installed: nil, pki: nil, db: nil, shared: false}, :ok)
+    do: seen(%{state | installed: nil, pki: nil, db: nil, shared: false, retained: false}, :ok)
 
   defp step(state, {:call, _, :write_db, [marker]}), do: seen(%{state | db: marker}, :ok)
 
@@ -248,7 +260,13 @@ defmodule HalC2.OpenShellInstallPropTest do
 
       true ->
         seen(
-          %{state | installed: {"external", Manifest.version(), nil}, pki: gen, shared: false},
+          %{
+            state
+            | installed: {"external", Manifest.version(), nil},
+              pki: gen,
+              shared: false,
+              retained: false
+          },
           :ok
         )
     end
@@ -257,8 +275,20 @@ defmodule HalC2.OpenShellInstallPropTest do
   defp step(state, {:call, _, :other_environment_arrives, []}),
     do: seen(%{state | shared: true}, :ok)
 
-  defp step(state, {:call, _, :connect, []}),
-    do: seen(state, if(state.shared, do: {:shared, ["env-b"]}, else: :ok))
+  # A connection that is let in is kept, in place of the one kept before.
+  defp step(state, {:call, _, :connect, []}) do
+    if state.shared,
+      do: seen(state, {:shared, ["env-b"]}),
+      else: seen(%{state | retained: true}, :ok)
+  end
+
+  # The kept connection makes (and then deletes) a sandbox only while the gateway
+  # holds no other environment's.
+  defp step(state, {:call, _, :create_retained, []}) do
+    if state.shared,
+      do: seen(state, {{:shared, ["env-b"]}, 0}),
+      else: seen(state, {:created, 2})
+  end
 
   defp step(state, {:call, _, :status, []}) do
     if state.shared,
@@ -305,6 +335,7 @@ defmodule HalC2.OpenShellInstallPropTest do
 
   def uninstall do
     result = Install.uninstall()
+    drop_retained()
     Process.put(:openshell, %{Process.get(:openshell) | current: nil})
     observe(result)
   end
@@ -329,6 +360,9 @@ defmodule HalC2.OpenShellInstallPropTest do
     }
 
     result = Install.reuse(gateway.endpoint, gateway.credentials)
+    Process.put(:openshell, ctx)
+    if match?({:ok, _}, result), do: drop_retained()
+    ctx = Process.get(:openshell)
     current = if match?({:ok, _}, result), do: gateway, else: ctx.current
     Process.put(:openshell, %{ctx | current: current})
     observe(result, kind == :shared)
@@ -344,7 +378,8 @@ defmodule HalC2.OpenShellInstallPropTest do
   def connect do
     case Client.connect() do
       {:ok, conn} ->
-        Client.disconnect(conn)
+        drop_retained()
+        Process.put(:openshell, %{Process.get(:openshell) | retained: conn})
         observe(:ok, true)
 
       {:error, {:shared_gateway, ids}} ->
@@ -358,6 +393,30 @@ defmodule HalC2.OpenShellInstallPropTest do
   def status do
     status = Install.status()
     observe({:status, status["problems"], status["sharedWith"]}, true)
+  end
+
+  # Creates a sandbox over the connection `connect` kept, and deletes it again if it
+  # was made: the result and the number of sandbox requests the gateway got.
+  def create_retained do
+    ctx = Process.get(:openshell)
+    mutations()
+    name = "mine-#{ctx.seq}"
+    Process.put(:openshell, %{ctx | seq: ctx.seq + 1})
+
+    result =
+      case Client.create_sandbox(ctx.retained, name) do
+        {:ok, _} -> with :ok <- Client.delete_sandbox(ctx.retained, name), do: :created
+        {:error, {:shared_gateway, ids}} -> {:shared, ids}
+        other -> other
+      end
+
+    observe({result, mutations()})
+  end
+
+  defp drop_retained do
+    ctx = Process.get(:openshell)
+    if ctx.retained, do: Client.disconnect(ctx.retained)
+    Process.put(:openshell, %{ctx | retained: nil})
   end
 
   defp other_labels, do: %{OpenShell.owner_label() => "env-b"}
