@@ -309,12 +309,16 @@ defmodule HalC2.Acp.Auth do
 
   # What a sign-in failure never shows: an address with a scheme, a scheme-less host/path
   # that looks like a login page (`github.com/login/device`), or a device code: two groups
-  # of 4-5 characters. RFC 8628 §6.1 recommends upper-case letters (`WDJB-MJHT`), so any
-  # all-upper-case letters/digits pair is one (`AB12C-DE34F`, `WXYZ-9876`). In lower case
-  # only a pair with an all-digit group beside a group holding a letter is (`wxyz-9876`):
-  # `gpt4-mini` has no all-digit group, and `HTTP-502`/`SHA-256` have a group under 4.
+  # of 4-5 characters standing alone: no `-` or word character on either side, so a group
+  # inside a UUID or a longer hyphenated word is never a pair. RFC 8628 §6.1 recommends
+  # upper-case letters from the base-20 alphabet `BCDFGHJKLMNPQRSTVWXZ` (`WDJB-MJHT`), so
+  # an all-letter upper-case pair counts only when both groups use it (`AUTH-ERROR` has
+  # vowels and is shown). Upper-case pairs holding a digit count (`AB12C-DE34F`,
+  # `WXYZ-9876`) but an all-digit one never does (`2025-2026`). In lower case only a pair with an all-digit group beside a group holding
+  # a letter is one (`wxyz-9876`): `gpt4-mini` has no all-digit group, and
+  # `HTTP-502`/`SHA-256` have a group under 4.
   @sign_in_address ~r/https?:\/\/|\b[a-z0-9-]+(?:\.[a-z0-9-]+)+\/\S*(?:login|device|oauth|auth|activate|verify)/i
-  @device_code ~r/\b[a-z0-9]{4,5}-[a-z0-9]{4,5}\b/i
+  @device_code ~r/(?<![\w-])[a-z0-9]{4,5}-[a-z0-9]{4,5}(?![\w-])/i
 
   defp sign_in_secret?(said) do
     said =~ @sign_in_address or
@@ -325,7 +329,8 @@ defmodule HalC2.Acp.Auth do
     groups = String.split(code, "-")
 
     cond do
-      code =~ ~r/\A[A-Z0-9]+-[A-Z0-9]+\z/ -> true
+      code =~ ~r/\A[A-Z]+-[A-Z]+\z/ -> Enum.all?(groups, &(&1 =~ ~r/\A[BCDFGHJKLMNPQRSTVWXZ]+\z/))
+      code =~ ~r/\A[A-Z0-9]+-[A-Z0-9]+\z/ -> code =~ ~r/[A-Z]/
       code =~ ~r/[A-Z]/ -> false
       true -> Enum.any?(groups, &(&1 =~ ~r/\A\d+\z/)) and code =~ ~r/[a-z]/
     end

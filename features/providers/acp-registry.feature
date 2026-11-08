@@ -982,6 +982,12 @@ Feature: ACP registry agents
       | HTTP-502 from upstream |
       | SHA-256 mismatch      |
       | Model gpt4-mini unavailable |
+      | Request id 550e8400-e29b-41d4-a716-446655440000 rejected |
+      | Request id 550E8400-E29B-41D4-A716-446655440000 rejected |
+      | 550e8400-e29b-4123-a716-446655440000 |
+      | AUTH-ERROR from proxy |
+      | Model gpt-4o-mini-2024-07-18 unavailable |
+      | Valid 2025-2026 only |
 
   # Upstream #30295: a proxy's HTML error page would otherwise fill the sign-in panel.
   @priority-low
