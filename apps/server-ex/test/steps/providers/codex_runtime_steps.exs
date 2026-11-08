@@ -122,7 +122,7 @@ defmodule HalC2.Steps.Providers.CodexRuntime do
     assert Task.await(context.pending_call, 5_000) ==
              {:error, %{"message" => "Codex App Server input stream ended.", "ended" => true}}
 
-    assert System.monotonic_time(:millisecond) - context.muted_at < 1_000
+    assert System.monotonic_time(:millisecond) - context.muted_at < 500
     context
   end
 
