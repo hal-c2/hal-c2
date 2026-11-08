@@ -1330,6 +1330,10 @@ export const OrchestrationV2TurnItem = Schema.Union([
     viewedImagePath: Schema.optional(TrimmedNonEmptyString),
     input: Schema.Unknown,
     output: Schema.optional(Schema.Unknown),
+    /** Images the tool returned, stored with the thread like a message's. */
+    attachments: Schema.optional(Schema.Array(ChatAttachment)),
+    /** The tool's structured results, as the provider reported them. */
+    details: Schema.optional(Schema.Unknown),
   }),
 ]);
 export type OrchestrationV2TurnItem = typeof OrchestrationV2TurnItem.Type;
@@ -2081,6 +2085,10 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     viewedImagePath: Schema.optional(TrimmedNonEmptyString),
     input: Schema.Unknown,
     output: Schema.optional(Schema.Unknown),
+    /** Images the tool returned, stored with the thread like a message's. */
+    attachments: Schema.optional(Schema.Array(ChatAttachment)),
+    /** The tool's structured results, as the provider reported them. */
+    details: Schema.optional(Schema.Unknown),
   }),
 ]);
 export type OrchestrationV2TurnItemJson = typeof OrchestrationV2TurnItemJson.Type;

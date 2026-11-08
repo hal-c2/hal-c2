@@ -1114,8 +1114,10 @@ Feature: Pi
     Then the thread no longer counts the second and third turns as Pi's history
     And reverting the thread afterwards only offers turns Pi still has
 
-  # Upstream #17851: Pi tool images and structured results are preserved
-  @backlog @mc @plugin-pi
+  # Upstream #17851: Pi tool images and structured results are preserved. The MC stores the
+  # image with the thread and lists it in the tool item's attachments; the clients still have
+  # to draw a tool item's attachments.
+  @mc @shared @plugin-pi @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: An image a Pi tool returns is shown as an image
     When a Pi tool returns a screenshot alongside structured results
     Then the tool call shows the screenshot as an image, not as text

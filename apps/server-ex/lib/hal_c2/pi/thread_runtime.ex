@@ -1364,6 +1364,7 @@ defmodule HalC2.Pi.ThreadRuntime do
 
     %{kind: kind} = state.items[native]
     output = result_text(event["result"])
+    images = if kind == :tool, do: tool_images(state.thread_id, event["result"]), else: []
 
     # A Stop aborts in-flight tools, and Pi reports those as error ends: they
     # read as interrupted, matching the run, rather than failed.
@@ -1390,7 +1391,10 @@ defmodule HalC2.Pi.ThreadRuntime do
           Map.put(entity, "diffStr", output)
 
         _ ->
-          Map.put(entity, "output", output)
+          entity
+          |> Map.put("output", output)
+          |> then(&if(images == [], do: &1, else: Map.put(&1, "attachments", images)))
+          |> then(&put_details(&1, get_in(event, ["result", "details"])))
       end
     end)
   end
@@ -1580,6 +1584,36 @@ defmodule HalC2.Pi.ThreadRuntime do
   end
 
   defp result_text(_result), do: ""
+
+  # Images a tool returned are stored with the thread like pasted ones, so the item
+  # carries their ids, not their bytes. One that is not a valid image is left out.
+  defp tool_images(thread_id, %{"content" => content}) when is_list(content) do
+    for {%{"type" => "image", "data" => data, "mimeType" => mime}, n} <-
+          Enum.with_index(content, 1),
+        is_binary(data) and is_binary(mime),
+        image = %{
+          "name" => "tool-image-#{n}",
+          "mimeType" => mime,
+          "dataUrl" => "data:#{mime};base64,#{data}"
+        },
+        {:ok, %{"attachments" => stored}} <-
+          [HalC2.Attachments.persist(%{"threadId" => thread_id, "attachments" => [image]})],
+        attachment <- stored,
+        do: attachment
+  end
+
+  defp tool_images(_thread_id, _result), do: []
+
+  # A tool's structured results, kept unless they are empty or too large to send
+  # with the thread.
+  @max_details_chars 64_000
+  defp put_details(entity, details) when details in [nil, %{}, []], do: entity
+
+  defp put_details(entity, details) do
+    if byte_size(JSON.encode!(details)) <= @max_details_chars,
+      do: Map.put(entity, "details", details),
+      else: entity
+  end
 
   defp provider_failure(message, retryable),
     do: %{

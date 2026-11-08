@@ -4186,6 +4186,42 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
+  # --- tool images ---
+
+  # A 1x1 PNG.
+  @screenshot "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+  @screenshot_details %{"url" => "http://localhost:3000/", "viewport" => %{"width" => 1280}}
+
+  step "a Pi tool returns a screenshot alongside structured results", context do
+    content = [
+      %{"type" => "text", "text" => "Took a screenshot."},
+      %{"type" => "image", "data" => @screenshot, "mimeType" => "image/png"}
+    ]
+
+    step = %{
+      "tool" => "screenshot",
+      "args" => %{"url" => "http://localhost:3000/"},
+      "content" => content,
+      "details" => @screenshot_details
+    }
+
+    event_thread(context, [step, %{"text" => "Done."}], "take a screenshot")
+  end
+
+  step "the tool call shows the screenshot as an image, not as text", context do
+    assert [%{"toolName" => "screenshot"} = tool] = items(context, "dynamic_tool")
+    assert tool["output"] == "Took a screenshot."
+    assert [%{"type" => "image", "mimeType" => "image/png"} = image] = tool["attachments"]
+    assert File.read!(HalC2.Attachments.path(image)) == Base.decode64!(@screenshot)
+    assert image["sizeBytes"] == byte_size(Base.decode64!(@screenshot))
+    context
+  end
+
+  step "its structured results are kept in the tool's details", context do
+    assert [%{"details" => @screenshot_details}] = items(context, "dynamic_tool")
+    context
+  end
+
   # The extension HAL-C2 writes for Pi, run under bun with a stand-in Pi API.
   @extension_harness Path.expand("../../support/pi_extension_harness.ts", __DIR__)
 

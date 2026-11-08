@@ -1,8 +1,8 @@
 defmodule HalC2.PiSteerPropTest do
   @moduledoc """
   A state machine over one Pi thread (`HalC2.Pi.ThreadRuntime`) driven through the
-  orchestration commands a client sends: send a message whose turn works until it is
-  steered or stopped (or Pi aborts it itself, which reads as interrupted), either taking the steer into its running work or settling just
+  orchestration commands a client sends: send a message whose turn works (after a tool
+  that returns an image, or not) until it is steered or stopped (or Pi aborts it itself, which reads as interrupted), either taking the steer into its running work or settling just
   before the steer lands (so Pi answers it in a run of its own), or just before two
   steers sent at once land; steer the running turn, with a message Pi takes, one it
   refuses, one it refuses only once the run settled (which finds the turn over, so it
@@ -29,8 +29,9 @@ defmodule HalC2.PiSteerPropTest do
   Turns run on the fake `pi --mode rpc` in `test/support/fake_pi_rpc.py`. The model
   checks that each turn ends once, with the status it should, that every steer's
   answer is recorded in the thread, whichever way Pi ran it, that a steer Pi refused
-  is an error for its sender that leaves the turn running, and that no compaction
-  shows in a turn except that turn's own. Messages resent on their own
+  is an error for its sender that leaves the turn running, that no compaction
+  shows in a turn except that turn's own, and that an image a tool returned is stored
+  with the thread and listed on that turn's tool item. Messages resent on their own
   at once may run in either order, so runs and replies compare as sets. After each command the test
   waits on the thread's stream until the runs it ended have ended and a running turn
   began saying "Working on it.".
@@ -47,9 +48,27 @@ defmodule HalC2.PiSteerPropTest do
   @tid "pi-thread"
   @model %{"instanceId" => "pi", "model" => "fake/one"}
   @fake_pi Path.expand("../../test/support/fake_pi_rpc.py", __DIR__)
+  # A 1x1 PNG, the image the "shows" turn's tool returns.
+  @png "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 
   @turns [
     %{"match" => "joins", "steps" => [%{"text" => "Working on it."}, %{"waitAbort" => true}]},
+    # A "joins" turn whose tool first returns an image: it is stored with the thread.
+    %{
+      "match" => "shows",
+      "steps" => [
+        %{
+          "tool" => "screenshot",
+          "content" => [
+            %{"type" => "text", "text" => "Took it."},
+            %{"type" => "image", "data" => @png, "mimeType" => "image/png"}
+          ],
+          "details" => %{"width" => 1}
+        },
+        %{"text" => "Working on it."},
+        %{"waitAbort" => true}
+      ]
+    },
     %{"match" => "ends", "steps" => [%{"text" => "Working on it."}, %{"settleOnSteer" => 1}]},
     %{"match" => "pair", "steps" => [%{"text" => "Working on it."}, %{"settleOnSteer" => 2}]},
     # The abandoned compaction's late events land in this turn while its
@@ -228,9 +247,19 @@ defmodule HalC2.PiSteerPropTest do
   # still out (`:events`: Pi will finish it and its events land in a later turn;
   # `:replied`: Pi answered it with a failure and no events, so the task's reply
   # alone ended the abandonment and nothing is left to drop);
-  # compactions: the compaction summaries shown, in order.
+  # compactions: the compaction summaries shown, in order; images: the turns whose
+  # tool returned an image.
   def initial_state,
-    do: %{runs: [], turn: nil, how: nil, replies: [], next: 1, abandoned: :none, compactions: []}
+    do: %{
+      runs: [],
+      turn: nil,
+      how: nil,
+      replies: [],
+      next: 1,
+      abandoned: :none,
+      compactions: [],
+      images: []
+    }
 
   # With an abandoned compaction still out (its task has not answered),
   # the next turn may be the one its late events land in.
@@ -253,7 +282,7 @@ defmodule HalC2.PiSteerPropTest do
 
   def command(%{turn: nil, next: next}) do
     frequency([
-      {5, {:call, __MODULE__, :send, [id(next), oneof([:joins, :ends, :pair, :aborts])]}},
+      {5, {:call, __MODULE__, :send, [id(next), oneof([:joins, :ends, :pair, :aborts, :shows])]}},
       {2, {:call, __MODULE__, :send, [id(next), oneof([:compacts, :holds])]}},
       {2, {:call, __MODULE__, :send_compacted, [id(next), id(next + 1)]}},
       {1, {:call, __MODULE__, :send_handled, [id(next)]}},
@@ -385,6 +414,20 @@ defmodule HalC2.PiSteerPropTest do
   # stopped and the turn fails (the next send starts a fresh Pi).
   def next_state(state, _result, {:call, _, :send_silent, [msg]}) do
     %{state | next: state.next + 1, runs: state.runs ++ [{msg, "failed"}], abandoned: :none}
+  end
+
+  # Once its tool returned the image, a "shows" turn works as a "joins" turn.
+  def next_state(state, _result, {:call, _, :send, [msg, :shows]}) do
+    runs = state.runs ++ [{msg, "running"}]
+
+    %{
+      state
+      | next: state.next + 1,
+        runs: runs,
+        turn: msg,
+        how: :joins,
+        images: state.images ++ [msg]
+    }
   end
 
   def next_state(state, _result, {:call, _, :send, [msg, how]}) do
@@ -563,7 +606,8 @@ defmodule HalC2.PiSteerPropTest do
     replied? and
       Enum.sort(projection.runs) == Enum.sort(model.runs) and
       Enum.sort(projection.replies) == Enum.sort(model.replies) and
-      projection.compactions == model.compactions
+      projection.compactions == model.compactions and
+      Enum.sort(projection.images) == Enum.sort(model.images)
   end
 
   # --- commands ---------------------------------------------------------------------
@@ -1039,6 +1083,17 @@ defmodule HalC2.PiSteerPropTest do
           item <- state |> StreamState.list("turn-item") |> Enum.sort_by(& &1["ordinal"]),
           item["type"] == "compaction",
           do: item["summary"]
+        ),
+      # The turns whose tool item lists an image stored with the thread.
+      images:
+        for(
+          item <- StreamState.list(state, "turn-item"),
+          item["type"] == "dynamic_tool",
+          %{"type" => "image"} = image <- item["attachments"] || [],
+          File.read(HalC2.Attachments.path(image) || "") == {:ok, Base.decode64!(@png)},
+          run <- runs(state),
+          run["id"] == item["runId"],
+          do: run["userMessageId"]
         ),
       # Pi answers a steer it took in "steered: <text>", and one it ran on its own
       # "Reply to <text> after [...]".
