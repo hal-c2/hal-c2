@@ -506,6 +506,41 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     context
   end
 
+  step "a Codex turn of {string} ended before its usage report came",
+       %{args: [thread]} = context do
+    context = World.running_turn(context, thread)
+    {_pid, runtime} = World.codex_runtime(context, thread)
+    late = %{native: runtime.turn.native_turn_id, provider_turn: runtime.turn.ids.provider_turn}
+    context |> end_turn(thread) |> Map.put(:late_turn, late)
+  end
+
+  step "Codex reports that turn's usage while the next turn of {string} runs",
+       %{args: [thread]} = context do
+    context = World.running_turn(context, thread)
+    %{native: native, provider_turn: provider_turn} = context.late_turn
+    context = report_usage(context, 150_000, native)
+
+    World.await_state(
+      context,
+      thread,
+      &match?(
+        %{"usedTokens" => 150_000},
+        &1.entities["provider-turn"][provider_turn]["tokenUsage"]
+      )
+    )
+
+    context
+  end
+
+  step "the usage counts for the turn it came from, and not the running one", context do
+    {_pid, runtime} = World.codex_runtime(context, context.thread)
+    turns = World.state(context, context.thread).entities["provider-turn"]
+
+    assert %{"usedTokens" => 150_000} = turns[context.late_turn.provider_turn]["tokenUsage"]
+    assert turns[runtime.turn.ids.provider_turn]["tokenUsage"] == nil
+    end_turn(context, context.thread)
+  end
+
   # --- a failed turn -------------------------------------------------------------------
 
   # A real Codex turn that ran a command, began its answer and then failed; Codex's
@@ -1357,13 +1392,14 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
 
   defp number(text), do: text |> String.replace(",", "") |> String.to_integer()
 
-  # Codex's `thread/tokenUsage/updated` for the running turn: `used` of 200,000 tokens.
-  defp report_usage(context, used) do
+  # Codex's `thread/tokenUsage/updated` for the running turn, or Codex's turn `turn_id`:
+  # `used` of 200,000 tokens.
+  defp report_usage(context, used, turn_id \\ nil) do
     {_pid, runtime} = World.codex_runtime(context, context.thread)
 
     World.codex_notify(context, context.thread, "thread/tokenUsage/updated", %{
       "threadId" => runtime.native_thread_id,
-      "turnId" => runtime.turn.native_turn_id,
+      "turnId" => turn_id || runtime.turn.native_turn_id,
       "tokenUsage" => %{
         "last" => %{
           "totalTokens" => used,

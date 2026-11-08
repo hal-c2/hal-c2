@@ -2238,7 +2238,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   # provider thread, so it outlives the run, and a model change, until Codex says more.
   defp notification(
          "thread/tokenUsage/updated",
-         %{"tokenUsage" => %{"last" => %{"totalTokens" => used} = last} = usage},
+         %{"tokenUsage" => %{"last" => %{"totalTokens" => used} = last} = usage} = params,
          state
        )
        when is_integer(used) do
@@ -2267,8 +2267,9 @@ defmodule HalC2.Codex.ThreadRuntime do
           &Map.put(&1, "contextUsage", snapshot)
         ),
         # Its turn keeps it too, which says which run it counts
-        # (`HalC2.Orchestration.Handoff.room/3`).
-        (turn = Map.get(state.turn.ids, :provider_turn)) &&
+        # (`HalC2.Orchestration.Handoff.room/3`): the turn Codex names, as a report
+        # can come after its turn ended and the next began.
+        (turn = reported_turn(params, state)) &&
           Orchestration.upsert(
             stream,
             "provider-turn",
@@ -2354,6 +2355,12 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp notification(_method, _params, state), do: state
+
+  # The provider turn a usage report is of: the one Codex names, or the running one.
+  defp reported_turn(%{"turnId" => native}, _state) when is_binary(native),
+    do: "provider-turn:codex:#{native}"
+
+  defp reported_turn(_params, state), do: Map.get(state.turn.ids, :provider_turn)
 
   # The instance quota is published under, resolved once: a turn's own
   # instance when settings here know it, or the driver when they do not (a

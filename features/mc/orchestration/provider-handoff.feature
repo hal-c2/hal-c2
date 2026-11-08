@@ -127,6 +127,14 @@ Feature: Changing model and provider mid-thread
     Then the next run reports the context occupancy from before the change
     And the meter does not reset to zero until the provider reports new usage
 
+  # A report that came after its turn ended, and was taken as the running turn's, left
+  # that turn's tokens out of the room a handoff has (#1363 review).
+  @mc
+  Scenario: A late usage report counts for the turn it came from
+    Given a Codex turn of "t1" ended before its usage report came
+    When Codex reports that turn's usage while the next turn of "t1" runs
+    Then the usage counts for the turn it came from, and not the running one
+
   @mc
   Scenario: Switching provider records the new instance
     When the user switches "t1" to "claudeAgent" with model "claude-x"
