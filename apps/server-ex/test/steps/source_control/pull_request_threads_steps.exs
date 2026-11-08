@@ -404,7 +404,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
     context
     |> answer_view()
     |> World.cli_rules(%{
-      "args" => ["pr checkout 42 --force"],
+      "args" => ["pr checkout 42"],
       "run" =>
         "git fetch -q origin +refs/pull/42/head:refs/heads/feature/tax && " <>
           "git checkout -q feature/tax && " <>
@@ -1275,34 +1275,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
       "ssh_url" => "git@codeberg.org:#{repository}.git"
     }
 
-  # fj signed in to codeberg.org, whose API is a `HalC2.Test.FakeHttp` serving `routes`
-  # (`HAL_C2_FORGEJO_API_BASE_URL`); its log is the context's `:forgejo`.
-  defp forgejo_api(context, routes) do
-    keys = Path.join(Mc.tmp_dir(context.mc, "forgejo-cli"), "keys.json")
-
-    File.write!(
-      keys,
-      JSON.encode!(%{
-        "hosts" => %{"codeberg.org" => %{"type" => "Application", "token" => "fj-token"}},
-        "aliases" => %{}
-      })
-    )
-
-    previous = Application.get_env(:hal_c2, :fj_keys_paths)
-    Application.put_env(:hal_c2, :fj_keys_paths, [keys])
-    ExUnit.Callbacks.on_exit(fn -> Application.put_env(:hal_c2, :fj_keys_paths, previous) end)
-
-    {base, log} = FakeHttp.start(routes)
-    Shared.put_env("HAL_C2_FORGEJO_API_BASE_URL", base)
-
-    context
-    |> World.fake_cli(["fj"])
-    |> World.cli_rules([
-      %{"cmd" => "fj", "args" => ["version"], "stdout" => "fj v0.6.0\n"},
-      %{"cmd" => "fj", "args" => ["whoami"], "stdout" => "octocat\n"}
-    ])
-    |> Map.put(:forgejo, log)
-  end
+  defp forgejo_api(context, routes), do: Shared.forgejo_api(context, routes)
 
   # Pull request 42 of "acme/shop" on codeberg.org, its head at the server's
   # `refs/pull/42/head`, the checkout's origin reached over `protocol`. Over HTTPS the
@@ -1394,10 +1367,13 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
   defp mode_of("the local checkout"), do: "local"
   defp mode_of("a new worktree"), do: "worktree"
 
-  # Pull request 42's head on the fake GitHub, and `gh pr view` answering for it (by
-  # number and by URL) with `fields` over the defaults; `gh pr checkout` checks it out
-  # as `gh` would. Once per scenario, unless `fields` change.
-  defp answer_view(context, fields \\ %{}) do
+  @doc """
+  Pull request 42's head on the fake GitHub, and `gh pr view` answering for it (by
+  number and by URL) with `fields` over the defaults; `gh pr checkout` checks it out
+  without forcing, switching to its branch (made from the head when missing) but not
+  moving it, as some hosts' CLIs do. Once per scenario, unless `fields` change.
+  """
+  def answer_view(context, fields \\ %{}) do
     if context[:pr_view] && fields == %{} do
       context
     else
@@ -1416,6 +1392,8 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
         )
 
       context = push_head(context, pr)
+      pr = Map.put_new(pr, "headRefOid", context.pr_head)
+      branch = pr["headRefName"]
 
       context
       |> World.cli_rules([
@@ -1428,10 +1406,11 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
           "exit" => 1
         },
         %{
-          "args" => ["pr checkout 42 --force"],
+          "args" => ["pr checkout 42"],
           "run" =>
-            "git fetch -q origin +refs/pull/42/head:refs/heads/#{pr["headRefName"]} && " <>
-              "git checkout -q #{pr["headRefName"]}"
+            "git fetch -q origin +refs/pull/42/head:refs/remotes/origin/pr/42 && " <>
+              "{ git checkout -q #{branch} 2>/dev/null || " <>
+              "git checkout -q -b #{branch} refs/remotes/origin/pr/42; }"
         }
       ])
       |> Map.put(:pr_view, pr)

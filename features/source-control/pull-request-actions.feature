@@ -914,7 +914,7 @@ Feature: Acting on a pull request
 
   # Upstream #15000: a pull request from another GitHub host could check out a same-named
   # repository on the checkout's host, with the wrong commit and remote.
-  @backlog @mc @priority-high
+  @mc
   Scenario Outline: A pull request from another host is checked out from that host
     Given the checkout's "acme/web" is on github.com
     And pull request 42 of "acme/web" is on <host>
@@ -929,7 +929,7 @@ Feature: Acting on a pull request
       | a Forgejo at git.acme.dev | in this repository     |
 
   # Upstream #15036: Check out here could throw away local edits and commits and still say it worked.
-  @backlog @mc @desktop @priority-high
+  @mc @desktop @backlog-desktop @priority-high
   Scenario Outline: Checking out here never discards the user's work
     Given the repository <state>
     When the user checks out pull request 42 in this repository from its review
