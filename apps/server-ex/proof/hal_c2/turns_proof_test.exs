@@ -12,6 +12,7 @@ defmodule HalC2.TurnsProofTest do
   @items "writes a turn's items, streamed text and requests; no run's status changes"
   @changes "builds a transaction's changes; each transaction is one step"
   @preparing "a run that waits on its worktree, then starts through begin_turn/2 as a message does"
+  @observe "what plugins hear of a turn (HalC2.Plugins.observe/1): reads a turn and its items; changes nothing"
   @steer "adds a message to the turn the runtime drives; here a message queues behind an active run"
 
   use HalC2.Proof,
@@ -126,6 +127,8 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.session_call/2" =>
         "answers a call into a session that stopped mid-call as a lookup that found none would; it changes no run",
       "HalC2.Orchestration.TurnWriter.commit/2" => @items,
+      "HalC2.Orchestration.TurnWriter.observed_item/1" => @observe,
+      "HalC2.Orchestration.TurnWriter.new_conversation?/1" => @observe,
       "HalC2.Orchestration.TurnWriter.buffer/4" => @items,
       "HalC2.Orchestration.TurnWriter.flush/2" => @items,
       "HalC2.Orchestration.TurnWriter.split_ready/1" => @items,

@@ -221,6 +221,47 @@ defmodule HalC2.TextGeneration do
     end)
   end
 
+  @doc """
+  What a plugin asks the user's text model (`HalC2.Plugins.Host.generate/3`): an object
+  with `schema`'s keys, written from the global settings in an empty directory, and
+  what writing it used: `{:ok, out, %{"instanceId", "model", "inputTokens",
+  "cachedInputTokens", "outputTokens", "costUsd", "estimated"}}`. A provider that
+  reports nothing is estimated at four characters a token, with no cost.
+  """
+  def for_plugin(prompt, schema) do
+    in_dir(nil, fn dir ->
+      case usable_selection(dir, :text) do
+        {:ok, selection} ->
+          with {:ok, out, reported} <-
+                 measured_run(selection, dir, prompt, schema, isolate: true, operation: "text") do
+            {:ok, out, usage(selection, prompt, out, reported)}
+          end
+
+        {:error, message} ->
+          {:error, {:unavailable, message}}
+      end
+    end)
+  end
+
+  @doc false
+  def usage(selection, prompt, out, reported) do
+    base = %{"instanceId" => selection["instanceId"], "model" => selection["model"]}
+
+    case reported do
+      %{} ->
+        Map.merge(base, Map.put(reported, "estimated", false))
+
+      nil ->
+        Map.merge(base, %{
+          "inputTokens" => div(String.length(prompt) + 3, 4),
+          "cachedInputTokens" => 0,
+          "outputTokens" => div(String.length(JSON.encode!(out)) + 3, 4),
+          "costUsd" => nil,
+          "estimated" => true
+        })
+    end
+  end
+
   # --- model selection ---------------------------------------------------------------
 
   @doc "The settings that apply to `cwd`: its project's, when it is in one."
@@ -385,6 +426,12 @@ defmodule HalC2.TextGeneration do
   end
 
   defp run(selection, cwd, prompt, schema, opts) do
+    with {:ok, out, _reported} <- measured_run(selection, cwd, prompt, schema, opts),
+         do: {:ok, out}
+  end
+
+  # `run/5`, and what the provider reported it used, or nil when it reports nothing.
+  defp measured_run(selection, cwd, prompt, schema, opts) do
     json_schema = %{
       "type" => "object",
       "properties" => Map.new(schema, fn {key, type} -> {key, %{"type" => to_string(type)}} end),
@@ -418,9 +465,15 @@ defmodule HalC2.TextGeneration do
           {plugin, HalC2.Plugins.generate(plugin, prompt, json_schema)}
       end
 
+    {result, reported} =
+      case result do
+        {:ok, out, reported} -> {{:ok, out}, reported}
+        other -> {other, nil}
+      end
+
     with {:ok, out} <- result do
       if valid?(out, schema),
-        do: {:ok, out},
+        do: {:ok, out, reported},
         else: {:error, "#{label} returned invalid structured output."}
     end
   end
@@ -487,7 +540,7 @@ defmodule HalC2.TextGeneration do
         {:ok, out} ->
           with {:ok, decoded} <- JSON.decode(out),
                %{} = result <- structured(decoded) do
-            {:ok, result}
+            {:ok, result, claude_usage(final_result(decoded))}
           else
             _ -> {:error, claude_reported(out) || "Claude returned invalid structured output."}
           end
@@ -537,6 +590,20 @@ defmodule HalC2.TextGeneration do
       _ -> nil
     end
   end
+
+  # What the final result says the call used, as `for_plugin/2` reports it.
+  defp claude_usage(%{"usage" => %{} = usage} = result) do
+    %{
+      "inputTokens" =>
+        (usage["input_tokens"] || 0) + (usage["cache_creation_input_tokens"] || 0) +
+          (usage["cache_read_input_tokens"] || 0),
+      "cachedInputTokens" => usage["cache_read_input_tokens"] || 0,
+      "outputTokens" => usage["output_tokens"] || 0,
+      "costUsd" => result["total_cost_usd"]
+    }
+  end
+
+  defp claude_usage(_result), do: nil
 
   defp final_result(list) when is_list(list),
     do: list |> Enum.reverse() |> Enum.find(&match?(%{"type" => "result"}, &1))

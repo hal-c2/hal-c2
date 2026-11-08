@@ -342,6 +342,30 @@ defmodule HalC2.Plugins.Extension do
       offered to agents in HAL-C2's MCP server, as an MCP tool pack's are, when the
       plugin was granted `agentTools`. The context names the thread whose agent is
       asking, so a plugin can offer a tool to its own threads only.
+    * `observe(event, context)`: with `turns:observe`, what agents do in every
+      thread, as it happens (`HalC2.Plugins.observe/1`): `turn.started` (`"threadId",
+      "runId", "projectId", "instanceId", "provider", "model", "newConversation"`),
+      `turn.item` (a tool call or message that ended: `"threadId", "runId", "itemId",
+      "itemType", "tool"`, the provider's own name for the tool where it has one, `"title",
+      "status", "input", "output"`, cut to 4,000 characters, and `"exitCode"`) and
+      `turn.finished` (`"threadId", "runId", "status", "tokenUsage"`: the provider's
+      last report of the conversation's context, `%{"usedTokens", "inputTokens",
+      "cachedInputTokens", "outputTokens", "maxTokens"}` as far as it reports them, or
+      nil when it has not). Events reach the plugin one at a time, in the order
+      each thread's turns had them, in a process of the plugin's own. A plugin too slow
+      to keep up misses events rather than holding agents back: the next event it gets
+      counts what it missed in `"dropped"`. What it missed while it was not running
+      stays in the threads (`HalC2.Plugins.Host.history/2`).
+    * `shape_run(run, context)`: with `runs:shape`, called as an agent starts a new
+      conversation, never for one it resumes, with `%{"threadId", "runId",
+      "projectId", "cwd", "instanceId", "provider", "model", "message", "toolUnit"}`.
+      It answers nil, or `%{"context" => text, "deniedTools" => [name]}` within 300 ms
+      (or is left out): `context` goes ahead of the conversation's first message, and
+      the conversation keeps `deniedTools` turned off for as long as it lasts, so its
+      tools never change under the provider's prompt cache. `toolUnit` says what
+      `deniedTools` names for the provider: `"tool"` (Claude's tool names, such as
+      `"WebFetch"`), `"capability"` (Codex's `"collaboration"`, `"goals"` and
+      `"image_media"`) or nil when the provider takes none.
 
   What else it may do goes through `HalC2.Plugins.Host`, checked against the
   permissions the user granted.
@@ -354,5 +378,11 @@ defmodule HalC2.Plugins.Extension do
   @callback agent_tools(context :: map) :: [map]
   @callback call_agent_tool(name :: String.t(), arguments :: map, context :: map) ::
               {:ok, term} | {:error, String.t()}
-  @optional_callbacks handle_event: 2, agent_tools: 1, call_agent_tool: 3
+  @callback observe(event :: map, context :: map) :: any
+  @callback shape_run(run :: map, context :: map) :: map | nil
+  @optional_callbacks handle_event: 2,
+                      agent_tools: 1,
+                      call_agent_tool: 3,
+                      observe: 2,
+                      shape_run: 2
 end

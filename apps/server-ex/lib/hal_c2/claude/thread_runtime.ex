@@ -114,7 +114,12 @@ defmodule HalC2.Claude.ThreadRuntime do
   # The subagent tool, taken from the CLI for a session kept to HAL-C2's workers
   # (`HalC2.Mcp.workers_only?/1`). Part of the launch, so a change restarts the CLI when
   # the next turn starts.
-  defp disallowed_tools(mcp), do: if(HalC2.Mcp.workers_only?(mcp), do: @agent_tools, else: [])
+  # So are the tools plugins turned off for the conversation (`HalC2.Orchestration.RunShape`),
+  # the same on every turn of it.
+  defp disallowed_tools(mcp, turn) do
+    workers = if HalC2.Mcp.workers_only?(mcp), do: @agent_tools, else: []
+    Enum.uniq(workers ++ Map.get(turn, :denied_tools, []))
+  end
 
   def driver, do: "claudeAgent"
 
@@ -368,7 +373,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       |> auto_compact(Entities.instance(ids))
       |> with_launch_args(Entities.instance(ids), Map.get(turn, :cwd))
       |> Map.put(:mcp, HalC2.Mcp.for_agent(state.thread_id, Entities.instance(ids)))
-      |> then(&Map.put(&1, :disallowed_tools, disallowed_tools(&1.mcp)))
+      |> then(&Map.put(&1, :disallowed_tools, disallowed_tools(&1.mcp, turn)))
       |> Map.put(:instance, Entities.instance(ids))
 
     # Where the turn resumes the conversation, until Claude writes (`kept_head/3`).
@@ -2879,7 +2884,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         else: state
 
     {kind, fields} = tool_kind(name, input, block["presentation"])
-    ensure_item(state, tool_id, kind, fields)
+    ensure_item(state, tool_id, kind, Map.put(fields, :native_name, name))
   end
 
   # Claude Code names each MCP tool use on its assistant message, in `tool_use_meta`

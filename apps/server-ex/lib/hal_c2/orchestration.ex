@@ -1585,6 +1585,8 @@ defmodule HalC2.Orchestration do
 
   defp start_turn_now(thread_id, turn) do
     turn = refresh_provider_thread(thread_id, turn)
+    # What plugins add to a new conversation, or what the one it resumes was given.
+    turn = HalC2.Orchestration.RunShape.apply(thread_id, turn)
 
     case restore_worktree(thread_id) do
       :ok ->
@@ -3513,7 +3515,8 @@ defmodule HalC2.Orchestration do
         {[], :refused}
 
       # The send woke the thread (`woken/2`) and it stays awake: its turn still runs.
-      status in @active_statuses ->
+      # A steer meant only for its run (`steerOnly`) goes nowhere else either.
+      status in @active_statuses or resend["steerOnly"] == true ->
         {released, :refused}
 
       true ->
@@ -4585,6 +4588,12 @@ defmodule HalC2.Orchestration do
           (steer or auto_steer) and steerable?(active, instance) ->
             reserve_steer(state, active, command)
 
+          # A steer meant only for its run is never queued behind it.
+          steer and command["steerOnly"] == true ->
+            {[],
+             {:error,
+              "#{HalC2.ThreadMove.provider_name(active_instance)} cannot take messages while it works."}}
+
           steer ->
             case HalC2.Orchestration.CommandPolicy.decide_steering(active_instance, false) do
               {:ok, _} -> queue_run(state, thread, runs, command, active["id"])
@@ -4676,10 +4685,12 @@ defmodule HalC2.Orchestration do
 
   # A steer for a turn that completed before it arrived (the client still showed the
   # turn running) is sent as a message of its own, never lost.
+  # A steer meant only for its run (`steerOnly`, a plugin's) is refused instead.
   defp late_steer(runs, command) do
     target = get_in(command, ["dispatchMode", "targetRunId"])
 
     if get_in(command, ["dispatchMode", "type"]) == "steer_active" and
+         command["steerOnly"] != true and
          Enum.any?(runs, &(&1["id"] == target and &1["status"] == "completed")) do
       command
       |> Map.put("dispatchMode", %{"type" => "queue_after_active"})
@@ -5354,6 +5365,9 @@ defmodule HalC2.Orchestration do
       run_ordinal: ordinal,
       started_ms: System.system_time(:millisecond),
       text: HalC2.Orchestration.Handoff.prompt(handoff.context, provider_text),
+      # The user's message alone, for the plugins that shape a new conversation
+      # (`HalC2.Orchestration.RunShape`).
+      message: provider_text,
       # What a new provider conversation gets when the one to resume is gone
       # (`HalC2.Orchestration.Handoff.opened/2`).
       fresh: handoff.fallback && Map.put(handoff.fallback, :text, provider_text),

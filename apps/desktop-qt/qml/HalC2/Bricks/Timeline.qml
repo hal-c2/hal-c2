@@ -1576,6 +1576,8 @@ Item {
                             exited: entry.exitCode !== undefined && entry.exitCode !== null,
                             exitCode: entry.exitCode ?? 0,
                             preview: entry.preview ?? "",
+                            // A plugin's notice that offers to stop the run while it works.
+                            interrupt: entry.interrupt === true,
                             // Work a fork carried over: "Inherited", and the thread it came from.
                             visibility: entry.visibility ?? "",
                             source: entry.source ?? "",
@@ -1593,8 +1595,12 @@ Item {
                             })
                         };
                     }
+                    // A plugin's notice in the group offers to stop the run
+                    // while it works; the live row carries its Stop too.
+                    property bool stopOffered: false
                     function syncCalls() {
                         const next = root.list(row.entries);
+                        stopOffered = next.some(entry => entry.interrupt === true);
                         let at = 0;
                         for (; at < next.length && at < calls.count; ++at) {
                             const want = callOf(next[at]);
@@ -1657,7 +1663,21 @@ Item {
                         preview: workGroup.latest?.preview ?? ""
                         interactive: true
                         Accessible.name: workGroup.merged ? qsTr("%1, +%2 previous tool calls").arg(label).arg(row.hiddenCount) : label
-                        onClicked: root.toggle(row.rowId)
+                        onClicked: position => {
+                            // Stop takes its own tap.
+                            if (groupStop.visible && groupStop.contains(groupStop.mapFromItem(groupToggle, position)))
+                                return;
+                            root.toggle(row.rowId);
+                        }
+                        ActionLink {
+                            id: groupStop
+                            objectName: "noticeInterrupt"
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: workGroup.merged && workGroup.stopOffered
+                            text: qsTr("Stop")
+                            Accessible.name: qsTr("Stop the agent")
+                            onClicked: Shell.dispatch("composer.interrupt")
+                        }
                         RowText {
                             objectName: "workGroupStatus"
                             anchors.verticalCenter: parent.verticalCenter
@@ -1820,6 +1840,8 @@ Item {
                                             // Open takes its own tap.
                                             if (openLink.visible && openLink.contains(openLink.mapFromItem(callLine, position)))
                                                 return;
+                                            if (stopLink.visible && stopLink.contains(stopLink.mapFromItem(callLine, position)))
+                                                return;
                                             const next = Object.assign({}, row.openCalls);
                                             next[call.modelData.id] = !call.open;
                                             row.openCalls = next;
@@ -1831,6 +1853,15 @@ Item {
                                             visible: (call.modelData.path ?? "").length > 0
                                             text: qsTr("Open")
                                             onClicked: root.fileActivated(call.modelData.path, "files", row.rowId)
+                                        }
+                                        ActionLink {
+                                            id: stopLink
+                                            objectName: "noticeInterrupt"
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            visible: call.modelData.interrupt === true
+                                            text: qsTr("Stop")
+                                            Accessible.name: qsTr("Stop the agent")
+                                            onClicked: Shell.dispatch("composer.interrupt")
                                         }
                                         RowText {
                                             objectName: "workCallVisibility"

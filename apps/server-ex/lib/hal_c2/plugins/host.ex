@@ -227,6 +227,165 @@ defmodule HalC2.Plugins.Host do
     end
   end
 
+  @doc """
+  Steers run `run_id` of `thread_id` with `text`, as a user's steer does, and only it:
+  a run that has ended, is being stopped, or whose provider cannot take a message while
+  it works refuses it, and the message is neither queued nor kept (`steerOnly`). Needs
+  `threads:steer`. `{:ok, receipt}` once the provider took it, or `{:error, message}`.
+  """
+  def steer(id, thread_id, run_id, text) when is_binary(text) and text != "" do
+    with :ok <- permit(id, "threads:steer") do
+      HalC2.Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "commandId" => "plugin:#{id}:#{HalC2.Environment.uuid4()}",
+        "threadId" => thread_id,
+        "text" => text,
+        "attachments" => [],
+        "createdBy" => "system",
+        "creationSource" => "server",
+        "deliveryIntent" => "steer",
+        "dispatchMode" => %{"type" => "steer_active", "targetRunId" => run_id},
+        "steerOnly" => true
+      })
+    end
+  end
+
+  @doc """
+  Shows `message` in `thread_id`'s timeline, in run `run_id`, as a notice from the
+  plugin (`system_notice`, with its `pluginId`). `opts`: `title` (the message when
+  left out) and `interrupt: true`, which offers a button that stops the run while it
+  works. Needs `threads:notice`. `{:ok, item_id}`, or `{:error, message}` when the
+  thread has no such run.
+  """
+  def notice(id, thread_id, run_id, message, opts \\ []) when is_binary(message) do
+    alias HalC2.Orchestration.Entities
+
+    with :ok <- permit(id, "threads:notice") do
+      item_id = "turn-item:plugin:#{id}:#{HalC2.Environment.uuid4()}"
+      title = Keyword.get(opts, :title) || message
+
+      fields =
+        %{"title" => title, "message" => message, "pluginId" => id}
+        |> then(&if(opts[:interrupt], do: Map.put(&1, "actions", ["interrupt"]), else: &1))
+
+      HalC2.Streams.transact(thread_id, :thread, fn stream ->
+        case HalC2.StreamState.get(stream, "run")[run_id] do
+          %{} = run ->
+            ids = %{
+              thread: thread_id,
+              run: run_id,
+              root_node: run["rootNodeId"],
+              provider_thread: run["providerThreadId"]
+            }
+
+            item =
+              Entities.turn_item(
+                ids,
+                item_id,
+                "system_notice",
+                HalC2.Orchestration.next_ordinal(stream),
+                "completed",
+                Entities.now(),
+                fields
+              )
+
+            {[HalC2.Orchestration.create("turn-item", item_id, item)], {:ok, item_id}}
+
+          nil ->
+            {[], {:error, "Thread #{thread_id} has no run #{run_id}."}}
+        end
+      end)
+    end
+  end
+
+  @doc """
+  Asks the user's text generation model (`HalC2.TextGeneration.for_plugin/2`) for an
+  object with the `schema`'s keys (`%{"key" => "string" | "boolean"}`), in an empty
+  directory: `{:ok, object, usage}`, where `usage` is `%{"instanceId", "model",
+  "inputTokens", "cachedInputTokens", "outputTokens", "costUsd", "estimated"}`
+  (`estimated` when the provider reports none, from the lengths of the prompt and the
+  answer), or `{:error, message}`. Needs `textGeneration`.
+  """
+  def generate(id, prompt, schema) when is_binary(prompt) and is_map(schema) do
+    with :ok <- permit(id, "textGeneration"),
+         {:ok, schema} <- generation_schema(schema) do
+      case HalC2.TextGeneration.for_plugin(prompt, schema) do
+        {:ok, out, usage} -> {:ok, out, usage}
+        {:error, {:unavailable, message}} -> {:error, message}
+        {:error, message} when is_binary(message) -> {:error, message}
+        {:error, reason} -> {:error, inspect(reason)}
+      end
+    end
+  end
+
+  defp generation_schema(schema) do
+    Enum.reduce_while(schema, {:ok, %{}}, fn
+      {key, type}, {:ok, acc} when is_binary(key) and type in ["string", "boolean"] ->
+        {:cont, {:ok, Map.put(acc, key, String.to_existing_atom(type))}}
+
+      {key, _type}, _acc ->
+        {:halt, {:error, "#{inspect(key)} is not a key with type \"string\" or \"boolean\"."}}
+    end)
+  end
+
+  @doc """
+  The turns `thread_id` ran, oldest first, the newest `limit` (50 when left out) of
+  those that ended: `%{"runId", "ordinal", "status", "instanceId", "model",
+  "startedAt", "completedAt", "tokenUsage", "items"}`, each item as plugins hear it
+  (`HalC2.Orchestration.TurnWriter.observed_item/1`), in the turn's order. What a
+  plugin that hears turns missed while it was not running. Needs `turns:observe`.
+  `{:error, message}` when there is no such thread.
+  """
+  def history(id, thread_id, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 50)
+
+    with :ok <- permit(id, "turns:observe") do
+      HalC2.Streams.read(thread_id, fn stream ->
+        if HalC2.StreamState.get(stream, "thread")[thread_id],
+          do: {:ok, turns(stream, limit)},
+          else: {:error, "There is no thread #{thread_id}."}
+      end)
+    end
+  end
+
+  @ended ~w(completed interrupted failed cancelled)
+
+  defp turns(stream, limit) do
+    alias HalC2.StreamState
+
+    items =
+      stream
+      |> StreamState.list("turn-item")
+      |> Enum.group_by(& &1["runId"])
+
+    attempts = StreamState.get(stream, "run-attempt")
+    provider_turns = StreamState.get(stream, "provider-turn")
+
+    stream
+    |> StreamState.list("run")
+    |> Enum.filter(&(&1["status"] in @ended))
+    |> Enum.sort_by(& &1["ordinal"])
+    |> Enum.take(-limit)
+    |> Enum.map(fn run ->
+      provider_turn = (attempts[run["activeAttemptId"]] || %{})["providerTurnId"]
+
+      %{
+        "runId" => run["id"],
+        "ordinal" => run["ordinal"],
+        "status" => run["status"],
+        "instanceId" => run["providerInstanceId"],
+        "model" => get_in(run, ["modelSelection", "model"]),
+        "startedAt" => run["startedAt"],
+        "completedAt" => run["completedAt"],
+        "tokenUsage" => (provider_turns[provider_turn] || %{})["tokenUsage"],
+        "items" =>
+          (items[run["id"]] || [])
+          |> Enum.sort_by(& &1["ordinal"])
+          |> Enum.map(&HalC2.Orchestration.TurnWriter.observed_item/1)
+      }
+    end)
+  end
+
   @doc "Whether plugin `id` was granted `permission`."
   def granted?(id, permission), do: permission in Plugins.granted(id)
 

@@ -23,7 +23,14 @@ defmodule HalC2.Plugins.Package do
     "threads:create" => "Start threads that run agents",
     "threads:organize" =>
       "Settle and stop threads it started, and show or hide them in the thread list",
-    "agentTools" => "Offer tools to agents"
+    "agentTools" => "Offer tools to agents",
+    "turns:observe" =>
+      "See what agents do in every thread: the tools they call, what those return, and the tokens turns use",
+    "runs:shape" =>
+      "Add context to agents starting a new conversation, and turn some of their tools off",
+    "threads:steer" => "Send messages to agents while they work",
+    "threads:notice" => "Show notices in threads, with a button to stop the agent",
+    "textGeneration" => "Ask your text generation model to write for it"
   }
 
   @setting_types ~w(text longText secret boolean number choice list object)

@@ -1532,9 +1532,30 @@ defmodule HalC2.Codex.ThreadRuntime do
           }
       end
 
-    if state.workers_only,
-      do: Map.put(mcp, "features", %{"multi_agent" => false, "multi_agent_v2" => false}),
-      else: mcp
+    features =
+      if state.workers_only, do: %{"multi_agent" => false, "multi_agent_v2" => false}, else: %{}
+
+    {features, toggles} = capabilities_off(features, Map.get(turn, :denied_tools, []))
+    config = Map.merge(mcp, toggles)
+    if features == %{}, do: config, else: Map.put(config, "features", features)
+  end
+
+  # The capabilities plugins turned off for the conversation (`HalC2.Orchestration.RunShape`),
+  # as Codex's config: `{features, other keys}`.
+  @capabilities %{
+    "collaboration" =>
+      {%{"multi_agent" => false, "multi_agent_v2" => false},
+       %{"include_collaboration_mode_instructions" => false}},
+    "goals" => {%{"goals" => false}, %{}},
+    "image_media" => {%{"view_image" => false}, %{}}
+  }
+
+  defp capabilities_off(features, denied) do
+    for capability <- denied,
+        {more, toggles} <- [@capabilities[capability]],
+        reduce: {features, %{}} do
+      {features, config} -> {Map.merge(features, more), Map.merge(config, toggles)}
+    end
   end
 
   # Codex takes `features` only when a native thread starts, so the choice is read then

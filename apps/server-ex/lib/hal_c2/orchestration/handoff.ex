@@ -761,10 +761,13 @@ defmodule HalC2.Orchestration.Handoff do
     end
   end
 
+  # The plugins' context for the conversation goes first again, as it did when the
+  # conversation started (`HalC2.Orchestration.RunShape`).
   defp afresh(%{fresh: %{} = fresh} = turn) do
     history = HalC2.Streams.read(fresh.thread, &transcript(&1, fresh.ordinal))
     context = wrap(history, fresh.merged, fresh.moved, nil, fresh.restart, :merged_first)
-    %{turn | text: prompt(context, fresh.text), fresh: nil}
+    text = prompt(Map.get(turn, :shape_context), prompt(context, fresh.text))
+    %{turn | text: text, fresh: nil}
   end
 
   defp afresh(turn), do: turn

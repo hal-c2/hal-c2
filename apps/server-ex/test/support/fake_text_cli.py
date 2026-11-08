@@ -5,7 +5,7 @@
 # replaces answers by key, $FAKE_TEXT_FAIL makes the call fail with that message and
 # $FAKE_TEXT_HANG makes it never answer. $FAKE_TEXT_EXIT makes it exit with that code
 # (printing $FAKE_TEXT_FAIL, if any, on stderr), and $FAKE_TEXT_STDOUT replaces what
-# Claude prints on stdout (before it exits).
+# Claude prints on stdout (before it exits). Claude's answer reports usage as Claude's does.
 #
 # With $FAKE_TEXT_ANSWERS set, a title comes from that file instead, one line per
 # call, used up in order: "fail" fails the call, and an empty or missing file titles
@@ -67,4 +67,8 @@ if codex:
     with open(args[args.index("--output-last-message") + 1], "w") as f:
         f.write(json.dumps(out))
 else:
-    print(json.dumps([{"type": "system"}, {"type": "result", "structured_output": out}]))
+    # What Claude reports the call used: a token per four characters, half the prompt cached.
+    usage = {"input_tokens": len(prompt) // 8, "cache_read_input_tokens": len(prompt) // 8,
+             "output_tokens": len(json.dumps(out)) // 4}
+    print(json.dumps([{"type": "system"},
+                      {"type": "result", "structured_output": out, "usage": usage, "total_cost_usd": 0.0001}]))

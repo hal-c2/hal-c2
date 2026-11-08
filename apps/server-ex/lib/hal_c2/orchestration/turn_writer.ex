@@ -44,6 +44,15 @@ defmodule HalC2.Orchestration.TurnWriter do
     if Map.has_key?(state.items, native) do
       state
     else
+      # The provider's own name for the tool (`:native_name`), for plugins that hear
+      # turns or read their history: `providerToolName` on the item.
+      {native_name, fields} = Map.pop(fields, :native_name)
+
+      fields =
+        if is_binary(native_name),
+          do: Map.put(fields, "providerToolName", native_name),
+          else: fields
+
       ids = state.turn.ids
       driver = Entities.driver(ids)
       at = Entities.now()
@@ -269,7 +278,9 @@ defmodule HalC2.Orchestration.TurnWriter do
     tail = item[:kind] == :command && CommandTail.get(state.thread_id, item_id)
     fun = if item[:kind] == :command, do: &keep_output(fun.(&1), tail || ""), else: fun
 
-    opened =
+    observing = HalC2.Plugins.observing?()
+
+    {opened, current} =
       HalC2.Streams.transact(state.thread_id, :thread, fn stream ->
         changes = [
           Orchestration.upsert(
@@ -301,12 +312,66 @@ defmodule HalC2.Orchestration.TurnWriter do
             _ -> []
           end
 
-        {Enum.filter(changes, &is_tuple/1), opened}
+        # What plugins that hear turns get of the item, as the thread now has it.
+        current =
+          case observing && StreamState.get(stream, "turn-item")[item_id] do
+            %{} = current -> fun.(current)
+            _ -> nil
+          end
+
+        {Enum.filter(changes, &is_tuple/1), {opened, current}}
       end)
 
     if opened != [], do: Opened.link(state.thread_id, opened)
     if item[:kind] == :command, do: CommandTail.delete(state.thread_id, item_id)
+    if current, do: observe_item(state, status, current)
     state
+  end
+
+  # Plugins that hear turns hear each item that ended, as the thread has it.
+  defp observe_item(state, status, current) do
+    HalC2.Plugins.observe(
+      current
+      |> observed_item()
+      |> Map.merge(%{
+        "type" => "turn.item",
+        "threadId" => state.thread_id,
+        "runId" => state.turn.ids.run,
+        "status" => status
+      })
+    )
+  end
+
+  @observed_chars 4_000
+
+  @doc """
+  What a plugin hears or reads of a turn item (`HalC2.Plugins.Extension`'s `observe/2`,
+  `HalC2.Plugins.Host.history/2`): `"itemId", "itemType", "tool"` (the provider's own
+  name for the tool, where it has one), `"title", "status", "input", "output",
+  "exitCode"`, the input and output cut to their last #{@observed_chars} characters, a
+  value that is not text as its JSON.
+  """
+  def observed_item(item) do
+    %{
+      "itemId" => item["id"],
+      "itemType" => item["type"],
+      "tool" => item["providerToolName"] || item["toolName"],
+      "title" => item["title"],
+      "status" => item["status"],
+      "input" => observed(item["input"]),
+      "output" => observed(item["output"]),
+      "exitCode" => item["exitCode"]
+    }
+  end
+
+  defp observed(nil), do: nil
+  defp observed(text) when is_binary(text), do: cut_text(text)
+  defp observed(value), do: value |> JSON.encode!() |> cut_text()
+
+  defp cut_text(text) do
+    if String.length(text) > @observed_chars,
+      do: String.slice(text, -@observed_chars, @observed_chars),
+      else: text
   end
 
   # What the thread keeps of a command's output: the provider's own account of it, or
@@ -573,7 +638,8 @@ defmodule HalC2.Orchestration.TurnWriter do
     at = Entities.now()
     TurnWatch.claim(state.thread_id, ids.run)
 
-    commit_active(state, ids.run, fn stream ->
+    state
+    |> commit_active(ids.run, fn stream ->
       [
         Orchestration.create(
           "provider-turn",
@@ -616,7 +682,33 @@ defmodule HalC2.Orchestration.TurnWriter do
         )
       ]
     end)
+    |> tap(&if(&1 == :ok, do: observe_started(state)))
   end
+
+  # Plugins that hear turns (`HalC2.Plugins.observe/1`) hear this one start.
+  defp observe_started(%{turn: turn} = state) do
+    if HalC2.Plugins.observing?() do
+      HalC2.Plugins.observe(%{
+        "type" => "turn.started",
+        "threadId" => state.thread_id,
+        "runId" => turn.ids.run,
+        "projectId" => Map.get(turn, :project_id),
+        "instanceId" => Entities.instance(turn.ids),
+        "provider" => Entities.driver(turn.ids),
+        "model" => Map.get(turn, :model),
+        "newConversation" => new_conversation?(turn)
+      })
+    end
+  end
+
+  @doc """
+  Whether `turn` starts a new provider conversation, rather than resuming one, forking
+  one or waking one the provider started by itself.
+  """
+  def new_conversation?(turn),
+    do:
+      Map.get(turn, :native_thread_id) == nil and Map.get(turn, :fork) == nil and
+        Map.get(turn, :wake) != true
 
   @doc """
   Ends the run: provider turn, attempt, run, root node, and provider thread.
@@ -874,6 +966,8 @@ defmodule HalC2.Orchestration.TurnWriter do
       )
     )
 
+    observe_finished(state, status)
+
     Task.start(fn ->
       if queue?, do: Orchestration.start_next(thread_id)
       # Notification channels hear about turns nobody was watching end.
@@ -889,6 +983,26 @@ defmodule HalC2.Orchestration.TurnWriter do
     Task.start(fn -> HalC2.Space.PageAgent.report(thread_id) end)
 
     :ok
+  end
+
+  # Plugins that hear turns hear this one end, from the process that drove it, after
+  # its items. The usage is the provider's last report of the conversation's context:
+  # the turn's own, or the provider thread's.
+  defp observe_finished(state, status) do
+    if HalC2.Plugins.observing?() do
+      ids = state.turn.ids
+      stream = HalC2.Streams.state(state.thread_id)
+      provider_turn = StreamState.get(stream, "provider-turn")[ids[:provider_turn]] || %{}
+      provider_thread = StreamState.get(stream, "provider-thread")[ids[:provider_thread]] || %{}
+
+      HalC2.Plugins.observe(%{
+        "type" => "turn.finished",
+        "threadId" => state.thread_id,
+        "runId" => ids.run,
+        "status" => status,
+        "tokenUsage" => provider_turn["tokenUsage"] || provider_thread["contextUsage"]
+      })
+    end
   end
 
   @doc """

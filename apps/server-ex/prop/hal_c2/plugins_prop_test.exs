@@ -14,14 +14,18 @@ defmodule HalC2.PluginsPropTest do
   settings saved last, after a crash too), read its files, follow, publish and drop topics,
   kill a client, crash a plugin's process once or until its supervisor gives up, crash
   a worker announced the way a host from before an update in place heard of them,
-  install and turn on a package that hears Slack, hand the running plugins Slack events (`slack_event/2`, in one series, as the Slack
+  hand the running plugins a turn (`observe/1`: every package hears turns, and only
+  those granted `turns:observe` may) and ask them to shape a run (`shape_run/1`:
+  version 2 of a package answers from the settings it runs with, so a save it takes
+  live must reach that too), install and turn on a package that hears Slack, hand the running plugins Slack events (`slack_event/2`, in one series, as the Slack
   courier does) that each plugin holds until the test releases it, check that a
   package's code compiles without enabling it (`plugins.compile`: what runs and is
   loaded must be as it was, whatever the code does as it compiles), and kill the host
   itself, and break settings.json and mend it (a document the MC cannot read refuses every
   save: enabling, disabling and saving settings answer `ServerSettingsError` and change
   nothing, and a new version's dropped permissions stay granted). After every step the listing, the document, the code that is loaded and
-  running, what the packages' code did at compile time, the host's monitors, and the
+  running, what the packages' code did at compile time, the host's monitors, the hooks
+  of the running plugins (`HalC2.Plugins.Feed`), and the
   events still waiting for a plugin must agree with the model: an event belongs to the
   run of the plugin it was handed to, and is dropped when that run stops.
   """
@@ -41,6 +45,7 @@ defmodule HalC2.PluginsPropTest do
   @marker "••••••"
   @defaults %{"count" => 1, "mode" => "a", "tags" => []}
   @valid [:ok, :ui, :compile_error, :two_modules, :second_broken]
+  @hooks ["turns:observe", "runs:shape"]
 
   setup do
     saved =
@@ -107,6 +112,7 @@ defmodule HalC2.PluginsPropTest do
   defp flush_heard do
     receive do
       {:prop_heard, _id, _n, _pid} -> flush_heard()
+      {:prop_observed, _id, _n} -> flush_heard()
     after
       0 -> :ok
     end
@@ -167,6 +173,10 @@ defmodule HalC2.PluginsPropTest do
         {1, {:call, __MODULE__, :kill_plugins, []}},
         {1, {:call, __MODULE__, :stale_worker, [held]}},
         {2, {:call, __MODULE__, :listen, [id(), oneof(["1", "2"])]}},
+        {2, {:call, __MODULE__, :hook, [id(), oneof(["1", "2"])]}},
+        {2, {:call, __MODULE__, :observe_turn, [integer(1, 9)]}},
+        {if(hooked(state, :shape, "runs:shape") == [], do: 1, else: 6),
+         {:call, __MODULE__, :shape, []}},
         {if(state.broken, do: 3, else: 1),
          {:call, __MODULE__, if(state.broken, do: :mend_settings, else: :break_settings), []}},
         {if(hearing(state) == [], do: 1, else: 8), {:call, __MODULE__, :deliver, [state.next]}}
@@ -228,7 +238,9 @@ defmodule HalC2.PluginsPropTest do
           ["threads:read"],
           ["projects:read", "threads:read"],
           ["slack:read"],
-          ["projects:read", "slack:read"]
+          ["projects:read", "slack:read"],
+          ["turns:observe"],
+          ["turns:observe", "runs:shape"]
         ])
     ] do
       {variant, version, permissions}
@@ -245,6 +257,7 @@ defmodule HalC2.PluginsPropTest do
         ["threads:read"],
         ["projects:read", "threads:read"],
         ["slack:read"],
+        ["turns:observe", "runs:shape"],
         "projects:read",
         [1]
       ])
@@ -378,6 +391,16 @@ defmodule HalC2.PluginsPropTest do
         do: {id, run}
   end
 
+  # The running plugins whose code loaded: each hears turns, version 2 shapes runs too.
+  defp hooked(s) do
+    for {id, %{running: true, st: :compiled, desc: {:ok, version, _}}} <- s.held,
+        hook <- if(version == "2", do: [:observe, :shape], else: [:observe]),
+        do: {hook, id}
+  end
+
+  defp hooked(s, hook, permission),
+    do: for({^hook, id} <- hooked(s), permission in conf(s, id).granted, do: id)
+
   # Every running plugin whose code loaded and that was granted slack:read is handed the
   # event; it hears it once it is done with the ones before.
   defp act(s, {:call, _, :deliver, [n]}) do
@@ -387,6 +410,25 @@ defmodule HalC2.PluginsPropTest do
       end)
 
     {%{s | queue: queue, next: max(s.next, n + 1)}, :ok}
+  end
+
+  defp act(s, {:call, _, :observe_turn, [_n]}),
+    do: {s, {:exactly, Enum.sort(hooked(s, :observe, "turns:observe"))}}
+
+  defp act(s, {:call, _, :shape, []}) do
+    case hooked(s, :shape, "runs:shape") do
+      [] ->
+        {s, {:exactly, nil}}
+
+      ids ->
+        {s,
+         {:exactly,
+          %{
+            contexts: Enum.sort(for id <- ids, do: "#{id} #{effective(conf(s, id))["mode"]}"),
+            denied: Enum.sort(["shared" | for(id <- ids, do: "#{id}-tool")]),
+            plugins: Enum.sort(ids)
+          }}}
+    end
   end
 
   defp act(s, {:call, _, :release, [id, n]}),
@@ -399,6 +441,12 @@ defmodule HalC2.PluginsPropTest do
   end
 
   # `{next state, the reply expected}`.
+  # A package that hears and shapes turns installed and turned on, as `listen/2`.
+  defp act(s, {:call, _, :hook, [id, version]}) do
+    {s, :ok} = act(s, {:call, nil, :install, [id, {:ok, version, @hooks}]})
+    act(s, {:call, nil, :enable, [id, @hooks]})
+  end
+
   defp act(s, {:call, _, :write, [id, desc]}), do: {put_in(s.disk[id], desc), :ok}
   defp act(s, {:call, _, :break_settings, []}), do: {%{s | broken: true}, :ok}
   defp act(s, {:call, _, :mend_settings, []}), do: {%{s | broken: false}, :ok}
@@ -785,6 +833,7 @@ defmodule HalC2.PluginsPropTest do
       observed.code
     )
     |> check(:monitors, monitors(s), observed.monitors)
+    |> check(:hooks, Enum.sort(hooked(s)), observed.hooks)
     |> check(
       :waiting,
       Enum.sort(for {id, q} <- s.queue, {_, n} <- q, do: {id, n}),
@@ -1139,6 +1188,54 @@ defmodule HalC2.PluginsPropTest do
     {Plugins.handle("enable", %{"id" => id, "acceptPermissions" => ["slack:read"]}), observe()}
   end
 
+  def hook(id, version) do
+    put_package(id, {:ok, version, @hooks})
+    Plugins.handle("rescan", %{})
+    {Plugins.handle("enable", %{"id" => id, "acceptPermissions" => @hooks}), observe()}
+  end
+
+  # A turn's event handed to the plugins that hear turns; each has heard it once its
+  # feed answers. The reply is who heard it.
+  def observe_turn(n) do
+    :ok = Plugins.observe(%{"type" => "turn.started", "n" => n})
+
+    for {pid, _} <- HalC2.Plugins.Feed.lookup(:observe) do
+      try do
+        :sys.get_state(pid)
+      catch
+        :exit, _ -> :gone
+      end
+    end
+
+    {heard_turn(n, []), observe()}
+  end
+
+  defp heard_turn(n, ids) do
+    receive do
+      {:prop_observed, id, ^n} -> heard_turn(n, [id | ids])
+    after
+      0 -> Enum.sort(ids)
+    end
+  end
+
+  # What the plugins that shape runs add to a new conversation, without their order.
+  def shape do
+    reply =
+      case Plugins.shape_run(%{"threadId" => "prop"}) do
+        nil ->
+          nil
+
+        %{"context" => context, "deniedTools" => denied, "plugins" => plugins} ->
+          %{
+            contexts: context |> String.split("\n\n") |> Enum.sort(),
+            denied: Enum.sort(denied),
+            plugins: Enum.sort(plugins)
+          }
+      end
+
+    {reply, observe()}
+  end
+
   # Event `n` is handed on, after the ones before it, as the Slack courier hands them.
   def deliver(n) do
     previous = Process.get({__MODULE__, :previous})
@@ -1215,7 +1312,8 @@ defmodule HalC2.PluginsPropTest do
       code: Map.new(@code_ids, &{&1, code(&1)}),
       marks: new_marks(),
       monitors: observed_monitors(),
-      waiting: waiting()
+      waiting: waiting(),
+      hooks: hooks()
     }
   end
 
@@ -1291,6 +1389,18 @@ defmodule HalC2.PluginsPropTest do
   defp waiting do
     for({key, pid} <- Process.get({__MODULE__, :tasks}), Process.alive?(pid), do: key)
     |> Enum.sort()
+  end
+
+  # The hooks of live feeds: a stopped feed's entry may outlive it until the registry
+  # hears of its exit, and is never handed anything.
+  defp hooks do
+    HalC2.Plugins.Hooks
+    |> Registry.select([{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
+    |> Enum.filter(fn {_key, pid} -> Process.alive?(pid) end)
+    |> Enum.map(&elem(&1, 0))
+    |> Enum.sort()
+  rescue
+    ArgumentError -> []
   end
 
   defp observed_monitors do
@@ -1490,11 +1600,22 @@ defmodule HalC2.PluginsPropTest do
 
         def call(method, _input, _context), do: {:error, "no method " <> method}
 
+        def observe(event, context), do: send(#{inspect(probe())}, {:prop_observed, context.id, event["n"]})
+
+        #{if version == "2", do: shape_run()}
+
         def handle_event(event, context) do
           send(#{inspect(probe())}, {:prop_heard, context.id, event["n"], self()})
           #{inspect(__MODULE__)}.hold()
         end
       end
+      """
+    end
+
+    defp shape_run do
+      """
+      def shape_run(_run, context),
+        do: %{"context" => context.id <> " " <> context.settings["mode"], "deniedTools" => [context.id <> "-tool", "shared"]}
       """
     end
 

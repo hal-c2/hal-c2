@@ -2221,6 +2221,13 @@ QVariantMap TimelineModel::entry(const QJsonObject& item, bool live) const {
     detail = text(item, QLatin1String("message"));
   } else if (type == QLatin1String("system_notice")) {
     label = text(item, QLatin1String("message"));
+    // A plugin's titled notice keeps its message as the detail (Host.notice).
+    if (!title.isEmpty() && title != label) detail = label;
+    // It offers to stop its run while that works.
+    if (item.value(QLatin1String("actions")).toArray().contains(QStringLiteral("interrupt")) &&
+        kRunning.contains(text(entity(QStringLiteral("run"), text(item, QLatin1String("runId"))), QLatin1String("status")))) {
+      entry.insert(QStringLiteral("interrupt"), true);
+    }
   } else {
     label = type;
   }
