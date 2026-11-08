@@ -1,0 +1,169 @@
+sload model-checker
+
+--- One sandboxed code review's lease (#1412). The opener (HalC2.OpenShell.Review.open/1)
+--- checks the review was not stopped, issues the broker token, creates the provider and
+--- the sandbox on the gateway, then binds them; a stop, the deadline, a token budget used
+--- up or the first report taken closes the review: its token is revoked, its binding goes
+--- and its sandbox and provider are deleted. The agent reports through the broker, which
+--- takes one report per token. The review process restarts, the whole MC goes down and
+--- comes back, the gateway refuses a step, and the reaper's timer deletes what is past
+--- its lease whether the MC runs or not.
+--- proof/hal_c2/review_lease_proof_test.exs maps it to the code and checks it.
+
+mod REVIEW-LEASE is
+  protecting NAT .
+  protecting BOOL .
+
+  sorts Stage Tok Mc Item Conf Sys .
+  subsort Item < Conf .
+
+  --- The opener: before its first call, past it, the token issued, the provider made,
+  --- the sandbox made (ready, composed, checked out), returned with its binding, or gone.
+  ops ask checked issued provided made done dead : -> Stage [ctor] .
+  --- The broker's token: not issued, live, flipped while one report is with the plugin, or
+  --- revoked (or lost with its table).
+  ops none live taking gone : -> Tok [ctor] .
+  --- The MC's review process: running, booting (its reconcile pending) or down.
+  ops up boot down : -> Mc [ctor] .
+
+  op opener : Stage -> Item [ctor] .
+  op tok : Tok -> Item [ctor] .
+  op mc : Mc -> Item [ctor] .
+  --- The binding, the ended marker, the deadline timer, the close a taken report asks for.
+  ops bound ended timer closing : Bool -> Item [ctor] .
+  --- The sandbox and the provider on the gateway, and whether the lease has run out.
+  ops box prov late : Bool -> Item [ctor] .
+  --- Reports with the plugin now, reports the plugin took, and deletions under way.
+  ops calls taken dels : Nat -> Item [ctor] .
+  --- What the boot reconcile listed, the sandbox and the provider, being deleted.
+  op wipe : Bool Bool -> Item [ctor] .
+  --- Budgets of the environment.
+  ops downs restarts stops fails : Nat -> Item [ctor] .
+
+  op empty : -> Conf [ctor] .
+  op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
+  op {_} : Conf -> Sys [ctor] .
+
+  vars N K J F : Nat .
+  vars B B' B'' B3 B4 : Bool .
+  var S : Stage .
+  var T : Tok .
+  var M : Mc .
+  var C : Conf .
+
+  --- Broker.revoke/1 deletes the token's row; nothing puts it back.
+  op revoke : Tok -> Tok .
+  eq revoke(none) = none .
+  eq revoke(T) = gone [owise] .
+
+  --- taking/2 back to live, for a report the plugin did not take; a revoked token stays gone.
+  op untake : Tok -> Tok .
+  eq untake(taking) = live .
+  eq untake(T) = T [owise] .
+
+  op inflight : Stage -> Bool .
+  eq inflight(issued) = true .
+  eq inflight(provided) = true .
+  eq inflight(made) = true .
+  eq inflight(S) = false [owise] .
+
+  op settledOpener : Stage -> Bool .
+  eq settledOpener(done) = true .
+  eq settledOpener(dead) = true .
+  eq settledOpener(S) = false [owise] .
+
+  --- end_sandbox/3: the token revoked, the binding and its timer gone, the thread marked
+  --- ended, and the bound sandbox and its provider to be deleted off the server.
+  op close : Conf -> Conf .
+  eq close(tok(T) bound(B) ended(B') timer(B'') dels(N) C)
+   = tok(revoke(T)) bound(false) ended(true) timer(false) dels(if B then s N else N fi) C .
+
+  --- The MC's processes go with it, its deletions under way too.
+  op drop : Conf -> Conf .
+  eq drop(wipe(B, B') C) = drop(C) .
+  eq drop(dels(N) C) = dels(0) drop(C) .
+  eq drop(C) = C [owise] .
+
+  --- The review process's ETS tables go with it: bindings, ended markers and tokens.
+  op lose : Conf -> Conf .
+  eq lose(tok(T) bound(B) ended(B') timer(B'') closing(B3) calls(N) C)
+   = tok(if T == none then none else gone fi) bound(false) ended(false) timer(false)
+     closing(false) calls(0) C .
+
+  --- open/1 ----------------------------------------------------------------------------
+  rl [opening] : opener(ask) ended(false) mc(up) => opener(checked) ended(false) mc(up) .
+  rl [stopped-first] : opener(ask) ended(true) mc(up) => opener(dead) ended(true) mc(up) .
+  rl [issue] : opener(checked) tok(T) => opener(issued) tok(live) .
+  rl [create-provider] : opener(issued) prov(B) => opener(provided) prov(true) .
+  rl [create-sandbox] : opener(provided) box(B) => opener(made) box(true) .
+  rl [bind] : opener(made) ended(false) mc(up) bound(false) timer(false)
+    => opener(done) ended(false) mc(up) bound(true) timer(true) .
+  rl [bind-refused] : opener(made) ended(true) mc(up) tok(T) box(B) prov(B')
+    => opener(dead) ended(true) mc(up) tok(revoke(T)) box(false) prov(false) .
+  --- The gateway refuses a step, or the sandbox is not ready or its checkout fails.
+  crl [open-fails] : { opener(S) fails(s N) tok(T) box(B) prov(B') C }
+    => { opener(dead) fails(N) tok(revoke(T)) box(false) prov(false) C } if inflight(S) .
+
+  --- close/2, the deadline, a budget used up ---------------------------------------------
+  --- remove/2 off the server; a deletion that fails or never settles is left there.
+  rl [delete] : dels(s N) box(B) prov(B') => dels(N) box(false) prov(false) .
+  rl [delete-fails] : { dels(s N) fails(s K) C } => { dels(N) fails(K) C } .
+
+  rl [stop] : { mc(up) stops(s N) C } => { mc(up) stops(N) close(C) } .
+  rl [deadline] : { mc(up) timer(true) late(true) C } => { mc(up) late(true) close(timer(true) C) } .
+  rl [spent] : { mc(up) bound(true) C } => { mc(up) close(bound(true) C) } .
+
+  --- The broker: one report at a time per token, the token revoked once one is taken --
+  rl [report] : bound(true) tok(live) calls(N) mc(up)
+    => bound(true) tok(taking) calls(s N) mc(up) .
+  rl [take] : calls(s N) tok(T) taken(K) closing(B)
+    => calls(N) tok(revoke(T)) taken(s K) closing(true) .
+  rl [reject] : calls(s N) tok(T) => calls(N) tok(untake(T)) .
+  rl [reported] : { closing(true) mc(up) C } => { closing(false) mc(up) close(C) } .
+
+  --- The review process and the MC ---------------------------------------------------
+  crl [restart] : { mc(M) restarts(s N) C } => { mc(boot) restarts(N) lose(C) } if M =/= down .
+  crl [down] : { mc(M) downs(s N) opener(S) C }
+    => { mc(down) downs(N) opener(if settledOpener(S) then S else dead fi) drop(lose(C)) }
+    if M =/= down .
+  rl [up] : mc(down) => mc(boot) .
+  --- reconcile/0 on boot: no binding survives, so every review sandbox and provider
+  --- listed then goes, deleted off the server.
+  rl [reconcile] : mc(boot) box(B) prov(B') => mc(up) box(B) prov(B') wipe(B, B') .
+  rl [wiped] : wipe(B, B') box(B'') prov(B3) => box(B'' and not B) prov(B3 and not B') .
+
+  --- The lease and the reaper's timer -------------------------------------------------
+  rl [tick] : late(false) => late(true) .
+  crl [reap] : late(true) box(B) prov(B') => late(true) box(false) prov(false) if B or B' .
+
+  op start : Nat Nat Nat Nat -> Sys .
+  eq start(N, K, J, F) =
+    { opener(ask) tok(none) mc(up) bound(false) ended(false) timer(false) closing(false)
+      box(false) prov(false) late(false) calls(0) taken(0) dels(0)
+      downs(N) restarts(K) stops(J) fails(F) } .
+
+  --- Two reports taken; a binding on an ended thread; a token that takes reports on a
+  --- thread ended once its opener is through; two reports with the plugin at once.
+  op unsafe : Sys -> Bool .
+  eq unsafe({ opener(S) tok(T) bound(B) ended(B') calls(N) taken(K) C })
+   = K > 1 or N > 1 or (B and B') or (B' and settledOpener(S) and (T == live or T == taking)) .
+
+  --- Nothing left on the gateway, nothing bound, and the opener through.
+  op cleared : Sys -> Bool .
+  eq cleared({ opener(S) bound(B) box(B') prov(B'') C })
+   = settledOpener(S) and not B and not B' and not B'' .
+
+  op settled : Sys -> Bool .
+  eq settled(X:Sys) = cleared(X:Sys) .
+endm
+
+mod REVIEW-LEASE-PROPS is
+  including REVIEW-LEASE .
+  including SATISFACTION .
+  subsort Sys < State .
+
+  var X : Sys .
+
+  op gone : -> Prop [ctor] .
+  eq X |= gone = cleared(X) .
+endm
