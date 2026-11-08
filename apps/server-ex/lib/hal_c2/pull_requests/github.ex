@@ -1841,21 +1841,24 @@ defmodule HalC2.PullRequests.GitHub do
         do: {"commits/#{commit}", "[.parents[0].sha, .sha] | @tsv"},
         else: {"pulls/#{ctx.number}", "[.base.sha, .head.sha] | @tsv"}
 
+    revisions = fn ->
+      gh(ctx.cwd, ["api", "--hostname", ctx.host, "repos/#{owner}/#{name}/#{path}", "--jq", jq])
+    end
+
+    # The revisions and the changed-file guard are independent reads; neither
+    # waits on the other.
     with true <- commit == nil or sha?(commit),
-         {:ok, out} <-
-           gh(ctx.cwd, [
-             "api",
-             "--hostname",
-             ctx.host,
-             "repos/#{owner}/#{name}/#{path}",
-             "--jq",
-             jq
-           ]),
+         [revisions, changed] <-
+           Task.await_many(
+             [Task.async(revisions), Task.async(fn -> changed_file(ctx, commit, input) end)],
+             :infinity
+           ),
+         :ok <- changed,
+         {:ok, out} <- revisions,
          [base, head] <- out |> String.trim_trailing() |> String.split("\t"),
          true <-
            sha?(head) and
-             (sha?(base) or (commit != nil and input["changeType"] == "new" and base == "")),
-         :ok <- changed_file(ctx, commit, input) do
+             (sha?(base) or (commit != nil and input["changeType"] == "new" and base == "")) do
       [old, new] =
         Task.await_many(
           [
@@ -1887,13 +1890,11 @@ defmodule HalC2.PullRequests.GitHub do
   end
 
   # Only a file this change (or the named commit of it) actually changes may be
-  # expanded: the paths a client names are checked against the host's own list
-  # of changed files, so contents of any other file of the repository at the
-  # base or head are never handed out through a pull request.
+  # expanded: both paths a client names must be the two sides of one entry of
+  # the host's own list of changed files, exactly as they will be read, so
+  # contents of any other file of the repository at the base or head are never
+  # handed out through a pull request.
   defp changed_file(ctx, commit, input, page \\ 1) do
-    wanted =
-      MapSet.new(Enum.reject([trimmed(input["oldPath"]), trimmed(input["newPath"])], &is_nil/1))
-
     {owner, name} = split(ctx.repository)
     paging = "per_page=#{@files_page}&page=#{page}"
 
@@ -1909,13 +1910,7 @@ defmodule HalC2.PullRequests.GitHub do
       {:ok, out} ->
         case JSON.decode(out) do
           {:ok, files} when is_list(files) ->
-            found =
-              Enum.any?(files, fn file ->
-                Enum.any?([file["filename"], file["previous_filename"]], fn path ->
-                  path = trimmed(path)
-                  path != nil and MapSet.member?(wanted, path)
-                end)
-              end)
+            found = Enum.any?(files, &sides_of?(&1, input))
 
             cond do
               found -> :ok
@@ -1930,6 +1925,16 @@ defmodule HalC2.PullRequests.GitHub do
       error ->
         error
     end
+  end
+
+  # The side a change type leaves empty is never read, so it need not match.
+  defp sides_of?(file, input) do
+    new = file["filename"]
+    old = file["previous_filename"] || new
+
+    is_binary(new) and
+      (input["changeType"] == "deleted" or input["newPath"] == new) and
+      (input["changeType"] == "new" or input["oldPath"] == old)
   end
 
   defp raw_file(ctx, revision, path) do

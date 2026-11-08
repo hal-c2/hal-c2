@@ -429,6 +429,60 @@ defmodule HalC2.PullRequestsTest do
              PullRequests.run_action(Map.merge(@ref, %{"action" => "merge", "stackNumber" => 3}))
   end
 
+  test "a review without a verdict is refused before it reaches the host", %{dir: dir} do
+    rules!(dir, [])
+
+    for verdict <- [nil, "merge"] do
+      assert {:error,
+              %{"detail" => "A review needs a verdict: approve, request changes or comment."}} =
+               PullRequests.submit_review(Map.merge(@ref, %{"verdict" => verdict, "body" => "x"}))
+    end
+
+    assert calls(dir, "") == []
+  end
+
+  test "expanding reads only the two sides of one changed file", %{dir: dir} do
+    base = String.duplicate("a", 40)
+    head = String.duplicate("b", 40)
+
+    rules!(dir, [
+      %{"args" => ["repos/acme/widgets/pulls/5", "--jq"], "stdout" => "#{base}\t#{head}\n"},
+      %{
+        "args" => ["pulls/5/files?per_page=100&page=1"],
+        "stdout" => [
+          %{
+            "filename" => "src/basket.ts",
+            "previous_filename" => "src/cart.ts",
+            "status" => "renamed"
+          }
+        ]
+      },
+      %{"args" => ["contents/src/cart.ts?ref=#{base}"], "stdout" => "old\n"},
+      %{"args" => ["contents/src/basket.ts?ref=#{head}"], "stdout" => "new\n"},
+      %{"args" => ["contents/config/secrets.yml"], "stdout" => "token: hunter2\n"}
+    ])
+
+    expand = fn old, new ->
+      PullRequests.diff_file_contents(
+        Map.merge(@ref, %{"changeType" => "rename-changed", "oldPath" => old, "newPath" => new})
+      )
+    end
+
+    assert {:ok, %{"oldContents" => "old\n", "newContents" => "new\n"}} =
+             expand.("src/cart.ts", "src/basket.ts")
+
+    # Either side naming a changed file is not enough: the other is not read.
+    for {old, new} <- [
+          {"config/secrets.yml", "src/basket.ts"},
+          {"src/cart.ts", "config/secrets.yml"},
+          {"src/basket.ts", "src/basket.ts"}
+        ] do
+      assert {:error, %{"detail" => "The file was not found."}} = expand.(old, new)
+    end
+
+    assert calls(dir, "contents/config/secrets.yml") == []
+  end
+
   test "merging a stack layer merges the open layers below it, once GitHub's stack matches",
        %{dir: dir} do
     layer = fn number, sha ->

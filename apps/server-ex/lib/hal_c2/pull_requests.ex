@@ -1436,12 +1436,14 @@ defmodule HalC2.PullRequests do
     verdict = input["verdict"]
 
     cond do
+      not Map.has_key?(@verdict_labels, verdict) ->
+        refuse("submitReview", "A review needs a verdict: approve, request changes or comment.")
+
       (input["comments"] || []) != [] and capabilities[:inline] == false ->
         refuse("submitReview", @host_refusal_details.inline)
 
       is_list(capabilities[:verdicts]) and verdict not in capabilities.verdicts ->
-        label = @verdict_labels[verdict] || verdict
-        refuse("submitReview", "This host cannot #{label} a change request.")
+        refuse("submitReview", "This host cannot #{@verdict_labels[verdict]} a change request.")
 
       true ->
         nil
