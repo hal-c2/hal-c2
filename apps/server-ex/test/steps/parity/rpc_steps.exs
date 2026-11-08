@@ -274,6 +274,10 @@ defmodule HalC2.Steps.Parity.Fixtures do
       "provider.auth." <> _ ->
         {%{"instanceId" => "opencode", "flowId" => "hal-c2-none"}, context}
 
+      # Codex here is on the CLI's own login, so there is no account to move.
+      "provider.chatgpt.move" ->
+        {%{"instanceId" => "codex", "environmentId" => "hal-c2-none"}, context}
+
       # Started against a download that fails at once: the reply is the new state.
       "provider.install.start" ->
         {%{"instanceId" => "antigravity"}, managed_install(context)}
@@ -683,6 +687,9 @@ defmodule HalC2.Steps.Parity.Fixtures do
           [HalC2.UsageLimitSources]
 
         "provider.auth." <> _ ->
+          provider_auth()
+
+        "provider.chatgpt.move" ->
           provider_auth()
 
         "provider.install." <> _ ->

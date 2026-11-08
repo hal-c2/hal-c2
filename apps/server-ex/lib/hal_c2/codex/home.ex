@@ -33,8 +33,17 @@ defmodule HalC2.Codex.Home do
   def env(instance) do
     home = HalC2.Settings.instance_setting(instance, "homePath")
     shadow = HalC2.Settings.instance_setting(instance, "shadowHomePath")
+    managed? = shadow == nil and HalC2.Codex.ChatGpt.managed?(instance)
 
     cond do
+      # A ChatGPT account connected through HAL-C2 signs in in a shadow home of
+      # the instance's own (`HalC2.Codex.ChatGpt.home/1`), over the home Codex
+      # would use: so its threads are the CLI account's threads too.
+      managed? ->
+        shared = if home, do: expand(home), else: default_home()
+        shadow = HalC2.Codex.ChatGpt.home(instance)
+        with :ok <- link(shared, shadow), do: {:ok, [{"CODEX_HOME", shadow}]}
+
       shadow == nil and home == nil ->
         {:ok, []}
 
@@ -64,6 +73,14 @@ defmodule HalC2.Codex.Home do
           nil -> nil
           home -> expand(home)
         end
+    end
+  end
+
+  # Codex's own default: `$CODEX_HOME`, else `~/.codex`.
+  defp default_home do
+    case System.get_env("CODEX_HOME") do
+      home when is_binary(home) and home != "" -> expand(home)
+      _ -> Path.join(HalC2.Paths.user_home(), ".codex")
     end
   end
 

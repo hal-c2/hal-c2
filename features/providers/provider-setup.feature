@@ -307,8 +307,8 @@ Feature: Provider setup, updates and sign-in
       | not installed                    |
       | installed but reports no version |
 
-  # Codex's ChatGPT sign-in from HAL-C2 is @backlog in codex.feature ("Codex connects a
-  # ChatGPT account from HAL-C2"); this line describes today's behaviour and must be reconciled then.
+  # Codex here is on the Codex CLI's own login, its default. HAL-C2 signs in only a Codex
+  # whose ChatGPT account it connects (codex.feature "Codex connects a ChatGPT account from HAL-C2").
   # Upstream #18425: providers whose CLI owns setup declare they cannot be installed or signed in from the app.
   Scenario: Only providers that support it sign in from HAL-C2
     When the user tries to sign in to Codex from HAL-C2

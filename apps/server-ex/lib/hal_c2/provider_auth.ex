@@ -1,15 +1,17 @@
 defmodule HalC2.ProviderAuth do
   @moduledoc """
   Signing a provider instance in on this MC (`provider.auth.*`), for the agents
-  that keep their own credentials: ACP agents today (`HalC2.Acp.Auth`).
+  that keep their own credentials: ACP agents (`HalC2.Acp.Auth`), and Codex
+  instances whose ChatGPT account HAL-C2 connects (`HalC2.Codex.ChatGpt`).
 
   One process per instance holds its `ProviderAuthState` and runs at most one
   sign-in. It starts with its first subscriber or request and stops once no one
   watches and nothing runs. The sign-in itself is a linked worker that reports
   `{:auth_interaction, flow, interaction, responder}` (a URL to open, or a login
   terminal's output) and `{:auth_verifying, flow}`, and exits `:normal` when the
-  agent can open a session again; client responses go to the responder as
-  `{:auth_response, response}`.
+  agent can open a session again (`{:shutdown, {:succeeded, message}}` when the
+  success has something to say) or `{:shutdown, {:failed, message}}`; client
+  responses go to the responder as `{:auth_response, response}`.
 
   Every client of the MC sees the same flow: an MC's clients are one user's
   paired devices.
@@ -42,10 +44,10 @@ defmodule HalC2.ProviderAuth do
 
   @doc """
   `provider.auth.complete`: the redirect URL of a browser sign-in, pasted from
-  another device (Antigravity only).
+  another device (Antigravity, and a ChatGPT sign-in of Codex).
   """
   def complete(%{"instanceId" => instance} = input) do
-    if antigravity?(instance),
+    if antigravity?(instance) or codex?(instance),
       do: call(instance, {:complete, input["flowId"], input["callbackUrl"]}),
       else: error(instance, "complete", "This provider does not accept a pasted redirect URL.")
   end
@@ -89,7 +91,7 @@ defmodule HalC2.ProviderAuth do
 
   defp call(instance, message) do
     cond do
-      not HalC2.Acp.agent?(instance) ->
+      not HalC2.Acp.agent?(instance) and not codex?(instance) ->
         error(instance, "start", "This provider does not sign in here.")
 
       true ->
@@ -133,7 +135,7 @@ defmodule HalC2.ProviderAuth do
       "expiresAt" => nil,
       "message" => message,
       "interaction" => nil,
-      "credentialOwner" => "provider"
+      "credentialOwner" => if(codex?(instance), do: "hal-c2", else: "provider")
     }
   end
 
@@ -152,11 +154,13 @@ defmodule HalC2.ProviderAuth do
     methods = state.methods || []
 
     method_id =
-      if antigravity?(state.instance),
-        do: HalC2.Acp.Antigravity.config(state.instance)["authMethod"],
-        else: method_id || default_method(state.instance, methods)
+      cond do
+        antigravity?(state.instance) -> HalC2.Acp.Antigravity.config(state.instance)["authMethod"]
+        codex?(state.instance) -> method_id || "chatgpt"
+        true -> method_id || default_method(state.instance, methods)
+      end
 
-    refusal = HalC2.Acp.sign_in_refusal(state.instance)
+    refusal = if not codex?(state.instance), do: HalC2.Acp.sign_in_refusal(state.instance)
 
     if refusal do
       {:reply, error(state.instance, "start", refusal), state}
@@ -199,16 +203,21 @@ defmodule HalC2.ProviderAuth do
     result =
       case state.flow do
         %{id: ^flow_id} when not is_map(interaction) ->
-          {:error, "Wait for the Google sign-in link before you send a redirect URL."}
+          {:error, text(state.instance, :no_link)}
 
         %{id: ^flow_id, callback: true} ->
-          {:error, "The sign-in response was already sent. Wait for Google to finish."}
+          {:error, text(state.instance, :sent)}
 
         %{id: ^flow_id} ->
-          with {:ok, pending} <- authorization(interaction["url"]),
-               {:ok, uri} <-
-                 HalC2.Acp.Antigravity.Auth.validate_callback(pending, to_string(url || "")),
-               :ok <- HalC2.Acp.Antigravity.Auth.forward_callback(uri),
+          # `complete/1` lets only these two through.
+          auth =
+            if codex?(state.instance),
+              do: HalC2.Codex.ChatGpt,
+              else: HalC2.Acp.Antigravity.Auth
+
+          with {:ok, pending} <- authorization(auth, interaction["url"]),
+               {:ok, uri} <- auth.validate_callback(pending, to_string(url || "")),
+               :ok <- auth.forward_callback(uri),
                do: :ok
 
         _ ->
@@ -222,7 +231,7 @@ defmodule HalC2.ProviderAuth do
             "phase" => "verifying",
             "interaction" => nil,
             "authorizationUrl" => nil,
-            "message" => "Waiting for Google to finish sign-in."
+            "message" => text(state.instance, :finishing)
           })
 
         {:reply, {:ok, state.auth}, state}
@@ -233,9 +242,11 @@ defmodule HalC2.ProviderAuth do
   end
 
   def handle_call(:logout, from, state) do
-    if antigravity?(state.instance),
-      do: handle_call({:logout, nil}, from, state),
-      else: generic_logout(state)
+    cond do
+      antigravity?(state.instance) -> handle_call({:logout, nil}, from, state)
+      codex?(state.instance) -> codex_logout(state)
+      true -> generic_logout(state)
+    end
   end
 
   def handle_call({:logout, session}, _from, state) do
@@ -259,6 +270,16 @@ defmodule HalC2.ProviderAuth do
         state = finish(state, "failed", "Antigravity sign-out failed. Try again.")
         {:reply, error(state.instance, "logout", detail), state}
     end
+  end
+
+  defp codex_logout(state) do
+    state = if state.flow, do: end_flow(state, "idle", nil), else: state
+    :ok = HalC2.Codex.ChatGpt.logout(state.instance)
+    HalC2.Settings.notify_providers()
+    message = "Signed out of ChatGPT."
+    state = %{state | auth: Map.merge(idle(state.instance, message), methods(state))}
+    broadcast(state)
+    {:reply, {:ok, state.auth}, state}
   end
 
   defp generic_logout(state) do
@@ -331,10 +352,10 @@ defmodule HalC2.ProviderAuth do
     state =
       case reason do
         :normal ->
-          # The agent reads its new credentials when it is next started.
-          HalC2.Acp.forget(state.instance)
-          HalC2.Settings.notify_providers()
-          finish(state, "succeeded", text(state.instance, :succeeded))
+          succeeded(state, text(state.instance, :succeeded))
+
+        {:shutdown, {:succeeded, message}} ->
+          succeeded(state, message)
 
         {:shutdown, {:failed, message}} ->
           finish(state, "failed", message)
@@ -390,6 +411,25 @@ defmodule HalC2.ProviderAuth do
     end
   end
 
+  defp succeeded(state, message) do
+    # The agent reads its new credentials when it is next started; a Codex
+    # instance's sessions start Codex in its home each time.
+    if not codex?(state.instance), do: HalC2.Acp.forget(state.instance)
+    HalC2.Settings.notify_providers()
+    # The account the sign-in connected is the methods' to name now.
+    state = maybe_reload_methods(state)
+    finish(state, "succeeded", message)
+  end
+
+  defp maybe_reload_methods(state) do
+    if codex?(state.instance) do
+      {:ok, methods} = HalC2.Codex.ChatGpt.methods(state.instance)
+      %{state | methods: methods, auth: Map.put(state.auth, "methods", methods)}
+    else
+      state
+    end
+  end
+
   defp end_flow(state, phase, message) do
     Process.unlink(state.flow.worker)
     Process.exit(state.flow.worker, :kill)
@@ -436,58 +476,94 @@ defmodule HalC2.ProviderAuth do
 
   defp antigravity?(instance), do: HalC2.Acp.driver(instance) == "antigravity"
 
-  defp auth_module(instance),
-    do: if(antigravity?(instance), do: HalC2.Acp.Antigravity.Auth, else: HalC2.Acp.Auth)
+  defp codex?(instance), do: HalC2.Codex.ChatGpt.managed?(instance)
 
-  defp authorization(url) when is_binary(url) do
-    case HalC2.Acp.Antigravity.Auth.authorization(url) do
+  defp auth_module(instance) do
+    cond do
+      antigravity?(instance) -> HalC2.Acp.Antigravity.Auth
+      codex?(instance) -> HalC2.Codex.ChatGpt
+      true -> HalC2.Acp.Auth
+    end
+  end
+
+  defp authorization(auth, url) when is_binary(url) do
+    case auth.authorization(url) do
       {:ok, pending} -> {:ok, pending}
       :error -> {:error, "This sign-in is no longer active in this client."}
     end
   end
 
-  defp authorization(_url), do: {:error, "This sign-in is no longer active in this client."}
+  defp authorization(_auth, _url),
+    do: {:error, "This sign-in is no longer active in this client."}
 
-  # What a flow says at each step: Antigravity names Google, others are generic.
+  # What a flow says at each step: Antigravity names Google, a Codex ChatGPT
+  # sign-in OpenAI, others are generic.
   defp text(instance, key) do
-    if antigravity?(instance) do
-      browser? =
-        HalC2.Acp.Antigravity.browser?(HalC2.Acp.Antigravity.config(instance)["authMethod"])
+    cond do
+      antigravity?(instance) -> antigravity_text(instance, key)
+      codex?(instance) -> codex_text(key)
+      true -> generic_text(key)
+    end
+  end
 
-      case key do
-        :starting when browser? ->
-          "Starting Google sign-in."
+  defp codex_text(key) do
+    case key do
+      :starting ->
+        "Starting ChatGPT sign-in."
 
-        :starting ->
-          "Checking credentials."
+      :waiting ->
+        "Open the ChatGPT sign-in link. If you are remote, paste the callback address here."
 
-        :waiting ->
-          "Open the Google sign-in link. If you are remote, paste the redirect URL here."
+      :verifying ->
+        "Checking the ChatGPT account."
 
-        :verifying ->
-          "Checking Antigravity access and models."
+      :succeeded ->
+        "Signed in with ChatGPT."
 
-        :succeeded when browser? ->
-          "Signed in with Google."
+      :expired ->
+        "ChatGPT sign-in expired. Start sign-in again."
 
-        :succeeded ->
-          "Connected to Antigravity."
+      :cancelled ->
+        "ChatGPT sign-in was cancelled."
 
-        :expired ->
-          "Google sign-in expired. Start sign-in again."
+      :no_link ->
+        "Wait for the ChatGPT sign-in link before you paste a callback address."
 
-        :cancelled ->
-          "Google sign-in was cancelled."
-      end
-    else
-      case key do
-        :starting -> "Starting sign-in."
-        :waiting -> "Complete sign-in to continue."
-        :verifying -> "Checking provider sign-in."
-        :succeeded -> "Sign-in complete."
-        :expired -> "Sign-in expired. Start again."
-        :cancelled -> "Sign-in cancelled."
-      end
+      :sent ->
+        "The callback address was already sent. Wait for Codex to finish."
+
+      :finishing ->
+        "Waiting for Codex to finish the ChatGPT sign-in."
+    end
+  end
+
+  defp generic_text(key) do
+    case key do
+      :starting -> "Starting sign-in."
+      :waiting -> "Complete sign-in to continue."
+      :verifying -> "Checking provider sign-in."
+      :succeeded -> "Sign-in complete."
+      :expired -> "Sign-in expired. Start again."
+      :cancelled -> "Sign-in cancelled."
+    end
+  end
+
+  defp antigravity_text(instance, key) do
+    browser? =
+      HalC2.Acp.Antigravity.browser?(HalC2.Acp.Antigravity.config(instance)["authMethod"])
+
+    case key do
+      :starting when browser? -> "Starting Google sign-in."
+      :starting -> "Checking credentials."
+      :waiting -> "Open the Google sign-in link. If you are remote, paste the redirect URL here."
+      :verifying -> "Checking Antigravity access and models."
+      :succeeded when browser? -> "Signed in with Google."
+      :succeeded -> "Connected to Antigravity."
+      :expired -> "Google sign-in expired. Start sign-in again."
+      :cancelled -> "Google sign-in was cancelled."
+      :no_link -> "Wait for the Google sign-in link before you send a redirect URL."
+      :sent -> "The sign-in response was already sent. Wait for Google to finish."
+      :finishing -> "Waiting for Google to finish sign-in."
     end
   end
 

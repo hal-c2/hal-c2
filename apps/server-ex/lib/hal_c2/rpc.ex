@@ -259,6 +259,7 @@ defmodule HalC2.Rpc do
   def handle("provider.auth.cancel", input), do: HalC2.ProviderAuth.cancel(input)
   def handle("provider.auth.logout", input), do: HalC2.ProviderAuth.logout(input)
   def handle("provider.auth.complete", input), do: HalC2.ProviderAuth.complete(input)
+  def handle("provider.chatgpt.move", input), do: HalC2.Codex.ChatGpt.move(input)
   def handle("provider.install.start", input), do: HalC2.Acp.Antigravity.Installation.start(input)
 
   def handle("provider.install.cancel", input),

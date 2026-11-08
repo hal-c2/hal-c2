@@ -727,44 +727,45 @@ Feature: Codex
 
   # A ChatGPT account signed in through HAL-C2 rather than the Codex CLI. Its credentials
   # move to the environment the user picks; the primary environment runs the sign-in.
-  # Contradicts provider-setup.feature "Only providers that support it sign in from HAL-C2"
-  # (Codex "does not sign in here"), which is untagged and passes today. Reconcile when
-  # this backlog item is cleared.
-  @backlog @mc
+  # Connecting makes the instance HAL-C2's to sign in; a Codex on the CLI's own login still
+  # does not sign in here (provider-setup.feature "Only providers that support it sign in from HAL-C2").
+  @mc
   Scenario: Codex connects a ChatGPT account from HAL-C2 without a Codex CLI login
     Given the user has a ChatGPT plan and Codex is not signed in on the environment
     When the user connects ChatGPT to Codex
     And the user approves the sign-in with OpenAI
     Then Codex on the environment is signed in with that account
 
-  @backlog @mc
+  @mc
   Scenario: A ChatGPT account connected on one environment can be moved to another
     Given the user connected a ChatGPT account on the primary environment
     When the user chooses another environment for that Codex account
     Then the other environment's Codex is signed in with the account
 
-  @backlog @mc
+  @mc
   Scenario: Disconnecting a ChatGPT account signs its Codex out
     Given Codex is connected with a ChatGPT account
     When the user disconnects the account
     Then Codex on that environment is no longer signed in with it
 
   # Upstream #23160: a signed-out HAL-C2-managed Codex can switch to the Codex CLI's own login from Settings.
-  @backlog @shared @mc
+  @shared @mc @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A signed-out managed Codex can switch to the Codex CLI's own login
     Given a Codex instance whose ChatGPT account was connected through HAL-C2
     And its account is remembered but no longer signed in
     When the user chooses to use the existing Codex CLI in its provider settings
     Then the instance uses the Codex CLI's own login from then on
 
-  @backlog @shared @priority-low
+  # The MC carries the email apart from every text a client shows as is (the account's
+  # `email`, the sign-in method's `accountEmail`), so the clients can hide it.
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
   Scenario: A connected ChatGPT account's email is hidden until the user reveals it
     Given Codex is connected with a ChatGPT account
     Then the account's email is not shown
     When the user asks to show it
     Then the email is shown
 
-  @backlog @shared @priority-low
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
   Scenario: The first ChatGPT connection explains that plan usage counts against the plan
     Given the user has never connected a ChatGPT account
     When the user connects one
@@ -793,7 +794,7 @@ Feature: Codex
     Then connecting a new ChatGPT account is offered
 
   # Upstream #21750: a callback address pasted without its scheme still finishes the sign-in.
-  @backlog @mc
+  @mc
   Scenario Outline: A pasted ChatGPT sign-in callback address is checked by where it points
     Given the user is connecting ChatGPT to Codex and the browser could not reach the sign-in callback
     When the user pastes the callback address <pasted>
