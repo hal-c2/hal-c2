@@ -630,6 +630,14 @@ defmodule HalC2.Steps.Common do
     Map.put(context, :request, request)
   end
 
+  # The turn the scenario is watching was not ended by what just happened: it
+  # is still running, or it ran to its own end.
+  step "the turn goes on", context do
+    assert %{"status" => status} = World.latest_run(context, World.current_thread(context))
+    assert status in ["running", "completed"]
+    context
+  end
+
   # The default socket drops and connects again. A scenario that follows the MC
   # over the socket says how it resumes with `context.after_reconnect`.
   step "the client reconnects", context do

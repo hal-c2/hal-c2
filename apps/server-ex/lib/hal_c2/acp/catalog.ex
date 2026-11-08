@@ -628,18 +628,15 @@ defmodule HalC2.Acp.Catalog do
 
   defp check_command(agent, root, exe, cmd) do
     case File.lstat(exe) do
-      {:ok, %File.Stat{type: :regular}} ->
-        :ok
-
-      {:ok, %File.Stat{type: :symlink}} ->
-        case resolved_inside?(exe, root) do
-          true ->
-            :ok
-
-          false ->
-            archive_error(
-              "ACP Registry archive command resolves outside its installation directory."
-            )
+      # Even a regular file can sit outside, reached through a linked folder
+      # on its path, so every command is resolved before it is trusted.
+      {:ok, %File.Stat{type: type}} when type in [:regular, :symlink] ->
+        if resolved_inside?(exe, root) do
+          :ok
+        else
+          archive_error(
+            "ACP Registry archive command resolves outside its installation directory."
+          )
         end
 
       {:ok, _} ->
@@ -652,28 +649,43 @@ defmodule HalC2.Acp.Catalog do
     end
   end
 
-  # Follow the whole link chain, each target against its own link's folder:
-  # a relative target is not relative to the MC's cwd, and a first link that
-  # lands inside says nothing about where the next one goes.
-  defp resolved_inside?(exe, root), do: resolve_link(Path.expand(exe), Path.expand(root), 40)
-
-  defp resolve_link(path, root, hops) when hops >= 0 do
-    case File.lstat(path) do
-      {:ok, %File.Stat{type: :symlink}} ->
-        case File.read_link(path) do
-          {:ok, target} -> resolve_link(Path.expand(target, Path.dirname(path)), root, hops - 1)
-          _ -> false
-        end
-
-      {:ok, %File.Stat{type: :regular}} ->
-        path == root or String.starts_with?(path, root <> "/")
-
-      _ ->
-        false
+  # Resolve every segment of both paths, each link's target against its own
+  # link's folder: a relative target is not relative to the MC's cwd, a first
+  # link that lands inside says nothing about where the next one goes, and a
+  # linked folder on the command's path can take it outside just as a linked
+  # command can.
+  defp resolved_inside?(exe, root) do
+    with {:ok, resolved} <- canonical(Path.expand(exe)),
+         {:ok, canonical_root} <- canonical(Path.expand(root)) do
+      (resolved == canonical_root or String.starts_with?(resolved, canonical_root <> "/")) and
+        File.regular?(resolved)
+    else
+      _ -> false
     end
   end
 
-  defp resolve_link(_path, _root, _hops), do: false
+  defp canonical(path, hops \\ 40)
+  defp canonical(_path, hops) when hops < 0, do: :error
+
+  defp canonical(path, hops) do
+    Enum.reduce_while(Path.split(path), {:ok, "/"}, fn segment, {:ok, current} ->
+      candidate = Path.join(current, segment)
+
+      case File.lstat(candidate) do
+        {:ok, %File.Stat{type: :symlink}} ->
+          with {:ok, target} <- File.read_link(candidate),
+               {:ok, resolved} <-
+                 canonical(Path.expand(target, Path.dirname(candidate)), hops - 1) do
+            {:cont, {:ok, resolved}}
+          else
+            _ -> {:halt, :error}
+          end
+
+        _ ->
+          {:cont, {:ok, candidate}}
+      end
+    end)
+  end
 
   defp archive_error(message), do: error("archive_invalid", message)
 
@@ -976,6 +988,14 @@ defmodule HalC2.Acp.Catalog do
         @install_timeout ->
           Process.exit(pid, :kill)
           Process.demonitor(monitor, [:flush])
+
+          # A result sent as the timeout fired is already in the mailbox.
+          receive do
+            {^ref, _} -> :ok
+          after
+            0 -> :ok
+          end
+
           :timeout
       end
 

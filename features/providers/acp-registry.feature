@@ -292,7 +292,6 @@ Feature: ACP registry agents
 
   # Upstream #29463: "Always allow this session" answered an agent offering only allow-once by
   # cancelling, which stopped the turn the user had just approved.
-  @backlog @priority-high
   Scenario: Always allowing a request the agent can only allow once approves it once
     Given the thread runs "acme" with approval required
     And "acme" asks permission to run a command, offering only to allow once or reject
@@ -727,6 +726,7 @@ Feature: ACP registry agents
       | does not hold the command the registry names           | ACP Registry archive for acme did not contain 'bin/acme'.                 |
       | links its command to a file outside the install folder | ACP Registry archive command resolves outside its installation directory. |
       | links its command through another link to a file outside the install folder | ACP Registry archive command resolves outside its installation directory. |
+      | links a folder on its command's path to a folder outside the install folder | ACP Registry archive command resolves outside its installation directory. |
       | names a command that is not an executable file         | ACP Registry archive command is not a regular executable file.            |
 
   Scenario: An archive whose command links to a file beside it installs

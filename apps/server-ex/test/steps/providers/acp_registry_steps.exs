@@ -907,6 +907,28 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     run_on_acme(context, "approve", mode: context.mode)
   end
 
+  # The fake agent's permission request offers exactly allow_once and reject_once.
+  step "{string} asks permission to run a command, offering only to allow once or reject",
+       %{args: [_]} = context do
+    context
+    |> run_on_acme("approve", mode: context.mode)
+    |> Map.put(:current_thread, "Acme")
+  end
+
+  step "{string} is told the request is allowed once", %{args: [_]} = context do
+    [run] = Acp.await_runs(thread(context), 1)
+    assert run["status"] == "completed"
+    assert Acp.assistant_text(thread(context)) =~ "allowed"
+
+    assert Enum.any?(
+             Acp.log(context, "acme"),
+             &(&1["event"] == "response" and
+                 &1["result"] == %{"outcome" => %{"outcome" => "selected", "optionId" => "allow"}})
+           )
+
+    context
+  end
+
   step "the request is approved without asking the user", context do
     [run] = Acp.await_runs(thread(context), 1)
     assert run["status"] == "completed"
@@ -2191,6 +2213,35 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
       end)
 
     publish_archive(context, id, bytes)
+  end
+
+  # A bzip2 archive, unpacked by the system tar: `bin` in it is a link to a
+  # folder outside the install folder that holds a same-named command.
+  step "the registry entry or archive for {string} links a folder on its command's path to a folder outside the install folder",
+       %{args: [id]} = context do
+    ctx = Acp.serve_registry(context)
+    script = Acp.wrapper(ctx, Path.join([ctx.mc.home, "outside-bin", id]), id)
+    src = Path.join(ctx.mc.home, "dirlink-src-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(src)
+    File.ln_s!(Path.dirname(script), Path.join(src, "bin"))
+    served = Path.join(ctx.acp.served, "#{id}.tar.bz2")
+    {_, 0} = System.cmd("tar", ["-cjf", served, "-C", src, "."])
+    sha = :crypto.hash(:sha256, File.read!(served)) |> Base.encode16(case: :lower)
+    platform = HalC2.Acp.Catalog.platform()
+
+    dist = %{
+      "binary" => %{
+        platform => %{
+          "archive" => "#{ctx.acp.base}/#{id}.tar.bz2",
+          "cmd" => "./bin/#{id}",
+          "args" => ["--acp"],
+          "sha256" => sha
+        }
+      }
+    }
+
+    base = Acp.acme_agent(ctx, id: id)
+    Acp.publish(ctx, [%{base | "distribution" => dist}])
   end
 
   step "the archive for {string} links its command to a file inside its own folder",

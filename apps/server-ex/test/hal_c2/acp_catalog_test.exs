@@ -194,6 +194,32 @@ defmodule HalC2.Acp.CatalogTest do
     assert message =~ "resolves outside its installation directory"
   end
 
+  test "a command reached through a linked folder outside its install folder does not run",
+       %{served: served, base: base, sha: sha, tmp_dir: dir} do
+    publish(served, [fake(base, sha)])
+    assert {:ok, _} = HalC2.Acp.Catalog.prepare(%{"agentId" => "fake-agent"})
+    assert {:ok, [exe | _], _env} = HalC2.Acp.Catalog.command(%{"agentId" => "fake-agent"})
+    root = exe |> Path.dirname() |> Path.dirname()
+    bin = Path.dirname(exe)
+
+    # bin -> realbin, both inside the install folder.
+    File.rename!(bin, Path.join(root, "realbin"))
+    File.ln_s!("realbin", bin)
+    assert {:ok, [^exe | _], _env} = HalC2.Acp.Catalog.command(%{"agentId" => "fake-agent"})
+
+    # bin -> a folder outside it holding a same-named file.
+    outside = Path.join(dir, "outside-bin")
+    File.mkdir_p!(outside)
+    File.write!(Path.join(outside, "fake"), "#!/bin/sh\nexit 0\n")
+    File.rm!(bin)
+    File.ln_s!(outside, bin)
+
+    assert {:error, %{"reason" => "archive_invalid", "message" => message}} =
+             HalC2.Acp.Catalog.command(%{"agentId" => "fake-agent"})
+
+    assert message =~ "resolves outside its installation directory"
+  end
+
   test "a package spec that only ends in a version is not pinned", %{
     served: served,
     base: base,
