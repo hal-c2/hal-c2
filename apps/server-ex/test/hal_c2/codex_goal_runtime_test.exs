@@ -40,6 +40,40 @@ defmodule HalC2.CodexGoalRuntimeTest do
   test "a goal's run whose app-server exits between turns fails, and its grace ends nothing",
        %{work: work} do
     thread_id = "thread-goal"
+    start_goal_run(thread_id, work)
+
+    [{pid, _}] = await(fn -> Registry.lookup(HalC2.Codex.Registry, thread_id) end)
+    %{goal_hold: hold, conn: conn} = await_state(pid, &(&1.goal_hold != nil))
+    assert ["running"] = statuses(thread_id)
+
+    ref = Process.monitor(conn)
+    os_pid = HalC2.Subprocess.os_pid(:sys.get_state(conn).sub)
+    {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+    assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
+    assert %{turn: nil, goal_hold: nil} = await_state(pid, &(&1.conn == nil))
+    assert ["failed"] = statuses(thread_id)
+
+    send(pid, {:goal_grace, hold})
+    assert %{turn: nil} = :sys.get_state(pid)
+    assert ["failed"] = statuses(thread_id)
+  end
+
+  # Codex works on and finishes the goal while the MC still waits for its answer to
+  # the goal being set active, so its completion is already queued behind that answer.
+  # Keeping the goal active would hold the run until the grace paused it.
+  test "a goal Codex finished before the MC heard the activation answer is complete, not active",
+       %{work: work} do
+    System.delete_env("FAKE_CODEX_GOAL_STALL")
+    thread_id = "thread-goal-done"
+    start_goal_run(thread_id, work)
+
+    [{pid, _}] = await(fn -> Registry.lookup(HalC2.Codex.Registry, thread_id) end)
+    state = await_state(pid, &(&1.turn == nil and &1.goal != nil))
+    assert %{goal_hold: nil, goal: %{"status" => "complete"}} = state
+    assert ["completed"] = statuses(thread_id)
+  end
+
+  defp start_goal_run(thread_id, work) do
     :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
     selection = %{"instanceId" => "codex", "model" => "gpt-5.4"}
 
@@ -65,21 +99,6 @@ defmodule HalC2.CodexGoalRuntimeTest do
         "modelSelection" => selection,
         "dispatchMode" => %{"type" => "start_immediately"}
       })
-
-    [{pid, _}] = await(fn -> Registry.lookup(HalC2.Codex.Registry, thread_id) end)
-    %{goal_hold: hold, conn: conn} = await_state(pid, &(&1.goal_hold != nil))
-    assert ["running"] = statuses(thread_id)
-
-    ref = Process.monitor(conn)
-    os_pid = HalC2.Subprocess.os_pid(:sys.get_state(conn).sub)
-    {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
-    assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
-    assert %{turn: nil, goal_hold: nil} = await_state(pid, &(&1.conn == nil))
-    assert ["failed"] = statuses(thread_id)
-
-    send(pid, {:goal_grace, hold})
-    assert %{turn: nil} = :sys.get_state(pid)
-    assert ["failed"] = statuses(thread_id)
   end
 
   defp statuses(thread_id) do
