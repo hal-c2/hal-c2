@@ -133,4 +133,50 @@ defmodule HalC2.ProviderUpdatesTest do
                "targetVersion" => "1.0.0; rm -rf /"
              })
   end
+
+  # Grok's latest is seeded like the others'.
+  setup do
+    :persistent_term.put(
+      {HalC2.ProviderUpdates, "grok"},
+      {"9.9.9", System.monotonic_time(:millisecond)}
+    )
+
+    on_exit(fn ->
+      :persistent_term.erase({HalC2.ProviderUpdates, "grok"})
+      :persistent_term.erase({HalC2.ProviderUpdates, {:cask, "grok-build"}})
+    end)
+  end
+
+  test "Grok updates through its own updater, npm installs included", %{tmp_dir: dir} do
+    own = install(dir, "home/.grok/bin/grok", "home/bin/grok")
+
+    assert HalC2.ProviderUpdates.advisory("grok", own, "1.0.0")["updateCommand"] ==
+             "#{own} update"
+
+    npm = install(dir, "lib/node_modules/@xai-official/grok/bin/grok", "bin/grok")
+
+    assert HalC2.ProviderUpdates.advisory("grok", npm, "1.0.0")["updateCommand"] ==
+             "#{npm} update"
+  end
+
+  test "a Grok binary that cannot be resolved has no update command", %{tmp_dir: dir} do
+    missing = Path.join(dir, "gone/grok")
+    advisory = HalC2.ProviderUpdates.advisory("grok", missing, "1.0.0")
+    assert advisory["status"] == "behind_latest"
+    assert advisory["updateCommand"] == nil
+    assert HalC2.ProviderUpdates.advisory("grok", nil, "1.0.0")["updateCommand"] == nil
+  end
+
+  test "a Grok in a Homebrew cask upgrades through brew only where brew owns the prefix",
+       %{tmp_dir: dir} do
+    path = install(dir, "brew/Caskroom/grok-build/1.0.0/grok", "brew/bin/grok")
+    assert HalC2.ProviderUpdates.advisory("grok", path, "1.0.0")["updateCommand"] == nil
+
+    brew = Path.join(dir, "brew/bin/brew")
+    File.write!(brew, "#!/bin/sh\necho '{\"casks\":[{\"version\":\"1.0.60\"}]}'\n")
+    File.chmod!(brew, 0o755)
+
+    assert HalC2.ProviderUpdates.advisory("grok", path, "1.0.0")["updateCommand"] ==
+             "#{brew} upgrade --cask grok-build"
+  end
 end

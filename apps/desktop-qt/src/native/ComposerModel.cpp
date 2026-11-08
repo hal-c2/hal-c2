@@ -318,6 +318,8 @@ QList<Instance> instances(const QJsonArray& providers) {
     instance.available = str(provider, QLatin1String("availability")) != QLatin1String("unavailable");
     instance.requiresNewThreadForModelChange = provider.value(QLatin1String("requiresNewThreadForModelChange")).toBool();
     instance.showInteractionModeToggle = provider.value(QLatin1String("showInteractionModeToggle")) != QJsonValue(false);
+    const QJsonObject setup = provider.value(QLatin1String("setup")).toObject();
+    instance.canSetUp = setup.value(QLatin1String("canInstall")).toBool() || setup.value(QLatin1String("canAuthenticate")).toBool();
     for (const QJsonValue& mode : provider.value(QLatin1String("supportedRuntimeModes")).toArray()) {
       instance.runtimeModes.append(mode.toString());
     }
@@ -352,6 +354,24 @@ QJsonObject findModel(const Instance& instance, const QString& model) {
   }
   for (const QJsonValue& value : instance.models) {
     if (modelMatches(value.toObject(), model)) return value.toObject();
+  }
+  return {};
+}
+
+QString fallbackModelSlug(const Instance& instance, const QString& model) {
+  if (model.isEmpty()) return {};
+  for (const QJsonValue& value : instance.models) {
+    if (str(value.toObject(), QLatin1String("slug")) == model) return model;
+  }
+  for (const QJsonValue& value : instance.models) {
+    const QJsonObject candidate = value.toObject();
+    if (candidate.value(QLatin1String("isCustom")).toBool()) continue;
+    if (str(candidate, QLatin1String("name")).compare(model, Qt::CaseInsensitive) == 0) {
+      return str(candidate, QLatin1String("slug"));
+    }
+    for (const QJsonValue& alias : candidate.value(QLatin1String("aliases")).toArray()) {
+      if (alias.toString() == model) return str(candidate, QLatin1String("slug"));
+    }
   }
   return {};
 }
@@ -460,6 +480,7 @@ QVariantList pickerInstances(const QList<Instance>& list, const ModelPrefs& pref
         {QStringLiteral("initials"), initialsOf(instance.displayName)},
         {QStringLiteral("showBadge"), showBadge(instance, visible)},
         {QStringLiteral("status"), instance.status},
+        {QStringLiteral("canSetUp"), instance.canSetUp},
         {QStringLiteral("isAvailable"), instance.ready() || !shown.isEmpty()},
         {QStringLiteral("unavailableReason"), reason},
         {QStringLiteral("models"), shown},
@@ -570,7 +591,8 @@ QVariantList shellOptions(const QJsonArray& descriptors) {
     if (select) {
       for (const QJsonValue& choice : descriptor.value(QLatin1String("options")).toArray()) {
         choices.append(QVariantMap{{QStringLiteral("id"), str(choice.toObject(), QLatin1String("id"))},
-                                   {QStringLiteral("label"), str(choice.toObject(), QLatin1String("label"))}});
+                                   {QStringLiteral("label"), str(choice.toObject(), QLatin1String("label"))},
+                                   {QStringLiteral("isDefault"), choice.toObject().value(QLatin1String("isDefault")).toBool()}});
       }
     }
     const QJsonValue current = descriptor.value(QLatin1String("currentValue"));
@@ -631,6 +653,27 @@ QVariantList runtimeModes(const Instance* instance) {
                               {QStringLiteral("description"), QString::fromLatin1(mode.description)}});
   }
   return result;
+}
+
+QString shownRuntimeMode(const Instance* instance, const QString& saved) {
+  const QVariantList offered = runtimeModes(instance);
+  QStringList values;
+  for (const QVariant& entry : offered) values.append(entry.toMap().value(QStringLiteral("value")).toString());
+  if (values.contains(saved)) return saved;
+  if (values.contains(QStringLiteral("approval-required"))) return QStringLiteral("approval-required");
+  return values.isEmpty() ? saved : values.first();
+}
+
+QString noProviderStandIn(const QList<Instance>& list) {
+  // No providers reported yet is not "none can run a turn": the composer
+  // still shows the thread's model while it waits.
+  if (list.isEmpty()) return {};
+  bool setUp = false;
+  for (const Instance& instance : list) {
+    if (instance.ready()) return {};
+    if (instance.canSetUp) setUp = true;
+  }
+  return setUp ? QStringLiteral("open-provider-settings") : QStringLiteral("no-provider-available");
 }
 
 // What Enter and its modified forms send.

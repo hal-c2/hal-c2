@@ -94,6 +94,26 @@ Item {
             verify(!!findChild(composer, "optionToggle:fastMode"));
         }
 
+        // A model with fewer levels can replace one whose chosen level was past
+        // their end: each chip reads its value's label, never a stale index.
+        function test_aChipNamesTheValueAcrossAModelChange() {
+            const levels = (ids, value) => ({ id: "effort", label: "Effort", type: "select", value: value, choices: ids.map(id => ({ id: id, label: id.toUpperCase() })) });
+            const window = (ids, value) => ({ id: "contextWindow", label: "Context", type: "select", value: value, choices: ids.map(id => ({ id: id, label: id.toUpperCase() })) });
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), {
+                options: [levels(["low", "medium", "high", "max"], "max"), window(["200k", "500k", "1m"], "1m")]
+            }), workspace: null };
+            const composer = createTemporaryObject(composerComponent, root);
+            const effort = findChild(composer, "effortPicker");
+            const context = findChild(composer, "optionPicker:contextWindow");
+            compare(effort.displayText, "MAX");
+            compare(context.displayText, "1M");
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), {
+                options: [levels(["low", "high"], "high"), window(["200k"], "200k")]
+            }), workspace: null };
+            compare(effort.displayText, "HIGH");
+            compare(context.displayText, "200K");
+        }
+
         function test_aTriggerWithNothingToOfferSaysSo() {
             const empty = "No skills found. Try / to browse provider commands.";
             Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), {

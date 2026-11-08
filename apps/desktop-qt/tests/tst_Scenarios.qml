@@ -292,7 +292,9 @@ Item {
                     value: "high",
                     choices: [{ id: "high", label: "High" }, { id: "low", label: "Low" }]
                 }],
-                runtimeModes: [{ value: "approval-required", label: "Ask" }, { value: "auto", label: "Auto" }]
+                runtimeModes: [{ value: "approval-required", label: "Ask" }, { value: "auto", label: "Auto" }],
+                // Not the thread's own, so the toolbar names them.
+                defaultRuntimeMode: "auto"
             });
             Shell.state = Object.assign({}, Shell.state, {
                 workspace: {
@@ -319,6 +321,67 @@ Item {
             verify(!!picker, data.picker);
             Shell.actionRequested("composer.control.open", { command: data.command });
             tryCompare(picker.popup ?? picker, "visible", true);
+        }
+
+        // A started thread at its default permissions names them nowhere:
+        // their key opens the model control at its permissions menu.
+        function permissionsAtTheirDefault(overrides) {
+            const composer = createComposer(Object.assign({
+                selectedInstanceId: "codex",
+                selectedModel: "gpt-5.5",
+                runtimeModes: [{ value: "approval-required", label: "Ask" }, { value: "auto", label: "Auto" }],
+                defaultRuntimeMode: "approval-required"
+            }, overrides ?? {}));
+            Shell.state = Object.assign({}, Shell.state, { modelPicker: codexAndClaude() });
+            verify(!findChild(composer, "runtimeModePicker").visible);
+            return composer;
+        }
+
+        function test_given_a_thread_at_its_default_permissions_when_their_key_is_pressed_then_the_model_control_opens_at_them() {
+            const composer = permissionsAtTheirDefault();
+            const picker = findChild(composer, "modelPicker");
+            tryCompare(picker, "enabled", true);
+            Shell.actionRequested("composer.control.open", { command: "composer.mode" });
+            tryCompare(picker.popup, "opened", true);
+            const permissions = findChild(composer, "modelPickerPermissions");
+            verify(!!permissions, "modelPickerPermissions");
+            tryCompare(permissions.popup, "visible", true);
+        }
+
+        function test_given_the_model_control_is_open_when_the_permissions_key_is_pressed_then_its_permissions_menu_opens() {
+            const composer = permissionsAtTheirDefault();
+            const picker = findChild(composer, "modelPicker");
+            tryCompare(picker, "enabled", true);
+            picker.open();
+            tryCompare(picker.popup, "opened", true);
+            const permissions = findChild(composer, "modelPickerPermissions");
+            compare(permissions.popup.visible, false);
+            Shell.actionRequested("composer.control.open", { command: "composer.mode" });
+            tryCompare(permissions.popup, "visible", true);
+            compare(picker.popup.visible, true);
+        }
+
+        function test_given_the_permissions_menu_is_open_in_the_model_control_when_the_user_steps_back_then_only_the_menu_closes() {
+            const composer = permissionsAtTheirDefault();
+            const picker = findChild(composer, "modelPicker");
+            tryCompare(picker, "enabled", true);
+            Shell.actionRequested("composer.control.open", { command: "composer.mode" });
+            const permissions = findChild(composer, "modelPickerPermissions");
+            tryCompare(permissions.popup, "visible", true);
+            Shell.actionRequested("composer.modelPicker.back", undefined);
+            tryCompare(permissions.popup, "visible", false);
+            compare(picker.popup.visible, true);
+            Shell.actionRequested("composer.modelPicker.back", undefined);
+            tryCompare(picker.popup, "visible", false);
+        }
+
+        function test_given_a_message_on_its_way_when_the_permissions_key_is_pressed_then_the_model_control_stays_shut() {
+            const composer = permissionsAtTheirDefault({ isSendBusy: true });
+            const picker = findChild(composer, "modelPicker");
+            compare(picker.enabled, false);
+            Shell.actionRequested("composer.control.open", { command: "composer.mode" });
+            wait(0);
+            compare(picker.popup.visible, false);
         }
 
         function test_given_a_thread_on_a_branch_when_the_branch_picker_opens_then_the_refs_are_loaded_unfiltered() {
@@ -482,7 +545,10 @@ Item {
 
         function test_given_claude_opus_is_chosen_then_the_picker_names_it_and_its_provider() {
             const picker = createPicker(codexAndClaude(), "claudeAgent", "opus");
-            compare(picker.triggerTitle, "Claude Opus");
+            // The trigger says the name the user would say; the full name is
+            // in its tooltip.
+            compare(picker.triggerTitle, "Opus");
+            compare(picker.triggerFullTitle, "Claude Opus");
             compare(picker.activeInstance.displayName, "Claude");
             const icon = findChild(picker, "modelPickerIcon");
             verify(!!icon, "Object exists");
