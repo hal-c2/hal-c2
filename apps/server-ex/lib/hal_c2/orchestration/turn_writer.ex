@@ -504,6 +504,7 @@ defmodule HalC2.Orchestration.TurnWriter do
                   "completedAt" => at,
                   "updatedAt" => at
                 })
+                |> retry_title(status)
                 |> stopped_output(item, state.thread_id))
             ),
             Orchestration.upsert(
@@ -530,6 +531,21 @@ defmodule HalC2.Orchestration.TurnWriter do
 
     state
   end
+
+  # A retry still open when its turn ends says how it ended; a usage-limit end is
+  # retitled again by the failure item `finish/3` writes over it.
+  defp retry_title(%{"retry" => %{}} = item, status) do
+    title =
+      case status do
+        "completed" -> "Provider recovered"
+        "failed" -> "Provider error"
+        _ -> "Provider retry stopped"
+      end
+
+    Map.put(item, "title", title)
+  end
+
+  defp retry_title(item, _status), do: item
 
   # A command stopped mid-run keeps what it had printed.
   defp stopped_output(%{"output" => ""} = item, %{kind: :command, id: id}, thread_id) do
@@ -1079,6 +1095,7 @@ defmodule HalC2.Orchestration.TurnWriter do
               failure["class"] == "usage_limit" -> "Usage limit reached"
               failure["code"] == "queued_start_failed" -> "Queued provider could not start"
               failure["code"] == "provider_turned_off" -> "Provider turned off"
+              failure["code"] == "compact_empty_thread" -> "Cannot compact an empty thread"
               failure["code"] == "worktree_unavailable" -> "Worktree could not be made"
               true -> "Provider error"
             end,
@@ -1088,9 +1105,14 @@ defmodule HalC2.Orchestration.TurnWriter do
     )
   end
 
-  # "Run interrupted" in the transcript, under the user's request when there was one.
+  # "Run interrupted" in the transcript, under the stop's request when there was
+  # one, saying who stopped it: the user, an agent (with its reason), or the
+  # provider itself when nobody asked.
   defp interrupt_result(stream, ids, at) do
     item_id = "turn-item:run:#{ids.run}:signal:interrupt-result"
+
+    request =
+      StreamState.get(stream, "turn-item")["turn-item:run:#{ids.run}:signal:interrupt-request"]
 
     StreamState.get(stream, "turn-item")[item_id] == nil &&
       Orchestration.create(
@@ -1106,11 +1128,20 @@ defmodule HalC2.Orchestration.TurnWriter do
           %{
             "title" => "Interrupted",
             "parentItemId" => "turn-item:run:#{ids.run}:signal:interrupt-request",
-            "message" => "Run interrupted by user"
+            "message" => stopped_by(request)
           }
         )
       )
   end
+
+  defp stopped_by(nil), do: "Stopped by the provider"
+
+  defp stopped_by(%{"stoppedBy" => "agent", "message" => reason})
+       when is_binary(reason) and reason != "Interrupt requested",
+       do: "Stopped by an agent: #{reason}"
+
+  defp stopped_by(%{"stoppedBy" => "agent"}), do: "Stopped by an agent"
+  defp stopped_by(_request), do: "Stopped by user"
 
   defp capture_checkpoint(%{scope_id: scope_id} = turn, at) do
     # Its own lane: a finish can run inside the turn's own start (a wake

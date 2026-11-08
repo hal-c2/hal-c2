@@ -566,6 +566,38 @@ defmodule HalC2.Orchestration.DelegationTest do
       assert_received {:at_interrupt, %{"status" => "cancelled"}}
     end
 
+    # Upstream #24299: an agent's `task_cancel` read as the user's stop.
+    test "a cancel an agent asked for names the agent in the child's interrupt request" do
+      delegate("running")
+
+      assert {:ok, %{"status" => "cancelled"}} =
+               Delegation.cancel("p", "task", requested_by: "agent")
+
+      request =
+        "c"
+        |> HalC2.Streams.ensure()
+        |> HalC2.Streams.Server.state()
+        |> StreamState.get("turn-item")
+        |> Map.get("turn-item:run:cr:signal:interrupt-request")
+
+      assert request["stoppedBy"] == "agent"
+    end
+
+    test "a cancel the user asked for names the user in the child's interrupt request" do
+      delegate("running")
+
+      assert {:ok, %{"status" => "cancelled"}} = Delegation.cancel("p", "task")
+
+      request =
+        "c"
+        |> HalC2.Streams.ensure()
+        |> HalC2.Streams.Server.state()
+        |> StreamState.get("turn-item")
+        |> Map.get("turn-item:run:cr:signal:interrupt-request")
+
+      assert request["stoppedBy"] == "user"
+    end
+
     test "is refused for a task that already ended" do
       delegate("completed")
       Delegation.finished("c", "cr", "completed")

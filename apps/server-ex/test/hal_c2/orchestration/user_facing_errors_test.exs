@@ -23,6 +23,22 @@ defmodule HalC2.Orchestration.UserFacingErrorsTest do
     assert sanitize_failure("auth=xyz") == "auth=[REDACTED]"
   end
 
+  test "values under compound credential keys are hidden, token counts are not credentials" do
+    assert sanitize_failure("client_secret=abc refresh_token=def") ==
+             "client_secret=[REDACTED] refresh_token=[REDACTED]"
+
+    assert sanitize_failure(~s({"client_secret":"abc"})) ==
+             ~s({"client_secret":"[REDACTED]"})
+
+    assert sanitize_failure("clientSecret: abc") == "clientSecret: [REDACTED]"
+
+    assert sanitize_failure("refreshToken=abc accessToken: def") ==
+             "refreshToken=[REDACTED] accessToken: [REDACTED]"
+
+    assert sanitize_failure("max_tokens=4096 input_tokens: 12") ==
+             "max_tokens=4096 input_tokens: 12"
+  end
+
   test "an authorization header loses its value and keeps its scheme" do
     assert sanitize_failure("Authorization: Bearer abc") == "Authorization: Bearer [REDACTED]"
     assert sanitize_failure(~s("authorization": "sk-1")) == ~s("authorization": "[REDACTED]")

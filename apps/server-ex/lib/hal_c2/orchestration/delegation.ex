@@ -249,13 +249,22 @@ defmodule HalC2.Orchestration.Delegation do
       Orchestration.cancel_queued(task["childThreadId"])
       hook(:cancelling, task_id)
 
-      _ =
-        Orchestration.dispatch(%{
-          "type" => "run.interrupt",
-          "threadId" => task["childThreadId"],
-          "holdQueue" => false,
-          "stopDelegated" => Keyword.get(opts, :stop_delegated, true)
-        })
+      # A cancel an agent asked for (`task_cancel`, `requested_by: "agent"`) names
+      # the agent in the child's interrupt outcome; the user's stops name the user.
+      interrupt = %{
+        "type" => "run.interrupt",
+        "threadId" => task["childThreadId"],
+        "holdQueue" => false,
+        "stopDelegated" => Keyword.get(opts, :stop_delegated, true)
+      }
+
+      interrupt =
+        case Keyword.get(opts, :requested_by) do
+          nil -> interrupt
+          by -> Map.put(interrupt, "requestedBy", by)
+        end
+
+      _ = Orchestration.dispatch(interrupt)
 
       {:ok, status(thread_id, task_id)}
     else
