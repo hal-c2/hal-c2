@@ -601,6 +601,30 @@ defmodule HalC2.Claude.ThreadRuntime do
         state = resolve_request(%{state | requests: requests}, request_id, response, status)
         {:reply, :ok, state}
 
+      # An MCP tool's elicitation: the answer is for this one request, and no
+      # session or standing grant is written for the next one. A decision the card
+      # does not offer ("acceptForSession") declines.
+      {{:elicitation, control_id, params}, requests} ->
+        decision =
+          cond do
+            response["dismissed"] -> "cancel"
+            response["decision"] in ["accept", "decline", "cancel"] -> response["decision"]
+            true -> "decline"
+          end
+
+        answer = HalC2.Codex.Elicitation.response(params, decision)
+        Session.answer_elicitation(state.session, control_id, answer)
+
+        state =
+          resolve_request(
+            %{state | requests: requests},
+            request_id,
+            decision,
+            if(decision == "cancel", do: "cancelled", else: "resolved")
+          )
+
+        {:reply, :ok, state}
+
       {{:permission, control_id, tool, suggestions}, requests} ->
         decision = response["decision"] || "decline"
         cancelled? = decision == "cancel" or response["dismissed"] == true
@@ -745,6 +769,49 @@ defmodule HalC2.Claude.ThreadRuntime do
     {:noreply, %{state | requests: Map.put(state.requests, request_id, request)}}
   end
 
+  def handle_info({:claude, session, {:elicitation, id, _request}}, %{turn: nil} = state) do
+    Session.answer_elicitation(session, id, %{"action" => "decline"})
+    {:noreply, state}
+  end
+
+  # An MCP tool asks the user to confirm before it goes on: an approval naming
+  # its server, offering only that one request's approve, decline or cancel.
+  # A request the card cannot answer (a web sign-in, form values it cannot
+  # fill, input it does not describe) is declined without asking.
+  def handle_info({:claude, _session, {:elicitation, id, request}}, state) do
+    params = %{
+      "mode" => request["mode"],
+      "message" => request["message"],
+      "serverName" => request["mcp_server_name"],
+      "requestedSchema" => request["requested_schema"]
+    }
+
+    answerable? =
+      request["mode"] != "url" and is_map(request["requested_schema"]) and
+        HalC2.Codex.Elicitation.response(params, "accept")["action"] == "accept"
+
+    if answerable? do
+      %{app: app, options: options} = HalC2.Codex.Elicitation.describe(params)
+      options = Enum.filter(options, &(&1["decision"] in ["accept", "decline", "cancel"]))
+
+      {state, request_id} =
+        open_request(
+          flush(state),
+          "mcp-elicitation:#{id}",
+          "mcp-elicitation",
+          request["message"],
+          options,
+          %{"appName" => app}
+        )
+
+      request = {:elicitation, id, params}
+      {:noreply, %{state | requests: Map.put(state.requests, request_id, request)}}
+    else
+      Session.answer_elicitation(state.session, id, %{"action" => "decline"})
+      {:noreply, state}
+    end
+  end
+
   # Claude stopped waiting for an answer (it withdrew the request): the prompt
   # closes as cancelled. One the user already answered is no longer open, and
   # stays answered.
@@ -812,6 +879,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   def handle_info(_other, state), do: {:noreply, state}
 
   defp cancelled_decision({:permission, _id, _tool, _suggestions}), do: "cancel"
+  defp cancelled_decision({:elicitation, _id, _params}), do: "cancel"
   defp cancelled_decision(_request), do: %{"dismissed" => true}
 
   defp command?(input),
@@ -1562,10 +1630,21 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # The result of the wake a user's turn took over; the user's own follows it. An
-  # interrupt ends the user's turn with the first.
-  defp receive_message(%{"type" => "result"}, %{wake: %{open: true}} = state)
-       when not state.interrupted,
-       do: %{state | wake: nil}
+  # interrupt ends the user's turn with the first. A result naming the user's prompt
+  # is Claude folding that prompt into the wake turn: the one result ends both, and
+  # no other follows (Upstream #28010).
+  defp receive_message(%{"type" => "result"} = result, %{wake: %{open: true}} = state)
+       when not state.interrupted do
+    state = %{state | wake: nil}
+
+    case state.turn do
+      %{prompt: %{} = prompt} ->
+        if echoes_prompt?(result, prompt), do: message(result, state), else: state
+
+      _ ->
+        state
+    end
+  end
 
   # A result for a turn Claude ran by itself while the prompt waited (a resumed process
   # reporting work the last one left, a peer's message) does not end the user's turn:
@@ -1596,6 +1675,11 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   defp result?(message), do: match?(%{"type" => "result"}, message)
+
+  defp echoes_prompt?(result, prompt) do
+    echoed = List.wrap(result["user_message_uuids"]) ++ List.wrap(result["user_message_uuid"])
+    Enum.any?([prompt.uuid | Map.get(prompt, :steers, [])], &(&1 in echoed))
+  end
 
   defp wake?(%{"type" => type}) when type in ~w(assistant user stream_event), do: true
   defp wake?(_message), do: false

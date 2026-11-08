@@ -55,9 +55,13 @@ configuration. The token never reaches logs or diagnostics.
 
 - **Codex** gets `mcp_servers.hal-c2` (`url` and `http_headers`) in the config of its thread
   parameters ([`Codex.ThreadRuntime`](../../apps/server-ex/lib/hal_c2/codex/thread_runtime.ex)).
-- **Claude** gets an HTTP server in `--mcp-config`, `mcp__hal-c2` in `--allowedTools`, and the
-  shared instructions (`priv/mcp_instructions.md`) appended to its system prompt
-  ([`Claude.Protocol`](../../apps/server-ex/lib/hal_c2/claude/protocol.ex)).
+- **Claude** gets an HTTP server over stdin (the `mcp_set_servers` control request), never in a
+  file or argument: the shell commands, hooks and local MCP servers Claude runs share its
+  environment and can read what it can. `mcp__hal-c2` goes in `--allowedTools` and the shared
+  instructions (`priv/mcp_instructions.md`) are appended to its system prompt
+  ([`Claude.Protocol`](../../apps/server-ex/lib/hal_c2/claude/protocol.ex)). The first prompt
+  waits for Claude's answer; a server Claude refuses leaves the session without HAL-C2's tools
+  ([`Claude.Session`](../../apps/server-ex/lib/hal_c2/claude/session.ex)).
 - **ACP agents** (Grok, OpenCode, Antigravity, registry agents) get it in the `mcpServers` field of
   `session/new`, `session/load` and `session/fork`, and only when the agent advertises HTTP MCP
   support ([`Acp.ThreadRuntime`](../../apps/server-ex/lib/hal_c2/acp/thread_runtime.ex)).
