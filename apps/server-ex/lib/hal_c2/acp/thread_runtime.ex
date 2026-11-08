@@ -930,6 +930,14 @@ defmodule HalC2.Acp.ThreadRuntime do
   # loop answering with that loop's one result. OpenCode 1.19 does: a prompt to a
   # running session awaits the running loop's own result (`Runner.ensureRunning`), and
   # each prompt's answer is built from it, so a joined steer answers as its loop did.
+  defp answer(state, label, result) do
+    answer = if label == :prompt or state.answer != nil, do: result
+
+    if answer != nil and (state.interrupted or :gen_server.reqids_size(state.prompts) == 0),
+      do: answered(state, answer),
+      else: {:noreply, %{state | answer: answer}}
+  end
+
   # A Grok completion notice settles the turn's prompt when it names that
   # prompt (or names none while exactly one prompt waits) on this session,
   # and the prompt did not already complete. A subagent session's notice, a
@@ -961,14 +969,6 @@ defmodule HalC2.Acp.ThreadRuntime do
        do: reason
 
   defp grok_stop_reason(_reason), do: "end_turn"
-
-  defp answer(state, label, result) do
-    answer = if label == :prompt or state.answer != nil, do: result
-
-    if answer != nil and (state.interrupted or :gen_server.reqids_size(state.prompts) == 0),
-      do: answered(state, answer),
-      else: {:noreply, %{state | answer: answer}}
-  end
 
   defp answered(state, result) do
     {status, failure} =
@@ -3519,16 +3519,23 @@ defmodule HalC2.Acp.ThreadRuntime do
     case acp_prompt(turn, prompt_capabilities(state), text) do
       {:ok, prompt} ->
         # Grok's prompt carries an id of its own, which its completion notice
-        # names when the prompt request itself is never answered.
+        # names when the prompt request itself is never answered. A prompt
+        # that replaces one still out (a steer taken as a new turn) retires
+        # the replaced id, so its late notice settles nothing.
         {params, state} =
           if grok?(state) do
             id = "hal-c2-xai-prompt-#{state.grok_seq + 1}"
+
+            done =
+              if state.grok_prompt,
+                do: Enum.take(state.grok_done ++ [state.grok_prompt], -128),
+                else: state.grok_done
 
             {%{
                "sessionId" => state.session_id,
                "prompt" => prompt,
                "_meta" => %{"promptId" => id, "requestId" => id}
-             }, %{state | grok_prompt: id, grok_seq: state.grok_seq + 1}}
+             }, %{state | grok_prompt: id, grok_seq: state.grok_seq + 1, grok_done: done}}
           else
             {%{"sessionId" => state.session_id, "prompt" => prompt}, state}
           end
