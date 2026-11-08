@@ -582,12 +582,18 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
 
     names
     |> Enum.filter(&is_binary/1)
-    |> Enum.map(&@capability_of[&1])
+    |> Enum.map(&@capability_of[native_name(&1)])
     |> Enum.reject(&is_nil/1)
     |> Enum.uniq()
   end
 
   def used_in_item(_item, _unit), do: []
+
+  # The MC names a Codex tool call `<namespace>.<tool>` (an MCP call `<server>.<tool>`),
+  # and Codex's own tools sit in `tools`: `tools.view_image` is `view_image`, while
+  # another server's `view_image` is that server's tool, not Codex's package.
+  defp native_name("tools." <> name), do: name
+  defp native_name(name), do: name
 
   defp nested_tools(input) when is_binary(input) do
     ~r/\btools\.([A-Za-z_][A-Za-z0-9_]*)\s*\(/

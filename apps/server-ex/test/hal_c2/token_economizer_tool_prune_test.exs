@@ -381,6 +381,12 @@ defmodule HalC2.TokenEconomizerToolPruneTest do
 
     assert Prune.used_in_item(exec, "capability") == ["image_media"]
 
+    # A direct call keeps Codex's namespace; an MCP server's tool of the same name is not
+    # Codex's package.
+    direct = &%{"itemType" => "dynamic_tool", "tool" => &1, "input" => ~s({"path":"a.png"})}
+    assert Prune.used_in_item(direct.("tools.view_image"), "capability") == ["image_media"]
+    assert Prune.used_in_item(direct.("files.view_image"), "capability") == []
+
     assert Prune.used_in_item(
              %{"tool" => "spawn_agent", "itemType" => "dynamic_tool"},
              "capability"
