@@ -402,7 +402,6 @@ Feature: Grok
       | because the command finished      | completed |
       | saying it failed or timed out     | failed    |
 
-  @backlog
   Scenario: A Grok tool without a title is named after what it does
     When Grok runs a tool and gives it no title
     Then the tool call is named after the command, file or search it works on
@@ -602,7 +601,6 @@ Feature: Grok
       | _x.ai/exit_plan_mode          | a plan to review                |
 
   # XAiAcpExtension.ts: the corners of tool calls, monitors and subagents.
-  @backlog
   Scenario Outline: A Grok tool with a placeholder title is given a name that says what it is
     When Grok runs <tool> titled "Tool"
     Then the tool call is named <name>
@@ -617,16 +615,14 @@ Feature: Grok
       | a command of more than 80 characters     | the command's first 77 characters followed by "..." |
 
   # Upstream #32408: the 77-character cut could land inside an emoji and leave half of it.
-  @backlog
   Scenario: A Grok command name cut short does not end in a broken character
     When Grok runs a command titled "Tool" whose 77th character falls inside an emoji
     Then the tool call is named by the command up to just before that emoji, followed by "..."
     And the name holds no replacement character
 
-  @backlog
   Scenario Outline: A Grok command's result decides whether it is finished
     When Grok reports a command result with <result>
-    Then the command is shown as <state>
+    Then the command result is shown as <state>
 
     Examples:
       | result                        | state       |

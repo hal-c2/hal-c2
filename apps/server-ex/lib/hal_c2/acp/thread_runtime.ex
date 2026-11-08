@@ -1996,6 +1996,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp update(%{"sessionUpdate" => "tool_call", "toolCallId" => id} = call, state) do
     state = plan_file(state, call)
+    call = grok_call(call, state)
 
     cond do
       plan_call?(call, state) -> plan_call(state, id, call)
@@ -2006,6 +2007,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp update(%{"sessionUpdate" => "tool_call_update", "toolCallId" => id} = call, state) do
     state = plan_file(state, call)
+    call = grok_call(call, state)
 
     cond do
       plan_call?(call, state) -> plan_call(state, id, call)
@@ -2369,6 +2371,108 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp plan_call(state, _id, _call), do: state
 
+  # Grok names a tool "Tool" and reports a command's end in its own result; the call
+  # is read as the other agents' are, with a name and a status.
+  defp grok_call(call, %{turn: %{ids: %{driver: driver}}}) do
+    if HalC2.Acp.driver(driver) == "grok",
+      do: call |> grok_title() |> grok_status(),
+      else: call
+  end
+
+  defp grok_call(call, _state), do: call
+
+  # What the call is about names it, in this order: its description (a monitor's
+  # reads "Monitor: ..."), what kind of call it is, and its command cut to 80
+  # characters.
+  defp grok_title(%{"title" => title} = call) when title in [nil, ""] or is_binary(title) do
+    if String.downcase(String.trim(title || "")) in ["", "tool", "tool call", "terminal"] do
+      input = if is_map(call["rawInput"]), do: call["rawInput"], else: %{}
+      description = non_empty(input["description"], nil)
+      variant = input["variant"] |> to_string() |> String.downcase()
+
+      command =
+        non_empty(input["command"], nil) || non_empty(get_in(call, ["rawOutput", "command"]), nil)
+
+      name =
+        cond do
+          description && variant == "monitor" &&
+              not String.starts_with?(String.downcase(description), "monitor") ->
+            "Monitor: " <> description
+
+          description ->
+            description
+
+          variant == "monitor" ->
+            "Monitor"
+
+          variant in ["task", "cursortask", "spawn_subagent"] ->
+            "Task"
+
+          variant in ["taskoutput", "task_output"] ->
+            "Task output"
+
+          variant != "" ->
+            variant
+
+          is_binary(command) ->
+            if String.length(command) > 80, do: cut_utf16(command, 77) <> "...", else: command
+
+          true ->
+            nil
+        end
+
+      if name, do: Map.put(call, "title", name), else: call
+    else
+      call
+    end
+  end
+
+  defp grok_title(call), do: call
+
+  # The first `units` UTF-16 code units of `text`, never half a character.
+  defp cut_utf16(text, units) do
+    {kept, _} =
+      text
+      |> String.codepoints()
+      |> Enum.reduce_while({[], 0}, fn char, {kept, used} ->
+        width = if byte_size(char) >= 4, do: 2, else: 1
+
+        if used + width > units,
+          do: {:halt, {kept, used}},
+          else: {:cont, {[char | kept], used + width}}
+      end)
+
+    kept |> Enum.reverse() |> Enum.join()
+  end
+
+  # A command's exit code decides how it ended; one that exited cleanly and has said
+  # nothing yet is still going.
+  defp grok_status(%{"rawOutput" => %{"type" => "Bash"} = output} = call) do
+    code =
+      Enum.find_value(["exit_code", "exitCode", "code"], fn key ->
+        if is_integer(output[key]), do: output[key]
+      end)
+
+    text = String.trim(content_text(call["content"]) || raw_output(output) || "")
+
+    cond do
+      code == nil -> call
+      code != 0 -> Map.put(call, "status", "failed")
+      text == "" -> Map.put(call, "status", "in_progress")
+      true -> Map.put(call, "status", "completed")
+    end
+  end
+
+  defp grok_status(%{"status" => "completed", "kind" => "execute"} = call) do
+    text = content_text(call["content"]) || ""
+
+    if text =~ ~r/Exit Code:\s*-?(?!0\b)\d+/i,
+      do: Map.put(call, "status", "failed"),
+      else: call
+  end
+
+  defp grok_status(call), do: call
+
   # A write to the plan file of a Grok session shows as the thread's plan while Grok is
   # still in plan mode (`HalC2.Acp.GrokPlan`).
   defp plan_file(%{turn: %{ids: %{driver: driver}}} = state, call) do
@@ -2470,6 +2574,13 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # A Grok subagent task with no description is named after the tool ("Task").
+  defp grok_task_title(%{turn: %{ids: %{driver: driver}}}, call) do
+    if HalC2.Acp.driver(driver) == "grok", do: non_empty(call["title"], nil)
+  end
+
+  defp grok_task_title(_state, _call), do: nil
+
   defp subagent_call(state, id, call) do
     state = flush(state)
     output = content_text(call["content"]) || raw_output(call["rawOutput"])
@@ -2481,7 +2592,7 @@ defmodule HalC2.Acp.ThreadRuntime do
           sub:
             NativeSubagent.start(state.turn.ids, id, %{
               "prompt" => input["prompt"],
-              "title" => input["description"],
+              "title" => input["description"] || grok_task_title(state, call),
               "model" => input["model"]
             }),
           session: nil,

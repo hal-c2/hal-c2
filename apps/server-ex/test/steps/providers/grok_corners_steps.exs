@@ -465,4 +465,180 @@ defmodule HalC2.Steps.Providers.GrokCorners do
     |> HalC2.StreamState.list("plan")
     |> Enum.filter(&(&1["kind"] == "proposed_plan"))
   end
+
+  # --- tool names and command results ------------------------------------------------
+
+  # Grok runs one tool call, `call` merged over a finished tool titled "Tool", in a turn.
+  defp run_call(context, call, opts \\ []) do
+    update =
+      Map.merge(
+        %{
+          "sessionUpdate" => "tool_call",
+          "toolCallId" => "t-1",
+          "title" => "Tool",
+          "status" => "completed"
+        },
+        call
+      )
+
+    turns = [
+      %{
+        "match" => "run it",
+        "steps" => [
+          %{"update" => update}
+          | if(opts[:hang], do: [%{"hang" => true}], else: [%{"text" => "Done."}])
+        ]
+      }
+      | FakeAcp.turns()
+    ]
+
+    context =
+      context
+      |> FakeAcp.install("grok", %{"configOptions" => [], "turns" => turns}, enabled: true)
+      |> FakeAcp.thread("Work", "full-access")
+      |> FakeAcp.send_message("run it")
+
+    unless opts[:hang], do: FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  defp tool_item(context) do
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      state
+      |> HalC2.StreamState.list("turn-item")
+      |> Enum.find(&(&1["toolName"] || &1["input"] || &1["type"] == "subagent"))
+    end)
+  end
+
+  defp named(context, name) do
+    item = tool_item(context)
+    assert (item["toolName"] || item["title"] || item["input"]) == name
+    context
+  end
+
+  step "Grok runs a tool that carries a description titled \"Tool\"", context do
+    run_call(context, %{"rawInput" => %{"description" => "Lint the code"}})
+  end
+
+  step "Grok runs a monitor described as \"watch the build\" titled \"Tool\"", context do
+    run_call(context, %{
+      "rawInput" => %{"variant" => "monitor", "description" => "watch the build"}
+    })
+  end
+
+  step "Grok runs a monitor with no description titled \"Tool\"", context do
+    run_call(context, %{"rawInput" => %{"variant" => "monitor"}})
+  end
+
+  step "Grok runs a subagent task with no description titled \"Tool\"", context do
+    run_call(context, %{"rawInput" => %{"variant" => "task"}})
+  end
+
+  step "Grok runs a check on a background task titled \"Tool\"", context do
+    run_call(context, %{"rawInput" => %{"variant" => "taskoutput"}})
+  end
+
+  @long String.duplicate("make ", 20)
+
+  step "Grok runs a command of more than 80 characters titled \"Tool\"", context do
+    run_call(context, %{"rawInput" => %{"command" => @long}})
+  end
+
+  step "Grok runs a command titled \"Tool\" whose 77th character falls inside an emoji",
+       context do
+    run_call(context, %{
+      "rawInput" => %{"command" => String.duplicate("a", 76) <> "😀" <> String.duplicate("b", 20)}
+    })
+  end
+
+  step("the tool call is named that description", context, do: named(context, "Lint the code"))
+
+  step("the tool call is named \"Monitor: watch the build\"", context,
+    do: named(context, "Monitor: watch the build")
+  )
+
+  step("the tool call is named \"Monitor\"", context, do: named(context, "Monitor"))
+  step("the tool call is named \"Task\"", context, do: named(context, "Task"))
+  step("the tool call is named \"Task output\"", context, do: named(context, "Task output"))
+
+  step "the tool call is named the command's first 77 characters followed by \"...\"",
+       context do
+    named(context, String.slice(@long, 0, 77) <> "...")
+  end
+
+  step "the tool call is named by the command up to just before that emoji, followed by \"...\"",
+       context do
+    named(context, String.duplicate("a", 76) <> "...")
+  end
+
+  step "the name holds no replacement character", context do
+    item = tool_item(context)
+    refute (item["toolName"] || item["input"] || "") =~ "\uFFFD"
+    context
+  end
+
+  defp bash(code, output) do
+    %{
+      "kind" => "execute",
+      "rawInput" => %{"command" => "make"},
+      "rawOutput" => %{"type" => "Bash", "exit_code" => code, "output" => output}
+    }
+  end
+
+  step "Grok reports a command result with exit code 0 and no output yet", context do
+    run_call(context, bash(0, ""), hang: true)
+  end
+
+  step "Grok reports a command result with exit code 0 and its output", context do
+    run_call(context, bash(0, "built"))
+  end
+
+  step "Grok reports a command result with a non-zero exit code", context do
+    run_call(context, bash(2, "boom"))
+  end
+
+  step "Grok reports a command result with the text \"Exit Code: -1\"", context do
+    run_call(context, %{
+      "kind" => "execute",
+      "rawInput" => %{"command" => "make"},
+      "content" => [
+        %{"type" => "content", "content" => %{"type" => "text", "text" => "Exit Code: -1"}}
+      ]
+    })
+  end
+
+  defp command_status(context) do
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      state
+      |> HalC2.StreamState.list("turn-item")
+      |> Enum.find(&(&1["type"] == "command_execution" or &1["input"] == "make"))
+    end)["status"]
+  end
+
+  step "the command result is shown as in progress", context do
+    assert command_status(context) in ["running", "in_progress", "inProgress"]
+    context
+  end
+
+  step "the command result is shown as completed", context do
+    assert command_status(context) == "completed"
+    context
+  end
+
+  step "the command result is shown as failed", context do
+    assert command_status(context) == "failed"
+    context
+  end
+
+  step "Grok runs a tool and gives it no title", context do
+    run_call(context, %{
+      "title" => "",
+      "kind" => "execute",
+      "rawInput" => %{"command" => "mix test"}
+    })
+  end
+
+  step "the tool call is named after the command, file or search it works on", context do
+    named(context, "mix test")
+  end
 end
