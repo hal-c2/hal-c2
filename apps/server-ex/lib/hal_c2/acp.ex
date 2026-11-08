@@ -812,29 +812,6 @@ defmodule HalC2.Acp do
     end
   end
 
-  defp read_grok(id, dir) do
-    previous =
-      Process.get({:grok_previous_models, id}) ||
-        :persistent_term.get({__MODULE__, id, :models}, nil)
-
-    result = probe_session(id, dir, "grok")
-    staged = staged_value(id, :models)
-
-    cond do
-      result == {:error, :unauthenticated} ->
-        result
-
-      result == :ok and staged not in [nil, []] ->
-        stage(id, :notice, nil)
-        :ok
-
-      true ->
-        if previous not in [nil, []], do: stage(id, :models, previous)
-        stage(id, :notice, @grok_probe_warning)
-        :ok
-    end
-  end
-
   defp read_agent(id, dir, driver, entry) do
     with :ok <- check_version(id, driver, entry),
          do: probe_session(id, dir, driver)
@@ -890,6 +867,29 @@ defmodule HalC2.Acp do
 
       result ->
         result
+    end
+  end
+
+  defp read_grok(id, dir) do
+    previous =
+      Process.get({:grok_previous_models, id}) ||
+        :persistent_term.get({__MODULE__, id, :models}, nil)
+
+    result = probe_session(id, dir, "grok")
+    staged = staged_value(id, :models)
+
+    cond do
+      result == {:error, :unauthenticated} ->
+        result
+
+      result == :ok and staged not in [nil, []] ->
+        stage(id, :notice, nil)
+        :ok
+
+      true ->
+        if previous not in [nil, []], do: stage(id, :models, previous)
+        stage(id, :notice, @grok_probe_warning)
+        :ok
     end
   end
 
@@ -1051,16 +1051,8 @@ defmodule HalC2.Acp do
       |> put_env("GROK_DISABLE_AUTOUPDATER", "1")
 
     result =
-      with path when is_binary(path) <- System.find_executable(binary("grok", entry, "grok")),
-           task =
-             Task.async(fn ->
-               System.cmd(path, ["--version"], stderr_to_stdout: true, env: env)
-             end) do
-        case Task.yield(task, timeout) || Task.shutdown(task) do
-          {:ok, {out, 0}} -> {:ok, out}
-          {:ok, _} -> :failed
-          _ -> :timeout
-        end
+      with path when is_binary(path) <- System.find_executable(binary("grok", entry, "grok")) do
+        grok_version(path, env, timeout)
       else
         _ -> :failed
       end
@@ -1085,6 +1077,55 @@ defmodule HalC2.Acp do
   end
 
   defp check_version(_id, _driver, _entry), do: :ok
+
+  # Runs `grok --version` under erlexec so a hang past the timeout kills the
+  # OS process too, not only the Elixir task waiting on it.
+  defp grok_version(path, env, timeout) do
+    options = [:stdout, {:stderr, :stdout}, :monitor, {:env, env}, {:kill_timeout, 1}]
+
+    case :exec.run([path, "--version"], options) do
+      {:ok, _pid, os_pid} ->
+        deadline = System.monotonic_time(:millisecond) + timeout
+        grok_version_output(os_pid, deadline, "")
+
+      _ ->
+        :failed
+    end
+  end
+
+  defp grok_version_output(os_pid, deadline, out) do
+    left = deadline - System.monotonic_time(:millisecond)
+
+    if left <= 0 do
+      kill_version(os_pid)
+    else
+      receive do
+        {:stdout, ^os_pid, data} ->
+          grok_version_output(os_pid, deadline, out <> IO.iodata_to_binary(data))
+
+        {:DOWN, ^os_pid, :process, _pid, :normal} ->
+          {:ok, out}
+
+        {:DOWN, ^os_pid, :process, _pid, _reason} ->
+          :failed
+      after
+        left -> kill_version(os_pid)
+      end
+    end
+  end
+
+  # Hard-kills the hung process and takes its DOWN, so no stray message is
+  # left for the caller.
+  defp kill_version(os_pid) do
+    :exec.kill(os_pid, 9)
+
+    receive do
+      {:stdout, ^os_pid, _data} -> kill_version(os_pid)
+      {:DOWN, ^os_pid, :process, _pid, _reason} -> :timeout
+    after
+      500 -> :timeout
+    end
+  end
 
   # --- per-driver fields --------------------------------------------------------
 

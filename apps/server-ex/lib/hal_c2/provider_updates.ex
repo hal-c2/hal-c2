@@ -118,10 +118,22 @@ defmodule HalC2.ProviderUpdates do
     end
   end
 
-  defp lock_key(["brew" | _]), do: "homebrew"
-  defp lock_key([_npm, "install", "-g", "--prefix", prefix | _]), do: "npm-global:" <> prefix
-  defp lock_key([path | _]), do: "self:" <> path
+  defp lock_key([program | _] = command) do
+    cond do
+      program == "brew" or String.ends_with?(program, "/bin/brew") ->
+        "homebrew"
 
+      match?([_, "install", "-g", "--prefix", _ | _], command) ->
+        "npm-global:" <> Enum.at(command, 4)
+
+      true ->
+        "self:" <> program
+    end
+  end
+
+  # The program comes only from `update_command/2`: the provider's own binary,
+  # the npm beside it, or the proven `<prefix>/bin/brew`; list args, no shell.
+  # sobelow_skip ["CI.System"]
   defp run(driver, instance, target) do
     started = HalC2.Orchestration.Entities.now()
     put_state(instance, "running", started, "Updating provider.")
@@ -236,7 +248,7 @@ defmodule HalC2.ProviderUpdates do
 
       String.contains?(real, "/Caskroom/") ->
         case cask(real) do
-          {brew, name} when is_binary(brew) -> ["brew", "upgrade", "--cask", name]
+          {brew, name} when is_binary(brew) -> [brew, "upgrade", "--cask", name]
           _ -> nil
         end
 
@@ -404,6 +416,8 @@ defmodule HalC2.ProviderUpdates do
     end
   end
 
+  # `brew` is the proven `<prefix>/bin/brew` from `cask/1`; list args, no shell.
+  # sobelow_skip ["CI.System"]
   defp refresh_cask(brew, name) do
     key = {__MODULE__, {:cask, name}, :reading}
 

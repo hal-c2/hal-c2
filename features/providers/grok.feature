@@ -377,7 +377,6 @@ Feature: Grok
     When the user sends a message
     Then the turn runs without that reasoning level
 
-  @backlog
   Scenario: A Grok turn finishes when Grok says so even if its prompt never answers
     Given a Grok turn is running
     When Grok reports the turn complete but never answers the prompt request
@@ -451,13 +450,11 @@ Feature: Grok
     Then the check shows the command's latest line of output
 
   # GrokAdapterV2.ts: what the Grok flavour changes in the shared ACP adapter.
-  @backlog
   Scenario: Images are sent to Grok although Grok says it takes none
     Given Grok reports at start-up that it does not take images
     When the user sends a Grok message with a screenshot attached
     Then Grok receives the screenshot as an image with the message
 
-  @backlog
   Scenario: Sending /compact alone to Grok compacts its conversation
     Given a Grok thread with history
     When the user sends "/compact" with no attachments and the turn completes
@@ -544,7 +541,6 @@ Feature: Grok
     When the MC starts the grok command
     Then the command's environment carries "GROK_OAUTH2_REFERRER" set to "hal-c2"
 
-  @backlog
   Scenario: Stopping a Grok turn reaches Grok as an interrupt from the keyboard
     Given a Grok turn is running
     When the user stops the turn
@@ -563,12 +559,10 @@ Feature: Grok
     Then Grok is not asked to change its reasoning level
 
   # XAiAcpExtension.ts: the corners of turn completion.
-  @backlog
   Scenario: Each Grok prompt carries an id that Grok's completion notice can name
     When the user sends a message in a Grok thread
     Then the prompt sent to Grok carries a prompt id and a request id of its own
 
-  @backlog
   Scenario: A Grok completion notice that reports a rate limit stops the turn at the usage limit
     Given a Grok turn is running
     When Grok reports the turn complete with a rate limit and never answers the prompt request
@@ -581,13 +575,11 @@ Feature: Grok
     Then neither prompt is completed
     And the same notice completes the prompt when only one is waiting
 
-  @backlog
   Scenario: A repeated Grok completion notice does not end the next turn
     Given a Grok turn has completed
     When Grok reports that turn complete again while the next turn is running
     Then the next turn is still running
 
-  @backlog
   Scenario: A Grok completion notice with a reason HAL-C2 does not know ends the turn normally
     Given a Grok turn is running
     When Grok reports the turn complete with a stop reason HAL-C2 does not know
@@ -600,7 +592,6 @@ Feature: Grok
     Then the turn ends as cancelled
     And the grok command is not started again to do it
 
-  @backlog
   Scenario Outline: Grok's notices are understood in either spelling
     When Grok sends "<notice>"
     Then HAL-C2 treats it as <meaning>

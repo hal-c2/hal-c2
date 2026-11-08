@@ -851,9 +851,10 @@ defmodule HalC2.Steps.Providers.Grok do
       """)
 
       File.chmod!(brew, 0o755)
+      Map.put(context, :brew, brew)
+    else
+      context
     end
-
-    context
   end
 
   step "Grok's executable lives in the Homebrew cask that installed it", context do
@@ -897,7 +898,7 @@ defmodule HalC2.Steps.Providers.Grok do
   step "the update command upgrades that cask through Homebrew and not Grok's own updater",
        context do
     advisory = FakeAcp.find(context.providers, "grok")["versionAdvisory"]
-    assert advisory["updateCommand"] == "brew upgrade --cask grok-build"
+    assert advisory["updateCommand"] == "#{context.brew} upgrade --cask grok-build"
     context
   end
 
@@ -1167,6 +1168,422 @@ defmodule HalC2.Steps.Providers.Grok do
       )
 
     assert FakeAcp.find(providers, "grok")["compatibilityAdvisory"]["status"] == status
+    context
+  end
+
+  # --- prompt completion -------------------------------------------------------------
+
+  # The id the last prompt sent to Grok carries.
+  defp prompt_id(context) do
+    [%{"params" => %{"_meta" => %{"promptId" => id}}} | _] =
+      Enum.reverse(FakeAcp.received(context, "session/prompt"))
+
+    id
+  end
+
+  # Waits until the runtime has taken everything sent to it so far.
+  defp sync_runtime(context), do: :sys.get_state(runtime_pid(context))
+
+  defp run_status(context) do
+    context
+    |> then(&World.state(&1, &1.thread))
+    |> HalC2.StreamState.list("run")
+    |> Enum.max_by(& &1["requestedAt"], fn -> %{} end)
+    |> Map.get("status")
+  end
+
+  step "Grok reports the turn complete but never answers the prompt request", context do
+    # Notices for a subagent's session and for finished background work first:
+    # neither ends this turn.
+    grok_says(context, "session/update", %{
+      "sessionId" => @child_session,
+      "update" => %{
+        "sessionUpdate" => "turn_completed",
+        "prompt_id" => prompt_id(context)
+      }
+    })
+
+    grok_says(context, "x.ai/session_notification", %{
+      "sessionId" => session(context),
+      "update" => %{
+        "sessionUpdate" => "turn_completed",
+        "prompt_id" => "task-completed-task-sh"
+      }
+    })
+
+    sync_runtime(context)
+    context = Map.put(context, :still_running, run_status(context) == "running")
+
+    grok_says(context, "session/update", %{
+      "sessionId" => session(context),
+      "update" => %{
+        "sessionUpdate" => "turn_completed",
+        "prompt_id" => prompt_id(context),
+        "stop_reason" => "end_turn"
+      }
+    })
+
+    context
+  end
+
+  step "a completion notice for a subagent's session or for finished background work does not complete it",
+       context do
+    assert context.still_running
+    context
+  end
+
+  step "Grok reports the turn complete with a rate limit and never answers the prompt request",
+       context do
+    grok_says(context, "x.ai/session/prompt_complete", %{
+      "sessionId" => session(context),
+      "promptId" => prompt_id(context),
+      "stopReason" => "rate_limit"
+    })
+
+    context
+  end
+
+  step "a Grok turn has completed", context do
+    context =
+      context
+      |> FakeAcp.install("grok", signed_in_config(), enabled: true)
+      |> FakeAcp.thread()
+      |> FakeAcp.send_message("first")
+
+    FakeAcp.await_run(context, "completed")
+    Map.put(context, :done_prompt, prompt_id(context))
+  end
+
+  step "Grok reports that turn complete again while the next turn is running", context do
+    context = FakeAcp.send_message(context, "start a long task")
+    FakeAcp.await_run(context, "running")
+    await_answer(context)
+
+    grok_says(context, "x.ai/session/prompt_complete", %{
+      "sessionId" => session(context),
+      "promptId" => context.done_prompt,
+      "stopReason" => "end_turn"
+    })
+
+    sync_runtime(context)
+    context
+  end
+
+  step "the next turn is still running", context do
+    assert run_status(context) == "running"
+    context
+  end
+
+  step "Grok reports the turn complete with a stop reason HAL-C2 does not know", context do
+    grok_says(context, "_x.ai/session/prompt_complete", %{
+      "sessionId" => session(context),
+      "promptId" => prompt_id(context),
+      "stopReason" => "something_new"
+    })
+
+    context
+  end
+
+  step "the turn completes as an ordinary end of turn", context do
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step "the user sends a message in a Grok thread", context do
+    context =
+      context
+      |> FakeAcp.install("grok", signed_in_config(), enabled: true)
+      |> FakeAcp.thread()
+      |> FakeAcp.send_message("hello grok")
+
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step "the prompt sent to Grok carries a prompt id and a request id of its own", context do
+    context = FakeAcp.send_message(context, "and again")
+    FakeAcp.await_runs(context, 2)
+
+    metas =
+      for %{"params" => %{"_meta" => meta}} <- FakeAcp.received(context, "session/prompt"),
+          do: meta
+
+    assert [first, second] = metas
+    assert first["promptId"] == first["requestId"]
+    assert second["promptId"] == second["requestId"]
+    assert first["promptId"] != second["promptId"]
+    context
+  end
+
+  step "Grok's cancel request carries the cancel trigger {string}",
+       %{args: [trigger]} = context do
+    FakeAcp.await_run(context, "interrupted")
+
+    assert [%{"params" => %{"_meta" => %{"cancelTrigger" => ^trigger}}}] =
+             FakeAcp.received(context, "session/cancel")
+
+    context
+  end
+
+  # Grok's notices in every spelling: each run drives the notice the outline
+  # names and watches what it does to its thread.
+  step "Grok sends {string}", %{args: [notice]} = context do
+    context = Map.put(context, :notice, notice)
+
+    cond do
+      String.contains?(notice, "ask_user_question") ->
+        question_turn(context, notice)
+
+      String.contains?(notice, "exit_plan_mode") ->
+        plan_turn(context, notice)
+
+      String.contains?(notice, "task_backgrounded") ->
+        backgrounded_turn(context, notice)
+
+      String.contains?(notice, "task_completed") ->
+        context = background_thread(context, "work in the background")
+
+        grok_says(context, notice, %{
+          "sessionId" => session(context),
+          "update" => %{
+            "sessionUpdate" => "task_completed",
+            "task_snapshot" => %{"task_id" => "task-sh"}
+          }
+        })
+
+        context
+
+      true ->
+        context =
+          context
+          |> FakeAcp.install("grok", signed_in_config(), enabled: true)
+          |> FakeAcp.thread()
+          |> FakeAcp.send_message("start a long task")
+
+        FakeAcp.await_run(context, "running")
+        await_answer(context)
+        id = prompt_id(context)
+
+        params =
+          if String.contains?(notice, "prompt_complete") do
+            %{"sessionId" => session(context), "promptId" => id, "stopReason" => "end_turn"}
+          else
+            %{
+              "sessionId" => session(context),
+              "update" => %{
+                "sessionUpdate" => "turn_completed",
+                "prompt_id" => id,
+                "stop_reason" => "end_turn"
+              }
+            }
+          end
+
+        grok_says(context, notice, params)
+        context
+    end
+  end
+
+  step "HAL-C2 treats it as the turn completing", context do
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step "HAL-C2 treats it as a task moving to the background", context do
+    World.await_row(
+      World.thread_id(context, context.thread),
+      &match?([%{"taskType" => "command_execution"}], &1["runningBackgroundTasks"])
+    )
+
+    context
+  end
+
+  step "HAL-C2 treats it as a background task ending", context do
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      background_items(state)["sh-1"] == "completed"
+    end)
+
+    context
+  end
+
+  step "HAL-C2 treats it as a question for the user", context do
+    request = FakeAcp.await_request(context)
+    assert request["kind"] == "user_input"
+
+    context =
+      FakeAcp.respond(context, request["id"], %{"answers" => %{"Which database?" => "SQLite"}})
+
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step "HAL-C2 treats it as a plan to review", context do
+    FakeAcp.await_run(context, "completed")
+    state = World.state(context, context.thread)
+
+    assert Enum.any?(
+             HalC2.StreamState.list(state, "turn-item"),
+             &(&1["type"] == "proposed_plan")
+           )
+
+    context
+  end
+
+  defp question_turn(context, method) do
+    turns = [
+      %{
+        "match" => "pick a database",
+        "steps" => [
+          %{
+            "request" => %{
+              "method" => method,
+              "params" => %{
+                "toolCallId" => "q-1",
+                "questions" => [
+                  %{
+                    "question" => "Which database?",
+                    "options" => [%{"label" => "Postgres"}, %{"label" => "SQLite"}]
+                  }
+                ]
+              }
+            }
+          },
+          %{"text" => "Using it."}
+        ]
+      }
+      | FakeAcp.turns()
+    ]
+
+    context
+    |> FakeAcp.install("grok", Map.put(signed_in_config(), "turns", turns), enabled: true)
+    |> FakeAcp.thread("Work", "approval-required")
+    |> FakeAcp.send_message("pick a database")
+  end
+
+  defp plan_turn(context, method) do
+    turns = [
+      %{
+        "match" => "plan the work",
+        "steps" => [
+          %{
+            "request" => %{
+              "method" => method,
+              "params" => %{
+                "toolCallId" => "plan-1",
+                "planContent" => "# Plan\n\n1. Add the form"
+              }
+            }
+          }
+        ]
+      }
+      | FakeAcp.turns()
+    ]
+
+    context =
+      context
+      |> FakeAcp.install("grok", Map.put(signed_in_config(), "turns", turns), enabled: true)
+      |> FakeAcp.thread("Work", "approval-required")
+      |> FakeAcp.send_message("plan the work")
+
+    context
+  end
+
+  # A long command whose tool call is still open when Grok backgrounds it.
+  defp backgrounded_turn(context, method) do
+    turns = [
+      %{
+        "match" => "run the dev server",
+        "steps" => [
+          %{
+            "update" => %{
+              "sessionUpdate" => "tool_call",
+              "toolCallId" => "sh-1",
+              "title" => "npm run dev",
+              "kind" => "execute",
+              "status" => "in_progress",
+              "rawInput" => %{"command" => "npm run dev"}
+            }
+          },
+          %{"waitFile" => "release-bg"},
+          %{"text" => "Started it."}
+        ]
+      }
+      | FakeAcp.turns()
+    ]
+
+    context =
+      context
+      |> FakeAcp.install("grok", Map.put(signed_in_config(), "turns", turns), enabled: true)
+      |> FakeAcp.thread()
+      |> FakeAcp.send_message("run the dev server")
+
+    release = Path.join(FakeAcp.fake(context).dir, "release-bg")
+    ExUnit.Callbacks.on_exit(fn -> File.write(release, "") end)
+
+    # The tool call reached the thread; Grok now backgrounds it.
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      background_items(state)["sh-1"] == "running"
+    end)
+
+    grok_says(context, method, %{
+      "sessionId" => session(context),
+      "update" => %{"task_id" => "task-sh", "tool_call_id" => "sh-1"}
+    })
+
+    sync_runtime(context)
+    File.write!(release, "")
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  # --- images and compaction -----------------------------------------------------------
+
+  step "Grok reports at start-up that it does not take images", context do
+    # The fake's capabilities say promptCapabilities.image is false.
+    context
+    |> FakeAcp.install("grok", signed_in_config(), enabled: true)
+    |> FakeAcp.thread()
+  end
+
+  step "the user sends a Grok message with a screenshot attached", context do
+    dir = Path.join(context.mc.home, "attachments")
+    File.mkdir_p!(dir)
+    id = "att-shot"
+
+    png =
+      Base.decode64!(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAwMCAO+ip1sAAAAASUVORK5CYII="
+      )
+
+    File.write!(Path.join(dir, id <> ".png"), png)
+
+    FakeAcp.send_message(context, "look at this", nil, %{
+      "attachments" => [
+        %{
+          "type" => "image",
+          "id" => id,
+          "name" => "shot.png",
+          "mimeType" => "image/png",
+          "sizeBytes" => byte_size(png)
+        }
+      ]
+    })
+  end
+
+  step "Grok receives the screenshot as an image with the message", context do
+    FakeAcp.await_run(context, "completed")
+    [%{"params" => %{"prompt" => prompt}}] = FakeAcp.received(context, "session/prompt")
+    assert Enum.any?(prompt, &match?(%{"type" => "image", "mimeType" => "image/png"}, &1))
+    context
+  end
+
+  step "a Grok thread with history", context do
+    context =
+      context
+      |> FakeAcp.install("grok", signed_in_config(), enabled: true)
+      |> FakeAcp.thread()
+      |> FakeAcp.send_message("first")
+
+    FakeAcp.await_run(context, "completed")
     context
   end
 

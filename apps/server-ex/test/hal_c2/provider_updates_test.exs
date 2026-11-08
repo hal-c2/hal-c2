@@ -132,6 +132,6 @@ defmodule HalC2.ProviderUpdatesTest do
     File.chmod!(brew, 0o755)
 
     assert HalC2.ProviderUpdates.advisory("grok", path, "1.0.0")["updateCommand"] ==
-             "brew upgrade --cask grok-build"
+             "#{brew} upgrade --cask grok-build"
   end
 end
